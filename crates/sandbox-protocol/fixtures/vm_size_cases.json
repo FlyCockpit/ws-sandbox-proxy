@@ -1,0 +1,805 @@
+[
+  {
+    "name": "size 1/512",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 512
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 512
+    }
+  },
+  {
+    "name": "size 32/65536",
+    "kind": "size",
+    "input": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    }
+  },
+  {
+    "name": "size 2/2048",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048
+    }
+  },
+  {
+    "name": "size 1/1024",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    }
+  },
+  {
+    "name": "size 4/768",
+    "kind": "size",
+    "input": {
+      "cpuCount": 4,
+      "memoryMiB": 768
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 4,
+      "memoryMiB": 768
+    }
+  },
+  {
+    "name": "invalid cpuCount 0",
+    "kind": "size",
+    "input": {
+      "cpuCount": 0,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 33",
+    "kind": "size",
+    "input": {
+      "cpuCount": 33,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount -1",
+    "kind": "size",
+    "input": {
+      "cpuCount": -1,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 1.5",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1.5,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 2",
+    "kind": "size",
+    "input": {
+      "cpuCount": "2",
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount None",
+    "kind": "size",
+    "input": {
+      "cpuCount": null,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount True",
+    "kind": "size",
+    "input": {
+      "cpuCount": true,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 9007199254740992",
+    "kind": "size",
+    "input": {
+      "cpuCount": 9007199254740992,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 4294967296",
+    "kind": "size",
+    "input": {
+      "cpuCount": 4294967296,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 1e+30",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1e30,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 0",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 256",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 256
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 65537",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 65537
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 65792",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 65792
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB -512",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": -512
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 513",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 513
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 1025",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1025
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 1024.5",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024.5
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 1024",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": "1024"
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB None",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB False",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 9007199254740992",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 9007199254740992
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 4294967296",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 4294967296
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 1e+30",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1e30
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid shape {}",
+    "kind": "size",
+    "input": {},
+    "valid": false
+  },
+  {
+    "name": "invalid shape {'cpuCount': 1}",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid shape {'memoryMiB': 1024}",
+    "kind": "size",
+    "input": {
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid shape {'cpuCount': 1, 'memoryMiB': 1024, 'extra': 1}",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "extra": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid shape None",
+    "kind": "size",
+    "input": null,
+    "valid": false
+  },
+  {
+    "name": "invalid shape []",
+    "kind": "size",
+    "input": [],
+    "valid": false
+  },
+  {
+    "name": "invalid shape 42",
+    "kind": "size",
+    "input": 42,
+    "valid": false
+  },
+  {
+    "name": "omission {}",
+    "kind": "overrides",
+    "input": {},
+    "valid": true,
+    "expected": {}
+  },
+  {
+    "name": "defaults {}",
+    "kind": "revision",
+    "input": {},
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    }
+  },
+  {
+    "name": "omission {'cpuCount': 2}",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": 2
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2
+    }
+  },
+  {
+    "name": "defaults {'cpuCount': 2}",
+    "kind": "revision",
+    "input": {
+      "cpuCount": 2
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 1024
+    }
+  },
+  {
+    "name": "omission {'memoryMiB': 2048}",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": 2048
+    },
+    "valid": true,
+    "expected": {
+      "memoryMiB": 2048
+    }
+  },
+  {
+    "name": "defaults {'memoryMiB': 2048}",
+    "kind": "revision",
+    "input": {
+      "memoryMiB": 2048
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 2048
+    }
+  },
+  {
+    "name": "omission {'cpuCount': 32, 'memoryMiB': 65536}",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    }
+  },
+  {
+    "name": "defaults {'cpuCount': 32, 'memoryMiB': 65536}",
+    "kind": "revision",
+    "input": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 32,
+      "memoryMiB": 65536
+    }
+  },
+  {
+    "name": "invalid overrides {'cpuCount': None}",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid revision {'cpuCount': None}",
+    "kind": "revision",
+    "input": {
+      "cpuCount": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid overrides {'memoryMiB': None}",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid revision {'memoryMiB': None}",
+    "kind": "revision",
+    "input": {
+      "memoryMiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid overrides {'memoryMiB': 513}",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": 513
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid revision {'memoryMiB': 513}",
+    "kind": "revision",
+    "input": {
+      "memoryMiB": 513
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid overrides {'cpuCount': 0}",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid revision {'cpuCount': 0}",
+    "kind": "revision",
+    "input": {
+      "cpuCount": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid overrides {'extra': 1}",
+    "kind": "overrides",
+    "input": {
+      "extra": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid revision {'extra': 1}",
+    "kind": "revision",
+    "input": {
+      "extra": 1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid overrides None",
+    "kind": "overrides",
+    "input": null,
+    "valid": false
+  },
+  {
+    "name": "invalid revision None",
+    "kind": "revision",
+    "input": null,
+    "valid": false
+  },
+  {
+    "name": "invalid overrides []",
+    "kind": "overrides",
+    "input": [],
+    "valid": false
+  },
+  {
+    "name": "invalid revision []",
+    "kind": "revision",
+    "input": [],
+    "valid": false
+  },
+  {
+    "name": "invalid overrides True",
+    "kind": "overrides",
+    "input": true,
+    "valid": false
+  },
+  {
+    "name": "invalid revision True",
+    "kind": "revision",
+    "input": true,
+    "valid": false
+  },
+  {
+    "name": "capacity 512/1",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 512,
+      "maxCpuCount": 1
+    },
+    "valid": true,
+    "expected": {
+      "memoryBudgetMiB": 512,
+      "maxCpuCount": 1
+    }
+  },
+  {
+    "name": "capacity 16777216/32",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 16777216,
+      "maxCpuCount": 32
+    },
+    "valid": true,
+    "expected": {
+      "memoryBudgetMiB": 16777216,
+      "maxCpuCount": 32
+    }
+  },
+  {
+    "name": "capacity 4096/4",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4
+    },
+    "valid": true,
+    "expected": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4
+    }
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 0, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 0,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 511, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 511,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 513, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 513,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 16777217, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 16777217,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 16777472, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 16777472,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4294967296, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4294967296,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 9007199254740992, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 9007199254740992,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 1e+30, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 1e30,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 1024.5, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 1024.5,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': '4096', 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": "4096",
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': None, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": null,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': True, 'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": true,
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 0}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 33}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 33
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 1.5}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 1.5
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': '4'}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": "4"
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': None}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'maxCpuCount': 4}",
+    "kind": "capacity",
+    "input": {
+      "maxCpuCount": 4
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 4, 'maxMemoryMiB': 4096}",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "maxMemoryMiB": 4096
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid capacity None",
+    "kind": "capacity",
+    "input": null,
+    "valid": false
+  },
+  {
+    "name": "invalid capacity []",
+    "kind": "capacity",
+    "input": [],
+    "valid": false
+  },
+  {
+    "name": "array size",
+    "kind": "size",
+    "input": [1, 1024],
+    "valid": false
+  },
+  {
+    "name": "array capacity",
+    "kind": "capacity",
+    "input": [4096, 4],
+    "valid": false
+  },
+  {
+    "name": "array overrides",
+    "kind": "overrides",
+    "input": [1, 1024],
+    "valid": false
+  },
+  {
+    "name": "array revision",
+    "kind": "revision",
+    "input": [1, 1024],
+    "valid": false
+  },
+  {
+    "name": "integral JSON numbers",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1.0,
+      "memoryMiB": 1024.0
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    }
+  }
+]

@@ -1,0 +1,1379 @@
+{
+  "daemon": [
+    {
+      "type": "disk.upload.begin",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sizeBytes": 4096,
+      "unpackedBytes": 8192,
+      "format": "unified",
+      "cloudInitInstanceId": "5f1c2a9e-1b2c-4d3e-8f90-0a1b2c3d4e5f"
+    },
+    {
+      "type": "disk.upload.parts",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "parts": [
+        {
+          "n": 1,
+          "etag": "\"etag-1\""
+        }
+      ]
+    },
+    {
+      "type": "disk.upload.complete",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1"
+    },
+    {
+      "type": "disk.offload.failed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "staging_full"
+    },
+    {
+      "type": "disk.evict.request",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1
+    },
+    {
+      "type": "disk.evicted",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "grantId": "grant-1",
+      "rootAbsenceProof": {
+        "storagePoolName": "default",
+        "storageMarker": "storage_1",
+        "diskGiB": 32,
+        "state": "absent",
+        "networkCleanupComplete": true,
+        "observationSequence": 3
+      }
+    },
+    {
+      "type": "disk.discarded",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "rootAbsenceProof": {
+        "storagePoolName": "default",
+        "storageMarker": "storage_1",
+        "diskGiB": 32,
+        "state": "absent",
+        "networkCleanupComplete": true,
+        "observationSequence": 3
+      }
+    },
+    {
+      "type": "disk.discarded",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "code": "binding_mismatch"
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": [
+        {
+          "sandboxId": "sbx-1",
+          "offloadId": "off-1",
+          "seq": 1
+        },
+        {
+          "sandboxId": "sbx-2",
+          "offloadId": "off-7",
+          "seq": 4
+        }
+      ]
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "exporting_disk"
+      }
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-2",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "uploading_disk",
+        "bytesDone": 10,
+        "bytesTotal": 100
+      }
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-3",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "fetching_disk",
+        "bytesDone": 10,
+        "bytesTotal": 100
+      }
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-4",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "importing_disk"
+      }
+    },
+    {
+      "type": "operation.receipt",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotencyKey": "restore-key-1",
+      "kind": "sandbox.reconnect",
+      "state": "succeeded",
+      "result": null,
+      "error": null,
+      "launchMode": "new_root"
+    }
+  ],
+  "server": [
+    {
+      "type": "disk.offload.request",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "generation": 3
+    },
+    {
+      "type": "disk.offload.stored",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "generation": 3
+    },
+    {
+      "type": "disk.offload.cancel",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "reason": "superseded"
+    },
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example/obj?partNumber=1&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    {
+      "type": "disk.evict.suggest",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1
+    },
+    {
+      "type": "disk.evict.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "grantId": "grant-1",
+      "expiresAtUnixMs": 1700000600000
+    },
+    {
+      "type": "disk.evict.refused",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "sandbox.disk_busy"
+    },
+    {
+      "type": "disk.discard",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "createKey": "restore-key-1",
+      "baseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "templateFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "storagePoolName": "default",
+      "storageMarker": "storage_1"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "cloudInitInstanceId": "5f1c2a9e-1b2c-4d3e-8f90-0a1b2c3d4e5f"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "cold",
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key-2",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "expectDisk": {
+        "seq": 2,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "create-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "new_root"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cmd",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "argv": ["true"],
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    }
+  ],
+  "rejectedDaemon": [
+    {
+      "type": "disk.upload.begin",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sizeBytes": 4096,
+      "format": "unified",
+      "cloudInitInstanceId": "bad id"
+    },
+    {
+      "type": "disk.upload.begin",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sizeBytes": 4096,
+      "unpackedBytes": 8192,
+      "format": "split"
+    },
+    {
+      "type": "disk.upload.begin",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "offloadId": "off-1",
+      "seq": 0,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sizeBytes": 4096,
+      "unpackedBytes": 8192,
+      "format": "unified"
+    },
+    {
+      "type": "disk.upload.begin",
+      "sandboxId": "sbx-1",
+      "generation": 0,
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "sizeBytes": 4096,
+      "unpackedBytes": 8192,
+      "format": "unified"
+    },
+    {
+      "type": "disk.upload.parts",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "parts": []
+    },
+    {
+      "type": "disk.offload.failed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "unknown_code"
+    },
+    {
+      "type": "disk.evicted",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "grantId": "grant-1",
+      "rootAbsenceProof": {
+        "storagePoolName": "default",
+        "storageMarker": "storage_1",
+        "diskGiB": 32,
+        "state": "present",
+        "networkCleanupComplete": true,
+        "observationSequence": 3
+      }
+    },
+    {
+      "type": "disk.evicted",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "grantId": "grant-1",
+      "rootAbsenceProof": {
+        "storagePoolName": "default",
+        "storageMarker": "storage_1",
+        "diskGiB": 32,
+        "state": "absent",
+        "networkCleanupComplete": true,
+        "observationSequence": 3
+      },
+      "extra": 1
+    },
+    {
+      "type": "disk.discarded",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "rootAbsenceProof": {
+        "storagePoolName": "default",
+        "storageMarker": "storage_1",
+        "diskGiB": 32,
+        "state": "absent",
+        "networkCleanupComplete": true,
+        "observationSequence": 3
+      },
+      "code": "x"
+    },
+    {
+      "type": "disk.discarded",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1"
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": []
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": [
+        {
+          "sandboxId": "sbx-1",
+          "offloadId": "off-1",
+          "seq": 1,
+          "phase": "uploaded"
+        }
+      ]
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": [
+        {
+          "sandboxId": "sbx-1",
+          "offloadId": "off-1",
+          "seq": 0
+        }
+      ]
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": [
+        {
+          "sandboxId": "sbx-1",
+          "offloadId": "off-1",
+          "seq": 1
+        },
+        {
+          "sandboxId": "sbx-2",
+          "offloadId": "off-1",
+          "seq": 2
+        }
+      ]
+    },
+    {
+      "type": "disk.offload.inventory",
+      "entries": [
+        {
+          "sandboxId": "sbx-1",
+          "offloadId": "off-1",
+          "seq": 1
+        }
+      ],
+      "cursor": "x"
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:x"
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 0
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "exporting"
+      }
+    },
+    {
+      "type": "operation.receipt",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotencyKey": "restore-key-1",
+      "kind": "sandbox.reconnect",
+      "state": "succeeded",
+      "result": null,
+      "error": null,
+      "launchMode": "hot"
+    }
+  ],
+  "rejectedServer": [
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example/obj?partNumber=1&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000
+    },
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example/obj?partNumber=1&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "short"
+      }
+    },
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "http://s3.example.com/k",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example/obj?partNumber=1&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108881
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
+    },
+    {
+      "type": "disk.offload.request",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 0,
+      "generation": 3
+    },
+    {
+      "type": "disk.offload.stored",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "fingerprint": "sha256:xyz",
+      "generation": 3
+    },
+    {
+      "type": "disk.offload.cancel",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "reason": "Bad Reason"
+    },
+    {
+      "type": "disk.discard",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "createKey": "restore-key-1",
+      "baseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "storagePoolName": "default",
+      "storageMarker": "storage_1"
+    },
+    {
+      "type": "disk.discard",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "createKey": "restore-key-1",
+      "baseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "templateFingerprint": "not-a-fingerprint",
+      "storagePoolName": "default",
+      "storageMarker": "storage_1"
+    },
+    {
+      "type": "disk.discard",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "createKey": "",
+      "baseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "templateFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "storagePoolName": "default",
+      "storageMarker": "storage_1"
+    },
+    {
+      "type": "disk.discard",
+      "sandboxId": "sbx-1",
+      "copyId": "copy-1",
+      "createKey": "restore-key-1",
+      "baseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "templateFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "storagePoolName": "default",
+      "storageMarker": ""
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "cold",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true,
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "restore": {
+        "offloadId": "off-1",
+        "seq": 0,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "sizeBytes": 4096,
+        "format": "unified",
+        "source": "fetch"
+      },
+      "launchMode": "new_root",
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "guestSudo": true,
+      "guestRoot": true
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "restore-key-1",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "new_root"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "warm",
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "cold",
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "create-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "cold"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cmd",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "argv": ["true"],
+      "diskBaseFingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "launchMode": "cold"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cmd",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "argv": ["true"],
+      "diskBaseFingerprint": "sha256:short"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "cold",
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "extra": true
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "cold-key",
+      "generation": 3,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "launchMode": "cold",
+      "expectDisk": {
+        "seq": 1,
+        "fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      "restore": null
+    }
+  ]
+}

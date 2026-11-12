@@ -1,0 +1,41 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // Drift tests read the Rust side directly: the shared protocol fixtures
+    // and the files `file-payload-inventory.test.ts` scans. Without these the
+    // cache replays a pass after a Rust-only change.
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/crates/sandbox-protocol/fixtures/**",
+        "$TURBO_ROOT$/crates/sandbox-protocol/src/frame.rs",
+        "$TURBO_ROOT$/crates/sandbox-runtime/src/trait.rs",
+        "$TURBO_ROOT$/crates/sandbox-runtime/src/files.rs",
+        "$TURBO_ROOT$/apps/cli/src/sandbox_relay/files.rs"
+      ]
+    },
+    // The server process needs SANDBOX_REQUEST_HMAC_SECRET. In the dev-docker
+    // stack it is a per-stack value set on the container; strict env mode would
+    // drop it before `tsx watch` starts, and the server's dotenv load would then
+    // fall back to (or fail without) a root .env value. dotenv never overrides
+    // an existing process.env key, so passing it through makes the per-stack
+    // value win. Not added to the shared `dev` task: the worker never sees it (web#dev
+    // gets it from apps/web/turbo.json because vite dev runs the SSR server functions).
+    // DATA_ENCRYPTION_KEY(_PREVIOUS) and WEBHOOK_* are shared with the worker
+    // (apps/worker/turbo.json): the server seals webhook endpoint secrets under
+    // the data-encryption root and validates the destination policy.
+    // CREDENTIALS_ENABLED (the CLI-logins turn-off switch) gates the vault on
+    // both. The web app never sees them.
+    "dev": {
+      "passThroughEnv": [
+        "$TURBO_EXTENDS$",
+        "SANDBOX_REQUEST_HMAC_SECRET",
+        "DATA_ENCRYPTION_KEY",
+        "DATA_ENCRYPTION_KEY_PREVIOUS",
+        "CREDENTIALS_ENABLED",
+        "WEBHOOK_*"
+      ]
+    }
+  }
+}

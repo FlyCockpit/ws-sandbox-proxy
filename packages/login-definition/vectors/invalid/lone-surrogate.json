@@ -1,0 +1,5 @@
+{
+  "description": "strings must be valid Unicode",
+  "expect": "definition.invalid",
+  "documentText": "{\"schemaVersion\":1,\"id\":\"a\",\"displayName\":\"\\ud800\",\"login\":{\"command\":\"true\",\"method\":\"paste\"},\"credentials\":{\"env\":[{\"name\":\"A\",\"required\":true}]}}"
+}

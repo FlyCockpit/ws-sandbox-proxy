@@ -1,0 +1,519 @@
+{
+  "daemon": [
+    {
+      "type": "image.fetch.request",
+      "requestId": "req-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 1,
+      "attempt": 1,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resumeOffset": 0
+    },
+    {
+      "type": "image.cached",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "operationId": "op-1",
+      "compressedBytes": 1048576,
+      "unpackedBytes": 4194304,
+      "origin": "fetched",
+      "totals": {
+        "usedBytes": 1048576,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.cached",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "transferId": "tr-1",
+      "compressedBytes": 1048576,
+      "origin": "replica",
+      "totals": {
+        "usedBytes": 1048576,
+        "foreignBytes": 1048576
+      }
+    },
+    {
+      "type": "image.evicted",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "reason": "lru",
+      "totals": {
+        "usedBytes": 0,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.fetch.failed",
+      "requestId": "req-1",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "code": "corrupt"
+    },
+    {
+      "type": "image.cache.census",
+      "page": 0,
+      "complete": true,
+      "entries": [
+        {
+          "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owners": ["owner-1"],
+          "compressedBytes": 1048576,
+          "origin": "captured",
+          "pinned": true
+        }
+      ],
+      "totals": {
+        "usedBytes": 1048576,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.links.request",
+      "transferId": "tr-1",
+      "role": "DEST",
+      "parts": [1, 2]
+    },
+    {
+      "type": "image.part.ack",
+      "transferId": "tr-1",
+      "part": 1,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "type": "image.upload.begin",
+      "operationId": "op-2",
+      "requestId": "upload-1",
+      "attempt": 2,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1048576,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "transferId": "tr-3",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1048576,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.parts",
+      "transferId": "tr-2",
+      "parts": [
+        {
+          "n": 1,
+          "etag": "\"etag-1\""
+        }
+      ]
+    },
+    {
+      "type": "image.upload.complete",
+      "transferId": "tr-2"
+    },
+    {
+      "type": "image.job.resume",
+      "transferId": "tr-1",
+      "role": "SOURCE",
+      "bytesDone": 33554432
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "format_unsupported"
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 1,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "fetching_image",
+        "bytesDone": 10,
+        "bytesTotal": 100
+      }
+    }
+  ],
+  "server": [
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-1",
+      "transferId": "tr-1",
+      "mode": "S3",
+      "sizeBytes": 1048576,
+      "partSize": 67108864,
+      "expiresAtUnixMs": 1800000000000,
+      "url": "https://bucket.example.test/images/o/a/image.tar",
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+      }
+    },
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-2",
+      "transferId": "tr-1",
+      "mode": "RELAY",
+      "sizeBytes": 1048576,
+      "partSize": 33554432,
+      "expiresAtUnixMs": 1800000000000,
+      "links": [
+        {
+          "part": 1,
+          "linkId": "link-1",
+          "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    },
+    {
+      "type": "image.fetch.refused",
+      "requestId": "req-1",
+      "code": "image_unavailable"
+    },
+    {
+      "type": "image.serve.request",
+      "transferId": "tr-1",
+      "imageOwnerId": "owner-1",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1048576,
+      "partSize": 33554432,
+      "links": [
+        {
+          "part": 1,
+          "linkId": "link-2",
+          "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    },
+    {
+      "type": "image.publish.request",
+      "transferId": "tr-3",
+      "imageOwnerId": "owner-1",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "type": "image.links.grant",
+      "transferId": "tr-1",
+      "role": "DEST",
+      "links": [
+        {
+          "part": 2,
+          "linkId": "link-3",
+          "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    },
+    {
+      "type": "image.upload.grant",
+      "transferId": "tr-2",
+      "partSize": 67108864,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example.test/u?partNumber=1",
+          "sizeBytes": 1048576
+        }
+      ],
+      "expiresAtUnixMs": 1800000000000
+    },
+    {
+      "type": "image.upload.grant",
+      "transferId": "tr-3",
+      "requestId": "upload-1",
+      "partSize": 67108864,
+      "parts": [],
+      "expiresAtUnixMs": 1800000000000
+    },
+    {
+      "type": "image.job.resume.result",
+      "transferId": "tr-1",
+      "continue": false
+    },
+    {
+      "type": "image.job.cancel",
+      "transferId": "tr-1",
+      "reason": "access_lost"
+    },
+    {
+      "type": "image.job.cancel",
+      "transferId": "none",
+      "reason": "stale_capture",
+      "requestId": "upload-1"
+    },
+    {
+      "type": "image.release",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "reason": "stored"
+    },
+    {
+      "type": "image.cache.census.ack",
+      "page": 0
+    }
+  ],
+  "rejectedDaemon": [
+    {
+      "type": "image.fetch.request",
+      "requestId": "req-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 1,
+      "attempt": 1,
+      "fingerprint": "sha256:XYZ",
+      "resumeOffset": 0
+    },
+    {
+      "type": "image.cached",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "compressedBytes": 1,
+      "origin": "fetched",
+      "totals": {
+        "usedBytes": 1,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.cached",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "operationId": "op",
+      "transferId": "tr",
+      "compressedBytes": 1,
+      "origin": "fetched",
+      "totals": {
+        "usedBytes": 1,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.cached",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "operationId": "op",
+      "compressedBytes": 1,
+      "origin": "fetched",
+      "totals": {
+        "usedBytes": 1,
+        "foreignBytes": 2
+      }
+    },
+    {
+      "type": "image.evicted",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "reason": "bored",
+      "totals": {
+        "usedBytes": 0,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.cache.census",
+      "page": 0,
+      "complete": true,
+      "entries": [
+        {
+          "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owners": [],
+          "compressedBytes": 1,
+          "origin": "fetched",
+          "pinned": false
+        }
+      ],
+      "totals": {
+        "usedBytes": 1,
+        "foreignBytes": 0
+      }
+    },
+    {
+      "type": "image.links.request",
+      "transferId": "tr-1",
+      "role": "DEST",
+      "parts": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    },
+    {
+      "type": "image.part.ack",
+      "transferId": "tr-1",
+      "part": 0,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "type": "image.upload.begin",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "operationId": "op",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "split"
+    },
+    {
+      "type": "image.upload.begin",
+      "operationId": "op",
+      "attempt": 1,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "operationId": "op",
+      "requestId": "r-1",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "transferId": "tr-1",
+      "requestId": "r-1",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "transferId": "tr-1",
+      "attempt": 1,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.begin",
+      "operationId": "op",
+      "requestId": "bad id",
+      "attempt": 1,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "sizeBytes": 1,
+      "format": "unified"
+    },
+    {
+      "type": "image.upload.parts",
+      "transferId": "tr-2",
+      "parts": []
+    },
+    {
+      "type": "image.fetch.request",
+      "requestId": "req-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 1,
+      "attempt": 1,
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resumeOffset": 0,
+      "url": "https://leak.example"
+    },
+    {
+      "type": "operation.progress",
+      "id": "p-1",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "generation": 1,
+      "attempt": 1,
+      "state": "running",
+      "progress": {
+        "phase": "daydreaming"
+      }
+    }
+  ],
+  "rejectedServer": [
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-1",
+      "transferId": "tr-1",
+      "mode": "S3",
+      "sizeBytes": 1,
+      "partSize": 1,
+      "expiresAtUnixMs": 1,
+      "links": [
+        {
+          "part": 1,
+          "linkId": "l",
+          "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    },
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-1",
+      "transferId": "tr-1",
+      "mode": "RELAY",
+      "sizeBytes": 1,
+      "partSize": 1,
+      "expiresAtUnixMs": 1,
+      "url": "https://x.test/"
+    },
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-1",
+      "transferId": "tr-1",
+      "mode": "RELAY",
+      "sizeBytes": 1,
+      "partSize": 1,
+      "expiresAtUnixMs": 1,
+      "links": [
+        {
+          "part": 1,
+          "linkId": "l",
+          "token": "short"
+        }
+      ]
+    },
+    {
+      "type": "image.fetch.grant",
+      "requestId": "req-1",
+      "transferId": "tr-1",
+      "mode": "S3",
+      "sizeBytes": 1,
+      "partSize": 1,
+      "expiresAtUnixMs": 1,
+      "url": "ftp://x.test/"
+    },
+    {
+      "type": "image.upload.grant",
+      "transferId": "tr-2",
+      "partSize": 10,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://x.test/",
+          "sizeBytes": 11
+        }
+      ],
+      "expiresAtUnixMs": 1
+    },
+    {
+      "type": "image.release",
+      "fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "imageOwnerId": "owner-1",
+      "reason": "whim"
+    },
+    {
+      "type": "image.job.cancel",
+      "transferId": "tr-1",
+      "reason": "Has Spaces"
+    },
+    {
+      "type": "image.job.cancel",
+      "transferId": "none",
+      "reason": "stale_capture",
+      "requestId": "bad id"
+    },
+    {
+      "type": "image.upload.grant",
+      "transferId": "tr-2",
+      "requestId": "bad id",
+      "partSize": 10,
+      "parts": [],
+      "expiresAtUnixMs": 1
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The worker decrypts webhook endpoint secrets (data-encryption root and
+    // its rotation predecessor) and enforces the destination policy. In the
+    // dev-docker stack these are container values; strict env mode would drop
+    // them before the worker starts. CREDENTIALS_ENABLED gates the credential
+    // vault maintenance. Mirrors apps/server/turbo.json; the web app never
+    // sees them.
+    "dev": {
+      "passThroughEnv": [
+        "$TURBO_EXTENDS$",
+        "DATA_ENCRYPTION_KEY",
+        "DATA_ENCRYPTION_KEY_PREVIOUS",
+        "CREDENTIALS_ENABLED",
+        "WEBHOOK_*"
+      ]
+    }
+  }
+}

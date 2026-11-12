@@ -1,0 +1,14 @@
+{
+  "description": "login is required",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

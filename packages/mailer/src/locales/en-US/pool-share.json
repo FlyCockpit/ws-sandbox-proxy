@@ -1,0 +1,14 @@
+{
+  "subject": "Pool sharing invitation",
+  "heading": "You are invited to a pool",
+  "body": "{{inviter}} invited you to {{pool}}.",
+  "permissions": "Permissions (use / contribute): {{use}} / {{contribute}}",
+  "caps": "Limits (RAM MiB / vCPU / disk GiB): {{memory}} / {{vcpu}} / {{disk}}. An unset limit is unlimited.",
+  "expiry": "Expires: {{expiry}}",
+  "trust": "Users of a pool with foreign hosts must trust those host operators. An incus-admin user on a host can reach every VM on that host. Contribution uses your host budget and network/IP for guest egress. Withdrawal retains disks for the pool owner's grace, up to 30 days. Host deletion waits for positive cleanup proof and may take longer with offline or dead storage.",
+  "forwarding": "Accept explicitly after signing in. Check the accepting account: anyone with this link and an existing verified account may accept it. Signup requires the invited email and mailbox verification. Reopen this link after verification; do not forward it.",
+  "cta": "Review invitation",
+  "yes": "Yes",
+  "no": "No",
+  "unlimited": "Unlimited"
+}

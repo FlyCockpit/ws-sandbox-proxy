@@ -1,0 +1,26 @@
+{
+  "name": "@wssp/test-utils",
+  "license": "MIT",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    }
+  },
+  "dependencies": {
+    "@wssp/api": "workspace:*",
+    "@wssp/auth": "workspace:*",
+    "@wssp/db": "workspace:*",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@wssp/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

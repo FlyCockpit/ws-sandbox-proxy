@@ -1,0 +1,12 @@
+{
+  "type": "stream.chunk",
+  "streamId": "stream-fixture-1",
+  "operationId": "op-fixture-1",
+  "generation": 1,
+  "attempt": 1,
+  "sequence": 2,
+  "flags": {
+    "fileDownload": true
+  },
+  "final": false
+}

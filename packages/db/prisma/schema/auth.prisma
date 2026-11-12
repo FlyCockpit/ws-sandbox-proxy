@@ -1,0 +1,252 @@
+model User {
+  id                            String                        @id @default(cuid(2))
+  createdAt                     DateTime                      @default(now())
+  updatedAt                     DateTime                      @default(now()) @updatedAt
+  name                          String
+  email                         String
+  emailVerified                 Boolean                       @default(false)
+  image                         String?
+  // Better-Auth's admin plugin stores role as a string and supports arbitrary
+  // custom roles plus comma-separated multi-role values. Do not narrow this to
+  // a Prisma enum unless you also drop those Better-Auth capabilities.
+  role                          String                        @default("user")
+  // Preferred UI locale (BCP 47 tag). Synced into the i18n detection chain
+  // ahead of localStorage / navigator so a signed-in user's choice follows
+  // them across devices. Stored as String (not enum) because the supported-
+  // locale set evolves outside the schema; new locales are added in
+  // apps/web/src/i18n/config.ts without a Prisma migration.
+  locale                        String                        @default("en-US")
+  deletionRequestedAt           DateTime?
+  banned                        Boolean?
+  banReason                     String?
+  banExpires                    DateTime?
+  twoFactorEnabled              Boolean?
+  // Proof consumers serialize with User FOR NO KEY UPDATE (terminal-proof.ts).
+  hostTerminalFailedAttempts    Int                           @default(0)
+  hostTerminalLockedUntil       DateTime?
+  hostTerminalLastTotpStep      BigInt?
+  hostTerminalFactorFingerprint String?
+  hostTerminalFactorObservedAt  DateTime?
+  createdViaPoolInviteBy        String?
+  createdViaPoolInviteId        String?
+  operationalAlerts             Boolean                       @default(true)
+  sessions                      Session[]
+  accounts                      Account[]
+  twoFactors                    TwoFactor[]
+  pushSubscriptions             PushSubscription[]
+  SandboxHostStoragePools       SandboxHostStoragePool[]
+  SandboxHosts                  SandboxHost[]                 @relation("SandboxHostOwner")
+  HostTokens                    HostToken[]                   @relation("HostTokenOwner")
+  SandboxTemplates              SandboxTemplate[]             @relation("SandboxTemplateOwner")
+  Sandboxes                     Sandbox[]                     @relation("SandboxOwner")
+  SandboxActionReceipts         SandboxActionReceipt[]
+  SandboxOperationResults       SandboxOperationResult[]      @relation("SandboxOperationResultOwner")
+  SandboxOperations             SandboxOperation[]            @relation("SandboxOperationOwner")
+  SandboxCapacityWaits          SandboxCapacityWait[]         @relation("SandboxCapacityWaitOwner")
+  SandboxRestoreWaits           SandboxRestoreWait[]          @relation("SandboxRestoreWaitOwner")
+  SandboxDiskOffloads           SandboxDiskOffload[]          @relation("SandboxDiskOffloadOwner")
+  SandboxDiskCopies             SandboxDiskCopy[]             @relation("SandboxDiskCopyOwner")
+  OutboxEvents                  OutboxEvent[]                 @relation("OutboxEventOwner")
+  SdkKeys                       SdkKey[]                      @relation("SdkKeyOwner")
+  deviceCodes                   DeviceCode[]
+  HostDeviceCredentials         HostDeviceCredential[]        @relation("HostDeviceCredentialOwner")
+  SandboxTransfers              SandboxTransfer[]
+  TerminalTickets               SandboxTerminalTicket[]
+  TerminalSessions              SandboxTerminalSession[]
+  ExecutionConfigs              SandboxExecutionConfig[]
+  TemplateRevisions             SandboxTemplateRevision[]
+  TemplateTags                  SandboxTemplateTag[]
+  UpstreamImages                SandboxUpstreamImage[]
+  TemplateAvailability          SandboxTemplateAvailability[]
+  RevisionConfigs               SandboxRevisionConfig[]
+  RevisionGrants                SdkKeyRevisionAllowlist[]
+  SandboxPlacements             SandboxPlacement[]
+  SandboxPools                  SandboxPool[]
+  PoolMemberships               SandboxPoolMember[]
+  OwnedShares                   Share[]                       @relation("ShareOwner")
+  ReceivedShares                Share[]                       @relation("ShareGrantee")
+  PoolInvites                   ShareInvite[]
+  HostTerminalTickets           HostTerminalTicket[]
+  PoolGrants                    SdkKeyPoolAllowlist[]
+  ImageArtifacts                SandboxImageArtifact[]
+  ImageTransfers                SandboxImageTransfer[]
+  ImagePolicy                   AccountImagePolicy?
+  WebhookEndpoints              WebhookEndpoint[]             @relation("WebhookEndpointOwner")
+  TemplateBuilds                SandboxTemplateBuild[]        @relation("SandboxTemplateBuildOwner")
+  CredentialDefinitions         CredentialDefinition[]        @relation("CredentialDefinitionOwner")
+  Credentials                   Credential[]                  @relation("CredentialOwner")
+  CredentialAccounts            CredentialAccount[]           @relation("CredentialAccountOwner")
+  CredentialInstances           CredentialInstance[]          @relation("CredentialInstanceOwner")
+  CredentialLeases              CredentialLease[]             @relation("CredentialLeaseOwner")
+  CredentialResidue             CredentialResidue[]           @relation("CredentialResidueOwner")
+  SandboxCredentials            SandboxCredential[]           @relation("SandboxCredentialOwner")
+  CredentialLoginSessions       CredentialLoginSession[]      @relation("CredentialLoginSessionOwner")
+  CredentialEvents              CredentialEvent[]             @relation("CredentialEventOwner")
+  CredentialGrants              SdkKeyCredentialAllowlist[]   @relation("SdkKeyCredentialAllowlistOwner")
+
+  @@unique([email])
+  @@index([role])
+  // Trigram GIN for the ILIKE substring filters in `users.list`
+  // (`email`/`name` contains). The btree from @@unique([email]) only serves
+  // exact/prefix matches. Needs the `pg_trgm` extension declared on the
+  // datasource in schema.prisma.
+  @@index([email(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin)
+  @@map("user")
+}
+
+model Session {
+  id               String                   @id @default(cuid(2))
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @default(now()) @updatedAt
+  expiresAt        DateTime
+  token            String
+  ipAddress        String?
+  userAgent        String?
+  userId           String
+  user             User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  impersonatedBy   String?
+  /// One-use browser terminal upgrade tickets bound to this session (C53).
+  TerminalTickets  SandboxTerminalTicket[]
+  /// Resumable browser terminals opened by this session (WP8); cascade on revoke.
+  TerminalSessions SandboxTerminalSession[]
+
+  HostTerminalTickets HostTerminalTicket[]
+
+  @@unique([token])
+  @@unique([id, userId])
+  @@index([userId])
+  // Backs the daily expired-token sweep (`reap-expired-auth-tokens`), which
+  // selects id pages by `expiresAt < now`. Matches Verification.
+  @@index([expiresAt])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid(2))
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now()) @updatedAt
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  // Better Auth scopes account identity by (issuer, accountId). Credential
+  // accounts use `local:credential`.
+  issuer                String    @default("local:credential")
+
+  @@unique([issuer, accountId])
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid(2))
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @default(now()) @updatedAt
+  identifier String
+  value      String
+  expiresAt  DateTime
+
+  @@index([identifier])
+  @@index([expiresAt])
+  @@map("verification")
+}
+
+model TwoFactor {
+  id                      String    @id @default(cuid(2))
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @default(now()) @updatedAt
+  secret                  String
+  backupCodes             String
+  verified                Boolean   @default(true)
+  // Better Auth 1.7's two-factor plugin counts failed TOTP/backup-code checks
+  // and locks verification until `lockedUntil`. Every field its schema declares
+  // must exist here: packages/auth/src/plugin-schema-coverage.test.ts fails
+  // otherwise (M7-S12: a missing column made 2FA enrollment return 500).
+  failedVerificationCount Int?      @default(0)
+  lockedUntil             DateTime?
+  userId                  String
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+  @@map("two_factor")
+}
+
+model AppSetting {
+  // `key` is the natural primary key — every read/write looks rows up by it,
+  // so a separate cuid `id` would be dead weight. Deliberately deviates from
+  // the repo's "every model has an id" rule for this single-column lookup table.
+  key       String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  value     String
+
+  @@map("app_setting")
+}
+
+model DeviceCode {
+  id               String    @id @default(cuid(2))
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+  deviceCode       String    @unique
+  userCode         String    @unique
+  userId           String?
+  expiresAt        DateTime
+  status           String
+  lastPolledAt     DateTime?
+  pollingInterval  Int?
+  clientId         String?
+  scope            String?
+  // Null until approval; target id is deliberately not a cascading relation.
+  enrollmentIntent String?
+  replaceHostId    String?
+  user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("device_code")
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid(2))
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscription")
+}
+
+/// Per-account image placement default (user) and store quotas (admin).
+/// The env ceiling is enforced in code, so no CHECK carries env values.
+model AccountImagePolicy {
+  userId                       String               @id
+  imagePlacement               ImagePlacementPolicy @default(ANY_NODE)
+  adminStoredGiBMax            Int?
+  adminDownloadsPerHourMax     Int?
+  /// Owner consent to run this account's builds on other owners' builder nodes.
+  allowForeignBuilds           Boolean              @default(false)
+  adminConcurrentBuildsMax     Int?
+  adminBuildMinutesPerMonthMax Int?
+  /// Admin cap on this account's stored disk offloads (GiB); null = deployment default.
+  adminOffloadGiBMax           Int?
+  adminUpdatedAt               DateTime?
+  adminUpdatedBy               String?
+  createdAt                    DateTime             @default(now())
+  updatedAt                    DateTime             @default(now()) @updatedAt
+  User                         User                 @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  // @check account_image_policy_admin: ("adminStoredGiBMax" IS NULL OR "adminStoredGiBMax" >= 0) AND ("adminDownloadsPerHourMax" IS NULL OR "adminDownloadsPerHourMax" >= 0) AND ("adminConcurrentBuildsMax" IS NULL OR "adminConcurrentBuildsMax" >= 0) AND ("adminBuildMinutesPerMonthMax" IS NULL OR "adminBuildMinutesPerMonthMax" >= 0) AND ("adminOffloadGiBMax" IS NULL OR "adminOffloadGiBMax" >= 0)
+  @@map("account_image_policy")
+}

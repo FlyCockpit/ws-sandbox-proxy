@@ -1,0 +1,334 @@
+{
+  "_about": "Relay 1.0 egress wire cases, read by crates/sandbox-protocol/tests/fixtures.rs and packages/sandbox-contracts/src/egress-wire.test.ts. Valid entries are canonical: each language parses and re-encodes them byte-for-byte (as JSON values). Launch-policy cases are the `wire` forms in egress_policy_cases.json.",
+  "helloEgress": [
+    {
+      "name": "open and guard",
+      "egress": {
+        "open": true,
+        "guard": true
+      }
+    },
+    {
+      "name": "guard only (resolver probe failed)",
+      "egress": {
+        "open": false,
+        "guard": true
+      }
+    },
+    {
+      "name": "neither",
+      "egress": {
+        "open": false,
+        "guard": false
+      }
+    },
+    {
+      "name": "open bit without guard (server never schedules it)",
+      "egress": {
+        "open": true,
+        "guard": false
+      }
+    }
+  ],
+  "invalidHelloEgress": [
+    {
+      "open": true
+    },
+    {
+      "guard": true
+    },
+    {
+      "open": "true",
+      "guard": true
+    },
+    {
+      "open": true,
+      "guard": true,
+      "extra": true
+    },
+    null,
+    []
+  ],
+  "admissionEgressOpen": [
+    {
+      "name": "absent (older daemon or not capable)",
+      "absent": true,
+      "stored": false
+    },
+    {
+      "name": "capable",
+      "egressOpen": true,
+      "stored": true
+    }
+  ],
+  "admissionEgressOpenNonCanonical": [
+    {
+      "name": "explicit false is accepted and re-encoded by omission",
+      "egressOpen": false,
+      "stored": false
+    }
+  ],
+  "invalidAdmissionEgressOpen": ["true", 1, null],
+  "reports": [
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 1,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 2,
+      "allowOpenForOthers": true,
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 7,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 3,
+      "allowOpenForOthers": true,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 4,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "quarantined",
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 8,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 2147483647,
+      "sequence": 9007199254740991,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "lease_expired",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "allowGuestSudoForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 1
+    }
+  ],
+  "invalidReports": [
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 0,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 0,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 9007199254740992,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardReason": "not_installed",
+      "guardInstanceId": "g",
+      "guardGeneration": 1,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "g",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardGeneration": 1,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "g",
+      "guardGeneration": 0,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "bad id",
+      "guardGeneration": 1,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "Not Installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "extra": true,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "guardInstanceId": null,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": false,
+      "guardReason": "not_installed",
+      "guardGeneration": null,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardReason": null,
+      "guardInstanceId": "g",
+      "guardGeneration": 1,
+      "allowGuestSudoForOthers": false
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "allowGuestSudoForOthers": null,
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 1
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "allowGuestSudoForOthers": "yes",
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 1
+    },
+    {
+      "type": "host.egress-state",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "allowOpenForOthers": false,
+      "guardOk": true,
+      "guardInstanceId": "g-6f1c2a",
+      "guardGeneration": 1
+    }
+  ],
+  "launchDispatch": {
+    "type": "operation.dispatch",
+    "sandboxOwnerId": "user-1",
+    "operationId": "op-egress-1",
+    "sandboxId": "sbx-egress-1",
+    "idempotencyKey": "key-egress-1",
+    "kind": "sandbox.create",
+    "generation": 1,
+    "attempt": 1,
+    "egressPolicyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

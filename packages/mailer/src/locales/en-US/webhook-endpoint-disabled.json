@@ -1,0 +1,5 @@
+{
+  "subject": "Webhook endpoint disabled",
+  "body": "Your webhook endpoint for {{host}} was disabled after failing every delivery attempt for at least 72 hours ({{failures}} consecutive failures). Pending deliveries were cancelled.",
+  "action": "Fix the receiver, then re-enable the endpoint from the Webhooks page in your dashboard. Re-enabling resets its failure counters; events that occurred while it was disabled are not sent."
+}

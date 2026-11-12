@@ -1,0 +1,23 @@
+[package]
+name = "login-definition"
+version = "1.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "wssp CLI login definition v1: validation, canonical digest, bundle v1 codec"
+
+[dependencies]
+# SHA-256 for the definition digest; ring is already locked for the daemon's TLS and receipts.
+ring = "0.17.14"
+serde.workspace = true
+# `float_roundtrip`: correctly rounded number parsing, so `1000000000000000.1`
+# and `9007199254740991.0` mean what JavaScript's `JSON.parse` says they mean.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+thiserror.workspace = true
+# Wipes owned credential plaintext (encoded bundles, header values) on drop.
+# Already locked through rustls; `alloc` for `Zeroizing<Vec<u8>>`.
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
+
+[lints]
+workspace = true

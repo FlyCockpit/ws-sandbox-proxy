@@ -1,0 +1,18 @@
+{
+  "description": "displayName is non-empty",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

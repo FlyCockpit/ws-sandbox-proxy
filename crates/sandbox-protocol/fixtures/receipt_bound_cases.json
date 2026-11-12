@@ -1,0 +1,52 @@
+[
+  {
+    "field": "bodyHash",
+    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": true
+  },
+  {
+    "field": "bodyHash",
+    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "valid": false
+  },
+  {
+    "field": "bodyHash",
+    "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "valid": false
+  },
+  {
+    "field": "bodyHash",
+    "value": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+    "valid": false
+  },
+  {
+    "field": "idempotencyKey",
+    "value": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+    "valid": true
+  },
+  {
+    "field": "idempotencyKey",
+    "value": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+    "valid": false
+  },
+  {
+    "field": "idempotencyKey",
+    "value": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+    "valid": false
+  },
+  {
+    "field": "kind",
+    "value": "sandbox.stop",
+    "valid": true
+  },
+  {
+    "field": "kind",
+    "value": "sandbox.explode",
+    "valid": false
+  },
+  {
+    "field": "kind",
+    "value": "snapshot.create",
+    "valid": false
+  }
+]

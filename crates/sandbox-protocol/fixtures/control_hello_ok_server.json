@@ -1,0 +1,21 @@
+{
+  "type": "hello.ok",
+  "id": "hello-fixture-1",
+  "protocolVersion": "1.0",
+  "supportedProtocolVersions": ["1.0"],
+  "capabilities": {
+    "protocolVersion": "1.0",
+    "binaryFrames": true,
+    "cancellation": true,
+    "maxBinaryChunkBytes": 1048576,
+    "streamWindowChunks": 4,
+    "outputChunkBytes": 65536,
+    "censusEntryResults": true,
+    "pendingReceipts": true,
+    "expiryStatusResults": true,
+    "observationFence": true,
+    "commandRetire": true
+  },
+  "connectionEpoch": 1,
+  "hostOwnerId": "owner-1"
+}

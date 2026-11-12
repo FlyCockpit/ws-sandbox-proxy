@@ -1,0 +1,409 @@
+{
+  "server": [
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "ready": "curl -sf localhost:3000",
+        "readyTimeoutMs": 60000,
+        "cwd": "/home/user/app"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "./serve.sh"
+      }
+    }
+  ],
+  "rejectedServer": [
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "startup": {
+        "command": "npm start"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start"
+      },
+      "build": {
+        "buildId": "build-1"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "readyTimeoutMs": 60000
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "ready": "true",
+        "readyTimeoutMs": 999
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "ready": "true",
+        "readyTimeoutMs": 600001
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "cwd": "home/user"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "cwd": "/home/../root"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": ""
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "ready": ""
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "startup": {
+        "command": "npm start",
+        "user": "root"
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "description": "env names are unique",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      },
+      "env": [
+        {
+          "name": "A",
+          "required": true
+        },
+        {
+          "name": "A",
+          "required": false
+        }
+      ]
+    }
+  }
+}

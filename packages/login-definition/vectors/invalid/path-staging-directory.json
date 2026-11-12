@@ -1,0 +1,18 @@
+{
+  "description": "credential staging directories are reserved at every path depth",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": ["auth/nested/.wssp-cred-0123456789abcdef/token"]
+      }
+    }
+  }
+}

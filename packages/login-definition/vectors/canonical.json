@@ -1,0 +1,85 @@
+{
+  "description": "Canonical JSON v1. Parse `text` with the language's native JSON parser, canonicalize, and compare to `canonical` (or expect a refusal when `canonical` is null).",
+  "cases": [
+    {
+      "name": "sorted-keys",
+      "text": "{\"b\":1,\"a\":{\"d\":[3,2],\"c\":null}}",
+      "canonical": "{\"a\":{\"c\":null,\"d\":[3,2]},\"b\":1}"
+    },
+    {
+      "name": "code-point-order",
+      "text": "{\"\\ud83d\\ude00\":1,\"\\ue000\":2,\"z\":3,\"Z\":4,\"\u00e9\":5}",
+      "canonical": "{\"Z\":4,\"z\":3,\"\u00e9\":5,\"\ue000\":2,\"\ud83d\ude00\":1}"
+    },
+    {
+      "name": "whitespace",
+      "text": " { \"a\" : [ 1 , true , false ] } ",
+      "canonical": "{\"a\":[1,true,false]}"
+    },
+    {
+      "name": "escapes",
+      "text": "\"q\\\" b\\\\ s\\/ t\\t n\\n r\\r b\\b f\\f nul\\u0000 us\\u001f del\\u007f ls\\u2028 e\\u00e9\"",
+      "canonical": "\"q\\\" b\\\\ s/ t\\t n\\n r\\r b\\b f\\f nul\\u0000 us\\u001f del\u007f ls\u2028 e\u00e9\""
+    },
+    {
+      "name": "negative-zero",
+      "text": "-0",
+      "canonical": "0"
+    },
+    {
+      "name": "integral-float",
+      "text": "[1.0,1e2,-2E1,0.0]",
+      "canonical": "[1,100,-20,0]"
+    },
+    {
+      "name": "safe-bounds",
+      "text": "[9007199254740991,-9007199254740991]",
+      "canonical": "[9007199254740991,-9007199254740991]"
+    },
+    {
+      "name": "unsafe-integer",
+      "text": "9007199254740992",
+      "canonical": null
+    },
+    {
+      "name": "unsafe-negative",
+      "text": "-9007199254740992",
+      "canonical": null
+    },
+    {
+      "name": "huge-integral",
+      "text": "1e300",
+      "canonical": null
+    },
+    {
+      "name": "fraction",
+      "text": "1.5",
+      "canonical": null
+    },
+    {
+      "name": "small-fraction",
+      "text": "[0.1]",
+      "canonical": null
+    },
+    {
+      "name": "lone-surrogate",
+      "text": "\"\\ud800\"",
+      "canonical": null
+    },
+    {
+      "name": "max-safe-integral-float",
+      "text": "[9007199254740991.0,-9007199254740991.0,9.007199254740991e15]",
+      "canonical": "[9007199254740991,-9007199254740991,9007199254740991]"
+    },
+    {
+      "name": "near-integer-fraction",
+      "text": "1000000000000000.1",
+      "canonical": null
+    },
+    {
+      "name": "empty-containers",
+      "text": "{\"a\":{},\"b\":[]}",
+      "canonical": "{\"a\":{},\"b\":[]}"
+    }
+  ]
+}

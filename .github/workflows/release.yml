@@ -1,0 +1,571 @@
+# Manual, versioned releases for the whole repo: publishes app and worker
+# container images to GHCR and builds/publishes the companion
+# Rust CLI's Linux artifacts (via cargo-dist) as a GitHub Release.
+#
+# Trigger it from the Actions tab after merging a version bump of
+# apps/cli/Cargo.toml to the default branch. The requested tag must match that
+# Cargo.toml version — container images and CLI artifacts version in lockstep.
+#
+# This file is hand-maintained. The CLI jobs were adapted from cargo-dist's
+# generated workflow; cargo-dist artifact settings (targets, installers)
+# live in apps/cli/dist-workspace.toml — see apps/cli/docs/releasing.md before
+# changing either.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to publish, for example v1.0.0. Must match apps/cli/Cargo.toml.
+        required: true
+        type: string
+      publish_latest:
+        description: Also move the GHCR latest tag to these container images.
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release request
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      image: ${{ steps.release.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - id: release
+        name: Validate version, branch, and image name
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Run releases from the default branch. Current ref is $GITHUB_REF."
+            exit 1
+          fi
+
+          tag="$VERSION"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release version must be a SemVer tag like v1.0.0."
+            exit 1
+          fi
+
+          version="${tag#v}"
+          cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' apps/cli/Cargo.toml | head -n 1)"
+          if [ "$cargo_version" != "$version" ]; then
+            echo "::error::apps/cli/Cargo.toml version is $cargo_version, expected $version."
+            exit 1
+          fi
+
+          # Canonical package: ghcr.io/flycockpit/ws-sandbox-proxy
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+
+  release-preflight:
+    name: CLI release preflight
+    needs: validate
+    uses: ./.github/workflows/release-preflight.yml
+    secrets: inherit
+
+  node-checks:
+    name: Node checks
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - run: pnpm install --frozen-lockfile
+      # `pnpm verify` includes `pnpm test:pg`, whose disposable PostgreSQL
+      # container needs the pinned image present: the harness never pulls
+      # implicitly (enforced for every workflow by `pnpm policy:pg-image-ci`).
+      - run: pnpm test:pg:pull-image
+      # The full gate, not a subset: `pnpm verify` also runs the policy checks,
+      # env manifest/entrypoint checks, Dockerfile COPY-list check, knip and the
+      # doc-citation check; `pnpm verify:tooling` adds the template-tooling
+      # self-tests split out of `verify` (also run per-PR and nightly). A
+      # release is exactly the moment those must hold. The only database either
+      # touches is the disposable PostgreSQL container `pnpm test:pg` owns and
+      # removes (migration checks use fetched base history). The wire gate
+      # builds the CLI and uses only local transport doubles.
+      - run: pnpm verify && pnpm verify:tooling
+      - run: pnpm audit --audit-level=high
+
+  # Publishes ghcr.io/<owner>/<repo> (app) and ghcr.io/<owner>/<repo>-worker.
+  # Note: VITE_* values are baked into the SPA at image build time — if your
+  # deployment needs them (VITE_APP_NAME etc.), pass them as build-args here or
+  # keep building on the deploy platform instead (see the rebrand pattern doc).
+  publish-containers:
+    name: Publish ${{ matrix.name }} container
+    needs:
+      - validate
+      - node-checks
+      - release-preflight
+    if: >-
+      !cancelled()
+      && needs.validate.result == 'success'
+      && needs.node-checks.result == 'success'
+      && needs.release-preflight.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: app
+            dockerfile: ./Dockerfile
+            suffix: ""
+          - name: worker
+            dockerfile: ./Dockerfile.worker
+            suffix: "-worker"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - id: tags
+        name: Compute container tags
+        shell: bash
+        env:
+          IMAGE: ${{ needs.validate.outputs.image }}
+          SUFFIX: ${{ matrix.suffix }}
+          SCAN_NAME: ${{ matrix.name }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          PUBLISH_LATEST: ${{ inputs.publish_latest }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE$SUFFIX"
+          scan_tag="release-scan-$SCAN_NAME:$GITHUB_SHA"
+          {
+            echo "scan_tag=$scan_tag"
+            echo "release_tags<<EOF"
+            echo "$image:$RELEASE_TAG"
+            echo "$image:$RELEASE_VERSION"
+            echo "$image:sha-$GITHUB_SHA"
+            if [ "$PUBLISH_LATEST" = "true" ]; then
+              echo "$image:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # Passed as APT_CACHE_DATE so the base stage's `apt-get upgrade` layer is
+      # rebuilt at most daily instead of being frozen in the buildx cache —
+      # otherwise Trivy fails on OS patches Debian shipped after the layer was
+      # first cached (see the ARG comment in the Dockerfiles). Computed once so
+      # the scan build and the push build share the same layer cache.
+      - name: Compute apt cache-bust date
+        id: apt-date
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build ${{ matrix.name }} image for scan
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ steps.tags.outputs.scan_tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.name }}
+          provenance: false
+
+      - name: Reclaim ephemeral Buildx cache before Trivy
+        run: |
+          set -euo pipefail
+          docker buildx prune -f --max-used-space 512MB || docker builder prune -f
+
+      - name: Scan ${{ matrix.name }} image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.2
+          image-ref: ${{ steps.tags.outputs.scan_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+      - name: Log in to GHCR
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push ${{ matrix.name }} image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.release_tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+          build-args: |
+            BUILD_VERSION=${{ github.sha }}
+            APT_CACHE_DATE=${{ steps.apt-date.outputs.date }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.name }}
+          provenance: false
+
+  # ── CLI artifacts (cargo-dist) ───────────────────────────────────────────────
+  # These jobs run dist from apps/cli. The workflow is dispatched from a branch,
+  # not a tag push, so each job creates the release tag locally for dist to
+  # resolve; the real tag is created on GitHub by `gh release create` at the end.
+  plan-cli-release:
+    name: Plan CLI release
+    needs:
+      - validate
+      - release-preflight
+    runs-on: ubuntu-latest
+    outputs:
+      val: ${{ steps.plan.outputs.manifest }}
+      tag: ${{ needs.validate.outputs.tag }}
+      tag-flag: --tag=${{ needs.validate.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Create local release tag
+        working-directory: apps/cli
+        run: git tag --force "${{ needs.validate.outputs.tag }}" "${{ github.sha }}"
+
+      - name: Install dist
+        shell: bash
+        working-directory: apps/cli
+        run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/axodotdev/cargo-dist/releases/download/v0.34.0/cargo-dist-installer.sh | sh
+
+      - name: Cache dist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/dist
+
+      - id: plan
+        name: Plan dist release
+        working-directory: apps/cli
+        run: |
+          dist host --steps=create --tag=${{ needs.validate.outputs.tag }} --output-format=json > plan-dist-manifest.json
+          echo "dist ran successfully"
+          cat plan-dist-manifest.json
+          echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist-manifest.json
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-plan-dist-manifest
+          path: apps/cli/plan-dist-manifest.json
+
+  build-cli-local-artifacts:
+    name: build-cli-local-artifacts (${{ join(matrix.targets, ', ') }})
+    needs: plan-cli-release
+    if: ${{ fromJson(needs.plan-cli-release.outputs.val).ci.github.artifacts_matrix.include != null }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan-cli-release.outputs.val).ci.github.artifacts_matrix }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container && matrix.container.image || null }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/${{ join(matrix.targets, '-') }}-dist-manifest.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Create local release tag
+        working-directory: apps/cli
+        run: git tag --force "${{ needs.plan-cli-release.outputs.tag }}" "${{ github.sha }}"
+
+      - name: Install Rust non-interactively if not already installed
+        if: ${{ matrix.container }}
+        run: |
+          if ! command -v cargo > /dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+
+      - name: Install dist
+        run: ${{ matrix.install_dist.run }}
+
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-*
+          path: apps/cli/target/distrib/
+          merge-multiple: true
+
+      - name: Install dependencies
+        working-directory: apps/cli
+        run: |
+          ${{ matrix.packages_install }}
+
+      # Each musl target builds natively. ubuntu-24.04-arm is required because
+      # GitHub has no ubuntu-latest arm64 label (selected in dist-workspace.toml).
+      - name: Install native musl toolchain
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          TARGETS: ${{ join(matrix.targets, ' ') }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools binutils
+          for target in $TARGETS; do
+            case "$target" in
+              *-unknown-linux-musl)
+                linker_target="${target//-/_}"
+                echo "CC_${linker_target}=musl-gcc" >> "$GITHUB_ENV"
+                echo "CARGO_TARGET_${linker_target^^}_LINKER=musl-gcc" >> "$GITHUB_ENV"
+                ;;
+              *) echo "Unexpected release target: $target" >&2; exit 1 ;;
+            esac
+          done
+
+      - name: Build artifacts
+        working-directory: apps/cli
+        run: |
+          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          echo "dist ran successfully"
+
+      - name: Verify static musl binaries
+        shell: bash
+        working-directory: apps/cli
+        env:
+          TARGETS: ${{ join(matrix.targets, ' ') }}
+        run: |
+          set -euo pipefail
+          for target in $TARGETS; do
+            binary="../../target/$target/dist/wssp"
+            test -x "$binary"
+            readelf --program-headers "$binary" > "$RUNNER_TEMP/wssp-program-headers.txt"
+            readelf --dynamic "$binary" > "$RUNNER_TEMP/wssp-dynamic.txt"
+            if grep -q INTERP "$RUNNER_TEMP/wssp-program-headers.txt" || grep -q NEEDED "$RUNNER_TEMP/wssp-dynamic.txt"; then
+              echo "Expected a static musl binary: $binary" >&2
+              exit 1
+            fi
+            "$binary" --version
+          done
+
+      - id: cargo-dist
+        name: Post-build
+        shell: bash
+        working-directory: apps/cli
+        run: |
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          dist print-upload-files-from-manifest --manifest dist-manifest.json | sed 's#^#apps/cli/#' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-build-local-${{ join(matrix.targets, '_') }}
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            apps/cli/${{ env.BUILD_MANIFEST_NAME }}
+
+  build-cli-global-artifacts:
+    name: build-cli-global-artifacts
+    needs:
+      - plan-cli-release
+      - build-cli-local-artifacts
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Create local release tag
+        working-directory: apps/cli
+        run: git tag --force "${{ needs.plan-cli-release.outputs.tag }}" "${{ github.sha }}"
+
+      - name: Install cached dist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+
+      - run: chmod +x ~/.cargo/bin/dist
+
+      - name: Fetch local artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-*
+          path: apps/cli/target/distrib/
+          merge-multiple: true
+
+      - id: cargo-dist
+        shell: bash
+        working-directory: apps/cli
+        run: |
+          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json
+          echo "dist ran successfully"
+
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          jq --raw-output ".upload_files[]" dist-manifest.json | sed 's#^#apps/cli/#' >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-build-global
+          path: |
+            ${{ steps.cargo-dist.outputs.paths }}
+            apps/cli/${{ env.BUILD_MANIFEST_NAME }}
+
+  publish-cli-release:
+    name: Publish CLI GitHub Release
+    needs:
+      - validate
+      - node-checks
+      - publish-containers
+      - plan-cli-release
+      - build-cli-local-artifacts
+      - build-cli-global-artifacts
+    if: >-
+      !cancelled()
+      && needs.validate.result == 'success'
+      && needs.node-checks.result == 'success'
+      && needs.publish-containers.result == 'success'
+      && needs.plan-cli-release.result == 'success'
+      && (needs.build-cli-global-artifacts.result == 'skipped' || needs.build-cli-global-artifacts.result == 'success')
+      && (needs.build-cli-local-artifacts.result == 'skipped' || needs.build-cli-local-artifacts.result == 'success')
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: ubuntu-latest
+    outputs:
+      val: ${{ steps.host.outputs.manifest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Create local release tag
+        working-directory: apps/cli
+        run: git tag --force "${{ needs.plan-cli-release.outputs.tag }}" "${{ github.sha }}"
+
+      - name: Install cached dist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: cargo-dist-cache
+          path: ~/.cargo/bin/
+
+      - run: chmod +x ~/.cargo/bin/dist
+
+      - name: Fetch artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-*
+          path: apps/cli/target/distrib/
+          merge-multiple: true
+
+      - id: host
+        shell: bash
+        working-directory: apps/cli
+        run: |
+          dist host ${{ needs.plan-cli-release.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
+          echo "artifacts uploaded and released successfully"
+          cat dist-manifest.json
+          echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload dist-manifest.json
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: artifacts-dist-manifest
+          path: apps/cli/dist-manifest.json
+
+      - name: Download GitHub Artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: artifacts-*
+          path: apps/cli/artifacts
+          merge-multiple: true
+
+      - name: Cleanup
+        run: rm -f apps/cli/artifacts/*-dist-manifest.json
+
+      - name: Create GitHub Release
+        env:
+          PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
+          ANNOUNCEMENT_TITLE: "${{ fromJson(steps.host.outputs.manifest).announcement_title }}"
+          ANNOUNCEMENT_BODY: "${{ fromJson(steps.host.outputs.manifest).announcement_github_body }}"
+          RELEASE_COMMIT: "${{ github.sha }}"
+        run: |
+          echo "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
+          gh release create "${{ needs.plan-cli-release.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" apps/cli/artifacts/*
+
+  release-summary:
+    name: Release summary
+    needs:
+      - validate
+      - publish-containers
+      - publish-cli-release
+    if: ${{ always() && needs.publish-containers.result == 'success' && needs.publish-cli-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write summary
+        run: |
+          {
+            echo "## Release ${{ needs.validate.outputs.tag }}"
+            echo
+            echo "- App container: \`${{ needs.validate.outputs.image }}:${{ needs.validate.outputs.tag }}\`"
+            echo "- Worker container: \`${{ needs.validate.outputs.image }}-worker:${{ needs.validate.outputs.tag }}\`"
+            echo "- CLI artifacts: GitHub Release \`${{ needs.validate.outputs.tag }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

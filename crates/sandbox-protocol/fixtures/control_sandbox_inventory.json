@@ -1,0 +1,31 @@
+{
+  "type": "sandbox.inventory",
+  "page": 0,
+  "complete": true,
+  "entries": [
+    {
+      "sandboxId": "sbx-fixture-1",
+      "state": "stopped",
+      "lease": {
+        "generation": 3,
+        "lease": {
+          "revision": 2,
+          "deadlineUnixMs": 1790000000000,
+          "action": "stop",
+          "expiryPolicy": "retry-force-60s"
+        },
+        "expired": true,
+        "expiryComplete": true,
+        "timerExpired": true
+      },
+      "root": null,
+      "sandboxOwnerId": "user-1"
+    },
+    {
+      "sandboxId": "sbx-fixture-2",
+      "state": "absent",
+      "root": null,
+      "sandboxOwnerId": "user-1"
+    }
+  ]
+}

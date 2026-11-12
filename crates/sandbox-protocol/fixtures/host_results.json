@@ -1,0 +1,399 @@
+[
+  {
+    "name": "stat",
+    "kind": "STAT_PATH",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null
+    }
+  },
+  {
+    "name": "command-birth",
+    "kind": "RUN_COMMAND",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "command",
+        "process": {
+          "sandboxId": "sandbox",
+          "generation": 1,
+          "processId": "process",
+          "attempt": 1,
+          "pid": 123
+        },
+        "startedAt": "2026-10-27T00:00:00.000Z",
+        "exitCode": 7
+      },
+      "continuation": null,
+      "birth": {
+        "type": "process.started",
+        "operationId": "operation",
+        "sandboxId": "sandbox",
+        "generation": 1,
+        "processId": "process",
+        "attempt": 1,
+        "pid": 123,
+        "bootId": "12345678-1234-4234-8234-123456789abc",
+        "startTicks": "123456",
+        "startedAt": "2026-10-27T00:00:00.000Z",
+        "observedAt": "2026-10-27T00:00:00.001Z"
+      },
+      "failure": null,
+      "outputBytes": 12
+    }
+  },
+  {
+    "name": "birth-conflict",
+    "kind": "RUN_COMMAND",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "command",
+        "process": {
+          "sandboxId": "sandbox",
+          "generation": 1,
+          "processId": "process",
+          "attempt": 1,
+          "pid": 123
+        },
+        "startedAt": "2026-10-27T00:00:00.000Z",
+        "exitCode": 7
+      },
+      "continuation": null,
+      "birth": {
+        "type": "process.started",
+        "operationId": "operation",
+        "sandboxId": "sandbox",
+        "generation": 1,
+        "processId": "process",
+        "attempt": 1,
+        "pid": 124,
+        "bootId": "12345678-1234-4234-8234-123456789abc",
+        "startTicks": "123456",
+        "startedAt": "2026-10-27T00:00:00.000Z",
+        "observedAt": "2026-10-27T00:00:00.001Z"
+      },
+      "failure": null,
+      "outputBytes": 12
+    }
+  },
+  {
+    "name": "missing-birth",
+    "kind": "RUN_COMMAND",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "command",
+        "process": {
+          "sandboxId": "sandbox",
+          "generation": 1,
+          "processId": "process",
+          "attempt": 1,
+          "pid": 123
+        },
+        "startedAt": "2026-10-27T00:00:00.000Z",
+        "exitCode": 7
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "outputBytes": 12
+    }
+  },
+  {
+    "name": "partial-failure",
+    "kind": "REMOVE_PATH",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": null,
+      "continuation": null,
+      "birth": null,
+      "failure": {
+        "resource": "filesystem",
+        "effect": "partial"
+      }
+    }
+  },
+  {
+    "name": "explicit-expiry",
+    "kind": "STAT_PATH",
+    "valid": true,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": null,
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "resultExpired": true
+    }
+  },
+  {
+    "name": "expiry-with-content",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "resultExpired": true
+    }
+  },
+  {
+    "name": "missing-nullable",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "failure": null
+    }
+  },
+  {
+    "name": "extra-key",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "unexpected": "private"
+    }
+  },
+  {
+    "name": "wrong-kind",
+    "kind": "MKDIR",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null
+    }
+  },
+  {
+    "name": "nul-owner",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": "bad\u0000name",
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null
+    }
+  },
+  {
+    "name": "future-version",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 2,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null
+    }
+  },
+  {
+    "name": "mkdir-legacy-path-False",
+    "kind": "MKDIR",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.mkdir",
+        "created": true
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "legacyPath": "relative"
+    }
+  },
+  {
+    "name": "remove_path-legacy-path-False",
+    "kind": "REMOVE_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.remove",
+        "removed": true
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "legacyPath": "relative"
+    }
+  },
+  {
+    "name": "stat-refuses-legacy-path",
+    "kind": "STAT_PATH",
+    "valid": false,
+    "value": {
+      "version": 1,
+      "observedAt": "2026-10-27T00:00:00.001Z",
+      "payload": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      },
+      "continuation": null,
+      "birth": null,
+      "failure": null,
+      "legacyPath": "/x"
+    }
+  }
+]

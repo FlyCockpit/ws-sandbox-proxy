@@ -1,0 +1,19 @@
+{
+  "description": "exclude must lie below an included path",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": ["a"],
+        "exclude": ["b/c"]
+      }
+    }
+  }
+}

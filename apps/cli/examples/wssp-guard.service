@@ -1,0 +1,53 @@
+# System service. Installed by `sudo wssp guard install --daemon-user <user>`;
+# re-running that command upgrades it. Do not edit the installed copy.
+#
+# The egress guard owns one nftables table (`inet wssp_guard`) that only
+# drops: protected ranges, every node address, routed internal prefixes,
+# the root list /etc/wssp/egress-blocklist and the deployment list. Sandbox
+# forwarding exists only while this service keeps renewing it (30 s
+# dead-man). It reads only root-owned files and its own socket.
+[Unit]
+Description=wssp egress guard (root-owned nftables drops for sandbox bridges)
+Before=incus.service
+After=local-fs.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/wssp/wssp-guard guard run
+Restart=always
+RestartSec=1
+User=root
+UMask=0022
+Environment=WSSP_LOG=info
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadOnlyPaths=/etc/wssp
+RuntimeDirectory=wssp-guard
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=wssp-guard
+StateDirectoryMode=0700
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+{
+  "description": "integers must be in the safe range",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    },
+    "x-big": 9007199254740992
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "cpuCountMin": 1,
+  "cpuCountMax": 32,
+  "cpuCountDefault": 1,
+  "memoryMiBMin": 512,
+  "memoryMiBMax": 65536,
+  "memoryMiBDefault": 1024,
+  "memoryMiBStep": 256,
+  "hostMemoryBudgetMiBMax": 16777216,
+  "diskGiBMin": 1,
+  "diskGiBMax": 2048,
+  "diskGiBDefault": 32,
+  "hostVcpuBudgetMin": 1,
+  "hostVcpuBudgetMax": 8192,
+  "hostVcpuBudgetDefaultThreadsMultiplier": 2,
+  "vmHostOverheadMiB": 320,
+  "hostMemoryReserve": {
+    "minimumMiB": 4096,
+    "percent": 25
+  },
+  "rootDiskOverheadGiB": 1,
+  "defaultStorageCapacityPercent": 80,
+  "defaultStorageHeadroomPercent": 5,
+  "hostManagedSandboxCeiling": 250,
+  "storagePoolMax": 16,
+  "storageCapacityGiBMax": 1048576
+}

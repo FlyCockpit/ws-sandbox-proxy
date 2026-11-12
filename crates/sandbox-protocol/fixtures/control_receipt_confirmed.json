@@ -1,0 +1,11 @@
+{
+  "type": "receipt.confirmed",
+  "sandboxOwnerId": "user-1",
+  "operationId": "op-fixture-1",
+  "sandboxId": "sbx-fixture-1",
+  "generation": 3,
+  "attempt": 2,
+  "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "idempotencyKey": "key-fixture-1",
+  "kind": "command.run"
+}

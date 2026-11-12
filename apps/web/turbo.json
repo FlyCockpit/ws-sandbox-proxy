@@ -1,0 +1,27 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // docs-links.test.ts checks every linked doc page exists and reads the
+    // docker stack's docs base.
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/docs/**/*.md",
+        "$TURBO_ROOT$/.env.docker.defaults"
+      ]
+    },
+    // `vite dev` runs the TanStack Start server functions (getRouteSession and
+    // friends) in THIS process, and they import @wssp/auth, which validates the
+    // full server env (@wssp/env/server) — so the web dev process is a server-env
+    // consumer and needs SANDBOX_REQUEST_HMAC_SECRET exactly like server#dev.
+    // Strict env mode would otherwise drop the per-stack value dev-docker sets
+    // on the container, and loadRootDotenv in vite.config.ts would fall back to
+    // (or fail without) a root .env value. In production the same SSR runs inside
+    // the server process, which already has it. Dev task only; the worker never
+    // sees it (scripts/dev-docker.test.mjs).
+    "dev": {
+      "passThroughEnv": ["$TURBO_EXTENDS$", "SANDBOX_REQUEST_HMAC_SECRET"]
+    }
+  }
+}

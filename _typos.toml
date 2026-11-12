@@ -1,0 +1,52 @@
+# typos discovers this root config automatically; the CLI's nested config
+# remains authoritative for apps/cli. Keep English source and docs checked.
+[files]
+extend-exclude = [
+  "packages/locales/src/*", "!packages/locales/src/en-US",
+  "packages/mailer/src/locales/*", "!packages/mailer/src/locales/en-US",
+  "**/fixtures/**", "**/testdata/**",
+  "**/*.gen.*", "**/generated/**", "**/.env.example", "pnpm-lock.yaml", "Cargo.lock",
+  "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
+  "**/*.png", "**/*.ico", "**/*.svg", "**/*.woff*", "**/*.webp",
+]
+
+[default]
+extend-ignore-re = [
+  # Intentional SQL fragments / lexer adversarial inputs, never commands.
+  '\bTRUN\b', '\bCHEC\b', 'complet\[\^',
+  # Intentional shell flags and escaped command-name fragments in hook tests.
+  'git clean -nd', 'ba\\sh',
+  # Spanish assertions and relative-time output examples in English source.
+  'hace(?: un momento)?', 'caracteres',
+  # Deliberately mixed-case HTTP header to test case-insensitive stripping.
+  'AuThOrIzAtIoN',
+  # Webhook endpoint ids are `whe_<random>` (fixtures use `whe-1` / SQL 'whe').
+  "\\bwhe[_'-]",
+  # Node's llhttp parser error codes (`HPE_HEADER_OVERFLOW`, ...).
+  '\bHPE_[A-Z_]+',
+  # Postgres truncates generated constraint names at 63 bytes.
+  '_storag_fkey',
+  # Hyphenated English the dictionary splits apart.
+  'look-alikes', 'mis-sized', 'context-ful', '\bOTPs\b',
+]
+
+[default.extend-words]
+# Project / terminal UI names.
+wssp = "wssp"
+ratatui = "ratatui"
+# Existing spelling in reserved Incus ACL/DNS sources; also used by Rust tests.
+unparseable = "unparseable"
+# Exact pre-fence/recovery names in reserved DNS implementation and tests;
+# Markdown cites those identifiers and must continue to match them.
+prefence = "prefence"
+recoverys = "recoverys"
+# nftables meta keys for input/output interface, used by the guard ruleset model.
+iif = "iif"
+oif = "oif"
+
+[default.extend-identifiers]
+# Inflected SQL keyword and logical conjunction (typos splits their casing).
+CHECKs = "CHECKs"
+ANDed = "ANDed"
+CHECKed = "CHECKed"
+JOINed = "JOINed"

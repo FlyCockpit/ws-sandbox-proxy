@@ -1,0 +1,18 @@
+{
+  "description": "excludes alone declare nothing",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "exclude": ["a/b"]
+      }
+    }
+  }
+}

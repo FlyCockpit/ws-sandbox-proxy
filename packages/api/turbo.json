@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // Drift tests read files outside the package: the shared protocol
+    // fixtures, the runtime trait, the device-flow and webhook docs, and the
+    // canonical backup transport and heartbeat helpers.
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "$TURBO_ROOT$/crates/sandbox-protocol/fixtures/**",
+        "$TURBO_ROOT$/crates/sandbox-runtime/src/trait.rs",
+        "$TURBO_ROOT$/docs/design/device-flow-contract.md",
+        "$TURBO_ROOT$/docs/guide/webhooks.md",
+        "$TURBO_ROOT$/scripts/backup/s3.mjs",
+        "$TURBO_ROOT$/scripts/backup-heartbeat.mjs"
+      ]
+    }
+  }
+}

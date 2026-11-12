@@ -1,0 +1,52 @@
+{
+  "description": "Constructed header values format(value) (R2-7). value is UTF-8 text, valueHex raw bytes, valueRepeat {byte, count} a run of one byte. ok=false must be refused with no value bytes in the error.",
+  "cases": [
+    { "name": "bearer", "format": "Bearer {value}", "value": "sk-test-0123", "ok": true },
+    { "name": "bare", "format": "{value}", "value": "abc", "ok": true },
+    { "name": "inner-space", "format": "{value}", "value": "a b", "ok": true },
+    { "name": "inner-tab", "format": "{value}", "value": "a\tb", "ok": true },
+    { "name": "obs-text-utf8", "format": "{value}", "value": "é", "ok": true },
+    { "name": "obs-text-raw", "format": "{value}", "valueHex": "ff80", "ok": true },
+    { "name": "visible-range", "format": "{value}", "value": "!~", "ok": true },
+    { "name": "cr", "format": "Bearer {value}", "value": "a\rb", "ok": false },
+    { "name": "lf", "format": "Bearer {value}", "value": "a\nb", "ok": false },
+    { "name": "nul", "format": "Bearer {value}", "value": "a\u0000b", "ok": false },
+    {
+      "name": "crlf-injection",
+      "format": "Bearer {value}",
+      "value": "x\r\nX-Evil: 1",
+      "ok": false
+    },
+    { "name": "del", "format": "{value}", "value": "a\u007f", "ok": false },
+    { "name": "other-control", "format": "{value}", "value": "a\u001bb", "ok": false },
+    { "name": "leading-space", "format": "{value}", "value": " a", "ok": false },
+    { "name": "trailing-space", "format": "{value}", "value": "a ", "ok": false },
+    { "name": "leading-tab", "format": "{value}", "value": "\ta", "ok": false },
+    { "name": "empty-value-after-prefix", "format": "Bearer {value}", "value": "", "ok": false },
+    { "name": "empty", "format": "{value}", "value": "", "ok": false },
+    {
+      "name": "max-8k",
+      "format": "Bearer {value}",
+      "valueRepeat": { "byte": 97, "count": 8185 },
+      "ok": true
+    },
+    {
+      "name": "max-8k-plus-one",
+      "format": "Bearer {value}",
+      "valueRepeat": { "byte": 97, "count": 8186 },
+      "ok": false
+    },
+    {
+      "name": "bare-8k",
+      "format": "{value}",
+      "valueRepeat": { "byte": 122, "count": 8192 },
+      "ok": true
+    },
+    {
+      "name": "bare-8k-plus-one",
+      "format": "{value}",
+      "valueRepeat": { "byte": 122, "count": 8193 },
+      "ok": false
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+{
+  "create": {
+    "action": "Agregar endpoint",
+    "title": "Agregar un endpoint de webhook",
+    "description": "Los eventos que se confirmen después de que exista el endpoint se entregarán a él.",
+    "submit": "Agregar endpoint",
+    "submitting": "Agregando…",
+    "secretLabel": "Secreto de firma",
+    "secretHint": "Verifica cada entrega con este secreto (Standard Webhooks). Se muestra solo ahora; guárdalo con tu receptor."
+  },
+  "delete": {
+    "action": "Eliminar",
+    "title": "¿Eliminar el endpoint para {{host}}?",
+    "description": "El endpoint y su registro de entregas se eliminan. Las entregas pendientes se descartan.",
+    "typePrompt": "Escribe el host del endpoint para confirmar",
+    "copyHost": "Copiar host",
+    "done": "Endpoint eliminado."
+  },
+  "deliveries": {
+    "title": "Registro de entregas",
+    "description": "Las entregas se reintentan durante 24 horas. Cada intento se firma de nuevo con una marca de tiempo nueva; el webhook-id permanece igual.",
+    "empty": "Sin entregas aún.",
+    "filter": "Estado",
+    "all": "Todos los estados",
+    "attempts": "{{count}} de {{max}} intentos",
+    "nextAttempt": "Próximo intento {{when}}",
+    "open": "Detalles",
+    "kind": {
+      "event": "Evento",
+      "test": "Prueba",
+      "redeliver": "Reenvío"
+    },
+    "state": {
+      "PENDING": "Pendiente",
+      "IN_FLIGHT": "En tránsito",
+      "SUCCEEDED": "Exitosa",
+      "FAILED": "Fallida",
+      "CANCELLED": "Cancelada"
+    }
+  },
+  "delivery": {
+    "title": "Entrega {{id}}",
+    "eventId": "ID del evento (webhook-id)",
+    "attempts": "Intentos",
+    "noAttempts": "Sin intentos aún.",
+    "attempt": "Intento {{n}}",
+    "status": "HTTP {{status}}",
+    "duration": "{{ms}} ms",
+    "address": "Conectado a {{address}}",
+    "response": "Extracto de respuesta",
+    "redeliver": "Reenviar",
+    "redelivered": "Reenvío en cola con el mismo webhook-id."
+  },
+  "description": "Llamadas HTTPS firmadas cuando tus sandboxes y operaciones cambian de estado.",
+  "detail": {
+    "back": "Todos los endpoints de webhook",
+    "notFound": "Este endpoint de webhook no existe o fue eliminado.",
+    "secretVersion": "Versión del secreto {{version}}",
+    "previousSecretUntil": "Secreto anterior válido hasta {{date}}",
+    "lastSuccess": "Último éxito {{when}}",
+    "lastFailure": "Última falla {{when}} ({{errorClass}})",
+    "never": "nunca"
+  },
+  "edit": {
+    "action": "Editar",
+    "title": "Editar endpoint",
+    "description": "Los cambios se aplican a los intentos de entrega a partir de ahora.",
+    "saved": "Endpoint guardado."
+  },
+  "empty": {
+    "title": "Sin endpoints de webhook aún",
+    "description": "Agrega un endpoint para recibir eventos de sandbox y operaciones. Cada entrega está firmada; veríficala con el secreto de tu endpoint."
+  },
+  "errorClass": {
+    "dns_failed": "Falló la búsqueda DNS",
+    "destination_blocked": "Destino no permitido",
+    "connect_failed": "Falló la conexión",
+    "connect_timeout": "Conexión agotada",
+    "tls_error": "Error de TLS",
+    "timeout": "Tiempo agotado",
+    "http_status": "Respuesta no 2xx",
+    "redirect_not_followed": "Redirección no seguida",
+    "response_too_large": "Respuesta demasiado grande",
+    "protocol_error": "Error de protocolo",
+    "worker_lost": "Worker perdido; reintentado",
+    "not_configured": "Servidor no configurado",
+    "backlog_overflow": "Backlog lleno",
+    "expired": "Ventana de reintento expirada",
+    "endpoint_disabled": "Endpoint deshabilitado"
+  },
+  "event": {
+    "sandbox.ready": "Sandbox listo",
+    "sandbox.stopped": "Sandbox detenido",
+    "sandbox.create_failed": "Falló la creación del sandbox",
+    "sandbox.destroyed": "Sandbox destruido",
+    "sandbox.offloaded": "Sandbox descargado al almacén",
+    "operation.completed": "Operación completada",
+    "credential.capture_failed": "Falló la captura del inicio de sesión (el sandbox siguió en ejecución)",
+    "credential.capture_lost": "Se perdió la captura del inicio de sesión",
+    "credential.recovery_required": "Se requiere recuperar el inicio de sesión",
+    "credential.needs_login": "El inicio de sesión requiere iniciar sesión de nuevo",
+    "webhook.test": "Evento de prueba"
+  },
+  "form": {
+    "url": "URL del endpoint",
+    "urlHint": "Solo HTTPS. Las direcciones privadas e internas se rechazan a menos que el operador las haya incluido en la lista blanca para tu cuenta.",
+    "description": "Descripción (opcional)",
+    "events": "Eventos",
+    "kinds": "Tipos de operación para \"Operación completada\"",
+    "kindsDefault": "Ciclo de vida y comandos (crear, detener, matar, reconectar, renovación de concesión, ejecutar comando)",
+    "kindsAll": "Todos los tipos de operación (incluye lecturas de archivos y procesos de alto volumen)",
+    "kindsCustom": "Selección personalizada (establecida a través de la API)",
+    "enabled": "Habilitado",
+    "urlRequired": "Ingresa la URL del endpoint.",
+    "urlTooLong": "Usa como máximo 2048 caracteres.",
+    "eventsRequired": "Elige al menos un evento.",
+    "descriptionTooLong": "Usa como máximo 200 caracteres."
+  },
+  "list": {
+    "label": "Endpoints de webhook",
+    "open": "Abrir {{host}}",
+    "events": "Eventos",
+    "failing": "{{count}} fallas consecutivas",
+    "healthy": "Saludable"
+  },
+  "notConfigured": {
+    "title": "Los webhooks no están configurados",
+    "description": "Este servidor no tiene DATA_ENCRYPTION_KEY, así que no se pueden crear endpoints de webhook. Pide al operador que los habilite."
+  },
+  "problem": {
+    "destinationInvalid": "Esa URL no es válida: usa https://, sin credenciales ni fragmento, y puerto 443 o 1024-65535.",
+    "destinationBlocked": "Ese destino no está permitido: se rechazan direcciones privadas, locales y de metadatos.",
+    "limit": "Ya tienes el máximo de 10 endpoints de webhook.",
+    "disabled": "Este endpoint está deshabilitado. Habilítalo primero.",
+    "expired": "Este evento es demasiado antiguo para reenviarlo.",
+    "notConfigured": "Los webhooks no están configurados en este servidor.",
+    "notFound": "Ya no existe. La lista ha sido actualizada.",
+    "rateLimited": "Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
+    "generic": "Eso no funcionó. Verifica tu conexión e inténtalo de nuevo."
+  },
+  "rotate": {
+    "action": "Rotar secreto",
+    "title": "¿Rotar el secreto de firma?",
+    "description": "Se genera un nuevo secreto y se muestra una sola vez. Durante la superposición, las entregas llevan firmas de ambos secretos para que tu receptor pueda cambiar sin perder eventos.",
+    "overlap": "Mantener el secreto anterior válido por",
+    "overlapNone": "Sin superposición",
+    "overlapHour": "1 hora",
+    "overlapDay": "24 horas",
+    "overlapWeek": "7 días",
+    "confirm": "Rotar",
+    "secretLabel": "Nuevo secreto de firma"
+  },
+  "status": {
+    "enabled": "Habilitado",
+    "disabled": "Deshabilitado",
+    "disabledByOwner": "Deshabilitado por ti. Las entregas no se envían mientras esté deshabilitado.",
+    "disabledForFailures": "Deshabilitado después de fallas sostenidas en la entrega (72 horas y 20 fallas consecutivas). Corrige el receptor y luego vuelve a habilitarlo."
+  },
+  "test": {
+    "action": "Enviar evento de prueba",
+    "queued": "Evento de prueba en cola. Aparece en el registro de entregas abajo."
+  },
+  "title": "Webhooks",
+  "toggle": {
+    "enable": "Habilitar",
+    "disable": "Deshabilitar",
+    "enabled": "Endpoint habilitado.",
+    "disabled": "Endpoint deshabilitado."
+  }
+}

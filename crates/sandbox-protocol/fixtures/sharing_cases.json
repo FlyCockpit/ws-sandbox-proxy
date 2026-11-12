@@ -1,0 +1,1008 @@
+[
+  {
+    "kind": "transport",
+    "name": "one transport",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1"
+    },
+    "valid": true
+  },
+  {
+    "kind": "transport",
+    "name": "transport ambiguous owner",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "ownerId": "host-owner"
+    },
+    "valid": false
+  },
+  {
+    "kind": "transport",
+    "name": "transport empty owner",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "",
+      "hostId": "host-1"
+    },
+    "valid": false
+  },
+  {
+    "kind": "transport",
+    "name": "transport unbounded server",
+    "input": {
+      "server": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1"
+    },
+    "valid": false
+  },
+  {
+    "kind": "workload",
+    "name": "foreign creator A",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "sandboxOwnerId": "creator-a",
+      "sandboxId": "sandbox-a",
+      "generation": 1
+    },
+    "valid": true
+  },
+  {
+    "kind": "workload",
+    "name": "foreign creator B",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "sandboxOwnerId": "creator-b",
+      "sandboxId": "sandbox-b",
+      "generation": 1
+    },
+    "valid": true
+  },
+  {
+    "kind": "workload",
+    "name": "missing hostOwnerId",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostId": "host-1",
+      "sandboxOwnerId": "creator-a",
+      "sandboxId": "sandbox-a",
+      "generation": 1
+    },
+    "valid": false
+  },
+  {
+    "kind": "workload",
+    "name": "missing sandboxOwnerId",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "sandboxId": "sandbox-a",
+      "generation": 1
+    },
+    "valid": false
+  },
+  {
+    "kind": "workload",
+    "name": "workload zero generation",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "sandboxOwnerId": "creator-a",
+      "sandboxId": "sandbox-a",
+      "generation": 0
+    },
+    "valid": false
+  },
+  {
+    "kind": "workload",
+    "name": "workload spoof extra owner",
+    "input": {
+      "server": "wss://example.test/ws/sandbox-host",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1",
+      "sandboxOwnerId": "creator-a",
+      "sandboxId": "sandbox-a",
+      "generation": 1,
+      "ownerId": "creator-a"
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "host fence",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "host"
+      }
+    },
+    "valid": true
+  },
+  {
+    "kind": "fence",
+    "name": "host fence flat fields",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "host"
+      },
+      "sandboxId": "sandbox-a",
+      "generation": 1
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "host fence null target",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": null
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "host fence zero epoch",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 0,
+      "target": {
+        "kind": "host"
+      }
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "host fence mixed target",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "host",
+        "sandboxId": "sandbox-a",
+        "generation": 1
+      }
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.open",
+    "input": {
+      "type": "terminal.open",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80,
+      "hostPolicy": {
+        "policyRevision": 4,
+        "proofRequired": true
+      }
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "host wrong policy tuple",
+    "input": {
+      "type": "terminal.open",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.ready",
+    "input": {
+      "type": "terminal.ready",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.resize",
+    "input": {
+      "type": "terminal.resize",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.ack",
+    "input": {
+      "type": "terminal.ack",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "sequence": 0
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.data",
+    "input": {
+      "type": "terminal.data",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "sequence": 0
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "host terminal.close",
+    "input": {
+      "type": "terminal.close",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "requestId": "request-1",
+      "intent": "revoked"
+    },
+    "valid": true
+  },
+  {
+    "kind": "fence",
+    "name": "sandbox fence",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "sandbox",
+        "sandboxId": "sandbox-a",
+        "generation": 1
+      }
+    },
+    "valid": true
+  },
+  {
+    "kind": "fence",
+    "name": "sandbox fence flat fields",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "sandbox",
+        "sandboxId": "sandbox-a",
+        "generation": 1
+      },
+      "sandboxId": "sandbox-a",
+      "generation": 1
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "sandbox fence null target",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": null
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "sandbox fence zero epoch",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 0,
+      "target": {
+        "kind": "sandbox",
+        "sandboxId": "sandbox-a",
+        "generation": 1
+      }
+    },
+    "valid": false
+  },
+  {
+    "kind": "fence",
+    "name": "sandbox fence mixed target",
+    "input": {
+      "sessionId": "session-1",
+      "operationId": "operation-1",
+      "hostId": "host-1",
+      "epoch": 3,
+      "target": {
+        "kind": "host",
+        "sandboxId": "sandbox-a",
+        "generation": 1
+      }
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.open",
+    "input": {
+      "type": "terminal.open",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox wrong policy tuple",
+    "input": {
+      "type": "terminal.open",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80,
+      "hostPolicy": {
+        "policyRevision": 4,
+        "proofRequired": false
+      }
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.ready",
+    "input": {
+      "type": "terminal.ready",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.resize",
+    "input": {
+      "type": "terminal.resize",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.ack",
+    "input": {
+      "type": "terminal.ack",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "sequence": 0
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.data",
+    "input": {
+      "type": "terminal.data",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "sequence": 0
+    },
+    "valid": true
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.close",
+    "input": {
+      "type": "terminal.close",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "intent": "revoked"
+    },
+    "valid": true
+  },
+  {
+    "kind": "policy",
+    "name": "off/required report",
+    "input": {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "hostTerminal": false,
+      "requireHostTerminalTotp": true,
+      "policyRevision": 4
+    },
+    "valid": true
+  },
+  {
+    "kind": "policy",
+    "name": "on/optional report",
+    "input": {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "hostTerminal": true,
+      "requireHostTerminalTotp": false,
+      "policyRevision": 4
+    },
+    "valid": true
+  },
+  {
+    "kind": "policy",
+    "name": "report zero sequence",
+    "input": {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 3,
+      "sequence": 0,
+      "hostTerminal": false,
+      "requireHostTerminalTotp": true,
+      "policyRevision": 4
+    },
+    "valid": false
+  },
+  {
+    "kind": "policy",
+    "name": "report unsafe revision",
+    "input": {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "hostTerminal": false,
+      "requireHostTerminalTotp": true,
+      "policyRevision": 9007199254740992
+    },
+    "valid": false
+  },
+  {
+    "kind": "policy",
+    "name": "report extra authority",
+    "input": {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "hostTerminal": false,
+      "requireHostTerminalTotp": true,
+      "policyRevision": 4,
+      "ownerId": "creator-a"
+    },
+    "valid": false
+  },
+  {
+    "kind": "policy",
+    "name": "online raise",
+    "input": {
+      "type": "host.terminal-policy.raise",
+      "connectionEpoch": 3,
+      "requestId": "raise-1"
+    },
+    "valid": true
+  },
+  {
+    "kind": "policy",
+    "name": "raise lowering",
+    "input": {
+      "type": "host.terminal-policy.raise",
+      "connectionEpoch": 3,
+      "requestId": "raise-1",
+      "requireHostTerminalTotp": false
+    },
+    "valid": false
+  },
+  {
+    "kind": "policy",
+    "name": "raise offline epoch",
+    "input": {
+      "type": "host.terminal-policy.raise",
+      "connectionEpoch": 0,
+      "requestId": "raise-1"
+    },
+    "valid": false
+  },
+  {
+    "kind": "policy",
+    "name": "raise empty request",
+    "input": {
+      "type": "host.terminal-policy.raise",
+      "connectionEpoch": 3,
+      "requestId": ""
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit",
+    "valid": true,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked"
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit",
+    "valid": true,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked"
+    }
+  },
+  {
+    "kind": "transport",
+    "name": "transport server bound counts UTF-8 bytes",
+    "input": {
+      "server": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+      "hostOwnerId": "host-owner",
+      "hostId": "host-1"
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox terminal.open refuses null host policy",
+    "input": {
+      "type": "terminal.open",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "requestId": "request-1",
+      "rows": 24,
+      "cols": 80,
+      "hostPolicy": null
+    },
+    "valid": false
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit refuses null requestId",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "requestId": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit refuses null exitCode",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "exitCode": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit refuses null intent",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit refuses null error",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit refuses capacity reason on unrelated error",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": {
+        "code": "protocol_error",
+        "reason": "ram",
+        "message": "refused"
+      }
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit refuses null requestId",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "requestId": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit refuses null exitCode",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "exitCode": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit refuses null intent",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit refuses null error",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": null
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit refuses capacity reason on unrelated error",
+    "valid": false,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": {
+        "code": "protocol_error",
+        "reason": "ram",
+        "message": "refused"
+      }
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "host fence exit bounded capacity error",
+    "valid": true,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": {
+        "code": "host_capacity",
+        "reason": "ram",
+        "message": "refused"
+      }
+    }
+  },
+  {
+    "kind": "terminal",
+    "name": "sandbox fence exit bounded capacity error",
+    "valid": true,
+    "input": {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "session-1",
+        "operationId": "operation-1",
+        "hostId": "host-1",
+        "epoch": 3,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sandbox-a",
+          "generation": 1
+        }
+      },
+      "reaped": false,
+      "intent": "revoked",
+      "error": {
+        "code": "host_capacity",
+        "reason": "ram",
+        "message": "refused"
+      }
+    }
+  }
+]

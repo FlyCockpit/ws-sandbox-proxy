@@ -1,0 +1,875 @@
+[
+  {
+    "name": "stat",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "wrong-kind",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "MOVE_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "unknown-field",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null,
+          "nonce": "private"
+        }
+      }
+    }
+  },
+  {
+    "name": "unsafe-size",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 9007199254740992,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "mode-mismatch",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rwxrwxrwx",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "basename-mismatch",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "elsewhere",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "invalid-time",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": "2026-02-30T00:00:00Z",
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "multibyte-name-limit",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+          "path": "/\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9\u00e9",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "failed-null",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "failed",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": null
+    }
+  },
+  {
+    "name": "unknown-content",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "unknown",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "directory-page",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_DIR",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.list",
+        "path": "/",
+        "depth": 1,
+        "items": [
+          {
+            "name": "x",
+            "path": "/x",
+            "type": "file",
+            "size": 1,
+            "mode": 420,
+            "permissions": "rw-r--r--",
+            "uid": 1000,
+            "gid": 1000,
+            "owner": null,
+            "group": null,
+            "modifiedTime": null,
+            "symlinkTarget": null
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "directory-outside-root",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_DIR",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.list",
+        "path": "/elsewhere",
+        "depth": 1,
+        "items": [
+          {
+            "name": "x",
+            "path": "/x",
+            "type": "file",
+            "size": 1,
+            "mode": 420,
+            "permissions": "rw-r--r--",
+            "uid": 1000,
+            "gid": 1000,
+            "owner": null,
+            "group": null,
+            "modifiedTime": null,
+            "symlinkTarget": null
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "process-page",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_PROCESSES",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "process.list",
+        "items": [
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "true",
+            "args": [],
+            "argsTruncated": false,
+            "cwd": "/",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "long-process-argument",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_PROCESSES",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "process.list",
+        "items": [
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "true",
+            "args": [
+              "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            ],
+            "argsTruncated": false,
+            "cwd": "/",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "process-argument-nul",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_PROCESSES",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "process.list",
+        "items": [
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "bad\u0000cmd",
+            "args": [],
+            "argsTruncated": false,
+            "cwd": "/",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "description-byte-cap",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_PROCESSES",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "process.list",
+        "items": [
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "true",
+            "args": [],
+            "argsTruncated": false,
+            "cwd": "/\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001\u0001",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "duplicate-process-key",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_PROCESSES",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "process.list",
+        "items": [
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "true",
+            "args": [],
+            "argsTruncated": false,
+            "cwd": "/",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          },
+          {
+            "process": {
+              "sandboxId": "s",
+              "generation": 1,
+              "processId": "p",
+              "attempt": 1,
+              "pid": 42
+            },
+            "operationId": "command",
+            "kind": "command",
+            "cmd": "true",
+            "args": [],
+            "argsTruncated": false,
+            "cwd": "/",
+            "startedAt": "2026-10-27T00:00:00Z",
+            "observedAt": "2026-10-27T00:00:00Z"
+          }
+        ],
+        "nextCursor": null,
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "root-stat",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "/",
+          "path": "/",
+          "type": "dir",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "non-root-trailing-slash",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "/",
+          "path": "/x/",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "list-operation-cursor-bound",
+    "valid": true,
+    "value": {
+      "operationId": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_DIR",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.list",
+        "path": "/",
+        "depth": 1,
+        "items": [
+          {
+            "name": "x",
+            "path": "/x",
+            "type": "file",
+            "size": 1,
+            "mode": 420,
+            "permissions": "rw-r--r--",
+            "uid": 1000,
+            "gid": 1000,
+            "owner": null,
+            "group": null,
+            "modifiedTime": null,
+            "symlinkTarget": null
+          }
+        ],
+        "nextCursor": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "list-operation-cursor-too-long",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "LIST_DIR",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.list",
+        "path": "/",
+        "depth": 1,
+        "items": [
+          {
+            "name": "x",
+            "path": "/x",
+            "type": "file",
+            "size": 1,
+            "mode": 420,
+            "permissions": "rw-r--r--",
+            "uid": 1000,
+            "gid": 1000,
+            "owner": null,
+            "group": null,
+            "modifiedTime": null,
+            "symlinkTarget": null
+          }
+        ],
+        "nextCursor": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+        "consistency": "live"
+      }
+    }
+  },
+  {
+    "name": "stat-owner-group-named",
+    "valid": true,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": "guest",
+          "group": "guest",
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "stat-owner-nul",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": "gu\u0000est",
+          "group": "guest",
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "stat-group-nul",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "x",
+          "path": "/x",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": "guest",
+          "group": "\u0000",
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "stat-dotdot-probe",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "shadow",
+          "path": "/a/../etc/shadow",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "stat-dot-segment",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "b",
+          "path": "/a/./b",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  },
+  {
+    "name": "stat-empty-segment",
+    "valid": false,
+    "value": {
+      "operationId": "o",
+      "sandboxId": "s",
+      "generation": 1,
+      "kind": "STAT_PATH",
+      "outcome": "succeeded",
+      "observedAt": "2026-10-27T00:00:00Z",
+      "expiresAt": "2026-10-27T01:00:00Z",
+      "result": {
+        "type": "file.stat",
+        "entry": {
+          "name": "b",
+          "path": "/a//b",
+          "type": "file",
+          "size": 1,
+          "mode": 420,
+          "permissions": "rw-r--r--",
+          "uid": 1000,
+          "gid": 1000,
+          "owner": null,
+          "group": null,
+          "modifiedTime": null,
+          "symlinkTarget": null
+        }
+      }
+    }
+  }
+]

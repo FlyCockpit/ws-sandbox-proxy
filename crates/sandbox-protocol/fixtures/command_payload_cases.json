@@ -1,0 +1,47 @@
+[
+  {
+    "name": "default env",
+    "scriptUnit": "x",
+    "repeat": 1,
+    "expectedBytes": 46,
+    "valid": true,
+    "envCount": 0,
+    "envValueBytes": 0
+  },
+  {
+    "name": "at limit",
+    "scriptUnit": "x",
+    "repeat": 32723,
+    "expectedBytes": 32768,
+    "valid": true,
+    "envCount": 0,
+    "envValueBytes": 0
+  },
+  {
+    "name": "over limit",
+    "scriptUnit": "x",
+    "repeat": 32724,
+    "expectedBytes": 32769,
+    "valid": false,
+    "envCount": 0,
+    "envValueBytes": 0
+  },
+  {
+    "name": "unicode quotes newlines",
+    "scriptUnit": "世界\"\n  ",
+    "repeat": 100,
+    "expectedBytes": 1245,
+    "valid": true,
+    "envCount": 0,
+    "envValueBytes": 0
+  },
+  {
+    "name": "oversized env",
+    "scriptUnit": "x",
+    "repeat": 1,
+    "expectedBytes": 32909,
+    "valid": false,
+    "envCount": 8,
+    "envValueBytes": 4096
+  }
+]

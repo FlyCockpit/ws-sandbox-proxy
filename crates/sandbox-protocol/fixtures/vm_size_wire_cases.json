@@ -1,0 +1,173 @@
+[
+  {
+    "name": "old or unknown launch 10.0",
+    "kind": "launch",
+    "version": "10.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "old or unknown launch 10.5",
+    "kind": "launch",
+    "version": "10.5",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "old or unknown launch 10.6",
+    "kind": "launch",
+    "version": "10.6",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "old or unknown launch 10.7",
+    "kind": "launch",
+    "version": "10.7",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "old or unknown launch 11.1",
+    "kind": "launch",
+    "version": "11.1",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "strict size {'cpuCount': 1, 'memoryMiB': 1024, 'diskGiB': 32}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": true
+  },
+  {
+    "name": "strict size {'cpuCount': 1, 'memoryMiB': 1024}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "strict size {'cpuCount': 0, 'memoryMiB': 1024, 'diskGiB': 32}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 0,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "strict size {'cpuCount': 1, 'memoryMiB': 513, 'diskGiB': 32}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 513,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "strict size {'cpuCount': 1, 'memoryMiB': 1024, 'diskGiB': None}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "strict size {'cpuCount': 1, 'memoryMiB': 1024, 'diskGiB': 2049}",
+    "kind": "launch",
+    "version": "1.0",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 2049
+    },
+    "valid": false
+  },
+  {
+    "name": "strict capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 4, 'vcpuBudget': 8}",
+    "kind": "admission",
+    "version": "1.0",
+    "input": {
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "strict capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 4}",
+    "kind": "admission",
+    "version": "1.0",
+    "input": {
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "strict capacity {'memoryBudgetMiB': 513, 'maxCpuCount': 4, 'vcpuBudget': 8}",
+    "kind": "admission",
+    "version": "1.0",
+    "input": {
+      "vmCapacity": {
+        "memoryBudgetMiB": 513,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      }
+    },
+    "valid": false
+  },
+  {
+    "name": "strict capacity {'memoryBudgetMiB': 4096, 'maxCpuCount': 4, 'vcpuBudget': 0}",
+    "kind": "admission",
+    "version": "1.0",
+    "input": {
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 0
+      }
+    },
+    "valid": false
+  }
+]

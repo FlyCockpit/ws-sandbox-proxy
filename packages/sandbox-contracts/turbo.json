@@ -1,0 +1,18 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // The committed OpenAPI document and package manifest sit beside `src/`,
+    // the wire tests read the shared protocol fixtures, and env.test.ts reads
+    // the CLI CI trigger list.
+    "test": {
+      "inputs": [
+        "$TURBO_EXTENDS$",
+        "openapi.json",
+        "package.json",
+        "$TURBO_ROOT$/crates/sandbox-protocol/fixtures/**",
+        "$TURBO_ROOT$/.github/workflows/cli-ci.yml"
+      ]
+    }
+  }
+}

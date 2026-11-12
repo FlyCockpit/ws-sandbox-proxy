@@ -1,0 +1,78 @@
+{
+  "_comment": "The hello requires per-entry census support. Every inventory acknowledgement judges its page in order. Stale storage evidence is re-offered under a newer observation.",
+  "validOffers": [true],
+  "rejectedOffers": [false, "true", 1, null],
+  "helloOkCapabilities": {
+    "protocolVersion": "1.0",
+    "binaryFrames": true,
+    "cancellation": true,
+    "maxBinaryChunkBytes": 1048576,
+    "streamWindowChunks": 4,
+    "censusEntryResults": true,
+    "outputChunkBytes": 65536,
+    "pendingReceipts": true,
+    "expiryStatusResults": true,
+    "observationFence": true,
+    "commandRetire": true
+  },
+  "ack": {
+    "type": "inventory.ack",
+    "page": 0,
+    "entryResults": [
+      {
+        "sandboxId": "sbx-a",
+        "outcome": "converged"
+      },
+      {
+        "sandboxId": "sbx-b",
+        "outcome": "stale_storage"
+      },
+      {
+        "sandboxId": "sbx-c",
+        "outcome": "not_converged"
+      }
+    ]
+  },
+  "rejectedAcks": [
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "refused"
+        }
+      ]
+    },
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "converged",
+          "reason": "x"
+        }
+      ]
+    },
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "",
+          "outcome": "converged"
+        }
+      ]
+    },
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "outcome": "converged"
+        }
+      ]
+    }
+  ]
+}

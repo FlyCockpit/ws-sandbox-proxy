@@ -1,0 +1,620 @@
+{
+  "server": [
+    {
+      "type": "terminal.open",
+      "requestId": "treq-1",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.open",
+      "requestId": "treq-cwd",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "cwd": "/srv/app"
+    },
+    {
+      "type": "terminal.resize",
+      "requestId": "treq-2",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 512,
+      "cols": 1024
+    },
+    {
+      "type": "terminal.close",
+      "requestId": "treq-3",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "intent": "backpressure"
+    },
+    {
+      "type": "terminal.ack",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "sequence": 9
+    },
+    {
+      "type": "hello.ok",
+      "id": "hello-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "capabilities": {
+        "protocolVersion": "1.0",
+        "binaryFrames": true,
+        "cancellation": true,
+        "maxBinaryChunkBytes": 1048576,
+        "streamWindowChunks": 4,
+        "outputChunkBytes": 65536,
+        "censusEntryResults": true,
+        "pendingReceipts": true,
+        "expiryStatusResults": true,
+        "observationFence": true,
+        "commandRetire": true
+      },
+      "connectionEpoch": 7,
+      "hostOwnerId": "owner-1"
+    },
+    {
+      "type": "terminal.open",
+      "requestId": "host-open",
+      "fence": {
+        "sessionId": "host-term",
+        "operationId": "host-op",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "hostPolicy": {
+        "policyRevision": 3,
+        "proofRequired": true
+      }
+    },
+    {
+      "type": "host.terminal-policy.raise",
+      "connectionEpoch": 7,
+      "requestId": "raise-1"
+    }
+  ],
+  "daemon": [
+    {
+      "type": "terminal.ready",
+      "requestId": "treq-1",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.ack",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "sequence": 0
+    },
+    {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "exitCode": 0,
+      "reaped": true
+    },
+    {
+      "type": "terminal.exit",
+      "requestId": "treq-3",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "intent": "backpressure",
+      "reaped": false
+    },
+    {
+      "type": "terminal.exit",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "reaped": true
+    },
+    {
+      "type": "terminal.exit",
+      "requestId": "treq-1",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "reaped": true,
+      "error": {
+        "code": "host_effect_not_issued",
+        "message": "terminal open was not issued"
+      }
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "host-open",
+      "fence": {
+        "sessionId": "host-term",
+        "operationId": "host-op",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "host.terminal-policy",
+      "connectionEpoch": 7,
+      "sequence": 1,
+      "hostTerminal": true,
+      "requireHostTerminalTotp": true,
+      "policyRevision": 3
+    }
+  ],
+  "rejected": {
+    "server": [
+      {
+        "type": "terminal.open",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 0,
+        "cols": 80
+      },
+      {
+        "type": "terminal.resize",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 1025
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "../x",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80
+      },
+      {
+        "type": "terminal.close",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 0
+          }
+        },
+        "intent": "client"
+      },
+      {
+        "type": "terminal.close",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "intent": "explode"
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80,
+        "guestUid": 0
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "templateFingerprint": "x",
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "host-open",
+        "fence": {
+          "sessionId": "host-term",
+          "operationId": "host-op",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "host"
+          }
+        },
+        "rows": 24,
+        "cols": 80
+      },
+      {
+        "type": "host.terminal-policy.raise",
+        "connectionEpoch": 7,
+        "requestId": "raise-1",
+        "required": false
+      },
+      {
+        "type": "terminal.open",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "requestId": "null-policy",
+        "rows": 24,
+        "cols": 80,
+        "hostPolicy": null
+      },
+      {
+        "type": "terminal.ack",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "sequence": 9007199254740992
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-badcwd",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80,
+        "cwd": "srv/app"
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-badcwd",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80,
+        "cwd": "/srv/../etc"
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "treq-badcwd",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 80,
+        "cwd": "/srv/a\u0007pp"
+      },
+      {
+        "type": "terminal.open",
+        "requestId": "host-open",
+        "fence": {
+          "sessionId": "host-term",
+          "operationId": "host-op",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "host"
+          }
+        },
+        "rows": 24,
+        "cols": 80,
+        "hostPolicy": {
+          "policyRevision": 3,
+          "proofRequired": true
+        },
+        "cwd": "/srv/app"
+      }
+    ],
+    "daemon": [
+      {
+        "type": "terminal.ready",
+        "requestId": "treq-1",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 24,
+        "cols": 0
+      },
+      {
+        "type": "terminal.ack",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "sequence": -1
+      },
+      {
+        "type": "terminal.exit",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        }
+      },
+      {
+        "type": "terminal.exit",
+        "fence": {
+          "sessionId": "term 1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true
+      },
+      {
+        "type": "terminal.exit",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "requestId": null
+      },
+      {
+        "type": "terminal.ack",
+        "fence": {
+          "sessionId": "term-1",
+          "operationId": "termop-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "sequence": 9007199254740992
+      }
+    ]
+  },
+  "dataFrame": {
+    "metadata": {
+      "type": "terminal.data",
+      "fence": {
+        "sessionId": "term-1",
+        "operationId": "termop-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "sequence": 3
+    },
+    "bodyHex": "6c730d"
+  }
+}

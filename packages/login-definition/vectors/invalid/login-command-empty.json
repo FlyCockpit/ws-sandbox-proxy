@@ -1,0 +1,18 @@
+{
+  "description": "login.command is non-empty",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

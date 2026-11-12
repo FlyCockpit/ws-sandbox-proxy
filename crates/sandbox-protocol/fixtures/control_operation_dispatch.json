@@ -1,0 +1,13 @@
+{
+  "type": "operation.dispatch",
+  "operationId": "op-fixture-1",
+  "sandboxId": "sbx-fixture-1",
+  "idempotencyKey": "key-fixture-1",
+  "kind": "command.run",
+  "generation": 3,
+  "attempt": 2,
+  "argv": ["cat"],
+  "stdinSequence": 7,
+  "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sandboxOwnerId": "user-1"
+}

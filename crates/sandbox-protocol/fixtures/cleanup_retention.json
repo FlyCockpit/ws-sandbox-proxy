@@ -1,0 +1,41 @@
+[
+  {
+    "kind": "sandbox.stop",
+    "result": {
+      "state": "stopped",
+      "endState": "stopped",
+      "exitCode": 0,
+      "errorCode": null,
+      "stdout": "expiring output"
+    },
+    "retained": {
+      "state": "stopped",
+      "endState": "stopped",
+      "exitCode": 0,
+      "errorCode": null,
+      "outputExpired": true
+    }
+  },
+  {
+    "kind": "sandbox.stop",
+    "result": {
+      "state": "absent",
+      "stdout": "expiring output"
+    },
+    "retained": {
+      "state": "absent",
+      "outputExpired": true
+    }
+  },
+  {
+    "kind": "sandbox.kill",
+    "result": {
+      "state": "deleted",
+      "stdout": "expiring output"
+    },
+    "retained": {
+      "state": "deleted",
+      "outputExpired": true
+    }
+  }
+]

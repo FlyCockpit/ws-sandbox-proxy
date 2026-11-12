@@ -1,0 +1,28 @@
+{
+  "type": "sandbox.expiry_status",
+  "entries": [
+    {
+      "sandboxId": "sbx-fixture-3",
+      "state": "ready",
+      "lease": {
+        "generation": 4,
+        "lease": {
+          "revision": 1,
+          "deadlineUnixMs": 1790000000000,
+          "action": "destroy",
+          "expiryPolicy": "retry-force-60s"
+        },
+        "expired": true,
+        "expiryComplete": false,
+        "timerExpired": true,
+        "expiryFailure": {
+          "reason": "runtime stop failed",
+          "attempts": 3,
+          "sinceUnixMs": 1790000001000
+        }
+      },
+      "root": null,
+      "sandboxOwnerId": "user-1"
+    }
+  ]
+}

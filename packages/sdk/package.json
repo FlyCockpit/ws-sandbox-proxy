@@ -1,0 +1,51 @@
+{
+  "name": "@wssp/sdk",
+  "license": "MIT",
+  "version": "1.0.0",
+  "description": "Server-side TypeScript client for the WS Sandbox Proxy /v1 sandbox API.",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FlyCockpit/ws-sandbox-proxy.git",
+    "directory": "packages/sdk"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "import": "./dist/index.mjs"
+    },
+    "./webhooks": {
+      "types": "./dist/webhooks.d.mts",
+      "import": "./dist/webhooks.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.mts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "//": "prepack copies the repo-root MIT LICENSE next to the manifest so the tarball ships license text; the copy is gitignored and refreshed on every pack, so it cannot drift.",
+    "prepack": "cp ../../LICENSE LICENSE && tsdown",
+    "check-types": "tsc --noEmit && tsc --noEmit -p examples",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@wssp/config": "workspace:*",
+    "@wssp/sandbox-contracts": "workspace:*",
+    "@wssp/template-recipe": "workspace:*",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "private": true
+}

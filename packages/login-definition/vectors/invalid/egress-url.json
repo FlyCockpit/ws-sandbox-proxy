@@ -1,0 +1,21 @@
+{
+  "description": "a name, not a URL",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste",
+      "egress": {
+        "domains": ["https://example.com"]
+      }
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

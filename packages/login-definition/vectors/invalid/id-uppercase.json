@@ -1,0 +1,18 @@
+{
+  "description": "id is lowercase",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "Codex",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "env": ["BUILD_VERSION", "RENDER_GIT_COMMIT", "VITE_*"],
+      // `.env*` is package-relative (apps/web/.env…). `$TURBO_ROOT$/.env` is the
+      // repo-root file, which apps/web/vite.config.ts hydrates into the Vite
+      // process — and Vite's loadEnv merges prefix-matching process.env keys, so a
+      // VITE_* key there changes the emitted client bundle. Without it Turbo would
+      // replay a stale dist.
+      //
+      // Scoped to `build` rather than declared in `globalDependencies`: a global
+      // entry puts the file's content hash in the cache key of EVERY task, so
+      // rotating a local SMTP password would invalidate lint, test, and
+      // check-types too. Only the build output can depend on this file.
+      // `RENDER_GIT_COMMIT` is Render's injected git SHA, the version fallback
+      // in apps/web/vite.config.ts when BUILD_VERSION is unset. `VITE_*` covers
+      // the process-env keys that config reads (VITE_DEV_PORT,
+      // VITE_DEV_SERVER_URL, VITE_DEV_HOST) and inlines into the client bundle.
+      "inputs": ["$TURBO_DEFAULT$", ".env*", "$TURBO_ROOT$/.env"],
+      "outputs": ["dist/**"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "src/**/*.json",
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "prisma/schema/**/*.prisma",
+        "prisma/*.mjs",
+        "vitest.config.*",
+        "vite.config.*",
+        "$TURBO_ROOT$/vitest.config.ts",
+        "$TURBO_ROOT$/scripts/test-io-guard.ts",
+        "$TURBO_ROOT$/scripts/vitest-test-io-guard-fixture.config.ts"
+      ]
+    },
+    // Real-PostgreSQL layer. Run only through `pnpm test:pg` (scripts/test-pg.mjs),
+    // which owns the disposable container and passes its admin URL here. Never
+    // cached: the database, not the source hash, is the input.
+    "test:pg": {
+      "cache": false,
+      // Every test:pg package reads the generated Prisma client at runtime.
+      "dependsOn": ["@wssp/db#db:generate"],
+      // WSSP_OWNED_PROCESS_TREE lets the harness find a task orphaned by Turbo's
+      // exit (scripts/lib/disposable-postgres.mjs); strict env mode drops it otherwise.
+      "passThroughEnv": [
+        "WSSP_PG_ADMIN_URL",
+        "WSSP_PG_TEMPLATE_DB",
+        "WSSP_PG_CONTAINER",
+        "WSSP_OWNED_PROCESS_TREE"
+      ]
+    },
+    // `db:generate` exists only in @wssp/db; every package that reads the
+    // generated client reaches it through `^check-types`, so no typecheck runs
+    // against a client older than prisma/schema, and a schema change moves the
+    // hash of every dependent check-types.
+    "check-types": {
+      "dependsOn": ["^check-types", "db:generate"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "DATABASE_URL",
+        "REDIS_URL",
+        "NODE_ENV",
+        "PORT",
+        "HOST",
+        "SERVER_PORT",
+        "WORKER_MODE",
+        "PORTLESS_*",
+        "BETTER_AUTH_*",
+        "CORS_ORIGIN",
+        "SIGNUP_ENABLED",
+        "VAPID_*",
+        "TRUST_PROXY_HOPS",
+        "OPENROUTER_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "TRANSLATION_*",
+        "RATE_LIMIT_*",
+        "SMTP_*",
+        "PUBLIC_APP_URL",
+        "ADMIN_EMAILS",
+        "VITE_*"
+      ]
+    },
+    // Not Turbo-cached: prisma/generate-client.mjs is its own cache (a content
+    // hash stamped into prisma/generated) and skips prisma generate when fresh.
+    // The inputs still shape this task's hash, which dependents fold in.
+    "db:generate": {
+      "cache": false,
+      "inputs": ["prisma/schema/**", "prisma.config.ts", "prisma/generate-client.mjs"]
+    },
+    "db:validate": {
+      "inputs": ["prisma/schema/**/*.prisma", "prisma.config.ts"]
+    },
+    "db:studio": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["DATABASE_URL", "ALLOW_NONLOCAL_DB_STUDIO", "ASSERT_LOCAL_DB_ESCAPE"]
+    },
+    "db:seed": {
+      "cache": false,
+      "passThroughEnv": ["DATABASE_URL", "ALLOW_NONLOCAL_DB_SEED", "ASSERT_LOCAL_DB_ESCAPE"]
+    }
+  }
+}

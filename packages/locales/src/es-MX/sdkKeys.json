@@ -1,0 +1,134 @@
+{
+  "description": "Claves con alcance limitado para la API del SDK /v1.",
+  "empty": {
+    "title": "Aún no hay claves de SDK",
+    "description": "Las claves de SDK autorizan la API /v1 para tus sandboxes. Las claves revocadas no se muestran."
+  },
+  "form": {
+    "scopes": "Alcances",
+    "scopesHint": "Cada alcance debe otorgar algo por sí solo o junto con los demás que elijas.",
+    "resources": "Recursos",
+    "mode": {
+      "ALL_OWNED": "Todos mis hosts, revisiones y grupos",
+      "ALLOWLIST": "Solo hosts, revisiones exactas y grupos seleccionados"
+    },
+    "modeHint": {
+      "ALL_OWNED": "Incluye los recursos propios que agregues después.",
+      "ALLOWLIST": "Crear en un host específico requiere permisos de host y revisión exacta; crear en un grupo requiere además el permiso del grupo. Las revisiones nuevas nunca reciben permisos automáticamente."
+    },
+    "resourcesFailed": "No se pudieron cargar tus hosts y plantillas.",
+    "hosts": "Hosts",
+    "noHosts": "No tienes un host que se pueda seleccionar.",
+    "templates": "Versiones de plantilla",
+    "noTemplates": "Ninguna revisión activa tiene una asociación verificada o pendiente en los hosts seleccionados.",
+    "pickHostFirst": "Selecciona un host para ver sus asociaciones de revisión.",
+    "moreHosts": "Cargar más hosts",
+    "moreTemplates": "Cargar más plantillas",
+    "pools": "Grupos",
+    "poolsHint": "Opcional para asignación directa. La asignación por grupo también requiere permisos para el grupo, el host y la revisión exacta.",
+    "association": "{{host}} · {{status}}",
+    "availability": {
+      "AVAILABLE": "Imagen verificada",
+      "PENDING": "Verificación pendiente (se puede otorgar permiso; aún no puede iniciar)",
+      "MISSING": "Falta la imagen",
+      "REJECTED": "Imagen rechazada"
+    },
+    "ownedPool": "De tu propiedad",
+    "credentialsUseDisclosure": "Esta clave puede poner valores de inicio de sesión en sandboxes (credentials:use) y ejecutar comandos o leer archivos ahí. Quien tenga la clave puede leer esos valores. Otórgala solo a código al que confiarías los inicios de sesión mismos.",
+    "logins": "Inicios de sesión de CLI",
+    "loginsHint": "Los inicios de sesión que esta clave puede usar, leer o cambiar. Déjalo vacío para ninguno.",
+    "loginsRequired": "Con credentials:use, elige al menos un inicio de sesión que esta clave pueda usar.",
+    "loginsFailed": "No se pudieron cargar tus inicios de sesión.",
+    "noLogins": "Todavía no tienes inicios de sesión de CLI.",
+    "moreLogins": "Cargar más inicios de sesión"
+  },
+  "list": {
+    "scopes": "Alcances",
+    "allOwned": "Todos tus hosts, revisiones y grupos",
+    "allowlistTitle": "Limitada a estos recursos",
+    "allowlistHosts": "Hosts: {{names}}",
+    "allowlistTemplates": "Versiones de plantilla: {{names}}",
+    "allowlistPools": "Grupos: {{names}}",
+    "allowlistLogins": "Inicios de sesión: {{names}}"
+  },
+  "mint": {
+    "action": "Crear clave de SDK",
+    "title": "Crear una clave de SDK",
+    "description": "Elige solo los alcances y recursos que necesita tu código. La clave no puede administrar credenciales, hosts ni usuarios, ni abrir terminales.",
+    "submit": "Crear clave",
+    "secretLabel": "Tu nueva clave de SDK",
+    "usageHint": "Envíala como Authorization: Bearer <clave> a la API /v1."
+  },
+  "poolMode": {
+    "title": "Selección de grupos (independiente de hosts/revisiones)",
+    "ALL_USABLE": "Todos los grupos utilizables actualmente",
+    "SELECTED": "Solo grupos seleccionados",
+    "immutable": "Las claves son inmutables. Perder un permiso elimina acceso futuro al grupo; recuperarlo requiere otra clave seleccionada. El trabajo retenido sigue ligado a su clave de creación.",
+    "revisionContext": "Grupo donde buscar tus revisiones exactas en hosts ajenos"
+  },
+  "resourceIdentity": "{{label}} · {{id}}",
+  "revoke": {
+    "title": "¿Revocar {{name}}?",
+    "description": "Las solicitudes con esta clave fallan desde ahora. El trabajo que ya inició no se cancela.",
+    "done": "Clave de SDK revocada.",
+    "typePrompt": "Escribe el nombre de la clave para confirmar",
+    "copyName": "Copiar nombre de la clave"
+  },
+  "scope": {
+    "hosts": {
+      "read": "Listar tus hosts."
+    },
+    "templates": {
+      "read": "Listar plantillas.",
+      "write": "Registrar plantillas, agregar revisiones y verificar asociaciones de hosts.",
+      "build": "Construir revisiones de plantillas a partir de una receta o un Dockerfile, leer sus registros y cancelarlas. Crear una plantilla por nombre también requiere templates:write."
+    },
+    "sandboxes": {
+      "read": "Leer sandboxes y sus procesos.",
+      "write": "Crear, detener, reconectar, renovar y eliminar sandboxes."
+    },
+    "commands": {
+      "execute": "Ejecutar comandos, escribir en stdin y enviar señales a procesos.",
+      "read": "Leer comandos supervisados; la salida también requiere operations:read."
+    },
+    "files": {
+      "read": "Leer y descargar archivos.",
+      "write": "Escribir, subir, mover y eliminar archivos."
+    },
+    "operations": {
+      "read": "Leer el estado de las operaciones.",
+      "cancel": "Cancelar operaciones (con el alcance del trabajo)."
+    },
+    "pools": {
+      "read": "Consultar grupos y miembros permitidos."
+    },
+    "webhooks": {
+      "write": "Administrar endpoints de webhook que reciben eventos de todos los sandboxes de la cuenta. Requiere una clave sobre todos los recursos propios y todos los grupos utilizables."
+    },
+    "credentials": {
+      "read": "Lista definiciones de inicio de sesión, inicios de sesión, cuentas, instancias y sus eventos. Nunca devuelve un valor.",
+      "write": "Crea y edita definiciones, inicios de sesión, cuentas e instancias, pausa cuentas y sube valores. Los valores son de solo escritura.",
+      "use": "Adjunta y libera inicios de sesión en sandboxes, nómbralos al crear y fíjalos al iniciar. El valor llega al invitado: con commands:execute o files:read esta clave puede leerlo. Una clave con lista permitida solo alcanza los inicios de sesión que nombra."
+    }
+  },
+  "scopeGroup": {
+    "hosts": "Hosts",
+    "templates": "Plantillas",
+    "sandboxes": "Sandboxes",
+    "commands": "Comandos",
+    "files": "Archivos",
+    "operations": "Operaciones",
+    "pools": "Grupos",
+    "webhooks": "Webhooks",
+    "credentials": "Inicios de sesión de CLI"
+  },
+  "scopeNeeds": {
+    "operations": {
+      "cancel": "Selecciona también el alcance del trabajo que se cancela (por ejemplo sandboxes:write o commands:execute)."
+    },
+    "credentials": {
+      "use": "Selecciona también sandboxes:write."
+    }
+  },
+  "title": "Claves de SDK"
+}

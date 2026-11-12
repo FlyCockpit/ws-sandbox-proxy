@@ -1,0 +1,18 @@
+{
+  "description": "the whole credential staging prefix is reserved",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": ["auth/.wssp-cred-other"]
+      }
+    }
+  }
+}

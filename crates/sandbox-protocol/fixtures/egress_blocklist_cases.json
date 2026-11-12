@@ -1,0 +1,305 @@
+{
+  "_about": "E6 deployment blocklist and typed egress refusal reasons, read by crates/sandbox-protocol/tests/fixtures.rs, crates/sandbox-runtime (guard parser), apps/cli (digest) and apps/server (env parser, zod). `env`: SANDBOX_EGRESS_BLOCKLIST values and the relay's verdict; valid entries are what the guard accepts; invalid ones are refused by both the relay and the guard (invalidEntry is 1-based among non-empty tokens). digest = sha256 of JSON.stringify(entries).",
+  "env": [
+    {
+      "name": "unset",
+      "raw": null,
+      "state": "not_configured",
+      "entries": [],
+      "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "empty",
+      "raw": "",
+      "state": "not_configured",
+      "entries": [],
+      "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "separators only",
+      "raw": " ,\n, ",
+      "state": "not_configured",
+      "entries": [],
+      "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "mixed, normalized, sorted and deduplicated",
+      "raw": "203.0.113.0/24, Bad.Example. 1.1.1.1 bad.example,198.51.100.7/32",
+      "state": "valid",
+      "entries": ["1.1.1.1/32", "198.51.100.7/32", "203.0.113.0/24", "bad.example"],
+      "digest": "sha256:cb11d33397cc77820b9f4fd9280ab3f0363f2e4c5230d14792f6060500d5b584"
+    },
+    {
+      "name": "newline separated",
+      "raw": "10.0.0.0/8\nexample.org\n",
+      "state": "valid",
+      "entries": ["10.0.0.0/8", "example.org"],
+      "digest": "sha256:81d71874163dac8d27c9ad4fab893c538f8a5b369f322dfa6ba7c5f6c7aff1fc"
+    },
+    {
+      "name": "whole internet prefix",
+      "raw": "0.0.0.0/0",
+      "state": "valid",
+      "entries": ["0.0.0.0/0"],
+      "digest": "sha256:1c1231caf8cd8e9afbea3ccc829b790a4f02241fdc672d5cac2a8a21ebb09ea7"
+    },
+    {
+      "name": "host bits set",
+      "raw": "example.org,203.0.113.1/24",
+      "state": "invalid",
+      "invalidEntry": 2
+    },
+    {
+      "name": "IPv6",
+      "raw": "2001:db8::/32",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "prefix too long",
+      "raw": "1.2.3.4/33",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "prefix with a leading zero",
+      "raw": "1.2.3.0/024",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "octet out of range",
+      "raw": "256.1.1.0/24",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "slash in a name",
+      "raw": "a.example/x",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "single label",
+      "raw": "localhost",
+      "state": "invalid",
+      "invalidEntry": 1
+    },
+    {
+      "name": "label starts with a hyphen",
+      "raw": "ok.example -bad.example",
+      "state": "invalid",
+      "invalidEntry": 2
+    },
+    {
+      "name": "underscore",
+      "raw": "bad_name.example",
+      "state": "invalid",
+      "invalidEntry": 1
+    }
+  ],
+  "frames": {
+    "valid": [
+      {
+        "type": "egress.blocklist",
+        "configured": false,
+        "entries": [],
+        "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "type": "egress.blocklist",
+        "configured": true,
+        "entries": ["1.1.1.1/32", "203.0.113.0/24", "bad.example"],
+        "digest": "sha256:0b6ee35908f00b8b0fc67b53f6850640f49ffe92b142f2a6f2c1a931b517a283"
+      },
+      {
+        "type": "egress.blocklist",
+        "configured": true,
+        "entries": [],
+        "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "invalid": true
+      }
+    ],
+    "invalid": [
+      {
+        "name": "configured:false with entries",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": ["bad.example"],
+          "digest": "sha256:47080d826033420118e09d7ad06fb2d846d96fb74590c4e8a1e55d55b8b27430"
+        }
+      },
+      {
+        "name": "configured:true without entries",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": [],
+          "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      {
+        "name": "unsorted",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": ["bad.example", "1.1.1.1/32"],
+          "digest": "sha256:e1522c0f4fde8672ef6da2e9f1a9ceada6e82cd3111be911ee1f3d20329330cd"
+        }
+      },
+      {
+        "name": "duplicate",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": ["bad.example", "bad.example"],
+          "digest": "sha256:a7c1dee33d08cd72bebe9321baebe54fddf82ee6afded467f53426b28a07c9d4"
+        }
+      },
+      {
+        "name": "uppercase entry",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": ["Bad.example"],
+          "digest": "sha256:59a3b5afbd5bab422f6c947b137c185a33688fe15dc169133fd3a322267726b2"
+        }
+      },
+      {
+        "name": "entry with a space",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": ["bad example"],
+          "digest": "sha256:09ab4ad88cd869eaea381ae2b5a7bff6de00dd639b044b52a95e726e70f589ab"
+        }
+      },
+      {
+        "name": "empty entry",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": [""],
+          "digest": "sha256:055539df4a0b804c58caf46c0cd2941af10d64c1395ddd8e50b5f55d945841e6"
+        }
+      },
+      {
+        "name": "digest without prefix",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": [],
+          "digest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      },
+      {
+        "name": "uppercase digest",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": [],
+          "digest": "sha256:4F53CDA18C2BAA0C0354BB5F9A3ECBE5ED12AB4D8E11BA873C2F11161202B945"
+        }
+      },
+      {
+        "name": "missing digest",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": []
+        }
+      },
+      {
+        "name": "explicit invalid:false",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": [],
+          "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "invalid": false
+        }
+      },
+      {
+        "name": "invalid with entries",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": true,
+          "entries": ["bad.example"],
+          "digest": "sha256:47080d826033420118e09d7ad06fb2d846d96fb74590c4e8a1e55d55b8b27430",
+          "invalid": true
+        }
+      },
+      {
+        "name": "invalid not configured",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": [],
+          "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "invalid": true
+        }
+      },
+      {
+        "name": "unknown field",
+        "frame": {
+          "type": "egress.blocklist",
+          "configured": false,
+          "entries": [],
+          "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "extra": 1
+        }
+      }
+    ]
+  },
+  "errorReasons": {
+    "base": {
+      "type": "operation.result",
+      "id": "result-op",
+      "operationId": "op",
+      "sandboxId": "sbx",
+      "generation": 1,
+      "attempt": 1,
+      "state": "failed"
+    },
+    "valid": [
+      {
+        "code": "host_capacity",
+        "reason": "disk"
+      },
+      {
+        "code": "unsupported_capability",
+        "reason": "open_egress_not_permitted"
+      },
+      {
+        "code": "unsupported_capability",
+        "reason": "egress_guard_unavailable"
+      },
+      {
+        "code": "unsupported_capability"
+      }
+    ],
+    "invalid": [
+      {
+        "code": "host_capacity",
+        "reason": "egress_guard_unavailable"
+      },
+      {
+        "code": "unsupported_capability",
+        "reason": "ram"
+      },
+      {
+        "code": "internal",
+        "reason": "open_egress_not_permitted"
+      },
+      {
+        "code": "unsupported_capability",
+        "reason": "egress_policy_too_large"
+      },
+      {
+        "code": "unsupported_capability",
+        "reason": "Egress_guard_unavailable"
+      }
+    ]
+  }
+}

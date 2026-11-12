@@ -1,0 +1,21 @@
+{
+  "description": "domains are DNS names",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste",
+      "egress": {
+        "domains": ["1.2.3.4"]
+      }
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

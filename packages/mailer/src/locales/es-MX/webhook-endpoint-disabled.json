@@ -1,0 +1,5 @@
+{
+  "subject": "Endpoint de webhook deshabilitado",
+  "body": "Tu endpoint de webhook para {{host}} se deshabilitó porque falló en todos los intentos de entrega durante al menos 72 horas ({{failures}} fallas consecutivas). Las entregas pendientes se cancelaron.",
+  "action": "Corrige el receptor y vuelve a habilitar el endpoint desde la página de Webhooks de tu panel. Al habilitarlo se reinician sus contadores de fallas; los eventos ocurridos mientras estuvo deshabilitado no se envían."
+}

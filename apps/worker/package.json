@@ -1,0 +1,36 @@
+{
+  "name": "worker",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run --passWithNoTests",
+    "check-types": "tsc --noEmit",
+    "build": "tsdown",
+    "start": "node dist/index.mjs"
+  },
+  "dependencies": {
+    "@wssp/api": "workspace:*",
+    "@wssp/auth": "workspace:*",
+    "@wssp/db": "workspace:*",
+    "@wssp/env": "workspace:*",
+    "@wssp/mailer": "workspace:*",
+    "@wssp/queue": "workspace:*",
+    "bullmq": "catalog:",
+    "ioredis": "catalog:"
+  },
+  "devDependencies": {
+    "@wssp/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  }
+}

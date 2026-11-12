@@ -1,0 +1,9 @@
+{
+  "extends": "./packages/sdk/tsconfig.json",
+  "include": ["packages/sdk/src", "packages/sandbox-contracts/src", "packages/template-recipe/src"],
+  "exclude": [
+    "packages/sdk/src/**/*.test.ts",
+    "packages/sandbox-contracts/src/**/*.test.ts",
+    "packages/template-recipe/src/**/*.test.ts"
+  ]
+}

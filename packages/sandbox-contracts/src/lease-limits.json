@@ -1,0 +1,5 @@
+{
+  "limitMinMs": 300000,
+  "finiteMaxMs": 2073600000,
+  "unlimitedDeadlineMs": 253402300799999
+}

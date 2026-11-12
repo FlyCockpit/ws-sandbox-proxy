@@ -1,0 +1,400 @@
+{
+  "name": "@wssp/api",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./context": {
+      "default": "./src/context.ts"
+    },
+    "./routers/index": {
+      "default": "./src/routers/index.ts"
+    },
+    "./lib/push-subscription": {
+      "default": "./src/lib/push-subscription.ts"
+    },
+    "./lib/slug": {
+      "default": "./src/lib/slug.ts"
+    },
+    "./lib/admin-error-codes": {
+      "default": "./src/lib/admin-error-codes.ts"
+    },
+    "./lib/backup-freshness": {
+      "default": "./src/lib/backup-freshness.ts"
+    },
+    "./lib/ownership": {
+      "default": "./src/lib/ownership.ts"
+    },
+    "./lib/auth-token-retention": {
+      "default": "./src/lib/auth-token-retention.ts"
+    },
+    "./lib/device-code-transitions": {
+      "default": "./src/lib/device-code-transitions.ts"
+    },
+    "./lib/owner-device-session-gate": {
+      "default": "./src/lib/owner-device-session-gate.ts"
+    },
+    "./lib/host-token-access": {
+      "default": "./src/lib/host-token-access.ts"
+    },
+    "./lib/owner-credential-policy": {
+      "default": "./src/lib/owner-credential-policy.ts"
+    },
+    "./lib/sdk-key-access": {
+      "default": "./src/lib/sdk-key-access.ts"
+    },
+    "./lib/service-scopes": {
+      "default": "./src/lib/service-scopes.ts"
+    },
+    "./lib/sdk-key-rules": {
+      "default": "./src/lib/sdk-key-rules.ts"
+    },
+    "./credentials/definition-rules": {
+      "default": "./src/credentials/definition-rules.ts"
+    },
+    "./sandbox/budgets": {
+      "default": "./src/sandbox/budgets.ts"
+    },
+    "./sandbox/template-input": {
+      "default": "./src/sandbox/template-input.ts"
+    },
+    "./sandbox/guest-sudo-policy": {
+      "default": "./src/sandbox/guest-sudo-policy.ts"
+    },
+    "./sandbox/incus-name": {
+      "default": "./src/sandbox/incus-name.ts"
+    },
+    "./sandbox/restore-login-codes": {
+      "default": "./src/sandbox/disk-offload/restore-login-codes.ts"
+    },
+    "./sandbox/state-transitions": {
+      "default": "./src/sandbox/state-transitions.ts"
+    },
+    "./sandbox/result-finalization": {
+      "default": "./src/sandbox/result-finalization.ts"
+    },
+    "./sandbox/host-protocol": {
+      "default": "./src/sandbox/host-protocol.ts"
+    },
+    "./sandbox/operation-results": {
+      "default": "./src/sandbox/operation-results.ts"
+    },
+    "./sandbox/result-locks": {
+      "default": "./src/sandbox/result-locks.ts"
+    },
+    "./sandbox/command-output": {
+      "default": "./src/sandbox/command-output.ts"
+    },
+    "./sandbox/image-store/config": {
+      "default": "./src/sandbox/image-store/config.ts"
+    },
+    "./sandbox/image-store/s3": {
+      "default": "./src/sandbox/image-store/s3.ts"
+    },
+    "./sandbox/disk-offload/availability": {
+      "default": "./src/sandbox/disk-offload/availability.ts"
+    },
+    "./sandbox/disk-offload/consume": {
+      "default": "./src/sandbox/disk-offload/consume.ts"
+    },
+    "./sandbox/disk-offload/destroy": {
+      "default": "./src/sandbox/disk-offload/destroy.ts"
+    },
+    "./sandbox/disk-offload/detach": {
+      "default": "./src/sandbox/disk-offload/detach.ts"
+    },
+    "./sandbox/disk-offload/discard": {
+      "default": "./src/sandbox/disk-offload/discard.ts"
+    },
+    "./sandbox/disk-offload/evict": {
+      "default": "./src/sandbox/disk-offload/evict.ts"
+    },
+    "./sandbox/disk-offload/eligibility": {
+      "default": "./src/sandbox/disk-offload/eligibility.ts"
+    },
+    "./sandbox/disk-offload/enqueue": {
+      "default": "./src/sandbox/disk-offload/enqueue.ts"
+    },
+    "./sandbox/disk-offload/keys": {
+      "default": "./src/sandbox/disk-offload/keys.ts"
+    },
+    "./sandbox/disk-offload/restore-admit": {
+      "default": "./src/sandbox/disk-offload/restore-admit.ts"
+    },
+    "./sandbox/disk-offload/restore-exit": {
+      "default": "./src/sandbox/disk-offload/restore-exit.ts"
+    },
+    "./sandbox/launch-mode": {
+      "default": "./src/sandbox/launch-mode.ts"
+    },
+    "./sandbox/disk-offload/quota": {
+      "default": "./src/sandbox/disk-offload/quota.ts"
+    },
+    "./sandbox/disk-offload/store": {
+      "default": "./src/sandbox/disk-offload/store.ts"
+    },
+    "./sandbox/image-placement": {
+      "default": "./src/sandbox/image-placement.ts"
+    },
+    "./sandbox/image-store/capture-result": {
+      "default": "./src/sandbox/image-store/capture-result.ts"
+    },
+    "./sandbox/image-store/captures": {
+      "default": "./src/sandbox/image-store/captures.ts"
+    },
+    "./sandbox/image-store/jobs": {
+      "default": "./src/sandbox/image-store/jobs.ts"
+    },
+    "./sandbox/image-store/references": {
+      "default": "./src/sandbox/image-store/references.ts"
+    },
+    "./sandbox/managed-sandbox": {
+      "default": "./src/sandbox/managed-sandbox.ts"
+    },
+    "./sandbox/relay-fence": {
+      "default": "./src/sandbox/relay-fence.ts"
+    },
+    "./sandbox/services/sandboxes": {
+      "default": "./src/sandbox/services/sandboxes.ts"
+    },
+    "./sandbox/sdk-mutations": {
+      "default": "./src/sandbox/sdk-mutations.ts"
+    },
+    "./sandbox/host-drain": {
+      "default": "./src/sandbox/host-drain.ts"
+    },
+    "./sandbox/sdk-reads": {
+      "default": "./src/sandbox/sdk-reads.ts"
+    },
+    "./sandbox/contracts": {
+      "default": "./src/sandbox/contracts.ts"
+    },
+    "./sandbox/execution-config": {
+      "default": "./src/sandbox/execution-config.ts"
+    },
+    "./sandbox/idempotency": {
+      "default": "./src/sandbox/idempotency.ts"
+    },
+    "./sandbox/lease-wire": {
+      "default": "./src/sandbox/lease-wire.ts"
+    },
+    "./sandbox/lease": {
+      "default": "./src/sandbox/lease.ts"
+    },
+    "./sandbox/host-admission": {
+      "default": "./src/sandbox/host-admission.ts"
+    },
+    "./sandbox/egress-guard": {
+      "default": "./src/sandbox/egress-guard.ts"
+    },
+    "./sandbox/terminal-sessions": {
+      "default": "./src/sandbox/terminal-sessions.ts"
+    },
+    "./sandbox/terminal-tickets": {
+      "default": "./src/sandbox/terminal-tickets.ts"
+    },
+    "./sandbox/terminal-lifecycle": {
+      "default": "./src/sandbox/terminal-lifecycle.ts"
+    },
+    "./sandbox/outbox": {
+      "default": "./src/sandbox/outbox.ts"
+    },
+    "./sandbox/outbox-operation": {
+      "default": "./src/sandbox/outbox-operation.ts"
+    },
+    "./sandbox/outbox-retention": {
+      "default": "./src/sandbox/outbox-retention.ts"
+    },
+    "./sandbox/principal-kinds": {
+      "default": "./src/sandbox/principal-kinds.ts"
+    },
+    "./sandbox/stored-principal": {
+      "default": "./src/sandbox/stored-principal.ts"
+    },
+    "./sandbox/operation-waiters": {
+      "default": "./src/sandbox/operation-waiters.ts"
+    },
+    "./sandbox/dispatch-control-envelope": {
+      "default": "./src/sandbox/dispatch-control-envelope.ts"
+    },
+    "./sandbox/host-image-verifier": {
+      "default": "./src/sandbox/host-image-verifier.ts"
+    },
+    "./lib/two-factor-policy": {
+      "default": "./src/lib/two-factor-policy.ts"
+    },
+    "./lib/sensitive-session-two-factor-gate": {
+      "default": "./src/lib/sensitive-session-two-factor-gate.ts"
+    },
+    "./test/mock-prisma": {
+      "default": "./src/test/mock-prisma.ts"
+    },
+    "./lib/procedure-budget": {
+      "default": "./src/lib/procedure-budget.ts"
+    },
+    "./lib/rate-limit-families": {
+      "default": "./src/lib/rate-limit-families.ts"
+    },
+    "./sandbox/sensitive-errors": {
+      "default": "./src/sandbox/sensitive-errors.ts"
+    },
+    "./sandbox/operation-transaction": {
+      "default": "./src/sandbox/operation-transaction.ts"
+    },
+    "./sandbox/lease-limits": {
+      "default": "./src/sandbox/lease-limits.ts"
+    },
+    "./sandbox/lease-policy": {
+      "default": "./src/sandbox/lease-policy.ts"
+    },
+    "./sandbox/lease-pull-in": {
+      "default": "./src/sandbox/lease-pull-in.ts"
+    },
+    "./sandbox/pool-input": {
+      "default": "./src/sandbox/pool-input.ts"
+    },
+    "./sandbox/process-controls": "./src/sandbox/process-controls.ts",
+    "./sandbox/process-signals": "./src/sandbox/process-signals.ts",
+    "./sandbox/process-connect": "./src/sandbox/process-connect.ts",
+    "./sandbox/services/capabilities": "./src/sandbox/services/capabilities.ts",
+    "./sandbox/sharing-access": "./src/sandbox/sharing-access.ts",
+    "./sandbox/sharing-access-scheduler": "./src/sandbox/sharing-access-scheduler.ts",
+    "./sandbox/host-terminal-policy": {
+      "default": "./src/sandbox/host-terminal-policy.ts"
+    },
+    "./sandbox/host-terminal-tickets": {
+      "default": "./src/sandbox/host-terminal-tickets.ts"
+    },
+    "./sandbox/sharing-input": {
+      "default": "./src/sandbox/sharing-input.ts"
+    },
+    "./sandbox/capacity-limits": "./src/sandbox/capacity-limits.ts",
+    "./sandbox/capacity-queue": "./src/sandbox/capacity-queue.ts",
+    "./sandbox/capacity-queue-wake": "./src/sandbox/capacity-queue-wake.ts",
+    "./sandbox/capacity-view": "./src/sandbox/capacity-view.ts",
+    "./sandbox/image-store/access": {
+      "default": "./src/sandbox/image-store/access.ts"
+    },
+    "./template-builds/community/sdk": {
+      "default": "./src/template-builds/community/sdk.ts"
+    },
+    "./template-builds/config": {
+      "default": "./src/template-builds/config.ts"
+    },
+    "./template-builds/context-port": {
+      "default": "./src/template-builds/context-port.ts"
+    },
+    "./template-builds/hints": {
+      "default": "./src/template-builds/hints.ts"
+    },
+    "./template-builds/orchestrator": {
+      "default": "./src/template-builds/orchestrator.ts"
+    },
+    "./template-builds/quiesce-hold": {
+      "default": "./src/template-builds/quiesce-hold.ts"
+    },
+    "./template-builds/service": {
+      "default": "./src/template-builds/service.ts"
+    },
+    "./template-builds/views": {
+      "default": "./src/template-builds/views.ts"
+    },
+    "./webhooks/config": {
+      "default": "./src/webhooks/config.ts"
+    },
+    "./credentials/rewrap": {
+      "default": "./src/credentials/rewrap.ts"
+    },
+    "./crypto/data-key": {
+      "default": "./src/crypto/data-key.ts"
+    },
+    "./crypto/data-key-epoch": {
+      "default": "./src/crypto/data-key-epoch.ts"
+    },
+    "./crypto/data-key-status": {
+      "default": "./src/crypto/data-key-status.ts"
+    },
+    "./crypto/data-key-heartbeat": {
+      "default": "./src/crypto/data-key-heartbeat.ts"
+    },
+    "./webhooks/ledger": {
+      "default": "./src/webhooks/ledger.ts"
+    },
+    "./webhooks/deliver": {
+      "default": "./src/webhooks/deliver.ts"
+    },
+    "./webhooks/service": {
+      "default": "./src/webhooks/service.ts"
+    },
+    "./credentials/live": {
+      "default": "./src/credentials/live.ts"
+    },
+    "./credentials/service": {
+      "default": "./src/credentials/service.ts"
+    },
+    "./credentials/relay": {
+      "default": "./src/credentials/relay.ts"
+    },
+    "./credentials/availability": {
+      "default": "./src/credentials/availability.ts"
+    },
+    "./webhooks/render": {
+      "default": "./src/webhooks/render.ts"
+    },
+    "./webhooks/destination-policy": {
+      "default": "./src/webhooks/destination-policy.ts"
+    },
+    "./webhooks/http-client": {
+      "default": "./src/webhooks/http-client.ts"
+    },
+    "./webhooks/signing": {
+      "default": "./src/webhooks/signing.ts"
+    },
+    "./webhooks/crypto": {
+      "default": "./src/webhooks/crypto.ts"
+    },
+    "./webhooks/schedule": {
+      "default": "./src/webhooks/schedule.ts"
+    },
+    "./webhooks/constants": {
+      "default": "./src/webhooks/constants.ts"
+    }
+  },
+  "scripts": {
+    "check-types": "tsc -p tsconfig.check-types.json --noEmit && pnpm check-types:contracts",
+    "check-types:contracts": "tsc -p tsconfig.boundary-tests.json --noEmit",
+    "test": "vitest run --passWithNoTests --exclude '**/*.contract.test.ts'",
+    "test:pg": "vitest run --config ../../vitest.pg.config.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
+    "@aws-sdk/s3-request-presigner": "catalog:",
+    "@orpc/client": "catalog:",
+    "@orpc/openapi": "catalog:",
+    "@orpc/server": "catalog:",
+    "@orpc/zod": "catalog:",
+    "@wssp/auth": "workspace:*",
+    "@wssp/config": "workspace:*",
+    "@wssp/db": "workspace:*",
+    "@wssp/env": "workspace:*",
+    "@wssp/login-definition": "workspace:*",
+    "@wssp/mailer": "workspace:*",
+    "@wssp/queue": "workspace:*",
+    "@wssp/sandbox-contracts": "workspace:*",
+    "@wssp/template-recipe": "workspace:*",
+    "rate-limiter-flexible": "catalog:",
+    "web-push": "^3.6.7",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/web-push": "^3.6.4",
+    "better-auth": "catalog:",
+    "hono": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:",
+    "vitest-mock-extended": "catalog:"
+  }
+}

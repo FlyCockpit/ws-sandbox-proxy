@@ -1,0 +1,3494 @@
+{
+  "nftables": [
+    {
+      "metainfo": { "version": "1.0.9", "release_name": "Old Doc Yak #3", "json_schema_version": 1 }
+    },
+    { "table": { "family": "ip", "name": "filter", "handle": 1 } },
+    { "chain": { "family": "ip", "table": "filter", "name": "NETBIRD-RT-FWD-IN", "handle": 1 } },
+    { "chain": { "family": "ip", "table": "filter", "name": "NETBIRD-RT-FWD-OUT", "handle": 2 } },
+    { "chain": { "family": "ip", "table": "filter", "name": "NETBIRD-ACL-INPUT", "handle": 5 } },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "filter",
+        "name": "INPUT",
+        "handle": 6,
+        "type": "filter",
+        "hook": "input",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "filter",
+        "name": "FORWARD",
+        "handle": 10,
+        "type": "filter",
+        "hook": "forward",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "NETBIRD-RT-FWD-IN",
+        "handle": 3,
+        "expr": [
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "NETBIRD-RT-FWD-OUT",
+        "handle": 4,
+        "expr": [
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "NETBIRD-ACL-INPUT",
+        "handle": 15,
+        "expr": [
+          { "xt": { "type": "match", "name": "set" } },
+          { "counter": { "packets": 26, "bytes": 1560 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "NETBIRD-ACL-INPUT",
+        "handle": 16,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "tcp"
+            }
+          },
+          { "xt": { "type": "match", "name": "set" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 22
+            }
+          },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "NETBIRD-ACL-INPUT",
+        "handle": 17,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "tcp"
+            }
+          },
+          { "xt": { "type": "match", "name": "set" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 22022
+            }
+          },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "INPUT",
+        "handle": 9,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 327, "bytes": 48535 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "INPUT",
+        "handle": 8,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "counter": { "packets": 107, "bytes": 52995 } },
+          { "jump": { "target": "NETBIRD-ACL-INPUT" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "INPUT",
+        "handle": 7,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "counter": { "packets": 81, "bytes": 51435 } },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "FORWARD",
+        "handle": 13,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "jump": { "target": "NETBIRD-RT-FWD-IN" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "FORWARD",
+        "handle": 14,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "mark" } }, "right": 113952 } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "FORWARD",
+        "handle": 12,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wt0" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "jump": { "target": "NETBIRD-RT-FWD-OUT" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "filter",
+        "chain": "FORWARD",
+        "handle": 11,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "drop": null }
+        ]
+      }
+    },
+    { "table": { "family": "ip", "name": "mangle", "handle": 2 } },
+    { "chain": { "family": "ip", "table": "mangle", "name": "NETBIRD-RT-PRE", "handle": 1 } },
+    { "chain": { "family": "ip", "table": "mangle", "name": "NETBIRD-RT-MSSCLAMP", "handle": 2 } },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "mangle",
+        "name": "PREROUTING",
+        "handle": 3,
+        "type": "filter",
+        "hook": "prerouting",
+        "prio": -150,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "mangle",
+        "name": "FORWARD",
+        "handle": 5,
+        "type": "filter",
+        "hook": "forward",
+        "prio": -150,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "mangle",
+        "name": "POSTROUTING",
+        "handle": 9,
+        "type": "filter",
+        "hook": "postrouting",
+        "prio": -150,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "NETBIRD-RT-PRE",
+        "handle": 13,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "set" } },
+          { "xt": { "type": "match", "name": "addrtype" } },
+          { "counter": { "packets": 353, "bytes": 50095 } },
+          { "xt": { "type": "target", "name": "MARK" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "NETBIRD-RT-PRE",
+        "handle": 14,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "tcp"
+            }
+          },
+          { "xt": { "type": "match", "name": "set" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 22
+            }
+          },
+          { "xt": { "type": "match", "name": "addrtype" } },
+          { "counter": { "packets": 353, "bytes": 50095 } },
+          { "xt": { "type": "target", "name": "MARK" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "NETBIRD-RT-PRE",
+        "handle": 15,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "tcp"
+            }
+          },
+          { "xt": { "type": "match", "name": "set" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 22022
+            }
+          },
+          { "xt": { "type": "match", "name": "addrtype" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "xt": { "type": "target", "name": "MARK" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "NETBIRD-RT-MSSCLAMP",
+        "handle": 7,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wt0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": {
+                "&": [{ "payload": { "protocol": "tcp", "field": "flags" } }, ["syn", "rst"]]
+              },
+              "right": "syn"
+            }
+          },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "xt": { "type": "target", "name": "TCPMSS" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "PREROUTING",
+        "handle": 4,
+        "expr": [
+          { "counter": { "packets": 420026287, "bytes": 235573715047 } },
+          { "jump": { "target": "NETBIRD-RT-PRE" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "PREROUTING",
+        "handle": 8,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 107, "bytes": 52995 } },
+          { "xt": { "type": "target", "name": "CONNMARK" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "FORWARD",
+        "handle": 6,
+        "expr": [
+          { "counter": { "packets": 387982, "bytes": 1614711174 } },
+          { "jump": { "target": "NETBIRD-RT-MSSCLAMP" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "FORWARD",
+        "handle": 11,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "FORWARD",
+        "handle": 12,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "match": { "op": "!=", "left": { "meta": { "key": "mark" } }, "right": 113952 } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "mangle",
+        "chain": "POSTROUTING",
+        "handle": 10,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wt0" } },
+          { "xt": { "type": "match", "name": "conntrack" } },
+          { "counter": { "packets": 293, "bytes": 108110 } },
+          { "xt": { "type": "target", "name": "CONNMARK" } }
+        ]
+      }
+    },
+    { "table": { "family": "ip", "name": "nat", "handle": 3 } },
+    { "chain": { "family": "ip", "table": "nat", "name": "NETBIRD-RT-NAT", "handle": 1 } },
+    { "chain": { "family": "ip", "table": "nat", "name": "NETBIRD-RT-RDR", "handle": 2 } },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "nat",
+        "name": "POSTROUTING",
+        "handle": 5,
+        "type": "nat",
+        "hook": "postrouting",
+        "prio": 100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "ip",
+        "table": "nat",
+        "name": "PREROUTING",
+        "handle": 7,
+        "type": "nat",
+        "hook": "prerouting",
+        "prio": -100,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "nat",
+        "chain": "NETBIRD-RT-NAT",
+        "handle": 3,
+        "expr": [
+          { "match": { "op": "!=", "left": { "meta": { "key": "oifname" } }, "right": "lo" } },
+          { "match": { "op": "==", "left": { "meta": { "key": "mark" } }, "right": 113953 } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "xt": { "type": "target", "name": "MASQUERADE" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "nat",
+        "chain": "NETBIRD-RT-NAT",
+        "handle": 4,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wt0" } },
+          { "match": { "op": "==", "left": { "meta": { "key": "mark" } }, "right": 113954 } },
+          { "counter": { "packets": 0, "bytes": 0 } },
+          { "xt": { "type": "target", "name": "MASQUERADE" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "nat",
+        "chain": "NETBIRD-RT-RDR",
+        "handle": 9,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "100.64.0.10"
+            }
+          },
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wt0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 22
+            }
+          },
+          { "xt": { "type": "match", "name": "addrtype" } },
+          { "counter": { "packets": 26, "bytes": 1560 } },
+          { "xt": { "type": "target", "name": "DNAT" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "nat",
+        "chain": "POSTROUTING",
+        "handle": 6,
+        "expr": [
+          { "counter": { "packets": 733809, "bytes": 49367036 } },
+          { "jump": { "target": "NETBIRD-RT-NAT" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "ip",
+        "table": "nat",
+        "chain": "PREROUTING",
+        "handle": 8,
+        "expr": [
+          { "counter": { "packets": 645810, "bytes": 106925101 } },
+          { "jump": { "target": "NETBIRD-RT-RDR" } }
+        ]
+      }
+    },
+    { "table": { "family": "inet", "name": "incus", "handle": 7 } },
+    {
+      "set": {
+        "family": "inet",
+        "name": "bridges",
+        "table": "incus",
+        "type": "ifname",
+        "handle": 125,
+        "elem": ["wsn-gq0", "wsn-gq1", "incusbr0"]
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "pstrt.wsn-gq1",
+        "handle": 5546841,
+        "type": "nat",
+        "hook": "postrouting",
+        "prio": 100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "pstrt.incusbr0",
+        "handle": 5546844,
+        "type": "nat",
+        "hook": "postrouting",
+        "prio": 100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwd.wsn-gq1",
+        "handle": 5546849,
+        "type": "filter",
+        "hook": "forward",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwd.incusbr0",
+        "handle": 5546852,
+        "type": "filter",
+        "hook": "forward",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "in.wsn-gq1",
+        "handle": 5546857,
+        "type": "filter",
+        "hook": "input",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "out.wsn-gq1",
+        "handle": 5546858,
+        "type": "filter",
+        "hook": "output",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "in.incusbr0",
+        "handle": 5546871,
+        "type": "filter",
+        "hook": "input",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "out.incusbr0",
+        "handle": 5546872,
+        "type": "filter",
+        "hook": "output",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    { "chain": { "family": "inet", "table": "incus", "name": "acl.wsn-gq0", "handle": 5546891 } },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "aclin.wsn-gq0",
+        "handle": 5546892,
+        "type": "filter",
+        "hook": "input",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "aclout.wsn-gq0",
+        "handle": 5546893,
+        "type": "filter",
+        "hook": "output",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "aclfwd.wsn-gq0",
+        "handle": 5546894,
+        "type": "filter",
+        "hook": "forward",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "pstrt.wsn-gq0",
+        "handle": 5546913,
+        "type": "nat",
+        "hook": "postrouting",
+        "prio": 100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwd.wsn-gq0",
+        "handle": 5546916,
+        "type": "filter",
+        "hook": "forward",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "in.wsn-gq0",
+        "handle": 5546919,
+        "type": "filter",
+        "hook": "input",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "out.wsn-gq0",
+        "handle": 5546920,
+        "type": "filter",
+        "hook": "output",
+        "prio": 0,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwdprert.wsn-gq0",
+        "handle": 5546960,
+        "type": "nat",
+        "hook": "prerouting",
+        "prio": -100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwdout.wsn-gq0",
+        "handle": 5546961,
+        "type": "nat",
+        "hook": "output",
+        "prio": -100,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "inet",
+        "table": "incus",
+        "name": "fwdpstrt.wsn-gq0",
+        "handle": 5546962,
+        "type": "nat",
+        "hook": "postrouting",
+        "prio": 100,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.wsn-gq1",
+        "handle": 5546842,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.250.78.0", "len": 24 } }
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "@bridges" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.wsn-gq1",
+        "handle": 5546843,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.250.78.0", "len": 24 } }
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": { "prefix": { "addr": "10.250.78.0", "len": 24 } }
+            }
+          },
+          { "masquerade": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.incusbr0",
+        "handle": 5546845,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.71.136.0", "len": 24 } }
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "@bridges" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.incusbr0",
+        "handle": 5546846,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.71.136.0", "len": 24 } }
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": { "prefix": { "addr": "10.71.136.0", "len": 24 } }
+            }
+          },
+          { "masquerade": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.incusbr0",
+        "handle": 5546847,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip6", "field": "saddr" } },
+              "right": { "prefix": { "addr": "fd00:0:0:1::", "len": 64 } }
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "@bridges" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.incusbr0",
+        "handle": 5546848,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip6", "field": "saddr" } },
+              "right": { "prefix": { "addr": "fd00:0:0:1::", "len": 64 } }
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip6", "field": "daddr" } },
+              "right": { "prefix": { "addr": "fd00:0:0:1::", "len": 64 } }
+            }
+          },
+          { "masquerade": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.wsn-gq1",
+        "handle": 5546850,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.wsn-gq1",
+        "handle": 5546851,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.incusbr0",
+        "handle": 5546853,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.incusbr0",
+        "handle": 5546854,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.incusbr0",
+        "handle": 5546855,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip6", "field": "version" } },
+              "right": 6
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.incusbr0",
+        "handle": 5546856,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip6", "field": "version" } },
+              "right": 6
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq1",
+        "handle": 5546859,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq1",
+        "handle": 5546860,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq1",
+        "handle": 5546862,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq1",
+        "handle": 5546863,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq1",
+        "handle": 5546864,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq1",
+        "handle": 5546865,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq1",
+        "handle": 5546866,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq1",
+        "handle": 5546868,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq1",
+        "handle": 5546869,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq1",
+        "handle": 5546870,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq1" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546873,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546874,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546876,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546877,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546878,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546880,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": {
+                "set": [
+                  "destination-unreachable",
+                  "packet-too-big",
+                  "time-exceeded",
+                  "parameter-problem",
+                  "nd-router-solicit",
+                  "nd-neighbor-solicit",
+                  "nd-neighbor-advert",
+                  "mld2-listener-report"
+                ]
+              }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.incusbr0",
+        "handle": 5546881,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 547
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546882,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546883,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546885,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546886,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546887,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546889,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": {
+                "set": [
+                  "destination-unreachable",
+                  "packet-too-big",
+                  "time-exceeded",
+                  "parameter-problem",
+                  "echo-request",
+                  "nd-router-advert",
+                  "nd-neighbor-solicit",
+                  "nd-neighbor-advert",
+                  "mld2-listener-report"
+                ]
+              }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.incusbr0",
+        "handle": 5546890,
+        "expr": [
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "incusbr0" }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 547
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546986,
+        "expr": [
+          {
+            "match": {
+              "op": "in",
+              "left": { "ct": { "key": "state" } },
+              "right": ["established", "related"]
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546989,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": {
+                "set": [
+                  { "range": ["1.0.0.0", "9.255.255.255"] },
+                  { "range": ["11.0.0.0", "100.63.255.255"] },
+                  { "range": ["100.128.0.0", "126.255.255.255"] },
+                  { "range": ["128.0.0.0", "168.63.129.15"] },
+                  { "range": ["168.63.129.17", "169.253.255.255"] },
+                  { "range": ["169.255.0.0", "172.15.255.255"] },
+                  { "range": ["172.32.0.0", "191.255.255.255"] },
+                  { "prefix": { "addr": "192.0.1.0", "len": 24 } },
+                  { "range": ["192.0.3.0", "192.88.98.255"] },
+                  { "range": ["192.88.100.0", "192.167.255.255"] },
+                  { "range": ["192.169.0.0", "198.17.255.255"] },
+                  { "range": ["198.20.0.0", "198.51.99.255"] },
+                  { "range": ["198.51.101.0", "203.0.112.255"] },
+                  { "range": ["203.0.114.0", "223.255.255.255"] }
+                ]
+              }
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": { "set": [53, 853] }
+            }
+          },
+          { "reject": { "type": "icmp", "expr": "port-unreachable" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546992,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": {
+                "set": [
+                  { "range": ["1.0.0.0", "9.255.255.255"] },
+                  { "range": ["11.0.0.0", "100.63.255.255"] },
+                  { "range": ["100.128.0.0", "126.255.255.255"] },
+                  { "range": ["128.0.0.0", "168.63.129.15"] },
+                  { "range": ["168.63.129.17", "169.253.255.255"] },
+                  { "range": ["169.255.0.0", "172.15.255.255"] },
+                  { "range": ["172.32.0.0", "191.255.255.255"] },
+                  { "prefix": { "addr": "192.0.1.0", "len": 24 } },
+                  { "range": ["192.0.3.0", "192.88.98.255"] },
+                  { "range": ["192.88.100.0", "192.167.255.255"] },
+                  { "range": ["192.169.0.0", "198.17.255.255"] },
+                  { "range": ["198.20.0.0", "198.51.99.255"] },
+                  { "range": ["198.51.101.0", "203.0.112.255"] },
+                  { "range": ["203.0.114.0", "223.255.255.255"] }
+                ]
+              }
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": { "set": [53, 853] }
+            }
+          },
+          { "reject": { "type": "icmp", "expr": "port-unreachable" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546994,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": {
+                "set": [
+                  { "range": ["1.0.0.0", "9.255.255.255"] },
+                  { "range": ["11.0.0.0", "100.63.255.255"] },
+                  { "range": ["100.128.0.0", "126.255.255.255"] },
+                  { "range": ["128.0.0.0", "168.63.129.15"] },
+                  { "range": ["168.63.129.17", "169.253.255.255"] },
+                  { "range": ["169.255.0.0", "172.15.255.255"] },
+                  { "range": ["172.32.0.0", "191.255.255.255"] },
+                  { "prefix": { "addr": "192.0.1.0", "len": 24 } },
+                  { "range": ["192.0.3.0", "192.88.98.255"] },
+                  { "range": ["192.88.100.0", "192.167.255.255"] },
+                  { "range": ["192.169.0.0", "198.17.255.255"] },
+                  { "range": ["198.20.0.0", "198.51.99.255"] },
+                  { "range": ["198.51.101.0", "203.0.112.255"] },
+                  { "range": ["203.0.114.0", "223.255.255.255"] }
+                ]
+              }
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 25
+            }
+          },
+          { "reject": { "type": "icmp", "expr": "port-unreachable" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546995,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 67
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 68
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546996,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546997,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546998,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "255.255.255.255"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 68
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5546999,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "10.250.77.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5547000,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "10.250.77.1"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5547002,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": {
+                "set": [
+                  { "range": ["1.0.0.0", "9.255.255.255"] },
+                  { "range": ["11.0.0.0", "100.63.255.255"] },
+                  { "range": ["100.128.0.0", "126.255.255.255"] },
+                  { "range": ["128.0.0.0", "168.63.129.15"] },
+                  { "range": ["168.63.129.17", "169.253.255.255"] },
+                  { "range": ["169.255.0.0", "172.15.255.255"] },
+                  { "range": ["172.32.0.0", "191.255.255.255"] },
+                  { "prefix": { "addr": "192.0.1.0", "len": 24 } },
+                  { "range": ["192.0.3.0", "192.88.98.255"] },
+                  { "range": ["192.88.100.0", "192.167.255.255"] },
+                  { "range": ["192.169.0.0", "198.17.255.255"] },
+                  { "range": ["198.20.0.0", "198.51.99.255"] },
+                  { "range": ["198.51.101.0", "203.0.112.255"] },
+                  { "range": ["203.0.114.0", "223.255.255.255"] }
+                ]
+              }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5547003,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "acl.wsn-gq0",
+        "handle": 5547004,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546895,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546896,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546897,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546898,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 547
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546900,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546902,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": {
+                "set": [
+                  "destination-unreachable",
+                  "packet-too-big",
+                  "time-exceeded",
+                  "parameter-problem",
+                  "nd-router-solicit",
+                  "nd-neighbor-solicit",
+                  "nd-neighbor-advert",
+                  "mld2-listener-report"
+                ]
+              }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclin.wsn-gq0",
+        "handle": 5546903,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          { "jump": { "target": "acl.wsn-gq0" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclout.wsn-gq0",
+        "handle": 5546904,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclout.wsn-gq0",
+        "handle": 5546905,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 547
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclout.wsn-gq0",
+        "handle": 5546907,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclout.wsn-gq0",
+        "handle": 5546909,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": {
+                "set": [
+                  "destination-unreachable",
+                  "packet-too-big",
+                  "time-exceeded",
+                  "parameter-problem",
+                  "echo-request",
+                  "nd-router-advert",
+                  "nd-neighbor-solicit",
+                  "nd-neighbor-advert",
+                  "mld2-listener-report"
+                ]
+              }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclout.wsn-gq0",
+        "handle": 5546910,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          { "jump": { "target": "acl.wsn-gq0" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclfwd.wsn-gq0",
+        "handle": 5546911,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          { "jump": { "target": "acl.wsn-gq0" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "aclfwd.wsn-gq0",
+        "handle": 5546912,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          { "jump": { "target": "acl.wsn-gq0" } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.wsn-gq0",
+        "handle": 5546914,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.250.77.0", "len": 24 } }
+            }
+          },
+          {
+            "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "@bridges" }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "pstrt.wsn-gq0",
+        "handle": 5546915,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": { "prefix": { "addr": "10.250.77.0", "len": 24 } }
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": { "prefix": { "addr": "10.250.77.0", "len": 24 } }
+            }
+          },
+          { "masquerade": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.wsn-gq0",
+        "handle": 5546917,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwd.wsn-gq0",
+        "handle": 5546918,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "version" } },
+              "right": 4
+            }
+          },
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq0",
+        "handle": 5546921,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq0",
+        "handle": 5546922,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq0",
+        "handle": 5546924,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq0",
+        "handle": 5546925,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "in.wsn-gq0",
+        "handle": 5546926,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "iifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq0",
+        "handle": 5546927,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq0",
+        "handle": 5546928,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 53
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq0",
+        "handle": 5546930,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmp", "field": "type" } },
+              "right": { "set": ["destination-unreachable", "time-exceeded", "parameter-problem"] }
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq0",
+        "handle": 5546931,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "sport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "out.wsn-gq0",
+        "handle": 5546932,
+        "expr": [
+          { "match": { "op": "==", "left": { "meta": { "key": "oifname" } }, "right": "wsn-gq0" } },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "protocol" } },
+              "right": "udp"
+            }
+          },
+          {
+            "mangle": {
+              "key": { "payload": { "protocol": "udp", "field": "checksum" } },
+              "value": 0
+            }
+          }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwdprert.wsn-gq0",
+        "handle": 5546963,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "192.0.2.88"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 18080
+            }
+          },
+          { "dnat": { "family": "ip", "addr": "10.250.77.2", "port": 8080 } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwdout.wsn-gq0",
+        "handle": 5546964,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "192.0.2.88"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 18080
+            }
+          },
+          { "dnat": { "family": "ip", "addr": "10.250.77.2", "port": 8080 } }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "inet",
+        "table": "incus",
+        "chain": "fwdpstrt.wsn-gq0",
+        "handle": 5546965,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.2"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "10.250.77.2"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "tcp", "field": "dport" } },
+              "right": 8080
+            }
+          },
+          { "masquerade": null }
+        ]
+      }
+    },
+    { "table": { "family": "bridge", "name": "incus", "handle": 11 } },
+    {
+      "chain": {
+        "family": "bridge",
+        "table": "incus",
+        "name": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 701,
+        "type": "filter",
+        "hook": "input",
+        "prio": -200,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "bridge",
+        "table": "incus",
+        "name": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 702,
+        "type": "filter",
+        "hook": "forward",
+        "prio": -200,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "bridge",
+        "table": "incus",
+        "name": "in.wssp-gq-a.eth0",
+        "handle": 4381,
+        "type": "filter",
+        "hook": "input",
+        "prio": -200,
+        "policy": "accept"
+      }
+    },
+    {
+      "chain": {
+        "family": "bridge",
+        "table": "incus",
+        "name": "fwd.wssp-gq-a.eth0",
+        "handle": 4382,
+        "type": "filter",
+        "hook": "forward",
+        "prio": -200,
+        "policy": "accept"
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 703,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "saddr" } },
+              "right": "02:00:00:00:00:01"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 704,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ether" } },
+              "right": "02:00:00:00:00:01"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 705,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": "nd-neighbor-advert"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "base": "nh", "offset": 528, "len": 48 } },
+              "right": 18032051326489
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 706,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "0.0.0.0"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "255.255.255.255"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 707,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ip" } },
+              "right": "10.250.42.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 708,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.42.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 709,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": "ip6"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 711,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": { "set": ["ip", "arp", "ip6"] }
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 712,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "saddr" } },
+              "right": "02:00:00:00:00:01"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 713,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ether" } },
+              "right": "02:00:00:00:00:01"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 714,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": "nd-neighbor-advert"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "base": "nh", "offset": 528, "len": 48 } },
+              "right": 18032051326489
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 715,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "0.0.0.0"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "255.255.255.255"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 716,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ip" } },
+              "right": "10.250.42.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 717,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.42.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 718,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": "ip6"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-fixture_wssp-sbx-00000000-0000-4000-8000-000000000001.eth0",
+        "handle": 720,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tap517db40c"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": { "set": ["ip", "arp", "ip6"] }
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4383,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "saddr" } },
+              "right": "02:00:00:00:00:02"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4384,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ether" } },
+              "right": "02:00:00:00:00:02"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4385,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": "nd-neighbor-advert"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "base": "nh", "offset": 528, "len": 48 } },
+              "right": 18032054986943
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4386,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "0.0.0.0"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "255.255.255.255"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4387,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ip" } },
+              "right": "10.250.77.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4388,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4389,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": "ip6"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "in.wssp-gq-a.eth0",
+        "handle": 4391,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": { "set": ["ip", "arp", "ip6"] }
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4392,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "saddr" } },
+              "right": "02:00:00:00:00:02"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4393,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ether" } },
+              "right": "02:00:00:00:00:02"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4394,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "icmpv6", "field": "type" } },
+              "right": "nd-neighbor-advert"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "base": "nh", "offset": 528, "len": 48 } },
+              "right": 18032054986943
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4395,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "0.0.0.0"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ip", "field": "daddr" } },
+              "right": "255.255.255.255"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "udp", "field": "dport" } },
+              "right": 67
+            }
+          },
+          { "accept": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4396,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "arp", "field": "saddr ip" } },
+              "right": "10.250.77.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4397,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ip", "field": "saddr" } },
+              "right": "10.250.77.2"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4398,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "==",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": "ip6"
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    },
+    {
+      "rule": {
+        "family": "bridge",
+        "table": "incus",
+        "chain": "fwd.wssp-gq-a.eth0",
+        "handle": 4400,
+        "expr": [
+          {
+            "match": {
+              "op": "==",
+              "left": { "meta": { "key": "iifname" } },
+              "right": "tape0dcb9bb"
+            }
+          },
+          {
+            "match": {
+              "op": "!=",
+              "left": { "payload": { "protocol": "ether", "field": "type" } },
+              "right": { "set": ["ip", "arp", "ip6"] }
+            }
+          },
+          { "drop": null }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,278 @@
+{
+  "description": "C57 lifecycle fault matrix, shared by the TypeScript conformance suite (apps/server/src/sandbox-relay/lifecycle-conformance.pg.test.ts, which drives its host double from these rows) and the Rust daemon suite (apps/cli/src/sandbox_relay/lifecycle_conformance_tests.rs, which asserts the real daemon's restart receipts against them). Each cell is one loss at one boundary in one direction. `host.journal` is the durable phase the host reached before it died (null: never journaled; `delivered`: the result reached the server but the confirmation was lost); `host.effect` says whether the runtime effect happened. `receipt` is what the restarted host reports (null: nothing); `operation` is the server's terminal state; `effects` is how many runtime effects exist at the end, which an uncertain retry under the same key must never raise. `carry` rows (reconnect plan WP3) are relay outages, not deaths: one carried attempt (`phase`: `intent` never started, `effect` issued) and what ends it while the host is disconnected (`ending`: `reconnect`, its own timer, the sandbox lease, `carry_intent_window` or `max_carry`). `decision` is the daemon's per-entry carry rule (apps/cli/src/sandbox_relay/carry.rs asserts it): `keep` carries on, `revoke` settles by its journaled receipt, `stop` cancels the running command through the cancel proof path. `expect.operation` is the server's terminal state (`lease_behaviour`: unchanged lease expiry; `receipt`: whatever its journaled result was); `unprovenStop` is the state when the host cannot prove the stop.",
+  "cells": [
+    {
+      "id": "commit-request",
+      "boundary": "commit",
+      "direction": "request",
+      "host": null,
+      "expect": {
+        "sandbox.create": {
+          "receipt": null,
+          "operation": "succeeded",
+          "effects": 1
+        },
+        "command.run": {
+          "receipt": null,
+          "operation": "succeeded",
+          "effects": 1
+        }
+      }
+    },
+    {
+      "id": "commit-response",
+      "boundary": "commit",
+      "direction": "response",
+      "host": null,
+      "expect": {
+        "sandbox.create": {
+          "receipt": null,
+          "operation": "succeeded",
+          "effects": 1
+        },
+        "command.run": {
+          "receipt": null,
+          "operation": "succeeded",
+          "effects": 1
+        }
+      }
+    },
+    {
+      "id": "dispatch-request",
+      "boundary": "dispatch",
+      "direction": "request",
+      "host": {
+        "journal": null,
+        "effect": false
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": null,
+          "operation": "failed",
+          "effects": 0,
+          "operationErrorCode": "host_effect_not_issued"
+        },
+        "command.run": {
+          "receipt": null,
+          "operation": "unknown_outcome",
+          "effects": 0
+        }
+      }
+    },
+    {
+      "id": "dispatch-response",
+      "boundary": "dispatch",
+      "direction": "response",
+      "host": {
+        "journal": "intent",
+        "effect": false
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": {
+            "state": "failed",
+            "errorCode": "host_effect_not_issued"
+          },
+          "operation": "failed",
+          "effects": 0
+        },
+        "command.run": {
+          "receipt": {
+            "state": "unknown_outcome",
+            "errorCode": "unknown_outcome"
+          },
+          "operation": "unknown_outcome",
+          "effects": 0
+        }
+      }
+    },
+    {
+      "id": "effect-request",
+      "boundary": "effect",
+      "direction": "request",
+      "host": {
+        "journal": "effect",
+        "effect": false
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": {
+            "state": "unknown_outcome",
+            "errorCode": "unknown_outcome"
+          },
+          "operation": "failed",
+          "effects": 0
+        },
+        "command.run": {
+          "receipt": {
+            "state": "unknown_outcome",
+            "errorCode": "unknown_outcome"
+          },
+          "operation": "unknown_outcome",
+          "effects": 0
+        }
+      }
+    },
+    {
+      "id": "effect-response",
+      "boundary": "effect",
+      "direction": "response",
+      "host": {
+        "journal": "effect",
+        "effect": true
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": {
+            "state": "succeeded",
+            "errorCode": null
+          },
+          "operation": "succeeded",
+          "effects": 1
+        },
+        "command.run": {
+          "receipt": {
+            "state": "unknown_outcome",
+            "errorCode": "unknown_outcome"
+          },
+          "operation": "unknown_outcome",
+          "effects": 1
+        }
+      }
+    },
+    {
+      "id": "ack-request",
+      "boundary": "ack",
+      "direction": "request",
+      "host": {
+        "journal": "result",
+        "effect": true
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": {
+            "state": "succeeded",
+            "errorCode": null
+          },
+          "operation": "succeeded",
+          "effects": 1
+        },
+        "command.run": {
+          "receipt": {
+            "state": "succeeded",
+            "errorCode": null
+          },
+          "operation": "succeeded",
+          "effects": 1
+        }
+      }
+    },
+    {
+      "id": "ack-response",
+      "boundary": "ack",
+      "direction": "response",
+      "host": {
+        "journal": "delivered",
+        "effect": true
+      },
+      "expect": {
+        "sandbox.create": {
+          "receipt": {
+            "state": "succeeded",
+            "errorCode": null
+          },
+          "operation": "succeeded",
+          "effects": 1
+        },
+        "command.run": {
+          "receipt": {
+            "state": "succeeded",
+            "errorCode": null
+          },
+          "operation": "succeeded",
+          "effects": 1
+        }
+      }
+    }
+  ],
+  "carry": [
+    {
+      "id": "carry-command-outlives-the-window",
+      "kind": "command.run",
+      "phase": "effect",
+      "ending": "reconnect",
+      "decision": "keep",
+      "expect": {
+        "operation": "succeeded",
+        "operationErrorCode": null
+      }
+    },
+    {
+      "id": "carry-command-own-timer",
+      "kind": "command.run",
+      "phase": "effect",
+      "ending": "own_timer",
+      "decision": "keep",
+      "expect": {
+        "operation": "failed",
+        "operationErrorCode": "timeout"
+      }
+    },
+    {
+      "id": "carry-command-lease",
+      "kind": "command.run",
+      "phase": "effect",
+      "ending": "lease",
+      "decision": "keep",
+      "expect": {
+        "operation": "lease_behaviour",
+        "operationErrorCode": null
+      }
+    },
+    {
+      "id": "carry-command-max-carry",
+      "kind": "command.run",
+      "phase": "effect",
+      "ending": "max_carry",
+      "decision": "stop",
+      "expect": {
+        "operation": "failed",
+        "operationErrorCode": "host_disconnect_expired",
+        "unprovenStop": "unknown_outcome"
+      }
+    },
+    {
+      "id": "carry-issued-read-max-carry",
+      "kind": "file.get",
+      "phase": "effect",
+      "ending": "max_carry",
+      "decision": "revoke",
+      "expect": {
+        "operation": "receipt",
+        "operationErrorCode": null
+      }
+    },
+    {
+      "id": "carry-intent-window",
+      "kind": "command.run",
+      "phase": "intent",
+      "ending": "intent_window",
+      "decision": "revoke",
+      "expect": {
+        "operation": "failed",
+        "operationErrorCode": "host_effect_not_issued"
+      }
+    },
+    {
+      "id": "carry-intent-lease-first",
+      "kind": "command.run",
+      "phase": "intent",
+      "ending": "lease",
+      "decision": "revoke",
+      "expect": {
+        "operation": "failed",
+        "operationErrorCode": "host_effect_not_issued"
+      }
+    }
+  ]
+}

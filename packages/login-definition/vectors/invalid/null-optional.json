@@ -1,0 +1,19 @@
+{
+  "description": "optional fields are omitted, never null",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    },
+    "description": null
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "description": "excludes must not overlap",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": ["a"],
+        "exclude": ["a/b", "a/b/c"]
+      }
+    }
+  }
+}

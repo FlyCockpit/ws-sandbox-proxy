@@ -1,0 +1,183 @@
+{
+  "cases": [
+    {
+      "file": "codex-auth.bin",
+      "definition": "codex-cli.json",
+      "expect": "ok",
+      "decoded": {
+        "files": [
+          {
+            "kind": "file",
+            "path": ".codex/auth.json",
+            "mode": 384,
+            "dataHex": "7b22746f6b656e223a22746573742d6f6e6c79227d0a"
+          }
+        ],
+        "env": []
+      }
+    },
+    {
+      "file": "tool-mixed.bin",
+      "definition": "files-exclude.json",
+      "expect": "ok",
+      "decoded": {
+        "files": [
+          {
+            "kind": "dir",
+            "path": ".config/tool",
+            "mode": 448
+          },
+          {
+            "kind": "dir",
+            "path": ".config/tool/empty",
+            "mode": 448
+          },
+          {
+            "kind": "file",
+            "path": ".config/tool/run.sh",
+            "mode": 448,
+            "dataHex": "23212f62696e2f73680a"
+          },
+          {
+            "kind": "file",
+            "path": ".local/share/tool/session",
+            "mode": 384,
+            "dataHex": "00ff01"
+          },
+          {
+            "kind": "file",
+            "path": "dir with \"quotes\" and spaces/ünïcödé/x",
+            "mode": 384,
+            "dataHex": ""
+          }
+        ],
+        "env": [
+          {
+            "name": "TOOL_PROFILE",
+            "valueHex": "776f726b"
+          }
+        ]
+      }
+    },
+    {
+      "file": "empty.bin",
+      "definition": "codex-cli.json",
+      "expect": "truncated"
+    },
+    {
+      "file": "truncated-header.bin",
+      "definition": "codex-cli.json",
+      "expect": "truncated"
+    },
+    {
+      "file": "truncated-data.bin",
+      "definition": "codex-cli.json",
+      "expect": "truncated"
+    },
+    {
+      "file": "trailing-byte.bin",
+      "definition": "codex-cli.json",
+      "expect": "trailing_bytes"
+    },
+    {
+      "file": "bad-magic.bin",
+      "definition": "codex-cli.json",
+      "expect": "bad_magic"
+    },
+    {
+      "file": "version-2.bin",
+      "definition": "codex-cli.json",
+      "expect": "unsupported_version"
+    },
+    {
+      "file": "digest-mismatch.bin",
+      "definition": "codex-cli.json",
+      "expect": "digest_mismatch"
+    },
+    {
+      "file": "bad-kind.bin",
+      "definition": "codex-cli.json",
+      "expect": "bad_kind"
+    },
+    {
+      "file": "mode-0644.bin",
+      "definition": "codex-cli.json",
+      "expect": "bad_mode"
+    },
+    {
+      "file": "dir-mode-0755.bin",
+      "definition": "files-exclude.json",
+      "expect": "bad_mode"
+    },
+    {
+      "file": "undeclared-path.bin",
+      "definition": "codex-cli.json",
+      "expect": "undeclared_path"
+    },
+    {
+      "file": "excluded-path.bin",
+      "definition": "files-exclude.json",
+      "expect": "excluded_path"
+    },
+    {
+      "file": "under-file.bin",
+      "definition": "files-exclude.json",
+      "expect": "under_file"
+    },
+    {
+      "file": "unsorted.bin",
+      "definition": "files-exclude.json",
+      "expect": "unsorted_path"
+    },
+    {
+      "file": "duplicate.bin",
+      "definition": "files-exclude.json",
+      "expect": "duplicate_path"
+    },
+    {
+      "file": "dir-with-data.bin",
+      "definition": "files-exclude.json",
+      "expect": "dir_has_data"
+    },
+    {
+      "file": "dot-dot.bin",
+      "definition": "files-exclude.json",
+      "expect": "invalid_path"
+    },
+    {
+      "file": "absolute.bin",
+      "definition": "files-exclude.json",
+      "expect": "invalid_path"
+    },
+    {
+      "file": "empty-path.bin",
+      "definition": "files-exclude.json",
+      "expect": "invalid_path"
+    },
+    {
+      "file": "non-utf8-path.bin",
+      "definition": "files-exclude.json",
+      "expect": "invalid_path"
+    },
+    {
+      "file": "data-over-max-bytes.bin",
+      "definition": "codex-cli.json",
+      "expect": "data_total"
+    },
+    {
+      "file": "undeclared-env.bin",
+      "definition": "files-exclude.json",
+      "expect": "undeclared_env"
+    },
+    {
+      "file": "env-nul.bin",
+      "definition": "files-exclude.json",
+      "expect": "env_value_nul"
+    },
+    {
+      "file": "env-duplicate.bin",
+      "definition": "files-exclude.json",
+      "expect": "duplicate_env"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "description": "a definition is a JSON object",
+  "expect": "definition.invalid",
+  "document": [
+    {
+      "schemaVersion": 1,
+      "id": "base",
+      "displayName": "Base",
+      "login": {
+        "command": "true",
+        "method": "paste"
+      },
+      "credentials": {
+        "files": {
+          "required": [".tool/auth.json"]
+        }
+      }
+    }
+  ]
+}

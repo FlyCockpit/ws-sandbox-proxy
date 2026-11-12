@@ -1,0 +1,17 @@
+{
+  "description": "schemaVersion is required",
+  "expect": "definition.invalid",
+  "document": {
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "_comment": "The hello requires command retirement support. An exact unknown command receipt requests host proof before retirement; the server row remains unknown. Retirement never accompanies a cleanup generation.",
+  "capability": "commandRetire",
+  "validOffers": [true],
+  "rejectedOffers": [false, "true", 1, null],
+  "helloOkCapabilities": {
+    "protocolVersion": "1.0",
+    "binaryFrames": true,
+    "cancellation": true,
+    "maxBinaryChunkBytes": 1048576,
+    "streamWindowChunks": 4,
+    "commandRetire": true,
+    "outputChunkBytes": 65536,
+    "censusEntryResults": true,
+    "pendingReceipts": true,
+    "expiryStatusResults": true,
+    "observationFence": true
+  },
+  "retireConfirmation": {
+    "type": "receipt.confirmed",
+    "sandboxOwnerId": "user-1",
+    "operationId": "op-1",
+    "sandboxId": "sbx-1",
+    "generation": 2,
+    "attempt": 1,
+    "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "idempotencyKey": "op-1",
+    "kind": "command.run",
+    "retireCommand": true
+  },
+  "rejectedRetireValues": ["true", 1, null]
+}

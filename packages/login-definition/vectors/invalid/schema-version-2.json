@@ -1,0 +1,18 @@
+{
+  "description": "schemaVersion above 1 is a typed refusal",
+  "expect": "definition.schema_version_unsupported",
+  "document": {
+    "schemaVersion": 2,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "description": "POSIX names start with a letter or underscore",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      },
+      "env": [
+        {
+          "name": "1A",
+          "required": true
+        }
+      ]
+    }
+  }
+}

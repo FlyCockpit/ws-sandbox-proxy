@@ -1,0 +1,2933 @@
+[
+  {
+    "name": "sized root",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32
+    }
+  },
+  {
+    "name": "empty overrides preserve omission",
+    "kind": "overrides",
+    "input": {},
+    "valid": true,
+    "expected": {}
+  },
+  {
+    "name": "disk-only override",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": 64
+    },
+    "valid": true,
+    "expected": {
+      "diskGiB": 64
+    }
+  },
+  {
+    "name": "defaults",
+    "kind": "revision",
+    "input": {},
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    }
+  },
+  {
+    "name": "capacity",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": 8
+    },
+    "valid": true,
+    "expected": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": 8
+    }
+  },
+  {
+    "name": "implicit pool",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": true,
+    "expected": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    }
+  },
+  {
+    "name": "hello 1.0",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": true,
+    "expected": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "pinned allocation",
+    "kind": "allocation",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32,
+      "storagePoolName": "default",
+      "storageMarker": "storage_1",
+      "chargedMemoryMiB": 2304,
+      "chargedVcpu": 2,
+      "rootChargeGiB": 33
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32,
+      "storagePoolName": "default",
+      "storageMarker": "storage_1",
+      "chargedMemoryMiB": 2304,
+      "chargedVcpu": 2,
+      "rootChargeGiB": 33
+    }
+  },
+  {
+    "name": "invalid diskGiB None",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB None",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid diskGiB 0",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB 0",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid diskGiB -1",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": -1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB -1",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": -1
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid diskGiB 2049",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 2049
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB 2049",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": 2049
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid diskGiB 1.5",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 1.5
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB 1.5",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": 1.5
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid diskGiB 9007199254740992",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 9007199254740992
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override diskGiB 9007199254740992",
+    "kind": "overrides",
+    "input": {
+      "diskGiB": 9007199254740992
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 0",
+    "kind": "size",
+    "input": {
+      "cpuCount": 0,
+      "memoryMiB": 2048,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override cpuCount 0",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid cpuCount 33",
+    "kind": "size",
+    "input": {
+      "cpuCount": 33,
+      "memoryMiB": 2048,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override cpuCount 33",
+    "kind": "overrides",
+    "input": {
+      "cpuCount": 33
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 511",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 511,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override memoryMiB 511",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": 511
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 513",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 513,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override memoryMiB 513",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": 513
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid memoryMiB 65792",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 65792,
+      "diskGiB": 32
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid override memoryMiB 65792",
+    "kind": "overrides",
+    "input": {
+      "memoryMiB": 65792
+    },
+    "valid": false
+  },
+  {
+    "name": "disk boundary 1",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 1
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 1
+    }
+  },
+  {
+    "name": "disk boundary 2048",
+    "kind": "size",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 2048
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 2048
+    }
+  },
+  {
+    "name": "invalid vcpu budget 0",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": 0
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid vcpu budget 8193",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": 8193
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid vcpu budget None",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": null
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid vcpu budget 1.5",
+    "kind": "capacity",
+    "input": {
+      "memoryBudgetMiB": 4096,
+      "maxCpuCount": 4,
+      "vcpuBudget": 1.5
+    },
+    "valid": false
+  },
+  {
+    "name": "zero healthy implicit cap",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 0,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 0,
+      "draining": false
+    },
+    "valid": true,
+    "expected": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 0,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 0,
+      "draining": false
+    }
+  },
+  {
+    "name": "invalid pool {'derivationActualBytes': 1}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 1,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'derivationTotalBytes': None}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": null,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'capacityGiB': 161}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 161,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'usedBytes': -1}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": -1,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'freeBytes': 1}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 1,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'health': 'missing'}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "missing",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid pool {'marker': '/source/path'}",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "/source/path",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "explicit pool",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": null,
+      "capacitySource": "explicit",
+      "derivationTotalBytes": null,
+      "derivationFreeBytes": null,
+      "derivationCommittedBytes": null,
+      "derivationActualBytes": null,
+      "derivationHeadroomBytes": null,
+      "implicitCeilingGiB": null,
+      "draining": false
+    },
+    "valid": true,
+    "expected": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": null,
+      "capacitySource": "explicit",
+      "derivationTotalBytes": null,
+      "derivationFreeBytes": null,
+      "derivationCommittedBytes": null,
+      "derivationActualBytes": null,
+      "derivationHeadroomBytes": null,
+      "implicitCeilingGiB": null,
+      "draining": false
+    }
+  },
+  {
+    "name": "zero explicit pool",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "reason": null,
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 0,
+      "totalBasedCapacityGiB": null,
+      "capacitySource": "explicit",
+      "derivationTotalBytes": null,
+      "derivationFreeBytes": null,
+      "derivationCommittedBytes": null,
+      "derivationActualBytes": null,
+      "derivationHeadroomBytes": null,
+      "implicitCeilingGiB": null,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "required nullable health reason",
+    "kind": "pool",
+    "input": {
+      "name": "default",
+      "marker": "storage_1",
+      "health": "healthy",
+      "totalBytes": 214748364800,
+      "usedBytes": 21474836480,
+      "freeBytes": 193273528320,
+      "capacityGiB": 160,
+      "totalBasedCapacityGiB": 160,
+      "capacitySource": "implicit",
+      "derivationTotalBytes": 214748364800,
+      "derivationFreeBytes": 193273528320,
+      "derivationCommittedBytes": 0,
+      "derivationActualBytes": 0,
+      "derivationHeadroomBytes": 10737418240,
+      "implicitCeilingGiB": 160,
+      "draining": false
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid hello protocolVersion",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "10.7",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid hello supportedProtocolVersions",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0", "10.7"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "invalid hello storagePools",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        },
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "removed maximum rejected",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0,
+        "maxSandboxes": 8
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "missing disk",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1,
+      "memoryMiB": 1024
+    },
+    "valid": false
+  },
+  {
+    "name": "old lower pinned weights valid after calibration",
+    "kind": "allocation",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32,
+      "storagePoolName": "default",
+      "storageMarker": "storage_1",
+      "chargedMemoryMiB": 2048,
+      "chargedVcpu": 2,
+      "rootChargeGiB": 32
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32,
+      "storagePoolName": "default",
+      "storageMarker": "storage_1",
+      "chargedMemoryMiB": 2048,
+      "chargedVcpu": 2,
+      "rootChargeGiB": 32
+    }
+  },
+  {
+    "name": "undercharged pinned allocation",
+    "kind": "allocation",
+    "input": {
+      "cpuCount": 2,
+      "memoryMiB": 2048,
+      "diskGiB": 32,
+      "storagePoolName": "default",
+      "storageMarker": "storage_1",
+      "chargedMemoryMiB": 1024,
+      "chargedVcpu": 2,
+      "rootChargeGiB": 33
+    },
+    "valid": false
+  },
+  {
+    "name": "integral JSON float disk",
+    "kind": "size",
+    "input": {
+      "cpuCount": 1.0,
+      "memoryMiB": 1024.0,
+      "diskGiB": 32.0
+    },
+    "valid": true,
+    "expected": {
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "diskGiB": 32
+    }
+  },
+  {
+    "name": "unicode label at code point bound",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": true,
+    "expected": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "unicode label over code point bound",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80\ud83e\udd80",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "CJK label at bound",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": true,
+    "expected": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c\u754c",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "optional daemon version rejects explicit null",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        },
+        "version": null
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "hostTerminal missing",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "hostTerminal null",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": null,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "hostTerminal wrong type",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": "false",
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "requireHostTerminalTotp missing",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "requireHostTerminalTotp null",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": null,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "requireHostTerminalTotp wrong type",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": "false",
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "policyRevision missing",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "policyRevision null",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": null,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "policyRevision wrong type",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": "false",
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "hello templateStartup",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "templateStartup": true,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": true,
+    "expected": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "templateStartup": true,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "templateStartup wrong type",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "templateStartup": "yes",
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "health-only inventory remains valid",
+    "kind": "inventory",
+    "input": {
+      "type": "inventory.update",
+      "id": "update-1",
+      "connectionEpoch": 1,
+      "observationSequence": 1,
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320
+        }
+      ]
+    },
+    "expected": {
+      "type": "inventory.update",
+      "id": "update-1",
+      "connectionEpoch": 1,
+      "observationSequence": 1,
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320
+        }
+      ]
+    },
+    "valid": true
+  },
+  {
+    "name": "inventory refuses policy hostTerminal",
+    "kind": "inventory",
+    "input": {
+      "type": "inventory.update",
+      "id": "update-1",
+      "connectionEpoch": 1,
+      "observationSequence": 1,
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320
+        }
+      ],
+      "hostTerminal": true
+    },
+    "valid": false
+  },
+  {
+    "name": "inventory refuses policy requireHostTerminalTotp",
+    "kind": "inventory",
+    "input": {
+      "type": "inventory.update",
+      "id": "update-1",
+      "connectionEpoch": 1,
+      "observationSequence": 1,
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320
+        }
+      ],
+      "requireHostTerminalTotp": false
+    },
+    "valid": false
+  },
+  {
+    "name": "inventory refuses policy policyRevision",
+    "kind": "inventory",
+    "input": {
+      "type": "inventory.update",
+      "id": "update-1",
+      "connectionEpoch": 1,
+      "observationSequence": 1,
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320
+        }
+      ],
+      "policyRevision": 1
+    },
+    "valid": false
+  }
+]

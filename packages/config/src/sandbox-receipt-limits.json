@@ -1,0 +1,32 @@
+{
+  "bodyHashBytes": 64,
+  "idempotencyKeyBytes": 256,
+  "identityBytes": 128,
+  "serverBytes": 2048,
+  "receiptBytes": 40960,
+  "resultBytes": 32768,
+  "errorBytes": 1000,
+  "kinds": [
+    "sandbox.create",
+    "sandbox.lease.renew",
+    "sandbox.kill",
+    "sandbox.reconnect",
+    "sandbox.stop",
+    "command.run",
+    "file.get",
+    "file.put",
+    "file.list",
+    "file.stat",
+    "file.mkdir",
+    "file.remove",
+    "file.move",
+    "process.list",
+    "process.signal",
+    "sandbox.probe",
+    "sandbox.capture",
+    "credential.attach",
+    "credential.free"
+  ],
+  "guestPathBytes": 256,
+  "guestIdMax": 65534
+}

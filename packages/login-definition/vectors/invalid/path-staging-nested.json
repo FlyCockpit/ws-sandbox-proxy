@@ -1,0 +1,18 @@
+{
+  "description": "credential staging filenames are reserved below the first segment",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": ["auth/.wssp-cred-0123456789abcdef"]
+      }
+    }
+  }
+}

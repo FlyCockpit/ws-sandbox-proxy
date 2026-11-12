@@ -1,0 +1,14 @@
+{
+  "type": "operation.dispatch",
+  "operationId": "op-script-fixture",
+  "sandboxId": "sbx-fixture-1",
+  "idempotencyKey": "key-script-fixture",
+  "kind": "command.run",
+  "generation": 1,
+  "attempt": 1,
+  "script": "set -e\nprintf '%s\\n' 'line1'\nprintf '%s\\n' \"quote'\\\"\"\nprintf '%s\\n' '\u4e16\u754c  '  \nprintf '%s\\n' '$(touch SHOULD_NOT_EXIST); `id`; \"quoted\"'\n# capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture capture   \n",
+  "timeoutMs": 120000,
+  "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "incusFingerprint": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "sandboxOwnerId": "user-1"
+}

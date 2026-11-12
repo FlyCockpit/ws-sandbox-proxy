@@ -1,0 +1,131 @@
+# Captured from a reference host, identifiers replaced with documentation ranges.
+# wssp egress guard -- hand-written r4 qualification ruleset.
+#
+# Source of truth: the guard ruleset in crates/sandbox-runtime/src/guard/ruleset.rs. This file is
+# the production shape with the reference host's test values filled in by hand:
+#   test bridges : wsn-gq0 (10.250.77.1/24, has the test VM)
+#                  wsn-gq1 (10.250.78.1/24, no VM; "another sandbox's gateway")
+#   uplink       : wlan0 (only interface carrying a default route)
+#   scope4       : every non-default, non-local route in every table on this
+#                  host at qualification time (ip -4 route show table all), plus the two
+#                  test bridges' /24s.
+#
+# Differences from production, all on purpose for qualification:
+#   * every drop carries `counter` and a `comment`, so the probe can tell
+#     which chain dropped a packet (pre vs input vs forward);
+#   * live_bridges elements are loaded WITHOUT a timeout (the real guard
+#     re-arms them with `timeout 30s` every resync). The dead-man step of the
+#     probe re-adds the element with `timeout 10s` to qualify the syntax and
+#     the expiry. The set itself carries `flags timeout`, as in production.
+#
+# Invariants (same as production): no `accept`, no `ct` expression. Every
+# chain has policy accept and contains only `return` and `drop`, so this
+# table can only narrow what Incus allows, never widen it.
+#
+# Idempotent: the first two statements make sure the table exists and then
+# delete it, and the definition below re-creates it. `nft -f` applies the
+# whole file as ONE transaction, so there is no window without the guard on
+# a reload, and a syntax error leaves the previous state untouched.
+
+table inet wssp_guard
+delete table inet wssp_guard
+
+table inet wssp_guard {
+	# SANDBOX_PROTECTED_V4: union of webhooks BLOCKED_V4 and HARD_DENIED
+	# (IPv4 part), incl. Azure wireserver 168.63.129.16/32.
+	set protected4 {
+		type ipv4_addr
+		flags interval
+		elements = { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8,
+			     168.63.129.16/32, 169.254.0.0/16, 172.16.0.0/12,
+			     192.0.0.0/24, 192.0.2.0/24, 192.88.99.0/24,
+			     192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24,
+			     203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4 }
+	}
+
+	# Every non-default route prefix in any routing table, any length.
+	# (On the reference host all of them are already inside protected4.)
+	set scope4 {
+		type ipv4_addr
+		flags interval
+		elements = { 10.71.136.0/24, 10.250.77.0/24, 10.250.78.0/24,
+			     100.64.0.0/16, 192.0.2.0/24 }
+	}
+
+	# Root operator list + deployment list. Empty at load; the probe adds
+	# and removes elements live (M8).
+	set deny4 {
+		type ipv4_addr
+		flags interval
+	}
+
+	# Interfaces carrying a default-like route.
+	set uplinks {
+		type ifname
+		elements = { "wlan0" }
+	}
+
+	# (wsn bridge, its single .1 address). Only this exact pair is the
+	# sandbox's "own gateway"; any other node address is dropped (m14).
+	set gateways {
+		type ifname . ipv4_addr
+		elements = { "wsn-gq0" . 10.250.77.1, "wsn-gq1" . 10.250.78.1 }
+	}
+
+	# Dead-man: forwarding exists only for bridges listed here. Production
+	# elements carry `timeout 30s` and are renewed by every resync.
+	set live_bridges {
+		type ifname
+		flags timeout
+		elements = { "wsn-gq0", "wsn-gq1" }
+	}
+
+	# ORIGINAL destination, before conntrack (-200) and every DNAT (-100).
+	chain pre {
+		type filter hook prerouting priority raw - 10; policy accept;
+		iifname != "wsn-*" return
+		meta nfproto ipv6 counter drop comment "pre: ipv6"
+		iifname . ip daddr @gateways return
+		ip daddr 255.255.255.255 udp sport 68 udp dport 67 return
+		fib daddr type { local, broadcast, multicast, anycast } counter drop comment "pre: node address (pre-NAT)"
+		ip daddr @protected4 counter drop comment "pre: protected4"
+		ip daddr @scope4 counter drop comment "pre: scope4"
+		ip daddr @deny4 counter drop comment "pre: deny4"
+		iifname != @live_bridges counter drop comment "pre: not live (dead-man)"
+	}
+
+	# TRANSLATED destination that ends on this node.
+	chain input {
+		type filter hook input priority filter - 300; policy accept;
+		iifname != "wsn-*" return
+		meta nfproto ipv6 counter drop comment "input: ipv6"
+		iifname . ip daddr @gateways return
+		ip daddr 255.255.255.255 udp sport 68 udp dport 67 return
+		counter drop comment "input: other node address (post-NAT)"
+	}
+
+	# TRANSLATED destination that leaves the node.
+	chain forward {
+		type filter hook forward priority filter - 300; policy accept;
+		iifname "wsn-*" jump from_sandbox
+		oifname "wsn-*" jump to_sandbox
+	}
+
+	chain from_sandbox {
+		iifname != @live_bridges counter drop comment "fwd-out: not live (dead-man)"
+		meta nfproto ipv6 counter drop comment "fwd-out: ipv6"
+		ip daddr @protected4 counter drop comment "fwd-out: protected4"
+		ip daddr @scope4 counter drop comment "fwd-out: scope4"
+		ip daddr @deny4 counter drop comment "fwd-out: deny4"
+		oifname != @uplinks counter drop comment "fwd-out: not via uplink"
+	}
+
+	chain to_sandbox {
+		oifname != @live_bridges counter drop comment "fwd-in: not live (dead-man)"
+		meta nfproto ipv6 counter drop comment "fwd-in: ipv6"
+		ip saddr @protected4 counter drop comment "fwd-in: protected4"
+		ip saddr @scope4 counter drop comment "fwd-in: scope4"
+		ip saddr @deny4 counter drop comment "fwd-in: deny4"
+		iifname != @uplinks counter drop comment "fwd-in: not via uplink"
+	}
+}

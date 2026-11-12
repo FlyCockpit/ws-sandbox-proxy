@@ -1,0 +1,18 @@
+{
+  "description": "schemaVersion 1.5 is not an integer",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1.5,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

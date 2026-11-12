@@ -1,0 +1,5 @@
+{
+  "description": "1000000000000000.1 is 1000000000000000.125 when correctly rounded, so it is a fraction (an approximate parser would round it to an integer)",
+  "expect": "definition.invalid",
+  "documentText": "{\"schemaVersion\":1,\"id\":\"base\",\"displayName\":\"Base\",\"login\":{\"command\":\"true\",\"method\":\"paste\"},\"credentials\":{\"files\":{\"required\":[\".tool/auth.json\"]}},\"x-near\":1000000000000000.1}"
+}

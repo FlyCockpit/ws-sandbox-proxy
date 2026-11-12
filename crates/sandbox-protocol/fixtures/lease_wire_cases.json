@@ -1,0 +1,39 @@
+{
+  "valid": [
+    {
+      "revision": 3,
+      "deadlineUnixMs": 1893456000000,
+      "action": "stop",
+      "expiryPolicy": "retry-force-60s"
+    },
+    {
+      "revision": 4,
+      "deadlineUnixMs": 1893456000000,
+      "action": "destroy",
+      "expiryPolicy": "retry-force-60s",
+      "shortenOnly": true
+    },
+    {
+      "revision": 1,
+      "deadlineUnixMs": 253402300799999,
+      "action": "stop",
+      "expiryPolicy": "retry-force-60s"
+    }
+  ],
+  "invalid": [
+    {
+      "revision": 4,
+      "deadlineUnixMs": 1893456000000,
+      "action": "destroy",
+      "expiryPolicy": "retry-force-60s",
+      "shortenOnly": "yes"
+    },
+    {
+      "revision": 4,
+      "deadlineUnixMs": 1893456000000,
+      "action": "destroy",
+      "expiryPolicy": "retry-force-60s",
+      "extra": true
+    }
+  ]
+}

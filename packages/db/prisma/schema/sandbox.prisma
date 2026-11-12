@@ -1,0 +1,2049 @@
+enum SandboxState {
+  REQUESTED
+  SCHEDULED
+  PROVISIONING
+  READY
+  STOPPING
+  STOPPED
+  RECLAIMING
+  DELETED
+  UNREACHABLE
+  RECOVERED
+  HOST_LOST
+  ERROR
+  /// Pool create waiting for capacity: no host, storage, placement or holds.
+  WAITING_FOR_CAPACITY
+  /// Stopped sandbox whose disk lives only in the image store (offload plan
+  /// §1): hostless, no placement, pool usage, holds or lease.
+  OFFLOADED
+}
+
+/// Lifecycle of one disk offload attempt and its stored object (offload plan §2).
+enum SandboxDiskOffloadState {
+  PENDING
+  EXPORTING
+  UPLOADING
+  VERIFYING
+  STORED
+  EVICTING
+  CONSUMED
+  SUPERSEDED
+  FAILED
+  DELETING
+  DELETED
+}
+
+/// A detached local copy that still holds its host's root reservation.
+enum SandboxDiskCopyState {
+  STALE
+  DISCARDING
+}
+
+/// Where an offloaded sandbox may resume.
+enum SandboxOffloadPin {
+  ANY
+  OWN_HOSTS
+}
+
+/// Who asked for a teardown (S2): server-set, never from a host.
+enum SandboxTeardownIntent {
+  OWNER_DESTROY
+  SYSTEM_DETACH
+}
+
+/// Immutable launch semantics of a create or reconnect operation (round 5).
+enum SandboxLaunchMode {
+  NEW_ROOT
+  COLD
+  WARM
+}
+
+/// Lifecycle of one pool create waiting for capacity (`SandboxCapacityWait`).
+enum CapacityWaitState {
+  WAITING
+  PLACED
+  TIMED_OUT
+  CANCELLED
+  FAILED
+}
+
+enum OperationState {
+  QUEUED
+  DISPATCHED
+  ACCEPTED
+  RUNNING
+  CANCEL_REQUESTED
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  UNKNOWN_OUTCOME
+}
+
+enum HostConnectionStatus {
+  DISCONNECTED
+  CONNECTED
+  STALE
+  REVOKED
+}
+
+/// Runtime the node daemon reported in its last registered hello.
+enum NodeDaemonRuntime {
+  FAKE
+  INCUS_KVM
+  UNSUPPORTED
+}
+
+/// Why a sandbox requested open egress but was placed in allowlist mode.
+enum SandboxEgressModeReason {
+  /// A foreign node whose owner does not allow open egress for others.
+  NODE_POLICY
+  /// The node has the egress guard but cannot serve open mode.
+  HOST_UNSUPPORTED
+}
+
+enum SandboxGuestSudoReason {
+  /// A foreign node whose owner does not allow guest sudo for others.
+  NODE_POLICY
+  /// The node does not advertise the guestSudo capability.
+  HOST_UNSUPPORTED
+}
+
+enum SandboxLeaseExpireAction {
+  STOP
+  DESTROY
+}
+
+enum SandboxOperationKind {
+  CREATE_SANDBOX
+  KILL_SANDBOX
+  RUN_COMMAND
+  GET_FILE
+  PUT_FILE
+  RECONNECT_SANDBOX
+  STOP_SANDBOX
+  RENEW_SANDBOX_LEASE
+  LIST_DIR
+  STAT_PATH
+  MKDIR
+  REMOVE_PATH
+  MOVE_PATH
+  LIST_PROCESSES
+  SIGNAL_PROCESS
+  CAPTURE_TEMPLATE
+  CREDENTIAL_ATTACH
+  CREDENTIAL_FREE
+}
+
+/// Who a sandbox is for. Managed purposes are created only by wssp (MS0,
+/// packages/api/src/sandbox/managed-sandbox.ts).
+enum SandboxPurpose {
+  WORKLOAD
+  CREDENTIAL_LOGIN
+  TEMPLATE_BUILD
+  /// A community build's verify VM (community-base D-D): boots the pending
+  /// revision as the guest user, no root, and is bound by `verifyBuildId`.
+  TEMPLATE_VERIFY
+}
+
+/// Paired Linux host that runs the sandbox daemon (Incus/KVM). Enrollment and
+/// connection semantics mirror {@link CliDevice} in the model-relay reference.
+model SandboxHost {
+  HostTerminalTickets         HostTerminalTicket[]
+  /// Negotiated protocol fact, private and bound to connectionEpoch.
+  relayProtocolVersion        String?
+  relayProtocolEpoch          Int?
+  id                          String                        @id @default(cuid(2))
+  createdAt                   DateTime                      @default(now())
+  updatedAt                   DateTime                      @default(now()) @updatedAt
+  userId                      String
+  slug                        String
+  label                       String
+  status                      HostConnectionStatus          @default(DISCONNECTED)
+  lastConnectedAt             DateTime?
+  lastDisconnectedAt          DateTime?
+  lastHeartbeatAt             DateTime?
+  deletionRequestedAt         DateTime?
+  connectionCount             Int                           @default(0)
+  /// Incremented in the hello-registration transaction. Relay writes CAS this
+  /// epoch; the socket is marked current only after the increment commits.
+  connectionEpoch             Int                           @default(0)
+  /// Count of complete host inventory censuses converged by the server.
+  inventorySeq                Int                           @default(0)
+  inventoryDigest             String?
+  /// The exact connection whose complete managed-sandbox census was ACKed.
+  inventoryAcknowledgedEpoch  Int?
+  journalKeyVersion           Int?
+  journalKeyId                String?
+  journalKeyAcknowledgedEpoch Int?
+  /// Current-epoch authoritative launch observations.
+  lastPlacedAt                DateTime?
+  admissionRuntime            NodeDaemonRuntime?
+  admissionEpoch              Int?
+  admissionReportedAt         DateTime?
+  daemonSchedulable           Boolean?
+  daemonFeatures              Json?
+  availabilityEpoch           Int?
+  availabilityCensusComplete  Boolean                       @default(false)
+  /// Last complete, acknowledged census. Absence is only concluded from one.
+  inventoryAcknowledgedAt     DateTime?
+  /// Set when a census contradicts server identity records. Blocks new work
+  /// and reconciliation until a later conflict-free census clears it.
+  quarantinedAt               DateTime?
+  quarantineReason            String?
+  /// Owner-configured concurrent live-VM cap (default 4). Node daemons must not
+  /// Exactly-once count of held live resources; never a configurable limit.
+  liveCount                   Int                           @default(0)
+  /// Sum of pinned boot memory charges, including host overhead.
+  memoryReservedMiB           Int                           @default(0)
+  /// Last negotiated size advertisement; null means no report.
+  daemonMemoryBudgetMiB       Int?
+  daemonMaxCpuCount           Int?
+  /// Canonical bounded hello tuple; cleared on each new connection.
+  capacityReport              Json?
+  daemonVcpuBudget            Int?
+  vcpuReserved                Int                           @default(0)
+  rootCount                   Int                           @default(0)
+  /// Authoritative admission switch; existing guests and relay sessions stay live.
+  draining                    Boolean                       @default(false)
+  /// Offload plan §10 C7 (`wssp drain --offload`): while draining, stopped
+  /// sandboxes here are offloaded and their cached copies evicted when an
+  /// eligible restore host exists. Cleared by undrain.
+  drainOffload                Boolean                       @default(false)
+  /// WP7: when the daemon started quiescing for a restart (`host.quiesce` or
+  /// a quiescing hello); cleared by a hello without `quiescing`. A template
+  /// build step held meanwhile does not spend its deadline (quiesce-hold.ts).
+  quiescingSince              DateTime?
+  /// Daemon-reported metadata from the last registered hello (display only;
+  /// never an admission input). The owner-set `label` is not overwritten.
+  daemonRuntime               NodeDaemonRuntime?
+  daemonVersion               String?
+  /// Bounded host-reported reconciler observations with server reportedAt.
+  /// Display-only: never admission, lifecycle or packet-isolation authority.
+  policyReconcilerHealth      Json?
+  /// Advertised in the last registered hello (relay v10): the host enforces
+  /// recorded sandbox egress policies. Admission gate for policy-bearing
+  /// creates only; it can never widen an already-recorded policy.
+  egressEnforcement           Boolean                       @default(false)
+  /// Host lease ceiling (ms) from the last hello or `host.lease-policy`
+  /// report; null means the machine owner configured unlimited. Only the
+  /// daemon can change it. Existing rows and older daemons mean 24 hours.
+  daemonMaxLeaseMs            Int?                          @default(86400000)
+  /// The last registered hello reported `maxLeaseMs` (a lease-policy daemon):
+  /// only such a host accepts the system pull-in's `shortenOnly` lease field.
+  /// Rewritten on every hello with the connection epoch, so it is always the
+  /// current session's capability. Older daemons never receive that renewal:
+  /// their pull-in only shortens the server's requested deadline.
+  daemonLeasePolicy           Boolean                       @default(false)
+  /// Node-owner consent from the last `host.egress-state` report on the
+  /// current connection: open egress for other users' sandboxes. Reset to
+  /// false on every hello until the daemon reports it.
+  daemonOpenEgressForOthers   Boolean                       @default(false)
+  /// Node-owner consent from the last `host.egress-state` report:
+  /// allow_guest_sudo_for_others (daemon default true). The resolver also
+  /// requires the current admission's `guestSudo` capability, so this column
+  /// alone grants nothing.
+  daemonGuestSudoForOthers    Boolean                       @default(true)
+  /// Egress guard health (M11, M18): the last report's `guardOk`, bound to
+  /// `daemonEgressGuardEpoch`. Placement and the create gate require it at the
+  /// current epoch with an unexpired lease, in both modes.
+  daemonEgressGuardOk         Boolean                       @default(false)
+  /// Bounded machine code from the last unhealthy report (display only).
+  daemonEgressGuardReason     String?
+  daemonEgressGuardEpoch      Int?
+  /// Server-clock lease: last `guardOk=true` report + 15 s; null when the
+  /// guard is unhealthy, on hello and on disconnect.
+  daemonEgressGuardLeaseUntil DateTime?
+  /// Guard process instance and generation fence (an older generation of the
+  /// same instance is ignored).
+  daemonEgressGuardInstanceId String?
+  daemonEgressGuardGeneration BigInt?
+  /// Last accepted `host.egress-state` sequence on the current epoch.
+  daemonEgressStateSequence   BigInt?
+  /// Daemon-reported managed image cache (bytes). Totals are trusted only while
+  /// `imageCacheEpoch` equals `connectionEpoch`; null means no cache feature.
+  imageCacheCapBytes          BigInt?
+  imageCacheUsedBytes         BigInt?
+  imageCacheForeignBytes      BigInt?
+  imageCacheEpoch             Int?
+  ImageCache                  SandboxHostImageCache[]
+  User                        User                          @relation("SandboxHostOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  HostTokens                  HostToken[]
+  HostDeviceCredentials       HostDeviceCredential[]
+  SdkKeyHostAllowlist         SdkKeyHostAllowlist[]
+  Sandboxes                   Sandbox[]
+  PoolMemberships             SandboxPoolMember[]
+  TemplateAvailability        SandboxTemplateAvailability[]
+  StoragePools                SandboxHostStoragePool[]
+  CredentialPendingCaptures   CredentialPendingCapture[]
+  CredentialCensus            CredentialHostCensus?
+  CredentialTombstones        CredentialLeaseTombstone[]
+  CredentialReturnKeys        CredentialHostReturnKey[]
+  DiskCopies                  SandboxDiskCopy[]
+  /// The current session's hello reported the disk offload capability;
+  /// rewritten on every hello (false until the daemon reports it).
+  daemonDiskOffload           Boolean                       @default(false)
+
+  // @check sandbox_host_vcpu_budget: "daemonVcpuBudget" IS NULL OR ("daemonVcpuBudget" >= 1 AND "daemonVcpuBudget" <= 8192)
+  // @check sandbox_host_vcpu_reserved: "vcpuReserved" >= 0 AND "vcpuReserved" <= 8000
+  // @check sandbox_host_counts: "liveCount" >= 0 AND "liveCount" <= 250 AND "rootCount" >= 0 AND "rootCount" <= 250
+  // @check sandbox_host_memory_reserved: "memoryReservedMiB" >= 0 AND "memoryReservedMiB" <= 2147483647
+  // @check sandbox_host_memory_budget: "daemonMemoryBudgetMiB" IS NULL OR ("daemonMemoryBudgetMiB" >= 512 AND "daemonMemoryBudgetMiB" <= 16777216 AND "daemonMemoryBudgetMiB" % 256 = 0)
+  // @check sandbox_host_cpu_cap: "daemonMaxCpuCount" IS NULL OR ("daemonMaxCpuCount" >= 1 AND "daemonMaxCpuCount" <= 32)
+  // @check sandbox_host_max_lease: "daemonMaxLeaseMs" IS NULL OR "daemonMaxLeaseMs" BETWEEN 300000 AND 2073600000
+  // @check sandbox_host_egress_guard_reason: "daemonEgressGuardReason" IS NULL OR length("daemonEgressGuardReason") <= 64
+  // @check sandbox_host_image_cache: ("imageCacheCapBytes" IS NULL OR "imageCacheCapBytes" >= 0) AND ("imageCacheUsedBytes" IS NULL OR "imageCacheUsedBytes" >= 0) AND ("imageCacheForeignBytes" IS NULL OR "imageCacheForeignBytes" >= 0)
+  @@unique([userId, slug])
+  @@unique([id, userId])
+  @@index([userId, status])
+  @@index([lastHeartbeatAt])
+  @@map("sandbox_host")
+}
+
+/// Enrollment token for a sandbox node daemon (pairing credential).
+model HostToken {
+  id            String       @id @default(cuid(2))
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @default(now()) @updatedAt
+  userId        String
+  sandboxHostId String?
+  name          String
+  lookupPrefix  String
+  secretDigest  String
+  lastUsedAt    DateTime?
+  revokedAt     DateTime?
+  expiresAt     DateTime?
+  User          User         @relation("HostTokenOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  SandboxHost   SandboxHost? @relation(fields: [sandboxHostId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([lookupPrefix])
+  @@unique([secretDigest])
+  @@index([userId, revokedAt])
+  @@index([sandboxHostId])
+  @@index([expiresAt])
+  @@map("host_token")
+}
+
+/// Minted by `wssp login` for exactly one sandbox host and never rebound.
+model HostDeviceCredential {
+  id            String      @id @default(cuid(2))
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+  userId        String
+  sandboxHostId String
+  lookupPrefix  String
+  secretDigest  String
+  lastUsedAt    DateTime?
+  revokedAt     DateTime?
+  User          User        @relation("HostDeviceCredentialOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  SandboxHost   SandboxHost @relation(fields: [sandboxHostId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([lookupPrefix])
+  @@unique([secretDigest])
+  @@index([userId, revokedAt])
+  @@index([sandboxHostId])
+  @@map("host_device_credential")
+}
+
+enum SdkKeyResourceMode {
+  ALL_OWNED
+  ALLOWLIST
+}
+
+enum SdkKeyPoolMode {
+  ALL_USABLE
+  SELECTED
+}
+
+/// Owner-scoped SDK bearer credential for the `/v1` HTTP plane.
+model SdkKey {
+  id                  String                      @id @default(cuid(2))
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @default(now()) @updatedAt
+  userId              String
+  name                String
+  poolMode            SdkKeyPoolMode              @default(SELECTED)
+  resourceMode        SdkKeyResourceMode          @default(ALLOWLIST)
+  /// Explicit capability grants; empty is rejected at mint and never authenticates.
+  scopes              String[]
+  lookupPrefix        String
+  secretDigest        String
+  lastUsedAt          DateTime?
+  revokedAt           DateTime?
+  expiresAt           DateTime?
+  User                User                        @relation("SdkKeyOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  HostAllowlist       SdkKeyHostAllowlist[]
+  RevisionAllowlist   SdkKeyRevisionAllowlist[]
+  PoolAllowlist       SdkKeyPoolAllowlist[]
+  CredentialAllowlist SdkKeyCredentialAllowlist[]
+
+  @@unique([lookupPrefix])
+  @@unique([secretDigest])
+  @@unique([id, userId])
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sdk_key")
+}
+
+model SdkKeyHostAllowlist {
+  id            String      @id @default(cuid(2))
+  createdAt     DateTime    @default(now())
+  sdkKeyId      String
+  sandboxHostId String
+  SdkKey        SdkKey      @relation(fields: [sdkKeyId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  SandboxHost   SandboxHost @relation(fields: [sandboxHostId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([sdkKeyId, sandboxHostId])
+  @@index([sandboxHostId])
+  @@map("sdk_key_host_allowlist")
+}
+
+model SdkKeyRevisionAllowlist {
+  id                 String                  @id @default(cuid(2))
+  createdAt          DateTime                @default(now())
+  userId             String
+  sdkKeyId           String
+  templateRevisionId String
+  User               User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  SdkKey             SdkKey                  @relation(fields: [sdkKeyId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Revision           SandboxTemplateRevision @relation(fields: [templateRevisionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([sdkKeyId, templateRevisionId])
+  @@index([templateRevisionId, userId])
+  @@map("sdk_key_revision_allowlist")
+}
+
+model SandboxTemplate {
+  id                String                    @id @default(cuid(2))
+  userId            String
+  slug              String
+  label             String
+  archivedAt        DateTime?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @default(now()) @updatedAt
+  /// Where fetched copies of this template's images may be placed.
+  imagePlacement    TemplateImagePlacement    @default(INHERIT)
+  /// Captures kept per capture tag before older revisions retire.
+  captureKeep       Int                       @default(3)
+  /// Untagged revisions older than this many days retire (null: never).
+  pruneAfterDays    Int?
+  /// Extra guest paths scrubbed on every capture into this template.
+  captureScrubPaths String[]                  @default([])
+  /// A wssp-managed community base (catalog id; community-base D-G).
+  communitySource   String?
+  /// Daily upstream refresh of a community base (owner switch, default on).
+  communityRefresh  Boolean                   @default(true)
+  User              User                      @relation("SandboxTemplateOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Revisions         SandboxTemplateRevision[]
+  Tags              SandboxTemplateTag[]
+  ActionReceipts    SandboxActionReceipt[]
+  Captures          SandboxTemplateCapture[]
+  Builds            SandboxTemplateBuild[]
+  UpstreamImages    SandboxUpstreamImage[]
+  // @check sandbox_template_community: "communitySource" IS NULL OR "communitySource" IN ('ubuntu-26.04')
+  // @check sandbox_template_capture_keep: "captureKeep" BETWEEN 1 AND 50 AND ("pruneAfterDays" IS NULL OR "pruneAfterDays" BETWEEN 1 AND 3650) AND cardinality("captureScrubPaths") <= 64
+
+  @@unique([userId, slug])
+  @@unique([id, userId])
+  /// One community template per owner and catalog entry (NULLs never collide).
+  @@unique([userId, communitySource])
+  @@map("sandbox_logical_template")
+}
+
+model SandboxTemplateRevision {
+  diskGiB               Int                           @default(32)
+  /// Immutable configured allocation.
+  cpuCount              Int                           @default(1)
+  memoryMiB             Int                           @default(1024)
+  id                    String                        @id @default(cuid(2))
+  userId                String
+  templateId            String
+  revision              Int
+  incusFingerprint      String
+  architecture          String
+  guestUid              Int                           @default(1000)
+  guestGid              Int                           @default(1000)
+  guestHome             String                        @default("/home/user")
+  guestShell            String                        @default("/bin/bash")
+  guestVersion          String?
+  manifestDigest        String
+  retiredAt             DateTime?
+  createdAt             DateTime                      @default(now())
+  sourceKind            TemplateRevisionSource        @default(MANUAL)
+  parentRevisionId      String?
+  /// History only (no FK): the sandbox a capture came from.
+  capturedFromSandboxId String?
+  captureTag            String?
+  retiredReason         String?
+  /// The build that produced this revision (sourceKind BUILD; history, no FK).
+  buildId               String?                       @unique
+  recipeDigest          String?
+  /// Recipe WORKDIR: the default cwd of sandboxes created from this revision.
+  defaultCwd            String?
+  startCmd              String?
+  readyCmd              String?
+  readyTimeoutMs        Int?
+  builtOnForeignHost    Boolean                       @default(false)
+  /// At least one recipe step ran as guest root (inside the build VM only).
+  builtWithRoot         Boolean                       @default(false)
+  /// Captured from (or built on) a sandbox whose guest could reach root
+  /// (`guestRoot`). Immutable.
+  capturedWithGuestRoot Boolean                       @default(false)
+  /// Built by wssp's own community prep build (COMMUNITY_PREP origin, the
+  /// template's UPSTREAM base, full build digest, verifyRequired, non-root
+  /// build VM, own host). Waives only the builtWithRoot term of the root taint
+  /// (guest-sudo-policy.ts revisionRootTaint). Immutable. Always false until
+  /// community-base lands its writer.
+  builtWithWsspRecipe   Boolean                       @default(false)
+  /// Set while a community build's verify VM has not passed (community-base
+  /// D-D): the revision is not launchable, grantable, taggable or
+  /// associable except as that build's own verify output.
+  pendingVerifyBuildId  String?                       @unique
+  User                  User                          @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Template              SandboxTemplate               @relation(fields: [templateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Tags                  SandboxTemplateTag[]
+  UpstreamImage         SandboxUpstreamImage?
+  Availability          SandboxTemplateAvailability[]
+  Config                SandboxRevisionConfig?
+  Grants                SdkKeyRevisionAllowlist[]
+  Sandboxes             Sandbox[]
+  Placements            SandboxPlacement[]
+  // @check sandbox_revision_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0
+  // @check sandbox_revision_root_disk: "diskGiB" >= 1 AND "diskGiB" <= 2048
+
+  @@unique([id, userId])
+  @@unique([id, templateId, userId])
+  @@unique([templateId, revision])
+  // @check sandbox_revision_number: "revision" > 0 AND "guestUid" > 0 AND "guestGid" > 0
+  // Compares sourceKind as text: the initial migration creates BUILD before this CHECK.
+  // @check sandbox_revision_template_build: ("sourceKind"::text = 'BUILD') = ("buildId" IS NOT NULL) AND ("buildId" IS NULL OR "recipeDigest" ~ '^[0-9a-f]{64}$') AND ("defaultCwd" IS NULL OR ("defaultCwd" LIKE '/%' AND octet_length("defaultCwd") <= 4096)) AND ("startCmd" IS NULL OR octet_length("startCmd") <= 4096) AND ("readyCmd" IS NULL OR octet_length("readyCmd") <= 4096) AND ("readyTimeoutMs" IS NULL OR "readyTimeoutMs" BETWEEN 1000 AND 600000)
+  // @check sandbox_revision_retired_reason: "retiredReason" IS NULL OR "retiredReason" IN ('manual', 'retention', 'auto_prune', 'verify_failed', 'superseded')
+  // @check sandbox_revision_upstream: "sourceKind"::text <> 'UPSTREAM' OR ("parentRevisionId" IS NULL AND "buildId" IS NULL AND "pendingVerifyBuildId" IS NULL AND "captureTag" IS NULL)
+  // @check sandbox_revision_wssp_recipe: NOT "builtWithWsspRecipe" OR ("sourceKind"::text = 'BUILD' AND "builtWithRoot" AND NOT "capturedWithGuestRoot" AND NOT "builtOnForeignHost")
+  @@index([templateId, captureTag, revision])
+  @@index([parentRevisionId, userId])
+  @@map("sandbox_template_revision")
+}
+
+/// The upstream facts of an UPSTREAM revision (community-base D-A, I10):
+/// the pinned simplestreams build, written once by the dedicated insert.
+model SandboxUpstreamImage {
+  id           String                  @id @default(cuid(2))
+  userId       String
+  templateId   String
+  revisionId   String                  @unique
+  /// Catalog id (`SandboxTemplate.communitySource`).
+  source       String
+  product      String
+  /// Simplestreams version key, e.g. `20261105_07:42`.
+  version      String
+  /// `sha256:<combined_disk-kvm-img_sha256>` (the Incus split fingerprint).
+  fingerprint  String
+  architecture String
+  metaPath     String
+  metaSha256   String
+  metaSize     BigInt
+  diskPath     String
+  diskSha256   String
+  diskSize     BigInt
+  /// The index's `expiry_date` for this version, when given.
+  expiresAt    DateTime?
+  createdAt    DateTime                @default(now())
+  User         User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Template     SandboxTemplate         @relation(fields: [templateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Revision     SandboxTemplateRevision @relation(fields: [revisionId, templateId, userId], references: [id, templateId, userId], onDelete: Cascade, onUpdate: Restrict)
+  // @check sandbox_upstream_image_bounds: "metaSize" > 0 AND "metaSize" <= 1048576 AND "diskSize" > 0 AND "diskSize" <= 4294967296 AND "fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "metaSha256" ~ '^[0-9a-f]{64}$' AND "diskSha256" ~ '^[0-9a-f]{64}$' AND octet_length("metaPath") <= 512 AND octet_length("diskPath") <= 512 AND length("version") <= 64
+
+  @@unique([templateId, fingerprint])
+  @@unique([revisionId, templateId, userId])
+  @@map("sandbox_upstream_image")
+}
+
+model SandboxTemplateTag {
+  id         String                  @id @default(cuid(2))
+  userId     String
+  templateId String
+  tag        String
+  revisionId String
+  User       User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Template   SandboxTemplate         @relation(fields: [templateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Revision   SandboxTemplateRevision @relation(fields: [revisionId, templateId, userId], references: [id, templateId, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([templateId, tag])
+  @@map("sandbox_template_tag")
+}
+
+enum TemplateAvailabilityStatus {
+  PENDING
+  AVAILABLE
+  MISSING
+  REJECTED
+}
+
+model SandboxTemplateAvailability {
+  createdAt               DateTime                   @default(now())
+  id                      String                     @id @default(cuid(2))
+  userId                  String
+  revisionId              String
+  hostId                  String
+  hostOwnerId             String
+  localFingerprint        String
+  architecture            String
+  manifestDigest          String
+  status                  TemplateAvailabilityStatus @default(PENDING)
+  verifiedConnectionEpoch Int?
+  observedAt              DateTime?
+  /// Host-reported compressed image size and format (peer-mode placement input).
+  sizeBytes               BigInt?
+  imageFormat             String?
+  User                    User                       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Revision                SandboxTemplateRevision    @relation(fields: [revisionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Host                    SandboxHost                @relation(fields: [hostId, hostOwnerId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict, map: "sandbox_template_availability_hostId_userId_fkey")
+
+  // @check sandbox_availability_host_owner: "hostOwnerId" IS NOT NULL
+  // @check sandbox_availability_image_facts: ("sizeBytes" IS NULL OR "sizeBytes" > 0) AND ("imageFormat" IS NULL OR "imageFormat" IN ('unified', 'split'))
+  @@unique([revisionId, hostId])
+  @@index([hostId, revisionId])
+  @@map("sandbox_template_availability")
+}
+
+/// Private defaults: no CHECK on an env-bearing row.
+model SandboxRevisionConfig {
+  id           String                  @id @default(cuid(2))
+  userId       String
+  revisionId   String                  @unique
+  defaultEnvs  Json
+  checksum     String
+  digestScheme String
+  digestKeyId  String
+  User         User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Revision     SandboxTemplateRevision @relation(fields: [revisionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([revisionId, userId])
+  @@map("sandbox_revision_config")
+}
+
+model SandboxPlacement {
+  /// Storage identity pinned before launch.
+  storagePoolId        String
+  storageMarker        String
+  storagePoolName      String
+  rootChargeGiB        Int
+  /// Immutable weights; B4 copies original weights when transferring a live hold.
+  chargedMemoryMiB     Int
+  chargedVcpu          Int
+  diskGiB              Int                     @default(32)
+  /// Immutable configured allocation.
+  cpuCount             Int                     @default(1)
+  memoryMiB            Int                     @default(1024)
+  id                   String                  @id @default(cuid(2))
+  userId               String
+  sandboxId            String
+  generation           Int
+  operationId          String                  @unique
+  kind                 String
+  originHostId         String
+  originPoolId         String?
+  hostOwnerId          String
+  originShareId        String?
+  acceptedGraceSeconds Int                     @default(259200)
+  originMemberId       String?
+  /// Planned image fetch (M6): bytes reserved against the host cache headroom
+  /// until the create ends or the host reports the image cached.
+  imageFetchBytes      BigInt?
+  templateId           String
+  templateRevisionId   String
+  artifact             String
+  architecture         String
+  guestUid             Int
+  guestGid             Int
+  guestHome            String
+  guestShell           String
+  configId             String
+  acceptedAt           DateTime
+  startedAt            DateTime?
+  readyAt              DateTime?
+  endedAt              DateTime?
+  endReason            String?
+  /// Provenance only (CN2): the offload a restore placement fetched.
+  restoreOffloadId     String?
+  User                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Sandbox              Sandbox                 @relation("SandboxPlacements", fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  CurrentFor           Sandbox?                @relation("CurrentPlacement")
+  Operation            SandboxOperation        @relation(fields: [operationId, sandboxId, userId], references: [id, sandboxId, userId], onDelete: Restrict, onUpdate: Restrict)
+  Revision             SandboxTemplateRevision @relation(fields: [templateRevisionId, templateId, userId], references: [id, templateId, userId], onDelete: Restrict, onUpdate: Restrict)
+  Config               SandboxExecutionConfig  @relation(fields: [configId, sandboxId, userId], references: [id, sandboxId, userId], onDelete: Restrict, onUpdate: Restrict)
+  // @check sandbox_placement_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0
+  // @check sandbox_placement_charges: ("chargedMemoryMiB" IS NULL AND "chargedVcpu" IS NULL) OR ("chargedMemoryMiB" IS NOT NULL AND "chargedMemoryMiB" >= "memoryMiB" AND "chargedMemoryMiB" <= 2147483647 AND "chargedVcpu" IS NOT NULL AND "chargedVcpu" = "cpuCount")
+
+  // @check sandbox_placement_disk_size: "diskGiB" >= 1 AND "diskGiB" <= 2048
+  // @check sandbox_placement_root_charge: "rootChargeGiB" IS NULL OR ("rootChargeGiB" >= "diskGiB" AND "rootChargeGiB" <= 2147483647)
+
+  // @check sandbox_placement_host_owner: "hostOwnerId" IS NOT NULL
+  // @check sandbox_placement_grace: "acceptedGraceSeconds" >= 0 AND "acceptedGraceSeconds" <= 2592000
+  // @check sandbox_placement_image_fetch: "imageFetchBytes" IS NULL OR "imageFetchBytes" > 0
+  // @check sandbox_placement_direct: "generation" > 0 AND (("kind" = 'DIRECT' AND "originPoolId" IS NULL AND "originMemberId" IS NULL) OR ("kind" = 'POOL' AND "originPoolId" IS NOT NULL AND "originMemberId" IS NOT NULL))
+  @@unique([sandboxId, generation])
+  @@unique([id, sandboxId, userId])
+  @@unique([operationId, sandboxId, userId])
+  @@map("sandbox_placement")
+}
+
+model Sandbox {
+  /// Storage identity pinned before launch; absent on a hostless sandbox.
+  storagePoolId              String?
+  storageMarker              String?
+  storagePoolName            String?
+  rootChargeGiB              Int?
+  diskReservationHeld        Boolean                   @default(false)
+  StoragePool                SandboxHostStoragePool?   @relation(fields: [storagePoolId, sandboxHostId, hostOwnerId, storageMarker, storagePoolName], references: [id, sandboxHostId, userId, marker, name], onDelete: Restrict, onUpdate: Restrict, map: "sandbox_instance_storagePoolId_sandboxHostId_userId_storag_fkey")
+  diskGiB                    Int                       @default(32)
+  /// Immutable configured allocation.
+  cpuCount                   Int                       @default(1)
+  memoryMiB                  Int                       @default(1024)
+  id                         String                    @id @default(cuid(2))
+  createdAt                  DateTime                  @default(now())
+  updatedAt                  DateTime                  @default(now()) @updatedAt
+  userId                     String
+  sandboxHostId              String?
+  hostOwnerId                String?
+  usagePoolId                String?
+  usageMemberId              String?
+  accessGraceUntil           DateTime?
+  accessGraceReason          String?
+  templateRevisionId         String
+  originPoolId               String?
+  originalSelector           String
+  currentPlacementId         String?                   @unique
+  templateId                 String
+  // Immutable authorization history; deliberately survives placement/host deletion.
+  // NULL only while a pool create waits for capacity, or after such a wait ended unplaced.
+  originHostId               String?
+  state                      SandboxState              @default(REQUESTED)
+  generation                 Int                       @default(1)
+  incusName                  String?
+  metadata                   Json                      @default("{}")
+  leaseRevision              Int                       @default(1)
+  leaseExpiresAt             DateTime?
+  leaseExpireAction          SandboxLeaseExpireAction  @default(DESTROY)
+  leaseExpiresAtRequested    DateTime?
+  leaseExpireActionRequested SandboxLeaseExpireAction?
+  leaseRevisionEffective     Int?
+  leaseExpiresAtEffective    DateTime?
+  leaseExpireActionEffective SandboxLeaseExpireAction?
+  /// Lease runs from READY: `leaseExpiresAt` is a provisional server reclaim
+  /// backstop until the host ACKs the READY-based deadline.
+  leasePendingReady          Boolean                   @default(false)
+  startedAt                  DateTime?
+  readyAt                    DateTime?
+  lastErrorCode              String?
+  lastErrorDetail            String?
+  /// Host-enforced lease expiry adopted from a complete inventory census
+  /// (the host expired the lease while the server could not reach it).
+  hostExpiryConfirmedAt      DateTime?
+  hostExpiryRevision         Int?
+  /// The expiry action the host confirmed, independent of later lifecycle.
+  hostExpiryAction           SandboxLeaseExpireAction?
+  /// True while this sandbox owns its current boot live-resource charges.
+  liveResourcesHeld          Boolean                   @default(false)
+  /// Normalized immutable egress allowlist recorded at create (M5, C34);
+  /// `{domains: [], cidrs: []}` is deny-all. Null until placement resolves the policy.
+  egressPolicy               Json?
+  /// SHA-256 (lowercase hex) of the canonical normalized policy JSON.
+  egressPolicyHash           String?
+  /// Managed sandboxes (CREDENTIAL_LOGIN, TEMPLATE_BUILD) are hidden from lists
+  /// and refused for ordinary actions (packages/api/src/sandbox/managed-sandbox.ts).
+  purpose                    SandboxPurpose            @default(WORKLOAD)
+  /// The template build this managed sandbox runs (history, no FK; §3.10).
+  buildId                    String?                   @unique
+  /// The community build this verify VM verifies (TEMPLATE_VERIFY only;
+  /// immutable, one verify VM per build; never grants root).
+  verifyBuildId              String?                   @unique
+  /// Set at create when a proxy-delivery login is attached (CLI logins proxy mode).
+  credentialProxyEnabled     Boolean                   @default(false)
+  /// Every home-relative login path any binding of this sandbox ever
+  /// declared (CLI logins §7.6), appended at grant and never shrunk. A
+  /// template capture scrubs all of them whatever a stop reported; it
+  /// survives the cascade that removes residue rows with a deleted login.
+  credentialPathHistory      String[]                  @default([])
+  /// The normalized egress REQUEST (explicit mode, fallback grants), fixed at
+  /// create. `egressPolicy`/`egressPolicyHash` hold the EFFECTIVE policy the
+  /// host enforces, resolved once at placement and never re-derived; a
+  /// waiting create has a request and no effective policy yet.
+  egressRequest              Json?
+  /// Why the effective mode is allowlist although open was requested.
+  egressModeReason           SandboxEgressModeReason?
+  /// Requested guest sudo (create input after the WORKLOAD default). History.
+  guestSudoRequested         Boolean                   @default(false)
+  /// Effective guest sudo, resolved once at materialization
+  /// (resolveEffectiveGuestSudo). Immutable.
+  guestSudo                  Boolean                   @default(false)
+  /// Why the effective value is false although sudo was requested.
+  guestSudoReason            SandboxGuestSudoReason?
+  /// The guest may reach root: guestSudo || revisionRootTaint(revision),
+  /// resolved once at materialization. UNKNOWN
+  /// commands retire only on host proof; results are guest-attested.
+  guestRoot                  Boolean                   @default(false)
+  /// Grants the node's domain blocklist refused at materialization (M19).
+  egressDeniedGrants         String[]                  @default([])
+  /// Whether the guest delivers TERM/INT/HUP to a process group (kernel
+  /// >= 6.9), as the host observed it when the last create or reconnect
+  /// became ready. Null: not observed (an older daemon); signal calls are
+  /// still checked at call time either way.
+  guestGroupSignals          Boolean?
+  /// Owner-chosen or generated name: lowercase DNS label, 1-63 chars. Unique per
+  /// owner among live WORKLOAD sandboxes. The DB default only names rows that no
+  /// app insert named; app creates always pass
+  /// an adjective-noun name. Owner content: never in admin or host-guest selects.
+  name                       String                    @default(dbgenerated("('sandbox-'::text || substr(md5((random())::text), 1, 12))"))
+  /// Per-sandbox offload sequence; never reused.
+  offloadSeq                 Int                       @default(0)
+  /// The current STORED/EVICTING offload (U8 composite FK below).
+  diskOffloadId              String?                   @unique
+  /// The bound host's local copy equals this offload seq.
+  cachedOffloadSeq           Int?
+  /// N1: base image of the current instance lineage when restored (null = template).
+  diskBaseFingerprint        String?
+  /// Pinned at restore (owner decision 1).
+  cloudInitInstanceId        String?
+  offloadPin                 SandboxOffloadPin         @default(ANY)
+  /// Set at every login binding grant (any delivery); never cleared. Such a
+  /// sandbox resumes only on its owner's own hosts.
+  credentialFilesEver        Boolean                   @default(false)
+  lastStoppedAt              DateTime?
+  User                       User                      @relation("SandboxOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  SandboxHost                SandboxHost?              @relation(fields: [sandboxHostId, hostOwnerId], references: [id, userId], onDelete: Restrict, onUpdate: Restrict, map: "sandbox_instance_sandboxHostId_userId_fkey")
+  SandboxTemplateRevision    SandboxTemplateRevision   @relation(fields: [templateRevisionId, templateId, userId], references: [id, templateId, userId], onDelete: Restrict, onUpdate: Restrict)
+  Operations                 SandboxOperation[]
+  Transfers                  SandboxTransfer[]
+  TerminalTickets            SandboxTerminalTicket[]
+  TerminalSessions           SandboxTerminalSession[]
+  DispatchOutbox             OutboxEvent[]
+  ExecutionConfig            SandboxExecutionConfig?
+  Placements                 SandboxPlacement[]        @relation("SandboxPlacements")
+  CurrentPlacement           SandboxPlacement?         @relation("CurrentPlacement", fields: [currentPlacementId, id, userId], references: [id, sandboxId, userId], onDelete: Restrict, onUpdate: Restrict)
+  CapacityWait               SandboxCapacityWait?
+  CredentialLeases           CredentialLease[]
+  CredentialResidue          CredentialResidue[]
+  Credentials                SandboxCredential[]
+  DiskOffloads               SandboxDiskOffload[]      @relation("SandboxDiskOffloads")
+  CurrentDiskOffload         SandboxDiskOffload?       @relation("CurrentDiskOffload", fields: [diskOffloadId, id, userId], references: [id, sandboxId, userId], onDelete: Restrict, onUpdate: Restrict)
+  DiskCopies                 SandboxDiskCopy[]
+  // Compares state as text: the initial migration creates the enum value before this CHECK.
+  // @check sandbox_instance_waiting: state::text <> 'WAITING_FOR_CAPACITY' OR ("sandboxHostId" IS NULL AND "hostOwnerId" IS NULL AND "originHostId" IS NULL AND "currentPlacementId" IS NULL AND "usagePoolId" IS NULL AND "usageMemberId" IS NULL AND "storagePoolId" IS NULL AND NOT "liveResourcesHeld" AND NOT "diskReservationHeld" AND "leaseExpiresAt" IS NULL AND "leaseExpiresAtRequested" IS NULL AND "leaseExpiresAtEffective" IS NULL)
+  // @check sandbox_instance_origin_host: "originHostId" IS NOT NULL OR "currentPlacementId" IS NULL
+  // @check sandbox_instance_host_owner: "sandboxHostId" IS NULL OR "hostOwnerId" IS NOT NULL
+  // @check sandbox_instance_lease_bound: "leaseExpiresAt" IS NULL OR "leaseExpiresAt" <= '9999-12-31 23:59:59.999'
+  // @check sandbox_instance_access_reason: ("accessGraceUntil" IS NULL AND "accessGraceReason" IS NULL) OR ("accessGraceUntil" IS NOT NULL AND "accessGraceReason" IS NOT NULL AND "accessGraceReason" = 'access')
+  // @check sandbox_instance_origin_pool: "originPoolId" IS NULL OR length("originPoolId") > 0
+  // @check sandbox_instance_generation: "generation" > 0 AND "leaseRevision" > 0
+  // @check sandbox_instance_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0
+  // @check sandbox_instance_disk_hold: NOT "diskReservationHeld" OR ("sandboxHostId" IS NOT NULL AND "storagePoolId" IS NOT NULL AND "storageMarker" IS NOT NULL AND "storagePoolName" IS NOT NULL AND "rootChargeGiB" IS NOT NULL)
+
+  // @check sandbox_instance_build: (purpose::text = 'TEMPLATE_BUILD') = ("buildId" IS NOT NULL)
+  // @check sandbox_instance_verify: (purpose::text = 'TEMPLATE_VERIFY') = ("verifyBuildId" IS NOT NULL) AND ("verifyBuildId" IS NULL OR "buildId" IS NULL)
+  // @check sandbox_instance_guest_sudo: NOT "guestSudo" OR ("purpose"::text = 'WORKLOAD' AND "guestRoot" AND "guestSudoRequested")
+  // @check sandbox_instance_guest_sudo_reason: "guestSudoReason" IS NULL OR ("guestSudoRequested" AND NOT "guestSudo")
+  // @check sandbox_instance_egress_denied: cardinality("egressDeniedGrants") <= 128
+  // @check sandbox_instance_disk_size: "diskGiB" >= 1 AND "diskGiB" <= 2048
+  // @check sandbox_instance_root_charge: "rootChargeGiB" IS NULL OR ("rootChargeGiB" >= "diskGiB" AND "rootChargeGiB" <= 2147483647)
+  // @check sandbox_instance_name: length("name") BETWEEN 1 AND 63 AND "name" ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+  // Disk offload (offload plan §2). OFFLOADED is hostless and holds nothing; access grace included (S11).
+  // @check sandbox_instance_offloaded: state::text <> 'OFFLOADED' OR ("sandboxHostId" IS NULL AND "hostOwnerId" IS NULL AND "currentPlacementId" IS NULL AND "usagePoolId" IS NULL AND "usageMemberId" IS NULL AND "storagePoolId" IS NULL AND NOT "liveResourcesHeld" AND NOT "diskReservationHeld" AND "leaseExpiresAt" IS NULL AND "leaseExpiresAtRequested" IS NULL AND "leaseExpiresAtEffective" IS NULL AND "accessGraceUntil" IS NULL AND "accessGraceReason" IS NULL AND "diskOffloadId" IS NOT NULL)
+  // @check sandbox_instance_deleted_offload: state::text <> 'DELETED' OR "diskOffloadId" IS NULL
+  // @check sandbox_instance_offload_parked: "diskOffloadId" IS NULL OR state::text IN ('STOPPED', 'STOPPING', 'PROVISIONING', 'ERROR', 'OFFLOADED')
+  // @check sandbox_instance_offload_seq: "offloadSeq" >= 0
+
+  @@unique([id, userId])
+  @@unique([currentPlacementId, id, userId])
+  /// Per-owner live workload names (packages/api/src/sandbox/sandbox-names.ts).
+  @@unique([userId, name], map: "sandbox_instance_owner_live_name", where: raw("((state <> 'DELETED'::\"SandboxState\") AND (purpose = 'WORKLOAD'::\"SandboxPurpose\"))"))
+  @@unique([diskOffloadId, id, userId])
+  /// Owner list (sandbox-list.ts): state filter, then createdAt/id keyset order.
+  /// Its [userId, state] prefix serves every owner/state filter, so the old
+  /// [userId, state] index was dropped (2026-11-04 outbox release).
+  @@index([userId, state, createdAt, id])
+  @@index([sandboxHostId, state])
+  @@index([usagePoolId])
+  @@index([accessGraceUntil])
+  @@index([leaseExpiresAt])
+  /// Cleanup invariant scan (template builds §3.10): live build VMs only.
+  @@index([state], map: "sandbox_instance_build_cleanup_idx", where: raw("(\"buildId\" IS NOT NULL)"))
+  /// The same scan for verify VMs (community-base T2).
+  @@index([state], map: "sandbox_instance_verify_cleanup_idx", where: raw("(\"verifyBuildId\" IS NOT NULL)"))
+  @@map("sandbox_instance")
+}
+
+/// Durable, owner-scoped mutation with idempotency and generation binding.
+/// Private immutable workload snapshot; never projected by public/admin reads.
+/// No CHECK constraints: PostgreSQL violation DETAIL can contain the whole row.
+model SandboxExecutionConfig {
+  id                String             @id @default(cuid(2))
+  userId            String
+  sandboxId         String             @unique
+  generation        Int
+  hostId            String
+  authorizingKeyId  String?
+  templateDefaults  Json
+  sandboxOverrides  Json
+  mergedDefaults    Json
+  bindingScheme     String
+  bindingKeyId      String
+  bindingMac        String
+  acknowledgedEpoch Int?
+  acknowledgedAt    DateTime?
+  createdAt         DateTime           @default(now())
+  User              User               @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Placements        SandboxPlacement[]
+  Sandbox           Sandbox            @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([id, sandboxId, userId])
+  @@unique([sandboxId, userId])
+  @@index([userId])
+  @@map("sandbox_execution_config")
+}
+
+model SandboxOperation {
+  id                          String                    @id @default(cuid(2))
+  createdAt                   DateTime                  @default(now())
+  updatedAt                   DateTime                  @default(now()) @updatedAt
+  userId                      String
+  sandboxId                   String
+  kind                        SandboxOperationKind
+  state                       OperationState            @default(QUEUED)
+  generation                  Int
+  /// Sandbox state read under S before a stop/kill moved it to STOPPING (CLI logins §10.3).
+  teardownPriorState          SandboxState?
+  dispatchedConnectionEpoch   Int?
+  nextStdinSequence           Int                       @default(0)
+  /// EOF is durable stream acceptance, independent of target completion.
+  stdinClosed                 Boolean                   @default(false)
+  dispatchAttempt             Int                       @default(0)
+  acceptedAttempt             Int?
+  authorizingKeyId            String?
+  dispatchedHostId            String?
+  idempotencyKey              String
+  requestBodyHash             String
+  requestDigestScheme         String
+  requestDigestKeyId          String?
+  /// Immutable accepted relative lifetime, separate from the current sandbox lease.
+  leaseAcceptedAt             DateTime?
+  leaseTimeoutMs              Int?
+  leaseRevisionAccepted       Int?
+  leaseExpiresAtAccepted      DateTime?
+  leaseExpireActionAccepted   SandboxLeaseExpireAction?
+  /// Exact durable host ACK; dispatch identity/body hash remain on this operation.
+  leaseAcknowledgedAt         DateTime?
+  leaseAcknowledgedAttempt    Int?
+  leaseAcknowledgedEpoch      Int?
+  /// The dispatch asked the host to start the lease clock at READY.
+  leaseFromReady              Boolean                   @default(false)
+  /// Last host-reported progress (create image fetch, capture phases).
+  progressPhase               String?
+  progressBytesDone           BigInt?
+  progressBytesTotal          BigInt?
+  progressAt                  DateTime?
+  /// Immutable command incarnation; never store the host wrapper nonce.
+  processId                   String?                   @unique
+  processPid                  Int?
+  processStartedAt            DateTime?
+  processBootId               String?
+  processStartTicks           String?
+  processDescription          Json?
+  processDescriptionExpiresAt DateTime?
+  resultVersion               Int?
+  resultExpiresAt             DateTime?
+  resultObservedAt            DateTime?
+  scalarResult                Json?
+  failure                     Json?
+  result                      Json?
+  errorCode                   String?
+  errorDetail                 String?
+  dispatchedAt                DateTime?
+  completedAt                 DateTime?
+  /// S2: server-set (owner kill, system teardown); never from a host.
+  teardownIntent              SandboxTeardownIntent?
+  /// Immutable, set at acceptance; null for non-launch kinds.
+  launchMode                  SandboxLaunchMode?
+  /// Round 5: set only by restore admission; immutable.
+  restoreOffloadId            String?
+  /// Round 5/6 (CN3, V5): every replay input of the request digest.
+  digestContext               Json
+  /// U5: on a SYSTEM_DETACH kill, the failed restore attempt it ends.
+  attemptOperationId          String?
+  attemptGeneration           Int?
+  User                        User                      @relation("SandboxOperationOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Sandbox                     Sandbox                   @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  TypedResult                 SandboxOperationResult?
+  CommandOutput               SandboxCommandOutput?
+  Placement                   SandboxPlacement?
+  Capture                     SandboxTemplateCapture?
+  CapacityWait                SandboxCapacityWait?
+  CredentialSpec              CredentialOperationSpec?
+  RestoreWait                 SandboxRestoreWait?
+
+  // @check sandbox_operation_progress: ("progressPhase" IS NULL OR "progressPhase" IN ('fetching_image', 'importing_image', 'freezing', 'snapshotting', 'copying', 'scrubbing', 'publishing', 'uploading', 'finalizing', 'exporting_disk', 'uploading_disk', 'fetching_disk', 'importing_disk')) AND ("progressBytesDone" IS NULL OR "progressBytesDone" >= 0) AND ("progressBytesTotal" IS NULL OR "progressBytesTotal" >= 0)
+  // @check sandbox_operation_launch_mode: "restoreOffloadId" IS NULL OR ("kind"::text = 'RECONNECT_SANDBOX' AND "launchMode"::text = 'NEW_ROOT')
+  @@unique([userId, idempotencyKey])
+  @@unique([id, sandboxId, userId])
+  @@unique([id, userId])
+  @@index([userId, processDescriptionExpiresAt])
+  @@index([processDescriptionExpiresAt, userId])
+  @@index([sandboxId, state])
+  @@index([userId, kind, state])
+  @@index([dispatchedHostId, state])
+  // Dashboard operation list (C48): newest-first keyset pages per owner and per sandbox.
+  @@index([userId, createdAt])
+  @@index([sandboxId, createdAt])
+  @@map("sandbox_mutation_operation")
+}
+
+/// Durable, bounded output of one RUN_COMMAND operation. Retains at most the
+/// first 256 KiB plus a rolling final 768 KiB of the aggregate stdout/stderr
+/// byte stream; every other byte is an explicit gap. Written only under the
+/// operation row lock (H → S → O → output). `totalBytes` is the host-reported
+/// total: it is set exactly when the output completion watermark commits.
+/// Content expires 24 hours after the operation completes; the operation row
+/// (status and exit code) outlives it.
+model SandboxCommandOutput {
+  /// The owning operation's ID.
+  id           String                        @id
+  createdAt    DateTime                      @default(now())
+  updatedAt    DateTime                      @default(now()) @updatedAt
+  /// Dispatch attempt that authored these bytes; a newer attempt resets them.
+  attempt      Int
+  nextSequence Int                           @default(0)
+  /// Aggregate byte offset just past the last accepted chunk.
+  receivedEnd  BigInt                        @default(0)
+  totalBytes   BigInt?
+  headBytes    Int                           @default(0)
+  tailBytes    Int                           @default(0)
+  headSegments Int                           @default(0)
+  tailSegments Int                           @default(0)
+  /// Last four accepted relay chunks: `{ sequence, hash }` replay fingerprints.
+  recent       Json                          @default("[]")
+  Operation    SandboxOperation              @relation(fields: [id], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Segments     SandboxCommandOutputSegment[]
+
+  @@map("sandbox_command_stream")
+}
+
+/// At most 8 KiB of contiguous aggregate output bytes. Bit i of `stderrMask`
+/// is set when byte i came from stderr, so interleaved streams share a row.
+model SandboxCommandOutputSegment {
+  id          String               @id @default(cuid(2))
+  outputId    String
+  /// False: offsets below 256 KiB (head). True: rolling tail.
+  tail        Boolean
+  startOffset BigInt
+  endOffset   BigInt
+  bytes       Bytes
+  stderrMask  Bytes
+  Output      SandboxCommandOutput @relation(fields: [outputId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([outputId, startOffset])
+  @@index([outputId, tail, startOffset])
+  @@map("sandbox_command_stream_segment")
+}
+
+/// Transactional outbox row for sandbox control-plane side effects.
+model OutboxEvent {
+  id                  String    @id @default(cuid(2))
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @default(now()) @updatedAt
+  userId              String
+  aggregateType       String
+  aggregateId         String
+  eventType           String
+  payload             Json      @default("{}")
+  /// Copy of `payload.operationId`, written by every outbox writer so hot
+  /// relay lookups use an index instead of detoasting payloads.
+  /// Every event belongs to an operation; lookups read this column alone.
+  operationId         String
+  sentAt              DateTime?
+  sentConnectionEpoch Int?
+  claimToken          String?
+  claimedAt           DateTime?
+  processedAt         DateTime?
+  User                User      @relation("OutboxEventOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Sandbox             Sandbox   @relation(fields: [aggregateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@index([aggregateType, processedAt, sentAt, id])
+  /// Serves every per-operation lookup; its prefix serves per-sandbox scans.
+  @@index([userId, aggregateType, aggregateId, operationId], map: "sandbox_dispatch_outbox_operation_idx")
+  @@map("sandbox_dispatch_outbox")
+}
+
+/// Non-dispatch receipts (template registration, probe, stdin and cancellation).
+/// UNKNOWN_OUTCOME is persisted before non-transactional observation; retries
+/// never repeat an uncertain effect. Resource IDs retain authorization history.
+model SandboxActionReceipt {
+  /// Immutable SDK authorizer; null for a browser session.
+  authorizingKeyId            String?
+  id                          String         @id @default(cuid(2))
+  createdAt                   DateTime       @default(now())
+  updatedAt                   DateTime       @default(now()) @updatedAt
+  userId                      String
+  idempotencyKey              String
+  requestBodyHash             String
+  requestDigestScheme         String
+  requestDigestKeyId          String?
+  action                      String
+  sandboxId                   String?
+  hostId                      String
+  verificationConnectionEpoch Int?
+  logicalTemplateId           String?
+  templateRevisionId          String?
+  originPoolId                String?
+  targetOperationId           String?
+  generation                  Int?
+  state                       OperationState @default(UNKNOWN_OUTCOME)
+  errorCode                   String?
+  probeState                  String?
+  resourceId                  String?
+  /// §8.3a: the replay inputs of the request digest (round 5/6).
+  digestContext               Json
+  User                        User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  LogicalTemplate SandboxTemplate? @relation(fields: [logicalTemplateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@map("sandbox_mutation_receipt")
+}
+
+// Payload bytes live exclusively in the private server spool. Reservations remain
+// held until unlink + directory fsync complete, including terminal cleanup failures.
+enum SandboxTransferState {
+  ALLOCATING
+  OPEN
+  SEALED
+  ABORTED
+  EXPIRED
+  FAILED
+}
+
+enum SandboxTransferDirection {
+  UPLOAD
+  DOWNLOAD
+}
+
+model SandboxTransfer {
+  id               String                   @id
+  userId           String
+  // Immutable credential identity; no SetNull FK that could grant session access.
+  keyId            String?
+  sandboxId        String
+  generation       Int
+  direction        SandboxTransferDirection
+  guestPath        String
+  idempotencyKey   String
+  requestBodyHash  String
+  totalBytes       BigInt
+  receivedBytes    BigInt                   @default(0)
+  reservationHeld  Boolean                  @default(true)
+  state            SandboxTransferState     @default(ALLOCATING)
+  createdAt        DateTime                 @default(now())
+  idleExpiresAt    DateTime
+  expiresAt        DateTime
+  /// Whole-content SHA-256, set exactly when the transfer is SEALED.
+  sha256           String?
+  /// Downloads bind one operation attempt. Committed uploads bind their PUT_FILE
+  /// operation with a null attempt; uncommitted sessions leave both null.
+  operationId      String?
+  operationAttempt Int?
+  /// Immutable transport host pinned at acceptance; required for release attribution.
+  acceptedHostId   String
+  User             User                     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Sandbox          Sandbox                  @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Restrict, onUpdate: Restrict)
+  Chunks           SandboxTransferChunk[]
+
+  @@unique([operationId, operationAttempt])
+  @@unique([userId, idempotencyKey])
+  @@index([reservationHeld, id])
+  @@index([sandboxId, reservationHeld])
+  @@map("sandbox_stream_transfer")
+}
+
+model SandboxTransferChunk {
+  transferId String
+  offset     BigInt
+  length     Int
+  digest     String
+  Transfer   SandboxTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@id([transferId, offset])
+  @@map("sandbox_stream_transfer_chunk")
+}
+
+/// One-use, short-lived browser terminal upgrade ticket (C53). Only the
+/// SHA-256 digest of the 256-bit secret is stored. Bound to the auth session,
+/// owner, sandbox, host and generation it was minted for; consumed by one
+/// atomic `DELETE ... RETURNING` at upgrade time, so concurrent presentations
+/// have exactly one winner and a replay finds nothing. Logout (session
+/// delete), account deletion and sandbox deletion cascade it away.
+model SandboxTerminalTicket {
+  id               String   @id @default(cuid(2))
+  createdAt        DateTime @default(now())
+  expiresAt        DateTime
+  tokenDigest      String   @unique
+  userId           String
+  sessionId        String
+  sandboxId        String
+  sandboxHostId    String
+  hostOwnerId      String
+  epoch            Int
+  generation       Int
+  rows             Int
+  cols             Int
+  /// WP8 reattach: the detached terminal this ticket resumes (v2 only) and
+  /// the next output sequence the browser has not displayed. The upgrade
+  /// re-checks the `SandboxTerminalSession` row it names.
+  resumeTerminalId String?
+  resumeOutputSeq  Int?
+  User             User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Session          Session  @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Sandbox          Sandbox  @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_terminal_resume_target: ("resumeTerminalId" IS NULL AND "resumeOutputSeq" IS NULL) OR ("resumeTerminalId" IS NOT NULL AND "resumeOutputSeq" IS NOT NULL AND "resumeOutputSeq" >= 0)
+  // @check sandbox_terminal_transport: ("hostOwnerId" IS NULL AND "epoch" IS NULL) OR ("hostOwnerId" IS NOT NULL AND "epoch" IS NOT NULL AND "epoch" >= 0)
+  @@index([userId, expiresAt])
+  @@index([sessionId])
+  @@index([sandboxId])
+  @@index([expiresAt])
+  @@map("sandbox_browser_terminal_ticket")
+}
+
+/// WP8 (D10): one resumable browser terminal of a sandbox, written when its
+/// PTY first opens (v2 attachment, node negotiated `terminalResume`). A
+/// reattach must match the same owner, auth session, sandbox, host and
+/// generation, with `closedAt` null and `openedAt` + the guest PTY lifetime
+/// not passed; `openedAt` is never reset. Revoking or expiring the auth
+/// session cascades the row away. Closed rows and rows past the lifetime are
+/// deleted by the bounded `sandbox-terminal-session-sweep`.
+model SandboxTerminalSession {
+  /// The relay terminal id (`TerminalFence.sessionId`, server-minted).
+  id         String    @id
+  userId     String
+  /// The Better Auth session that opened it (not the terminal id).
+  sessionId  String
+  sandboxId  String
+  generation Int
+  hostId     String
+  openedAt   DateTime  @default(now())
+  closedAt   DateTime?
+  User       User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Session    Session   @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Sandbox    Sandbox   @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  @@index([userId, sandboxId])
+  @@index([sessionId])
+  @@index([sandboxId])
+  @@index([closedAt])
+  @@index([openedAt])
+  @@map("sandbox_terminal_session")
+}
+
+/// Soft-deleted pools retain identity and grants for accepted work.
+model SandboxPool {
+  id                       String                @id @default(cuid(2))
+  userId                   String
+  slug                     String
+  label                    String
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @default(now()) @updatedAt
+  deletedAt                DateTime?
+  User                     User                  @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ownHostsOnly             Boolean               @default(false)
+  disconnectGraceSeconds   Int                   @default(259200)
+  /// Pool owner's maximum sandbox lease (ms); null adds no pool limit.
+  maxLeaseMs               Int?
+  /// Longest capacity wait (ms) in this pool; null inherits the operator ceiling, 0 disables waits.
+  capacityWaitMaxMs        Int?
+  /// Waiting creates per SDK key / per creator in this pool; null adds no pool limit.
+  capacityQueuePerKeyMax   Int?
+  capacityQueuePerOwnerMax Int?
+  /// Who may create sandboxes with no lease timer: false = the owner only.
+  unlimitedLeaseForShares  Boolean               @default(false)
+  /// Placement ranks the requester's own member hosts first (a sort tier, never a filter).
+  preferOwnHosts           Boolean               @default(true)
+  /// Most GiB of images not owned by the host owner cached on each contributed
+  /// member (all such bytes on the member); null adds no pool limit.
+  memberImageCacheMaxGiB   Int?
+  Shares                   Share[]
+  Invites                  ShareInvite[]
+  ContributionWitnesses    SandboxPoolMember[]   @relation("PoolContributionWitness")
+  // @check sandbox_pool_grace: "disconnectGraceSeconds" >= 0 AND "disconnectGraceSeconds" <= 2592000
+  // @check sandbox_pool_max_lease: "maxLeaseMs" IS NULL OR "maxLeaseMs" BETWEEN 300000 AND 2073600000
+  // @check sandbox_pool_capacity_wait: ("capacityWaitMaxMs" IS NULL OR "capacityWaitMaxMs" BETWEEN 0 AND 2073600000) AND ("capacityQueuePerKeyMax" IS NULL OR "capacityQueuePerKeyMax" BETWEEN 0 AND 100000) AND ("capacityQueuePerOwnerMax" IS NULL OR "capacityQueuePerOwnerMax" BETWEEN 0 AND 100000)
+  // @check sandbox_pool_image_cache: "memberImageCacheMaxGiB" IS NULL OR "memberImageCacheMaxGiB" BETWEEN 0 AND 1048576
+  Members                  SandboxPoolMember[]
+  Grants                   SdkKeyPoolAllowlist[]
+
+  @@unique([userId, slug])
+  @@unique([id, userId])
+  @@unique([id, userId, ownHostsOnly])
+  @@index([userId, createdAt])
+  @@map("sandbox_pool")
+}
+
+/// Re-add reactivates this row; removal changes only future scheduling.
+model SandboxPoolMember {
+  id                  String       @id @default(cuid(2))
+  userId              String
+  poolId              String
+  sandboxHostId       String
+  hostOwnerId         String
+  shareId             String?
+  contributeWitness   Boolean?
+  ownHostsOnlyWitness Boolean?
+  memoryCapPercent    Int?
+  vcpuCapPercent      Int?
+  /// Host owner's maximum lease (ms) for sandboxes on this membership path;
+  /// null adds no limit. Only the host owner sets it.
+  maxLeaseMs          Int?
+  enabled             Boolean      @default(true)
+  removedAt           DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @default(now()) @updatedAt
+  User                User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Pool                SandboxPool  @relation(fields: [poolId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Host                SandboxHost  @relation(fields: [sandboxHostId, hostOwnerId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict, map: "sandbox_pool_member_sandboxHostId_userId_fkey")
+  Share               Share?       @relation("ContributionWitness", fields: [shareId, poolId, userId, hostOwnerId, contributeWitness], references: [id, poolId, ownerUserId, granteeUserId, canContribute], onDelete: Restrict, onUpdate: Restrict)
+  ContributionPool    SandboxPool? @relation("PoolContributionWitness", fields: [poolId, userId, ownHostsOnlyWitness], references: [id, userId, ownHostsOnly], onDelete: Restrict, onUpdate: Restrict)
+  // @check sandbox_member_identity: "hostOwnerId" IS NOT NULL AND (("hostOwnerId" = "userId" AND "shareId" IS NULL AND "contributeWitness" IS NULL AND "ownHostsOnlyWitness" IS NULL AND "memoryCapPercent" IS NULL AND "vcpuCapPercent" IS NULL) OR ("hostOwnerId" <> "userId" AND (("removedAt" IS NOT NULL AND "shareId" IS NULL AND "contributeWitness" IS NULL AND "ownHostsOnlyWitness" IS NULL) OR ("removedAt" IS NULL AND "shareId" IS NOT NULL AND "contributeWitness" IS TRUE AND "ownHostsOnlyWitness" IS FALSE))))
+  // @check sandbox_member_caps: ("memoryCapPercent" IS NULL OR "memoryCapPercent" BETWEEN 1 AND 100) AND ("vcpuCapPercent" IS NULL OR "vcpuCapPercent" BETWEEN 1 AND 100)
+  // @check sandbox_member_max_lease: "maxLeaseMs" IS NULL OR "maxLeaseMs" BETWEEN 300000 AND 2073600000
+
+  @@unique([poolId, sandboxHostId])
+  @@index([sandboxHostId, userId])
+  @@index([poolId, createdAt])
+  @@index([shareId])
+  @@map("sandbox_pool_member")
+}
+
+model SdkKeyPoolAllowlist {
+  id          String      @id @default(cuid(2))
+  userId      String
+  sdkKeyId    String
+  poolId      String
+  poolOwnerId String
+  shareId     String?
+  useWitness  Boolean?
+  createdAt   DateTime    @default(now())
+  User        User        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  SdkKey      SdkKey      @relation(fields: [sdkKeyId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Pool        SandboxPool @relation(fields: [poolId, poolOwnerId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict, map: "sdk_key_pool_allowlist_poolId_userId_fkey")
+  Share       Share?      @relation("UseWitness", fields: [shareId, poolId, poolOwnerId, userId, useWitness], references: [id, poolId, ownerUserId, granteeUserId, canUse], onDelete: Restrict, onUpdate: Restrict)
+  // @check sdk_pool_grant_identity: "poolOwnerId" IS NOT NULL AND (("poolOwnerId" = "userId" AND "shareId" IS NULL AND "useWitness" IS NULL) OR ("poolOwnerId" <> "userId" AND "shareId" IS NOT NULL AND "useWitness" IS TRUE))
+
+  @@unique([sdkKeyId, poolId])
+  @@index([poolId, userId])
+  @@index([shareId])
+  @@map("sdk_key_pool_allowlist")
+}
+
+model Share {
+  id            String                @id @default(cuid(2))
+  poolId        String
+  ownerUserId   String
+  granteeUserId String
+  canUse        Boolean               @default(true)
+  canContribute Boolean               @default(true)
+  maxMemoryMiB  Int?
+  maxVcpu       Int?
+  maxDiskGiB    Int?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @default(now()) @updatedAt
+  Owner         User                  @relation("ShareOwner", fields: [ownerUserId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Grantee       User                  @relation("ShareGrantee", fields: [granteeUserId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Pool          SandboxPool           @relation(fields: [poolId, ownerUserId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Members       SandboxPoolMember[]   @relation("ContributionWitness")
+  Grants        SdkKeyPoolAllowlist[] @relation("UseWitness")
+
+  // @check share_identity: "ownerUserId" <> "granteeUserId" AND ("canUse" OR "canContribute")
+  // @check share_caps: ("maxMemoryMiB" IS NULL OR "maxMemoryMiB" BETWEEN 1 AND 16777216) AND ("maxVcpu" IS NULL OR "maxVcpu" BETWEEN 1 AND 8192) AND ("maxDiskGiB" IS NULL OR "maxDiskGiB" BETWEEN 1 AND 268435456)
+  @@unique([poolId, granteeUserId])
+  @@unique([id, poolId, ownerUserId, granteeUserId, canUse], map: "share_use_witness_key")
+  @@unique([id, poolId, ownerUserId, granteeUserId, canContribute], map: "share_contribute_witness_key")
+  @@index([granteeUserId, createdAt])
+  @@map("share")
+}
+
+model ShareInvite {
+  id               String      @id @default(cuid(2))
+  poolId           String
+  ownerUserId      String
+  email            String
+  tokenDigest      String      @unique
+  pendingKey       String?     @unique
+  canUse           Boolean     @default(true)
+  canContribute    Boolean     @default(true)
+  maxMemoryMiB     Int?
+  maxVcpu          Int?
+  maxDiskGiB       Int?
+  signupAllowed    Boolean     @default(false)
+  createdAt        DateTime    @default(now())
+  expiresAt        DateTime
+  sentAt           DateTime?
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+  expiredAt        DateTime?
+  acceptedByUserId String?
+  acceptedShareId  String?
+  Owner            User        @relation(fields: [ownerUserId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Pool             SandboxPool @relation(fields: [poolId, ownerUserId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check share_invite_permissions: "canUse" OR "canContribute"
+  // @check share_invite_caps: ("maxMemoryMiB" IS NULL OR "maxMemoryMiB" BETWEEN 1 AND 16777216) AND ("maxVcpu" IS NULL OR "maxVcpu" BETWEEN 1 AND 8192) AND ("maxDiskGiB" IS NULL OR "maxDiskGiB" BETWEEN 1 AND 268435456)
+  // @check share_invite_email: "email" = lower(btrim("email")) AND length("email") BETWEEN 3 AND 320 AND position('@' in "email") > 1
+  // @check share_invite_digest: "tokenDigest" ~ '^[0-9a-f]{64}$'
+  // @check share_invite_state: "expiresAt" > "createdAt" AND (("acceptedAt" IS NULL AND "revokedAt" IS NULL AND "expiredAt" IS NULL AND "pendingKey" IS NOT NULL AND "acceptedByUserId" IS NULL AND "acceptedShareId" IS NULL) OR ("pendingKey" IS NULL AND (("acceptedAt" IS NOT NULL AND "revokedAt" IS NULL AND "expiredAt" IS NULL AND "acceptedByUserId" IS NOT NULL AND "acceptedShareId" IS NOT NULL) OR ("acceptedAt" IS NULL AND "acceptedByUserId" IS NULL AND "acceptedShareId" IS NULL AND num_nonnulls("revokedAt", "expiredAt") = 1))))
+  @@index([poolId, createdAt])
+  @@index([ownerUserId, createdAt])
+  @@index([expiresAt])
+  @@map("share_invite")
+}
+
+/// Separate host-target tickets; no secret/factor-row CHECKs.
+model HostTerminalTicket {
+  id                String       @id @default(cuid(2))
+  createdAt         DateTime     @default(now())
+  expiresAt         DateTime
+  tokenDigest       String       @unique
+  userId            String
+  sessionId         String
+  sandboxHostId     String
+  hostOwnerId       String
+  epoch             Int
+  rows              Int
+  cols              Int
+  policyRevision    BigInt
+  proofRequired     Boolean
+  verifiedAt        DateTime?
+  factorFingerprint String?
+  observedAt        DateTime?
+  User              User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Session           Session      @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Host              SandboxHost? @relation(fields: [sandboxHostId, hostOwnerId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check host_terminal_ticket_binding: "userId" = "hostOwnerId" AND "epoch" >= 0 AND "rows" BETWEEN 1 AND 512 AND "cols" BETWEEN 1 AND 1024 AND "policyRevision" >= 0 AND "tokenDigest" ~ '^[0-9a-f]{64}$' AND "expiresAt" > "createdAt"
+  // @check host_terminal_ticket_proof: ("proofRequired" AND "verifiedAt" IS NOT NULL AND "factorFingerprint" IS NOT NULL AND "observedAt" IS NOT NULL) OR (NOT "proofRequired" AND "verifiedAt" IS NULL AND "factorFingerprint" IS NULL AND "observedAt" IS NULL)
+  @@index([userId, expiresAt])
+  @@index([sessionId])
+  @@index([sandboxHostId])
+  @@index([expiresAt])
+  @@map("host_terminal_ticket")
+}
+
+/// Terminal tombstones prevent late receipts from restoring released content.
+enum OperationResultReservationState {
+  RESERVED
+  PUBLISHED
+  RELEASED
+  EXPIRED
+}
+
+/// Private owner-bound content, written only under O → outbox → quota → children.
+model SandboxOperationResult {
+  operationId      String                          @id
+  sandboxId        String
+  userId           String
+  generation       Int
+  attempt          Int
+  version          Int
+  payload          Json?
+  continuation     Json?
+  expiresAt        DateTime
+  reservationBytes Int
+  reservationState OperationResultReservationState @default(RESERVED)
+  Operation        SandboxOperation                @relation(fields: [operationId, sandboxId, userId], references: [id, sandboxId, userId], onDelete: Cascade, onUpdate: Restrict)
+  User             User                            @relation("SandboxOperationResultOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  /// Required by Prisma for the 1:1 composite relation above, although the
+  /// operationId PK already implies it (B1-C-9: kept; removal fails validate).
+  @@unique([operationId, sandboxId, userId])
+  @@index([userId, expiresAt])
+  @@index([expiresAt, userId])
+  @@map("sandbox_operation_result")
+}
+
+/// Every report/counter writer holds the parent host lock. No cache/image ledger.
+model SandboxHostStoragePool {
+  id                       String      @id @default(cuid(2))
+  userId                   String
+  sandboxHostId            String
+  name                     String
+  marker                   String
+  capacityGiB              Int
+  totalBasedCapacityGiB    Int?
+  /// Frozen implicit derivation inputs; explicit caps leave these null.
+  derivationTotalBytes     BigInt?
+  derivationFreeBytes      BigInt?
+  derivationCommittedBytes BigInt?
+  derivationActualBytes    BigInt?
+  derivationHeadroomBytes  BigInt?
+  implicitCeilingGiB       Int?
+  capacitySource           String
+  /// Frozen at hello; health-only recovery cannot authorize new roots.
+  newRootsAllowed          Boolean     @default(false)
+  configured               Boolean     @default(false)
+  draining                 Boolean     @default(false)
+  health                   String
+  healthReason             String?
+  connectionEpoch          Int
+  observationSequence      BigInt
+  reportedAt               DateTime
+  diskReservedGiB          Int         @default(0)
+  totalBytes               BigInt?
+  usedBytes                BigInt?
+  freeBytes                BigInt?
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @default(now()) @updatedAt
+  User                     User        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Host                     SandboxHost @relation(fields: [sandboxHostId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Sandboxes                Sandbox[]
+
+  // @check sandbox_storage_capacity: "capacityGiB" >= 0 AND "capacityGiB" <= 1048576 AND "diskReservedGiB" >= 0 AND "diskReservedGiB" <= 2147483647 AND ("totalBasedCapacityGiB" IS NULL OR "totalBasedCapacityGiB" >= 0) AND ("implicitCeilingGiB" IS NULL OR "implicitCeilingGiB" >= 0)
+  // @check sandbox_storage_identity: length("name") >= 1 AND length("name") <= 63 AND length("marker") >= 1 AND length("marker") <= 128
+  // @check sandbox_storage_report: "connectionEpoch" > 0 AND "observationSequence" >= 0 AND "observationSequence" <= 9007199254740991 AND "health" IN ('healthy', 'unavailable') AND ("healthReason" IS NULL OR "healthReason" IN ('missing', 'identity', 'permission', 'unsupported', 'io', 'incomplete'))
+  // @check sandbox_storage_usage: ("totalBytes" IS NULL AND "usedBytes" IS NULL AND "freeBytes" IS NULL) OR ("totalBytes" IS NOT NULL AND "usedBytes" IS NOT NULL AND "freeBytes" IS NOT NULL AND "totalBytes" > 0 AND "usedBytes" >= 0 AND "usedBytes" <= "totalBytes" AND "freeBytes" = "totalBytes" - "usedBytes")
+  // @check sandbox_storage_derivation: ("capacitySource" = 'explicit' AND "capacityGiB" > 0 AND "totalBasedCapacityGiB" IS NULL AND "derivationTotalBytes" IS NULL AND "derivationFreeBytes" IS NULL AND "derivationCommittedBytes" IS NULL AND "derivationActualBytes" IS NULL AND "derivationHeadroomBytes" IS NULL AND "implicitCeilingGiB" IS NULL) OR ("capacitySource" = 'implicit' AND "totalBasedCapacityGiB" IS NOT NULL AND "derivationTotalBytes" IS NOT NULL AND "derivationFreeBytes" IS NOT NULL AND "derivationCommittedBytes" IS NOT NULL AND "derivationActualBytes" IS NOT NULL AND "derivationHeadroomBytes" IS NOT NULL AND "implicitCeilingGiB" IS NOT NULL AND "derivationTotalBytes" > 0 AND "derivationFreeBytes" >= 0 AND "derivationFreeBytes" <= "derivationTotalBytes" AND "derivationCommittedBytes" >= 0 AND "derivationActualBytes" >= 0 AND "derivationActualBytes" <= "derivationCommittedBytes" AND "derivationHeadroomBytes" >= 0 AND "derivationHeadroomBytes" <= "derivationTotalBytes" AND "capacityGiB" <= "totalBasedCapacityGiB" AND "capacityGiB" <= "implicitCeilingGiB")
+  @@unique([id, userId])
+  @@unique([id, sandboxHostId, userId, marker, name])
+  @@unique([sandboxHostId, marker])
+  @@index([userId, sandboxHostId, id])
+  @@map("sandbox_host_storage_pool")
+}
+
+enum TemplateRevisionSource {
+  MANUAL
+  CAPTURE
+  BUILD
+  /// A pinned upstream image (community-base D-A): never launchable, tagged,
+  /// granted or distributed; boots only in its own community build VM.
+  UPSTREAM
+}
+
+enum ImagePlacementPolicy {
+  ANY_NODE
+  OWNED_NODES_ONLY
+}
+
+enum TemplateImagePlacement {
+  INHERIT
+  ANY_NODE
+  OWNED_NODES_ONLY
+}
+
+enum ImageArtifactState {
+  LOCAL
+  UPLOADING
+  VERIFYING
+  STORED
+  CORRUPT
+  FAILED
+  DELETING
+  DELETED
+}
+
+enum ImageStoreKind {
+  S3
+  PEER
+}
+
+enum ImageTransferPurpose {
+  FETCH
+  REPLICATE
+  PUBLISH
+  CAPTURE_UPLOAD
+  OFFLOAD_UPLOAD
+  RESTORE_FETCH
+}
+
+enum ImageTransferState {
+  OPEN
+  COMPLETE
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
+enum TemplateCaptureState {
+  PENDING
+  CAPTURED
+  STORING
+  FINALIZED
+  FAILED
+}
+
+/// One owner's copy of one image in the image store (or, for PEER, the facts
+/// the server knows about an image that lives only on the owner's hosts).
+/// Never holds a presigned URL, relay token or plaintext data key.
+model SandboxImageArtifact {
+  id                String                      @id @default(cuid(2))
+  userId            String
+  fingerprint       String
+  architecture      String
+  format            String                      @default("unified")
+  sizeBytes         BigInt
+  unpackedBytes     BigInt?
+  storeKind         ImageStoreKind
+  state             ImageArtifactState
+  objectKey         String?
+  partSize          Int?
+  /// The stored object's encryption (copied from the session that completed
+  /// it); null while uploading.
+  encryption        String?
+  wrappedKey        Bytes?
+  wrappedKeyNonce   Bytes?
+  keyId             String?
+  uploadedByHostId  String?
+  storedAt          DateTime?
+  verifiedAt        DateTime?
+  unreferencedSince DateTime?
+  deleteAfter       DateTime?
+  lastFetchedAt     DateTime?
+  lastProgressAt    DateTime?
+  corruptReports    Int                         @default(0)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @default(now()) @updatedAt
+  User              User                        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  UploadSessions    SandboxImageUploadSession[]
+
+  // @check sandbox_image_artifact_fingerprint: "fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "format" = 'unified'
+  // @check sandbox_image_artifact_stored: "state"::text <> 'STORED' OR ("objectKey" IS NOT NULL AND "verifiedAt" IS NOT NULL AND "storeKind"::text = 'S3')
+  // @check sandbox_image_artifact_encryption: ("encryption" IS NULL AND "wrappedKey" IS NULL AND "wrappedKeyNonce" IS NULL AND "keyId" IS NULL) OR ("encryption" = 'aes256gcm-r1' AND "wrappedKey" IS NOT NULL AND "wrappedKeyNonce" IS NOT NULL AND "keyId" IS NOT NULL)
+  // @check sandbox_image_artifact_sizes: "sizeBytes" > 0 AND ("unpackedBytes" IS NULL OR "unpackedBytes" > 0) AND ("partSize" IS NULL OR "partSize" > 0) AND "corruptReports" >= 0
+  @@unique([userId, fingerprint])
+  @@unique([id, userId])
+  @@index([state, deleteAfter])
+  @@index([userId, state])
+  @@map("sandbox_image_artifact")
+}
+
+enum ImageUploadSessionState {
+  OPEN
+  COMPLETE
+  ABORTED
+}
+
+/// One multipart upload of an artifact by one image job (round-5 P2-2). The
+/// S3 upload id, its parts and its data key belong to this session, never to
+/// the shared artifact. Its identity (transfer, host epoch, dispatch attempt,
+/// request, object key and key) is fixed at begin; `uploadId` is set once,
+/// by the begin that opened it. Every write after an S3 call is conditional
+/// on this row still being OPEN; continuations resolve their own transfer's
+/// session. At most one OPEN session per artifact: `liveArtifactId` is the
+/// artifact id while OPEN (null otherwise) and is unique.
+model SandboxImageUploadSession {
+  id                String                   @id @default(cuid(2))
+  transferId        String                   @unique
+  /// Exactly one of artifactId (template image) and diskOffloadId (disk offload).
+  artifactId        String?
+  liveArtifactId    String?                  @unique
+  diskOffloadId     String?
+  /// S1: = diskOffloadId while OPEN; one OPEN session per offload.
+  liveDiskOffloadId String?                  @unique
+  userId            String
+  hostId            String
+  hostEpoch         Int
+  dispatchAttempt   Int?
+  requestId         String?
+  state             ImageUploadSessionState  @default(OPEN)
+  objectKey         String
+  /// Private S3 multipart upload id; never projected.
+  uploadId          String?
+  /// Declared plaintext size and the stored (possibly encrypted) size.
+  sizeBytes         BigInt
+  storedBytes       BigInt
+  partSize          Int
+  encryption        String?
+  wrappedKey        Bytes?
+  wrappedKeyNonce   Bytes?
+  keyId             String?
+  /// Disk DEK wraps use a per-row HKDF salt (disk-offload/keys.ts); null for templates.
+  wrapSalt          Bytes?
+  endReason         String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @default(now()) @updatedAt
+  Artifact          SandboxImageArtifact?    @relation(fields: [artifactId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  DiskOffload       SandboxDiskOffload?      @relation(fields: [diskOffloadId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Transfer          SandboxImageTransfer     @relation(fields: [transferId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Parts             SandboxImageUploadPart[]
+
+  // @check sandbox_image_upload_session_target: ("artifactId" IS NULL) <> ("diskOffloadId" IS NULL)
+  // @check sandbox_image_upload_session_live: ("state"::text = 'OPEN') = (COALESCE("liveArtifactId", "liveDiskOffloadId") IS NOT NULL) AND ("liveArtifactId" IS NULL OR "liveArtifactId" = "artifactId") AND ("liveDiskOffloadId" IS NULL OR "liveDiskOffloadId" = "diskOffloadId")
+  // S3: a disk session holds its wrap exactly while OPEN; template sessions never carry a wrap salt.
+  // @check sandbox_image_upload_session_disk_key: CASE WHEN "diskOffloadId" IS NULL THEN "wrapSalt" IS NULL ELSE ("state"::text = 'OPEN') = ("wrappedKey" IS NOT NULL) AND ("wrappedKey" IS NULL) = ("wrapSalt" IS NULL) AND ("wrappedKey" IS NULL OR "encryption" = 'aes256gcm-r1') END
+  // @check sandbox_image_upload_session_encryption: ("encryption" IS NULL AND "wrappedKey" IS NULL AND "wrappedKeyNonce" IS NULL AND "keyId" IS NULL) OR ("encryption" = 'aes256gcm-r1' AND "wrappedKey" IS NOT NULL AND "wrappedKeyNonce" IS NOT NULL AND "keyId" IS NOT NULL)
+  // @check sandbox_image_upload_session_sizes: "sizeBytes" > 0 AND "storedBytes" >= "sizeBytes" AND "partSize" > 0 AND "hostEpoch" > 0
+  @@index([artifactId])
+  @@index([diskOffloadId])
+  @@index([state, updatedAt])
+  @@map("sandbox_image_upload_session")
+}
+
+/// Completed multipart parts of one upload session (ETags are not secrets;
+/// links are never stored).
+model SandboxImageUploadPart {
+  sessionId  String
+  partNumber Int
+  etag       String
+  sizeBytes  Int
+  Session    SandboxImageUploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_image_upload_part: "partNumber" BETWEEN 1 AND 10000 AND "sizeBytes" > 0 AND length("etag") BETWEEN 1 AND 256
+  @@id([sessionId, partNumber])
+  @@map("sandbox_image_upload_part")
+}
+
+/// Daemon-reported managed cache entry for one image owner on one host.
+model SandboxHostImageCache {
+  id              String      @id @default(cuid(2))
+  hostId          String
+  hostOwnerId     String
+  /// No FK: a cache entry outlives nothing and is history-free.
+  imageOwnerId    String
+  fingerprint     String
+  compressedBytes BigInt
+  unpackedBytes   BigInt?
+  origin          String
+  pinned          Boolean     @default(false)
+  connectionEpoch Int
+  reportedAt      DateTime
+  /// Foreign copy whose access was lost (security review P2-5): set once by
+  /// the access scan; the copy is released until the host reports it gone.
+  accessLostAt    DateTime?
+  /// Last `image.release(access_lost)` attempt; the retry schedule rotates on it.
+  releaseSentAt   DateTime?
+  Host            SandboxHost @relation(fields: [hostId, hostOwnerId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_host_image_cache_entry: "fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "compressedBytes" >= 0 AND ("unpackedBytes" IS NULL OR "unpackedBytes" >= 0) AND "origin" IN ('fetched', 'captured', 'replica') AND "connectionEpoch" > 0
+  @@unique([hostId, fingerprint, imageOwnerId])
+  @@index([imageOwnerId, fingerprint])
+  @@index([accessLostAt, releaseSentAt])
+  @@map("sandbox_host_image_cache")
+}
+
+/// Host-level image job ledger (fetch, publish, capture upload). Never holds a link.
+model SandboxImageTransfer {
+  id                String                     @id @default(cuid(2))
+  userId            String
+  fingerprint       String
+  artifactId        String?
+  purpose           ImageTransferPurpose
+  mode              String
+  sourceHostId      String?
+  sourceHostOwnerId String?
+  destHostId        String?
+  destHostOwnerId   String?
+  operationId       String?
+  state             ImageTransferState         @default(OPEN)
+  sizeBytes         BigInt
+  partSize          Int
+  partCount         Int
+  bytesDone         BigInt                     @default(0)
+  sourceEpoch       Int?
+  destEpoch         Int?
+  /// Dispatch attempt of `operationId` this transfer was granted to (round-2
+  /// P2-3); continuations and resumes are honoured only for that attempt.
+  dispatchAttempt   Int?
+  /// Counts against the owner's downloads-per-hour budget.
+  countedDownload   Boolean                    @default(false)
+  expiresAt         DateTime
+  lastProgressAt    DateTime                   @default(now())
+  endReason         String?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @default(now()) @updatedAt
+  User              User                       @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  /// T8: the disk offload an OFFLOAD_UPLOAD / RESTORE_FETCH transfer moves.
+  diskOffloadId     String?
+  DiskOffload       SandboxDiskOffload?        @relation(fields: [diskOffloadId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Links             SandboxImageLink[]
+  UploadSession     SandboxImageUploadSession?
+
+  // @check sandbox_image_transfer_shape: "fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "mode" IN ('S3', 'RELAY') AND "sizeBytes" > 0 AND "partSize" > 0 AND "partCount" BETWEEN 1 AND 10000 AND "bytesDone" >= 0 AND "bytesDone" <= "sizeBytes"
+  @@index([state, expiresAt])
+  @@index([destHostId, state])
+  @@index([sourceHostId, state])
+  @@index([userId, createdAt])
+  @@index([operationId])
+  @@index([diskOffloadId])
+  @@map("sandbox_image_transfer")
+}
+
+/// One-time relay part link. Only the SHA-256 digest of the token is stored;
+/// consumed with one `DELETE ... RETURNING` (terminal-ticket pattern).
+model SandboxImageLink {
+  id          String               @id @default(cuid(2))
+  transferId  String
+  hostId      String
+  hostEpoch   Int
+  role        String
+  partNumber  Int
+  tokenDigest String               @unique
+  createdAt   DateTime             @default(now())
+  expiresAt   DateTime
+  Transfer    SandboxImageTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_image_link_shape: "role" IN ('SOURCE', 'DEST') AND "partNumber" BETWEEN 1 AND 10000 AND "tokenDigest" ~ '^[0-9a-f]{64}$' AND "expiresAt" > "createdAt" AND "hostEpoch" > 0
+  @@unique([transferId, role, partNumber])
+  @@index([expiresAt])
+  @@map("sandbox_image_link")
+}
+
+/// One CAPTURE_TEMPLATE operation: the host result is stored here and a
+/// separate finalizer transaction creates the revision (no H->S->O -> template
+/// lock inversion).
+model SandboxTemplateCapture {
+  operationId      String               @id
+  userId           String
+  sandboxId        String
+  templateId       String
+  tag              String
+  hostId           String
+  hostOwnerId      String
+  scrubPaths       String[]             @default([])
+  state            TemplateCaptureState @default(PENDING)
+  /// The sandbox was STOPPED at acceptance (no freeze, no snapshot).
+  stoppedCapture   Boolean              @default(false)
+  fingerprint      String?
+  sizeBytes        BigInt?
+  unpackedBytes    BigInt?
+  architecture     String?
+  resultEpoch      Int?
+  revisionId       String?
+  /// Transient capture-VM hold, released exactly once.
+  resourcesHeld    Boolean              @default(false)
+  chargedMemoryMiB Int                  @default(0)
+  chargedVcpu      Int                  @default(0)
+  diskChargeGiB    Int                  @default(0)
+  storagePoolId    String?
+  errorCode        String?
+  symlinkedPaths   String[]             @default([])
+  /// The template build this capture belongs to (history, no FK).
+  buildId          String?
+  /// The build's capture attempt this row is (immutable; 0 for a plain
+  /// capture). A capture that ended UNKNOWN_OUTCOME is retried as a new
+  /// attempt; the build's `captureAttempt` names the current one.
+  buildAttempt     Int                  @default(0)
+  /// The build's cancel committed while this capture's host result was not
+  /// yet recorded (PENDING): the cancel won, so this capture never publishes
+  /// a revision or moves a tag; a result that still arrives is recorded only
+  /// so the finalizer can fail it and release its image. Written under the
+  /// build row lock and serialized with result recording on this row.
+  buildCancelledAt DateTime?
+  finalizedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @default(now()) @updatedAt
+  Operation        SandboxOperation     @relation(fields: [operationId, sandboxId, userId], references: [id, sandboxId, userId], onDelete: Cascade, onUpdate: Restrict)
+  Template         SandboxTemplate      @relation(fields: [templateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_template_capture_shape: cardinality("scrubPaths") <= 80 AND "chargedMemoryMiB" >= 0 AND "chargedVcpu" >= 0 AND "diskChargeGiB" >= 0 AND ("fingerprint" IS NULL OR "fingerprint" ~ '^sha256:[0-9a-f]{64}$') AND (NOT "resourcesHeld" OR "storagePoolId" IS NOT NULL OR "diskChargeGiB" = 0)
+  // @check sandbox_template_capture_build_attempt: "buildAttempt" >= 0 AND ("buildId" IS NOT NULL OR "buildAttempt" = 0)
+  @@unique([operationId, sandboxId, userId])
+  @@unique([buildId, buildAttempt])
+  @@index([hostId, state])
+  @@index([sandboxId, state])
+  @@index([state, updatedAt])
+  @@map("sandbox_template_capture")
+}
+
+/// One pool create waiting for capacity (§ capacity queue). Written with its
+/// hostless WAITING_FOR_CAPACITY sandbox and QUEUED CREATE operation; kept for
+/// the sandbox's whole life (replay chooses the queued digest domain from it).
+/// The pool and pool owner are plain strings, like a placement's origin pool:
+/// pools are soft-deleted and an owner's account deletion must never be
+/// blocked by a grantee's history. `intent` is the private normalized create
+/// intent (env overrides included): never projected, scrubbed at any end.
+model SandboxCapacityWait {
+  id                 String                   @id @default(cuid(2))
+  seq                BigInt                   @unique @default(autoincrement())
+  userId             String
+  sandboxId          String                   @unique
+  operationId        String                   @unique
+  poolId             String
+  poolOwnerId        String
+  /// Creating SDK key (no FK, same as the operation's `authorizingKeyId`).
+  authorizingKeyId   String?
+  templateRevisionId String
+  cpuCount           Int
+  memoryMiB          Int
+  diskGiB            Int
+  chargedMemoryMiB   Int
+  rootChargeGiB      Int
+  /// Requested relative lease; 0 means no lease timer. The lease starts at placement.
+  leaseTimeoutMs     Int
+  leaseExpireAction  SandboxLeaseExpireAction
+  intent             Json?
+  state              CapacityWaitState        @default(WAITING)
+  enqueuedAt         DateTime                 @default(now())
+  /// NULL waits without limit.
+  deadlineAt         DateTime?
+  bypassCount        Int                      @default(0)
+  lastBlocker        String?
+  lastEvaluatedAt    DateTime?
+  endedAt            DateTime?
+  endReason          String?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @default(now()) @updatedAt
+  User               User                     @relation("SandboxCapacityWaitOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Sandbox            Sandbox                  @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Operation          SandboxOperation         @relation(fields: [operationId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  // @check sandbox_capacity_wait_intent: (state::text = 'WAITING' AND "intent" IS NOT NULL AND "endedAt" IS NULL) OR (state::text <> 'WAITING' AND "intent" IS NULL AND "endedAt" IS NOT NULL)
+  // @check sandbox_capacity_wait_bypass: "bypassCount" >= 0
+  // @check sandbox_capacity_wait_deadline: "deadlineAt" IS NULL OR "deadlineAt" > "enqueuedAt"
+  // @check sandbox_capacity_wait_blocker: "lastBlocker" IS NULL OR "lastBlocker" IN ('ram', 'vcpu', 'disk', 'storage', 'ceiling', 'reserved', 'member_quota', 'share_quota', 'unavailable', 'image_rebuilding')
+
+  @@unique([sandboxId, userId])
+  @@unique([operationId, userId])
+  @@index([poolId, state, seq])
+  @@index([userId, state])
+  @@index([authorizingKeyId, state])
+  @@index([state, deadlineAt])
+  @@map("sandbox_capacity_wait")
+}
+
+/// One disk offload attempt AND its stored object (offload plan §2; R1(a):
+/// never a SandboxImageArtifact). The wrap columns are read and written only
+/// in packages/api/src/sandbox/disk-offload/keys.ts (projection lint).
+model SandboxDiskOffload {
+  id                  String                      @id @default(cuid(2))
+  sandboxId           String
+  userId              String
+  /// Per-sandbox sequence; never reused.
+  seq                 Int
+  sourceGeneration    Int
+  sourceHostId        String
+  sourceHostOwnerId   String
+  state               SandboxDiskOffloadState     @default(PENDING)
+  /// = sandboxId while non-terminal: one live offload per sandbox.
+  liveSandboxId       String?                     @unique
+  /// sha256 of the unified tarball (content hash).
+  fingerprint         String?
+  /// Plaintext tarball bytes.
+  sizeBytes           BigInt?
+  storedBytes         BigInt?
+  objectKey           String?                     @unique
+  partSize            Int?
+  /// Always 'aes256gcm-r1' for a stored disk.
+  encryption          String?
+  /// DEK of the completing session, wrapped (§3).
+  wrappedKey          Bytes?
+  wrapSalt            Bytes?
+  wrapNonce           Bytes?
+  rootKid             String?
+  completedSessionId  String?                     @unique
+  verifiedAt          DateTime?
+  storedAt            DateTime?
+  /// Review r3: the source host confirmed (`disk.offload.released`) that it
+  /// dropped this offload's alias, export and staging; a STORED row holds
+  /// the host's export slot until then.
+  sourceReleasedAt    DateTime?
+  /// R2 evict marker (grant-scoped fence).
+  evictGrantId        String?                     @unique
+  evictHostId         String?
+  evictGrantEpoch     Int?
+  evictGrantedAt      DateTime?
+  evictGrantExpiresAt DateTime?
+  consumedAt          DateTime?
+  /// Salvage grace after CONSUMED / destroy.
+  deleteAfter         DateTime?
+  /// R5: the owner destroy that ended it.
+  destroyOperationId  String?
+  /// R5: deferred key shred (DELETING only).
+  shredAfter          DateTime?
+  /// S3: set only by shredOffloadKeys.
+  shreddedAt          DateTime?
+  failureCode         String?
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @default(now()) @updatedAt
+  User                User                        @relation("SandboxDiskOffloadOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Sandbox             Sandbox                     @relation("SandboxDiskOffloads", fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  CurrentFor          Sandbox?                    @relation("CurrentDiskOffload")
+  UploadSessions      SandboxImageUploadSession[]
+  ImageTransfers      SandboxImageTransfer[]
+
+  // @check sandbox_disk_offload_stored: "state"::text NOT IN ('STORED', 'EVICTING') OR ("objectKey" IS NOT NULL AND "verifiedAt" IS NOT NULL AND "encryption" = 'aes256gcm-r1' AND "wrappedKey" IS NOT NULL AND "wrapSalt" IS NOT NULL AND "wrapNonce" IS NOT NULL AND "rootKid" IS NOT NULL AND "fingerprint" ~ '^sha256:[0-9a-f]{64}$')
+  // @check sandbox_disk_offload_evict: ("state"::text = 'EVICTING') = ("evictGrantId" IS NOT NULL) AND ("evictGrantId" IS NULL OR ("evictHostId" IS NOT NULL AND "evictGrantEpoch" > 0 AND "evictGrantExpiresAt" IS NOT NULL))
+  // @check sandbox_disk_offload_live: ("liveSandboxId" IS NULL) = ("state"::text IN ('CONSUMED', 'SUPERSEDED', 'FAILED', 'DELETING', 'DELETED')) AND ("liveSandboxId" IS NULL OR "liveSandboxId" = "sandboxId")
+  // @check sandbox_disk_offload_shredded: "shreddedAt" IS NULL OR ("wrappedKey" IS NULL AND "wrapSalt" IS NULL AND "wrapNonce" IS NULL)
+  // @check sandbox_disk_offload_wrap_all: ("wrappedKey" IS NULL) = ("wrapSalt" IS NULL) AND ("wrappedKey" IS NULL) = ("wrapNonce" IS NULL) AND ("wrappedKey" IS NULL OR "completedSessionId" IS NOT NULL)
+  @@unique([sandboxId, seq])
+  @@unique([id, sandboxId, userId])
+  @@index([userId, state])
+  @@index([state, updatedAt])
+  @@index([shredAfter])
+  @@index([state, shreddedAt])
+  @@map("sandbox_disk_offload")
+}
+
+/// A detached local copy that still holds its host's root reservation (S10).
+model SandboxDiskCopy {
+  id                  String               @id @default(cuid(2))
+  sandboxId           String
+  userId              String
+  hostId              String
+  hostOwnerId         String
+  /// S10: share attribution moves with the hold.
+  usagePoolId         String?
+  usageMemberId       String?
+  storagePoolId       String
+  storageMarker       String
+  storagePoolName     String
+  rootChargeGiB       Int
+  offloadSeq          Int
+  /// R9/U9.3: the instance's actual create key (for a restored lineage, the
+  /// restore RECONNECT operation's idempotencyKey).
+  createKey           String
+  /// N1: the stale instance's volatile.base_image.
+  baseFingerprint     String
+  state               SandboxDiskCopyState @default(STALE)
+  diskReservationHeld Boolean              @default(true)
+  discardSentAt       DateTime?
+  createdAt           DateTime             @default(now())
+  User                User                 @relation("SandboxDiskCopyOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Sandbox             Sandbox              @relation(fields: [sandboxId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Host                SandboxHost          @relation(fields: [hostId, hostOwnerId], references: [id, userId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([sandboxId, hostId])
+  @@index([hostId, state])
+  @@index([userId])
+  @@map("sandbox_disk_copy")
+}
+
+/// Round 6, V3: the durable continuation of one queued restore. One row per
+/// accepted restore operation, never per sandbox. `intent` is private: it is
+/// never projected and is scrubbed at any end, like SandboxCapacityWait.intent.
+model SandboxRestoreWait {
+  operationId        String            @id
+  sandboxId          String
+  userId             String
+  /// The accepting principal (null = owner session).
+  authorizingKeyId   String?
+  /// Sandbox generation at acceptance (CAS on resume).
+  expectedGeneration Int
+  /// Normalized target hint, override, credential pins, timeout, snapshot hashes.
+  intent             Json?
+  state              CapacityWaitState @default(WAITING)
+  enqueuedAt         DateTime          @default(now())
+  deadlineAt         DateTime
+  lastAttemptAt      DateTime?
+  endedAt            DateTime?
+  endReason          String?
+  /// The transient `credential.*` refusal of the latest evaluation that
+  /// reached a verdict (§8.3c), recorded under the row lock: set by a login
+  /// refusal, cleared by an evaluation that found no host with room. At the
+  /// deadline a set value is the restore's failure code instead of
+  /// `restore_no_allowed_host`.
+  lastLoginRefusal   String?
+  User               User              @relation("SandboxRestoreWaitOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Operation          SandboxOperation  @relation(fields: [operationId, sandboxId, userId], references: [id, sandboxId, userId], onDelete: Cascade, onUpdate: Restrict)
+
+  // @check sandbox_restore_wait_intent: (state::text = 'WAITING' AND "intent" IS NOT NULL AND "endedAt" IS NULL) OR (state::text <> 'WAITING' AND "intent" IS NULL AND "endedAt" IS NOT NULL)
+  // @check sandbox_restore_wait_deadline: "deadlineAt" > "enqueuedAt"
+  @@unique([operationId, sandboxId, userId])
+  @@index([state, deadlineAt])
+  @@index([sandboxId, state])
+  @@index([userId])
+  @@map("sandbox_restore_wait")
+}

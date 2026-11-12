@@ -1,0 +1,128 @@
+# Nightly self-tests for the template's own tooling: the checkers, hooks, and
+# scripts that guard this repo, rather than the repo's product code. These
+# verify the guards themselves still catch what they claim to catch.
+#
+# Every step here also runs in the PR `policy-checks` / `secret-scan` jobs on
+# each change; the nightly run adds a time-shifted safety net so a checker that
+# breaks through an indirect dependency bump (node, tsx, glob semantics) is
+# surfaced within a day even on a quiet main branch.
+#
+# `pnpm verify:tooling` is exactly the set of steps that were split out of
+# `pnpm verify` when it was split into the fast pre-handoff gate
+# (`pnpm verify:fast`) and the full CI/release gate (`pnpm verify`).
+#
+# The same schedule runs the FULL relay chaos matrix (reconnect coverage):
+# every cell of `relay-chaos-matrix.ts`, not just the PR subset that
+# `pr-checks.yml` runs. It is sharded by test file and seeded; the seed is
+# printed so a failure can be replayed with
+# `RELAY_CHAOS_SEED=<seed> pnpm test:relay-chaos:full --sequence.seed=<seed>`.
+# FakeRuntime and loopback only; live Incus chaos (`pnpm test:relay-chaos:live`)
+# never runs in CI.
+name: Nightly tooling self-tests
+
+on:
+  schedule:
+    # 03:30 UTC — quiet hour, off the top of the hour to dodge cron congestion.
+    - cron: "30 3 * * *"
+  # Manual trigger for testing the workflow or re-running a failure outside the
+  # schedule. `relay_chaos_seed` replays a failed relay chaos run.
+  workflow_dispatch:
+    inputs:
+      relay_chaos_seed:
+        description: "Relay chaos seed (positive integer; empty picks the run id)"
+        required: false
+        default: ""
+
+# Least-privilege token: the self-tests only read the repo.
+permissions:
+  contents: read
+
+# One nightly run at a time; a superseded scheduled run is cancelled.
+concurrency:
+  group: nightly-tooling
+  cancel-in-progress: true
+
+jobs:
+  tooling-self-tests:
+    name: Tooling self-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Everything below is offline and DB/Redis-free: policy-checker fixture
+      # runs, the Claude hook deny-rule suite, the trufflehog filter's stubbed
+      # CLI tests, and the Dokploy config test bundle.
+      - name: Run tooling self-tests
+        run: pnpm verify:tooling
+
+  relay-chaos-full:
+    name: Relay chaos full matrix (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      # One seed for every shard of a run, so a replay covers the same order.
+      RELAY_CHAOS_SEED: ${{ inputs.relay_chaos_seed || github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # DmnR cells spawn the real debug daemon (FakeRuntime); the debug build
+      # is the only one that reads WSSP_TEST_RELAY_TIMING.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+
+      - name: Build the daemon
+        run: cargo build -p wssp --bin wssp --locked
+
+      - name: Validate the seed
+        run: |
+          case "$RELAY_CHAOS_SEED" in
+            ''|*[!0-9]*) echo "relay_chaos_seed must be a positive integer" >&2; exit 1 ;;
+          esac
+          echo "Relay chaos seed: $RELAY_CHAOS_SEED (shard ${{ matrix.shard }}/2)"
+
+      # `--passWithNoTests`: a shard can be empty while the matrix has fewer
+      # test files than shards; the cells themselves never skip silently.
+      - name: Relay chaos full matrix
+        run: >-
+          pnpm test:relay-chaos:full
+          --shard=${{ matrix.shard }}/2
+          --sequence.seed="$RELAY_CHAOS_SEED"
+          --passWithNoTests

@@ -1,0 +1,19 @@
+{
+  "description": "maxBytes is an integer",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      },
+      "maxBytes": "1024"
+    }
+  }
+}

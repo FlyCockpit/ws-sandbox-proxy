@@ -1,0 +1,61 @@
+{
+  "server": [
+    {
+      "type": "image.verify.request",
+      "requestId": "verify-1",
+      "imageRef": "images:ubuntu/24.04/cloud",
+      "expectedArchitecture": "x86_64"
+    },
+    {
+      "type": "sandbox.probe.request",
+      "requestId": "probe-1",
+      "hostId": "host-1",
+      "sandboxId": "sbx-1",
+      "generation": 2,
+      "incusFingerprint": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "architecture": "x86_64",
+      "guestUid": 1000,
+      "guestGid": 1000,
+      "guestHome": "/home/user",
+      "guestShell": "/bin/bash",
+      "hostOwnerId": "owner-1",
+      "sandboxOwnerId": "user-1"
+    }
+  ],
+  "daemon": [
+    {
+      "type": "image.verify.result",
+      "requestId": "verify-1",
+      "incusFingerprint": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "architecture": "x86_64"
+    },
+    {
+      "type": "image.verify.result",
+      "requestId": "verify-2",
+      "error": {
+        "code": "not_found",
+        "message": "missing image"
+      }
+    },
+    {
+      "type": "sandbox.probe.result",
+      "requestId": "probe-1",
+      "state": "guest_ready"
+    },
+    {
+      "type": "sandbox.probe.result",
+      "requestId": "probe-1",
+      "state": "stopped"
+    },
+    {
+      "type": "sandbox.probe.result",
+      "requestId": "probe-1",
+      "state": "confirmed_absent"
+    },
+    {
+      "type": "sandbox.probe.result",
+      "requestId": "probe-1",
+      "state": "unreachable"
+    }
+  ]
+}

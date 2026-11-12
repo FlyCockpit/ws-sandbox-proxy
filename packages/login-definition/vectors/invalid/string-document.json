@@ -1,0 +1,5 @@
+{
+  "description": "a definition is a JSON object",
+  "expect": "definition.invalid",
+  "document": "codex"
+}

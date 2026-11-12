@@ -1,0 +1,14 @@
+{
+  "list": {
+    "loadFailed": "No se pudo cargar esta lista."
+  },
+  "nav": {
+    "ariaLabel": "Navegación principal",
+    "templates": "Plantillas",
+    "sandboxes": "Sandboxes",
+    "collapseSidebar": "Contraer barra lateral",
+    "expandSidebar": "Expandir barra lateral",
+    "activity": "Actividad",
+    "settings": "Configuración"
+  }
+}

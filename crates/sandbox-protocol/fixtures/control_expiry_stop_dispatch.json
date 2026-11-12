@@ -1,0 +1,26 @@
+{
+  "type": "operation.dispatch",
+  "operationId": "operations-1",
+  "sandboxId": "sbx-1",
+  "idempotencyKey": "lease-expire:sbx-1:2:1:STOP",
+  "kind": "sandbox.stop",
+  "generation": 2,
+  "attempt": 1,
+  "incusName": "wssp-sbx-sbx-1",
+  "recursive": false,
+  "bodyHash": "530d02245ca7129f1e31cdaf039c1947c984ccb8d6bf6bdf9c259b40ed02add6",
+  "allocation": {
+    "cpuCount": 1,
+    "memoryMiB": 1024,
+    "diskGiB": 32,
+    "storagePoolName": "default",
+    "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "chargedMemoryMiB": 1344,
+    "chargedVcpu": 1,
+    "rootChargeGiB": 33
+  },
+  "digestScheme": "sha256-env-free-v1",
+  "incusFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "templateDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sandboxOwnerId": "user-1"
+}

@@ -1,0 +1,283 @@
+//! `wssp login` device-code enrollment.
+
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use serde::Serialize;
+
+use crate::auth::{
+    DeviceFlowState, ExchangeError, MAX_LOGIN_DURATION, approval_url, exchange_device_code,
+    remaining, start_device_authorization,
+};
+use crate::output;
+use crate::slug::validate_host_slug;
+use crate::state::{AuthStore, LoginStart};
+
+#[derive(Debug, clap::Args)]
+pub struct Args {
+    #[command(flatten)]
+    pub tls: crate::tls::TlsArgs,
+
+    /// Sandbox host slug to enroll (`host-slug:<slug>` scope).
+    #[arg(long)]
+    slug: String,
+
+    /// Control plane origin override (defaults to configured `server_url`).
+    #[arg(long)]
+    server: Option<String>,
+
+    /// Emit JSON instead of human-readable text.
+    #[arg(long)]
+    json: bool,
+
+    /// Let sandboxes from other users' pools reach the open internet from
+    /// this machine. Without it, an interactive login asks once.
+    #[arg(long, value_enum, value_name = "on|off")]
+    open_egress_for_others: Option<crate::commands::config::OnOff>,
+}
+
+pub fn run(args: &Args) -> Result<()> {
+    let store = AuthStore::open(None)?;
+    let (config, _) = store.snapshot()?;
+    let trust = args.tls.load(&config)?;
+    // Environment trust is an invocation-only override, including enrollment.
+    // Only an explicit flag publishes a new default; retain an existing one.
+    let saved_ca_file = if args.tls.ca_file.is_some() {
+        trust.ca_file.clone()
+    } else {
+        config.ca_file.clone()
+    };
+    let host_slug = args.slug.clone();
+    validate_host_slug(&host_slug)?;
+    let LoginStart {
+        generation,
+        server_url,
+    } = store.begin_login(args.server.as_deref(), &host_slug)?;
+    drop(store);
+    let server_url = server_url.as_str();
+    let login_started = Instant::now();
+    let started = start_device_authorization(
+        &trust,
+        server_url,
+        &host_slug,
+        login_started + MAX_LOGIN_DURATION,
+    )?;
+    let approval = approval_url(&started)?;
+    let expires_in = Duration::from_secs(started.expires_in).min(MAX_LOGIN_DURATION);
+    let deadline = login_started + expires_in;
+    let mut interval = Duration::from_secs(started.interval.max(1));
+    let mut next_rate_limit_floor: Option<Duration> = None;
+    if args.json {
+        output::json(&LoginStarted {
+            host_slug: &host_slug,
+            user_code: &started.user_code,
+            verification_uri: Some(started.verification_uri.as_str()),
+            verification_uri_complete: started.verification_uri_complete.as_deref(),
+            expires_in: Some(expires_in.as_secs()),
+            interval: Some(interval.as_secs()),
+        })?;
+    } else {
+        output::line(format!("host slug: {host_slug}"))?;
+        output::line(format!("user code: {}", started.user_code))?;
+        output::line(format!("verification URI: {approval}"))?;
+    }
+
+    loop {
+        let mut wait = interval;
+        if let Some(retry_floor) = next_rate_limit_floor.take() {
+            wait = wait.max(retry_floor);
+        }
+        if wait > remaining(deadline)? {
+            anyhow::bail!("device authorization expired");
+        }
+        poll_sleep(wait);
+        let store = AuthStore::open(Some(deadline))?;
+        store.check_generation(&generation)?;
+        match exchange_device_code(
+            &trust,
+            server_url,
+            &started.device_code,
+            &host_slug,
+            deadline,
+        ) {
+            Ok(credential) => {
+                remaining(deadline)?;
+                store.publish_with_ca_file(&generation, credential, saved_ca_file.clone())?;
+                drop(store);
+                if !args.json {
+                    output::line("device login complete")?;
+                }
+                return node_setup(args, &host_slug);
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Pending)) => {
+                tracing::debug!("device authorization pending");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::SlowDown)) => {
+                interval = slowed_down_interval(interval);
+                tracing::debug!(?interval, "device authorization polling too fast");
+            }
+            Err(ExchangeError::RateLimited(delay)) => {
+                if delay > remaining(deadline)? {
+                    anyhow::bail!("device authorization expired");
+                }
+                next_rate_limit_floor = Some(delay);
+                tracing::debug!(?delay, "device exchange rate limited");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Denied)) => {
+                anyhow::bail!("device authorization denied");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Expired)) => {
+                anyhow::bail!("device authorization expired");
+            }
+            Err(ExchangeError::Other(error)) => return Err(error),
+        }
+    }
+}
+
+const OPEN_EGRESS_QUESTION: &str =
+    "Allow sandboxes from other users' pools to reach the open internet from this machine? [y/N] ";
+
+/// Node setup after enrollment (docs/guide/hosts.md#egress-guard): the open
+/// egress consent, then the egress guard check. Never prompts or waits on
+/// stdin without a terminal on both stdin and stdout.
+fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
+    use std::io::IsTerminal;
+    let current = crate::config::Config::load()?.allow_open_egress_for_others;
+    let interactive =
+        !args.json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let answer = match (args.open_egress_for_others, current) {
+        (Some(value), _) => Some(matches!(value, crate::commands::config::OnOff::On)),
+        (None, None) if interactive => Some(ask_open_egress()?),
+        (None, _) => None,
+    };
+    if let Some(value) = answer {
+        crate::config::Config::update(|cfg| {
+            cfg.allow_open_egress_for_others = Some(value);
+            Ok(())
+        })?;
+    }
+    let consent = answer.or(current);
+    if consent.is_none() && !args.json {
+        output::diagnostic(
+            "open internet for other users' sandboxes is off until you choose: `wssp config set-open-egress-for-others on|off`",
+        )?;
+    } else if !args.json {
+        output::line(format!(
+            "open internet for other users' sandboxes: {}",
+            if consent == Some(true) { "on" } else { "off" }
+        ))?;
+    }
+    let guard = crate::guard_report::GuardReport::local();
+    if args.json {
+        output::json(&LoginComplete {
+            host_slug,
+            open_egress_for_others: consent,
+            guard: GuardSummary {
+                installed: guard.installed,
+                ok: guard.ok,
+                reason: guard.reason,
+            },
+            guard_install_command: (!guard.ok).then(crate::guard_report::install_command),
+        })?;
+    } else if let Some(hint) = guard.hint() {
+        output::line(hint)?;
+    } else {
+        output::line("egress guard: ok")?;
+    }
+    Ok(())
+}
+
+fn ask_open_egress() -> Result<bool> {
+    use std::io::{BufRead, Read, Write};
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(OPEN_EGRESS_QUESTION.as_bytes())?;
+    stdout.flush()?;
+    drop(stdout);
+    // Bounded single-line read: a stray paste cannot grow without limit.
+    let mut line = String::new();
+    std::io::stdin().lock().take(256).read_line(&mut line)?;
+    Ok(parse_yes(&line))
+}
+
+fn parse_yes(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GuardSummary {
+    installed: bool,
+    ok: bool,
+    reason: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginComplete<'a> {
+    host_slug: &'a str,
+    /// `null`: not asked yet (reads as off).
+    open_egress_for_others: Option<bool>,
+    guard: GuardSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    guard_install_command: Option<String>,
+}
+
+fn slowed_down_interval(interval: Duration) -> Duration {
+    interval.saturating_add(Duration::from_secs(5))
+}
+
+fn poll_sleep(duration: Duration) {
+    #[cfg(debug_assertions)]
+    if let Ok(record) = std::env::var("WSSP_TEST_RECORD_SLEEP") {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(record)
+            .and_then(|mut file| {
+                use std::io::Write;
+                writeln!(file, "{}", duration.as_secs())
+            });
+        return;
+    }
+    thread::sleep(duration);
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginStarted<'a> {
+    host_slug: &'a str,
+    user_code: &'a str,
+    verification_uri: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_uri_complete: Option<&'a str>,
+    expires_in: Option<u64>,
+    interval: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_explicit_yes_consents() {
+        for yes in ["y", "Y", "yes", " YES \n"] {
+            assert!(parse_yes(yes), "{yes}");
+        }
+        for no in ["", "\n", "n", "no", "yess", "sure"] {
+            assert!(!parse_yes(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn slow_down_adds_five_seconds_without_an_artificial_cap() {
+        assert_eq!(
+            slowed_down_interval(Duration::from_secs(5)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            slowed_down_interval(Duration::from_secs(118)),
+            Duration::from_secs(123)
+        );
+    }
+}

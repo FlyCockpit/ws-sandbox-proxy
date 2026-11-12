@@ -1,0 +1,18 @@
+{
+  "description": "id starts with a letter or digit",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "-codex",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

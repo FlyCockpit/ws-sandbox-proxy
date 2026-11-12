@@ -1,0 +1,90 @@
+{
+  "comment": "E4-01. Shared by apps/server/src/sandbox-relay/protocol-signal.test.ts and apps/cli/src/sandbox_relay/connect.rs. queuedPayload is the outbox payload processes.signal queues (no top-level pid); dispatch is the frame the server must send for it (pid copied from process.pid); refusedDispatch are frames the daemon must refuse as one operation without ending the session.",
+  "queuedPayload": {
+    "sandboxId": "sbx-signal",
+    "sandboxHostId": "host-1",
+    "operationId": "op-signal",
+    "dispatchAttempt": 0,
+    "generation": 1,
+    "kind": "process.signal",
+    "idempotencyKey": "signal-key",
+    "process": {
+      "sandboxId": "sbx-signal",
+      "generation": 1,
+      "processId": "proc-signal",
+      "attempt": 1,
+      "pid": 4242
+    },
+    "targetOperationId": "op-command",
+    "signal": "SIGTERM",
+    "resultVersion": 1,
+    "connectionEpoch": 1
+  },
+  "dispatch": {
+    "type": "operation.dispatch",
+    "sandboxOwnerId": "owner",
+    "operationId": "op-signal",
+    "sandboxId": "sbx-signal",
+    "idempotencyKey": "signal-key",
+    "kind": "process.signal",
+    "generation": 1,
+    "attempt": 1,
+    "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "resultVersion": 1,
+    "process": {
+      "sandboxId": "sbx-signal",
+      "generation": 1,
+      "processId": "proc-signal",
+      "attempt": 1,
+      "pid": 4242
+    },
+    "targetOperationId": "op-command",
+    "pid": 4242,
+    "signal": "SIGTERM"
+  },
+  "refusedDispatch": [
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-signal-no-pid",
+      "sandboxId": "sbx-signal",
+      "idempotencyKey": "signal-key-no-pid",
+      "kind": "process.signal",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resultVersion": 1,
+      "process": {
+        "sandboxId": "sbx-signal",
+        "generation": 1,
+        "processId": "proc-signal",
+        "attempt": 1,
+        "pid": 4242
+      },
+      "targetOperationId": "op-command",
+      "signal": "SIGTERM"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-signal-other-pid",
+      "sandboxId": "sbx-signal",
+      "idempotencyKey": "signal-key-other-pid",
+      "kind": "process.signal",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resultVersion": 1,
+      "process": {
+        "sandboxId": "sbx-signal",
+        "generation": 1,
+        "processId": "proc-signal",
+        "attempt": 1,
+        "pid": 4242
+      },
+      "targetOperationId": "op-command",
+      "pid": 4243,
+      "signal": "SIGTERM"
+    }
+  ]
+}

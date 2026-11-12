@@ -1,0 +1,213 @@
+# Continuous integration for the companion Rust CLI (`apps/cli`).
+# Every job runs cargo from `apps/cli`; the Node/pnpm checks live in
+# pr-checks.yml. Release builds live in release.yml; this file is
+# hand-maintained.
+name: CLI CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/cli/**"
+      - "crates/**"
+      - "packages/sandbox-contracts/src/env-limits.json"
+      - "packages/sandbox-contracts/src/lease-limits.json"
+      - "packages/config/src/*.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "THIRD-PARTY-LICENSES.md"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/cli-ci.yml"
+      # apps/cli/tests/cli_reference.rs checks the `wssp` invocations in these docs.
+      - "README.md"
+      - "docs/**"
+      - "packages/sdk/README.md"
+    tags:
+      - "**[0-9]+.[0-9]+.[0-9]+*"
+  pull_request:
+    paths:
+      - "apps/cli/**"
+      - "crates/**"
+      - "packages/sandbox-contracts/src/env-limits.json"
+      - "packages/sandbox-contracts/src/lease-limits.json"
+      - "packages/config/src/*.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "THIRD-PARTY-LICENSES.md"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/cli-ci.yml"
+      # apps/cli/tests/cli_reference.rs checks the `wssp` invocations in these docs.
+      - "README.md"
+      - "docs/**"
+      - "packages/sdk/README.md"
+  schedule:
+    # Check RustSec advisories regularly without making unrelated PRs flaky.
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+# Least-privilege by default.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: cli-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: .
+
+env:
+  CARGO_TERM_COLOR: always
+  # Treat all warnings as errors across the whole workspace.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # ── Tests (the CLI ships for Linux only) ────────────────────────────────────
+  test:
+    name: test (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - run: cargo test --workspace --all-targets --locked
+      # `--all-targets` skips doctests; run them explicitly.
+      - run: cargo test --workspace --doc --locked
+      # Slow tests are `#[ignore]`d so local runs stay fast; CI still runs them.
+      - run: cargo test -p wssp --locked -- --ignored census_registers_after_more_than_thirty_seconds_of_acl_writer_contention
+      # Reconnect chaos timing knob (`WSSP_TEST_RELAY_TIMING`) is
+      # debug-only: the release unit test proves it inert, and the shipped
+      # binary must not even name the variable.
+      - name: Release build ignores the debug-only test knobs
+        run: |
+          cargo test -p wssp --release --locked --lib sandbox_relay::test_timing
+          cargo test -p wssp --release --locked --lib shared_incus_override
+          cargo build -p wssp --release --locked --bin wssp
+          if grep -q WSSP_TEST_RELAY_TIMING target/release/wssp; then
+            echo "release wssp references WSSP_TEST_RELAY_TIMING" >&2
+            exit 1
+          fi
+          # One-daemon-per-Incus-server test override: debug builds only.
+          if grep -q WSSP_TEST_SHARED_INCUS target/release/wssp; then
+            echo "release wssp references WSSP_TEST_SHARED_INCUS" >&2
+            exit 1
+          fi
+
+  # ── Formatting ──────────────────────────────────────────────────────────────
+  fmt:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  # ── Lint (warnings are errors via RUSTFLAGS) ────────────────────────────────
+  clippy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - run: cargo clippy --workspace --all-targets --all-features --locked
+
+  # ── Minimum Supported Rust Version still builds ─────────────────────────────
+  msrv:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    # New compiler lints shouldn't fail the MSRV build; only compilation matters.
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Keep this in sync with `rust-version` in apps/cli/Cargo.toml.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: "1.99"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - run: cargo build --workspace --locked
+
+  # ── Supply chain: licenses, bans, and sources ───────────────────────────────
+  # Keep deterministic policy checks blocking on PRs. RUSTSEC advisories run in
+  # the scheduled job below so new disclosures do not break unrelated PRs.
+  deny:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check bans licenses sources
+          arguments: ""
+          command-arguments: --config apps/cli/deny.toml
+          manifest-path: Cargo.toml
+
+  # ── RustSec advisories ─────────────────────────────────────────────────────
+  advisories:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories
+          arguments: ""
+          command-arguments: --config apps/cli/deny.toml
+          manifest-path: Cargo.toml
+
+  # ── Agent docs are in sync with apps/cli/AGENTS.md ──────────────────────────
+  docs-drift:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - run: cargo xtask sync-docs --check
+        working-directory: apps/cli
+
+  # ── Spell check (scoped to apps/cli by its typos.toml) ──────────────────────
+  typos:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: typos-cli
+      - run: typos
+
+  # ── Project policy greps (things the compiler/clippy can't see) ─────────────
+  # Secret scanning for the whole repo (TruffleHog) runs in pr-checks.yml.
+  policy:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash scripts/policy-checks.sh

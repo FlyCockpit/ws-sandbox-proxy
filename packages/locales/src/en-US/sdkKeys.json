@@ -1,0 +1,134 @@
+{
+  "title": "SDK keys",
+  "description": "Scoped keys for the /v1 SDK API.",
+  "empty": {
+    "title": "No SDK keys yet",
+    "description": "SDK keys authorize the /v1 API for your sandboxes. Revoked keys are not listed."
+  },
+  "mint": {
+    "action": "Mint SDK key",
+    "title": "Mint an SDK key",
+    "description": "Choose only the scopes and resources your code needs. The key cannot manage credentials, hosts or users, or open terminals.",
+    "submit": "Mint key",
+    "secretLabel": "Your new SDK key",
+    "usageHint": "Send it as Authorization: Bearer <key> to the /v1 API."
+  },
+  "list": {
+    "scopes": "Scopes",
+    "allOwned": "All your hosts, revisions and pools",
+    "allowlistTitle": "Restricted to these resources",
+    "allowlistHosts": "Hosts: {{names}}",
+    "allowlistTemplates": "Template versions: {{names}}",
+    "allowlistPools": "Pools: {{names}}",
+    "allowlistLogins": "Logins: {{names}}"
+  },
+  "revoke": {
+    "title": "Revoke {{name}}?",
+    "description": "Requests with this key fail from now on. Work it already started is not cancelled.",
+    "done": "SDK key revoked.",
+    "typePrompt": "Type the key name to confirm",
+    "copyName": "Copy key name"
+  },
+  "form": {
+    "scopes": "Scopes",
+    "scopesHint": "Each scope must grant something on its own or with the others you pick.",
+    "resources": "Resources",
+    "mode": {
+      "ALL_OWNED": "All my hosts, revisions and pools",
+      "ALLOWLIST": "Only selected hosts, exact revisions and pools"
+    },
+    "modeHint": {
+      "ALL_OWNED": "Includes owned resources you add later.",
+      "ALLOWLIST": "Direct creates need host + exact revision grants; pooled creates also need the pool grant. New revisions are never granted automatically."
+    },
+    "resourcesFailed": "Couldn't load your hosts and templates.",
+    "hosts": "Hosts",
+    "noHosts": "You have no host that can be selected.",
+    "templates": "Template versions",
+    "noTemplates": "No active revision has a verified or pending association on the selected hosts.",
+    "pickHostFirst": "Select a host to see its revision associations.",
+    "moreHosts": "Load more hosts",
+    "moreTemplates": "Load more templates",
+    "pools": "Pools",
+    "poolsHint": "Optional for direct placement. Pool placement also needs its pool grant, host grant and exact revision grant.",
+    "association": "{{host}} · {{status}}",
+    "availability": {
+      "AVAILABLE": "Verified image",
+      "PENDING": "Verification pending (grantable; not ready to launch)",
+      "MISSING": "Image missing",
+      "REJECTED": "Image rejected"
+    },
+    "ownedPool": "Owned by you",
+    "credentialsUseDisclosure": "This key can put login values into sandboxes (credentials:use) and run commands or read files there. Whoever holds the key can read those values back. Grant it only to code you trust with the logins themselves.",
+    "logins": "CLI logins",
+    "loginsHint": "The logins this key may use, read or change. Leave empty for none.",
+    "loginsRequired": "With credentials:use, choose at least one login this key may use.",
+    "loginsFailed": "Couldn't load your logins.",
+    "noLogins": "You have no CLI logins yet.",
+    "moreLogins": "Load more logins"
+  },
+  "scopeGroup": {
+    "hosts": "Hosts",
+    "templates": "Templates",
+    "sandboxes": "Sandboxes",
+    "commands": "Commands",
+    "files": "Files",
+    "operations": "Operations",
+    "pools": "Pools",
+    "webhooks": "Webhooks",
+    "credentials": "CLI logins"
+  },
+  "scope": {
+    "hosts": {
+      "read": "List your hosts."
+    },
+    "templates": {
+      "read": "List templates.",
+      "write": "Register templates, append revisions and verify host associations.",
+      "build": "Build template revisions from a recipe or Dockerfile, read their logs and cancel them. Creating a template by name also needs templates:write."
+    },
+    "sandboxes": {
+      "read": "Read sandboxes and their processes.",
+      "write": "Create, stop, reconnect, renew and kill sandboxes."
+    },
+    "commands": {
+      "execute": "Run commands, write stdin and signal processes.",
+      "read": "Read tracked commands; output also needs operations:read."
+    },
+    "files": {
+      "read": "Read and download files.",
+      "write": "Write, upload, move and delete files."
+    },
+    "operations": {
+      "read": "Read operation status.",
+      "cancel": "Cancel operations (with the scope for the work)."
+    },
+    "pools": {
+      "read": "Discover pools and permitted members."
+    },
+    "webhooks": {
+      "write": "Manage webhook endpoints that receive events for every sandbox on the account. Needs a key over all owned resources and all usable pools."
+    },
+    "credentials": {
+      "read": "List login definitions, logins, accounts, instances and their events. Never returns a value.",
+      "write": "Create and edit login definitions, logins, accounts and instances, pause accounts and upload values. Values are write-only.",
+      "use": "Attach and free logins on sandboxes, name them at create and pin them on start. The login's value reaches the guest: with commands:execute or files:read this key can read it back. An allowlist key reaches only the logins it names."
+    }
+  },
+  "scopeNeeds": {
+    "operations": {
+      "cancel": "Also select the scope for the work to cancel (for example sandboxes:write or commands:execute)."
+    },
+    "credentials": {
+      "use": "Also select sandboxes:write."
+    }
+  },
+  "resourceIdentity": "{{label}} · {{id}}",
+  "poolMode": {
+    "title": "Pool selection (independent of hosts/revisions)",
+    "ALL_USABLE": "All currently usable pools",
+    "SELECTED": "Selected pools only",
+    "immutable": "Keys are immutable. Losing a grant removes future pool access; regrant requires a new selected key. Retained creator work stays bound to its original create key.",
+    "revisionContext": "Pool to discover your exact revisions on foreign hosts"
+  }
+}

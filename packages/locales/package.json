@@ -1,0 +1,20 @@
+{
+  "name": "@wssp/locales",
+  "license": "MIT",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./src/*": "./src/*"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@wssp/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

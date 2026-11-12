@@ -1,0 +1,30 @@
+{
+  "description": "a proxied definition declares no files",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "proxy",
+    "displayName": "Proxy",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "env": [
+        {
+          "name": "KEY",
+          "required": true,
+          "proxy": {
+            "upstream": "https://api.example.com",
+            "header": "Authorization",
+            "format": "Bearer {value}",
+            "baseUrlEnv": "KEY_BASE_URL"
+          }
+        }
+      ],
+      "files": {
+        "required": ["a"]
+      }
+    }
+  }
+}

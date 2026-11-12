@@ -1,0 +1,151 @@
+{
+  "_comment": "Optional graceful quiesce support is offered by the daemon and echoed by the server. A quiescing reconnect carries the quiescing flag only when the runtime offers this feature.",
+  "quiesce": [
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 3,
+      "sequence": 1
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 2147483647,
+      "sequence": 9007199254740991
+    }
+  ],
+  "invalidQuiesce": [
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 0,
+      "sequence": 1
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 2147483648,
+      "sequence": 1
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 3,
+      "sequence": 0
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 3,
+      "sequence": 9007199254740992
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 3
+    },
+    {
+      "type": "host.quiesce",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "extra": true
+    }
+  ],
+  "acks": [
+    {
+      "type": "host.quiesce.ack",
+      "sequence": 1
+    },
+    {
+      "type": "host.quiesce.ack",
+      "sequence": 9007199254740991
+    }
+  ],
+  "invalidAcks": [
+    {
+      "type": "host.quiesce.ack",
+      "sequence": 0
+    },
+    {
+      "type": "host.quiesce.ack",
+      "sequence": 9007199254740992
+    },
+    {
+      "type": "host.quiesce.ack"
+    },
+    {
+      "type": "host.quiesce.ack",
+      "sequence": 1,
+      "connectionEpoch": 3
+    }
+  ],
+  "hellos": [
+    {
+      "case": "runtime without quiesce support",
+      "capability": null,
+      "quiescing": null,
+      "valid": true,
+      "quiescingParsed": false
+    },
+    {
+      "case": "capable, running",
+      "capability": true,
+      "quiescing": null,
+      "valid": true,
+      "quiescingParsed": false
+    },
+    {
+      "case": "capable, reconnect while quiescing",
+      "capability": true,
+      "quiescing": true,
+      "valid": true,
+      "quiescingParsed": true
+    },
+    {
+      "case": "capable, explicit false",
+      "capability": true,
+      "quiescing": false,
+      "valid": true,
+      "quiescingParsed": false
+    },
+    {
+      "case": "quiescing without the capability",
+      "capability": null,
+      "quiescing": true,
+      "valid": false
+    },
+    {
+      "case": "capability declined, quiescing",
+      "capability": false,
+      "quiescing": true,
+      "valid": false
+    },
+    {
+      "case": "non-boolean capability",
+      "capability": "true",
+      "quiescing": null,
+      "valid": false
+    },
+    {
+      "case": "non-boolean quiescing",
+      "capability": true,
+      "quiescing": "yes",
+      "valid": false
+    }
+  ],
+  "helloOk": {
+    "type": "hello.ok",
+    "id": "hello-fixture-1",
+    "protocolVersion": "1.0",
+    "supportedProtocolVersions": ["1.0"],
+    "capabilities": {
+      "protocolVersion": "1.0",
+      "binaryFrames": true,
+      "cancellation": true,
+      "maxBinaryChunkBytes": 1048576,
+      "streamWindowChunks": 4,
+      "quiesce": true,
+      "outputChunkBytes": 65536,
+      "censusEntryResults": true,
+      "pendingReceipts": true,
+      "expiryStatusResults": true,
+      "observationFence": true,
+      "commandRetire": true
+    },
+    "connectionEpoch": 1,
+    "hostOwnerId": "owner-1"
+  }
+}

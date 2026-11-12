@@ -1,0 +1,291 @@
+[
+  {
+    "name": "base",
+    "valid": true,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-u64-max",
+    "valid": true,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "18446744073709551615",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "boot-id-any-version-variant",
+    "valid": true,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-1234-1234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "operation-id-64",
+    "valid": true,
+    "value": {
+      "type": "process.started",
+      "operationId": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "operation-id-65",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "operation-id-dot",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "op.1",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "operation-id-space",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": " op",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "operation-id-empty",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-u64-overflow",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "18446744073709551616",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-twenty-nines",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "99999999999999999999",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-plus-sign",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "+5",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-zero",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "0",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "start-ticks-leading-zero",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abc",
+      "startTicks": "012",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "boot-id-uppercase",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789ABC",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "boot-id-non-hex",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "12345678-1234-4234-8234-123456789abg",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "boot-id-no-hyphens",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "123456781234423482341234567890ab",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  },
+  {
+    "name": "boot-id-braced",
+    "valid": false,
+    "value": {
+      "type": "process.started",
+      "operationId": "operation",
+      "sandboxId": "sandbox",
+      "generation": 1,
+      "processId": "process",
+      "attempt": 1,
+      "pid": 123,
+      "bootId": "{12345678-1234-4234-8234-123456789a}",
+      "startTicks": "123456",
+      "startedAt": "2026-10-27T00:00:00.000Z",
+      "observedAt": "2026-10-27T00:00:00.001Z"
+    }
+  }
+]

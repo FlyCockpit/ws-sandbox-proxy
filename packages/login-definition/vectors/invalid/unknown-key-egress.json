@@ -1,0 +1,22 @@
+{
+  "description": "unknown keys are refused at every level",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste",
+      "egress": {
+        "domains": [],
+        "cidrs": []
+      }
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

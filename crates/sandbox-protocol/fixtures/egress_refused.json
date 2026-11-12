@@ -1,0 +1,144 @@
+{
+  "_comment": "B12 egress.refused parity: crates/sandbox-protocol/tests/egress_refused.rs and apps/server/src/sandbox-relay/protocol-egress-refused.test.ts",
+  "frames": [
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["pypi.org"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx_2",
+      "names": [
+        "files.pythonhosted.org",
+        "_dmarc.example.com",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+      ]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-3",
+      "names": [
+        "h0.example",
+        "h1.example",
+        "h2.example",
+        "h3.example",
+        "h4.example",
+        "h5.example",
+        "h6.example",
+        "h7.example",
+        "h8.example",
+        "h9.example",
+        "h10.example",
+        "h11.example",
+        "h12.example",
+        "h13.example",
+        "h14.example",
+        "h15.example"
+      ]
+    }
+  ],
+  "rejectedFrames": [
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": []
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": [
+        "h0.example",
+        "h1.example",
+        "h2.example",
+        "h3.example",
+        "h4.example",
+        "h5.example",
+        "h6.example",
+        "h7.example",
+        "h8.example",
+        "h9.example",
+        "h10.example",
+        "h11.example",
+        "h12.example",
+        "h13.example",
+        "h14.example",
+        "h15.example",
+        "h16.example"
+      ]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["a.example", "a.example"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "../x",
+      "names": ["a.example"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["a.example"],
+      "extra": 1
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1"
+    },
+    {
+      "type": "egress.refused",
+      "names": ["a.example"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["PyPI.org"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["evil\u001b[31m.example"]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": ["pypi.org."]
+    },
+    {
+      "type": "egress.refused",
+      "sandboxId": "sbx-1",
+      "names": [1]
+    }
+  ],
+  "validNames": [
+    "pypi.org",
+    "localhost",
+    "_dmarc.example.com",
+    "a-b.c0",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  ],
+  "invalidNames": [
+    "",
+    ".",
+    " ",
+    "a..b",
+    "a.",
+    "-a.com",
+    "a-.com",
+    "A.com",
+    "a b",
+    "a\u0007b",
+    "\u00e9.com",
+    "a\nb",
+    "a/b",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "a\u202eb.com",
+    "a*.com"
+  ],
+  "capabilities": [true, false],
+  "rejectedCapabilities": ["yes", 1, null]
+}

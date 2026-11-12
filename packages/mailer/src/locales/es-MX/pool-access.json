@@ -1,0 +1,7 @@
+{
+  "lossSubject": "Se perdió el acceso al grupo",
+  "restoreSubject": "Se restauró el acceso al grupo",
+  "loss": "Tu sandbox {{sandbox}} perdió su última ruta de acceso al grupo y se detendrá. Su disco se conserva hasta {{deadline}}; eliminarlo requiere pruebas de limpieza.",
+  "restore": "Se restauró el acceso a tu sandbox {{sandbox}} antes de eliminarlo. Puedes iniciarlo si el disco sigue disponible y los límites actuales lo permiten.",
+  "notice": "Los hosts desconectados aplican la detención al reconectarse o al vencer el plazo local efectivo. El almacenamiento desconectado o dañado puede retrasar la limpieza. Una eliminación incierta no garantiza que el disco sobreviva."
+}

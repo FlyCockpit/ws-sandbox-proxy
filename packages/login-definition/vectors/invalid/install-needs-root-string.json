@@ -1,0 +1,21 @@
+{
+  "description": "needsRoot is a boolean",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    },
+    "install": {
+      "needsRoot": "no"
+    }
+  }
+}

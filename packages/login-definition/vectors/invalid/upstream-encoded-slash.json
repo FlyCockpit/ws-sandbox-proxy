@@ -1,0 +1,27 @@
+{
+  "description": "no %2F",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "proxy",
+    "displayName": "Proxy",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "env": [
+        {
+          "name": "KEY",
+          "required": true,
+          "proxy": {
+            "upstream": "https://api.example.com/v1%2Fx",
+            "header": "Authorization",
+            "format": "Bearer {value}",
+            "baseUrlEnv": "KEY_BASE_URL"
+          }
+        }
+      ]
+    }
+  }
+}

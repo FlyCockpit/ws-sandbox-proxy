@@ -1,0 +1,19 @@
+{
+  "description": "at least one file path or env entry",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [],
+        "optional": []
+      }
+    }
+  }
+}

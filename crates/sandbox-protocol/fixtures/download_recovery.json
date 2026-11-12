@@ -1,0 +1,30 @@
+{
+  "receipt": {
+    "type": "operation.receipt",
+    "operationId": "op-1",
+    "sandboxId": "sbx-1",
+    "generation": 1,
+    "attempt": 1,
+    "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "idempotencyKey": "key",
+    "kind": "file.get",
+    "state": "unknown_outcome",
+    "result": null,
+    "error": {
+      "code": "unknown_outcome",
+      "message": "download bytes no longer retained"
+    },
+    "sandboxOwnerId": "user-1"
+  },
+  "confirmation": {
+    "type": "receipt.confirmed",
+    "sandboxOwnerId": "user-1",
+    "operationId": "op-1",
+    "sandboxId": "sbx-1",
+    "generation": 1,
+    "attempt": 1,
+    "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "idempotencyKey": "key",
+    "kind": "file.get"
+  }
+}

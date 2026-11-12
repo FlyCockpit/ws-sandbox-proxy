@@ -1,0 +1,239 @@
+/// Template builds (plan template-builds §3, §10.2). A build is composed from
+/// ordinary operations on a managed TEMPLATE_BUILD sandbox; these rows hold its
+/// request, progress and outcome. `CONTEXT_COMMIT` is a phase of RUNNING's
+/// prelude, not a state.
+enum TemplateBuildState {
+  AWAITING_CONTEXT
+  QUEUED
+  PLACING
+  RUNNING
+  STOPPING
+  CAPTURING
+  CANCELLING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+/// The accepting principal. A build principal is derived from the row, never
+/// stored as a fourth kind.
+enum TemplateBuildPrincipalKind {
+  session
+  sdkKey
+  system
+}
+
+/// Who composed the build (guest-sudo DG-12 T1a). COMMUNITY_PREP is written
+/// only by the community create, retry and refresh paths
+/// (template-builds/community/service.ts); the public build input has no
+/// origin and the user path writes USER.
+enum TemplateBuildOrigin {
+  USER
+  COMMUNITY_PREP
+}
+
+enum TemplateBuildSourceFormat {
+  RECIPE
+  DOCKERFILE
+}
+
+/// Derived from the cleanup invariant (§3.10): DONE only when no live sandbox
+/// carries this buildId and the staged context is not OPEN/SEALED.
+enum TemplateBuildCleanupState {
+  PENDING
+  DONE
+}
+
+enum BuildContextState {
+  OPEN
+  SEALED
+  ADOPTED
+  ABORTED
+  EXPIRED
+}
+
+model SandboxTemplateBuild {
+  id                    String                     @id @default(cuid(2))
+  userId                String
+  templateId            String
+  tag                   String
+  principalKind         TemplateBuildPrincipalKind
+  /// The real accepting key (no FK: key deletion must not rewrite history).
+  authorizingKeyId      String?
+  /// Rebuild on miss (system builds only): the revision that went missing.
+  triggeredByRevisionId String?
+  idempotencyKey        String
+  requestBodyHash       String
+  // Recipe
+  recipe                Json
+  recipeDigest          String
+  buildDigest           String
+  sourceFormat          TemplateBuildSourceFormat
+  dockerfileText        String?
+  // Inputs (the context bytes live in SandboxBuildContext)
+  baseRevisionId        String
+  baseFingerprint       String
+  buildArgs             Json                       @default("{}")
+  contextSha256         String?
+  contextBytes          BigInt?
+  // Target and size. targetKey/principalKey are derived (CHECK-bound) dedupe keys.
+  poolId                String?
+  requestedHostId       String?
+  targetKey             String
+  principalKey          String
+  cpuCount              Int
+  memoryMiB             Int
+  diskGiB               Int
+  /// The egress request only; the effective policy lives on the build sandbox.
+  egressRequest         Json?
+  egressPresets         String[]                   @default([])
+  // Quota
+  timeoutMinutes        Int
+  /// The build VM create's capacity wait (pool targets only), frozen at
+  /// acceptance: null waits not at all; a COPY build's wait is clamped to the
+  /// sealed-context ceiling (§3.7); "unlimited" is stored as the longest
+  /// finite wait (CAPACITY_WAIT_MAX_MS).
+  waitForCapacityMs     Int?
+  reservedMinutes       Int
+  chargedMinutes        Int?
+  minutesSettled        Boolean                    @default(false)
+  /// First day of the UTC month the minutes are charged to.
+  chargeMonth           DateTime                   @db.Date
+  // Progress
+  state                 TemplateBuildState
+  phase                 String?
+  stepIndex             Int                        @default(-1)
+  steps                 Json                       @default("[]")
+  /// B12 blocked-name hints the build VM's host reported: [{n, name, at}],
+  /// appended by the relay (DNS-grammar names only), at most 64.
+  egressHints           Json                       @default("[]")
+  /// Orchestrator claim: {kind, key, input, attempt, claimToken, claimedUntil}.
+  pendingAction         Json?
+  nextAttemptAt         DateTime?
+  // Links (history: no FKs)
+  buildSandboxId        String?                    @unique
+  currentOperationId    String?
+  captureOperationId    String?                    @unique
+  /// The current capture attempt (SandboxTemplateCapture.buildAttempt):
+  /// raised, with `captureOperationId` cleared, in the claim of a retried
+  /// capture, so the current attempt's row is always unambiguous.
+  captureAttempt        Int                        @default(0)
+  revisionId            String?
+  cacheHitRevisionId    String?
+  hostId                String?
+  hostOwnerId           String?
+  foreignHost           Boolean                    @default(false)
+  // Timing
+  noCache               Boolean                    @default(false)
+  cancelRequestedAt     DateTime?
+  deadlineAt            DateTime?
+  captureDeadlineAt     DateTime?
+  readyAt               DateTime?
+  stoppedAt             DateTime?
+  completedAt           DateTime?
+  // Failure
+  errorCode             String?
+  /// The typed code behind `errorCode` (e.g. build_placement_failed's
+  /// placement refusal), code-shaped only, never message text.
+  errorDetail           String?
+  failureStepIndex      Int?
+  failureExitCode       Int?
+  failureTail           Bytes?
+  // Community verify (community-base D-D). The verify VM is the Sandbox with
+  // `verifyBuildId = id`; `verifySandboxId` is display only.
+  origin                TemplateBuildOrigin        @default(USER)
+  verifyRequired        Boolean                    @default(false)
+  verifySandboxId       String?                    @unique
+  verifyDeadlineAt      DateTime?
+  // Cleanup
+  cleanupState          TemplateBuildCleanupState  @default(PENDING)
+  cleanupDoneAt         DateTime?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @default(now()) @updatedAt
+  User                  User                       @relation("SandboxTemplateBuildOwner", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  Template              SandboxTemplate            @relation(fields: [templateId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Context               SandboxBuildContext?
+  // @check template_build_principal: ("principalKind"::text = 'sdkKey') = ("authorizingKeyId" IS NOT NULL) AND ("principalKind"::text = 'system') = ("triggeredByRevisionId" IS NOT NULL) AND "principalKey" = CASE "principalKind"::text WHEN 'sdkKey' THEN 'k:' || "authorizingKeyId" WHEN 'session' THEN 's' ELSE 'sys' END
+  // @check template_build_target: ("poolId" IS NULL) <> ("requestedHostId" IS NULL) AND "targetKey" = coalesce("poolId", "requestedHostId")
+  // @check template_build_minutes: "timeoutMinutes" BETWEEN 1 AND 1440 AND "reservedMinutes" BETWEEN 0 AND "timeoutMinutes" AND ("chargedMinutes" IS NULL OR "chargedMinutes" BETWEEN 0 AND "reservedMinutes") AND (NOT "minutesSettled" OR "chargedMinutes" IS NOT NULL) AND extract(day FROM "chargeMonth") = 1
+  // @check template_build_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0 AND "diskGiB" >= 1 AND "diskGiB" <= 2048
+  // @check template_build_recipe: octet_length("recipe"::text) <= 65536 AND "recipeDigest" ~ '^[0-9a-f]{64}$' AND "buildDigest" ~ '^[0-9a-f]{64}$' AND ("sourceFormat"::text = 'DOCKERFILE') = ("dockerfileText" IS NOT NULL) AND ("dockerfileText" IS NULL OR octet_length("dockerfileText") <= 65536) AND jsonb_typeof("buildArgs") = 'object' AND cardinality("egressPresets") <= 16
+  // @check template_build_context: ("contextSha256" IS NULL) = ("contextBytes" IS NULL) AND ("contextSha256" IS NULL OR "contextSha256" ~ '^[0-9a-f]{64}$') AND ("contextBytes" IS NULL OR "contextBytes" > 0)
+  // @check template_build_progress: "stepIndex" >= -1 AND jsonb_typeof("steps") = 'array' AND jsonb_array_length("steps") <= 256 AND ("phase" IS NULL OR length("phase") <= 64) AND ("failureStepIndex" IS NULL OR "failureStepIndex" >= 0) AND ("failureTail" IS NULL OR octet_length("failureTail") <= 8192)
+  // @check template_build_capture_attempt: "captureAttempt" BETWEEN 0 AND 16
+  // @check template_build_egress_hints: jsonb_typeof("egressHints") = 'array' AND jsonb_array_length("egressHints") <= 64
+  // @check template_build_host: ("hostId" IS NULL) = ("hostOwnerId" IS NULL) AND (NOT "foreignHost" OR ("hostOwnerId" IS NOT NULL AND "hostOwnerId" <> "userId"))
+  // @check template_build_outcome: (state::text IN ('SUCCEEDED', 'FAILED', 'CANCELLED')) = ("completedAt" IS NOT NULL) AND (state::text <> 'SUCCEEDED' OR "revisionId" IS NOT NULL OR "cacheHitRevisionId" IS NOT NULL) AND (state::text <> 'FAILED' OR "errorCode" IS NOT NULL) AND (state::text NOT IN ('CANCELLING', 'CANCELLED') OR "cancelRequestedAt" IS NOT NULL) AND (("cleanupState"::text = 'DONE') = ("cleanupDoneAt" IS NOT NULL)) AND ("cleanupState"::text = 'PENDING' OR state::text IN ('SUCCEEDED', 'FAILED', 'CANCELLED'))
+  // @check template_build_wait: ("waitForCapacityMs" IS NULL OR "waitForCapacityMs" BETWEEN 1000 AND 2073600000) AND ("waitForCapacityMs" IS NULL OR "poolId" IS NOT NULL) AND ("errorDetail" IS NULL OR ("errorCode" IS NOT NULL AND "errorDetail" ~ '^[a-z0-9_.]{1,64}$'))
+  // @check template_build_error_code: "errorCode" IS NULL OR "errorCode" IN ('build_step_failed', 'build_step_unknown', 'build_step_timeout', 'build_step_host_disconnected', 'build_timeout', 'build_context_timeout', 'build_context_mismatch', 'build_context_expired', 'build_context_failed', 'build_placement_failed', 'build_capture_failed', 'build_capture_lease_expired', 'build_store_failed', 'build_authority_lost', 'build_host_lost', 'build_internal', 'build_cancelled', 'build_verify_failed', 'build_upstream_unavailable')
+  // @check template_build_verify: (NOT "verifyRequired" AND "verifySandboxId" IS NULL AND "verifyDeadlineAt" IS NULL) OR ("verifyRequired" AND "noCache")
+  // Compares origin as text: the initial migration creates the enum before this CHECK.
+  // @check template_build_origin: "origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = '6a9f748c5980b996b63b97f818ac825df00c943572d07ee977097f0a92d88ed3' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL)
+
+  @@unique([id, userId])
+  @@unique([userId, idempotencyKey])
+  /// Active dedupe (§6.1): identical concurrent acceptances join, scoped by
+  /// target and accepting principal; noCache builds never join.
+  @@unique([userId, templateId, tag, buildDigest, targetKey, principalKey], map: "sandbox_template_build_active_dedupe", where: raw("((state = ANY (ARRAY['AWAITING_CONTEXT'::\"TemplateBuildState\", 'QUEUED'::\"TemplateBuildState\", 'PLACING'::\"TemplateBuildState\", 'RUNNING'::\"TemplateBuildState\", 'STOPPING'::\"TemplateBuildState\", 'CAPTURING'::\"TemplateBuildState\"])) AND (NOT \"noCache\"))"))
+  @@index([userId, state])
+  @@index([state, nextAttemptAt])
+  @@index([templateId, createdAt])
+  @@index([userId, chargeMonth])
+  @@index([hostOwnerId, state])
+  /// Context cleanup scan (orchestrator runTemplateBuildCleanup): ended builds
+  /// still PENDING cleanup, in id order. Shrinks to the backlog only.
+  @@index([id], map: "sandbox_template_build_cleanup_pending_idx", where: raw("(\"cleanupState\" = 'PENDING'::\"TemplateBuildCleanupState\")"))
+  @@map("sandbox_template_build")
+}
+
+/// A build's staged context (§3.7). Owned by the build-context store; becomes an
+/// ordinary transfer only through TransferStore.importSealed (state ADOPTED).
+model SandboxBuildContext {
+  id              String                     @id @default(cuid(2))
+  buildId         String                     @unique
+  userId          String
+  /// The accepting key of a keyed build (no FK, like transfers).
+  keyId           String?
+  state           BuildContextState          @default(OPEN)
+  totalBytes      BigInt
+  receivedBytes   BigInt                     @default(0)
+  expectedSha256  String
+  idleExpiresAt   DateTime
+  expiresAt       DateTime
+  importAttempt   Int                        @default(0)
+  /// The staged bytes are still charged against the staged budgets. Set at
+  /// open; cleared only after the staged name is durably unlinked (the
+  /// context ended or was adopted), like `SandboxTransfer.reservationHeld`.
+  reservationHeld Boolean                    @default(true)
+  /// Why the context ended unadopted (the build's own errorCode for it):
+  /// build_context_timeout (OPEN expired), build_context_expired (SEALED
+  /// expired), build_context_mismatch (seal sha256), build_context_failed.
+  errorCode       String?
+  /// Set on adoption (no FK: the transfer outlives nothing it needs).
+  transferId      String?                    @unique
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @default(now()) @updatedAt
+  Build           SandboxTemplateBuild       @relation(fields: [buildId, userId], references: [id, userId], onDelete: Cascade, onUpdate: Restrict)
+  Chunks          SandboxBuildContextChunk[]
+  // @check sandbox_build_context_shape: "totalBytes" > 0 AND "receivedBytes" BETWEEN 0 AND "totalBytes" AND "expectedSha256" ~ '^[0-9a-f]{64}$' AND "importAttempt" >= 0 AND (state::text = 'ADOPTED') = ("transferId" IS NOT NULL) AND (state::text NOT IN ('SEALED', 'ADOPTED') OR "receivedBytes" = "totalBytes") AND ("errorCode" IS NULL OR (state::text IN ('ABORTED', 'EXPIRED') AND "errorCode" IN ('build_context_timeout', 'build_context_expired', 'build_context_mismatch', 'build_context_failed'))) AND (state::text NOT IN ('OPEN', 'SEALED') OR "reservationHeld")
+
+  @@unique([buildId, userId])
+  @@index([state, idleExpiresAt])
+  @@index([state, expiresAt])
+  @@index([userId, state])
+  @@index([reservationHeld, id])
+  @@map("sandbox_build_context")
+}
+
+/// Per-chunk digests on the fixed TRANSFER_CHUNK_BYTES grid.
+model SandboxBuildContextChunk {
+  contextId String
+  offset    BigInt
+  length    Int
+  digest    String
+  Context   SandboxBuildContext @relation(fields: [contextId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  // @check sandbox_build_context_chunk_shape: "offset" >= 0 AND "length" > 0
+
+  @@id([contextId, offset])
+  @@map("sandbox_build_context_chunk")
+}

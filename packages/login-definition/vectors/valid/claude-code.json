@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "claude-code",
+  "displayName": "Claude Code (subscription sign-in)",
+  "description": "User-owned example. Runs the interactive Claude Code sign-in and keeps the credentials file it writes on Linux.",
+  "install": {
+    "checkCommand": "claude --version",
+    "notes": "Advisory only: wssp never runs install commands."
+  },
+  "login": {
+    "command": "claude /login",
+    "method": "interactive",
+    "doneWhenCommandExits": false,
+    "verifyCommand": "test -s \"$HOME/.claude/.credentials.json\""
+  },
+  "credentials": {
+    "files": {
+      "required": [".claude/.credentials.json"],
+      "optional": [".claude.json"]
+    },
+    "rotates": "yes"
+  },
+  "x-source": "Check the CLI vendor's documentation and terms before use."
+}

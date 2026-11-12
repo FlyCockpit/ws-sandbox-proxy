@@ -1,0 +1,36 @@
+{
+  "name": "@wssp/config",
+  "license": "MIT",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tsconfig.base.json": "./tsconfig.base.json",
+    "./biome.json": "./biome.json",
+    "./postcss.config.mjs": "./postcss.config.mjs",
+    "./locales": {
+      "default": "./src/locales.ts"
+    },
+    "./orpc-batch": {
+      "default": "./src/orpc-batch.ts"
+    },
+    "./theme-init": {
+      "default": "./src/theme-init.ts"
+    },
+    "./host-device-login": {
+      "default": "./src/host-device-login.ts"
+    },
+    "./host-status": {
+      "default": "./src/host-status.ts"
+    },
+    "./browser-terminal": {
+      "default": "./src/browser-terminal.ts"
+    }
+  },
+  "files": [
+    "tsconfig.base.json",
+    "biome.json",
+    "postcss.config.mjs",
+    "src"
+  ]
+}

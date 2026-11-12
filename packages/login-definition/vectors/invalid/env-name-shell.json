@@ -1,0 +1,24 @@
+{
+  "description": "SHELL is reserved",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      },
+      "env": [
+        {
+          "name": "SHELL",
+          "required": true
+        }
+      ]
+    }
+  }
+}

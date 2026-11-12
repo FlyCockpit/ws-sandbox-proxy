@@ -1,0 +1,1657 @@
+{
+  "server": [
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": "root"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["."],
+        "dest": "/opt/app",
+        "owner": "root"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1",
+        "bootstrap": true
+      },
+      "image": {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1",
+        "bootstrap": true
+      }
+    }
+  ],
+  "rejectedServer": [
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": "root",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": [],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "file.put",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": "root",
+      "path": "/tmp/x"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": "admin"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": 0
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "bad id"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "b",
+        "extra": 1
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {}
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "script": "apt-get update",
+      "timeoutMs": 60000,
+      "runAs": "root",
+      "build": {
+        "buildId": "build-1"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      },
+      "runAs": "root"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      },
+      "argv": ["sh"]
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      },
+      "script": "echo"
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      },
+      "env": [["A", "b"]]
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.capture",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      },
+      "capture": {
+        "scrubPaths": [],
+        "stopped": true,
+        "upload": false
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["../etc"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["a/../b"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["/etc/passwd"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["a/"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["./a"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["*/x"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": [],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": [
+          "f0",
+          "f1",
+          "f2",
+          "f3",
+          "f4",
+          "f5",
+          "f6",
+          "f7",
+          "f8",
+          "f9",
+          "f10",
+          "f11",
+          "f12",
+          "f13",
+          "f14",
+          "f15",
+          "f16",
+          "f17",
+          "f18",
+          "f19",
+          "f20",
+          "f21",
+          "f22",
+          "f23",
+          "f24",
+          "f25",
+          "f26",
+          "f27",
+          "f28",
+          "f29",
+          "f30",
+          "f31",
+          "f32",
+          "f33",
+          "f34",
+          "f35",
+          "f36",
+          "f37",
+          "f38",
+          "f39",
+          "f40",
+          "f41",
+          "f42",
+          "f43",
+          "f44",
+          "f45",
+          "f46",
+          "f47",
+          "f48",
+          "f49",
+          "f50",
+          "f51",
+          "f52",
+          "f53",
+          "f54",
+          "f55",
+          "f56",
+          "f57",
+          "f58",
+          "f59",
+          "f60",
+          "f61",
+          "f62",
+          "f63",
+          "f64"
+        ],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["a\nb"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "relative/path",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/a/../b",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/a//b",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/a/*",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/other.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/../context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/tmp/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "nobody",
+        "mode": 420
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 512
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": -1
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "timeoutMs": 60000,
+      "buildCopy": {
+        "contextPath": "/var/tmp/wssp-build/build-1/context.tar",
+        "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "src": ["app", "package.json", "src/*.js"],
+        "dest": "/home/user/app/",
+        "owner": "user",
+        "mode": 420,
+        "extra": true
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1"
+      },
+      "image": {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.create",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1",
+        "bootstrap": "yes"
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "sandbox.reconnect",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "build": {
+        "buildId": "build-1",
+        "bootstrap": true
+      }
+    },
+    {
+      "type": "operation.dispatch",
+      "sandboxOwnerId": "owner",
+      "operationId": "op-1",
+      "sandboxId": "sbx-1",
+      "idempotencyKey": "tb:build-1:run:0:0",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "command.run",
+      "cpuCount": 1,
+      "memoryMiB": 1024,
+      "allocation": {
+        "cpuCount": 1,
+        "memoryMiB": 1024,
+        "diskGiB": 32,
+        "storagePoolName": "default",
+        "storageMarker": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "chargedMemoryMiB": 1280,
+        "chargedVcpu": 1,
+        "rootChargeGiB": 33
+      },
+      "egressPolicy": {
+        "domains": ["example.com"],
+        "cidrs": []
+      },
+      "egressPolicyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "image": {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      }
+    }
+  ],
+  "capabilities": [
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": true,
+      "acceptForeign": false,
+      "leaseFromReady": true,
+      "formats": ["unified"]
+    },
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": true,
+      "acceptForeign": false,
+      "leaseFromReady": true,
+      "formats": ["unified"],
+      "build": true
+    },
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": true,
+      "acceptForeign": true,
+      "leaseFromReady": true,
+      "formats": ["unified"],
+      "build": true,
+      "acceptForeignBuilds": true
+    }
+  ],
+  "rejectedCapabilities": [
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": false,
+      "acceptForeign": false,
+      "leaseFromReady": true,
+      "formats": ["unified"],
+      "build": true
+    },
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": true,
+      "acceptForeign": false,
+      "leaseFromReady": true,
+      "formats": ["unified"],
+      "acceptForeignBuilds": true
+    },
+    {
+      "fetch": true,
+      "serve": true,
+      "publish": true,
+      "capture": true,
+      "acceptForeign": false,
+      "leaseFromReady": true,
+      "formats": ["unified"],
+      "build": "yes"
+    }
+  ],
+  "upstreamImage": {
+    "valid": [
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 10,
+        "format": "unified",
+        "source": "fetch"
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 4294968320,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 4294967296
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 537919488,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1048576,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/a+b/x_y.z-1/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/a+b/x_y.z-1/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      }
+    ],
+    "rejected": [
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 10,
+        "format": "unified",
+        "source": "fetch",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "fetch",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "unified",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream"
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 10,
+        "format": "split",
+        "source": "fetch"
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871937,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 4294968321,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 4294967297
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 537919489,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1048577,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536870912,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 0,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "ubuntu/x/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "ubuntu/x/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "/images/x/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "/images/x/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/../x/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/../x/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/./x/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/./x/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images//x/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images//x/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/x?y/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/x?y/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/x%2e/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/x%2e/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/a/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/b/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/meta.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/root.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "diskSize": 536870912,
+          "extra": "x"
+        }
+      },
+      {
+        "fingerprint": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "sizeBytes": 536871936,
+        "format": "split",
+        "source": "upstream",
+        "upstream": {
+          "metaPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+          "metaSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+          "metaSize": 1024,
+          "diskPath": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2",
+          "diskSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      }
+    ]
+  }
+}

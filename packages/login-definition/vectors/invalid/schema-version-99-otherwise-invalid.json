@@ -1,0 +1,8 @@
+{
+  "description": "the version refusal wins over other problems",
+  "expect": "definition.schema_version_unsupported",
+  "document": {
+    "schemaVersion": 99,
+    "bogus": true
+  }
+}

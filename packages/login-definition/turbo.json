@@ -1,0 +1,18 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "test": {
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.json",
+        "scripts/**/*.ts",
+        "schema/**/*.json",
+        "vectors/**",
+        "$TURBO_ROOT$/docs/guide/cli-logins.md",
+        "tsconfig.json",
+        "package.json"
+      ]
+    }
+  }
+}

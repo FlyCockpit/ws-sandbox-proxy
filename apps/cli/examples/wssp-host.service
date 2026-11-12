@@ -1,0 +1,37 @@
+# User service. Install the wssp binary at ~/.local/bin/wssp and log in first.
+[Unit]
+Description=wssp sandbox host and independent lease expiry supervisor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/wssp connect --runtime incus
+# `systemctl --user reload wssp-host` after installing a new binary: running
+# commands finish (up to `quiesce_max`, default 10 min), new ones wait in the
+# server queue, then the daemon exits 0 and Restart=always starts the new
+# binary. A daemon from before this release cannot quiesce: it gets SIGTERM
+# (an ordinary graceful restart), so the first upgrade into it restarts as
+# before.
+ExecReload=%h/.local/bin/wssp daemon quiesce
+Restart=always
+RestartSec=2s
+# SIGTERM goes to the daemon alone (`mixed`): it closes every terminal, ends
+# the relay normally and dies by SIGTERM. Its helpers and PTY children keep
+# running for that cleanup; whatever is left gets SIGKILL at the timeout,
+# which exceeds the daemon's own 60 s shutdown deadline.
+TimeoutStopSec=75s
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+# No core dumps: the daemon holds CLI-login values in memory while it installs,
+# captures or proxies them (it also marks itself non-dumpable at start).
+LimitCORE=0
+
+[Install]
+WantedBy=default.target
+
+# Host terminals default off/required. Change policy locally with config setters;
+# dashboard raises require a current link and persisted ACK. Hot off preserves guests.
+# Foreign guests require operator trust; retained disks can delay host deletion.

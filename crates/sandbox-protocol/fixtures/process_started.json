@@ -1,0 +1,13 @@
+{
+  "type": "process.started",
+  "operationId": "operation",
+  "sandboxId": "sandbox",
+  "generation": 1,
+  "processId": "process",
+  "attempt": 1,
+  "pid": 123,
+  "bootId": "12345678-1234-4234-8234-123456789abc",
+  "startTicks": "123456",
+  "startedAt": "2026-10-27T00:00:00.000Z",
+  "observedAt": "2026-10-27T00:00:00.001Z"
+}

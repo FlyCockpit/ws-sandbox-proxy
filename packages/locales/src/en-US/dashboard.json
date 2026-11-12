@@ -1,0 +1,14 @@
+{
+  "nav": {
+    "ariaLabel": "Main navigation",
+    "templates": "Templates",
+    "sandboxes": "Sandboxes",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "activity": "Activity",
+    "settings": "Settings"
+  },
+  "list": {
+    "loadFailed": "Couldn't load this list."
+  }
+}

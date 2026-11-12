@@ -1,0 +1,481 @@
+{
+  "_comment": "WP8 terminal reattach (D5, D10), shared by crates/sandbox-protocol/tests/terminal_resume.rs and apps/server/src/sandbox-relay/protocol-terminal-resume.test.ts. A daemon offers `terminalResume: {graceMs}` in its hello; only then does hello.ok answer `capabilities.terminalResume: true` and may the server send `terminal.resume` (after the host's reconcile.complete). The resume is answered by `terminal.ready` carrying `outputSeq` (or `terminal.exit`). Host-target terminals are never resumable. The daemon decodes `terminal.resume` as ServerControlMessage::TerminalResume and answers it from its detached table (apps/cli/src/sandbox_relay/terminal.rs).",
+  "graceDefaultMs": 120000,
+  "graceMaxMs": 600000,
+  "validOffers": [
+    {
+      "graceMs": 120000
+    },
+    {
+      "graceMs": 1000
+    },
+    {
+      "graceMs": 600000
+    }
+  ],
+  "rejectedOffers": [
+    {
+      "graceMs": 0
+    },
+    {
+      "graceMs": 999
+    },
+    {
+      "graceMs": 600001
+    },
+    {
+      "graceMs": "120000"
+    },
+    {
+      "graceMs": 1.5
+    },
+    {
+      "graceMs": -1
+    },
+    {},
+    {
+      "graceMs": 120000,
+      "ring": 262144
+    },
+    true,
+    null,
+    120000
+  ],
+  "helloOk": {
+    "type": "hello.ok",
+    "id": "hello-fixture-1",
+    "protocolVersion": "1.0",
+    "supportedProtocolVersions": ["1.0"],
+    "capabilities": {
+      "protocolVersion": "1.0",
+      "binaryFrames": true,
+      "cancellation": true,
+      "maxBinaryChunkBytes": 1048576,
+      "streamWindowChunks": 4,
+      "terminalResume": true,
+      "outputChunkBytes": 65536,
+      "censusEntryResults": true,
+      "pendingReceipts": true,
+      "expiryStatusResults": true,
+      "observationFence": true,
+      "commandRetire": true
+    },
+    "connectionEpoch": 1,
+    "hostOwnerId": "owner-1"
+  },
+  "rejectedAnswers": [
+    1,
+    "true",
+    null,
+    {
+      "graceMs": 120000
+    }
+  ],
+  "resume": [
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 0,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 9007199254740991,
+      "rows": 24,
+      "cols": 80
+    }
+  ],
+  "rejectedResume": [
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "host"
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 0,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 1025
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": -1,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 9007199254740992,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 1.5,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "../x",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "term 1",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80,
+      "cwd": "/srv"
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80,
+      "hostPolicy": {
+        "policyRevision": 1,
+        "proofRequired": true
+      }
+    },
+    {
+      "type": "terminal.resume",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "nextOutputSeq": 41,
+      "rows": 24,
+      "cols": 80,
+      "terminalId": "t1"
+    }
+  ],
+  "ready": [
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": 44
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": 0
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": 9007199254740991
+    }
+  ],
+  "rejectedReady": [
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": -1
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": null
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": 9007199254740992
+    },
+    {
+      "type": "terminal.ready",
+      "requestId": "tr-resume-1",
+      "fence": {
+        "sessionId": "t0123456789abcdef0123456789abcdef",
+        "operationId": "top-2",
+        "hostId": "host-1",
+        "epoch": 8,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 24,
+      "cols": 80,
+      "outputSeq": "44"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "_comment": "Output chunk ceiling cases shared by Rust and TypeScript. The daemon reports its ceiling and the server answers with the smaller accepted ceiling.",
+  "daemonOffer": 65536,
+  "serverMax": 65536,
+  "validOffers": [8192, 16384, 65536, 1048576],
+  "rejectedOffers": [0, 4096, 8191, 1048577, -1, 1.5, "65536", null, true],
+  "helloOk": {
+    "type": "hello.ok",
+    "id": "hello-fixture-1",
+    "protocolVersion": "1.0",
+    "supportedProtocolVersions": ["1.0"],
+    "capabilities": {
+      "protocolVersion": "1.0",
+      "binaryFrames": true,
+      "cancellation": true,
+      "maxBinaryChunkBytes": 1048576,
+      "streamWindowChunks": 4,
+      "outputChunkBytes": 65536,
+      "censusEntryResults": true,
+      "pendingReceipts": true,
+      "expiryStatusResults": true,
+      "observationFence": true,
+      "commandRetire": true
+    },
+    "connectionEpoch": 1,
+    "hostOwnerId": "owner-1"
+  },
+  "rejectedAnswers": [0, 4096, 8191, 1048577, -1, 1.5, "65536", true],
+  "matrix": [
+    {
+      "case": "current daemon, current server",
+      "offer": 65536,
+      "answer": 65536,
+      "chunkBytes": 65536,
+      "server": "current"
+    },
+    {
+      "case": "smaller offer",
+      "offer": 16384,
+      "answer": 16384,
+      "chunkBytes": 16384,
+      "server": "current"
+    },
+    {
+      "case": "larger offer is clamped by the server",
+      "offer": 1048576,
+      "answer": 65536,
+      "chunkBytes": 65536,
+      "server": "current"
+    }
+  ]
+}

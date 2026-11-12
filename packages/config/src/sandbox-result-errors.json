@@ -1,0 +1,94 @@
+{
+  "fs_not_found": {
+    "message": "Guest path not found.",
+    "resource": "filesystem"
+  },
+  "fs_is_directory": {
+    "message": "Guest path is a directory.",
+    "resource": "filesystem"
+  },
+  "fs_not_directory": {
+    "message": "Guest path is not a directory.",
+    "resource": "filesystem"
+  },
+  "fs_not_regular": {
+    "message": "Guest path is not a regular file.",
+    "resource": "filesystem"
+  },
+  "fs_permission_denied": {
+    "message": "Guest filesystem permission denied.",
+    "resource": "filesystem"
+  },
+  "fs_read_only": {
+    "message": "Guest filesystem is read only.",
+    "resource": "filesystem"
+  },
+  "fs_already_exists": {
+    "message": "Guest path already exists.",
+    "resource": "filesystem"
+  },
+  "fs_not_empty": {
+    "message": "Guest directory is not empty.",
+    "resource": "filesystem"
+  },
+  "fs_cross_device": {
+    "message": "Guest paths are on different devices.",
+    "resource": "filesystem"
+  },
+  "fs_no_space": {
+    "message": "Guest filesystem has no space.",
+    "resource": "filesystem"
+  },
+  "fs_symlink_refused": {
+    "message": "Guest symlink traversal refused.",
+    "resource": "filesystem"
+  },
+  "fs_entry_too_large": {
+    "message": "Guest entry exceeds the result limit.",
+    "resource": "filesystem"
+  },
+  "fs_listing_limit": {
+    "message": "Guest listing exceeds the observation limit.",
+    "resource": "filesystem"
+  },
+  "fs_invalid_encoding": {
+    "message": "Guest metadata encoding is invalid.",
+    "resource": "filesystem"
+  },
+  "fs_metadata_unrepresentable": {
+    "message": "Guest metadata cannot be represented.",
+    "resource": "filesystem"
+  },
+  "process_not_found": {
+    "message": "Process not found.",
+    "resource": "process"
+  },
+  "process_exited": {
+    "message": "Process has exited.",
+    "resource": "process"
+  },
+  "process_stale": {
+    "message": "Process reference is stale.",
+    "resource": "process"
+  },
+  "process_not_started": {
+    "message": "Process has not started.",
+    "resource": "process"
+  },
+  "process_stdin_closed": {
+    "message": "Process stdin is closed.",
+    "resource": "process"
+  },
+  "process_cancel_pending": {
+    "message": "Process cancellation is pending.",
+    "resource": "process"
+  },
+  "process_permission_denied": {
+    "message": "Guest process permission denied.",
+    "resource": "process"
+  },
+  "signal_unsupported_on_guest": {
+    "message": "Guest does not support safe process group signals.",
+    "resource": "process"
+  }
+}

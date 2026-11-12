@@ -1,0 +1,6 @@
+{
+  "maxEntries": 64,
+  "keyBytes": 128,
+  "valueBytes": 4096,
+  "jsonBytes": 16384
+}

@@ -1,0 +1,51 @@
+# Local development services — PostgreSQL 18 + Valkey 9
+# COMPOSE_PROJECT_NAME (or compose -p) scopes all physical resources.
+# DEV_POSTGRES_PORT / DEV_REDIS_PORT select the loopback ports per checkout.
+# Credentials match .env.example defaults so no extra config is needed.
+#
+# Usage:
+#   pnpm dev:services          # start in background
+#   docker compose -f docker-compose.dev.yml down   # stop
+#   docker compose -f docker-compose.dev.yml down -v # stop + delete data
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    environment:
+      POSTGRES_DB: wssp
+      POSTGRES_USER: postgres
+      # DEV ONLY — do not use this password in production.
+      POSTGRES_PASSWORD: password
+    ports:
+      # Bind to loopback only. A bare "5432:5432" binds 0.0.0.0 and, because
+      # Docker writes its own iptables rules ahead of ufw/firewalld, would
+      # expose Postgres to the public internet on a VPS — with the dev password
+      # below — even behind a closed host firewall. localhost dev is unaffected.
+      - "127.0.0.1:${DEV_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: docker.io/valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    ports:
+      # Loopback only — see the postgres note above. Redis has no auth here, so
+      # a 0.0.0.0 binding on a VPS is an open, unauthenticated data store.
+      - "127.0.0.1:${DEV_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  redis-data:

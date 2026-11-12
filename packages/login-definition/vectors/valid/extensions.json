@@ -1,0 +1,28 @@
+{
+  "x-top": { "nested": [1, -2, true, null, "s"], "x-any": { "deep": {} } },
+  "schemaVersion": 1,
+  "id": "0-ext",
+  "displayName": "Extensions everywhere ✓ 😀",
+  "x-": "private use sorts before astral",
+  "x-😀": "astral sorts after U+E000 by code point",
+  "x-escapes": "quote \" backslash \\ slash / tab \t newline \n nul \u0000 unit \u001f del \u007f ls  ",
+  "install": { "x-i": 0 },
+  "login": {
+    "command": "login",
+    "method": "device-code",
+    "x-l": "l",
+    "egress": { "domains": ["xn--bcher-kva.example"], "x-e": [] }
+  },
+  "credentials": {
+    "x-c": 9007199254740991,
+    "x-n": -9007199254740991,
+    "files": { "required": ["a"], "x-f": "f" },
+    "env": [
+      {
+        "name": "_A",
+        "required": false,
+        "x-v": "v"
+      }
+    ]
+  }
+}

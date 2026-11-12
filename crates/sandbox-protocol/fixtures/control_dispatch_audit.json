@@ -1,0 +1,82 @@
+{
+  "daemon": [
+    { "type": "dispatch.audit.request", "page": 0 },
+    {
+      "type": "dispatch.audit.result",
+      "page": 0,
+      "entries": [
+        { "operationId": "op-fixture-1", "generation": 3, "attempt": 2, "received": false },
+        { "operationId": "op-fixture-2", "generation": 1, "attempt": 1, "received": true }
+      ]
+    }
+  ],
+  "server": [
+    {
+      "type": "dispatch.audit.page",
+      "page": 0,
+      "complete": true,
+      "entries": [
+        {
+          "sandboxOwnerId": "user-1",
+          "operationId": "op-fixture-1",
+          "sandboxId": "sbx-fixture-1",
+          "generation": 3,
+          "attempt": 2,
+          "connectionEpoch": 7,
+          "idempotencyKey": "key-fixture-1",
+          "kind": "command.run"
+        }
+      ]
+    }
+  ],
+  "rejectedDaemon": [
+    { "type": "dispatch.audit.request", "page": 1025 },
+    {
+      "type": "dispatch.audit.result",
+      "page": 0,
+      "entries": [{ "operationId": "op 1", "generation": 1, "attempt": 1, "received": false }]
+    },
+    {
+      "type": "dispatch.audit.result",
+      "page": 0,
+      "entries": [{ "operationId": "op-1", "generation": 0, "attempt": 1, "received": false }]
+    },
+    { "type": "dispatch.audit.result", "page": 0, "entries": [], "extra": 1 }
+  ],
+  "rejectedServer": [
+    {
+      "type": "dispatch.audit.page",
+      "page": 0,
+      "complete": true,
+      "entries": [
+        {
+          "sandboxOwnerId": "user-1",
+          "operationId": "op-fixture-1",
+          "sandboxId": "sbx-fixture-1",
+          "generation": 3,
+          "attempt": 2,
+          "connectionEpoch": 0,
+          "idempotencyKey": "key-fixture-1",
+          "kind": "command.run"
+        }
+      ]
+    },
+    {
+      "type": "dispatch.audit.page",
+      "page": 0,
+      "complete": true,
+      "entries": [
+        {
+          "sandboxOwnerId": "user-1",
+          "operationId": "op-fixture-1",
+          "sandboxId": "sbx-fixture-1",
+          "generation": 3,
+          "attempt": 2,
+          "connectionEpoch": 7,
+          "idempotencyKey": "key-fixture-1",
+          "kind": "not.a.kind"
+        }
+      ]
+    }
+  ]
+}

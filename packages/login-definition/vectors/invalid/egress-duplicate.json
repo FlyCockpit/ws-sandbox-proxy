@@ -1,0 +1,21 @@
+{
+  "description": "domains are unique",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste",
+      "egress": {
+        "domains": ["a.example.com", "a.example.com"]
+      }
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    }
+  }
+}

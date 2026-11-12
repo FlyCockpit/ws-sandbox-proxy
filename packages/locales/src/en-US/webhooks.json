@@ -1,0 +1,170 @@
+{
+  "title": "Webhooks",
+  "description": "Signed HTTPS callbacks when your sandboxes and operations change state.",
+  "notConfigured": {
+    "title": "Webhooks are not configured",
+    "description": "This server has no DATA_ENCRYPTION_KEY, so webhook endpoints cannot be created. Ask the operator to enable them."
+  },
+  "empty": {
+    "title": "No webhook endpoints yet",
+    "description": "Add an endpoint to receive sandbox and operation events. Each delivery is signed; verify it with your endpoint's secret."
+  },
+  "list": {
+    "label": "Webhook endpoints",
+    "open": "Open {{host}}",
+    "events": "Events",
+    "failing": "{{count}} consecutive failures",
+    "healthy": "Healthy"
+  },
+  "status": {
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "disabledByOwner": "Disabled by you. Deliveries are not sent while it is disabled.",
+    "disabledForFailures": "Disabled after sustained delivery failures (72 hours and 20 consecutive failures). Fix the receiver, then enable it again."
+  },
+  "event": {
+    "sandbox.ready": "Sandbox ready",
+    "sandbox.stopped": "Sandbox stopped",
+    "sandbox.create_failed": "Sandbox creation failed",
+    "sandbox.destroyed": "Sandbox destroyed",
+    "sandbox.offloaded": "Sandbox offloaded",
+    "operation.completed": "Operation completed",
+    "credential.capture_failed": "Login capture failed (sandbox kept running)",
+    "credential.capture_lost": "Login capture lost",
+    "credential.recovery_required": "Login recovery required",
+    "credential.needs_login": "Login needs a new sign-in",
+    "webhook.test": "Test event"
+  },
+  "form": {
+    "url": "Endpoint URL",
+    "urlHint": "HTTPS only. Private and internal addresses are refused unless the operator allowlisted them for your account.",
+    "description": "Description (optional)",
+    "events": "Events",
+    "kinds": "Operation kinds for “Operation completed”",
+    "kindsDefault": "Lifecycle and commands (create, stop, kill, reconnect, lease renewal, run command)",
+    "kindsAll": "All operation kinds (includes high-volume file and process reads)",
+    "kindsCustom": "Custom selection (set through the API)",
+    "enabled": "Enabled",
+    "urlRequired": "Enter the endpoint URL.",
+    "urlTooLong": "Use at most 2048 characters.",
+    "eventsRequired": "Choose at least one event.",
+    "descriptionTooLong": "Use at most 200 characters."
+  },
+  "create": {
+    "action": "Add endpoint",
+    "title": "Add a webhook endpoint",
+    "description": "Events that commit after the endpoint exists are delivered to it.",
+    "submit": "Add endpoint",
+    "submitting": "Adding…",
+    "secretLabel": "Signing secret",
+    "secretHint": "Verify every delivery with this secret (Standard Webhooks). It is shown only now; store it with your receiver."
+  },
+  "edit": {
+    "action": "Edit",
+    "title": "Edit endpoint",
+    "description": "Changes apply to deliveries attempted from now on.",
+    "saved": "Endpoint saved."
+  },
+  "toggle": {
+    "enable": "Enable",
+    "disable": "Disable",
+    "enabled": "Endpoint enabled.",
+    "disabled": "Endpoint disabled."
+  },
+  "rotate": {
+    "action": "Rotate secret",
+    "title": "Rotate the signing secret?",
+    "description": "A new secret is generated and shown once. During the overlap, deliveries carry signatures from both secrets so your receiver can switch without dropping events.",
+    "overlap": "Keep the old secret valid for",
+    "overlapNone": "No overlap",
+    "overlapHour": "1 hour",
+    "overlapDay": "24 hours",
+    "overlapWeek": "7 days",
+    "confirm": "Rotate",
+    "secretLabel": "New signing secret"
+  },
+  "test": {
+    "action": "Send test event",
+    "queued": "Test event queued. It appears in the delivery log below."
+  },
+  "delete": {
+    "action": "Delete",
+    "title": "Delete the endpoint for {{host}}?",
+    "description": "The endpoint and its delivery log are deleted. Pending deliveries are dropped.",
+    "typePrompt": "Type the endpoint host to confirm",
+    "copyHost": "Copy host",
+    "done": "Endpoint deleted."
+  },
+  "detail": {
+    "back": "All webhook endpoints",
+    "notFound": "This webhook endpoint does not exist or was deleted.",
+    "secretVersion": "Secret version {{version}}",
+    "previousSecretUntil": "Previous secret valid until {{date}}",
+    "lastSuccess": "Last success {{when}}",
+    "lastFailure": "Last failure {{when}} ({{errorClass}})",
+    "never": "never"
+  },
+  "deliveries": {
+    "title": "Delivery log",
+    "description": "Deliveries are retried for 24 hours. Each attempt is signed again with a fresh timestamp; the webhook-id stays the same.",
+    "empty": "No deliveries yet.",
+    "filter": "State",
+    "all": "All states",
+    "attempts": "{{count}} of {{max}} attempts",
+    "nextAttempt": "Next attempt {{when}}",
+    "open": "Details",
+    "kind": {
+      "event": "Event",
+      "test": "Test",
+      "redeliver": "Redelivery"
+    },
+    "state": {
+      "PENDING": "Pending",
+      "IN_FLIGHT": "In flight",
+      "SUCCEEDED": "Succeeded",
+      "FAILED": "Failed",
+      "CANCELLED": "Cancelled"
+    }
+  },
+  "delivery": {
+    "title": "Delivery {{id}}",
+    "eventId": "Event ID (webhook-id)",
+    "attempts": "Attempts",
+    "noAttempts": "No attempts yet.",
+    "attempt": "Attempt {{n}}",
+    "status": "HTTP {{status}}",
+    "duration": "{{ms}} ms",
+    "address": "Connected to {{address}}",
+    "response": "Response excerpt",
+    "redeliver": "Redeliver",
+    "redelivered": "Redelivery queued with the same webhook-id."
+  },
+  "errorClass": {
+    "dns_failed": "DNS lookup failed",
+    "destination_blocked": "Destination not allowed",
+    "connect_failed": "Connection failed",
+    "connect_timeout": "Connection timed out",
+    "tls_error": "TLS error",
+    "timeout": "Timed out",
+    "http_status": "Non-2xx response",
+    "redirect_not_followed": "Redirect not followed",
+    "response_too_large": "Response too large",
+    "protocol_error": "Protocol error",
+    "worker_lost": "Worker lost; retried",
+    "not_configured": "Server not configured",
+    "backlog_overflow": "Backlog full",
+    "expired": "Retry window expired",
+    "endpoint_disabled": "Endpoint disabled"
+  },
+  "problem": {
+    "destinationInvalid": "That URL is not valid: use https://, no credentials or fragment, and port 443 or 1024-65535.",
+    "destinationBlocked": "That destination is not allowed: private, local and metadata addresses are refused.",
+    "limit": "You already have the maximum of 10 webhook endpoints.",
+    "disabled": "This endpoint is disabled. Enable it first.",
+    "expired": "This event is too old to redeliver.",
+    "notConfigured": "Webhooks are not configured on this server.",
+    "notFound": "It no longer exists. The list has been refreshed.",
+    "rateLimited": "Too many requests. Wait a moment and try again.",
+    "generic": "That didn't work. Check your connection and try again."
+  }
+}

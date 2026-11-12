@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.sh text eol=lf
+
+# Generated artifacts remain tracked but collapse in code review.
+packages/sandbox-contracts/openapi.json linguist-generated=true
+apps/web/src/routeTree.gen.ts linguist-generated=true
+pnpm-lock.yaml linguist-generated=true

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "tool-with-cache",
+  "displayName": "Tool keeping a config directory",
+  "login": {
+    "command": "tool auth login",
+    "method": "browser-callback",
+    "egress": { "domains": [] }
+  },
+  "credentials": {
+    "files": {
+      "required": [".config/tool"],
+      "optional": [".local/share/tool/session", "dir with \"quotes\" and spaces/ünïcödé"],
+      "exclude": [".config/tool/cache", ".config/tool/logs/old"]
+    },
+    "env": [{ "name": "TOOL_PROFILE", "required": false }],
+    "maxBytes": 4194304
+  }
+}

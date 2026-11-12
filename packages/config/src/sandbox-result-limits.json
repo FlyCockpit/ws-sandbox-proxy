@@ -1,0 +1,15 @@
+{
+  "resultVersion": 1,
+  "hostResultMaxBytes": 24576,
+  "responseMaxBytes": 32768,
+  "scalarMaxBytes": 2048,
+  "descriptionMaxBytes": 12288,
+  "ownerReservedMaxBytes": 33554432,
+  "observationRetentionMs": 3600000,
+  "mutationContentRetentionMs": 86400000,
+  "listDefaultLimit": 100,
+  "listMaxLimit": 100,
+  "directoryDepthMax": 8,
+  "listVisitMax": 100000,
+  "observationTimeoutMs": 30000
+}

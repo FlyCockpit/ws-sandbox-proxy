@@ -1,0 +1,58 @@
+{
+  "format": "products:1.0",
+  "content_id": "images",
+  "datatype": "image-downloads",
+  "products": {
+    "ubuntu:resolute:amd64:cloud": {
+      "aliases": "ubuntu/resolute/cloud,ubuntu/26.04/cloud",
+      "arch": "amd64",
+      "os": "Ubuntu",
+      "release": "resolute",
+      "release_title": "resolute",
+      "requirements": {},
+      "variant": "cloud",
+      "versions": {
+        "20261105_07:42": {
+          "items": {
+            "incus.tar.xz": {
+              "ftype": "incus.tar.xz",
+              "sha256": "ef1f94ba50893216a75db3ca7b613ab4d79ea5843c58c868fd973b544d7f6827",
+              "size": 1188,
+              "path": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/incus.tar.xz",
+              "combined_sha256": "6b5191f13a9ec4951e8831dd3f6495b53e6f19a2956cb3fe77d18c0c5ff05e96",
+              "combined_rootxz_sha256": "6b5191f13a9ec4951e8831dd3f6495b53e6f19a2956cb3fe77d18c0c5ff05e96",
+              "combined_squashfs_sha256": "b9a38386e964cc45b564f59b24d56fb87a03f5eb730f35e8907020c63c129ced",
+              "combined_disk-kvm-img_sha256": "4f7a5832276d546ff38003d3f559e15ae0f904f67744222387dec2f44269c34b"
+            },
+            "disk.qcow2": {
+              "ftype": "disk-kvm.img",
+              "sha256": "b9ab2ffe3e73f6fbdcb9c1869bd00353e0224a7cc0951c26e2f639ffa1e51b1d",
+              "size": 495468544,
+              "path": "images/ubuntu/resolute/amd64/cloud/20261105_07:42/disk.qcow2"
+            }
+          }
+        },
+        "20261106_07:42": {
+          "items": {
+            "incus.tar.xz": {
+              "ftype": "incus.tar.xz",
+              "sha256": "89043d5db7beb86a6fd713976321a2287c265164a50d1cbf392e06b1b8e18019",
+              "size": 1208,
+              "path": "images/ubuntu/resolute/amd64/cloud/20261106_07:42/incus.tar.xz",
+              "combined_sha256": "dde09fb109444cc4e5317d3cb604fc9911e62a21c2cbdaca96b853bef36bb798",
+              "combined_rootxz_sha256": "dde09fb109444cc4e5317d3cb604fc9911e62a21c2cbdaca96b853bef36bb798",
+              "combined_squashfs_sha256": "d31a073524c22a7ff7bc1b1f538f5fbb67100fb42d8af6ec536c4e8df29e7824",
+              "combined_disk-kvm-img_sha256": "370bafec5a904285398c108f6c75bd8e644abb645ffe81c1524b153cfb617aca"
+            },
+            "disk.qcow2": {
+              "ftype": "disk-kvm.img",
+              "sha256": "8db8e33dca06e8664bca60fa2b722c3c9038148f59f8b2ccf2f208db979aa02d",
+              "size": 495803904,
+              "path": "images/ubuntu/resolute/amd64/cloud/20261106_07:42/disk.qcow2"
+            }
+          }
+        }
+      }
+    }
+  }
+}

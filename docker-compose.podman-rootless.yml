@@ -1,0 +1,4 @@
+# Used only by pnpm dev:docker --rootless-podman with the Podman runtime.
+services:
+  app-dev:
+    userns_mode: keep-id

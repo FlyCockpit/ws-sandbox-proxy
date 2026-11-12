@@ -1,0 +1,137 @@
+/// Outbound webhook endpoint (owner-scoped). The signing secret is stored only
+/// as AES-256-GCM ciphertext under the webhook HKDF sub-key of
+/// DATA_ENCRYPTION_KEY, bound by AAD to
+/// (endpoint id, owner id, secret version); never projected by list/get/admin.
+model WebhookEndpoint {
+  id                       String            @id @default(cuid(2))
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @default(now()) @updatedAt
+  userId                   String
+  /// Audit only: the SDK key that created it. Never an authority.
+  createdByKeyId           String?
+  url                      String
+  description              String?
+  events                   String[]
+  /// Empty means every kind; filters `operation.completed` only.
+  operationKinds           String[]          @default([])
+  payloadVersion           Int               @default(1)
+  secretCiphertext         Bytes
+  secretNonce              Bytes
+  secretKeyId              String
+  secretVersion            Int               @default(1)
+  previousSecretCiphertext Bytes?
+  previousSecretNonce      Bytes?
+  previousSecretKeyId      String?
+  previousSecretVersion    Int?
+  previousSecretExpiresAt  DateTime?
+  disabledAt               DateTime?
+  /// `owner` | `sustained_failures`.
+  disabledReason           String?
+  /// Set once the sustained-failure disable email was sent; cleared on re-enable.
+  disabledNotifiedAt       DateTime?
+  consecutiveFailures      Int               @default(0)
+  failingSince             DateTime?
+  lastSuccessAt            DateTime?
+  lastFailureAt            DateTime?
+  lastFailureClass         String?
+  User                     User              @relation("WebhookEndpointOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Deliveries               WebhookDelivery[]
+
+  @@unique([id, userId])
+  @@index([userId, createdAt])
+  @@index([userId, disabledAt])
+  @@map("webhook_endpoint")
+}
+
+/// One durable fact, written by the `wssp_webhook_*_event` triggers in the
+/// same transaction as the state change (or by test-send). Deliberately no
+/// foreign keys: the trigger insert takes no key-share lock on `user` or
+/// `sandbox_instance`, and events outlive the sandbox row.
+model WebhookEvent {
+  id          String            @id
+  seq         BigInt            @unique @default(autoincrement())
+  occurredAt  DateTime          @default(now())
+  userId      String
+  type        String
+  sandboxId   String?
+  operationId String?
+  /// Raw transition facts `{from, to, generation, errorCode(raw), kind?, state?}`.
+  /// Only the renderer reads them; they never leave the server unfiltered.
+  facts       Json
+  /// Rendered once at fan-out (or creation for test events), then frozen.
+  body        String?
+  fannedOutAt DateTime?
+  Deliveries  WebhookDelivery[]
+
+  @@index([fannedOutAt, seq])
+  @@index([userId, occurredAt])
+  @@index([occurredAt])
+  @@map("webhook_event")
+}
+
+enum WebhookDeliveryState {
+  PENDING
+  IN_FLIGHT
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+/// The delivery ledger. BullMQ only carries `{deliveryId, attempt, seq}`.
+model WebhookDelivery {
+  id             String                   @id @default(cuid(2))
+  createdAt      DateTime                 @default(now())
+  eventId        String
+  endpointId     String
+  userId         String
+  /// `event` | `test` | `redeliver`.
+  kind           String
+  state          WebhookDeliveryState     @default(PENDING)
+  attemptCount   Int                      @default(0)
+  maxAttempts    Int
+  nextAttemptAt  DateTime?
+  leaseUntil     DateTime?
+  /// When the current job was handed to Redis; NULL = not (yet) enqueued.
+  enqueuedAt     DateTime?
+  /// Bumped on every deliberate re-enqueue; part of the BullMQ job id.
+  enqueueSeq     Int                      @default(0)
+  expiresAt      DateTime
+  lastStatusCode Int?
+  lastErrorClass String?
+  completedAt    DateTime?
+  Event          WebhookEvent             @relation(fields: [eventId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Endpoint       WebhookEndpoint          @relation(fields: [endpointId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  Attempts       WebhookDeliveryAttempt[]
+
+  @@index([state, nextAttemptAt])
+  @@index([state, leaseUntil])
+  /// The release sweep: a loose scan of endpoints with PENDING rows, then each
+  /// endpoint's oldest due rows (ledger.ts `enqueuePending`).
+  @@index([state, endpointId, nextAttemptAt])
+  /// Manual sends (`test`, `redeliver`) jump the automatic backlog: the release
+  /// picks an endpoint's due manual rows from this small index first.
+  @@index([endpointId, nextAttemptAt], map: "webhook_delivery_manual_due_idx", where: raw("((state = 'PENDING'::\"WebhookDeliveryState\") AND (kind <> 'event'::text))"))
+  @@index([endpointId, state])
+  @@index([endpointId, createdAt])
+  @@index([userId, createdAt])
+  @@index([eventId])
+  @@map("webhook_delivery")
+}
+
+model WebhookDeliveryAttempt {
+  id              String          @id @default(cuid(2))
+  deliveryId      String
+  attempt         Int
+  startedAt       DateTime
+  durationMs      Int
+  /// Owner-only.
+  resolvedAddress String?
+  statusCode      Int?
+  errorClass      String?
+  /// Owner-only: at most 512 bytes of the response, lossy UTF-8.
+  responseExcerpt String?
+  Delivery        WebhookDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+
+  @@unique([deliveryId, attempt])
+  @@map("webhook_delivery_attempt")
+}

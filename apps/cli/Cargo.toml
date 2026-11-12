@@ -1,0 +1,108 @@
+# Companion Rust CLI (`apps/cli`) for WS Sandbox Proxy.
+#
+# Keep the package name and [[bin]] name aligned so release artifacts and
+# `assert_cmd` tests use the same executable (`wssp`).
+
+[package]
+name = "wssp"
+version = "1.0.0"
+edition = "2024"
+publish = false
+# Minimum Supported Rust Version: the latest stable when last bumped (host journal
+# file locks alone need 1.89). The `msrv` CI job is the source of truth — if you
+# add a dependency that needs newer, bump this and the job will tell you.
+rust-version = "1.99"
+description = "Node daemon and CLI for WS Sandbox Proxy."
+authors = ["FlyCockpit LLC"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/FlyCockpit/ws-sandbox-proxy"
+homepage = "https://github.com/FlyCockpit/ws-sandbox-proxy"
+documentation = "https://github.com/FlyCockpit/ws-sandbox-proxy#readme"
+keywords = ["cli", "command-line", "sandbox"]
+categories = ["command-line-utilities"]
+# Files NOT shipped in the crates.io tarball (keeps `cargo publish` lean and
+# avoids leaking daemon/dev scaffolding to package consumers).
+exclude = [
+    "tap/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".cursorrules",
+]
+
+[package.metadata.dist]
+dist = true
+
+[[bin]]
+name = "wssp"
+path = "src/main.rs"
+
+[dependencies]
+sandbox-protocol = { path = "../../crates/sandbox-protocol" }
+sandbox-runtime = { path = "../../crates/sandbox-runtime" }
+login-definition = { path = "../../crates/login-definition" }
+# Error handling. anyhow for application code (rich context, easy `?`). Reach
+# for `thiserror` only when you publish a library with a stable error API; see
+# docs/error-handling.md.
+anyhow = "1"
+# Argument parsing + shell completions.
+clap = { version = "4", features = ["derive", "wrap_help"] }
+clap_complete = "4"
+# Cross-platform config/data directories (XDG on Linux, the right spots
+# on macOS and Windows).
+dirs = "7"
+# Serialization. serde_json powers `--json` output; toml powers the human-edited
+# config file.
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+# SHA-256 receipt bindings; ring is already in the TLS dependency tree.
+ring = "0.17.14"
+# Wipes credential plaintext on drop
+# (`SecretBytes`). Already locked through rustls; `alloc` for `Zeroizing<Vec<u8>>`.
+zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
+# Temporary files for atomic config writes.
+tempfile = "3"
+toml = "1"
+# Device login HTTP (no redirects; oRPC exchange polling).
+# Exact pin: the additive root store implements ureq's unversioned transport API.
+ureq = { version = "=3.5.1", features = ["json"] }
+# Structured logging. `--log-format`, `RUST_LOG`/`WSSP_LOG` filtering.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+# Exact pins keep the audited HTTPS and WSS TLS primitives and root store aligned.
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "=1.0.12"
+# Uses strict HTTP/1.1 head parsing for the
+# credential proxy (already locked through tungstenite). Pinned: the proxy's
+# smuggling table depends on its exact acceptance rules.
+httparse = "=1.10.1"
+
+[target.'cfg(unix)'.dependencies]
+# SIGTERM/SIGINT binding for `wssp connect` without
+# `unsafe` (the crate forbids it). Only the `iterator` feature: a process-wide
+# handler feeds one watcher thread (no blocked signal mask, so children keep
+# theirs), and `low_level::emulate_default_handler` re-raises the signal after
+# the graceful shutdown so a service manager sees death by signal.
+signal-hook = { version = "0.4.6", default-features = false, features = ["iterator"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Prevents credential dumps: `prctl(PR_SET_DUMPABLE, 0)` at daemon start
+# (safe API, `process` feature; `signal` for the guard's process-group kill). `mlock` stays unused: nix exposes it only as
+# an `unsafe fn` and the crate forbids `unsafe`.
+nix = { workspace = true, features = ["process", "signal"] }
+# Egress guard: `SO_PEERCRED` on the guard socket without `unsafe` (std's
+# `peer_cred` is unstable). rustix (>= 1.1.5) is already in Cargo.lock through
+# tempfile; this adds only its `net` feature, no new crate. `wssp daemon
+# quiesce`: `fs` opens the control file with `O_NOFOLLOW` and `process`
+# sends the reload signal; features of the same crate, no new crate.
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process"] }
+
+[dev-dependencies]
+# Black-box CLI testing: run the built binary and assert on stdout/stderr/exit.
+assert_cmd = "2"
+predicates = "3"
+
+[lints]
+workspace = true

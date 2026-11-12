@@ -1,0 +1,6 @@
+{
+  "commandPayloadBytes": 32768,
+  "jsonControlMaxBytes": 65536,
+  "commandArgvMaxCount": 256,
+  "commandArgvMaxUtf16Units": 512
+}

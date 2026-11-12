@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "ubuntu-apt",
+      "description": "Ubuntu package archive and security updates (apt).",
+      "domains": ["archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com"],
+      "cidrs": []
+    },
+    {
+      "name": "debian-apt",
+      "description": "Debian package archive and security updates (apt).",
+      "domains": ["deb.debian.org", "security.debian.org"],
+      "cidrs": []
+    },
+    {
+      "name": "pypi",
+      "description": "Python Package Index (pip).",
+      "domains": ["pypi.org", "files.pythonhosted.org"],
+      "cidrs": []
+    },
+    {
+      "name": "npm",
+      "description": "npm public registry.",
+      "domains": ["registry.npmjs.org"],
+      "cidrs": []
+    },
+    {
+      "name": "github",
+      "description": "GitHub web, API, archives and raw content (git clone, release downloads).",
+      "domains": [
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+        "raw.githubusercontent.com"
+      ],
+      "cidrs": []
+    }
+  ]
+}

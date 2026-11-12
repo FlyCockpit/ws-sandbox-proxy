@@ -1,0 +1,159 @@
+{
+  "_comment": "Current reconnect frames shared by Rust and TypeScript protocol tests. Core hello capabilities pendingReceipts, expiryStatusResults and observationFence are required. reconcile.complete may name up to four operations whose receipts are still resolving; they remain unsettled until a receipt arrives or the session ends. Connected expiry status batches carry an observation sequence and receive ordered per-entry verdicts. Evidence predating a lifecycle result is superseded and must be observed again. Both peers parse strictly.",
+  "capabilities": ["pendingReceipts", "expiryStatusResults", "observationFence"],
+  "validOffers": [true],
+  "rejectedOffers": [false, "true", 1, null],
+  "helloOkCapabilities": {
+    "protocolVersion": "1.0",
+    "binaryFrames": true,
+    "cancellation": true,
+    "maxBinaryChunkBytes": 1048576,
+    "streamWindowChunks": 4,
+    "pendingReceipts": true,
+    "expiryStatusResults": true,
+    "observationFence": true,
+    "outputChunkBytes": 65536,
+    "censusEntryResults": true,
+    "commandRetire": true
+  },
+  "reconcileComplete": [
+    {
+      "type": "reconcile.complete"
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": []
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": ["op-a", "op-b", "op-c", "op-d"]
+    }
+  ],
+  "rejectedReconcileComplete": [
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": ["op-a", "op-b", "op-c", "op-d", "op-e"]
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": ["op-a", "op-a"]
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": [""]
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": ["op a"]
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": "op-a"
+    },
+    {
+      "type": "reconcile.complete",
+      "pendingReceipts": null
+    }
+  ],
+  "expiryStatus": {
+    "type": "sandbox.expiry_status",
+    "batch": 1,
+    "observation": 1,
+    "entries": [
+      {
+        "sandboxOwnerId": "user-1",
+        "sandboxId": "sbx-a",
+        "state": "stopped",
+        "root": null
+      }
+    ]
+  },
+  "rejectedExpiryBatches": [0, -1, 1.5, "1", null],
+  "rejectedObservations": [0, -1, 1.5, "1", null],
+  "ack": {
+    "type": "sandbox.expiry_status.ack",
+    "batch": 1,
+    "entryResults": [
+      {
+        "sandboxId": "sbx-a",
+        "outcome": "converged"
+      },
+      {
+        "sandboxId": "sbx-b",
+        "outcome": "stale_storage"
+      },
+      {
+        "sandboxId": "sbx-c",
+        "outcome": "not_converged"
+      },
+      {
+        "sandboxId": "sbx-d",
+        "outcome": "superseded"
+      }
+    ]
+  },
+  "rejectedInventoryAcks": [
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "superseded"
+        }
+      ]
+    }
+  ],
+  "rejectedAcks": [
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "converged"
+        }
+      ]
+    },
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 1,
+      "entryResults": []
+    },
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 1
+    },
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 1,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "refused"
+        }
+      ]
+    },
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 1,
+      "entryResults": [
+        {
+          "sandboxId": "",
+          "outcome": "converged"
+        }
+      ]
+    },
+    {
+      "type": "sandbox.expiry_status.ack",
+      "batch": 1,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "converged"
+        }
+      ],
+      "extra": true
+    }
+  ]
+}

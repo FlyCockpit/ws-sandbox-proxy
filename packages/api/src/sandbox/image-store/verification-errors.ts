@@ -1,0 +1,21 @@
+/** A definite integrity failure, as opposed to an unavailable object store. */
+export class ImageIntegrityError extends Error {}
+
+/** Unknown failures must retry without condemning the object or its keys. */
+export function isTerminalImageVerificationError(error: unknown): boolean {
+  if (error instanceof ImageIntegrityError) return true;
+  if (typeof error !== "object" || error === null) return false;
+  // Bucket/endpoint configuration failures can also be HTTP 404. Only a
+  // missing object is evidence against this upload.
+  if (
+    ("name" in error && error.name === "NoSuchKey") ||
+    ("Code" in error && error.Code === "NoSuchKey")
+  )
+    return true;
+  // Node/OpenSSL's AES-GCM authentication and malformed nonce/tag failures.
+  return (
+    ("message" in error && error.message === "Unsupported state or unable to authenticate data") ||
+    ("code" in error &&
+      (error.code === "ERR_CRYPTO_INVALID_AUTH_TAG" || error.code === "ERR_CRYPTO_INVALID_IV"))
+  );
+}

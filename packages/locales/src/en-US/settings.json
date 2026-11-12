@@ -1,0 +1,130 @@
+{
+  "navProfile": "Profile",
+  "navSecurity": "Security",
+  "title": "Settings",
+  "profile": {
+    "title": "Profile",
+    "description": "Manage your profile information",
+    "emailReadonly": "Email cannot be changed",
+    "saved": "Profile updated",
+    "saveError": "Couldn't update your profile. Try again.",
+    "operationalAlerts": "Email me about operational failures",
+    "operationalAlertsDescription": "Receive admin alerts when background jobs fail permanently.",
+    "notificationsSaved": "Notification preference updated",
+    "notificationsSaveError": "Couldn't update notification preference. Try again."
+  },
+  "security": {
+    "passwordTitle": "Password",
+    "passwordDescription": "Change the password you use to sign in.",
+    "passwordLoadError": "Couldn't load your password settings.",
+    "currentPasswordLabel": "Current password",
+    "newPasswordLabel": "New password",
+    "confirmPasswordLabel": "Confirm new password",
+    "passwordSessionRevocation": "After your password changes, every other device will be signed out. This device will stay signed in.",
+    "changePassword": "Change password",
+    "changingPassword": "Changing password…",
+    "passwordChangedSuccess": "Password changed. Other devices have been signed out.",
+    "currentPasswordMismatch": "Your current password doesn't match.",
+    "passwordChangeError": "Couldn't change your password. Try again.",
+    "twoFactorTitle": "Two-Factor Authentication",
+    "enabledDescription": "Two-factor authentication is enabled for your account",
+    "disabledDescription": "Add an extra layer of security to your account",
+    "enable2FA": "Enable Two-Factor Authentication",
+    "disable2FA": "Disable Two-Factor Authentication",
+    "confirmPasswordPrompt": "Confirm your password to set up two-factor authentication.",
+    "scanQrPrompt": "Scan this with your authenticator app",
+    "addKeyToApp": "Add this key to your authenticator app (Authy, Google Authenticator, etc.):",
+    "saveBackupCodes": "Save these backup codes in a safe place:",
+    "savedBackupCodes": "I've saved my backup codes",
+    "verifyPrompt": "Enter the 6-digit code from your authenticator app to verify setup.",
+    "verifyAndEnable": "Verify & Enable",
+    "couldNotStartSetup": "Couldn't start 2FA setup. Try again.",
+    "enabledSuccess": "Two-factor authentication enabled",
+    "disablePrompt": "Enter your password to disable two-factor authentication.",
+    "disable": "Disable 2FA",
+    "disabling": "Disabling…",
+    "couldNotDisable": "Couldn't disable 2FA. Try again.",
+    "disabledSuccess": "Two-factor authentication disabled"
+  },
+  "images": {
+    "title": "Template images",
+    "description": "Where copies of your template images may be placed, and your image store usage.",
+    "loadFailed": "Couldn't load your image settings.",
+    "off": "Image distribution is turned off on this deployment.",
+    "placement": "Default image placement",
+    "anyNode": "Any host (including shared pools)",
+    "ownedOnly": "Owned hosts only",
+    "placementHint": "Templates set to \"Use account default\" follow this. Hosts in shared pools belong to other people.",
+    "stored": "Image store",
+    "storedUnlimited": "{{used}} stored",
+    "storedOf": "{{used}} of {{max}}",
+    "downloads": "Downloads in the last hour",
+    "downloadsUnlimited": "{{count}}",
+    "downloadsOf": "{{count}} of {{max}}",
+    "saved": "Image placement saved",
+    "saveError": "Couldn't save image placement"
+  },
+  "builds": {
+    "title": "Template builds",
+    "description": "Your build quotas and usage, and whether your builds may run on other people's builder hosts.",
+    "loadFailed": "Couldn't load your build settings.",
+    "foreign": "Run my builds on other people's builder hosts",
+    "foreignHint": "Off: builds run only on your own hosts. On: a shared builder host may run your recipe, as root, in a VM on someone else's machine. Needs the S3 image store and templates that may be placed on any host.",
+    "confirmTitle": "Allow builds on other people's hosts?",
+    "confirmDescription": "The host's owner can see your recipe, build args, environment and build context while the build runs. Never put secrets in a build.",
+    "confirm": "Allow foreign builds",
+    "saved": "Build settings saved",
+    "saveError": "Couldn't save build settings"
+  },
+  "navImages": "Images & builds",
+  "account": {
+    "title": "Account",
+    "description": "Your profile, sign-in security and template image defaults.",
+    "tabsLabel": "Account pages"
+  },
+  "hub": {
+    "title": "Settings",
+    "description": "Things you set up once: where sandboxes run, API access and your account.",
+    "back": "Settings",
+    "groups": {
+      "infrastructure": "Infrastructure",
+      "developer": "Developer",
+      "logins": "CLI logins",
+      "account": "Account"
+    },
+    "items": {
+      "hosts": {
+        "label": "Hosts",
+        "description": "Machines that run your sandboxes, and the credentials they connect with."
+      },
+      "pools": {
+        "label": "Pools & sharing",
+        "description": "Group hosts, share them with other accounts and accept invitations."
+      },
+      "sdkKeys": {
+        "label": "SDK keys",
+        "description": "Scoped keys for the SDK and the /v1 API."
+      },
+      "webhooks": {
+        "label": "Webhooks",
+        "description": "Signed callbacks when sandboxes and operations change state."
+      },
+      "logins": {
+        "label": "CLI logins",
+        "description": "Tool logins your sandboxes can use, stored write-only."
+      },
+      "profile": {
+        "label": "Profile",
+        "description": "Your name, email and notifications."
+      },
+      "security": {
+        "label": "Security",
+        "description": "Password and two-factor authentication."
+      },
+      "images": {
+        "label": "Images & builds",
+        "description": "Where template images are kept and your recent builds."
+      }
+    }
+  }
+}

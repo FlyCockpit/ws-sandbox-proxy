@@ -1,0 +1,71 @@
+{
+  "daemon": [
+    {
+      "type": "operation.adopt",
+      "sandboxOwnerId": "user-1",
+      "operationId": "op-fixture-1",
+      "sandboxId": "sbx-fixture-1",
+      "generation": 3,
+      "attempt": 2,
+      "bodyHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotencyKey": "key-fixture-1",
+      "kind": "command.run",
+      "phase": "effect",
+      "stdinNextSequence": 4
+    },
+    {
+      "type": "operation.adopt",
+      "sandboxOwnerId": "user-1",
+      "operationId": "op-fixture-2",
+      "sandboxId": "sbx-fixture-2",
+      "generation": 1,
+      "attempt": 1,
+      "bodyHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "idempotencyKey": "key-fixture-2",
+      "kind": "sandbox.create",
+      "phase": "intent",
+      "stdinNextSequence": null
+    }
+  ],
+  "server": [
+    {
+      "type": "operation.adopt.result",
+      "operationId": "op-fixture-1",
+      "generation": 3,
+      "attempt": 2,
+      "adopted": true
+    },
+    {
+      "type": "operation.adopt.result",
+      "operationId": "op-fixture-2",
+      "generation": 1,
+      "attempt": 1,
+      "adopted": false
+    }
+  ],
+  "rejectedDaemon": [
+    { "phase": "result" },
+    { "kind": "not.a.kind" },
+    { "bodyHash": "short" },
+    { "generation": 0 },
+    { "sandboxOwnerId": "has space" },
+    { "stdinNextSequence": -1 },
+    { "extra": true }
+  ],
+  "rejectedServer": [
+    {
+      "type": "operation.adopt.result",
+      "operationId": "op-fixture-1",
+      "generation": 3,
+      "attempt": 2
+    },
+    {
+      "type": "operation.adopt.result",
+      "operationId": "op-fixture-1",
+      "generation": 3,
+      "attempt": 2,
+      "adopted": true,
+      "extra": 1
+    }
+  ]
+}

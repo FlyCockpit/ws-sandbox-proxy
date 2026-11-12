@@ -1,0 +1,11 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // email-verification-writers.test.ts scans production sources, `scripts/`
+    // included.
+    "test": {
+      "inputs": ["$TURBO_EXTENDS$", "$TURBO_ROOT$/scripts/**"]
+    }
+  }
+}

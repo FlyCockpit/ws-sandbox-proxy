@@ -1,0 +1,88 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema-jsonc.json",
+  "workspaces": {
+    ".": {
+      "entry": [
+        // Docker image bootstrap, copied into a temporary directory before install.
+        "scripts/install-pnpm.mjs!",
+        // Shell/image-dispatched canonical migration, backup and native-owner roots.
+        "scripts/db/migrate-runtime.mjs!",
+        "scripts/db/generate-initial-migration.mjs!",
+        "scripts/db/lib/prisma-owner.mjs!",
+        "scripts/db/lib/local-db-name.mjs!",
+        "scripts/backup/restore.mjs!",
+        "scripts/backup/s3.mjs!",
+        "scripts/backup/drill.mjs!",
+        "scripts/backup/schedule.mjs!",
+        "scripts/backup-heartbeat.mjs!",
+        // PR secret-scan filter — invoked by scripts/trufflehog-pr-scan.sh and CI.
+        "scripts/trufflehog-pr-scan.sh!",
+        // Structural destructive-operation scanner — invoked by policy-checks.sh.
+        "scripts/check-destructive-operations.mjs!",
+        // Daemon-frame encoder policy — also invoked by policy-checks.sh.
+        "scripts/check-daemon-frame-encoding.mjs!",
+        // Agent-rules gate (route exports / t() coverage / sitemap sync) —
+        // invoked by policy-checks.sh, not statically imported.
+        "scripts/check-agent-rules.ts!",
+        // Dev-only webhook receiver for the live end-to-end check, run by hand
+        // (docs/guide/webhooks.md § Local testing).
+        "scripts/webhook-receiver.mjs!",
+        // Child Vitest config — passed dynamically to the I/O-guard fixture test.
+        "scripts/vitest-test-io-guard-fixture.config.ts!",
+        // S3 integration Vitest config — passed by path from scripts/test-s3.mjs.
+        "vitest.s3.config.ts"
+      ],
+      "ignoreBinaries": [
+        // System tool: the webhook TLS tests mint a throwaway CA into a temp dir.
+        "openssl",
+        // PostgreSQL clients are supplied by the image/operator environment.
+        "psql",
+        "pg_restore",
+        // Native generator resolves the production CLI from @wssp/db.
+        "prisma",
+        // System tool: the SDK build-context test makes a FIFO to prove it is skipped.
+        "mkfifo",
+        // Global local-dev CLI. Intentionally not listed in package.json.
+        "portless"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "src/routes/**/*.tsx!",
+        "src/hooks/*.ts!",
+        "src/stores/*.ts!",
+        // Overflow primitive used by wide dashboard tables. Not yet imported
+        // from a route; keep it so the layout recipe stays available.
+        "src/components/wide-content.tsx!"
+      ],
+      "ignoreDependencies": [
+        // Imported only via PostCSS/Tailwind CSS pipeline, not statically.
+        "tailwindcss",
+        "postcss",
+        // Toast primitive re-exported from @wssp/ui.
+        "sileo"
+      ]
+    },
+    "apps/server": {
+      // better-auth is consumed via @wssp/auth; declared directly so the
+      // native binary / auth handler graph stays in this app's deploy image.
+      "ignoreDependencies": ["better-auth"]
+    },
+    "apps/worker": {},
+    "packages/ui": {
+      "entry": ["src/components/**/*.tsx", "src/styles/**/*.css"]
+    },
+    "packages/api": {
+      "ignoreDependencies": ["@orpc/openapi", "@orpc/zod"]
+    },
+    "packages/db": {
+      "ignoreDependencies": ["@prisma/client", "pg", "zod"]
+    },
+    "packages/auth": {},
+    "packages/sdk": {
+      // Documentation examples: type-checked by `tsc -p examples` and embedded
+      // verbatim in README.md (test/docs-examples.test.ts), never imported.
+      "entry": ["examples/*.ts"]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "lossSubject": "Pool access lost",
+  "restoreSubject": "Pool access restored",
+  "loss": "Your sandbox {{sandbox}} lost its last usable pool path. It will stop. Its disk is retained until {{deadline}}; deletion still requires positive cleanup proof.",
+  "restore": "Access to your sandbox {{sandbox}} was restored before deletion. You may start it again if its disk survives and current limits permit.",
+  "notice": "Offline hosts enforce stop on reconnect or the effective local lease. Offline or dead storage may delay cleanup. No disk survival is promised after an uncertain destroy."
+}

@@ -1,0 +1,84 @@
+[
+  {
+    "name": "max_argv_count",
+    "argvCount": 256,
+    "segment": "a",
+    "segmentCount": 1,
+    "valid": true
+  },
+  {
+    "name": "over_argv_count",
+    "argvCount": 257,
+    "segment": "a",
+    "segmentCount": 1,
+    "valid": false
+  },
+  {
+    "name": "max_ascii",
+    "argvCount": 1,
+    "segment": "a",
+    "segmentCount": 512,
+    "valid": true
+  },
+  {
+    "name": "over_ascii",
+    "argvCount": 1,
+    "segment": "a",
+    "segmentCount": 513,
+    "valid": false
+  },
+  {
+    "name": "max_e_acute",
+    "argvCount": 1,
+    "segment": "é",
+    "segmentCount": 512,
+    "valid": true
+  },
+  {
+    "name": "over_e_acute",
+    "argvCount": 1,
+    "segment": "é",
+    "segmentCount": 513,
+    "valid": false
+  },
+  {
+    "name": "max_cjk",
+    "argvCount": 1,
+    "segment": "界",
+    "segmentCount": 512,
+    "valid": true
+  },
+  {
+    "name": "over_cjk",
+    "argvCount": 1,
+    "segment": "界",
+    "segmentCount": 513,
+    "valid": false
+  },
+  {
+    "name": "max_emoji",
+    "argvCount": 1,
+    "segment": "😀",
+    "segmentCount": 256,
+    "valid": true
+  },
+  {
+    "name": "over_emoji",
+    "argvCount": 1,
+    "segment": "😀",
+    "segmentCount": 257,
+    "valid": false
+  },
+  {
+    "name": "max_mixed",
+    "argvCount": 1,
+    "argvValue": "aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀xx",
+    "valid": true
+  },
+  {
+    "name": "over_mixed",
+    "argvCount": 1,
+    "argvValue": "aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀aé界😀xxy",
+    "valid": false
+  }
+]

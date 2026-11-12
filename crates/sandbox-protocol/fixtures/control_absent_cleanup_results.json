@@ -1,0 +1,32 @@
+[
+  {
+    "kind": "sandbox.stop",
+    "frame": {
+      "type": "operation.result",
+      "id": "result-op",
+      "operationId": "op",
+      "sandboxId": "sbx",
+      "generation": 1,
+      "attempt": 1,
+      "state": "succeeded",
+      "result": {
+        "state": "absent"
+      }
+    }
+  },
+  {
+    "kind": "sandbox.kill",
+    "frame": {
+      "type": "operation.result",
+      "id": "result-op",
+      "operationId": "op",
+      "sandboxId": "sbx",
+      "generation": 1,
+      "attempt": 1,
+      "state": "succeeded",
+      "result": {
+        "state": "deleted"
+      }
+    }
+  }
+]

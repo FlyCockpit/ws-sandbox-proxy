@@ -1,0 +1,8 @@
+# Normalize line endings so checkouts are consistent across OSes.
+* text=auto eol=lf
+
+# Shell installers use Unix line endings.
+*.sh   text eol=lf
+
+# Lockfile: treat as generated in diffs/reviews (still committed & tracked).
+Cargo.lock linguist-generated=true

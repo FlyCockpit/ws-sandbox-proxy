@@ -1,0 +1,46 @@
+{
+  "name": "@wssp/auth",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./signup-policy": {
+      "default": "./src/signup-policy.ts"
+    },
+    "./ban": {
+      "default": "./src/ban.ts"
+    },
+    "./roles": {
+      "default": "./src/roles.ts"
+    },
+    "./two-factor-policy": {
+      "default": "./src/two-factor-policy.ts"
+    },
+    "./user-creation-policy": {
+      "default": "./src/user-creation-policy.ts"
+    },
+    "./terminal-proof": {
+      "default": "./src/terminal-proof.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:pg": "vitest run --config ../../vitest.pg.config.ts"
+  },
+  "dependencies": {
+    "@better-auth/utils": "catalog:",
+    "@wssp/config": "workspace:*",
+    "@wssp/db": "workspace:*",
+    "@wssp/env": "workspace:*",
+    "@wssp/mailer": "workspace:*",
+    "better-auth": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

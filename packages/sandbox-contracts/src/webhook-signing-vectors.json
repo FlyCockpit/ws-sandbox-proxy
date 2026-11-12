@@ -1,0 +1,40 @@
+{
+  "$comment": "Shared by packages/api/src/webhooks/signing.test.ts and packages/sdk webhook verify tests. Regenerate only with an independent HMAC implementation.",
+  "vectors": [
+    {
+      "name": "standard-webhooks spec vector",
+      "secrets": ["whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"],
+      "id": "msg_p5jXN8AQM9LWM0D4loKWxJek",
+      "timestamp": 1614265330,
+      "body": "{\"test\": 2432232314}",
+      "signature": "v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE="
+    },
+    {
+      "name": "wssp single secret",
+      "secrets": ["whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="],
+      "id": "evt_0123456789abcdef0123456789abcdef",
+      "timestamp": 1793577600,
+      "body": "{\"id\":\"evt_0123456789abcdef0123456789abcdef\",\"type\":\"webhook.test\",\"schemaVersion\":1,\"occurredAt\":\"2026-11-02T00:00:00.000Z\",\"data\":{\"endpointId\":\"ep_1\"}}",
+      "signature": "v1,pL6OnfX+LhFfFzEnB/b+ekq4wbjFiwRjNOtMtIX/MVA="
+    },
+    {
+      "name": "wssp rotation overlap (new, then old)",
+      "secrets": [
+        "whsec_//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=",
+        "whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
+      ],
+      "id": "evt_0123456789abcdef0123456789abcdef",
+      "timestamp": 1793577600,
+      "body": "{\"id\":\"evt_0123456789abcdef0123456789abcdef\",\"type\":\"webhook.test\",\"schemaVersion\":1,\"occurredAt\":\"2026-11-02T00:00:00.000Z\",\"data\":{\"endpointId\":\"ep_1\"}}",
+      "signature": "v1,Ex53eTVl0rD5qTe/K5vvRjS0PcE1VIdlChAj4U0Alvc= v1,pL6OnfX+LhFfFzEnB/b+ekq4wbjFiwRjNOtMtIX/MVA="
+    },
+    {
+      "name": "wssp non-ASCII body bytes",
+      "secrets": ["whsec_AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="],
+      "id": "evt_fedcba9876543210fedcba9876543210",
+      "timestamp": 1793577601,
+      "body": "{\"note\":\"café ✓\"}",
+      "signature": "v1,p1TgNVH5rFWY65youh420mU/icNCocE+7DPdA1YYM0A="
+    }
+  ]
+}

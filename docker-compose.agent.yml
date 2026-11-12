@@ -1,0 +1,372 @@
+# docker-compose.agent.yml — port-parameterized, ephemeral local stack used by
+# agents to boot the app in isolation, browse it, and tear it down. The wrapper
+# script `scripts/dev-docker.sh` sets COMPOSE_PROJECT_NAME and WEB_PORT before
+# invoking compose.
+#
+# Two profiles:
+#   dev  (default) — source-mounted container running `pnpm dev:raw` (hot reload)
+#   prod           — production Dockerfile artifacts (server + worker built
+#                    from Dockerfile and Dockerfile.worker respectively),
+#                    slower first run but tests the real shipped bundle.
+#                    Browsers use the self-signed https front (tls-proxy,
+#                    https://localhost:$TLS_PORT); the plain loopback http port
+#                    stays published for backend/debug access only.
+#
+# The database and redis live in the container writable layer (no volumes), so:
+#   * `compose restart`  → state preserved within a session
+#   * `compose down`     → state wiped, next `up` is a clean slate
+#
+# NOT for production. The
+# values in .env.docker.defaults are only safe for local, ephemeral use.
+#
+# Start: pnpm dev:docker <port> [--prod]
+# Tail:  pnpm dev:docker:logs <port> [service]
+# Down:  pnpm dev:docker:down <port>
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    environment:
+      POSTGRES_DB: wssp
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    profiles: [dev, prod]
+
+  redis:
+    image: docker.io/valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles: [dev, prod]
+
+  # ---------------------------------------------------------------------------
+  # Mailpit — local SMTP sink. The app's mailer (packages/mailer) points here
+  # by default via SMTP_HOST=mailpit / SMTP_PORT=1025 in .env.docker.defaults,
+  # so the real signup → email-verification → 2FA flow works offline with zero
+  # credentials: verification emails are captured here instead of hitting a
+  # real relay. Read them at http://localhost:$MAILPIT_PORT (web UI) or
+  # GET http://localhost:$MAILPIT_PORT/api/v1/messages (REST). To send for
+  # real instead (e.g. AgentMail, Postmark, SES), set SMTP_* in .env — those
+  # override the mailpit defaults. MP_SMTP_AUTH_ACCEPT_ANY +
+  # MP_SMTP_AUTH_ALLOW_INSECURE let nodemailer connect without auth/TLS.
+  mailpit:
+    image: docker.io/axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      # Web UI + REST API. Host port derived as WEB_PORT+5000 by
+      # scripts/dev-docker.sh so concurrent stacks never collide.
+      # Bind to loopback only (BIND_ADDR default below) — see the app-dev note.
+      - "${BIND_ADDR:-127.0.0.1}:${MAILPIT_PORT:-8025}:8025"
+    profiles: [dev, prod]
+
+  # ---------------------------------------------------------------------------
+  # Dev profile — one container runs `pnpm dev:raw` (turbo fans out to server/
+  # web/worker). Source is bind-mounted; node_modules live in per-project
+  # bind mounts so multi-agent installs don't collide.
+  # ---------------------------------------------------------------------------
+  app-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    # Run as the host user so files written into the bind-mounted /app
+    # (turbo cache, vite cache, generated prisma client, dist output, etc.)
+    # are owned by the host user instead of root. HOST_UID/HOST_GID are
+    # exported by scripts/dev-docker.sh; the 1000 fallback matches the
+    # default user on most Linux distros and the `node` user in the base
+    # image. There is no /etc/passwd entry for arbitrary UIDs — HOME is
+    # set explicitly below to a directory Dockerfile.dev chmod'd a+rwX.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file:
+      - .env.docker.defaults
+      - path: .env
+        required: false
+    environment:
+      HOME: /home/agent
+      # Pin the pnpm content-addressable store inside the image. Without this,
+      # pnpm's cross-filesystem fallback can create `.pnpm-store/` in the
+      # bind-mounted repo root when its preferred store location and the
+      # project sit on different filesystems. /pnpm is chmod a+rwX in
+      # Dockerfile.dev so an arbitrary HOST_UID can populate it.
+      PNPM_STORE_DIR: /pnpm/store
+      # Always point at the in-compose services, regardless of what the user's
+      # .env says (their .env may target a local host-bound Postgres).
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/wssp
+      REDIS_URL: redis://redis:6379
+      BETTER_AUTH_URL: http://localhost:${WEB_PORT:-3001}
+      # Unset so the web client falls back to window.location.origin; the vite
+      # dev server proxies /rpc, /api, /ws to the in-container server on :3000.
+      VITE_SERVER_URL: ""
+      # Tell vite to bind 0.0.0.0 so the host port mapping can reach it.
+      VITE_DEV_HOST: "true"
+      # Keep the in-container dev server and API ports stable even if the
+      # developer's host .env files customize ports for multi-app local dev.
+      VITE_DEV_PORT: "3001"
+      VITE_DEV_SERVER_URL: http://localhost:3000
+      SERVER_PORT: "3000"
+      NODE_ENV: development
+      # Translation API KEYS are OPT-IN for the agent stack, same rationale as
+      # save AND is rendered in plaintext by `docker compose config`. They read
+      # AGENT_-prefixed vars, NOT the bare host OPENROUTER_API_KEY /
+      # ANTHROPIC_API_KEY — unset => empty => translation runs fail
+      # the first job with a clear error and the rest of the app keeps working.
+      # PROVIDER/MODEL are not secrets and cost nothing without a key, so they
+      # still inherit from the host (no need to re-declare them when you opt in
+      # via AGENT_OPENROUTER_API_KEY).
+      OPENROUTER_API_KEY: "${AGENT_OPENROUTER_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${AGENT_ANTHROPIC_API_KEY:-}"
+      TRANSLATION_PROVIDER: "${TRANSLATION_PROVIDER:-openrouter}"
+      TRANSLATION_MODEL: "${TRANSLATION_MODEL:-}"
+      # Webhooks are OPT-IN for the agent stack, like the translation keys:
+      # AGENT_-prefixed host vars only (never the bare names from your shell).
+      # Unset AGENT_DATA_ENCRYPTION_KEY => webhooks off. Generate one with
+      # `openssl rand -hex 32`. See docs/guide/webhooks.md § Local testing.
+      DATA_ENCRYPTION_KEY: "${AGENT_DATA_ENCRYPTION_KEY:-}"
+      # Decrypt-only previous root, only during a rotation; unset => empty => none.
+      DATA_ENCRYPTION_KEY_PREVIOUS: "${AGENT_DATA_ENCRYPTION_KEY_PREVIOUS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_CIDRS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_CIDRS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_HOSTS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_HOSTS:-}"
+      WEBHOOK_TRANSLATION_PREFIXES: "${AGENT_WEBHOOK_TRANSLATION_PREFIXES:-}"
+      WEBHOOK_PRIVATE_ALLOWLIST_SCOPE: "${AGENT_WEBHOOK_PRIVATE_ALLOWLIST_SCOPE:-admins}"
+      WEBHOOK_ALLOW_PLAINTEXT_PRIVATE: "${AGENT_WEBHOOK_ALLOW_PLAINTEXT_PRIVATE:-false}"
+      # Required in every environment. scripts/dev-docker.sh generates one
+      # random value per stack (kept in AGENT_VOLUME_ROOT, removed by
+      # dev:docker:down / --reset with the ephemeral DB) and exports it here.
+      # It always overrides a SANDBOX_REQUEST_HMAC_SECRET in your .env: the
+      # server and web dev tasks pass it through Turbo (apps/server/turbo.json,
+      # apps/web/turbo.json — vite dev runs the SSR server functions, which
+      # validate the server env) and dotenv never overrides a key already in
+      # process.env. The worker never receives it.
+      SANDBOX_REQUEST_HMAC_SECRET: "${AGENT_SANDBOX_REQUEST_HMAC_SECRET:-}"
+    working_dir: /app
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo "[dev-docker] installing dependencies (first run ~60s, cached after)…"
+        pnpm install --frozen-lockfile --ignore-scripts
+        echo "[dev-docker] generating prisma client…"
+        pnpm -F @wssp/db exec prisma generate
+        echo "[dev-docker] applying committed migrations…"
+        node scripts/db/migrate-runtime.mjs apply
+        echo "[dev-docker] starting raw turbo dev…"
+        exec pnpm dev:raw
+    volumes:
+      # Bind the whole repo for live editing…
+      - ./:/app
+      # Mask the host volume tree so the recursive ./:/app bind above doesn't
+      # surface every port's node_modules back inside this container.
+      - /app/.docker-volumes
+      # …and keep node_modules in a gitignored, per-project directory
+      # (.docker-volumes/<project>/nm_*) so pnpm never writes into the host
+      # repo tree and multi-agent runs on different ports don't fight over the
+      # same store. AGENT_VOLUME_ROOT is an absolute path exported by
+      # scripts/dev-docker.sh, which also pre-creates these dirs with host
+      # ownership (the container runs as HOST_UID:HOST_GID).
+      - ${AGENT_VOLUME_ROOT:?run via pnpm dev:docker}/nm_root:/app/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_web:/app/apps/web/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_server:/app/apps/server/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_apps_worker:/app/apps/worker/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_api:/app/packages/api/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_auth:/app/packages/auth/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_config:/app/packages/config/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_db:/app/packages/db/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_env:/app/packages/env/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_queue:/app/packages/queue/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_sandbox-contracts:/app/packages/sandbox-contracts/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_sdk:/app/packages/sdk/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_template-recipe:/app/packages/template-recipe/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_ui:/app/packages/ui/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_i18n-translate:/app/packages/i18n-translate/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_mailer:/app/packages/mailer/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_test-utils:/app/packages/test-utils/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_locales:/app/packages/locales/node_modules
+      - ${AGENT_VOLUME_ROOT}/nm_packages_login-definition:/app/packages/login-definition/node_modules
+      # NOTE: every workspace package that gets a node_modules MUST be listed
+      # here, or pnpm install in the container writes it back into the host
+      # repo. scripts/dev-docker.sh refuses to start if a workspace package is
+      # missing its mount, and `pnpm policy:checks` runs the same guard
+      # (scripts/lib/dev-docker-runtime.sh) so the gap fails before anyone
+      # starts a stack.
+    ports:
+      # Only the vite dev server is exposed. It proxies API traffic to the
+      # in-container server on 3000, which has no host port binding.
+      #
+      # BIND_ADDR defaults to 127.0.0.1 so the published port is loopback-only.
+      # A bare "<port>:3001" binds 0.0.0.0 and, because Docker writes its own
+      # iptables rules ahead of ufw/firewalld, would expose this dev stack to
+      # the public internet on a VPS even behind a closed host firewall. To
+      # reach it from another device on your LAN (e.g. the PWA on a real phone),
+      # opt in explicitly: BIND_ADDR=0.0.0.0 pnpm dev:docker <port>.
+      - "${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    profiles: [dev]
+
+  # ---------------------------------------------------------------------------
+  # Prod profile — builds the real production image. Closer to what ships.
+  # ---------------------------------------------------------------------------
+  app-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.docker.defaults
+      - path: .env
+        required: false
+    environment:
+      WORKER_MODE: external
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/wssp
+      REDIS_URL: redis://redis:6379
+      # NODE_ENV=production requires an https BETTER_AUTH_URL
+      # (packages/env/src/server.ts), so the public origin is the tls-proxy
+      # front below, never the plain http port.
+      BETTER_AUTH_URL: https://localhost:${TLS_PORT:-9101}
+      SERVER_PORT: "3000"
+      # Server leads committed migration admission for this isolated database.
+      MIGRATE_ON_START: "true"
+      # Per-stack generated value; see the app-dev note. The worker does not
+      # load server env, so worker-prod does not receive it.
+      SANDBOX_REQUEST_HMAC_SECRET: "${AGENT_SANDBOX_REQUEST_HMAC_SECRET:-}"
+      # Per-stack random value from scripts/dev-docker.sh, never the weak
+      # .env.docker.defaults placeholder or a developer .env value (this key
+      # overrides both env_file entries). Unset => empty => the production
+      # env validator refuses to boot. The worker does not load server env.
+      BETTER_AUTH_SECRET: "${AGENT_BETTER_AUTH_SECRET:-}"
+      # Same opt-in webhook values as worker-prod: the server encrypts endpoint
+      # secrets and the worker decrypts them, so both need the same root key.
+      DATA_ENCRYPTION_KEY: "${AGENT_DATA_ENCRYPTION_KEY:-}"
+      # Decrypt-only previous root, only during a rotation; unset => empty => none.
+      DATA_ENCRYPTION_KEY_PREVIOUS: "${AGENT_DATA_ENCRYPTION_KEY_PREVIOUS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_CIDRS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_CIDRS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_HOSTS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_HOSTS:-}"
+      WEBHOOK_TRANSLATION_PREFIXES: "${AGENT_WEBHOOK_TRANSLATION_PREFIXES:-}"
+      WEBHOOK_PRIVATE_ALLOWLIST_SCOPE: "${AGENT_WEBHOOK_PRIVATE_ALLOWLIST_SCOPE:-admins}"
+      WEBHOOK_ALLOW_PLAINTEXT_PRIVATE: "${AGENT_WEBHOOK_ALLOW_PLAINTEXT_PRIVATE:-false}"
+    ports:
+      # Plain http, loopback-only by default — see the app-dev BIND_ADDR note
+      # above. Backend/debug access only. CLI and browsers use tls-proxy:
+      # CLI adds trust with --ca-file and retains the canonical HTTPS origin;
+      # the auth origin is https, so sign-in over this port does not work.
+      - "${BIND_ADDR:-127.0.0.1}:${WEB_PORT:-3001}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    profiles: [prod]
+
+  # ---------------------------------------------------------------------------
+  # tls-proxy — prod profile only. A self-signed https front for app-prod so
+  # the production image can boot with its required https BETTER_AUTH_URL
+  # without weakening the production guard. Caddy issues a certificate for
+  # `localhost` from its own internal CA, generated fresh inside this
+  # throwaway container: browsers show a certificate warning (accept it, or use
+  # `curl -k`). Local agent testing only; the real deployment (Dokploy
+  # Compose from scripts/generate-dokploy-config.ts) terminates TLS at its own
+  # proxy and has no such service. TLS_PORT is WEB_PORT+6100, exported by
+  # scripts/dev-docker.sh.
+  # ---------------------------------------------------------------------------
+  tls-proxy:
+    image: docker.io/library/caddy:2.11.9@sha256:e40b94d0a43b5ff69cb20568d73f10c70703df7b0ffc2298eb3d723cdc9d0bd1
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - https://localhost:8443
+      - --to
+      - http://app-prod:3000
+      - --internal-certs
+      - --disable-redirects
+    ports:
+      # Loopback-only by default — see the app-dev BIND_ADDR note above.
+      - "${BIND_ADDR:-127.0.0.1}:${TLS_PORT:-9101}:8443"
+    depends_on:
+      app-prod:
+        condition: service_started
+    profiles: [prod]
+
+  worker-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env.docker.defaults
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/wssp
+      REDIS_URL: redis://redis:6379
+      MIGRATE_ON_START: "false"
+      # BETTER_AUTH_URL is a server-only env var: the worker's import graph
+      # validates only @wssp/env/shared, which does not include it, so the
+      # worker does not require it. Kept here harmlessly only to mirror
+      # app-prod's config 1:1; the worker would boot fine without it.
+      BETTER_AUTH_URL: https://localhost:${TLS_PORT:-9101}
+      # Opt-in AGENT_-prefixed translation API keys, host-inherited
+      # provider/model — see app-dev for rationale; the prod worker also runs
+      # the translation handler.
+      OPENROUTER_API_KEY: "${AGENT_OPENROUTER_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${AGENT_ANTHROPIC_API_KEY:-}"
+      TRANSLATION_PROVIDER: "${TRANSLATION_PROVIDER:-openrouter}"
+      TRANSLATION_MODEL: "${TRANSLATION_MODEL:-}"
+      # Webhooks are OPT-IN for the agent stack, like the translation keys:
+      # AGENT_-prefixed host vars only (never the bare names from your shell).
+      # Unset AGENT_DATA_ENCRYPTION_KEY => webhooks off. Generate one with
+      # `openssl rand -hex 32`. See docs/guide/webhooks.md § Local testing.
+      DATA_ENCRYPTION_KEY: "${AGENT_DATA_ENCRYPTION_KEY:-}"
+      # Decrypt-only previous root, only during a rotation; unset => empty => none.
+      DATA_ENCRYPTION_KEY_PREVIOUS: "${AGENT_DATA_ENCRYPTION_KEY_PREVIOUS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_CIDRS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_CIDRS:-}"
+      WEBHOOK_ALLOWED_PRIVATE_HOSTS: "${AGENT_WEBHOOK_ALLOWED_PRIVATE_HOSTS:-}"
+      WEBHOOK_TRANSLATION_PREFIXES: "${AGENT_WEBHOOK_TRANSLATION_PREFIXES:-}"
+      WEBHOOK_PRIVATE_ALLOWLIST_SCOPE: "${AGENT_WEBHOOK_PRIVATE_ALLOWLIST_SCOPE:-admins}"
+      WEBHOOK_ALLOW_PLAINTEXT_PRIVATE: "${AGENT_WEBHOOK_ALLOW_PLAINTEXT_PRIVATE:-false}"
+    # Dockerfile.worker's default CMD is `node apps/worker/dist/index.mjs`.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles: [prod]
+
+# No top-level named volumes: node_modules now live in per-project bind mounts
+# under .docker-volumes/<project>/ (gitignored). Postgres + Redis remain in the
+# container writable layer (ephemeral — wiped on `pnpm dev:docker:down`).
+
+# ---------------------------------------------------------------------------
+# Network — every service above joins this single bridge (Compose attaches each
+# service to `default` automatically). Compose scopes the network by
+# COMPOSE_PROJECT_NAME, which scripts/dev-docker.sh sets to
+# <repo-slug>-<path-hash>-<port>, so each project+port gets a wholly separate
+# network with no cross-talk: two different projects doing agent
+# browser-testing on the same host (e.g. a shared VPS, separate per-app
+# databases) cannot see each other's containers, postgres, or redis. The
+# explicit `name:` carries the project so `docker network ls` is readable; the
+# interpolation fallback only applies to a raw `docker compose` invocation,
+# which the AGENT_VOLUME_ROOT guard above already blocks outside the
+# dev:docker wrappers.
+# ---------------------------------------------------------------------------
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-wssp-agent}_net
+    driver: bridge

@@ -1,0 +1,52 @@
+{
+  "home": {
+    "title": "WS Sandbox Proxy",
+    "description": "Self-hosted sandbox control plane for Incus KVM VMs."
+  },
+  "actions": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "clear": "Clear",
+    "close": "Close",
+    "copy": "Copy",
+    "copied": "Copied",
+    "delete": "Delete",
+    "deleting": "Deleting…",
+    "edit": "Edit",
+    "manage": "Manage",
+    "reload": "Reload",
+    "refresh": "Refresh",
+    "retry": "Retry",
+    "save": "Save",
+    "saveChanges": "Save changes",
+    "saving": "Saving…",
+    "tryAgain": "Try again",
+    "loadMore": "Load more",
+    "loadingMore": "Loading…"
+  },
+  "fileDrop": {
+    "ignored": "That file can't be dropped here."
+  },
+  "loading": "Loading…",
+  "somethingWentWrong": "Something went wrong",
+  "time": {
+    "justNow": "just now",
+    "withinMinute": "in less than a minute"
+  },
+  "resourceOption": "<label/> (<slug/>)",
+  "selectedOption": "Selected option",
+  "optionUnavailable": "Unavailable option",
+  "toastTitle": {
+    "message": "Notice",
+    "success": "Done",
+    "error": "Error",
+    "info": "Info",
+    "warning": "Warning"
+  },
+  "copyableId": {
+    "copy": "Copy {{label}}"
+  },
+  "advanced": {
+    "summary": "Advanced"
+  }
+}

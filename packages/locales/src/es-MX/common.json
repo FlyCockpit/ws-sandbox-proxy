@@ -1,0 +1,52 @@
+{
+  "actions": {
+    "back": "Atrás",
+    "cancel": "Cancelar",
+    "clear": "Limpiar",
+    "close": "Cerrar",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "delete": "Eliminar",
+    "deleting": "Eliminando…",
+    "edit": "Editar",
+    "manage": "Administrar",
+    "reload": "Recargar",
+    "refresh": "Actualizar",
+    "retry": "Reintentar",
+    "save": "Guardar",
+    "saveChanges": "Guardar cambios",
+    "saving": "Guardando…",
+    "tryAgain": "Intentar de nuevo",
+    "loadMore": "Cargar más",
+    "loadingMore": "Cargando…"
+  },
+  "advanced": {
+    "summary": "Avanzado"
+  },
+  "copyableId": {
+    "copy": "Copiar {{label}}"
+  },
+  "fileDrop": {
+    "ignored": "Ese archivo no se puede soltar aquí."
+  },
+  "home": {
+    "title": "WS Sandbox Proxy",
+    "description": "Plano de control autohospedado de sandboxes para VMs Incus KVM."
+  },
+  "loading": "Cargando…",
+  "optionUnavailable": "Opción no disponible",
+  "resourceOption": "<label/> (<slug/>)",
+  "selectedOption": "Opción seleccionada",
+  "somethingWentWrong": "Algo salió mal",
+  "time": {
+    "justNow": "hace un momento",
+    "withinMinute": "en menos de un minuto"
+  },
+  "toastTitle": {
+    "message": "Aviso",
+    "success": "Listo",
+    "error": "Error",
+    "info": "Información",
+    "warning": "Advertencia"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "claude-code.json": {
+    "digest": "a58eb4f947aad4d80117b0e1afa0ebb1f14510c0ba39dbe26168baedff5ded78",
+    "canonical": "{\"credentials\":{\"files\":{\"optional\":[\".claude.json\"],\"required\":[\".claude/.credentials.json\"]},\"rotates\":\"yes\"},\"description\":\"User-owned example. Runs the interactive Claude Code sign-in and keeps the credentials file it writes on Linux.\",\"displayName\":\"Claude Code (subscription sign-in)\",\"id\":\"claude-code\",\"install\":{\"checkCommand\":\"claude --version\",\"notes\":\"Advisory only: wssp never runs install commands.\"},\"login\":{\"command\":\"claude /login\",\"doneWhenCommandExits\":false,\"method\":\"interactive\",\"verifyCommand\":\"test -s \\\"$HOME/.claude/.credentials.json\\\"\"},\"schemaVersion\":1,\"x-source\":\"Check the CLI vendor's documentation and terms before use.\"}",
+    "warnings": []
+  },
+  "codex-cli.json": {
+    "digest": "8c5148ba102c4e7e0320812483db05ba1263d779b78cca853432c21a0ffbf491",
+    "canonical": "{\"credentials\":{\"files\":{\"exclude\":[],\"optional\":[],\"required\":[\".codex/auth.json\"]},\"maxBytes\":65536,\"rotates\":\"yes\",\"sharing\":\"exclusive\"},\"description\":\"User-owned example. Signs the Codex CLI in with a ChatGPT account through the device-code flow and keeps the resulting auth file.\",\"displayName\":\"Codex CLI (ChatGPT sign-in)\",\"id\":\"codex-cli\",\"install\":{\"checkCommand\":\"codex --version\",\"command\":\"npm install -g @openai/codex\",\"needsRoot\":false,\"notes\":\"Advisory only: wssp never runs install commands. Bake the CLI into your template.\"},\"login\":{\"command\":\"codex login --device-auth\",\"doneWhenCommandExits\":true,\"egress\":{\"domains\":[\"auth.openai.com\",\"chatgpt.com\"]},\"method\":\"device-code\",\"verifyCommand\":\"codex login status\"},\"schemaVersion\":1,\"x-source\":\"Check the CLI vendor's documentation and terms before use.\"}",
+    "warnings": []
+  },
+  "extension-integral-floats.json": {
+    "digest": "58c765fca14da2205c8080437be3d0d2eba9eee743334fd7826c018cd7f56f11",
+    "canonical": "{\"credentials\":{\"files\":{\"required\":[\".tool/auth.json\"]},\"x-exponent\":9007199254740991,\"x-max-safe\":9007199254740991,\"x-min-safe\":-9007199254740991},\"displayName\":\"Integral floats in extensions\",\"id\":\"float-ext\",\"login\":{\"command\":\"true\",\"method\":\"paste\"},\"schemaVersion\":1}",
+    "warnings": []
+  },
+  "extensions.json": {
+    "digest": "d2792b1018e93ab47183f56fa0a0f9f69f0c4aee4da6573f0d2a888605923923",
+    "canonical": "{\"credentials\":{\"env\":[{\"name\":\"_A\",\"required\":false,\"x-v\":\"v\"}],\"files\":{\"required\":[\"a\"],\"x-f\":\"f\"},\"x-c\":9007199254740991,\"x-n\":-9007199254740991},\"displayName\":\"Extensions everywhere ✓ 😀\",\"id\":\"0-ext\",\"install\":{\"x-i\":0},\"login\":{\"command\":\"login\",\"egress\":{\"domains\":[\"xn--bcher-kva.example\"],\"x-e\":[]},\"method\":\"device-code\",\"x-l\":\"l\"},\"schemaVersion\":1,\"x-escapes\":\"quote \\\" backslash \\\\ slash / tab \\t newline \\n nul \\u0000 unit \\u001f del  ls  \",\"x-top\":{\"nested\":[1,-2,true,null,\"s\"],\"x-any\":{\"deep\":{}}},\"x-\":\"private use sorts before astral\",\"x-😀\":\"astral sorts after U+E000 by code point\"}",
+    "warnings": []
+  },
+  "files-exclude.json": {
+    "digest": "b1d62862c86161722ecae488c9ef77101df92284d05922a08a88d5dfa3885907",
+    "canonical": "{\"credentials\":{\"env\":[{\"name\":\"TOOL_PROFILE\",\"required\":false}],\"files\":{\"exclude\":[\".config/tool/cache\",\".config/tool/logs/old\"],\"optional\":[\".local/share/tool/session\",\"dir with \\\"quotes\\\" and spaces/ünïcödé\"],\"required\":[\".config/tool\"]},\"maxBytes\":4194304},\"displayName\":\"Tool keeping a config directory\",\"id\":\"tool-with-cache\",\"login\":{\"command\":\"tool auth login\",\"egress\":{\"domains\":[]},\"method\":\"browser-callback\"},\"schemaVersion\":1}",
+    "warnings": [
+      "login.method.browser_callback_unsupported"
+    ]
+  },
+  "minimal-env.json": {
+    "digest": "958f4086b1af4dbb8bddec9dd76a9ea75374eef01595e832618026caea911999",
+    "canonical": "{\"credentials\":{\"env\":[{\"name\":\"EXAMPLE_TOKEN\",\"required\":true}]},\"displayName\":\"Minimal\",\"id\":\"a\",\"login\":{\"command\":\"true\",\"method\":\"paste\"},\"schemaVersion\":1}",
+    "warnings": []
+  },
+  "proxy-bearer.json": {
+    "digest": "d0e27f5b32ba12dd696224315ea4690b1092840fa9ac3d656a26432f3c1c7af8",
+    "canonical": "{\"credentials\":{\"env\":[{\"description\":\"Never enters the guest; the host proxy adds it.\",\"name\":\"EXAMPLE_API_KEY\",\"proxy\":{\"baseUrlEnv\":\"EXAMPLE_BASE_URL\",\"format\":\"Bearer {value}\",\"header\":\"Authorization\",\"placeholderEnv\":\"EXAMPLE_API_KEY\",\"upstream\":\"https://api.example.com/v1\"},\"required\":true},{\"name\":\"EXAMPLE_ORG_KEY\",\"proxy\":{\"baseUrlEnv\":\"EXAMPLE_ORG_BASE_URL\",\"format\":\"{value}\",\"header\":\"x-api-key\",\"upstream\":\"https://org.example.net:8443/api/v2/%C3%A9t%20e\"},\"required\":false}],\"rotates\":\"no\",\"sharing\":\"shareable\"},\"displayName\":\"Example API key (proxied)\",\"id\":\"example-api-proxy\",\"login\":{\"command\":\"true\",\"method\":\"paste\"},\"schemaVersion\":1}",
+    "warnings": []
+  }
+}

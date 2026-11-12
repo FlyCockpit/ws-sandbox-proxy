@@ -1,0 +1,27 @@
+{
+  "description": "port 1-65535",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "proxy",
+    "displayName": "Proxy",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "env": [
+        {
+          "name": "KEY",
+          "required": true,
+          "proxy": {
+            "upstream": "https://api.example.com:0",
+            "header": "Authorization",
+            "format": "Bearer {value}",
+            "baseUrlEnv": "KEY_BASE_URL"
+          }
+        }
+      ]
+    }
+  }
+}

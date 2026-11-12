@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "id": "a",
+  "displayName": "Minimal",
+  "login": { "command": "true", "method": "paste" },
+  "credentials": { "env": [{ "name": "EXAMPLE_TOKEN", "required": true }] }
+}

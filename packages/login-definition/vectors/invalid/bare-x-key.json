@@ -1,0 +1,19 @@
+{
+  "description": "an extension key needs a name after x-",
+  "expect": "definition.invalid",
+  "document": {
+    "schemaVersion": 1,
+    "id": "base",
+    "displayName": "Base",
+    "login": {
+      "command": "true",
+      "method": "paste"
+    },
+    "credentials": {
+      "files": {
+        "required": [".tool/auth.json"]
+      }
+    },
+    "x-": 1
+  }
+}

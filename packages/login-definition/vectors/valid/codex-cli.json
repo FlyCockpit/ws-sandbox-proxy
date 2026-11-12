@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "codex-cli",
+  "displayName": "Codex CLI (ChatGPT sign-in)",
+  "description": "User-owned example. Signs the Codex CLI in with a ChatGPT account through the device-code flow and keeps the resulting auth file.",
+  "install": {
+    "checkCommand": "codex --version",
+    "command": "npm install -g @openai/codex",
+    "needsRoot": false,
+    "notes": "Advisory only: wssp never runs install commands. Bake the CLI into your template."
+  },
+  "login": {
+    "command": "codex login --device-auth",
+    "method": "device-code",
+    "doneWhenCommandExits": true,
+    "verifyCommand": "codex login status",
+    "egress": { "domains": ["auth.openai.com", "chatgpt.com"] }
+  },
+  "credentials": {
+    "files": {
+      "required": [".codex/auth.json"],
+      "optional": [],
+      "exclude": []
+    },
+    "sharing": "exclusive",
+    "rotates": "yes",
+    "maxBytes": 65536
+  },
+  "x-source": "Check the CLI vendor's documentation and terms before use."
+}

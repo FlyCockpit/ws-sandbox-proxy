@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:wssp:login-definition:v1",
+  "title": "wssp login definition v1",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 500
+    },
+    "install": {
+      "type": "object",
+      "properties": {
+        "checkCommand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "needsRoot": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-.": {}
+      }
+    },
+    "login": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "device-code",
+            "paste",
+            "interactive",
+            "browser-callback"
+          ]
+        },
+        "doneWhenCommandExits": {
+          "default": true,
+          "type": "boolean"
+        },
+        "verifyCommand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "egress": {
+          "type": "object",
+          "properties": {
+            "domains": {
+              "maxItems": 32,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 253
+              }
+            }
+          },
+          "required": [
+            "domains"
+          ],
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-.": {}
+          }
+        }
+      },
+      "required": [
+        "command",
+        "method"
+      ],
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-.": {}
+      }
+    },
+    "credentials": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "object",
+          "properties": {
+            "required": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 255
+              }
+            },
+            "optional": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 255
+              }
+            },
+            "exclude": {
+              "default": [],
+              "maxItems": 64,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 255
+              }
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-.": {}
+          }
+        },
+        "env": {
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 500
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "proxy": {
+                "type": "object",
+                "properties": {
+                  "upstream": {
+                    "type": "string",
+                    "maxLength": 512
+                  },
+                  "header": {
+                    "type": "string",
+                    "maxLength": 64
+                  },
+                  "format": {
+                    "type": "string",
+                    "maxLength": 256
+                  },
+                  "baseUrlEnv": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  },
+                  "placeholderEnv": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  }
+                },
+                "required": [
+                  "upstream",
+                  "header",
+                  "format",
+                  "baseUrlEnv"
+                ],
+                "additionalProperties": false,
+                "patternProperties": {
+                  "^x-.": {}
+                }
+              }
+            },
+            "required": [
+              "name",
+              "required"
+            ],
+            "additionalProperties": false,
+            "patternProperties": {
+              "^x-.": {}
+            }
+          }
+        },
+        "sharing": {
+          "default": "exclusive",
+          "type": "string",
+          "enum": [
+            "exclusive",
+            "shareable"
+          ]
+        },
+        "rotates": {
+          "default": "unknown",
+          "type": "string",
+          "enum": [
+            "yes",
+            "no",
+            "unknown"
+          ]
+        },
+        "maxBytes": {
+          "default": 1048576,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4194304
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-.": {}
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "displayName",
+    "login",
+    "credentials"
+  ],
+  "additionalProperties": false,
+  "patternProperties": {
+    "^x-.": {}
+  }
+}

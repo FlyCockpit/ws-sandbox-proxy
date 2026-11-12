@@ -1,0 +1,4 @@
+[
+  "packages/api/src/sandbox/idempotency.ts|2d5e4bd5fc9f468e6932e94ca8f4b3a6783f730adaefbad9884b2f6a279fad01|R12: the null-key namespace of the request MAC is a hash domain, not authority (template-builds plan 3.1.2)",
+  "packages/api/src/sandbox/idempotency.ts|402e47b6cf4fbc0fc745632490bff879579081869d8ca16a10c8c150e47d0db7|R12: the null-key namespace of the stored-receipt MAC is a hash domain, not authority (template-builds plan 3.1.2)"
+]

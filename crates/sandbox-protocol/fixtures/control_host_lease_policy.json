@@ -1,0 +1,71 @@
+{
+  "helloCeilings": [
+    {
+      "maxLeaseMs": 21600000,
+      "stored": 21600000
+    },
+    {
+      "maxLeaseMs": null,
+      "stored": null
+    }
+  ],
+  "invalidHelloCeilings": [299999, 2073600001, 0, -1, 1.5, "6h"],
+  "reports": [
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "maxLeaseMs": 21600000
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 2,
+      "maxLeaseMs": null
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 3,
+      "maxLeaseMs": 2073600000
+    }
+  ],
+  "invalidReports": [
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 0,
+      "sequence": 1,
+      "maxLeaseMs": 21600000
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 0,
+      "maxLeaseMs": 21600000
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "maxLeaseMs": 299999
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "maxLeaseMs": 2073600001
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 1
+    },
+    {
+      "type": "host.lease-policy",
+      "connectionEpoch": 3,
+      "sequence": 1,
+      "maxLeaseMs": 21600000,
+      "extra": true
+    }
+  ]
+}

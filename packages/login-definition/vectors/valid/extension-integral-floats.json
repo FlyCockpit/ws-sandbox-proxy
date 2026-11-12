@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1.0,
+  "id": "float-ext",
+  "displayName": "Integral floats in extensions",
+  "login": { "command": "true", "method": "paste" },
+  "credentials": {
+    "files": { "required": [".tool/auth.json"] },
+    "x-max-safe": 9007199254740991.0,
+    "x-min-safe": -9007199254740991.0,
+    "x-exponent": 9.007199254740991e15
+  }
+}

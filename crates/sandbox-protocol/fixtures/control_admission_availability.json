@@ -1,0 +1,107 @@
+[
+  {
+    "direction": "daemon",
+    "frame": {
+      "type": "host.admission",
+      "connectionEpoch": 4,
+      "runtimeKind": "fake",
+      "schedulable": false,
+      "egressPolicy": true,
+      "terminal": true,
+      "journalId": "1234567890abcdef1234567890abcdef",
+      "vmCapacity": {
+        "memoryBudgetMiB": 65536,
+        "maxCpuCount": 32,
+        "vcpuBudget": 64
+      },
+      "storagePools": []
+    }
+  },
+  {
+    "direction": "server",
+    "frame": {
+      "type": "availability.request",
+      "requestId": "availability-fixture",
+      "connectionEpoch": 4,
+      "page": 0,
+      "bindings": [
+        {
+          "revisionId": "revision-fixture",
+          "artifact": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "manifestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "architecture": "x86_64"
+        }
+      ]
+    }
+  },
+  {
+    "direction": "daemon",
+    "frame": {
+      "type": "availability.result",
+      "requestId": "availability-fixture",
+      "connectionEpoch": 4,
+      "page": 0,
+      "entries": []
+    }
+  },
+  {
+    "direction": "daemon",
+    "frame": {
+      "type": "availability.result",
+      "requestId": "availability-fixture",
+      "connectionEpoch": 4,
+      "page": 0,
+      "entries": [
+        {
+          "binding": {
+            "revisionId": "revision-fixture",
+            "artifact": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "architecture": "x86_64"
+          },
+          "status": "present"
+        }
+      ]
+    }
+  },
+  {
+    "direction": "daemon",
+    "frame": {
+      "type": "availability.result",
+      "requestId": "availability-fixture",
+      "connectionEpoch": 4,
+      "page": 0,
+      "entries": [
+        {
+          "binding": {
+            "revisionId": "revision-fixture",
+            "artifact": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "architecture": "x86_64"
+          },
+          "status": "missing"
+        }
+      ]
+    }
+  },
+  {
+    "direction": "daemon",
+    "frame": {
+      "type": "availability.result",
+      "requestId": "availability-fixture",
+      "connectionEpoch": 4,
+      "page": 0,
+      "entries": [
+        {
+          "binding": {
+            "revisionId": "revision-fixture",
+            "artifact": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "manifestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "architecture": "x86_64"
+          },
+          "status": "rejected"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,14 @@
+{
+  "subject": "Invitación para compartir un grupo",
+  "heading": "Te invitaron a un grupo",
+  "body": "{{inviter}} te invitó a {{pool}}.",
+  "permissions": "Permisos (usar / contribuir): {{use}} / {{contribute}}",
+  "caps": "Límites (RAM MiB / vCPU / disco GiB): {{memory}} / {{vcpu}} / {{disk}}. Un límite sin establecer es ilimitado.",
+  "expiry": "Vence: {{expiry}}",
+  "trust": "Quienes usen un grupo con hosts ajenos deben confiar en sus operadores. Un usuario incus-admin en un host puede acceder a todas las VM de ese host. La contribución consume recursos del host y usa tu red/IP para el tráfico de las VM. Al retirar un host, los discos se conservan durante el plazo del propietario del grupo, hasta 30 días. Eliminar el host requiere pruebas de limpieza y puede tardar más si el almacenamiento está desconectado o dañado.",
+  "forwarding": "Acepta explícitamente después de iniciar sesión. Revisa la cuenta: cualquier persona con este enlace y una cuenta verificada existente puede aceptarlo. El registro requiere el correo invitado y verificar el buzón. Vuelve a abrir este enlace después de verificarlo; no lo reenvíes.",
+  "cta": "Revisar invitación",
+  "yes": "Sí",
+  "no": "No",
+  "unlimited": "Sin límite"
+}
