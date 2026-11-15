@@ -948,6 +948,8 @@ describe("account deletion inventory against the live schema (DECISIONS: Account
         table !== "host_terminal_ticket" &&
         // A queued host command belongs to a host, which blocks deletion.
         table !== "host_queued_command" &&
+        // So does a host file receipt.
+        table !== "host_file_receipt" &&
         table !== "host_device_credential" &&
         table !== "sandbox_host" &&
         table !== "sandbox_template_availability" &&

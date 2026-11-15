@@ -105,6 +105,17 @@ inline env can skip the layer (`scripts/test-pg.test.mjs`). The PR workflow and 
 release job through `pnpm verify`). `pnpm verify` includes it;
 `pnpm verify:fast` does not.
 
+### Container names
+
+Every disposable fixture (`test:pg`, `test:s3`, `backup:test`,
+`db:test-migrations`, `runtime:test-operations`) is named `<prefix>-…`: its
+containers, the backup test's network and tools image included. The prefix is
+`wssp` unless `TEST_CONTAINER_PREFIX=<name>` sets it (lowercase letters and
+digits joined by `.`, `_`, `__` or `-`, at most 24 characters), so a shared
+machine or a chained run (`pnpm verify`, CI) keeps its own namespace without
+passing flags through. `--container-prefix <name>` on `backup:test` and
+`db:test-migrations` overrides the variable (`scripts/lib/test-container-prefix.mjs`).
+
 ### Isolation
 
 Each test file calls `pgTestDatabase()` (`@wssp/db/testing/pg`) and gets its own

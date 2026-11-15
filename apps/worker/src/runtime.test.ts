@@ -22,6 +22,8 @@ const state = vi.hoisted(() => ({
   run: vi.fn(),
   imageUpsert: vi.fn(),
   imageRemove: vi.fn(),
+  /** Schedulers already stored in Redis for the image-store queue. */
+  imageStored: [] as { key: string }[],
   distribution: "auto" as string,
   restorable: true,
 }));
@@ -39,6 +41,7 @@ vi.mock("@wssp/queue", async () => {
       add: vi.fn(),
       upsertJobScheduler: state.imageUpsert,
       removeJobScheduler: state.imageRemove,
+      getJobSchedulers: vi.fn(async () => state.imageStored),
     },
     checkBackupFreshnessQueue: { upsertJobScheduler: state.scheduler },
     reapWebhookLogQueue: { upsertJobScheduler: state.scheduler },
@@ -198,7 +201,7 @@ describe("startWorkerRuntime", () => {
     // The sweep is the only reaper of orphaned disk objects (offload §6).
     expect(await scheduled()).toEqual({
       on: ["disk-offload-maintenance", "image-store-sweep"],
-      off: ["community-refresh", "image-store-gc", "image-store-prune"],
+      off: ["image-store-gc", "image-store-prune"],
     });
     state.distribution = "auto";
     state.restorable = false;
@@ -206,6 +209,23 @@ describe("startWorkerRuntime", () => {
     state.distribution = "off";
     state.restorable = false;
     expect((await scheduled()).on).toEqual([]);
+  });
+
+  it("removes a stored scheduler that is no longer configured (the retired community refresh)", async () => {
+    state.imageUpsert.mockClear();
+    state.imageRemove.mockClear();
+    state.distribution = "auto";
+    state.restorable = true;
+    state.imageStored = [{ key: "community-refresh" }, { key: "image-store-gc" }];
+    try {
+      const { startWorkerRuntime } = await import("./runtime");
+      const runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+      await runtime.stop();
+      vi.resetModules();
+    } finally {
+      state.imageStored = [];
+    }
+    expect(state.imageRemove.mock.calls.map((call) => call[0])).toEqual(["community-refresh"]);
   });
 
   it("still drains every consumer when heartbeat withdrawal fails", async () => {

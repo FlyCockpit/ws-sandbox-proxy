@@ -698,9 +698,23 @@ sandbox into a new revision of its template (or another template you own).
 ## Image store
 
 With `IMAGE_S3_BUCKET` set (R2, MinIO or S3), images live in
-`<IMAGE_S3_PREFIX>/owners/<ownerId>/<fingerprint>/image.tar[.wsspenc]`, one
-copy per owner (no cross-account deduplication).
+`<IMAGE_S3_PREFIX>/owners/<ownerId>/<fingerprint>/<sessionId>/image.tar[.wsspenc]`,
+one copy per owner (no cross-account deduplication) and one key per upload
+session, so two uploads never write the same key.
 
+- **Objects are create-only.** The server completes every upload (template
+  image or disk) with `If-None-Match: *`, so an existing object is never
+  overwritten, by a concurrent upload or by the SDK retrying a Complete. A
+  refused Complete (412, or 409 for a concurrent conditional write) aborts
+  that multipart upload. The existing object is never assumed to be the
+  upload's: it stays **Verifying** and the verify job hashes it (after
+  authenticated decryption under the upload's own data key when encrypted);
+  only an exact match is **Stored**, anything else is corrupt and deleted.
+  Any other Complete failure fails the upload. The store must honour
+  `If-None-Match` on CompleteMultipartUpload: AWS S3 documents it and
+  `pnpm test:s3` proves it against the pinned RustFS (412 for a second
+  Complete, for a racing one and for a retried one). Check any other
+  provider before relying on it: one that ignores the header overwrites.
 - Hosts only ever get presigned per-object GET or UploadPart URLs (their
   `Content-Length` is signed). They cannot list, delete or choose keys. The
   server lists the parts and checks every size before completing an upload,

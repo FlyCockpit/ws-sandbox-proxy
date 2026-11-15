@@ -35,9 +35,14 @@ const restore = fileURLToPath(new URL("./restore.mjs", import.meta.url));
  *   dump-spawn-fail  pg_restore is removed after the writers check under the
  *                    lock, so spawning the restore stream fails (ENOENT)
  * Every mode writes the receipt file once the session has read COMMIT, and
- * confirms it (prints the marker query's value) except commit-unconfirmed,
+ * confirms it (prints the \echo marker) except commit-unconfirmed,
  * hang-after-commit and exit:<n> with n > 0 (like psql with ON_ERROR_STOP,
- * whose COMMIT failed).
+ * whose COMMIT failed). Every mode that reads COMMIT first prints the
+ * transaction id line (xid 777) that restore asks for right after BEGIN.
+ * RESTORE_FIXTURE_XACT is what pg_xact_status('777') returns: committed,
+ * aborted, unknown (the default), fail (the query fails), or
+ * in-progress-then-aborted ("in progress" twice, then "aborted"). Every
+ * status query appends a line to <receipt>.xact.
  */
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "backup-restore-cli-test-"));
@@ -95,7 +100,14 @@ if (queryIndex !== -1) {
     const pgRestore = require("node:path").join(__dirname, "pg_restore");
     fs.renameSync(pgRestore, pgRestore + ".gone");
   }
-  if (mode === "hang-summary" && sql.includes("_prisma_migrations") && fs.existsSync(process.env.RESTORE_FIXTURE_RECEIPT)) {
+  if (sql.includes("pg_xact_status")) {
+    const log = process.env.RESTORE_FIXTURE_RECEIPT + ".xact";
+    fs.appendFileSync(log, sql + "\\n");
+    const xact = process.env.RESTORE_FIXTURE_XACT ?? "unknown";
+    if (xact === "fail") process.exit(2);
+    const asked = fs.readFileSync(log, "utf8").trim().split("\\n").length;
+    console.log(xact === "in-progress-then-aborted" ? (asked <= 2 ? "in progress" : "aborted") : xact);
+  } else if (mode === "hang-summary" && sql.includes("_prisma_migrations") && fs.existsSync(process.env.RESTORE_FIXTURE_RECEIPT)) {
     fs.writeFileSync(process.env.RESTORE_FIXTURE_RECEIPT + ".summary", "summary started");
     setInterval(() => {}, 1000);
   } else if (sql === "SHOW server_version_num") console.log("180000");
@@ -115,7 +127,9 @@ if (queryIndex !== -1) {
     if (mode.startsWith("psql-gone:") && input.includes("BEGIN;")) {
       // Holds the session's stdout/stderr: marks .gone once the session is
       // reaped (its exit is then visible to restore), lets go 3 s after
-      // pg_restore is done. Bounded to 10 s.
+      // pg_restore is done. Bounded to 10 s. (It cannot wait for restore to
+      // have handled pg_restore's end instead: Node destroys a child's stdin
+      // as soon as it sees the child exit, so nothing of that is observable.)
       const holder = [
         'const fs = require("node:fs");',
         "const receipt = process.env.RESTORE_FIXTURE_RECEIPT;",
@@ -140,7 +154,9 @@ if (queryIndex !== -1) {
       return;
     }
     fs.writeFileSync(process.env.RESTORE_FIXTURE_RECEIPT, "commit observed");
-    const marker = /SELECT '(wssp-restore-committed-[0-9a-f]+)';/.exec(input);
+    const xid = /SELECT '(wssp-restore-xid-[0-9a-f]+:)' \\|\\| pg_current_xact_id\\(\\);/.exec(input);
+    if (xid) console.log(xid[1] + "777");
+    const marker = /\\\\echo (wssp-restore-committed-[0-9a-f]+)\\n/.exec(input);
     const failedCommit = mode.startsWith("exit:") && mode !== "exit:0";
     if (marker && mode !== "commit-unconfirmed" && mode !== "hang-after-commit" && !failedCommit) console.log(marker[1]);
     if (mode.startsWith("confirm-then-exit:")) process.exitCode = Number(mode.slice(18));
@@ -155,14 +171,22 @@ if (queryIndex !== -1) {
 `,
     { mode: 0o755 },
   );
-  const env = (mode) => ({
+  const env = (mode, xact = "unknown") => ({
     // The spawn-failure modes must not find a real psql/pg_restore instead
     // (node's own directory may hold one too).
     PATH: mode.endsWith("spawn-fail") ? dir : `${dir}:${dirname(process.execPath)}:/usr/bin:/bin`,
     DATABASE_URL: "postgresql://127.0.0.1/restore_fixture",
     RESTORE_FIXTURE_RECEIPT: receipt,
     RESTORE_FIXTURE_MODE: mode,
+    RESTORE_FIXTURE_XACT: xact,
   });
+  const xactQueries = () => {
+    try {
+      return readFileSync(`${receipt}.xact`, "utf8").trim().split("\n");
+    } catch {
+      return [];
+    }
+  };
   const commit = () => {
     try {
       return readFileSync(receipt, "utf8");
@@ -176,39 +200,45 @@ if (queryIndex !== -1) {
     receipt,
     env,
     commit,
+    xactQueries,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
 
-function runRestore({ mode = "exit:0", preview = false } = {}) {
+function runRestore({ mode = "exit:0", preview = false, xact = "unknown" } = {}) {
   const f = fixture();
   try {
     const result = spawnSync(
       process.execPath,
       [restore, f.archive, ...(preview ? [] : ["--confirm", "RESTORE:restore_fixture"])],
       // SIGKILL: a regression that traps SIGTERM cannot outlive the timeout.
-      { env: f.env(mode), encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" },
+      { env: f.env(mode, xact), encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" },
     );
     assert.equal(result.error, undefined);
-    return { ...result, commit: f.commit(), output: result.stdout + result.stderr };
+    return {
+      ...result,
+      commit: f.commit(),
+      xactQueries: f.xactQueries(),
+      output: result.stdout + result.stderr,
+    };
   } finally {
     f.cleanup();
   }
 }
 
-/** Start a restore, wait until `marker` exists, send `signal`, collect the result. */
-async function interruptRestore({ mode, marker, signal }) {
-  const f = fixture();
-  const child = spawn(
-    process.execPath,
-    [restore, f.archive, "--confirm", "RESTORE:restore_fixture"],
-    {
-      env: f.env(mode),
-      stdio: ["ignore", "pipe", "pipe"],
-      // Its own process group, so a hung run can be reaped with its fixtures.
-      detached: true,
-    },
-  );
+/**
+ * Start `restore.mjs <args>`, wait until the file `marker` exists, send
+ * `signal`, collect the result. Bounded and self-reaping: restore runs in its
+ * own process group, which is always SIGKILLed at the end.
+ * @param {{ args: string[], env: NodeJS.ProcessEnv, marker: string, signal: NodeJS.Signals }} options
+ */
+async function interruptAt({ args, env, marker, signal }) {
+  const child = spawn(process.execPath, [restore, ...args], {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    // Its own process group, so a hung run can be reaped with its fixtures.
+    detached: true,
+  });
   const closed = once(child, "close").then(([code]) => code);
   /** @type {NodeJS.Timeout | undefined} */
   let timer;
@@ -220,10 +250,9 @@ async function interruptRestore({ mode, marker, signal }) {
     child.stderr.on("data", (chunk) => {
       output += chunk;
     });
-    const path = marker(f);
     const deadline = Date.now() + 10_000;
-    while (!existsSync(path) && Date.now() < deadline) await delay(50);
-    assert.ok(existsSync(path), `the restore never reached the interrupt point:\n${output}`);
+    while (!existsSync(marker) && Date.now() < deadline) await delay(50);
+    assert.ok(existsSync(marker), `the restore never reached the interrupt point:\n${output}`);
     child.kill(signal);
     // Bounded: a regression that ignores the signal fails instead of hanging.
     const code = await Promise.race([
@@ -233,7 +262,7 @@ async function interruptRestore({ mode, marker, signal }) {
       }),
     ]);
     assert.notEqual(code, "timeout", `the restore did not exit after ${signal}:\n${output}`);
-    return { code, output, commit: f.commit() };
+    return { code, output };
   } finally {
     clearTimeout(timer);
     // Reap the whole group, even when restore itself already exited: a
@@ -244,6 +273,21 @@ async function interruptRestore({ mode, marker, signal }) {
       // The group is already gone (ESRCH).
     }
     await closed;
+  }
+}
+
+/** Start a fixture restore, wait until `marker` exists, send `signal`, collect the result. */
+async function interruptRestore({ mode, marker, signal }) {
+  const f = fixture();
+  try {
+    const result = await interruptAt({
+      args: [f.archive, "--confirm", "RESTORE:restore_fixture"],
+      env: f.env(mode),
+      marker: marker(f),
+      signal,
+    });
+    return { ...result, commit: f.commit() };
+  } finally {
     f.cleanup();
   }
 }
@@ -266,11 +310,70 @@ test("a committed restore exits 0 and reports completion", () => {
 });
 
 test("a psql failure after COMMIT was sent reports an uncertain outcome, never 'rolled back; unchanged'", () => {
+  // psql exit 7 is not ON_ERROR_STOP's 3, and the server cannot say (unknown).
   const result = runRestore({ mode: "exit:7" });
   assert.equal(result.status, 1, result.output);
   assert.equal(result.commit, "commit observed");
   assert.match(result.output, /restore failed after COMMIT was sent/);
   assert.match(result.output, /uncertain/);
+  assert.doesNotMatch(result.output, /rolled back|is unchanged/);
+  // It asked the server about the transaction id the session printed.
+  assert.deepEqual(result.xactQueries, ["SELECT coalesce(pg_xact_status('777'::xid8), 'unknown')"]);
+});
+
+test("a psql that stopped on an SQL error (ON_ERROR_STOP, exit 3) without confirming COMMIT is rolled back: exit 4", () => {
+  // COMMIT was written, but psql stopped at an earlier statement (or at a
+  // failed COMMIT): nothing after COMMIT can fail, so nothing committed.
+  const result = runRestore({ mode: "exit:3" });
+  assert.equal(result.status, 4, result.output);
+  assert.equal(result.commit, "commit observed");
+  assert.match(
+    result.output,
+    /ROLLED BACK: restore failed \(psql exit 3, pg_restore exit 0\)\. psql stopped on an SQL error \(ON_ERROR_STOP\) before confirming COMMIT, so the transaction was rolled back; "restore_fixture" is unchanged/,
+  );
+  assert.doesNotMatch(result.output, /uncertain|Restore complete|FATAL/);
+  // Provable from psql's status alone: the server is not asked.
+  assert.deepEqual(result.xactQueries, []);
+});
+
+test("an unconfirmed COMMIT the server reports aborted is rolled back: exit 4", () => {
+  for (const [mode, xact, asked] of [
+    ["exit:7", "aborted", 1],
+    ["commit-unconfirmed", "aborted", 1],
+    // Still "in progress" at first (the backend is finishing): it waits.
+    ["exit:2", "in-progress-then-aborted", 3],
+  ]) {
+    const result = runRestore({ mode, xact });
+    const label = `${mode} + ${xact}`;
+    assert.equal(result.status, 4, `${label}:\n${result.output}`);
+    assert.match(
+      result.output,
+      /the server reports the restore transaction aborted, so the transaction was rolled back; "restore_fixture" is unchanged/,
+      label,
+    );
+    assert.doesNotMatch(result.output, /uncertain|Restore complete/, label);
+    assert.equal(result.xactQueries.length, asked, label);
+  }
+});
+
+test("an unconfirmed COMMIT the server reports committed says the restore committed, exit 1", () => {
+  const result = runRestore({ mode: "exit:7", xact: "committed" });
+  assert.equal(result.status, 1, result.output);
+  assert.match(
+    result.output,
+    /the restore session failed before confirming COMMIT, but the server reports the restore transaction committed \(psql exit 7\)\. "restore_fixture" is restored/,
+  );
+  assert.doesNotMatch(result.output, /rolled back|is uncertain|Restore complete\./);
+});
+
+test("an unconfirmed COMMIT whose status the server cannot give stays uncertain, exit 1", () => {
+  const result = runRestore({ mode: "exit:7", xact: "fail" });
+  assert.equal(result.status, 1, result.output);
+  assert.match(
+    result.output,
+    /COMMIT not confirmed; the server reports the restore transaction as unavailable/,
+  );
+  assert.match(result.output, /is uncertain/);
   assert.doesNotMatch(result.output, /rolled back|is unchanged/);
 });
 
@@ -285,31 +388,27 @@ test("a session that confirmed COMMIT and then failed says the restore committed
   assert.doesNotMatch(result.output, /Restore complete\.|rolled back|is uncertain/);
 });
 
-test("a failure before COMMIT was sent is rolled back and says so", () => {
+test("a failure before COMMIT was sent is rolled back and says so: exit 4", () => {
   const result = runRestore({ mode: "dump-fail" });
-  assert.equal(result.status, 1, result.output);
+  assert.equal(result.status, 4, result.output);
   assert.equal(result.commit, null);
   assert.match(result.output, /COMMIT was never sent, so the transaction was rolled back/);
   assert.doesNotMatch(result.output, /uncertain/);
 });
 
-test("a signal while the restore transaction is open, before COMMIT was sent, is rolled back and says so", async () => {
-  for (const [signal, status] of [
-    ["SIGTERM", 143],
-    ["SIGINT", 130],
-    ["SIGHUP", 129],
-  ]) {
+test("a signal while the restore transaction is open, before COMMIT was sent, is rolled back and says so: exit 4", async () => {
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
     const result = await interruptRestore({
       mode: "dump-hang",
       marker: (f) => `${f.receipt}.dump`,
       signal,
     });
-    assert.equal(result.code, status, result.output);
+    assert.equal(result.code, 4, result.output);
     assert.equal(result.commit, null);
     assert.match(
       result.output,
       new RegExp(
-        `interrupted by ${signal} before COMMIT; the unfinished restore transaction is rolled back`,
+        `ROLLED BACK: interrupted by ${signal} before COMMIT; the unfinished restore transaction is rolled back`,
       ),
     );
     assert.doesNotMatch(result.output, /uncertain|Restore complete/);
@@ -321,7 +420,7 @@ test("a restore session that already exited is never sent COMMIT: rolled back, n
   // output open) when pg_restore finishes: COMMIT must not count as sent.
   for (const exit of ["3", "0"]) {
     const result = runRestore({ mode: `psql-gone:${exit}` });
-    assert.equal(result.status, 1, result.output);
+    assert.equal(result.status, 4, result.output);
     assert.equal(result.commit, null);
     // pg_restore succeeded: only the session's early exit kept COMMIT back.
     assert.match(
@@ -377,18 +476,17 @@ test("a lock session that cannot be spawned is a refusal (exit 3), never an unca
   const result = runRestore({ mode: "lock-spawn-fail" });
   assert.equal(result.status, 3, result.output);
   assert.equal(result.commit, null);
-  // No stderr from a psql that ran: the spawn itself failed.
   assert.match(result.output, /REFUSED: could not open the lock session: spawn psql ENOENT/);
+  // No stderr from a psql that ran: the spawn itself failed.
   assert.doesNotMatch(result.output, /Restoring into|Unhandled 'error' event|uncertain|\n\s+at /);
 });
 
 test("a pg_restore that cannot be spawned sends no COMMIT: rolled back, never 'uncertain'", () => {
   const result = runRestore({ mode: "dump-spawn-fail" });
-  assert.equal(result.status, 1, result.output);
+  assert.equal(result.status, 4, result.output);
   assert.equal(result.commit, null);
   assert.match(
     result.output,
-    // -2 is ENOENT, the spawn failure itself (a real pg_restore would exit 1).
     /restore failed \(psql exit \d+, pg_restore exit -2\)\. COMMIT was never sent, so the transaction was rolled back/,
   );
   assert.doesNotMatch(result.output, /Unhandled 'error' event|uncertain|Restore complete|\n\s+at /);
@@ -400,7 +498,7 @@ test("a COMMIT the session never confirms is uncertain, never 'Restore complete'
   assert.equal(result.commit, "commit observed");
   assert.match(
     result.output,
-    /restore failed after COMMIT was sent \(psql exit 0, COMMIT not confirmed\)\. The outcome .* is uncertain/,
+    /restore failed after COMMIT was sent \(psql exit 0, COMMIT not confirmed; the server reports the restore transaction as unknown\)\. The outcome .* is uncertain/,
   );
   assert.doesNotMatch(result.output, /Restore complete|rolled back/);
 });
@@ -458,54 +556,18 @@ exec sleep 30
       { mode: 0o755 },
     );
     writeFileSync(join(dir, "psql"), "#!/bin/sh\necho 180000\n", { mode: 0o755 });
-    const child = spawn(
-      process.execPath,
-      [restore, archive, "--confirm", "RESTORE:restore_fixture"],
-      {
-        env: {
-          PATH: `${dir}:${dirname(process.execPath)}:/usr/bin:/bin`,
-          DATABASE_URL: "postgresql://127.0.0.1/restore_fixture",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        // Its own process group, so the run and its `sleep 30` are reaped below.
-        detached: true,
+    const { code, output } = await interruptAt({
+      args: [archive, "--confirm", "RESTORE:restore_fixture"],
+      env: {
+        PATH: `${dir}:${dirname(process.execPath)}:/usr/bin:/bin`,
+        DATABASE_URL: "postgresql://127.0.0.1/restore_fixture",
       },
-    );
-    const closed = once(child, "close").then(([code]) => code);
-    /** @type {NodeJS.Timeout | undefined} */
-    let timer;
-    try {
-      let output = "";
-      child.stdout.on("data", (chunk) => {
-        output += chunk;
-      });
-      child.stderr.on("data", (chunk) => {
-        output += chunk;
-      });
-      const deadline = Date.now() + 10_000;
-      while (!existsSync(join(dir, "listing")) && Date.now() < deadline) await delay(50);
-      assert.ok(existsSync(join(dir, "listing")), `the archive check never started:\n${output}`);
-      child.kill("SIGINT");
-      // Bounded: a regression that ignores SIGINT fails instead of hanging.
-      const code = await Promise.race([
-        closed,
-        new Promise((resolveTimeout) => {
-          timer = setTimeout(() => resolveTimeout("timeout"), 15_000);
-        }),
-      ]);
-      assert.notEqual(code, "timeout", `the restore did not exit after SIGINT:\n${output}`);
-      assert.equal(code, 3, output);
-      assert.match(output, /cancelled by SIGINT before the restore started — nothing was changed/);
-      assert.doesNotMatch(output, /rolled back|uncertain/);
-    } finally {
-      clearTimeout(timer);
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        // The group is already gone (ESRCH).
-      }
-      await closed;
-    }
+      marker: join(dir, "listing"),
+      signal: "SIGINT",
+    });
+    assert.equal(code, 3, output);
+    assert.match(output, /cancelled by SIGINT before the restore started — nothing was changed/);
+    assert.doesNotMatch(output, /rolled back|uncertain/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -526,37 +588,43 @@ test("a usage error is a refusal, exit 3", () => {
   const result = spawnSync(process.execPath, [restore, "--no-such-flag"], {
     env: { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` },
     encoding: "utf8",
-    timeout: 10_000,
-    killSignal: "SIGKILL",
   });
   assert.equal(result.status, 3, result.stdout + result.stderr);
   assert.match(result.stderr, /REFUSED: /);
 });
 
-test("a signal after a reported failure keeps exit 1 and prints no second outcome", async () => {
+test("a signal after a reported failure keeps its exit status (1 or 4) and prints no second outcome", async () => {
   // A test-only preload holds the process once at beforeExit (the failure is
   // reported, the exit code set) and marks it, so the signal lands while the
   // process winds down. Without the guard the handler would add a second,
   // contradictory outcome: "Restore completed" (exit 0) after a commit,
-  // "interrupted ... rolled back" (exit 143/129) before COMMIT. The preload
+  // "interrupted ... rolled back" before COMMIT. The preload
   // can also inject a throw, to reach the two failure reports of the
   // top-level catch: after the commit (the closing summary's log throws) and
   // once the restore started, before COMMIT (spawning pg_restore throws).
-  for (const [mode, inject, signal, reported] of [
+  for (const [mode, inject, signal, reported, status] of [
     [
       "confirm-then-exit:2",
       "",
       "SIGTERM",
       /the restore session confirmed COMMIT, then failed \(psql exit 2\)/,
+      1,
     ],
-    ["dump-fail", "", "SIGHUP", /COMMIT was never sent, so the transaction was rolled back/],
+    ["dump-fail", "", "SIGHUP", /COMMIT was never sent, so the transaction was rolled back/, 4],
     [
       "exit:0",
       "after-commit",
       "SIGTERM",
       /FATAL: the restore was committed, then: injected after commit/,
+      1,
     ],
-    ["exit:0", "at-apply", "SIGINT", /FATAL: injected at apply/],
+    [
+      "exit:0",
+      "at-apply",
+      "SIGINT",
+      /ROLLED BACK: injected at apply\. COMMIT was never sent, so the restore transaction was rolled back; the target is unchanged/,
+      4,
+    ],
   ]) {
     const f = fixture();
     const held = join(f.dir, "held-at-exit");
@@ -612,7 +680,7 @@ process.once("beforeExit", () => {
         }),
       ]);
       const label = `${mode}${inject ? ` + ${inject}` : ""} + ${signal}`;
-      assert.equal(code, 1, `${label}:\n${output}`);
+      assert.equal(code, status, `${label}:\n${output}`);
       assert.match(output, reported, label);
       assert.doesNotMatch(output, /Restore completed|interrupted by|REFUSED/, label);
     } finally {

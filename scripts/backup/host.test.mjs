@@ -20,6 +20,7 @@ function run(
     stopExit = "0",
     stopFailOn = "",
     restoreSignal = "",
+    imageGone = false,
     markOnStop = false,
     input = "",
     stopSignal = "",
@@ -68,6 +69,11 @@ if (args[0] === "ps") {
   else if (format.includes(".Config.Labels")) console.log(id.replace("app-", ""));
   else if (format.includes(".State.Running")) console.log("true");
   else if (format.includes(".Config.Env")) fs.writeSync(1, "DATABASE_URL=" + "postgresql://fake:fake@db/app\\nBACKUP_S3_BUCKET=fake-backups\\nBACKUP_S3_SECRET_ACCESS_KEY=fake-secret\\nS3_ACCESS_KEY_ID=fake-upload-key\\nBACKUP_HEARTBEAT_URL=https://heartbeat.invalid/ping\\nUNRELATED_SECRET=must-not-pass\\n");
+} else if (args[0] === "image" && args[1] === "inspect") {
+  if (process.env.HOST_TEST_IMAGE_GONE) {
+    console.error("Error response from daemon: No such image: " + args.at(-1));
+    process.exitCode = 1;
+  }
 } else if (args[0] === "stop") {
   // Once: the first stop (after the stop prompt) is interrupted by a signal.
   const signalled = process.env.HOST_TEST_LOG + ".signalled";
@@ -101,6 +107,7 @@ if (args[0] === "ps") {
         HOST_TEST_STOP_SIGNAL: stopSignal,
         HOST_TEST_STOP_FAIL_ON: stopFailOn,
         HOST_TEST_RESTORE_SIGNAL: restoreSignal,
+        ...(imageGone ? { HOST_TEST_IMAGE_GONE: "1" } : {}),
         ...(markOnStop ? { HOST_TEST_MARK: join(dir, "stopped") } : {}),
         ...(gone ? { HOST_TEST_GONE: join(dir, "reader-gone") } : {}),
       },
@@ -220,7 +227,7 @@ test("host leaves all writers stopped after an ambiguous failed restore", () => 
   );
   assert.match(
     result.stderr,
-    /Restore failed or its outcome is uncertain \(exit 7\): the restore output above says which\. The app stays stopped/,
+    /Restore failed and its outcome is uncertain, or it committed and a later step failed \(exit 7\): the restore output above says which\. The app stays stopped/,
   );
   assert.match(result.stderr, /docker start app-server app-worker app-backup/);
   assert.doesNotMatch(
@@ -249,6 +256,28 @@ test("host restarts every stopped writer when the restore is cancelled or refuse
   assert.doesNotMatch(result.stderr, /uncertain|Restore done/);
 });
 
+test("host restarts every stopped writer after a restore that rolled back (exit 4, database unchanged)", () => {
+  const result = run(
+    "require_terminal() { return 0; }\nask() { return 0; }\nmain restore daily.dump --project alpha",
+    { restoreExit: "4" },
+  );
+  assert.equal(result.status, 4, result.stderr);
+  const actions = result.calls.filter((call) => ["stop", "start", "run"].includes(call.args[0]));
+  assert.deepEqual(
+    actions.map((call) => call.args[0]),
+    ["stop", "stop", "stop", "run", "stop", "start", "stop", "start", "stop", "start"],
+  );
+  assert.deepEqual(
+    actions.filter((call) => call.args[0] === "start").map((call) => call.args[1]),
+    ["app-server", "app-worker", "app-backup"],
+  );
+  assert.match(
+    result.stderr,
+    /Restore failed and was rolled back; the database is unchanged[\s\S]*Started the app again/,
+  );
+  assert.doesNotMatch(result.stderr, /outcome is uncertain, or|Restore done|nothing was changed/);
+});
+
 test("host keeps writers stopped on docker run exit 125 (a wait failure can follow a started restore)", () => {
   const result = run(
     "require_terminal() { return 0; }\nask() { return 0; }\nmain restore daily.dump --project alpha",
@@ -261,7 +290,7 @@ test("host keeps writers stopped on docker run exit 125 (a wait failure can foll
   );
   assert.match(
     result.stderr,
-    /Restore failed or its outcome is uncertain \(exit 125\): the restore output above says which\. The app stays stopped/,
+    /Restore failed and its outcome is uncertain, or it committed and a later step failed \(exit 125\): the restore output above says which\. The app stays stopped/,
   );
 });
 
@@ -275,7 +304,7 @@ test("host keeps writers stopped when restore is interrupted", () => {
   assert.ok(!result.calls.some((call) => call.args[0] === "start"));
   assert.match(
     result.stderr,
-    /Restore failed or its outcome is uncertain \(exit 143\): the restore output above says which\. The app stays stopped/,
+    /Restore failed and its outcome is uncertain, or it committed and a later step failed \(exit 143\): the restore output above says which\. The app stays stopped/,
   );
   assert.doesNotMatch(result.stdout + result.stderr, /Nothing was restored|database is as it was/);
 });
@@ -365,7 +394,7 @@ test("host restore: Ctrl-C (INT), TERM or HUP while the stop prompt waits exits 
     assert.deepEqual(
       result.calls
         .map((call) => call.args[0])
-        .filter((verb) => !["ps", "inspect", "info", "network"].includes(verb)),
+        .filter((verb) => !["ps", "inspect", "image", "info", "network"].includes(verb)),
       [],
       name,
     );
@@ -568,4 +597,29 @@ test("host prints usage with no arguments, from a file and piped into bash -s, e
   assert.equal(piped.status, 2, piped.stderr);
   assert.match(piped.stderr, /^Usage: bash <this script> list \| backup \| restore/);
   assert.doesNotMatch(piped.stderr, /sed:|No such file/);
+});
+
+test("host stops with the recreate command when the server's image ID is gone, and never runs the tag", () => {
+  for (const command of ["list", "backup", "drill", "restore daily.dump"]) {
+    const result = run(
+      `require_terminal() { return 0; }\nask() { return 0; }\nmain ${command} --project alpha`,
+      { imageGone: true },
+    );
+    assert.equal(result.status, 1, `${command}: ${result.stderr}`);
+    assert.match(
+      result.stderr,
+      /the server container's image \(app-image\) is no longer on this machine/,
+    );
+    assert.match(
+      result.stderr,
+      /cd server && docker compose -p alpha up -d --no-build --force-recreate server/,
+    );
+    assert.match(result.stderr, /--profile backup/);
+    // Nothing was run, stopped or started: no fallback to the image's tag.
+    assert.deepEqual(
+      result.calls.filter((call) => ["run", "stop", "start"].includes(call.args[0])),
+      [],
+      command,
+    );
+  }
 });

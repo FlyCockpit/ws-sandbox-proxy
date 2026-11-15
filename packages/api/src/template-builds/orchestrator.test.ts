@@ -11,8 +11,14 @@ vi.mock("../sandbox/services/sandboxes", () => ({
   stopSandbox: vi.fn(),
 }));
 vi.mock("../sandbox/image-store/captures", () => ({ captureSandbox: vi.fn() }));
+const communityRefresh = vi.hoisted(() => ({ stop: vi.fn(async () => {}), check: vi.fn() }));
+const startCommunityRefresh = vi.hoisted(() => vi.fn(() => communityRefresh));
+vi.mock("./community/refresh-schedule", () => ({
+  startCommunityRefreshSchedule: startCommunityRefresh,
+}));
 
 const {
+  startTemplateBuildOrchestrator,
   TemplateBuildScheduler,
   BuildCallTimeout,
   BUILD_COPY_ARGV,
@@ -204,6 +210,17 @@ describe("frozen service inputs (§3.3)", () => {
     });
     expect(freezeInput(build, exec, "import", 0, 0, NOW, 60).key).toBe("tb:b1:import:0:0");
     expect(freezeInput(build, exec, "context", 0, 0, NOW, 60).key).toBe("tb:b1:context:0:0");
+  });
+});
+
+describe("startTemplateBuildOrchestrator", () => {
+  it("runs the daily community refresh on the server and stops it with the tick", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const orchestrator = startTemplateBuildOrchestrator(new AbortController().signal);
+    expect(startCommunityRefresh).toHaveBeenCalledTimes(1);
+    await orchestrator.stop();
+    expect(communityRefresh.stop).toHaveBeenCalledTimes(1);
+    error.mockRestore();
   });
 });
 

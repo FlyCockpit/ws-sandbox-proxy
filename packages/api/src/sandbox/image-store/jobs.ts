@@ -25,7 +25,6 @@ export type ImageStoreJob =
   | { kind: "gc" }
   | { kind: "sweep" }
   | { kind: "prune" }
-  | { kind: "community_refresh" }
   | DiskJob;
 
 /**
@@ -294,21 +293,27 @@ async function finishArtifactDelete(
 }
 
 export type ParsedObjectKey =
-  | { kind: "image"; ownerId: string; fingerprint: string }
+  | { kind: "image"; ownerId: string; fingerprint: string; sessionId: string }
   | { kind: "disk"; ownerId: string; sandboxId: string; offloadId: string; sessionId: string };
 
 /**
- * `<prefix>/owners/<owner>/<fphex>/image.tar[.wsspenc]` (a template image) or
+ * `<prefix>/owners/<owner>/<fphex>/<session>/image.tar[.wsspenc]` (a template image) or
  * `<prefix>/owners/<owner>/sandboxes/<sandbox>/<offload>/<session>.wsspenc`
  * → its parts, or null.
  */
 export function parseImageObjectKey(prefix: string, key: string): ParsedObjectKey | null {
   const base = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const id = "[A-Za-z0-9_-]{1,128}";
-  const image = new RegExp(`^${base}/owners/(${id})/([0-9a-f]{64})/image\\.tar(\\.wsspenc)?$`).exec(
-    key,
-  );
-  if (image) return { kind: "image", ownerId: image[1]!, fingerprint: `sha256:${image[2]}` };
+  const image = new RegExp(
+    `^${base}/owners/(${id})/([0-9a-f]{64})/(${id})/image\\.tar(\\.wsspenc)?$`,
+  ).exec(key);
+  if (image)
+    return {
+      kind: "image",
+      ownerId: image[1]!,
+      fingerprint: `sha256:${image[2]}`,
+      sessionId: image[3]!,
+    };
   const disk = new RegExp(
     `^${base}/owners/(${id})/sandboxes/(${id})/(${id})/(${id})\\.wsspenc$`,
   ).exec(key);
@@ -599,12 +604,6 @@ export async function handleImageStoreJob(job: ImageStoreJob): Promise<unknown> 
     case "disk_maintenance": {
       const { handleDiskJob } = await import("../disk-offload/jobs");
       return handleDiskJob(job);
-    }
-    case "community_refresh": {
-      // Imported lazily: the community service reaches the build modules,
-      // which the image store's other jobs never need.
-      const { runCommunityRefreshScan } = await import("../../template-builds/community/service");
-      return runCommunityRefreshScan();
     }
   }
 }

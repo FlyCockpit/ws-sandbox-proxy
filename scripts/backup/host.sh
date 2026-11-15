@@ -127,7 +127,26 @@ discover_app() {
   in_project() { docker ps -a -q -f "label=com.docker.compose.project=$project" "$@"; }
   server="$(in_project -f label=com.docker.compose.service=server | head -n1)"
   [ -n "$server" ] || die "no server container in \"$project\"."
+  # The server container's own image ID, never its tag: the one-off container
+  # must run exactly the code the app runs.
   image="$(docker inspect -f '{{.Image}}' "$server")"
+  # A redeploy that rebuilt an identical image can retag the name to a new ID
+  # and drop the old one (Docker 29's containerd image store) while the
+  # running server still points at it. Falling back to the tag could run other
+  # code than the app's, so stop and say how to line the two up again.
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    local dir
+    dir="$(label "$server" com.docker.compose.project.working_dir 2>/dev/null || true)"
+    case "$dir" in
+      "" | "<no value>") dir="<the compose's directory>" ;;
+      *) dir="$(printf '%q' "$dir")" ;;
+    esac
+    die "the server container's image (${image:0:19}) is no longer on this machine: a redeploy
+  replaced it without recreating the server. Recreate the server from the current image
+  (it restarts the app), then re-run this command:
+    cd $dir && docker compose -p $(printf '%q' "$project") up -d --no-build --force-recreate server
+  (add the profile flags the deploy uses: with the backup service, --profile backup before up)"
+  fi
   volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/backups"}}{{.Name}}{{end}}{{end}}' "$server")"
   postgres="$(in_project -f label=com.docker.compose.service=postgres | head -n1)"
   # The database's network: the one-off container must reach postgres, and the
@@ -201,17 +220,19 @@ main() {
       )
       echo
       say "Restoring stops the app (${#writers[@]} running container(s): $(printf '%s ' "${writers[@]#* }"))"
-      say "until it finishes, then starts it again: after a restore that completed, or one that was"
-      say "cancelled or refused before anything changed. If it failed or was interrupted while"
-      say "restoring, the app stays stopped until you have checked the database."
+      say "until it finishes, then starts it again: after a restore that completed, one that was"
+      say "cancelled or refused before anything changed, or one that failed and rolled back (the"
+      say "database unchanged). If its outcome is uncertain, the app stays stopped until you have"
+      say "checked the database."
       say "If Auto Deploy is on in Dokploy, do not merge anything meanwhile. You will see a preview"
       say "and be asked once more before anything changes."
       confirm_stop
       # restore.mjs exit status: 0 restored; 3 (REFUSED_EXIT) refused or
-      # cancelled before anything changed; anything else failed or was
-      # interrupted while restoring: rolled back, or (after COMMIT was sent)
-      # uncertain. Starting the app then would migrate and serve a database
-      # nobody has checked, so it stays stopped.
+      # cancelled before anything changed; 4 (ROLLED_BACK_EXIT) started, failed
+      # and provably rolled back, so the database is unchanged; anything else
+      # failed with an uncertain outcome (or committed and then failed).
+      # Starting the app then would migrate and serve a database nobody has
+      # checked, so it stays stopped.
       #
       # Start first, talk second: after Ctrl-C under `restore | tee log` the
       # pipe's reader is gone, and a write to it would kill this shell (SIGPIPE)
@@ -224,7 +245,8 @@ main() {
       restore_exit() {
         local exit_status=$?
         trap '' INT TERM HUP PIPE
-        if [ "$restore_invoked" = 0 ] || [ "$exit_status" -eq 0 ] || [ "$exit_status" -eq 3 ]; then
+        if [ "$restore_invoked" = 0 ] || [ "$exit_status" -eq 0 ] || [ "$exit_status" -eq 3 ] ||
+          [ "$exit_status" -eq 4 ]; then
           # `docker stop` first: an interrupted stop (Ctrl-C kills the client,
           # the daemon keeps stopping) would make a bare `docker start` a no-op
           # on a container that then exits. Stopping waits for that; it is a
@@ -237,6 +259,8 @@ main() {
             note "Restore was not invoked; nothing was changed."
           elif [ "$exit_status" -eq 3 ]; then
             note "Cancelled or refused; nothing was changed."
+          elif [ "$exit_status" -eq 4 ]; then
+            note "Restore failed and was rolled back; the database is unchanged (the restore output above says why)."
           else
             note "Restore done. The app applies any pending migrations as it starts."
             note "Check it from your computer: pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha>"
@@ -248,7 +272,7 @@ main() {
             # but a wait failure can also follow a started one.
             note "docker run failed (exit $exit_status): the restore container may not have started."
           fi
-          note "Restore failed or its outcome is uncertain (exit $exit_status): the restore output above says which. The app stays stopped."
+          note "Restore failed and its outcome is uncertain, or it committed and a later step failed (exit $exit_status): the restore output above says which. The app stays stopped."
           note "Inspect the database (bash $0 list; the restore output above), then start the app again"
           note "from Dokploy, or with: docker start $(printf '%s ' "${writers[@]%% *}")"
         fi

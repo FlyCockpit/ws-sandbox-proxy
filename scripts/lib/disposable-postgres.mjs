@@ -55,6 +55,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { testContainerPrefix } from "./test-container-prefix.mjs";
 
 /**
  * The single pin. CI pulls it via `pnpm test:pg:pull-image`; a workflow service
@@ -551,7 +552,8 @@ export async function startDisposablePostgres(options) {
   // Fail fast with the pull command, before any container exists.
   const missing = missingImageReason();
   if (missing) throw new Error(`Disposable PostgreSQL unavailable: ${missing}`);
-  const name = `wssp-${options.owner}-${randomUUID()}`;
+  // TEST_CONTAINER_PREFIX namespaces it (scripts/lib/test-container-prefix.mjs).
+  const name = `${testContainerPrefix()}-${options.owner}-${randomUUID()}`;
   const password = randomUUID();
   // The password never rides argv (visible to every local user via /proc):
   // a 0600 env file in a private 0700 directory, removed right after

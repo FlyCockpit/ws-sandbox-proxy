@@ -916,6 +916,13 @@ const TEMPLATE_BUILD_ROUTES = {
 
 const hostErrors = ["host.not_owned", "host.agent_access_off", "host.node_offline"] as const;
 const hostCommandErrors = [...hostErrors, "host.command_not_found"] as const;
+/** Writes and edits replay their credential-scoped idempotency receipt. */
+const hostFileChangeErrors = [
+  ...hostErrors,
+  "host.file_error",
+  "host.file_outcome_unknown",
+  "sandbox.idempotency_conflict",
+] as const;
 function hostMutation<
   B extends z.ZodType,
   R extends z.ZodType,
@@ -1048,22 +1055,28 @@ export const HOST_ROUTES = {
     "HostFileList",
     hostFileListSchema,
   ),
-  writeHostFile: hostMutation(
-    "/v1/hosts/{hostId}/files/write",
-    "hosts.files",
-    hostFileWriteBodySchema,
-    hostIdParamsSchema,
-    "HostFileWrite",
-    hostFileWriteSchema,
-  ),
-  editHostFile: hostMutation(
-    "/v1/hosts/{hostId}/files/edit",
-    "hosts.files",
-    hostFileEditBodySchema,
-    hostIdParamsSchema,
-    "HostFileEdit",
-    hostFileEditSchema,
-  ),
+  writeHostFile: {
+    ...hostMutation(
+      "/v1/hosts/{hostId}/files/write",
+      "hosts.files",
+      hostFileWriteBodySchema,
+      hostIdParamsSchema,
+      "HostFileWrite",
+      hostFileWriteSchema,
+    ),
+    errors: hostFileChangeErrors,
+  },
+  editHostFile: {
+    ...hostMutation(
+      "/v1/hosts/{hostId}/files/edit",
+      "hosts.files",
+      hostFileEditBodySchema,
+      hostIdParamsSchema,
+      "HostFileEdit",
+      hostFileEditSchema,
+    ),
+    errors: hostFileChangeErrors,
+  },
 } as const satisfies Record<string, SdkRoute>;
 
 export const JSON_ROUTES = {

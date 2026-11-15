@@ -24,15 +24,25 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { testContainerPrefix } from "../lib/test-container-prefix.mjs";
 
 const SCRIPTS = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let hostPort;
-const TOOLS_IMAGE = process.env.BACKUP_TEST_TOOLS_IMAGE ?? "wssp-backup-test-tools:pg18";
+// Every container, the network and the tools image are named under one
+// prefix: `--container-prefix <name>`, else TEST_CONTAINER_PREFIX, else `wssp`.
+const PREFIX = testContainerPrefix({ argv: process.argv.slice(2) });
+const TOOLS_IMAGE = process.env.BACKUP_TEST_TOOLS_IMAGE ?? `${PREFIX}-backup-test-tools:pg18`;
 const POSTGRES_IMAGE =
   "docker.io/library/postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42";
 const suffix = `${process.pid}-${Date.now().toString(36)}`;
-const NETWORK = `backup-test-${suffix}`;
-const PG = process.env.BACKUP_TEST_PG_CONTAINER ?? `wssp-backup-pg-${suffix}`;
+const NETWORK = `${PREFIX}-backup-net-${suffix}`;
+const PG = `${PREFIX}-backup-pg-${suffix}`;
+let toolRuns = 0;
+/** A unique, prefixed name for each one-off tools container. */
+const toolName = () => {
+  toolRuns += 1;
+  return `${PREFIX}-backup-tool-${suffix}-${toolRuns}`;
+};
 const work = mkdtempSync(join(tmpdir(), "backup-restore-test-"));
 const backups = join(work, "backups");
 let pgStarted = false;
@@ -111,6 +121,8 @@ function tool(db, command, { mount = "rw" } = {}) {
     [
       "run",
       "--rm",
+      "--name",
+      toolName(),
       "--network",
       NETWORK,
       "--user",
@@ -644,11 +656,16 @@ try {
       "--confirm",
       "RESTORE:restored_misc",
     );
-    assert.equal(result.code, 1, result.out);
-    // A small archive is fully streamed before psql reaches the failing COPY,
-    // so COMMIT may already have been sent: restore then reports the outcome
-    // as uncertain (never "restored"). The contents below prove the rollback.
-    assert.match(result.out, /rolled back|The outcome for "restored_misc" is uncertain/);
+    // psql stops at the failing COPY (ON_ERROR_STOP, exit 3) before the
+    // confirmation after COMMIT: provably rolled back, whether or not COMMIT
+    // had already been written (it never ran). Exit 4, ROLLED_BACK_EXIT.
+    assert.equal(result.code, 4, result.out);
+    assert.match(
+      result.out,
+      /ROLLED BACK: restore failed \(psql exit 3, pg_restore exit 0\)\. (COMMIT was never sent|psql stopped on an SQL error \(ON_ERROR_STOP\) before confirming COMMIT), so the transaction was rolled back; "restored_misc" is unchanged/,
+    );
+    assert.doesNotMatch(result.out, /Restore complete|uncertain/i);
+    assert.match(result.out, /later_check/);
     assert.equal(fingerprint("restored_misc"), sourcePrint);
     assert.equal(sql("restored_misc", "SELECT to_regclass('public.ok') IS NULL"), "t");
   });
@@ -700,7 +717,19 @@ try {
     // would be reparented to the postmaster, which treats any exiting child
     // as a crashed backend and restarts the cluster.
     assert.equal(
-      docker(["run", "-d", "--rm", "--network", NETWORK, TOOLS_IMAGE, "bash", "-c", helper]).code,
+      docker([
+        "run",
+        "-d",
+        "--rm",
+        "--name",
+        toolName(),
+        "--network",
+        NETWORK,
+        TOOLS_IMAGE,
+        "bash",
+        "-c",
+        helper,
+      ]).code,
       0,
     );
     spawnSync("sleep", ["1"]);
@@ -713,8 +742,15 @@ try {
       "--confirm",
       "RESTORE:restored_misc",
     );
-    assert.notEqual(result.code, 0, result.out);
-    assert.doesNotMatch(result.out, /Restore complete/);
+    // The terminated backend aborted the transaction: rolled back (exit 4),
+    // because COMMIT was never sent (pg_restore was still blocked on the full
+    // pipe) or because the server reports the transaction aborted.
+    assert.equal(result.code, 4, result.out);
+    assert.match(
+      result.out,
+      /ROLLED BACK: restore failed \(psql exit 2, pg_restore exit -?\d+\)\. (COMMIT was never sent|the server reports the restore transaction aborted), so the transaction was rolled back; "restored_misc" is unchanged/,
+    );
+    assert.doesNotMatch(result.out, /Restore complete|uncertain/);
     spawnSync("sleep", ["3"]);
     assert.equal(sql("postgres", "SELECT string_agg(got::text, ',') FROM lock_probe"), "false");
     assert.equal(fingerprint("restored_misc"), sourcePrint);

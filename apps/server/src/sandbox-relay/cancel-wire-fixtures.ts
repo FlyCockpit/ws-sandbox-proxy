@@ -181,6 +181,7 @@ export function installWireDelegates(
       ),
       {
         HostQueuedCommands: vi.fn(),
+        HostFileReceipts: vi.fn(),
         HostTerminalTickets: vi.fn(),
         ImageCache: vi.fn(),
         User: vi.fn(),

@@ -226,6 +226,20 @@ SELECT 'sdk_key_host_allowlist:fx_host_grant' AS violation WHERE NOT EXISTS (
     AND "createdAt" IS NOT DISTINCT FROM '2026-11-12 12:00:00'
 );
 
+SELECT 'host_file_receipt:fx_host_file_receipt' AS violation WHERE NOT EXISTS (
+  SELECT 1 FROM "host_file_receipt" WHERE "id" IS NOT DISTINCT FROM 'fx_host_file_receipt'
+    AND "userId" IS NOT DISTINCT FROM 'fx_user_plain'
+    AND "sandboxHostId" IS NOT DISTINCT FROM 'fx_host'
+    AND "sdkKeyId" IS NOT DISTINCT FROM 'fx_sdk'
+    AND "idempotencyKey" IS NOT DISTINCT FROM 'fx-write-key'
+    AND "requestHmac" IS NOT DISTINCT FROM 'hmac-sha256:synthetic-not-a-request-digest'
+    AND "state" IS NOT DISTINCT FROM 'SUCCEEDED'
+    AND "result" IS NOT DISTINCT FROM '{"etag":"h:AAAAAAAAAAAAAAAAAAAAAA","size":2,"created":true}'
+    AND "expiresAt" IS NOT DISTINCT FROM '2026-11-19 12:00:00'
+    AND "createdAt" IS NOT DISTINCT FROM '2026-11-12 12:00:00'
+    AND "updatedAt" IS NOT DISTINCT FROM '2026-11-12 12:00:00'
+);
+
 SELECT 'sdk_key_revision_allowlist:fx_revision_grant' AS violation WHERE NOT EXISTS (
   SELECT 1 FROM "sdk_key_revision_allowlist" WHERE "id" IS NOT DISTINCT FROM 'fx_revision_grant'
     AND "userId" IS NOT DISTINCT FROM 'fx_user_plain'
@@ -540,6 +554,8 @@ SELECT 'sdk_key_pool_allowlist count' AS violation WHERE (SELECT count(*) FROM "
 SELECT 'sdk_key_host_allowlist count' AS violation WHERE (SELECT count(*) FROM "sdk_key_host_allowlist") <> 1;
 
 SELECT 'sdk_key_revision_allowlist count' AS violation WHERE (SELECT count(*) FROM "sdk_key_revision_allowlist") <> 1;
+
+SELECT 'host_file_receipt count' AS violation WHERE (SELECT count(*) FROM "host_file_receipt") <> 1;
 
 SELECT 'share_invite count' AS violation WHERE (SELECT count(*) FROM "share_invite") <> 1;
 

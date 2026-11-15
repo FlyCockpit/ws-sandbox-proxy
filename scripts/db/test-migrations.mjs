@@ -49,6 +49,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { testContainerPrefix } from "../lib/test-container-prefix.mjs";
 import { withDatabase } from "./lib/local-db-name.mjs";
 import {
   isManagedSchemaEmpty,
@@ -91,11 +92,12 @@ function freePort() {
 }
 
 async function startPostgres() {
-  // `--container-prefix <name>` keeps a shared machine's containers in its own namespace.
-  const prefixIndex = process.argv.indexOf("--container-prefix");
-  const prefix = prefixIndex >= 0 ? process.argv[prefixIndex + 1] : "wssp-test-migrations";
-  if (!prefix || !/^[a-z0-9][a-z0-9_.-]*$/.test(prefix))
-    throw new Error("--container-prefix needs a Docker name prefix ([a-z0-9][a-z0-9_.-]*)");
+  // `--container-prefix <name>` (or TEST_CONTAINER_PREFIX, for chained runs)
+  // keeps a shared machine's containers in its own namespace.
+  const prefix = testContainerPrefix({
+    argv: process.argv.slice(2),
+    fallback: "wssp-test-migrations",
+  });
   const name = `${prefix}-${randomBytes(4).toString("hex")}`;
   const password = randomBytes(24).toString("hex");
   const run = sh("docker", [

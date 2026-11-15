@@ -280,6 +280,15 @@ export async function startWorkerRuntime(options: {
             { name: schedule.data.kind, data: { ...schedule.data } },
           );
       }
+      // Redis keeps a scheduler after its entry leaves IMAGE_STORE_SCHEDULES
+      // (a retired kind such as the old community refresh would keep producing
+      // jobs the schema refuses): the queue holds exactly the configured set.
+      const configured = new Set<string>(IMAGE_STORE_SCHEDULES.map((schedule) => schedule.id));
+      // A handful of schedulers exist; the bound only stops a runaway list.
+      for (const scheduler of await imageStoreMaintenanceQueue.getJobSchedulers(0, 199)) {
+        if (!configured.has(scheduler.key))
+          await imageStoreMaintenanceQueue.removeJobScheduler(scheduler.key);
+      }
     } catch (err) {
       console.error(
         "[image-store-maintenance] Failed to sync job schedulers:",

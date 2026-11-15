@@ -81,28 +81,27 @@ export const REAP_WEBHOOK_LOG_CRON_PATTERN = "53 3 * * *";
 /**
  * Template image store maintenance (docs/operations/templates.md#image-store):
  * verify an uploaded object, GC unreferenced artifacts, sweep orphans and
- * stale uploads, auto-prune old untagged revisions, refresh community bases,
- * and verify and maintain offloaded sandbox disks. One queue, seven kinds.
+ * stale uploads, auto-prune old untagged revisions, and verify and maintain
+ * offloaded sandbox disks. One queue, six kinds. The daily community base
+ * refresh is not here: it accepts builds under server-only secrets and
+ * policy, so the server runs it (template-builds/community/refresh-schedule.ts).
  */
 export const imageStoreMaintenanceJobSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("verify"), artifactId: z.string().min(1).max(128) }),
   z.object({ kind: z.literal("gc") }),
   z.object({ kind: z.literal("sweep") }),
   z.object({ kind: z.literal("prune") }),
-  /** Community base templates: the daily upstream refresh scan (community-base S10). */
-  z.object({ kind: z.literal("community_refresh") }),
   /** Disk offload: verify one completed disk object. */
   z.object({ kind: z.literal("disk_verify"), offloadId: z.string().min(1).max(128) }),
   /** Disk offload backstops, consumed-grace shred and row retention (§3, §6a). */
   z.object({ kind: z.literal("disk_maintenance") }),
 ]);
 export type ImageStoreMaintenanceJobData = z.infer<typeof imageStoreMaintenanceJobSchema>;
-/** GC and sweep hourly at :37; prune daily at 04:47 UTC; the community refresh scan daily at 05:23 UTC; disk offload maintenance at :07 and :22 (off the other sweeps' marks). */
+/** GC and sweep hourly at :37; prune daily at 04:47 UTC; disk offload maintenance at :07 and :22 (off the other sweeps' marks). */
 export const IMAGE_STORE_SCHEDULES = [
   { id: "image-store-gc", pattern: "37 * * * *", data: { kind: "gc" } },
   { id: "image-store-sweep", pattern: "52 * * * *", data: { kind: "sweep" } },
   { id: "image-store-prune", pattern: "47 4 * * *", data: { kind: "prune" } },
-  { id: "community-refresh", pattern: "23 5 * * *", data: { kind: "community_refresh" } },
   { id: "disk-offload-maintenance", pattern: "7,22 * * * *", data: { kind: "disk_maintenance" } },
 ] as const;
 

@@ -51,6 +51,41 @@ model HostQueuedCommand {
   @@map("host_queued_command")
 }
 
+enum HostFileReceiptState {
+  /// Reserved before dispatch; a concurrent duplicate waits for it to settle.
+  PENDING
+  SUCCEEDED
+  /// Sent, but no definitive answer arrived: never dispatched again.
+  UNKNOWN
+}
+
+/// Idempotency receipt of one agent host file write or edit, scoped to the
+/// authenticating SDK credential. Stores the request HMAC and the small typed
+/// result, never file content or paths. Expires 7 days after creation and is
+/// reaped by sweepHostAccessRetention; an expired key may be reused.
+model HostFileReceipt {
+  id             String               @id @default(cuid(2))
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @default(now()) @updatedAt
+  expiresAt      DateTime
+  userId         String
+  sandboxHostId  String
+  sdkKeyId       String
+  idempotencyKey String
+  requestHmac    String
+  state          HostFileReceiptState @default(PENDING)
+  result         Json?
+  User           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Host           SandboxHost          @relation(fields: [sandboxHostId, userId], references: [id, userId], onDelete: Cascade)
+  SdkKey         SdkKey               @relation(fields: [sdkKeyId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@unique([sdkKeyId, idempotencyKey])
+  @@index([expiresAt])
+  @@index([sandboxHostId])
+  @@index([userId])
+  @@map("host_file_receipt")
+}
+
 enum HostAuditKind {
   COMMAND
   COMMAND_QUEUED

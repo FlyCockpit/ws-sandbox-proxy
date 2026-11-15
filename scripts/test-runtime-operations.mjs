@@ -9,6 +9,7 @@ import {
   disposableDirectory,
   startDisposablePostgres,
 } from "./lib/disposable-postgres.mjs";
+import { testContainerPrefix } from "./lib/test-container-prefix.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const file = fileURLToPath(import.meta.url);
@@ -161,7 +162,7 @@ async function main() {
       "--detach",
       "--rm",
       "--name",
-      `wssp-runtime-redis-${randomUUID()}`,
+      `${testContainerPrefix()}-runtime-redis-${randomUUID()}`,
       "--memory",
       "64m",
       "--publish",

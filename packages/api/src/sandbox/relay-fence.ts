@@ -9,6 +9,7 @@ import { AccountDeletionConflictError } from "@wssp/db/account-deletion";
 import { noteHostBlockerReleased } from "./host-admission";
 import { sandboxOutboxTransaction } from "./outbox";
 import { outboxOperationWhere } from "./outbox-operation";
+import { RelayFenceRejected, requireRelayFence } from "./relay-fence-rejected";
 import { noteTerminalResultRelease } from "./result-finalization";
 import { assertBeforeResultQuota } from "./result-locks";
 import { rethrowSensitiveSandboxError, SandboxIntegrityError } from "./sensitive-errors";
@@ -32,10 +33,7 @@ import {
  * Admission without a placed host starts at the sandbox row and never acquires
  * a host lock later. First dispatch pins the chosen host under this same order.
  */
-export class RelayFenceRejected extends Error {}
-export function requireRelayFence(ok: boolean): asserts ok {
-  if (!ok) throw new RelayFenceRejected();
-}
+export { RelayFenceRejected, requireRelayFence };
 /** A rejected fence that is permanent for this evidence: what the host
  * reported can never apply to its own row or request (codec, request binding,
  * bound identity, immutable stored evidence). Authority, epoch and race fences

@@ -69,7 +69,7 @@
     "policy:trufflehog-filter": "node scripts/filter-trufflehog-results.mjs --cli-test",
     "policy:template-secrets": "node scripts/check-template-secret-patterns.mjs --self-test && node scripts/check-template-secret-patterns.mjs",
     "policy:local-db-guard": "bash scripts/assert-local-database.sh --self-test",
-    "policy:pg-image-ci": "node --test scripts/lib/disposable-postgres.test.mjs scripts/test-pg.test.mjs",
+    "policy:pg-image-ci": "node --test scripts/lib/disposable-postgres.test.mjs scripts/lib/test-container-prefix.test.mjs scripts/test-pg.test.mjs",
     "claude:hooks:install": "tsx scripts/install-claude-hooks.ts",
     "policy:test-colocation": "node scripts/check-test-colocation.ts",
     "policy:queue-wiring": "node scripts/check-queue-wiring.ts",

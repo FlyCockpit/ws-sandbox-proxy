@@ -120,7 +120,11 @@ require `expectedEtag` to replace an existing file (`createOnly` refuses an
 existing file). Edits take 1–20 `{oldText, newText}` pairs; each old text must
 match exactly once, and every replacement commits together. Do not write masked
 `⟦redacted` spans back. `host.file_error` exposes a typed `WsspError.reason`,
-including `conflict`, `path_denied`, `redacted_span` and `binary_file`.
+including `conflict`, `path_denied`, `redacted_span` and `binary_file`. Writes
+and edits replay by idempotency key for the same credential: a retry with the
+same key and input returns the first result without changing the file again.
+`host.file_outcome_unknown` (kind `unknown`) means the change was sent but its
+outcome is unknown; read the file before writing again under a new key.
 
 `hosts.queueCommand` returns `{id, state, expiresAt}`. `.getQueuedCommand` reads
 only this credential's queued command. Expiry is 1–168 hours, default 24; only a

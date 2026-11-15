@@ -71,6 +71,9 @@ VALUES ('fx_pool_grant', 'fx_user_plain', 'fx_sdk', 'fx_pool', 'fx_user_admin', 
 INSERT INTO "sdk_key_host_allowlist" ("id", "sdkKeyId", "sandboxHostId", "createdAt")
 VALUES ('fx_host_grant', 'fx_sdk', 'fx_host', '2026-11-12 12:00:00');
 
+INSERT INTO "host_file_receipt" ("id", "userId", "sandboxHostId", "sdkKeyId", "idempotencyKey", "requestHmac", "state", "result", "expiresAt", "createdAt", "updatedAt")
+VALUES ('fx_host_file_receipt', 'fx_user_plain', 'fx_host', 'fx_sdk', 'fx-write-key', 'hmac-sha256:synthetic-not-a-request-digest', 'SUCCEEDED', '{"etag":"h:AAAAAAAAAAAAAAAAAAAAAA","size":2,"created":true}', '2026-11-19 12:00:00', '2026-11-12 12:00:00', '2026-11-12 12:00:00');
+
 INSERT INTO "sdk_key_revision_allowlist" ("id", "userId", "sdkKeyId", "templateRevisionId", "createdAt")
 VALUES ('fx_revision_grant', 'fx_user_plain', 'fx_sdk', 'fx_revision', '2026-11-12 12:00:00');
 

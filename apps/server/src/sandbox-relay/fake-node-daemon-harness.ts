@@ -130,6 +130,9 @@ export class FakeNodeDaemon {
   };
   private agentSequence = 0;
   readonly hostCommands = new Map<string, HostCommandStatus>();
+  /** `host.file.result` body for a file request (default `not_found`);
+   * `null` drops the request unanswered, as a node that dies mid-request. */
+  hostFileReply: (request: Json) => Json | null = () => ({ ok: false, error: "not_found" });
   async reportAgentPolicy() {
     const hello = this.received.findLast((f) => f.type === "hello.ok");
     if (!hello) throw new Error("not connected");
@@ -587,19 +590,14 @@ export class FakeNodeDaemon {
           ),
         );
         return;
-      case "host.file.request":
+      case "host.file.request": {
+        const reply = this.hostFileReply(message);
+        if (!reply) return;
         this.track(
-          this.text(
-            {
-              type: "host.file.result",
-              requestId: message.requestId,
-              ok: false,
-              error: "not_found",
-            },
-            socket,
-          ),
+          this.text({ type: "host.file.result", requestId: message.requestId, ...reply }, socket),
         );
         return;
+      }
 
       case "allocation.attest.request":
         this.track(

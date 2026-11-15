@@ -26,6 +26,7 @@ import {
   S3_IMAGE,
   waitForReady,
 } from "./lib/s3-gateway.mjs";
+import { testContainerPrefix } from "./lib/test-container-prefix.mjs";
 
 const LABEL = "wssp.disposable-s3";
 const ROOT = resolve(import.meta.dirname, "..");
@@ -39,7 +40,7 @@ async function main() {
     console.error(`[test:s3] image ${S3_IMAGE} is not present; run: pnpm test:s3:pull-image`);
     return 1;
   }
-  const name = `wssp-s3-${randomUUID()}`;
+  const name = `${testContainerPrefix()}-s3-${randomUUID()}`;
   const access = `wssp${randomBytes(8).toString("hex")}`;
   const secret = randomBytes(24).toString("base64url");
   const secrets = disposableDirectory("wssp-s3-env-");

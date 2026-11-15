@@ -10,7 +10,26 @@ walkthrough.
 pnpm dokploy:config --environment production --git-ref <immutable-tag> --url https://sandbox.example.com --project wssp --proxy-network dokploy-network
 ```
 
-Import the generated Compose file into Dokploy. `app` (default) runs one server
+Paste the generated Compose file into Dokploy (Compose). Every image builds
+from the pinned Git context `<repository URL>#<git-ref>` (production: the
+immutable `release/<sha>` tag), so the pasted Compose needs no source tree: the
+Dokploy server's Docker fetches the ref itself on each deploy. The URL defaults
+to the checkout's `origin` remote; pass `--git-url <URL>` for another
+(https://, ssh:// or `git@host:owner/repo.git`). It must be fetchable by Docker
+on the Dokploy server (a public repository, or an SSH URL whose key that Docker
+can use) and may not carry credentials: the generator refuses a token in the
+URL, because the file is stored in Dokploy. `--git-url local` writes
+`context: .`, only for plain `docker compose` in a checkout. The checklist's
+`compose.buildContext` repeats the choice. The build's commit comes only from
+`BUILD_VERSION` (the image never reads `.git`, which `.dockerignore` excludes):
+production defaults it to the tag's SHA; for development set `BUILD_VERSION` to
+the deployed `main` SHA in Dokploy's environment, or `/ready` reports no commit.
+
+`MCP_ENABLED` is forwarded to the server as an optional key: leave it empty for
+the default (MCP on) or set `false` in Dokploy's environment to turn the MCP
+endpoint and its OAuth provider off ([environment variables](./environment-variables.md)).
+
+`app` (default) runs one server
 with embedded jobs plus Postgres 18 and Valkey 9 (`noeviction`). `--topology
 app-worker` adds a dedicated worker and sets `WORKER_MODE=external`. Backups default off; no backup settings, volume or sidecar are required.
 Regenerate with `--backups true` to add the optional backup profile and volume. No role uses a dedicated migration image.
@@ -146,8 +165,11 @@ except the Apple touch icon are generated from `apps/web/assets/logo.png`
    the source; move `favicon.ico`, `pwa-64x64.png`, `pwa-192x192.png`,
    `pwa-512x512.png` and `maskable-icon-512x512.png` into `apps/web/public/`,
    keeping those names, and leave only `logo.png` in `apps/web/assets/`.
-   `apple-touch-icon-180x180.png` is not generated;
-   keep the existing public file until Apple-style tiles are supplied.
+   `apple-touch-icon-180x180.png` is not generated: it is the owner's
+   Apple-style tile, kept by hand. To replace it, start from a 1024×1024 tile,
+   fill its transparent rounded corners from the tile's own edge colour (iOS
+   applies its own mask and renders transparency as black), and save a
+   full-bleed, opaque 180×180 PNG (no alpha channel) under that name.
 3. If the background no longer matches the icon, update the install colours
    `theme_color` and `background_color` in `apps/web/vite.config.ts`. Keep them
    in step with `theme-init.ts` and `use-theme-color-meta.ts`.

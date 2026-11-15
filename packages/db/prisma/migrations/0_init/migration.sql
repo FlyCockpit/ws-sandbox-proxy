@@ -18,6 +18,9 @@ CREATE TYPE "SdkKeyKind" AS ENUM ('API', 'AGENT_TOKEN', 'OAUTH_GRANT');
 CREATE TYPE "HostQueuedCommandState" AS ENUM ('QUEUED', 'RUN', 'DISMISSED', 'EXPIRED', 'REFUSED');
 
 -- CreateEnum
+CREATE TYPE "HostFileReceiptState" AS ENUM ('PENDING', 'SUCCEEDED', 'UNKNOWN');
+
+-- CreateEnum
 CREATE TYPE "HostAuditKind" AS ENUM ('COMMAND', 'COMMAND_QUEUED', 'QUEUED_RUN', 'QUEUED_DISMISSED', 'FILE_READ', 'FILE_LIST', 'FILE_WRITE', 'FILE_EDIT', 'POLICY_LOWER', 'POLICY_VETO_LIFT');
 
 -- CreateEnum
@@ -191,6 +194,23 @@ CREATE TABLE "host_queued_command" (
     "decidedBy" TEXT,
 
     CONSTRAINT "host_queued_command_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "host_file_receipt" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "userId" TEXT NOT NULL,
+    "sandboxHostId" TEXT NOT NULL,
+    "sdkKeyId" TEXT NOT NULL,
+    "idempotencyKey" TEXT NOT NULL,
+    "requestHmac" TEXT NOT NULL,
+    "state" "HostFileReceiptState" NOT NULL DEFAULT 'PENDING',
+    "result" JSONB,
+
+    CONSTRAINT "host_file_receipt_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -2165,6 +2185,18 @@ CREATE INDEX "host_queued_command_userId_state_createdAt_idx" ON "host_queued_co
 CREATE INDEX "host_queued_command_sandboxHostId_state_idx" ON "host_queued_command"("sandboxHostId", "state");
 
 -- CreateIndex
+CREATE INDEX "host_file_receipt_expiresAt_idx" ON "host_file_receipt"("expiresAt");
+
+-- CreateIndex
+CREATE INDEX "host_file_receipt_sandboxHostId_idx" ON "host_file_receipt"("sandboxHostId");
+
+-- CreateIndex
+CREATE INDEX "host_file_receipt_userId_idx" ON "host_file_receipt"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "host_file_receipt_sdkKeyId_idempotencyKey_key" ON "host_file_receipt"("sdkKeyId", "idempotencyKey");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "host_audit_event_commandId_key" ON "host_audit_event"("commandId");
 
 -- CreateIndex
@@ -3066,6 +3098,15 @@ ALTER TABLE "host_queued_command" ADD CONSTRAINT "host_queued_command_sandboxHos
 
 -- AddForeignKey
 ALTER TABLE "host_queued_command" ADD CONSTRAINT "host_queued_command_sdkKeyId_fkey" FOREIGN KEY ("sdkKeyId") REFERENCES "sdk_key"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_file_receipt" ADD CONSTRAINT "host_file_receipt_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_file_receipt" ADD CONSTRAINT "host_file_receipt_sandboxHostId_userId_fkey" FOREIGN KEY ("sandboxHostId", "userId") REFERENCES "sandbox_host"("id", "userId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_file_receipt" ADD CONSTRAINT "host_file_receipt_sdkKeyId_userId_fkey" FOREIGN KEY ("sdkKeyId", "userId") REFERENCES "sdk_key"("id", "userId") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "session" ADD CONSTRAINT "session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;

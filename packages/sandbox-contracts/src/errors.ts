@@ -14,6 +14,10 @@ export const SDK_ERRORS = {
   "host.command_not_found": [404, "Host command not found."],
   "host_queue.limit": [409, "Queued host command limit reached."],
   "host.file_error": [422, "Host file operation failed."],
+  "host.file_outcome_unknown": [
+    409,
+    "The host file change was sent but its outcome is unknown; read the file before changing it again.",
+  ],
   OPERATION_RESULT_NOT_READY: [409, "Operation result is not ready."],
   OPERATION_RESULT_UNSUPPORTED: [400, "Operation has no supported typed result."],
   OPERATION_RESULT_EXPIRED: [410, "Operation result has expired; status remains available."],

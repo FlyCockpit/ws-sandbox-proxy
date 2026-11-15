@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 const transaction = vi.hoisted(() => vi.fn());
-vi.mock("@wssp/db", () => ({ default: { $transaction: transaction } }));
+const findTemplates = vi.hoisted(() => vi.fn());
+vi.mock("@wssp/db", () => ({
+  default: { $transaction: transaction, sandboxTemplate: { findMany: findTemplates } },
+}));
 vi.mock("@wssp/env/server", () => ({ env: {} }));
 vi.mock("@wssp/queue", () => ({ redisConnection: {} }));
 const config = vi.hoisted(() => ({
@@ -22,9 +25,12 @@ vi.mock("../../sandbox/image-store/config", async (original) => ({
   imageDistributionMode: () => mode.value,
 }));
 
-const { createCommunityTemplate, communityTimeoutMinutes, listCommunityImages } = await import(
-  "./service"
-);
+const {
+  createCommunityTemplate,
+  communityTimeoutMinutes,
+  listCommunityImages,
+  runCommunityRefreshScan,
+} = await import("./service");
 const { COMMUNITY_IMAGES } = await import("./catalog");
 
 const session = { kind: "session" as const, ownerId: "owner-1" };
@@ -92,5 +98,42 @@ describe("community create refusals before any row (S8 order)", () => {
 
   it("lists tested entries only", () => {
     expect(listCommunityImages().images.map((image) => image.id)).toEqual(["ubuntu-26.04"]);
+  });
+});
+
+describe("daily refresh scan (S10)", () => {
+  const live = { id: "t1", userId: "owner-1", communitySource: COMMUNITY_IMAGES[0]!.id };
+
+  it("reads nothing while builds or image distribution are off", async () => {
+    findTemplates.mockClear();
+    index.newest.mockClear();
+    config.enabled = false;
+    config.reason = "off";
+    await expect(runCommunityRefreshScan(new Date(), index as never)).resolves.toEqual({
+      started: 0,
+      skipped: 0,
+      stopped: false,
+    });
+    config.enabled = true;
+    config.reason = null;
+    mode.value = "off";
+    await runCommunityRefreshScan(new Date(), index as never);
+    mode.value = "peer";
+    expect(findTemplates).not.toHaveBeenCalled();
+    expect(index.newest).not.toHaveBeenCalled();
+  });
+
+  it("stops between templates when asked, before any index read or transaction", async () => {
+    findTemplates.mockClear().mockResolvedValueOnce([live]);
+    index.newest.mockClear();
+    transaction.mockClear();
+    await expect(runCommunityRefreshScan(new Date(), index as never, () => true)).resolves.toEqual({
+      started: 0,
+      skipped: 0,
+      stopped: true,
+    });
+    expect(findTemplates).toHaveBeenCalledTimes(1);
+    expect(index.newest).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

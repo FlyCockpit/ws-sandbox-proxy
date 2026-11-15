@@ -802,16 +802,23 @@ const REFRESH_PAGE = 32;
  * The daily refresh scan (S10): every live community template, paged by
  * cursor, `take: 32`. One index read per catalog entry per scan (outside any
  * transaction); each template is refreshed in its own short transaction.
+ * Server-only: a new upstream revision's private defaults row is MACed with
+ * the server's request secret (`refresh-schedule.ts` runs it). `shouldStop`
+ * is checked between templates; a stopped scan reports `stopped: true`.
  */
 export async function runCommunityRefreshScan(
   now: Date = new Date(),
   index: CommunityIndexClient = communityIndexClient(),
-): Promise<{ started: number; skipped: number }> {
+  shouldStop: () => boolean = () => false,
+): Promise<{ started: number; skipped: number; stopped: boolean }> {
+  // Builds or image distribution off: no index read and nothing to accept.
+  if (communityDisabledReason() !== null) return { started: 0, skipped: 0, stopped: false };
   const pins = new Map<string, UpstreamPin | null>();
   let started = 0;
   let skipped = 0;
+  let stopped = false;
   let cursor: string | null = null;
-  for (;;) {
+  scan: for (;;) {
     const page: { id: string; userId: string; communitySource: string | null }[] =
       await prisma.sandboxTemplate.findMany({
         where: {
@@ -825,6 +832,10 @@ export async function runCommunityRefreshScan(
         take: REFRESH_PAGE,
       });
     for (const template of page) {
+      if (shouldStop()) {
+        stopped = true;
+        break scan;
+      }
       const entry = template.communitySource ? communityImage(template.communitySource) : null;
       if (!entry) continue;
       if (!pins.has(entry.id)) pins.set(entry.id, await index.newest(entry).catch(() => null));
@@ -859,7 +870,7 @@ export async function runCommunityRefreshScan(
     cursor = page.at(-1)?.id ?? null;
   }
   if (started > 0) notifyTemplateBuildsChanged();
-  return { started, skipped };
+  return { started, skipped, stopped };
 }
 
 /**

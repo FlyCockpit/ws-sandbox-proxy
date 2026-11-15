@@ -153,6 +153,7 @@ export const ACCOUNT_DELETION_CLASSIFICATION: readonly AccountDeletionClassifica
   ...[
     ["McpGrant", "mcp_grant"],
     ["HostQueuedCommand", "host_queued_command"],
+    ["HostFileReceipt", "host_file_receipt"],
     ["OauthClient", "oauth_client"],
     ["OauthRefreshToken", "oauth_refresh_token"],
     ["OauthAccessToken", "oauth_access_token"],

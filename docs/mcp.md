@@ -132,9 +132,12 @@ with the same validation as `/v1`'s `Idempotency-Key`. When omitted, a key is
 generated and returned on success or service failure. Retain the key and retry
 the exact same arguments after a lost response; changing arguments under that
 key can produce an idempotency conflict. Host read/list POST operations preserve
-the native requirement for a key as well. Host file writes and edits are not replayed
-from the key: a retry runs again, so pass the `expectedEtag` from the last read
-to make an edit retry fail instead of applying twice. Node access policy and resource
+the native requirement for a key as well. Host file writes and edits replay from
+the key like `/v1`: the same credential, key and arguments return the stored
+result without touching the file again, and different arguments return
+`sandbox.idempotency_conflict`. If the node was lost after the change was sent,
+the key answers `host.file_outcome_unknown`; read the file before writing again
+under a new key. Node access policy and resource
 permission failures require a person or operator decision; they should not be
 retried blindly. Retryable capacity failures include the deployment's
 `CAPACITY_RETRY_AFTER_SECONDS`; nonretryable failures omit retry delays.

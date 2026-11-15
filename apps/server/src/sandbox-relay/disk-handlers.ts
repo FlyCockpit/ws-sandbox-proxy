@@ -28,6 +28,7 @@ import {
 } from "@wssp/api/sandbox/image-store/config";
 import {
   IMAGE_ENCRYPTION_SCHEME,
+  ImageObjectExistsError,
   type ImageStore,
   imageStore,
 } from "@wssp/api/sandbox/image-store/s3";
@@ -758,7 +759,16 @@ export async function handleDiskUploadComplete(
       session.uploadId,
       listed.map((p) => ({ n: p.n, etag: p.etag })),
     );
-  } catch {
+  } catch (error) {
+    // Create-only refusal at this session's own key (a retried Complete whose
+    // first response was lost): nothing was overwritten and the store aborted
+    // the upload. The object is not assumed to be ours: it stays VERIFYING and
+    // the disk verify job proves it (authenticated decryption under this
+    // session's wrap, SHA-256 and size) or fails it as corrupt and deletes it.
+    if (error instanceof ImageObjectExistsError) {
+      await enqueueVerify(m.offloadId);
+      return;
+    }
     // The claimed object never appeared: the attempt fails (the disk stays
     // local) and the upload is aborted.
     await failOffload(store, m.sandboxId, m.offloadId, "store_unavailable");

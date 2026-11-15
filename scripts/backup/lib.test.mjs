@@ -237,6 +237,7 @@ case "$1" in
       *) exit 2 ;;
     esac ;;
   network) [ "$3" = project-private ] ;;
+  image) [ "$2" = inspect ] && [ "$3" = app-image ] ;;
   run)
     printf '%s\\n' "$@" > "$HOST_FIXTURE_RESULT.args"
     while [ "$1" != --env-file ]; do shift; done

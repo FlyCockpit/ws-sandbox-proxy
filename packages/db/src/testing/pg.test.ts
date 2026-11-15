@@ -21,7 +21,13 @@ it("the per-file drop refuses any target but a clone this process made on the ha
   const created = new Set([CLONE]);
   const ok = { adminUrl: ADMIN, container: `${CONTAINER}:41234`, clone: CLONE, created };
   expect(dropRefusal(ok)).toBeUndefined();
+  // TEST_CONTAINER_PREFIX renames the harness container; the guard follows.
+  expect(
+    dropRefusal({ ...ok, container: `rp5-52a-wssp-test-pg-${CONTAINER.slice(13)}:41234` }),
+  ).toBeUndefined();
   for (const [change, reason] of [
+    [{ container: `wssp-dev-${CONTAINER.slice(5)}-x:41234` }, /not one `pnpm test:pg` started/],
+    [{ container: `Bad-${CONTAINER}:41234` }, /not one `pnpm test:pg` started/],
     [{ container: "wssp-dev-postgres:41234" }, /not one `pnpm test:pg` started/],
     [{ container: CONTAINER }, /not one `pnpm test:pg` started/],
     [{ adminUrl: "postgresql://postgres:pw@db.example.com:41234/postgres" }, /loopback/],

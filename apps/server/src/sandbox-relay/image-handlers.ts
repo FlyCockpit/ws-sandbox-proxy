@@ -11,10 +11,12 @@ import {
 import { unrecordedForeignCaptureReleasable } from "@wssp/api/sandbox/image-store/references";
 import {
   IMAGE_ENCRYPTION_SCHEME,
+  ImageObjectExistsError,
   imageMasterKey,
   imageObjectKey,
   imageStore,
   newDataKey,
+  newImageSessionId,
   unwrapDataKey,
   wrapDataKey,
 } from "@wssp/api/sandbox/image-store/s3";
@@ -1261,7 +1263,16 @@ export async function handleImageUploadBegin(
       )
         return { kind: "cancel", reason: "image_quota_exceeded" };
       const encrypted = master !== null;
-      const objectKey = imageObjectKey(store.settings.prefix, ownerId, m.fingerprint, encrypted);
+      // One object key per session: completion is create-only, and two
+      // sessions never write the same key.
+      const sessionId = newImageSessionId();
+      const objectKey = imageObjectKey(
+        store.settings.prefix,
+        ownerId,
+        m.fingerprint,
+        sessionId,
+        encrypted,
+      );
       const storedBytes = BigInt(encrypted ? encryptedImageLength(m.sizeBytes) : m.sizeBytes);
       const sessionPartSize = encrypted
         ? (IMAGE_S3_PART_BYTES / (1024 * 1024)) * (1024 * 1024 + 16)
@@ -1356,6 +1367,7 @@ export async function handleImageUploadBegin(
       }
       const session = await tx.sandboxImageUploadSession.create({
         data: {
+          id: sessionId,
           transferId,
           artifactId: artifact.id,
           liveArtifactId: artifact.id,
@@ -1679,7 +1691,19 @@ export async function handleImageUploadComplete(
       session.uploadId,
       listed.map((p) => ({ n: p.n, etag: p.etag })),
     );
-  } catch {
+  } catch (error) {
+    // Create-only refusal: an object already sits at this session's own key
+    // (in practice the SDK retried a Complete whose first response was lost).
+    // Nothing was overwritten and the store already aborted the upload. The
+    // object is not assumed to be ours: the artifact stays VERIFYING and the
+    // verify job re-reads it, which proves it is exactly this image (its
+    // SHA-256 and size, and for an encrypted object authenticated decryption
+    // under this session's data key) before it is STORED; anything else is
+    // CORRUPT and deleted.
+    if (error instanceof ImageObjectExistsError) {
+      await enqueueVerify(session.artifactId);
+      return;
+    }
     // The claimed object never appeared: the artifact fails (its waiting
     // capture fails with it) and the upload is aborted.
     await prisma.sandboxImageArtifact.updateMany({

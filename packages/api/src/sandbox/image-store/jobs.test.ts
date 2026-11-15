@@ -14,7 +14,7 @@ vi.mock("@wssp/queue", () => queue);
 
 import { diskStoreObjectKey, enqueueDiskVerify } from "../disk-offload/store";
 import { enqueueImageVerify, parseImageObjectKey, verifyImageArtifact } from "./jobs";
-import { type ImageStore, wrapDataKey } from "./s3";
+import { type ImageStore, imageObjectKey, newImageSessionId, wrapDataKey } from "./s3";
 
 const { default: prisma } = await import("@wssp/db");
 const db = vi.mocked(prisma, true);
@@ -188,11 +188,19 @@ describe("enqueueImageVerify", () => {
 describe("object layouts (offload plan §6 sweeper)", () => {
   it("parses template images and disk session objects; anything else is unknown", () => {
     const fp = "a".repeat(64);
-    expect(parseImageObjectKey("wssp", `wssp/owners/o1/${fp}/image.tar.wsspenc`)).toEqual({
+    const image = imageObjectKey("wssp", "o1", `sha256:${fp}`, "ises_1", true);
+    expect(image).toBe(`wssp/owners/o1/${fp}/ises_1/image.tar.wsspenc`);
+    expect(parseImageObjectKey("wssp", image)).toEqual({
       kind: "image",
       ownerId: "o1",
       fingerprint: `sha256:${fp}`,
+      sessionId: "ises_1",
     });
+    // The per-fingerprint layout without a session is not a template image.
+    expect(parseImageObjectKey("wssp", `wssp/owners/o1/${fp}/image.tar`)).toBeNull();
+    expect(() => imageObjectKey("wssp", "o1", `sha256:${fp}`, "a/b", false)).toThrow();
+    expect(newImageSessionId()).toMatch(/^ises_[0-9a-f]{32}$/);
+    expect(newImageSessionId()).not.toBe(newImageSessionId());
     const key = diskStoreObjectKey("wssp", {
       ownerId: "o1",
       sandboxId: "s1",

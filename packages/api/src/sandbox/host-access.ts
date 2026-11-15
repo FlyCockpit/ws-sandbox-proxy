@@ -81,6 +81,24 @@ export function hostAccess(): HostAccessBridge {
   if (!bridge) throw hostAccessError("host.node_offline");
   return bridge;
 }
+/** Marks a failure observed AFTER a request frame reached the node socket
+ * (timeout, disconnect): the effect may have happened. A registered symbol
+ * property survives duplicate module instances and never serializes. */
+const DISPATCH_UNKNOWN = Symbol.for("wssp.hostDispatchOutcomeUnknown");
+export function hostDispatchOutcomeUnknown<E extends object>(error: E): E {
+  Object.defineProperty(error, DISPATCH_UNKNOWN, { value: true });
+  return error;
+}
+export function isHostDispatchOutcomeUnknown(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as Record<symbol, unknown>)[DISPATCH_UNKNOWN] === true
+  );
+}
+export function hostFileOutcomeUnknown() {
+  return new ORPCError("CONFLICT", { data: { code: "host.file_outcome_unknown" } });
+}
 export function hostAccessError(
   code:
     | "host.not_owned"

@@ -52,6 +52,8 @@ const fakeS3 = vi.hoisted(() => ({
   created: [] as Array<string | Promise<string>>,
   calls: [] as string[],
   listed: [] as Array<{ n: number; size: number; etag: string }>,
+  /** Thrown by the next Complete (then cleared). */
+  completeError: null as unknown,
 }));
 vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
   const real = await importOriginal<typeof import("@wssp/api/sandbox/image-store/s3")>();
@@ -69,6 +71,9 @@ vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
     },
     completeMultipart: async (_key: string, upload: string) => {
       fakeS3.calls.push(`complete:${upload}`);
+      const error = fakeS3.completeError;
+      fakeS3.completeError = null;
+      if (error) throw error;
     },
     abortMultipart: async (_key: string, upload: string) => {
       fakeS3.calls.push(`abort:${upload}`);
@@ -610,7 +615,14 @@ describe("each upload owns an immutable session (round-5 P2-2)", () => {
   const SIZE = 4096;
   const STORED = encryptedImageLength(SIZE);
   afterEach(() => {
-    Object.assign(fakeS3, { on: false, master: null, created: [], calls: [], listed: [] });
+    Object.assign(fakeS3, {
+      on: false,
+      master: null,
+      created: [],
+      calls: [],
+      listed: [],
+      completeError: null,
+    });
   });
   function encrypted() {
     Object.assign(fakeS3, {
@@ -727,5 +739,71 @@ describe("each upload owns an immutable session (round-5 P2-2)", () => {
     expect(done.replies).toEqual([]);
     expect(fakeS3.calls).toContain("complete:upload-a");
     expect(await artifactKey(f.ownerId, fingerprint)).toBe(grant.encryption?.key);
+  });
+
+  it("every session of one image gets its own object key (create-only objects never share one)", async () => {
+    const f = await fixture();
+    const a = await capture(f, 1);
+    const b = await capture(f, 1);
+    encrypted();
+    fakeS3.created.push("upload-a", "upload-b");
+    const fingerprint = fpOf();
+    const first = frameCtx(f);
+    await handleImageUploadBegin(first.ctx, begin(a.id, 1, randomUUID(), fingerprint));
+    const grantA = first.replies.at(-1) as Grant & { type: string };
+    expect(grantA.type).toBe("image.upload.grant");
+    // The first attempt's job ends; a new begin supersedes its session.
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: grantA.transferId },
+      data: { state: "CANCELLED" },
+    });
+    const second = frameCtx(f);
+    await handleImageUploadBegin(second.ctx, begin(b.id, 1, randomUUID(), fingerprint));
+    expect(second.replies.at(-1)).toMatchObject({ type: "image.upload.grant" });
+    const rows = await db.inspect.sandboxImageUploadSession.findMany({
+      where: { userId: f.ownerId },
+      select: { id: true, objectKey: true },
+    });
+    expect(rows).toHaveLength(2);
+    for (const row of rows)
+      expect(row.objectKey).toBe(
+        `test/owners/${f.ownerId}/${fingerprint.slice(7)}/${row.id}/image.tar.wsspenc`,
+      );
+    expect(new Set(rows.map((r) => r.objectKey)).size).toBe(2);
+  });
+
+  it("a create-only refusal at Complete keeps VERIFYING and hands the object to verify; any other failure fails it", async () => {
+    const { ImageObjectExistsError } = await import("@wssp/api/sandbox/image-store/s3");
+    const f = await fixture();
+    for (const refusal of [true, false]) {
+      const op = await capture(f, 1);
+      encrypted();
+      fakeS3.created.push(refusal ? "upload-refused" : "upload-outage");
+      const fingerprint = fpOf();
+      const started = frameCtx(f);
+      await handleImageUploadBegin(started.ctx, begin(op.id, 1, randomUUID(), fingerprint));
+      const grant = started.replies.at(-1) as Grant & { type: string };
+      expect(grant.type).toBe("image.upload.grant");
+      fakeS3.completeError = refusal
+        ? new ImageObjectExistsError("key", 412)
+        : Object.assign(new Error("InternalError"), { name: "InternalError" });
+      const done = await finish(f, grant);
+      const artifact = await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+        where: { userId_fingerprint: { userId: f.ownerId, fingerprint } },
+      });
+      if (refusal) {
+        // Nothing was overwritten and nothing is assumed: the verify job decides.
+        expect(done.replies).toEqual([]);
+        expect(done.verified).toEqual([artifact.id]);
+        expect(artifact.state).toBe("VERIFYING");
+      } else {
+        expect(done.replies).toEqual([
+          { type: "image.job.cancel", transferId: grant.transferId, reason: "store_unavailable" },
+        ]);
+        expect(done.verified).toEqual([]);
+        expect(artifact.state).toBe("FAILED");
+        expect(fakeS3.calls).toContain("abort:upload-outage");
+      }
+    }
   });
 });

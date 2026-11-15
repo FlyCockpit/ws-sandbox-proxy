@@ -12,6 +12,7 @@ import {
   type HostFileRequest,
   type HostNodeOffWitness,
   hostAccessError,
+  hostDispatchOutcomeUnknown,
 } from "../../../../packages/api/src/sandbox/host-access.js";
 import {
   interruptHostCommands,
@@ -137,7 +138,8 @@ export class HostAccessRelay implements HostAccessBridge {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(frame.requestId);
-        reject(hostAccessError("host.node_offline"));
+        // The frame was sent: no answer is not proof that nothing happened.
+        reject(hostDispatchOutcomeUnknown(hostAccessError("host.node_offline")));
       }, timeoutMs);
       timer.unref?.();
       this.pending.set(frame.requestId, {
@@ -302,7 +304,7 @@ export class HostAccessRelay implements HostAccessBridge {
       if (pending.link.socket === socket) {
         this.pending.delete(id);
         clearTimeout(pending.timer);
-        pending.reject(hostAccessError("host.node_offline"));
+        pending.reject(hostDispatchOutcomeUnknown(hostAccessError("host.node_offline")));
       }
     await interruptHostCommands(hostId, ownerId);
   }

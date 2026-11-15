@@ -56,11 +56,36 @@ async function put(url: string, body: Uint8Array) {
   return fetch(url, { method: "PUT", body, headers: { "content-length": String(body.length) } });
 }
 
+/** A one-part multipart upload of `body` to `key`, ready to complete. */
+async function stage(key: string, body: Uint8Array) {
+  const uploadId = await store.createMultipart(key);
+  expect(
+    (await put(await store.presignUploadPart(key, uploadId, 1, body.length), body)).status,
+  ).toBe(200);
+  return { uploadId, parts: await store.listParts(key, uploadId) };
+}
+
+async function stored(key: string): Promise<Uint8Array | null> {
+  const response = await fetch(await store.presignGet(key));
+  if (response.status === 404) return null;
+  expect(response.status).toBe(200);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+const freshKey = () =>
+  s3.imageObjectKey(
+    settings.prefix,
+    "owner-c",
+    sha(randomBytes(16)),
+    s3.newImageSessionId(),
+    false,
+  );
+
 describe("image store against a real S3 gateway", () => {
   it("presigned multipart upload (signed Content-Length, no checksum params), ListParts sizes, GET round trip", async () => {
     const image = randomBytes(5 * MIB + 123);
     const fp = sha(image);
-    const key = s3.imageObjectKey(settings.prefix, "owner-a", fp, false);
+    const key = s3.imageObjectKey(settings.prefix, "owner-a", fp, s3.newImageSessionId(), false);
     const uploadId = await store.createMultipart(key);
     const parts = [image.subarray(0, 5 * MIB), image.subarray(5 * MIB)];
     for (const [index, body] of parts.entries()) {
@@ -80,7 +105,13 @@ describe("image store against a real S3 gateway", () => {
   });
 
   it("refuses a part whose length differs from the signed Content-Length (M9)", async () => {
-    const key = s3.imageObjectKey(settings.prefix, "owner-a", `sha256:${"c".repeat(64)}`, false);
+    const key = s3.imageObjectKey(
+      settings.prefix,
+      "owner-a",
+      `sha256:${"c".repeat(64)}`,
+      s3.newImageSessionId(),
+      false,
+    );
     const uploadId = await store.createMultipart(key);
     const url = await store.presignUploadPart(key, uploadId, 1, 10);
     const response = await put(url, randomBytes(11));
@@ -102,7 +133,7 @@ describe("image store against a real S3 gateway", () => {
         s3.encryptRecord(dataKey, 1, true, image.subarray(MIB)),
       ]);
       if (tamper) sealed[10] ^= 1;
-      const key = s3.imageObjectKey(settings.prefix, "owner-b", fp, true);
+      const key = s3.imageObjectKey(settings.prefix, "owner-b", fp, s3.newImageSessionId(), true);
       const uploadId = await store.createMultipart(key);
       expect(
         (await put(await store.presignUploadPart(key, uploadId, 1, sealed.length), sealed)).status,
@@ -122,6 +153,52 @@ describe("image store against a real S3 gateway", () => {
       expect(rows.get(id)?.state).toBe(tamper ? "CORRUPT" : "STORED");
       const after = await fetch(await store.presignGet(key));
       expect(after.status).toBe(tamper ? 404 : 200);
+    }
+  });
+
+  it("create-only: a multipart completion onto an existing object is refused, aborted, and the original is unchanged", async () => {
+    const key = freshKey();
+    const original = randomBytes(64 * 1024);
+    const first = await stage(key, original);
+    await store.completeMultipart(key, first.uploadId, first.parts);
+    const second = await stage(key, randomBytes(64 * 1024));
+    const refused = await store
+      .completeMultipart(key, second.uploadId, second.parts)
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(s3.ImageObjectExistsError);
+    expect((refused as InstanceType<typeof s3.ImageObjectExistsError>).status).toBe(412);
+    expect(Buffer.from((await stored(key))!).equals(original)).toBe(true);
+    // The refused upload was aborted: its parts are gone.
+    await expect(store.listParts(key, second.uploadId)).rejects.toMatchObject({
+      name: "NoSuchUpload",
+    });
+    // A repeated Complete of the already-completed upload (an SDK retry after
+    // a lost response) is refused the same way (412, not an idempotent 200):
+    // the relay hands that object to the verify job instead of failing it.
+    await expect(store.completeMultipart(key, first.uploadId, first.parts)).rejects.toMatchObject({
+      name: "ImageObjectExistsError",
+      status: 412,
+    });
+    expect(Buffer.from((await stored(key))!).equals(original)).toBe(true);
+  });
+
+  it("create-only race: two uploads of different bytes to one new key complete together; exactly one wins", async () => {
+    for (let round = 0; round < 5; round++) {
+      const key = freshKey();
+      const bodies = [randomBytes(256 * 1024), randomBytes(256 * 1024)];
+      const staged = await Promise.all(bodies.map((body) => stage(key, body)));
+      expect(await stored(key)).toBeNull();
+      const results = await Promise.allSettled(
+        staged.map((s) => store.completeMultipart(key, s.uploadId, s.parts)),
+      );
+      const winners = results.flatMap((r, i) => (r.status === "fulfilled" ? [i] : []));
+      expect(winners).toHaveLength(1);
+      const loser = results[1 - winners[0]!] as PromiseRejectedResult;
+      expect(loser.reason).toBeInstanceOf(s3.ImageObjectExistsError);
+      expect(Buffer.from((await stored(key))!).equals(bodies[winners[0]!]!)).toBe(true);
+      await expect(store.listParts(key, staged[1 - winners[0]!]!.uploadId)).rejects.toMatchObject({
+        name: "NoSuchUpload",
+      });
     }
   });
 

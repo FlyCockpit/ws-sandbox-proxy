@@ -1,4 +1,5 @@
 import prisma, { type Prisma } from "@wssp/db";
+import { forEachPage, keysetWhere } from "../lib/pagination";
 /** Bounded reaping on the existing cleanup schedule; predicates rechecked at delete. */
 export async function sweepHostAccessRetention(now = new Date(), batch = 500) {
   const limit = Math.min(1000, Math.max(1, batch));
@@ -38,5 +39,26 @@ export async function sweepHostAccessRetention(now = new Date(), batch = 500) {
         })
       ).count
     : 0;
-  return { queued: queuedDeleted, audit: auditDeleted };
+  // Expired host file receipts (7 days after creation): keyset batches that
+  // delete as they go; the expiry predicate is rechecked at delete time.
+  let fileReceipts = 0;
+  const receiptWhere = { expiresAt: { lte: now } };
+  await forEachPage(
+    ({ take, afterId }) =>
+      prisma.hostFileReceipt.findMany({
+        where: { ...receiptWhere, ...keysetWhere(afterId) },
+        orderBy: { id: "asc" },
+        take,
+        select: { id: true },
+      }),
+    limit,
+    async (rows) => {
+      fileReceipts += (
+        await prisma.hostFileReceipt.deleteMany({
+          where: { ...receiptWhere, id: { in: rows.map((r) => r.id) } },
+        })
+      ).count;
+    },
+  );
+  return { queued: queuedDeleted, audit: auditDeleted, fileReceipts };
 }

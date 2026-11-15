@@ -217,7 +217,10 @@ describe("disk offload objects against a real S3 gateway", () => {
     });
     const sealed = await upload(key, plain, dek);
     sealed[100] = (sealed[100] ?? 0) ^ 1;
-    // Re-upload the tampered bytes under the same key.
+    // Re-upload the tampered bytes under the same key. Objects are
+    // create-only, so the original is deleted first (a Complete onto it is
+    // refused).
+    await objectStore.deleteObject(key);
     const uploadId = await objectStore.createMultipart(key);
     const url = await objectStore.presignUploadPart(key, uploadId, 1, sealed.length);
     await fetch(url, {

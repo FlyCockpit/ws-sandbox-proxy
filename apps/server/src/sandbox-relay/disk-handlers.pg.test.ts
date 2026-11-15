@@ -31,6 +31,8 @@ const s3 = vi.hoisted(() => ({
   uploads: 0,
   listed: new Map<string, { n: number; size: number; etag: string }[]>(),
   calls: [] as string[],
+  /** Thrown by the next Complete (then cleared). */
+  completeError: null as unknown,
 }));
 vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
   const real = await importOriginal<typeof import("@wssp/api/sandbox/image-store/s3")>();
@@ -56,6 +58,9 @@ vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
     listParts: async (_key: string, uploadId: string) => s3.listed.get(uploadId) ?? [],
     completeMultipart: async (_key: string, uploadId: string) => {
       s3.calls.push(`complete ${uploadId}`);
+      const error = s3.completeError;
+      s3.completeError = null;
+      if (error) throw error;
     },
     abortMultipart: async (_key: string, uploadId: string) => {
       s3.calls.push(`abort ${uploadId}`);
@@ -472,6 +477,38 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect(w.last()).toMatchObject({ type: "disk.offload.cancel", reason: "stale" });
     expect(s3.calls).toEqual([]);
     expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a create-only refusal at Complete keeps VERIFYING for the verify job; any other failure fails the attempt", async () => {
+    const { ImageObjectExistsError } = await import("@wssp/api/sandbox/image-store/s3");
+    const refused = await opened();
+    listAll(refused.session, [3 * (MIB + 16)]);
+    s3.completeError = new ImageObjectExistsError(refused.session.objectKey, 412);
+    const enqueue = vi.fn(async () => {});
+    await handlers.handleDiskUploadComplete(
+      refused.ctx(),
+      { type: "disk.upload.complete", ...refused.ref, sessionId: refused.session.id },
+      enqueue,
+    );
+    // Nothing was overwritten; the existing object is not trusted, it is verified.
+    expect(enqueue).toHaveBeenCalledWith(refused.offload.id);
+    expect(await refused.row()).toMatchObject({
+      state: "VERIFYING",
+      completedSessionId: refused.session.id,
+      objectKey: refused.session.objectKey,
+    });
+    const outage = await opened();
+    listAll(outage.session, [3 * (MIB + 16)]);
+    s3.completeError = Object.assign(new Error("InternalError"), { name: "InternalError" });
+    const enqueueOutage = vi.fn(async () => {});
+    await handlers.handleDiskUploadComplete(
+      outage.ctx(),
+      { type: "disk.upload.complete", ...outage.ref, sessionId: outage.session.id },
+      enqueueOutage,
+    );
+    expect(enqueueOutage).not.toHaveBeenCalled();
+    expect(outage.last()).toMatchObject({ reason: "store_unavailable" });
+    expect((await outage.row()).state).toBe("FAILED");
   });
 
   it("a late Complete of a superseded session is refused and its upload aborted", async () => {

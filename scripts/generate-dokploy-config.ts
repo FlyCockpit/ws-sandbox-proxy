@@ -1,4 +1,5 @@
 /** Generate a reviewable native-Git setup. No network, credentials, or writes. */
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { relative } from "node:path";
@@ -16,10 +17,73 @@ type Options = {
   project?: string;
   proxyNetwork?: string;
   backups?: boolean;
+  /**
+   * The repository Dokploy builds from. Set: every build context is the pinned
+   * Git context `<gitUrl>#<gitRef>`, so the pasted (raw) Compose builds
+   * without a source tree. Unset: `context: .` (plain `docker compose` from a
+   * checkout; the CLI's `--git-url local`).
+   */
+  gitUrl?: string;
 };
 const keys = new Set(ENV_VARS.map((variable) => variable.key));
 const sharedKeys = new Set(Object.keys(sharedVars));
 const serverKeys = new Set([...sharedKeys, ...Object.keys(serverVars)]);
+
+/**
+ * A repository URL Docker can use as a Git build context: https://, ssh:// or
+ * scp-like `user@host:path`. Never credentials (the file is pasted into
+ * Dokploy and kept in its database), never a `#` (the ref is appended).
+ */
+export function assertGitUrl(gitUrl: string) {
+  const fail = (why: string): never => {
+    throw new Error(`--git-url ${why}`);
+  };
+  if (!gitUrl || /[\s#"'`$\\]/.test(gitUrl))
+    fail(
+      "must be a repository URL without spaces, quotes, `$`, `\\` or `#` (the ref is appended).",
+    );
+  if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^/]/.test(gitUrl)) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(gitUrl);
+  } catch {
+    return fail("must be https://…, ssh://… or git@host:owner/repo.git.");
+  }
+  if (
+    !["https:", "ssh:"].includes(parsed.protocol) ||
+    !parsed.hostname ||
+    parsed.pathname.length < 2
+  )
+    fail("must be https://…, ssh://… or git@host:owner/repo.git.");
+  if (parsed.password || (parsed.protocol === "https:" && parsed.username))
+    fail(
+      "must not contain credentials: the generated file is pasted into Dokploy. Use a public URL, or an SSH URL the Dokploy server's Docker can fetch.",
+    );
+  if (parsed.search || parsed.hash) fail("must not have a query or fragment.");
+}
+
+/** The build context of every service: the pinned Git context, or `.`. */
+const buildContext = (options: Options) =>
+  options.gitUrl === undefined ? "." : JSON.stringify(`${options.gitUrl}#${options.gitRef}`);
+
+/**
+ * `--git-url`: the repository each image builds from (`<url>#<git-ref>`).
+ * Absent: the checkout's `origin` remote. `local`: `context: .` (plain
+ * `docker compose` from a checkout, never a pasted Dokploy Compose).
+ */
+export function resolveGitUrl(
+  flag: string | undefined,
+  origin: () => string | undefined,
+): string | undefined {
+  if (flag === "local") return undefined;
+  if (flag !== undefined) return flag;
+  const remote = origin()?.trim();
+  if (!remote)
+    throw new Error(
+      "No --git-url and no `origin` remote: pass --git-url <repository URL> (what Dokploy builds from), or --git-url local for plain docker compose in a checkout.",
+    );
+  return remote;
+}
 
 export function generateDokployConfig(options: Options) {
   if (!["development", "production"].includes(options.environment))
@@ -46,6 +110,7 @@ export function generateDokployConfig(options: Options) {
       "URL must be an HTTPS origin with a DNS hostname, without credentials, port, query, or path.",
     );
   validateNames(options);
+  if (options.gitUrl !== undefined) assertGitUrl(options.gitUrl);
   const worker = options.topology === "app-worker";
   const prefix = backupPrefix(options);
   const reference = (key: string) => {
@@ -68,6 +133,7 @@ export function generateDokployConfig(options: Options) {
       "SMTP_USER",
       "SMTP_PASS",
       "SMTP_FROM",
+      "MCP_ENABLED",
     ]),
     NODE_ENV: "production",
     // Client -> Traefik -> server: exactly one trusted proxy (client-ip.ts).
@@ -95,7 +161,8 @@ export function generateDokployConfig(options: Options) {
   const application = (role: string, dockerfile: string, environment: Record<string, string>) => ({
     name: `${projectName(options)}-${role}`,
     sourceType: "git",
-    customGitUrl: "<your repository URL; configure its Git credentials in Dokploy>",
+    customGitUrl:
+      options.gitUrl ?? "<your repository URL; configure its Git credentials in Dokploy>",
     customGitBranch: options.gitRef,
     autoDeploy: options.environment === "development",
     buildType: "dockerfile",
@@ -272,6 +339,8 @@ const OPTIONAL_FORWARDED: Record<string, string> = {
     "Define it with an empty value outside an encryption-root rotation (Dokploy rejects a reference to an undefined variable); use the same previous root on server and worker during rotation.",
   CREDENTIALS_ENABLED:
     "Define it with an empty value for the existing CLI-login default (Dokploy rejects a reference to an undefined variable); set false on both server and worker to disable.",
+  MCP_ENABLED:
+    "Server only. Define it with an empty value for the default (true: the built-in MCP endpoint and its OAuth provider are on; Dokploy rejects a reference to an undefined variable); set false to turn MCP off (its routes then return 404).",
 };
 const writerKeys = [
   "BACKUP_S3_BUCKET",
@@ -329,6 +398,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
         "SMTP_USER",
         "SMTP_PASS",
         "SMTP_FROM",
+        "MCP_ENABLED",
       ]),
       SMTP_PORT: composeVar("SMTP_PORT", "587"),
       BETTER_AUTH_URL: new URL(options.url).origin,
@@ -376,8 +446,12 @@ function composeChecklist(options: Options) {
   return {
     file: "docker-compose.dokploy.yml",
     topology: options.topology,
+    buildContext:
+      options.gitUrl === undefined
+        ? "local (`context: .`): only for plain `docker compose` in a checkout. A pasted Dokploy Compose has no source tree; regenerate with --git-url <repository URL> for Dokploy."
+        : `${options.gitUrl}#${options.gitRef}: every role builds that Git ref from the repository, so the pasted Compose needs no source tree. The Dokploy server's Docker fetches the URL itself.`,
     import:
-      "Import the generated Compose in the connected Git project; every role builds the selected Git ref.",
+      "Paste the generated Compose into Dokploy (Compose); every role builds the selected Git ref from the build context above.",
     environmentVariables: Object.fromEntries(
       Object.entries(composeEnvironments(options)).map(([role, entries]) => [
         role,
@@ -427,7 +501,7 @@ export function generateDokployCompose(options: Options): string {
       .join("\n");
   const runtime = (role: "server" | "worker") => `  ${role}:
     build:
-      context: .
+      context: ${buildContext(options)}
       dockerfile: ${role === "server" ? "Dockerfile" : "Dockerfile.worker"}
       args:
         BUILD_VERSION: ${buildVersion}
@@ -476,7 +550,8 @@ ${[
       restart_policy:
         condition: on-failure
 `;
-  return `# Generated from the connected Git ref ${options.gitRef}; do not commit this artifact.
+  return `# Generated for Git ref ${options.gitRef}; do not commit this artifact.
+# Build context: ${options.gitUrl === undefined ? ". (--git-url local: plain docker compose in a checkout only)" : `${options.gitUrl}#${options.gitRef} (fetched by the Dokploy server's Docker)`}.
 # PostgreSQL 18 + Valkey 9 (noeviction); server-led committed migrations.
 # External workers wait before starting consumers. No database/cache host ports.
 # Server stop-first protects its private spool; keep the 30s drain grace.
@@ -518,7 +593,7 @@ ${
     ? `  backup:
     profiles: [backup]
     build:
-      context: .
+      context: ${buildContext(options)}
       dockerfile: Dockerfile
       args:
         BUILD_VERSION: ${buildVersion}
@@ -572,13 +647,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           "--project",
           "--proxy-network",
           "--backups",
+          "--git-url",
         ].includes(key) ||
         fields[key] ||
         !value ||
         value.startsWith("--")
       )
         throw new Error(
-          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--project <stem>] [--proxy-network <name>] [--backups true|false].",
+          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--git-url <repository URL, default the origin remote>|local] [--project <stem>] [--proxy-network <name>] [--backups true|false].",
         );
       fields[key] = value;
     }
@@ -592,6 +668,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       project: fields["--project"],
       proxyNetwork: fields["--proxy-network"],
       backups: fields["--backups"] === "true",
+      gitUrl: resolveGitUrl(fields["--git-url"], () => {
+        const remote = spawnSync("git", ["remote", "get-url", "origin"], {
+          cwd: fileURLToPath(new URL("..", import.meta.url)),
+          encoding: "utf8",
+        });
+        return remote.status === 0 ? remote.stdout : undefined;
+      }),
     };
     if (!options.environment || !options.gitRef || !options.url)
       throw new Error("--environment, --git-ref, and --url are required.");

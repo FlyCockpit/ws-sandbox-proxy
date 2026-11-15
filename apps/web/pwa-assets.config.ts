@@ -8,8 +8,10 @@ import { defineConfig, minimal2023Preset } from "@vite-pwa/assets-generator/conf
 // 80% maskable safe-zone circle: measured radius 198.81 px versus 204.8 px
 // at 512px, leaving 5.99 px of margin (messages-mcp's artwork uses 0.27).
 //
-// The apple touch icon is NOT generated here (`sizes: []`): keep
-// `public/apple-touch-icon-180x180.png` as is until Apple-style tiles are supplied.
+// The apple touch icon is NOT generated here (`sizes: []`):
+// `public/apple-touch-icon-180x180.png` is the owner's Apple-style tile, flattened
+// to an opaque full-bleed square (iOS applies its own mask and shows transparency
+// as black). Replace it by hand: docs/operations/deployment.md.
 const background = "#4a97fa";
 
 export default defineConfig({

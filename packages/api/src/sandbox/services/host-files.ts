@@ -16,7 +16,10 @@ import { consumeSandboxWriteBudget } from "../budgets";
 import type { Principal } from "../contracts";
 import { hostAccess, hostCredentialId } from "../host-access";
 import { hostSubjectHmac } from "../host-audit";
+import { hostFileRequestHmac, withHostFileReceipt } from "../host-file-receipts";
 
+/** Writes and edits replay a credential-scoped receipt (host-file-receipts.ts);
+ * reads and lists validate the key but have no effect to replay. */
 type HostInput = { hostId: string; idempotencyKey?: string };
 const target = (input: HostInput) => ({ sandboxHostId: input.hostId });
 async function audit(
@@ -68,9 +71,25 @@ export const writeHostFile = serviceProcedure(
   async (principal: Principal, input: HostInput & z.output<typeof hostFileWriteBodySchema>) => {
     const parsed = hostFileWriteBodySchema.safeParse(body(input));
     if (!parsed.success) throw new ORPCError("BAD_REQUEST");
-    await audit(principal, input.hostId, parsed.data.path, "FILE_WRITE");
-    return hostFileWriteSchema.parse(
-      await hostAccess().file(principal, input.hostId, { op: "write", ...parsed.data }),
+    const { path, content, expectedEtag, createOnly } = parsed.data;
+    return withHostFileReceipt(
+      principal,
+      input,
+      hostFileRequestHmac(input.hostId, [
+        "write",
+        path,
+        content,
+        expectedEtag ?? null,
+        createOnly ?? false,
+      ]),
+      (stored) => hostFileWriteSchema.parse(stored),
+      {
+        prepare: () => audit(principal, input.hostId, path, "FILE_WRITE"),
+        dispatch: async () =>
+          hostFileWriteSchema.parse(
+            await hostAccess().file(principal, input.hostId, { op: "write", ...parsed.data }),
+          ),
+      },
     );
   },
 );
@@ -89,9 +108,24 @@ export const editHostFile = serviceProcedure(
       throw new ORPCError("UNPROCESSABLE_CONTENT", {
         data: { code: "host.file_error", reason: "too_large" },
       });
-    await audit(principal, input.hostId, parsed.data.path, "FILE_EDIT");
-    return hostFileEditSchema.parse(
-      await hostAccess().file(principal, input.hostId, { op: "edit", ...parsed.data }),
+    const { path, edits, expectedEtag } = parsed.data;
+    return withHostFileReceipt(
+      principal,
+      input,
+      hostFileRequestHmac(input.hostId, [
+        "edit",
+        path,
+        edits.map((edit) => [edit.oldText, edit.newText]),
+        expectedEtag ?? null,
+      ]),
+      (stored) => hostFileEditSchema.parse(stored),
+      {
+        prepare: () => audit(principal, input.hostId, path, "FILE_EDIT"),
+        dispatch: async () =>
+          hostFileEditSchema.parse(
+            await hostAccess().file(principal, input.hostId, { op: "edit", ...parsed.data }),
+          ),
+      },
     );
   },
 );

@@ -379,6 +379,7 @@ const READ_KIND: Record<SdkErrorCode, WsspErrorKind> = {
   "host.command_not_found": "not_found",
   "host_queue.limit": "capacity",
   "host.file_error": "invalid_request",
+  "host.file_outcome_unknown": "unknown",
   OPERATION_RESULT_EXPIRED: "gone",
   OPERATION_RESULT_NOT_READY: "conflict",
   OPERATION_RESULT_QUOTA: "capacity",

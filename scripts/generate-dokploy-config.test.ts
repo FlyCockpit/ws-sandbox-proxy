@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { generateDokployCompose, generateDokployConfig } from "./generate-dokploy-config.js";
+import {
+  generateDokployCompose,
+  generateDokployConfig,
+  resolveGitUrl,
+} from "./generate-dokploy-config.js";
 
 const defaults = {
   environment: "development" as const,
@@ -325,5 +329,110 @@ test("default Compose needs no backup settings, service or volume", () => {
     assert.ok(
       optedIn.applications[0]!.persistentStorage.some((entry) => entry.mountPath === "/backups"),
     );
+  }
+});
+
+const release = `release/${"a".repeat(40)}`;
+
+test("--git-url pins every build context to <url>#<git-ref>, so a pasted Compose builds without a source tree", () => {
+  for (const [options, contexts] of [
+    [{ ...defaults }, 1],
+    [
+      {
+        ...defaults,
+        environment: "production" as const,
+        gitRef: release,
+        topology: "app-worker" as const,
+        backups: true,
+      },
+      3,
+    ],
+  ] as const) {
+    const withUrl = { ...options, gitUrl: "https://github.com/example/app.git" };
+    const compose = generateDokployCompose(withUrl);
+    const found = [...compose.matchAll(/^ {6}context: (.+)$/gm)].map((match) => match[1]);
+    assert.equal(found.length, contexts, compose);
+    for (const context of found)
+      assert.equal(context, JSON.stringify(`https://github.com/example/app.git#${withUrl.gitRef}`));
+    assert.doesNotMatch(compose, /context: \.$/m);
+    const config = generateDokployConfig(withUrl);
+    assert.ok(
+      config.compose.buildContext.startsWith(
+        `https://github.com/example/app.git#${withUrl.gitRef}: `,
+      ),
+    );
+    for (const app of config.applications)
+      assert.equal(app.customGitUrl, "https://github.com/example/app.git");
+  }
+  // --project, --proxy-network and the backup profile keep working with it.
+  const compose = generateDokployCompose({
+    ...defaults,
+    gitUrl: "git@github.com:example/app.git",
+    project: "wssp",
+    proxyNetwork: "edge-net",
+    backups: true,
+  });
+  assert.match(compose, /context: "git@github\.com:example\/app\.git#main"/);
+  assert.match(compose, /name: edge-net/);
+  assert.match(compose, /profiles: \[backup\]/);
+});
+
+test("without a Git URL the context stays local and the checklist says it is not for Dokploy", () => {
+  const compose = generateDokployCompose(defaults);
+  assert.match(compose, /^ {6}context: \.$/m);
+  assert.match(compose, /--git-url local/);
+  assert.match(generateDokployConfig(defaults).compose.buildContext, /^local/);
+});
+
+test("--git-url refuses credentials, fragments and characters that could break the YAML", () => {
+  for (const gitUrl of [
+    "https://user:token@github.com/example/app.git",
+    "https://token@github.com/example/app.git",
+    "ssh://git:secret@example.com/app.git",
+    "https://github.com/example/app.git#main",
+    "https://github.com/example/app.git?x=1",
+    "http://github.com/example/app.git",
+    "file:///srv/app.git",
+    'https://github.com/example/"app',
+    "https://github.com/example/app.git $(id)",
+    "",
+  ])
+    assert.throws(() => generateDokployConfig({ ...defaults, gitUrl }), /--git-url/, gitUrl);
+});
+
+test("resolveGitUrl: the flag, else the origin remote; local means context .; neither is an error", () => {
+  assert.equal(
+    resolveGitUrl("https://x.example/a.git", () => "ignored"),
+    "https://x.example/a.git",
+  );
+  assert.equal(
+    resolveGitUrl(undefined, () => "git@github.com:o/r.git\n"),
+    "git@github.com:o/r.git",
+  );
+  assert.equal(
+    resolveGitUrl("local", () => "ignored"),
+    undefined,
+  );
+  assert.throws(() => resolveGitUrl(undefined, () => undefined), /--git-url/);
+  assert.throws(() => resolveGitUrl(undefined, () => "  "), /--git-url/);
+});
+
+test("MCP_ENABLED is an optional server-only key: empty keeps the app default (on), false turns MCP off", () => {
+  for (const topology of ["app", "app-worker"] as const) {
+    const config = generateDokployConfig({ ...defaults, topology });
+    assert.equal(config.applications[0]!.environment.MCP_ENABLED, `\${{environment.MCP_ENABLED}}`);
+    if (topology === "app-worker")
+      assert.equal(config.applications[1]!.environment.MCP_ENABLED, undefined);
+    assert.equal(config.environmentVariablesToSetOnce.MCP_ENABLED, undefined);
+    assert.match(
+      config.environmentVariablesOptional.MCP_ENABLED ?? "",
+      /set false to turn MCP off/,
+    );
+    assert.ok(config.compose.optionalEnvironmentVariables.server?.MCP_ENABLED);
+    assert.ok(!config.compose.environmentVariables.server?.includes("MCP_ENABLED"));
+    const compose = generateDokployCompose({ ...defaults, topology });
+    // Empty is unset for the app's env parser (emptyStringAsUndefined): default true.
+    assert.match(block(compose, "server"), /MCP_ENABLED: "\$\{MCP_ENABLED:-\}"/);
+    if (topology === "app-worker") assert.doesNotMatch(block(compose, "worker"), /MCP_ENABLED/);
   }
 });

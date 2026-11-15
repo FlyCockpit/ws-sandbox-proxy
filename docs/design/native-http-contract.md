@@ -382,17 +382,33 @@ Reads default to 65,536 bytes, maximum 262,144; lists have at most 1,000 entries
 (`name`, `kind: file|dir|symlink|other`, optional `size`). Writes have at most
 262,144 UTF-8 bytes; replacing requires `expectedEtag`, while `createOnly`
 refuses existing files. Edits contain 1–20 `{oldText, newText}` pairs, each
-matching exactly once; changes commit together. The `Idempotency-Key` does
-not replay host file writes or edits; a retried edit without `expectedEtag`
-can apply twice. Files to edit are at most 4 MiB.
+matching exactly once; changes commit together. Files to edit are at most 4 MiB.
+
+Writes and edits keep an idempotency receipt per credential and
+`Idempotency-Key` (another credential of the same owner has its own keys). The
+key binds a keyed HMAC of the host, operation, path, content or edits,
+`expectedEtag` and `createOnly`; the receipt stores that HMAC and the typed
+result, never file content. A retry with the same request returns the stored
+result and does not reach the node; a different request is 409
+`sandbox.idempotency_conflict`. The key is reserved by a unique row before the
+request is sent, so a concurrent duplicate waits for the first attempt (up to
+45 seconds) and then returns its result. A refusal before the request was sent,
+or a definitive `host.file_error` from the node other than `io_error`, releases
+the key and the same request may run again. A timeout, node disconnect or
+`io_error` after sending keeps the key as 409 `host.file_outcome_unknown`: the
+change may have been applied, so read the file and retry under a new key.
+Replays skip the write budget and the audit event. Receipts expire 7 days after
+creation and are deleted by the host access retention sweep; an expired key may
+be reused.
 Writes and edits refuse `⟦redacted` spans. ETags are opaque `h:` plus 22
 base64url characters; file reads mask secrets.
 
 Host errors use the existing envelope: `host.not_owned` (403),
 `host.agent_access_off` (409, `retryable: false`), `host.node_offline` (409,
 `retryable: true`, positive `retryAfterSeconds` and `Retry-After`),
-`host.command_not_found` (404), `host_queue.limit` (409), and `host.file_error`
-(422, `error.data.reason`). File reasons are `host_files_off`, `policy_changed`,
+`host.command_not_found` (404), `host_queue.limit` (409), `host.file_error`
+(422, `error.data.reason`), and, for writes and edits, `host.file_outcome_unknown`
+(409) and `sandbox.idempotency_conflict` (409). File reasons are `host_files_off`, `policy_changed`,
 `owner_mismatch`, `no_roots`, `path_denied`, `not_found`, `not_a_file`, `not_a_dir`,
 `too_large`, `binary_file`, `conflict`, `no_match`, `match_count`, `redacted_span`,
 `exists`, `invalid_input`, `io_error`, `limit`.

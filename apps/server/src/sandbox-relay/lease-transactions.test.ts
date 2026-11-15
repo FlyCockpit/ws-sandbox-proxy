@@ -121,6 +121,7 @@ function setup(init: Parameters<typeof createFenceStore>[0] = {}) {
     Object.assign(prismaPromise(Promise.resolve(find(store.hosts, args?.where) as never)), {
       User: vi.fn(),
       HostQueuedCommands: vi.fn(),
+      HostFileReceipts: vi.fn(),
       HostTerminalTickets: vi.fn(),
       HostTokens: vi.fn(),
       HostDeviceCredentials: vi.fn(),

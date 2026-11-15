@@ -1,7 +1,7 @@
 import prisma, { type Prisma, type SandboxState } from "@wssp/db";
 import { readSandboxOffloadEnv } from "@wssp/env/image-store-config";
 import type { ImageStore } from "../image-store/s3";
-import { requireRelayFence } from "../relay-fence";
+import { requireRelayFence } from "../relay-fence-rejected";
 import { shredOffloadKeys } from "./keys";
 
 /**

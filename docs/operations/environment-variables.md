@@ -352,6 +352,16 @@ Local Postgres/Valkey host ports may be selected with `DEV_POSTGRES_PORT` and
 `DEV_REDIS_PORT`; use matching local `DATABASE_URL` and `REDIS_URL`. Production
 Compose publishes no host ports.
 
+## MCP endpoint
+
+| Variable      | Default | Meaning                                                                                                                                                                                                                                            |
+| ------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MCP_ENABLED` | `true`  | Server only. Turns the built-in MCP endpoint and its OAuth provider on or off. Literal `true` or `false`; empty means the default. `false`: the MCP and MCP OAuth routes return real 404s (discovery included). Read at startup: restart to apply. |
+
+The generated Dokploy Compose forwards it to the server as an optional key
+(`${MCP_ENABLED:-}`, so an empty value keeps the default): set `MCP_ENABLED=false`
+in Dokploy's environment to turn MCP off from the UI ([deployment](./deployment.md#blessed-compose-path), [MCP](../mcp.md)).
+
 ## Agent token expiry
 
 | Variable                             | Default | Meaning                                                                                                                                         |

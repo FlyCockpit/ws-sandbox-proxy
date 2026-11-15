@@ -24,6 +24,7 @@ import {
   UBUNTU_CLOUD_SMOKE_V1,
   VERIFY_WINDOW_MINUTES,
 } from "./community/catalog";
+import { startCommunityRefreshSchedule } from "./community/refresh-schedule";
 import {
   TEMPLATE_BUILD_CONTEXT_SEALED_MAX_MS,
   TEMPLATE_BUILD_LEASE_SLACK_MINUTES,
@@ -1558,11 +1559,13 @@ export function startTemplateBuildOrchestrator(signal: AbortSignal): {
   bindTemplateBuildWake(wake);
   bindBuildContextWake(wake);
   bindOperationChangeBuildWake(wake);
-  const stop = () => {
+  // The daily community refresh accepts builds, so it runs here, on the server.
+  const communityRefresh = startCommunityRefreshSchedule();
+  const stop = async () => {
     bindTemplateBuildWake(null);
     bindBuildContextWake(null);
     bindOperationChangeBuildWake(null);
-    return scheduler.stop();
+    await Promise.all([communityRefresh.stop(), scheduler.stop()]);
   };
   signal.addEventListener("abort", () => void stop(), { once: true });
   scheduler.wake();

@@ -32,6 +32,7 @@ model User {
   operationalAlerts             Boolean                       @default(true)
   McpGrants                     McpGrant[]
   HostQueuedCommands            HostQueuedCommand[]
+  HostFileReceipts              HostFileReceipt[]
   oauthClients                  OauthClient[]
   oauthRefreshTokens            OauthRefreshToken[]
   oauthAccessTokens             OauthAccessToken[]

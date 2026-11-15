@@ -93,16 +93,57 @@ export function createImageS3Client(settings: ImageStoreSettings, signing = fals
   });
 }
 
-/** `<prefix>/owners/<ownerId>/<fphex>/image.tar[.wsspenc]`: per owner, no dedupe. */
+/**
+ * `<prefix>/owners/<ownerId>/<fphex>/<sessionId>/image.tar[.wsspenc]`: per
+ * owner (no dedupe) and per upload session, so two sessions never share a key.
+ * Image objects are create-only (`completeMultipart`): with a key per
+ * fingerprint, a stale object from an earlier session (a lost Complete
+ * response, a CORRUPT object whose delete failed) would block every re-upload
+ * until the sweeper removed it.
+ */
 export function imageObjectKey(
   prefix: string,
   ownerId: string,
   fingerprint: string,
+  sessionId: string,
   encrypted: boolean,
 ): string {
   if (!/^sha256:[0-9a-f]{64}$/.test(fingerprint)) throw new Error("invalid image fingerprint");
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(ownerId)) throw new Error("invalid image owner");
-  return `${prefix}/owners/${ownerId}/${fingerprint.slice(7)}/image.tar${encrypted ? ".wsspenc" : ""}`;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(sessionId)) throw new Error("invalid image upload session");
+  return `${prefix}/owners/${ownerId}/${fingerprint.slice(7)}/${sessionId}/image.tar${encrypted ? ".wsspenc" : ""}`;
+}
+
+/** A template upload session id, generated in code so its object key is known
+ * before the session row is written. */
+export function newImageSessionId(): string {
+  return `ises_${randomBytes(16).toString("hex")}`;
+}
+
+/**
+ * S3 refused a create-only write: an object already exists at the key (412
+ * PreconditionFailed) or a concurrent conditional write to it won the race
+ * (409 ConditionalRequestConflict). The write never replaced anything and is
+ * never retried as an unconditional one; the caller decides what the existing
+ * object is worth (the relay hands it to the verify job, which hashes it).
+ */
+export class ImageObjectExistsError extends Error {
+  constructor(
+    readonly key: string,
+    readonly status: 409 | 412,
+  ) {
+    super(`image object already exists (${status})`);
+    this.name = "ImageObjectExistsError";
+  }
+}
+
+/** 412/409 for a refused `If-None-Match: *` write, else null. */
+export function createOnlyRefusal(error: unknown): 409 | 412 | null {
+  const failure = error as { name?: string; $metadata?: { httpStatusCode?: number } } | null;
+  if (failure?.name === "PreconditionFailed" || failure?.$metadata?.httpStatusCode === 412)
+    return 412;
+  if (failure?.name === "ConditionalRequestConflict") return 409;
+  return null;
 }
 
 export function ownerPrefix(prefix: string, ownerId: string): string {
@@ -191,19 +232,35 @@ export class ImageStore {
     throw new Error("image store part listing did not terminate");
   }
 
+  /**
+   * Create-only: `If-None-Match: *` on every attempt (the SDK's own retries
+   * included), so an existing object at `key` is never replaced. A refusal
+   * aborts this multipart upload (best effort; the sweeper is the backstop),
+   * so no orphan parts are left, and throws `ImageObjectExistsError`.
+   * Presigned UploadPart URLs need no condition: a part never becomes an
+   * object until this call.
+   */
   async completeMultipart(key: string, uploadId: string, parts: { n: number; etag: string }[]) {
-    await this.client.send(
-      new CompleteMultipartUploadCommand({
-        Bucket: this.settings.bucket,
-        Key: key,
-        UploadId: uploadId,
-        MultipartUpload: {
-          Parts: [...parts]
-            .sort((a, b) => a.n - b.n)
-            .map((p) => ({ PartNumber: p.n, ETag: p.etag })),
-        },
-      }),
-    );
+    try {
+      await this.client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: this.settings.bucket,
+          Key: key,
+          UploadId: uploadId,
+          IfNoneMatch: "*",
+          MultipartUpload: {
+            Parts: [...parts]
+              .sort((a, b) => a.n - b.n)
+              .map((p) => ({ PartNumber: p.n, ETag: p.etag })),
+          },
+        }),
+      );
+    } catch (error) {
+      const refused = createOnlyRefusal(error);
+      if (refused === null) throw error;
+      await this.abortMultipart(key, uploadId).catch(() => {});
+      throw new ImageObjectExistsError(key, refused);
+    }
   }
 
   async abortMultipart(key: string, uploadId: string) {
