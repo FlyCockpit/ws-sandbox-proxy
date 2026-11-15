@@ -135,16 +135,27 @@ discover_app() {
   # running server still points at it. Falling back to the tag could run other
   # code than the app's, so stop and say how to line the two up again.
   if ! docker image inspect "$image" >/dev/null 2>&1; then
-    local dir
+    local dir files file_args="" file
+    local -a config_files=()
     dir="$(label "$server" com.docker.compose.project.working_dir 2>/dev/null || true)"
     case "$dir" in
       "" | "<no value>") dir="<the compose's directory>" ;;
       *) dir="$(printf '%q' "$dir")" ;;
     esac
+    # Every compose file the deploy used (overlays included): without them the
+    # recreated server would lose what they add (ports, mounts, settings).
+    files="$(label "$server" com.docker.compose.project.config_files 2>/dev/null || true)"
+    case "$files" in
+      "" | "<no value>") file_args=" -f <each compose file the deploy uses>" ;;
+      *)
+        IFS=, read -r -a config_files <<<"$files"
+        for file in "${config_files[@]}"; do file_args+=" -f $(printf '%q' "$file")"; done
+        ;;
+    esac
     die "the server container's image (${image:0:19}) is no longer on this machine: a redeploy
   replaced it without recreating the server. Recreate the server from the current image
   (it restarts the app), then re-run this command:
-    cd $dir && docker compose -p $(printf '%q' "$project") up -d --no-build --force-recreate server
+    cd $dir && docker compose -p $(printf '%q' "$project")$file_args up -d --no-build --force-recreate server
   (add the profile flags the deploy uses: with the backup service, --profile backup before up)"
   fi
   volume="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/backups"}}{{.Name}}{{end}}{{end}}' "$server")"

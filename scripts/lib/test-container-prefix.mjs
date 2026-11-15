@@ -13,7 +13,7 @@
  * by single `.`/`_`, a double `__`, or runs of `-`. Bounded so every derived
  * container name stays one DNS label (at most 63 bytes).
  */
-export const PREFIX_ENV = "TEST_CONTAINER_PREFIX";
+const PREFIX_ENV = "TEST_CONTAINER_PREFIX";
 export const DEFAULT_TEST_CONTAINER_PREFIX = "wssp";
 const PREFIX = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
 const MAX_PREFIX = 24;

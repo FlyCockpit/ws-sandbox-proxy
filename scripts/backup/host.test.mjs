@@ -21,6 +21,8 @@ function run(
     stopFailOn = "",
     restoreSignal = "",
     imageGone = false,
+    workingDir = "",
+    configFiles = "",
     markOnStop = false,
     input = "",
     stopSignal = "",
@@ -66,6 +68,8 @@ if (args[0] === "ps") {
   else if (format === "{{.Config.Image}}") console.log("postgres:18");
   else if (format.includes(".Mounts")) console.log(process.env.HOST_TEST_VOLUME);
   else if (format.includes(".NetworkSettings")) console.log("dokploy-network alpha_default");
+  else if (format.includes("working_dir")) console.log(process.env.HOST_TEST_WORKING_DIR || "<no value>");
+  else if (format.includes("config_files")) console.log(process.env.HOST_TEST_CONFIG_FILES || "<no value>");
   else if (format.includes(".Config.Labels")) console.log(id.replace("app-", ""));
   else if (format.includes(".State.Running")) console.log("true");
   else if (format.includes(".Config.Env")) fs.writeSync(1, "DATABASE_URL=" + "postgresql://fake:fake@db/app\\nBACKUP_S3_BUCKET=fake-backups\\nBACKUP_S3_SECRET_ACCESS_KEY=fake-secret\\nS3_ACCESS_KEY_ID=fake-upload-key\\nBACKUP_HEARTBEAT_URL=https://heartbeat.invalid/ping\\nUNRELATED_SECRET=must-not-pass\\n");
@@ -108,6 +112,8 @@ if (args[0] === "ps") {
         HOST_TEST_STOP_FAIL_ON: stopFailOn,
         HOST_TEST_RESTORE_SIGNAL: restoreSignal,
         ...(imageGone ? { HOST_TEST_IMAGE_GONE: "1" } : {}),
+        HOST_TEST_WORKING_DIR: workingDir,
+        HOST_TEST_CONFIG_FILES: configFiles,
         ...(markOnStop ? { HOST_TEST_MARK: join(dir, "stopped") } : {}),
         ...(gone ? { HOST_TEST_GONE: join(dir, "reader-gone") } : {}),
       },
@@ -600,19 +606,48 @@ test("host prints usage with no arguments, from a file and piped into bash -s, e
 });
 
 test("host stops with the recreate command when the server's image ID is gone, and never runs the tag", () => {
-  for (const command of ["list", "backup", "drill", "restore daily.dump"]) {
+  const overlays =
+    "/srv/app/docker-compose.yml,/srv/app/docker-compose.vps.yml,/srv/my app/docker-compose.backup.yml";
+  for (const [command, workingDir, dir, configFiles, files] of [
+    [
+      "list",
+      "/etc/dokploy/compose/wssp-prod/code",
+      "/etc/dokploy/compose/wssp-prod/code",
+      "/etc/dokploy/compose/wssp-prod/code/docker-compose.yml",
+      " -f /etc/dokploy/compose/wssp-prod/code/docker-compose.yml",
+    ],
+    // printf %q quotes a real directory and file; overlays are kept in order.
+    [
+      "backup",
+      "/srv/my app",
+      "/srv/my\\ app",
+      overlays,
+      " -f /srv/app/docker-compose.yml -f /srv/app/docker-compose.vps.yml -f /srv/my\\ app/docker-compose.backup.yml",
+    ],
+    // Unknown labels: the placeholders are printed verbatim.
+    ["drill", "", "<the compose's directory>", "", " -f <each compose file the deploy uses>"],
+    [
+      "restore daily.dump",
+      "",
+      "<the compose's directory>",
+      "",
+      " -f <each compose file the deploy uses>",
+    ],
+  ]) {
     const result = run(
       `require_terminal() { return 0; }\nask() { return 0; }\nmain ${command} --project alpha`,
-      { imageGone: true },
+      { imageGone: true, workingDir, configFiles },
     );
     assert.equal(result.status, 1, `${command}: ${result.stderr}`);
     assert.match(
       result.stderr,
       /the server container's image \(app-image\) is no longer on this machine/,
     );
-    assert.match(
-      result.stderr,
-      /cd server && docker compose -p alpha up -d --no-build --force-recreate server/,
+    assert.ok(
+      result.stderr.includes(
+        `cd ${dir} && docker compose -p alpha${files} up -d --no-build --force-recreate server`,
+      ),
+      `${command}: ${result.stderr}`,
     );
     assert.match(result.stderr, /--profile backup/);
     // Nothing was run, stopped or started: no fallback to the image's tag.

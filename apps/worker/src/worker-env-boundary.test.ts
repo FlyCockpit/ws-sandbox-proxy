@@ -164,15 +164,26 @@ describe("worker environment boundary", () => {
     );
     const modules = [...graph.keys()].filter((file) => /\.tsx?$/.test(file) && !skipped.has(file));
     const tsx = pathToFileURL(createRequire(ENTRY).resolve("tsx/esm")).href;
+    // No network either: queue barrels open Redis connections at import, so
+    // every TCP connect fails on the next tick without leaving the process
+    // (like scripts/test-io-guard.ts, which this child does not load).
     const script = [
+      'import net from "node:net";',
       'import { readFileSync } from "node:fs";',
       'import { pathToFileURL } from "node:url";',
+      "let blocked = 0;",
+      "net.Socket.prototype.connect = function blockedConnect() {",
+      "  blocked += 1;",
+      '  const error = Object.assign(new Error("boundary test: network blocked"), { code: "ECONNREFUSED" });',
+      "  process.nextTick(() => this.destroy(error));",
+      "  return this;",
+      "};",
       'const files = JSON.parse(readFileSync(0, "utf8"));',
       "for (const file of files) {",
       "  try { await import(pathToFileURL(file).href); }",
       '  catch (error) { console.error("IMPORT_FAILED " + file); console.error(error); process.exit(1); }',
       "}",
-      'console.log("IMPORTED " + files.length);',
+      'console.log("IMPORTED " + files.length + " (blocked " + blocked + " TCP connects)");',
       "process.exit(0);",
     ].join("\n");
     // The dedicated worker's variables only (dummy, disposable, unreachable).

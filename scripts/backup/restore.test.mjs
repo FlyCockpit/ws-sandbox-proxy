@@ -41,8 +41,14 @@ const restore = fileURLToPath(new URL("./restore.mjs", import.meta.url));
  * transaction id line (xid 777) that restore asks for right after BEGIN.
  * RESTORE_FIXTURE_XACT is what pg_xact_status('777') returns: committed,
  * aborted, unknown (the default), fail (the query fails), or
- * in-progress-then-aborted ("in progress" twice, then "aborted"). Every
- * status query appends a line to <receipt>.xact.
+ * in-progress-then-aborted ("in progress" twice, then "aborted"),
+ * in-progress (always), hang (no answer for 20 s), hang-with-descendant
+ * (it also leaves a 9 s child holding its output pipes) or
+ * in-progress-then-hang ("in progress" for 1.2 s after the first status
+ * query, then hang). Every status query appends a line to <receipt>.xact;
+ * the first writes its start time to <receipt>.xact-start.
+ * RESTORE_XACT_STATUS_WAIT_MS shortens the restore's 15 s status wait to 2 s
+ * for these.
  */
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "backup-restore-cli-test-"));
@@ -103,10 +109,25 @@ if (queryIndex !== -1) {
   if (sql.includes("pg_xact_status")) {
     const log = process.env.RESTORE_FIXTURE_RECEIPT + ".xact";
     fs.appendFileSync(log, sql + "\\n");
+    const startFile = process.env.RESTORE_FIXTURE_RECEIPT + ".xact-start";
+    if (!fs.existsSync(startFile)) fs.writeFileSync(startFile, String(Date.now()));
+    const started = Number(fs.readFileSync(startFile, "utf8"));
     const xact = process.env.RESTORE_FIXTURE_XACT ?? "unknown";
     if (xact === "fail") process.exit(2);
-    const asked = fs.readFileSync(log, "utf8").trim().split("\\n").length;
-    console.log(xact === "in-progress-then-aborted" ? (asked <= 2 ? "in progress" : "aborted") : xact);
+    // Bounded beyond the harness's 10 s kill, so a regression that never kills
+    // this query cannot leave it behind for good.
+    const hang = () => setTimeout(() => process.exit(0), 20000);
+    if (xact === "hang-with-descendant") require("node:child_process").spawn("sleep", ["9"], { stdio: "inherit" });
+    if (xact === "hang" || xact === "hang-with-descendant") hang();
+    else if (xact === "in-progress-then-hang") {
+      if (Date.now() - started < 1200) console.log("in progress");
+      else hang();
+    }
+    else if (xact === "in-progress") console.log("in progress");
+    else {
+      const asked = fs.readFileSync(log, "utf8").trim().split("\\n").length;
+      console.log(xact === "in-progress-then-aborted" ? (asked <= 2 ? "in progress" : "aborted") : xact);
+    }
   } else if (mode === "hang-summary" && sql.includes("_prisma_migrations") && fs.existsSync(process.env.RESTORE_FIXTURE_RECEIPT)) {
     fs.writeFileSync(process.env.RESTORE_FIXTURE_RECEIPT + ".summary", "summary started");
     setInterval(() => {}, 1000);
@@ -179,12 +200,20 @@ if (queryIndex !== -1) {
     RESTORE_FIXTURE_RECEIPT: receipt,
     RESTORE_FIXTURE_MODE: mode,
     RESTORE_FIXTURE_XACT: xact,
+    RESTORE_XACT_STATUS_WAIT_MS: "2000",
   });
   const xactQueries = () => {
     try {
       return readFileSync(`${receipt}.xact`, "utf8").trim().split("\n");
     } catch {
       return [];
+    }
+  };
+  const xactStart = () => {
+    try {
+      return Number(readFileSync(`${receipt}.xact-start`, "utf8"));
+    } catch {
+      return null;
     }
   };
   const commit = () => {
@@ -201,6 +230,7 @@ if (queryIndex !== -1) {
     env,
     commit,
     xactQueries,
+    xactStart,
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -219,6 +249,8 @@ function runRestore({ mode = "exit:0", preview = false, xact = "unknown" } = {})
       ...result,
       commit: f.commit(),
       xactQueries: f.xactQueries(),
+      xactStart: f.xactStart(),
+      ended: Date.now(),
       output: result.stdout + result.stderr,
     };
   } finally {
@@ -364,6 +396,70 @@ test("an unconfirmed COMMIT the server reports committed says the restore commit
     /the restore session failed before confirming COMMIT, but the server reports the restore transaction committed \(psql exit 7\)\. "restore_fixture" is restored/,
   );
   assert.doesNotMatch(result.output, /rolled back|is uncertain|Restore complete\./);
+});
+
+test("a status query that hangs, or a transaction that stays in progress, is bounded: uncertain, exit 1", () => {
+  for (const [xact, reason, minQueries] of [
+    // A client stalled on a dead connection is killed at the deadline.
+    [
+      "hang",
+      /the server reports the restore transaction as unavailable \(the status query failed\)/,
+      1,
+    ],
+    // Polled until the deadline. The last query may start with only a few ms
+    // left and be killed then, which reads "unavailable": uncertain either way.
+    [
+      "in-progress",
+      /the server reports the restore transaction as (still in progress|unavailable \(the status query failed\))/,
+      2,
+    ],
+  ]) {
+    const started = Date.now();
+    const result = runRestore({ mode: "exit:7", xact });
+    assert.equal(result.status, 1, `${xact}:\n${result.output}`);
+    assert.match(result.output, reason, xact);
+    assert.ok(
+      result.xactQueries.length >= minQueries,
+      `${xact}: ${result.xactQueries.length} queries`,
+    );
+    assert.match(result.output, /is uncertain/, xact);
+    assert.doesNotMatch(result.output, /rolled back|is unchanged/, xact);
+    // It waited out the 2 s budget (which starts after this spawn), not gave
+    // up after a few polls...
+    const waited = result.ended - started;
+    assert.ok(waited >= 2_000, `${xact}: gave up after ${waited} ms`);
+    // ...and stopped at it: the 2 s test wait, not the harness's 10 s kill.
+    assert.ok(Date.now() - started < 8_000, `${xact} took ${Date.now() - started} ms`);
+  }
+});
+
+test("the status wait is one total budget: a later query gets only what is left, and a killed query's descendants cannot hold it open", () => {
+  for (const [xact, reason, queries] of [
+    // "in progress" for 1.2 s, then a query that hangs: killed at the 2 s
+    // deadline, not 2 s after it started (3.2 s or more).
+    [
+      "in-progress-then-hang",
+      /the server reports the restore transaction as unavailable \(the status query failed\)/,
+      (n) => n > 1,
+    ],
+    // The killed client left a 9 s child holding its stdout/stderr.
+    [
+      "hang-with-descendant",
+      /the server reports the restore transaction as unavailable \(the status query failed\)/,
+      (n) => n === 1,
+    ],
+  ]) {
+    const result = runRestore({ mode: "exit:7", xact });
+    assert.equal(result.status, 1, `${xact}:\n${result.output}`);
+    assert.match(result.output, reason, xact);
+    assert.match(result.output, /is uncertain/, xact);
+    assert.doesNotMatch(result.output, /rolled back|is unchanged/, xact);
+    assert.ok(queries(result.xactQueries.length), `${xact}: ${result.xactQueries.length} queries`);
+    // From the first status query to the restore's exit: the 2 s budget plus
+    // reporting, never another full budget (3.2 s or more) or the 9 s child.
+    const took = result.ended - result.xactStart;
+    assert.ok(took < 3_000, `${xact}: the status wait and exit took ${took} ms`);
+  }
 });
 
 test("an unconfirmed COMMIT whose status the server cannot give stays uncertain, exit 1", () => {

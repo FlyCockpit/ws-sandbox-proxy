@@ -95,8 +95,16 @@ export const REFUSED_EXIT = 3;
 export const ROLLED_BACK_EXIT = 4;
 /** psql's exit status for an SQL error that stopped the script (ON_ERROR_STOP). */
 const PSQL_SCRIPT_ERROR = 3;
-/** How long an "in progress" restore transaction is waited for before "uncertain". */
-const XACT_STATUS_WAIT_MS = 15_000;
+/**
+ * How long the server is asked about an unconfirmed restore transaction
+ * (waiting while it is "in progress", each status query bounded by what is
+ * left) before the outcome is "uncertain". RESTORE_XACT_STATUS_WAIT_MS can only
+ * shorten it, for the unit tests' fake psql.
+ */
+const XACT_STATUS_WAIT_MS = Math.min(
+  15_000,
+  Number.parseInt(process.env.RESTORE_XACT_STATUS_WAIT_MS ?? "", 10) || 15_000,
+);
 
 /** @type {Set<import("node:child_process").ChildProcess>} */
 const children = new Set();
@@ -104,16 +112,30 @@ const children = new Set();
 /**
  * @param {string} command
  * @param {string[]} args
- * @param {{ env: NodeJS.ProcessEnv, capture?: boolean }} options
+ * @param {{ env: NodeJS.ProcessEnv, capture?: boolean, timeoutMs?: number }} options
+ *   timeoutMs: SIGKILL the child after this long and report code 124 (0: never)
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-function run(command, args, { env, capture = true }) {
+function run(command, args, { env, capture = true, timeoutMs = 0 }) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       env,
       stdio: ["ignore", capture ? "pipe" : "inherit", capture ? "pipe" : "inherit"],
     });
     children.add(child);
+    // A client stalled on a dead connection outlives any server-side timeout.
+    // Our ends of its pipes are closed too, so a descendant that inherited
+    // them cannot hold "close" (and the restore) open after the kill.
+    let timedOut = false;
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+            child.stdout?.destroy();
+            child.stderr?.destroy();
+          }, timeoutMs)
+        : undefined;
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
@@ -124,8 +146,13 @@ function run(command, args, { env, capture = true }) {
     });
     child.on("error", reject);
     child.on("close", (code, signal) => {
+      clearTimeout(timer);
       children.delete(child);
-      resolvePromise({ code: code ?? (signal ? 128 : 1), stdout, stderr });
+      resolvePromise(
+        timedOut
+          ? { code: 124, stdout, stderr: `${stderr}timed out after ${timeoutMs} ms` }
+          : { code: code ?? (signal ? 128 : 1), stdout, stderr },
+      );
     });
   });
 }
@@ -134,10 +161,12 @@ function run(command, args, { env, capture = true }) {
  * One read-only query with short timeouts; returns trimmed unaligned output.
  * @param {NodeJS.ProcessEnv} env
  * @param {string} sql
+ * @param {{ timeoutMs?: number }} [options] kill psql after this long (0: never)
  */
-async function query(env, sql) {
+async function query(env, sql, { timeoutMs = 0 } = {}) {
   const result = await run("psql", ["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql], {
     env: { ...env, PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=60s" },
+    timeoutMs,
   });
   if (result.code !== 0) {
     throw new Refusal(
@@ -666,16 +695,20 @@ async function serverXactStatus(env, xid) {
   if (!xid || !/^\d+$/.test(xid)) return "unknown";
   const deadline = Date.now() + XACT_STATUS_WAIT_MS;
   for (;;) {
+    // Every query and pause gets only what is left of the wait.
+    const left = deadline - Date.now();
+    if (left <= 0) return "still in progress";
     let status;
     try {
-      status = await query(env, `SELECT coalesce(pg_xact_status('${xid}'::xid8), 'unknown')`);
+      status = await query(env, `SELECT coalesce(pg_xact_status('${xid}'::xid8), 'unknown')`, {
+        timeoutMs: left,
+      });
     } catch {
       return "unavailable (the status query failed)";
     }
     if (status === "committed" || status === "aborted") return status;
     if (status !== "in progress") return "unknown";
-    if (Date.now() >= deadline) return "still in progress";
-    await delay(250);
+    await delay(Math.min(250, Math.max(0, deadline - Date.now())));
   }
 }
 
