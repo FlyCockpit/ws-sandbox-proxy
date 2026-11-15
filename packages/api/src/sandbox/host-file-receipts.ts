@@ -12,10 +12,10 @@ import {
 import { hostSubjectHmac } from "./host-audit";
 
 /** Receipts live 7 days, the same post-decision window as queued host commands. */
-export const HOST_FILE_RECEIPT_TTL_MS = 7 * 86_400_000;
+const HOST_FILE_RECEIPT_TTL_MS = 7 * 86_400_000;
 /** Longer than the relay's 30 s host file request timeout plus pre-dispatch
  * IO: a receipt still PENDING after this lost its process mid-flight. */
-export const HOST_FILE_RECEIPT_SETTLE_MS = 45_000;
+const HOST_FILE_RECEIPT_SETTLE_MS = 45_000;
 const DUPLICATE_POLL_MS = 200;
 
 const receiptSelect = {

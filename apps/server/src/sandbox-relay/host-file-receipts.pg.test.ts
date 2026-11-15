@@ -151,6 +151,12 @@ it("replays a write and an edit under the same key without applying them again",
   ).toBe(2);
   const receipts = await db.inspect.hostFileReceipt.findMany({ where: { userId: f.ownerId } });
   expect(receipts.map((r) => r.state)).toEqual(["SUCCEEDED", "SUCCEEDED"]);
+  // A receipt lives 7 days, like a decided queued host command (createdAt and
+  // expiresAt are stamped separately, so allow a little slack).
+  for (const r of receipts) {
+    const lifetime = r.expiresAt.getTime() - r.createdAt.getTime();
+    expect(Math.abs(lifetime - 7 * 86_400_000)).toBeLessThan(60_000);
+  }
   expect(JSON.stringify(receipts)).not.toContain("/srv/a");
   expect(JSON.stringify(receipts)).not.toContain("hello");
 });
