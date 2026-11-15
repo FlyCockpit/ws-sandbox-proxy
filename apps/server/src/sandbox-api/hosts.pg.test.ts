@@ -118,7 +118,14 @@ async function fixture() {
   const token = await createHostToken(principal(id), { hostId: host.id, name: "daemon" });
   const key = await createSdkKey(principal(id), {
     name: "sdk",
-    scopes: ["hosts:read", "sandboxes:read", "sandboxes:write", "templates:write"],
+    scopes: [
+      "hosts:read",
+      "sandboxes:read",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "templates:write",
+    ],
     resourceMode: "ALL_OWNED",
     hostIds: [],
     templateRevisionIds: [],

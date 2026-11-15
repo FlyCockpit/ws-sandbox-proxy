@@ -58,6 +58,8 @@ import { CredentialSessionRelay, offerReturnKey } from "./credential-handlers.js
 import { deploymentEgressBlocklist, egressBlocklistFrame } from "./egress-blocklist.js";
 import { EgressHintThrottle, handleEgressRefused } from "./egress-hints.js";
 import { acknowledgeExecutionConfig } from "./execution-config-ack.js";
+import { type HostAccessLink, HostAccessRelay } from "./host-access.js";
+import { HOST_CONTROL_MAX_BYTES } from "./host-access-protocol.js";
 import { recordHostEgressState } from "./host-egress-state.js";
 import { commitHostHello } from "./host-hello.js";
 import { recordHostLeasePolicy } from "./host-lease-policy.js";
@@ -98,7 +100,6 @@ import {
   parseTerminalDataFrame,
   SANDBOX_BINARY_CHUNK_MAX_BYTES,
   SANDBOX_FRAME_MAX_BYTES,
-  SANDBOX_JSON_CONTROL_MAX_BYTES,
   SANDBOX_RELAY_PROTOCOL_VERSION,
   type SandboxErrorCode,
   SandboxRelayDispatchValidationError,
@@ -631,6 +632,64 @@ export class SandboxRelaySessionManager {
     void this.revalidateAuthorityScope(scope);
   });
 
+  readonly hostAccess = new HostAccessRelay(
+    async (hostId, ownerId) => {
+      const socket = this.socketByHostId.get(hostId);
+      const session = socket && this.sessionsBySocket.get(socket);
+      if (
+        !socket ||
+        socket.readyState !== WS_READY_STATE_OPEN ||
+        !session?.registered ||
+        !session.reconciled ||
+        session.identity.userId !== ownerId ||
+        !this.isCurrentRegistered(session, socket)
+      )
+        return null;
+      if (!(await this.authorizeSession(session)) || !session.authorized()) return null;
+      return this.hostAccessLink(session);
+    },
+    (hostId, ownerId) => this.hostTerminalPolicies.lower(hostId, ownerId),
+    (hostId, ownerId) => this.hostTerminalPolicies.lift(hostId, ownerId),
+    (hostId, ownerId) => this.hostTerminalPolicies.offWitness(hostId, ownerId),
+  );
+
+  /** A node report can never clear the durable emergency stop. */
+  private async resendHostPolicyVeto(
+    session: SessionState,
+    target: "hostCommands" | "hostTerminal",
+    on: boolean,
+  ): Promise<void> {
+    if (!on) return;
+    const host = await prisma.sandboxHost.findFirst({
+      where: {
+        id: session.identity.hostId,
+        userId: session.identity.userId,
+        connectionEpoch: session.connectionEpoch,
+      },
+      select: { agentHostCommandsVetoedAt: true, hostTerminalVetoedAt: true },
+    });
+    if (!session.authorized() || !this.isCurrentRegistered(session, session.socket)) return;
+    const vetoed =
+      target === "hostCommands" ? host?.agentHostCommandsVetoedAt : host?.hostTerminalVetoedAt;
+    if (vetoed)
+      await this.hostAccess.lower(session.identity.hostId, session.identity.userId, target);
+  }
+
+  private hostAccessLink(session: SessionState): HostAccessLink {
+    return {
+      hostId: session.identity.hostId,
+      ownerId: session.identity.userId,
+      epoch: session.connectionEpoch,
+      socket: session.socket,
+      protocolVersion: session.protocolVersion,
+      authorized: () => session.authorized() && this.isCurrentRegistered(session, session.socket),
+      connected: () =>
+        session.socket.readyState === WS_READY_STATE_OPEN &&
+        session.reconciled &&
+        this.isCurrentRegistered(session, session.socket),
+    };
+  }
+
   readonly hostTerminalPolicies = new HostTerminalPolicies((hostId, reason) =>
     this.terminals.closeHostTarget(hostId, reason),
   );
@@ -662,6 +721,17 @@ export class SandboxRelaySessionManager {
     const socket = this.socketByHostId.get(hostId);
     const session = socket && this.sessionsBySocket.get(socket);
     if (!session || !this.terminalTransportConnected(hostId, ownerId, epoch)) return false;
+    const host = await client.sandboxHost.findFirst({
+      where: {
+        id: hostId,
+        userId: ownerId,
+        connectionEpoch: epoch,
+        hostTerminalVetoedAt: null,
+        deletionRequestedAt: null,
+      },
+      select: { id: true },
+    });
+    if (!host) return false;
     const checked = await revalidateSandboxHostIdentity(session.identity, new Date(), client);
     return (
       checked.status === "active" &&
@@ -2135,7 +2205,7 @@ export class SandboxRelaySessionManager {
   handleTextFrame(socket: SandboxRelaySocket, frame: string, now = new Date()) {
     this.notePeerAlive(socket);
     const size = Buffer.byteLength(frame, "utf8");
-    if (!this.admitFrameSize(socket, size, SANDBOX_JSON_CONTROL_MAX_BYTES)) return;
+    if (!this.admitFrameSize(socket, size, HOST_CONTROL_MAX_BYTES)) return;
     let peeked: unknown;
     try {
       peeked = JSON.parse(frame);
@@ -2489,8 +2559,21 @@ export class SandboxRelaySessionManager {
         case "journal.key.ack":
           if (await acknowledgeJournalKey(sender, message)) notifySandboxDispatchPending();
           return;
+        case "host.agent-policy":
+          if (this.hostAccess.policies.report(session.identity.hostId, session.socket, message))
+            await this.resendHostPolicyVeto(session, "hostCommands", message.hostCommands);
+          return;
+        case "host.policy.lower.result":
+        case "host.exec.started":
+        case "host.exec.rejected":
+        case "host.exec.status":
+        case "host.exec.stdin.result":
+        case "host.file.result":
+          await this.hostAccess.receive(this.hostAccessLink(session), message);
+          return;
         case "host.terminal-policy":
-          this.hostTerminalPolicies.report(session.identity.hostId, session.socket, message);
+          if (this.hostTerminalPolicies.report(session.identity.hostId, session.socket, message))
+            await this.resendHostPolicyVeto(session, "hostTerminal", message.hostTerminal);
           return;
         case "host.quiesce": {
           // WP7 (D9): negotiated. From here on new `command.run` work for this
@@ -2946,6 +3029,11 @@ export class SandboxRelaySessionManager {
       }
     }
     this.hostTerminalPolicies.remove(session.identity.hostId, socket);
+    const hostAccessCleanup = session.registered
+      ? this.hostAccess
+          .disconnect(session.identity.hostId, session.identity.userId, socket)
+          .catch(() => console.error("[host-access] disconnect audit failed"))
+      : Promise.resolve();
     this.sessionsBySocket.delete(socket);
     const hostSockets = this.socketsByHostId.get(session.identity.hostId);
     hostSockets?.delete(socket);
@@ -2964,7 +3052,9 @@ export class SandboxRelaySessionManager {
       this.socketByHostId.delete(session.identity.hostId);
     }
     if (session.registered) {
-      const revocation = this.revokeEpoch(session, now);
+      const revocation = Promise.all([this.revokeEpoch(session, now), hostAccessCleanup]).then(
+        () => undefined,
+      );
       this.epochRevocations.add(revocation);
       void revocation.then(() => this.epochRevocations.delete(revocation));
       return revocation;
@@ -3521,6 +3611,10 @@ export class SandboxRelaySessionManager {
         epoch: session.connectionEpoch,
         socket: session.socket,
         authorized: () => session.authorized() && this.isCurrentRegistered(session, session.socket),
+        connected: () =>
+          session.socket.readyState === WS_READY_STATE_OPEN &&
+          session.reconciled &&
+          this.isCurrentRegistered(session, session.socket),
       },
       {
         hostTerminal: message.daemon.capabilities.hostTerminal,
@@ -3529,6 +3623,25 @@ export class SandboxRelaySessionManager {
       },
     );
 
+    const lowerRequests = await prisma.sandboxHost.findFirst({
+      where: {
+        id: session.identity.hostId,
+        userId: session.identity.userId,
+        connectionEpoch: session.connectionEpoch,
+      },
+      select: { agentHostCommandsVetoedAt: true, hostTerminalVetoedAt: true },
+    });
+    if (!session.authorized() || !this.isCurrentRegistered(session, session.socket)) return;
+    const agent = message.daemon.capabilities;
+    this.hostAccess.policies.register(this.hostAccessLink(session), {
+      hostCommands: agent.hostCommands === true,
+      hostFiles: agent.hostFiles === true,
+      ...(agent.hostCommandMaxMs === undefined ? {} : { hostCommandMaxMs: agent.hostCommandMaxMs }),
+      agentPolicyRevision: agent.agentPolicyRevision ?? 0,
+      lowerPending: !!lowerRequests?.agentHostCommandsVetoedAt,
+    });
+    if (lowerRequests?.hostTerminalVetoedAt)
+      this.hostTerminalPolicies.lower(session.identity.hostId, session.identity.userId);
     session.socket.send(
       encodeServerControlMessage(
         {
@@ -3561,6 +3674,25 @@ export class SandboxRelaySessionManager {
         session.protocolVersion,
       ),
     );
+    for (const target of ["hostCommands", "hostTerminal"] as const) {
+      const pending =
+        target === "hostCommands"
+          ? lowerRequests?.agentHostCommandsVetoedAt
+          : lowerRequests?.hostTerminalVetoedAt;
+      const on = target === "hostCommands" ? agent.hostCommands : agent.hostTerminal;
+      if (pending && on)
+        session.socket.send(
+          encodeServerControlMessage(
+            {
+              type: "host.policy.lower",
+              connectionEpoch: session.connectionEpoch,
+              requestId: crypto.randomUUID(),
+              target,
+            },
+            session.protocolVersion,
+          ),
+        );
+    }
     const sender: RelaySender = {
       hostId: session.identity.hostId,
       userId: session.identity.userId,

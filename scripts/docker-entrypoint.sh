@@ -1,5 +1,22 @@
 #!/bin/sh
-# Docker entrypoint — runs before the container CMD (app and worker images).
+# Docker entrypoint — PID 1 of the app and worker images (the Dockerfiles set
+# ENTRYPOINT to this script, not to tini). It runs before the container CMD.
+#
+# Backup writer keys stay out of the app (owner decision 2026-11-13): this
+# script holds BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY only while
+# the migration runner (and its pre-migration / pre-drop backups) runs as its
+# child, then unsets them and `exec`s tini with the CMD. tini becomes PID 1
+# with that clean environment, so neither /proc/1/environ nor the server's or
+# worker's own environment carries the writer keys. Of the other BACKUP_S3_*
+# settings each process keeps only the ones it reads (least privilege, as the
+# template drops them all): BACKUP_S3_BUCKET, _PREFIX, _ENDPOINT and _REGION
+# (boot warnings and the admin freshness card), plus _FORCE_PATH_STYLE wherever
+# a worker runtime runs, since its freshness check lists the bucket with its
+# own ListBucket-only BACKUP_MONITOR_S3_* key: the worker image, and the server
+# unless WORKER_MODE=external (the default embedded worker runs inside it).
+# Every other one (_SSE, …) goes. The one-shot backup commands below (backup,
+# backup-schedule, restore, restore-drill) keep the writer keys: writing
+# backups is their job.
 #
 # Image commands:
 #   migrate              run the migration runner once and exit with its status
@@ -13,11 +30,13 @@
 #                        1..90) with the owner hold, or remove it (one-shot;
 #                        after a restore the runner cannot detect).
 #   anything else        the normal CMD (server or worker), after:
-#     1. required env validation;
+#     1. required env validation, and the refusal of a monitor key that is the
+#        dump-writer key;
 #     2. migrations — MIGRATE_ON_START=true (default for the server command):
 #        `node scripts/db/migrate-runtime.mjs apply` (classify the DB, admit or
 #        refuse db-ahead, refuse failed / no-history / in-place breaking
-#        changes on a served database, optional pre-migration backup,
+#        changes on a served database, the pre-migration backup when
+#        BACKUP_ENABLED=true,
 #        the committed migration deploy, then the scheduled deletions phase).
 #        Concurrent leaders (Dokploy app + worker both migrating) serialize on
 #        the runner's advisory lock; the second normally finds nothing to do.
@@ -29,27 +48,210 @@
 #        @wssp/db/instance-heartbeat, keeps the same row alive). The
 #        one-shot commands (`migrate`, `restore`, `hold-deletions`, `backup*`,
 #        `restore-drill`) get no id and register nothing;
-#     3. exec the CMD.
+#     3. drop the backup writer keys and exec tini with the CMD.
 #
 # See docs/schema-migrations.md and docs/operations/deployment.md.
 
+# Stop signals: handlers go in before validation or any child (even the
+# `node -p` that mints the instance id), so there is no gap between steps where
+# a `docker stop` is dropped — a shell running as PID 1 ignores TERM unless it
+# traps it — and the runner or the CMD starts anyway. They stay through `exec`
+# (exec resets caught signals itself), so there is no untrapped gap between
+# steps. (Before the first trap and between `exec` and tini installing its
+# own handlers, a TERM to PID 1 is dropped; sh cannot close those windows.)
+#
+# A supervised child gets TERM for every stop signal: this non-interactive
+# shell starts background children with SIGINT ignored, and bash keeps that,
+# so a forwarded INT could not stop it. The entrypoint still exits with the
+# signal's own status (143 TERM, 130 INT, 129 HUP).
+child_pid=""
+child_start=""
+launching_child=false
+stop_signal=""
+stopping=false
+have_proc=false
+if [ -r /proc/self/stat ]; then have_proc=true; fi
+# With a supervised child, the handler itself repeats the TERM until the child
+# is gone (stop_child): a signal that lands just before supervise's `wait` runs
+# the handler and then lets `wait` block, so nothing after it could repeat a
+# TERM the child missed. During the launch the child is not identified yet:
+# the handler only records the signal, and supervise forwards it. A signal
+# that lands while a stop is already under way only records itself: a nested
+# handler that drove the child to gone (letting dash reap it and free its PID)
+# would make the interrupted check-then-kill outside it signal a stale PID.
+# Without /proc nothing repeats the TERM, so there every signal sends one, as
+# before.
+stop_startup() {
+  stop_signal="$1"
+  [ "$stopping" = false ] || [ "$have_proc" = false ] || return 0
+  if [ -n "$child_pid" ]; then
+    stopping=true
+    stop_child
+  elif [ "$launching_child" = false ]; then
+    exit "$2"
+  fi
+}
+trap 'stop_startup TERM 143' TERM
+trap 'stop_startup INT 130' INT
+trap 'stop_startup HUP 129' HUP
 set -e
+
+# The pause between repeated TERMs: 0.2 s where sleep takes fractions, else
+# 1 s. Decided once, here: in dash a trap that runs during another trap leaves
+# $? at the outer trap's status, so the loop cannot branch on sleep's status.
+stop_pause=1
+if sleep 0.01 2>/dev/null; then stop_pause=0.2; fi
+
+# proc_start <pid>: sets proc_start_value to the start time of a live (not
+# zombie) process, field 22 of /proc/<pid>/stat, or to "" for a process that is
+# gone or a zombie. It tells the supervised child apart from a later process
+# that reuses its PID once it has been reaped (dash reaps a background child
+# while it waits for any foreground command, such as `sleep`). Builtins only,
+# no fork: the trap handler runs it, and a container at its pids limit cannot
+# fork, so the first TERM always gets out. (stop_child's pause does fork
+# `sleep`: at a full pids limit dash exits 2 there, after that TERM, and the
+# container's teardown ends the child.) The stop guard keeps two calls from
+# interleaving.
+proc_start() {
+  proc_start_value=""
+  stat_line=""
+  read -r stat_line 2>/dev/null <"/proc/$1/stat" || [ -n "$stat_line" ] || return 0
+  # Field 2 (comm) is in parentheses and may contain spaces: drop through ") ".
+  # shellcheck disable=SC2086
+  set -- ${stat_line##*) }
+  [ $# -ge 20 ] || return 0
+  [ "$1" != Z ] || return 0
+  shift 19
+  proc_start_value=$1
+}
+
+# child_alive: the supervised child still runs (same start time as at launch;
+# without /proc, `kill -0`).
+child_alive() {
+  if [ "$have_proc" = true ]; then
+    [ -n "$child_start" ] || return 1
+    proc_start "$child_pid"
+    [ "$proc_start_value" = "$child_start" ]
+  else
+    kill -0 "$child_pid" 2>/dev/null
+  fi
+}
+
+# term_child: TERM the supervised child, checked right before the kill, so a
+# reaped child's reused PID is not signalled (a gap of microseconds remains
+# between the check and the kill builtin; it matters only if the PID space
+# wraps around within it).
+term_child() {
+  [ -n "$child_pid" ] || return 0
+  if [ "$have_proc" = false ] || child_alive; then
+    kill -TERM "$child_pid" 2>/dev/null || :
+  fi
+}
+
+# stop_child: TERM the child every 0.2 s until it is gone (where /proc
+# identifies it; elsewhere, once). One TERM is not enough: one that lands in
+# the instant after the fork, before the forked shell has reset the traps it
+# inherited from this one, is swallowed there, and the command would run to
+# its end. Repeating it is harmless: the bash startup check has no TERM
+# handler, and the migration runner's handler only requests its cancellation
+# (a repeated TERM changes nothing while it drains its own children).
+stop_child() {
+  term_child
+  # Without /proc a reaped child's PID could be reused: one TERM only, which
+  # the fork window can swallow. The image always has /proc; only a local run
+  # of this script elsewhere (not Linux) takes this path.
+  [ "$have_proc" = true ] || return 0
+  # (The pause forks `sleep`; the TERM itself never needs a fork.)
+  while child_alive; do
+    sleep "$stop_pause" 2>/dev/null || :
+    term_child
+  done
+}
+
+# supervise <command...>: run one startup child (the backups startup check, the
+# migration runner) in the background so a stop signal reaches it — a trapped
+# signal only runs between commands, so a foreground child (a stalled /backups
+# mount) would keep it from running — then wait for the child's own exit, so
+# PID 1 stays alive while the child drains. Returns the child's status. After a
+# stop signal neither a later step nor the CMD ever starts: the child gets TERM
+# until it is gone, then the entrypoint exits with the signal's status.
+supervise() {
+  launching_child=true
+  "$@" &
+  child_pid=$!
+  # Its identity for every later TERM, read with builtins only, so dash cannot
+  # reap the child (and free its PID) before the read. A child that already
+  # exited reads as gone and is never signalled. Until
+  # launching_child is false, a signal is only recorded (term_child skips a
+  # child it cannot identify yet) and handled just below.
+  if [ "$have_proc" = true ]; then
+    proc_start "$child_pid"
+    child_start=$proc_start_value
+  fi
+  launching_child=false
+  set +e
+  if [ -z "$stop_signal" ]; then
+    wait "$child_pid"
+    child_status=$?
+  fi
+  # A stop signal recorded during the launch (the handler has already stopped
+  # the child for any later one): TERM the child until it is gone, then
+  # collect it.
+  if [ -n "$stop_signal" ]; then
+    stopping=true
+    stop_child
+    wait "$child_pid" 2>/dev/null
+    # Without /proc: a further signal interrupts that wait; wait again while
+    # the child still runs.
+    while [ "$have_proc" = false ] && kill -0 "$child_pid" 2>/dev/null; do
+      wait "$child_pid" 2>/dev/null
+    done
+  fi
+  set -e
+  child_pid=""
+  child_start=""
+  case "$stop_signal" in
+    TERM) exit 143 ;;
+    INT) exit 130 ;;
+    HUP) exit 129 ;;
+  esac
+  return "$child_status"
+}
+run_runner() { supervise node /app/scripts/db/migrate-runtime.mjs "$@"; }
+startup_notice() { supervise bash /app/scripts/backup/pre-migrate.sh --startup-notice; }
 
 # One-shot jobs never inherit a running application instance registration.
 unset WSSP_INSTANCE_ID
 
+# --- Strict switches ---
+case "${BACKUP_ENABLED:-}" in
+  "" | true | false) ;;
+  *)
+    echo "FATAL: BACKUP_ENABLED must be true or false (got \"$BACKUP_ENABLED\")." >&2
+    exit 1
+    ;;
+esac
+
 # --- One-shot image commands ---
+# Each long-running one runs under tini (signal forwarding, zombie reaping),
+# which becomes PID 1 by exec.
 case "${1:-}" in
   migrate)
     if [ -z "$DATABASE_URL" ]; then
       echo "FATAL: Missing required environment variable(s): DATABASE_URL" >&2
       exit 1
     fi
-    exec node /app/scripts/db/migrate-runtime.mjs apply
+    startup_notice
+    # The container-platform `migrate` job: the same separation as the server —
+    # only the runner (PID 1's child) ever holds the backup keys, and the job
+    # exits with its status.
+    status=0
+    run_runner apply || status=$?
+    exit "$status"
     ;;
   restore)
     shift
-    exec bash /app/scripts/backup/restore.sh "$@"
+    exec tini -- bash /app/scripts/backup/restore.sh "$@"
     ;;
   hold-deletions)
     shift
@@ -57,21 +259,22 @@ case "${1:-}" in
       echo "FATAL: Missing required environment variable(s): DATABASE_URL" >&2
       exit 1
     fi
-    exec node /app/scripts/db/migrate-runtime.mjs hold "$@"
+    exec tini -- node /app/scripts/db/migrate-runtime.mjs hold "$@"
     ;;
   backup)
-    # Back up now: the same pg_dump archive as the pre-migration backup.
+    # Back up now: the same pg_dump archive as the pre-migration backup. An
+    # explicit manual backup works whatever BACKUP_ENABLED says.
     shift
-    exec bash /app/scripts/backup/pre-migrate.sh --label manual --required "$@"
+    exec tini -- bash /app/scripts/backup/pre-migrate.sh --label manual --required "$@"
     ;;
   backup-schedule)
     # The optional daily-backup service (BACKUP_SCHEDULE=daily; idles when off).
-    exec node /app/scripts/backup/schedule.mjs run
+    exec tini -- node /app/scripts/backup/schedule.mjs run
     ;;
   restore-drill)
     # Restore into a THROWAWAY empty database and check it (host.sh drill).
     shift
-    exec node /app/scripts/backup/drill.mjs "$@"
+    exec tini -- node /app/scripts/backup/drill.mjs "$@"
     ;;
 esac
 
@@ -104,6 +307,23 @@ if [ -n "$missing" ]; then
   # on the values being in the environment.
   echo "       A mounted /app/.env does not satisfy this check — the container" >&2
   echo "       contract is injected environment variables, not an env file." >&2
+  exit 1
+fi
+
+# The server and the worker both keep the ListBucket-only BACKUP_MONITOR_S3_*
+# pair after the writer keys are dropped (step 3): the freshness check runs in
+# the worker image and in the server's default embedded worker. A monitor key
+# that IS the dump-writer key would hand the running process bucket write
+# access, and once the writer pair is gone the process's own comparison
+# (backupMonitorConfigWarnings in packages/env/src/backup-config.ts) can no
+# longer see the reuse. So it is checked here, while both are visible, and the
+# start is refused before anything runs. The one-shot commands above keep the
+# writer keys by design and are not affected. With an external worker the
+# monitor pair lives in the worker, so the generator also hands the server the
+# monitor key ID alone for this comparison (dropped again before the CMD).
+if [ -n "${BACKUP_MONITOR_S3_ACCESS_KEY_ID:-}" ] &&
+  [ "$BACKUP_MONITOR_S3_ACCESS_KEY_ID" = "${BACKUP_S3_ACCESS_KEY_ID:-}" ]; then
+  echo "FATAL: BACKUP_MONITOR_S3_ACCESS_KEY_ID matches BACKUP_S3_ACCESS_KEY_ID. The freshness monitor needs its own ListBucket-only key, never the dump-writer key (docs/operations/backup-and-restore.md)." >&2
   exit 1
 fi
 
@@ -143,14 +363,6 @@ fi
 # registered instance of an older release (scripts/db/lib/contracts.mjs).
 WSSP_INSTANCE_ID="$(node -p 'require("node:crypto").randomUUID()')"
 export WSSP_INSTANCE_ID
-# Keep PID 1 alive while the runner drains its owned native children. Forward
-# shutdown to admission and wait for it before the container exits.
-stop_admission() {
-  trap '' TERM INT HUP
-  kill -TERM "$admission_pid" 2>/dev/null || :
-  wait "$admission_pid" || :
-  exit 143
-}
 case "$MIGRATE_ON_START" in
   true) mode=apply ;;
   false) mode=wait ;;
@@ -159,20 +371,55 @@ case "$MIGRATE_ON_START" in
     exit 1
     ;;
 esac
-node /app/scripts/db/migrate-runtime.mjs "$mode" --role "$role" &
-admission_pid=$!
-trap stop_admission TERM INT HUP
-if wait "$admission_pid"; then
-  admission_status=0
-else
-  admission_status=$?
+# Backups notice / check, once per start, even with no pending SQL. A
+# container that migrates (apply) refuses to start when BACKUP_ENABLED=true has
+# no usable destination. One that only waits (MIGRATE_ON_START=false, e.g. the
+# container-platform server while the `migrate` job takes the backup) needs no
+# destination: a server prints the backups-off notice only when they are off.
+# Waiting workers stay quiet.
+if [ "$mode" = apply ]; then
+  startup_notice
+elif [ "$is_server" = true ] && [ "${BACKUP_ENABLED:-false}" != true ]; then
+  startup_notice
 fi
-trap - TERM INT HUP
-[ "$admission_status" -eq 0 ] || exit "$admission_status"
+run_runner "$mode" --role "$role"
 
-# Writer credentials are startup-only. The running app uses the separate
-# ListBucket-only monitor credentials; explicit backup/restore commands keep theirs.
+# Writer credentials are startup-only. The running app and worker use the
+# separate ListBucket-only monitor credentials; explicit backup/restore
+# commands keep theirs. Every other BACKUP_S3_* the process does not read goes
+# too (see the header): an allowlist, so a new writer-only setting is dropped
+# by default.
+if [ "$is_server" = true ] && [ "${WORKER_MODE:-embedded}" = external ]; then
+  keep_backup_s3=" BUCKET PREFIX ENDPOINT REGION "
+else
+  keep_backup_s3=" BUCKET PREFIX ENDPOINT REGION FORCE_PATH_STYLE "
+fi
+# Checked step by step: a failed command substitution in a `for` word list is
+# silently ignored by sh, which would keep every setting.
+if ! environment="$(env)"; then
+  echo "FATAL: could not list the environment to drop backup settings." >&2
+  exit 1
+fi
+if ! backup_s3_names="$(printf '%s\n' "$environment" | sed -n 's/^\(BACKUP_S3_[A-Za-z0-9_]*\)=.*/\1/p')"; then
+  echo "FATAL: could not list the backup settings to drop." >&2
+  exit 1
+fi
+unset environment
+for name in $backup_s3_names; do
+  case "$keep_backup_s3" in
+    *" ${name#BACKUP_S3_} "*) ;;
+    *) unset "$name" ;;
+  esac
+done
 unset BACKUP_S3_ACCESS_KEY_ID BACKUP_S3_SECRET_ACCESS_KEY
+# A server with an external worker does not run the freshness check. The
+# Dokploy generator gives it the monitor key ID alone (no secret) only so the
+# reuse check above can see both IDs; drop it with the writer keys.
+if [ "$is_server" = true ] && [ "${WORKER_MODE:-embedded}" = external ] &&
+  [ -z "${BACKUP_MONITOR_S3_SECRET_ACCESS_KEY:-}" ]; then
+  unset BACKUP_MONITOR_S3_ACCESS_KEY_ID
+fi
 
 # --- 3. Hand off to the container CMD ---
-exec "$@"
+# tini replaces this shell as PID 1 with the cleaned environment.
+exec tini -- "$@"

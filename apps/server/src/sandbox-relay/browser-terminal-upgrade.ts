@@ -41,7 +41,7 @@ export const BROWSER_TERMINAL_ROUTE = "/api/dashboard/sandboxes/:sandboxId/termi
 const BROWSER_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/sandboxes\/[^/]+\/terminal\/ws$/;
 export const HOST_TERMINAL_ROUTE = "/api/dashboard/hosts/:hostId/terminal/ws";
 const HOST_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/hosts\/[^/]+\/terminal\/ws$/;
-const MACHINE_CREDENTIAL = /wssp_(?:sdk|host|device)_/;
+const MACHINE_CREDENTIAL = /wssp_(?:sdk|host|device|agent)_/;
 
 type BrowserTerminalVariables = {
   browserTerminalBinding: BrowserTerminalBinding;

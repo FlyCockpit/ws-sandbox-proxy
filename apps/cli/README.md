@@ -719,7 +719,11 @@ protocol 1.0); a journal with an unknown version is refused, never converted.
 Host terminals default off with TOTP required. Local commands are
 `wssp config set-host-terminal on|off` and
 `wssp config set-host-terminal-totp required|optional`. `wssp connect --host-terminal
-on|off` is a startup override; subsequent local edits take precedence. Atomic
+on|off` is a startup override; subsequent local edits take precedence. Enabling
+host terminals (including the startup override) and making TOTP optional require
+stdin and stderr TTYs, neither `WSSP_HOST_COMMAND` nor `WSSP_HOST_TERMINAL`
+environment marker, verified local process ancestry, and typing `on`.
+There is no `--yes`. Lowering access never prompts. Atomic
 local persistence bumps revision even for repeated off. A fail-closed watcher
 applies local off within two seconds without restarting guest work. Only a
 fresh explicit enable command unlatches a running off state.
@@ -735,3 +739,91 @@ offline/dead storage. See [terminal guide](../../docs/guide/terminal.md).
 
 See the root [changelog](../../CHANGELOG.md) for release history and
 [contribution guide](../../CONTRIBUTING.md) for development and review rules.
+
+## Agent host commands and file tools
+
+Agent host access defaults off and is separate from person-only host terminals:
+
+```sh
+wssp config set-agent-host-commands on
+wssp config set-host-command-max-time 600
+wssp config set-host-file-roots /srv/projects /home/operator/work
+wssp config clear-host-file-roots
+wssp config set-agent-host-commands off
+```
+
+Agent host access means the agent can do what the wssp daemon user can do. It is
+off until a person enables it at the node. The daemon user is an Incus admin:
+host commands and host file tools can reach every sandbox on this node, including sandboxes other users run here through a
+shared pool. A credential's **own sandboxes only** setting does not limit host
+commands. Host access requires the credential owner to own this node; a shared
+pool alone never grants it.
+
+Every raise (enabling access, raising the time cap, or adding file roots)
+requires stdin and stderr TTYs, neither host-child environment marker, verified
+local process ancestry, and typing `on` at the prompt. A daemon ancestor, an ancestor
+with either marker, unverifiable process ancestry, or the same cgroup as a
+same-uid daemon discovered by live state or its comm/connect arguments prevents
+raising access. Non-dumpable login-session boundaries are accepted only under
+a foreign-uid parent, or for the user manager directly under pid 1. This deliberately
+fails closed, including when a manually started daemon shares the local
+terminal's cgroup. Dashboard host terminals carry `WSSP_HOST_TERMINAL=1`. There
+is no unattended approval flag. Commands execute with
+`WSSP_HOST_COMMAND=1`, a pipe or null stdin, a cleared environment, and the daemon
+user's permissions. The environment retains only PATH, HOME, USER, LOGNAME, LANG,
+LC_* and TZ, rejects product credentials, and forces TERM=dumb. Commands have no
+run-as or sudo mode. Their working directory defaults to the daemon user's home.
+
+Run the daemon as a service (a system or user unit) and raise settings from a
+separate local login. A daemon started in the same terminal session or scope
+as your shell makes the cgroup check refuse the raise. The marker, ancestry
+and cgroup checks refuse the direct dashboard host-terminal/host-command case,
+but are best effort against the daemon's own uid. A person or agent with host
+execution can escape the process tree with `systemd-run --user`, `setsid`
+followed by killing the supervisor, or cron, or edit `config.toml` directly.
+These checks are not a kernel-enforced sandbox.
+
+The default per-command cap is 600 seconds; the configurable range is 1..86400
+seconds. At most eight commands run concurrently; the last 64 completed commands
+remain pollable within the connection. Each stream retains at most 1 MiB of
+masked output, with absolute masked byte offsets and explicit eviction notices.
+Timeout, cancellation, local lowering, disconnect and shutdown terminate the
+whole process group and tracked descendants, including detached sessions and
+double-forked children. Linux subreapers keep orphans attributable to the
+daemon; each command has its own supervisor that kills and reaps its
+adopted orphans without consuming another runtime or PTY child's exit status.
+Normal shell exit also cleans up descendants. A surviving process or unverified
+cleanup reports `interrupted`. This remains best effort against processes with
+the daemon's own UID. Host commands are never carried across relay connections.
+
+Hot reload always applies lower limits, removed roots, and required TOTP.
+Increasing the time cap, adding roots, or making TOTP optional takes effect only
+with a new local setter enable witness. A failed dashboard lowering stays
+blocked until a persisted off policy is reread or a local enable witness advances.
+
+File roots must be absolute, existing canonical directories (at most 32, never
+`/`). Empty roots disable file tools. Reads and listings stay within physical
+roots; writes use etags and atomic replacement, and edits apply all changes or
+none. Symlink escapes, hardlink aliases, `/proc`, `/sys`, `/dev`, daemon config
+and data directories, and credential/key paths are refused. Text reads are
+masked before pagination, so read offsets and size describe the masked UTF-8
+view. Read chunks are at most 256 KiB, listings at most 1000 entries, and text
+files at most 4 MiB. There are at most eight pending file operations.
+
+Output masks in-memory credential values, the node credential, secret-named
+environment values, product tokens and PEM private keys, including across stream
+chunk boundaries. Masking is a defense against accidental disclosure; host
+commands and all host file tools still have the daemon user's host
+permissions. Do not paste the
+`⟦redacted⟧` marker into write/edit requests: they are refused.
+
+A running daemon reloads policy within one second. Unreadable config fails
+closed, and manually changing an observed off setting to true cannot unlatch it;
+use the local enable command. The dashboard can persistently turn off agent host
+access or host terminals, including while disconnected by retrying on reconnect.
+It cannot raise node access. **Allow again** requires the node to be online
+and report the setting off at the current epoch; it only clears the dashboard
+veto. If the node reports on, first run `wssp config set-agent-host-commands off`
+or `wssp config set-host-terminal off` at the node and wait for its off report.
+Lowering cancels affected work before acknowledging
+the persisted, re-read policy.

@@ -134,6 +134,7 @@ describe("nav-items", () => {
       "/settings/hosts",
       "/settings/pools",
       "/settings/sdk-keys",
+      "/settings/agent-tokens",
       "/settings/webhooks",
       "/settings/logins",
       "/settings/profile",

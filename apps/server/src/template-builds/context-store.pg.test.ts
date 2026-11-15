@@ -131,6 +131,8 @@ async function owner() {
     });
     return {
       kind: "sdkKey",
+      credentialKind: "API" as const,
+      ownSandboxesOnly: false,
       keyId: row.id,
       ownerId: id,
       expiresAt: null,

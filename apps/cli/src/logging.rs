@@ -54,10 +54,11 @@ fn product_credential_secret_len(rest: &str) -> usize {
 
 /// Redact product credential patterns from formatted log output.
 pub fn redact_product_credentials(message: &str) -> String {
-    const PREFIXES: [(&str, &str); 3] = [
+    const PREFIXES: [(&str, &str); 4] = [
         ("wssp_host_", "wssp_host_[REDACTED]"),
         ("wssp_device_", "wssp_device_[REDACTED]"),
         ("wssp_sdk_", "wssp_sdk_[REDACTED]"),
+        ("wssp_agent_", "wssp_agent_[REDACTED]"),
     ];
 
     let mut out = String::with_capacity(message.len());
@@ -442,5 +443,16 @@ mod tests {
         assert!(!out.contains(token));
         assert!(!out.contains("Authorization: Bearer"));
         assert!(out.contains("connect trace diagnostic"));
+    }
+}
+
+#[cfg(test)]
+mod agent_token_tests {
+    #[test]
+    fn agent_credentials_are_scrubbed() {
+        assert_eq!(
+            super::redact_product_credentials("prefix wssp_agent_fixture-token suffix"),
+            "prefix wssp_agent_[REDACTED] suffix"
+        );
     }
 }

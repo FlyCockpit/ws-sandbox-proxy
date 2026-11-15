@@ -1,6 +1,7 @@
 import { inspect } from "node:util";
 import {
   type CapacityReason,
+  type HostFileErrorReason,
   type OperationErrorCode,
   type OperationFailure,
   type ProcessRef,
@@ -47,6 +48,7 @@ export type WsspErrorKind = (typeof WSSP_ERROR_KINDS)[number];
 /** Bounded capacity dimension or transport failure cause; otherwise null. */
 export type WsspErrorReason =
   | CapacityReason
+  | HostFileErrorReason
   /** `sandbox.capture_unsupported`: what makes the sandbox uncapturable. */
   | "runtime"
   | "state"
@@ -77,11 +79,17 @@ export type WsspErrorReason =
   | "maybe_after_commit";
 
 /**
- * Kind of each catalog code on a read. A mutation maps every 5xx to `unknown`
- * instead (see `classifyCatalogError`). `satisfies` makes a new catalog code a
+ * Kind of each catalog code on a read. A mutation maps ambiguous 5xx errors
+ * to `unknown` (see `classifyCatalogError` for definitive refusals). `satisfies` makes a new catalog code a
  * type error until it is classified here.
  */
 const KIND_BY_CODE = {
+  "host.not_owned": "authorization",
+  "host.agent_access_off": "conflict",
+  "host.node_offline": "unavailable",
+  "host.command_not_found": "not_found",
+  "host_queue.limit": "capacity",
+  "host.file_error": "invalid_request",
   OPERATION_RESULT_EXPIRED: "gone",
   OPERATION_RESULT_NOT_READY: "conflict",
   OPERATION_RESULT_QUOTA: "capacity",
@@ -342,7 +350,8 @@ export class WsspError extends Error {
    * current usage, queue depth or online state blocks the request (back off,
    * honoring `retryAfterSeconds`); `false` when the request alone can never
    * be admitted as configured (fall back or change the request). Always set
-   * on those codes; null on every other error.
+   * on those codes. Also true for host.node_offline and false for
+   * host.agent_access_off; null on other errors.
    */
   readonly retryable: boolean | null;
   /** A create whose local wait ended: the server entry (and sandbox) remain. */

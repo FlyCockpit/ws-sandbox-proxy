@@ -10,6 +10,7 @@ export * from "./env";
 export { assertUniqueEnvKeys, assertUniqueInputMapKeys } from "./env-json";
 export * from "./errors";
 export * from "./guest-path";
+export * from "./hosts";
 export * from "./image-wire";
 export * from "./ip";
 export * from "./lease-limits";

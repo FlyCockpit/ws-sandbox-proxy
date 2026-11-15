@@ -1531,8 +1531,12 @@ async function sharingFixture(mode: "shared" | "contributed" = "shared", termina
     name: "B pool only",
     scopes: SERVICE_SCOPES.filter(
       // An allowlist key can hold neither webhooks:write (all-owned only) nor
-      // credentials:use without an allowlisted login.
-      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      // credentials:use without an allowlisted login; host scopes need a host grant.
+      (scope) =>
+        scope !== "webhooks:write" &&
+        scope !== "credentials:use" &&
+        scope !== "hosts:execute" &&
+        scope !== "hosts:files",
     ),
     resourceMode: "ALLOWLIST",
     poolMode: "SELECTED",
@@ -1710,8 +1714,12 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
       name: "B restored",
       scopes: SERVICE_SCOPES.filter(
         // An allowlist key can hold neither webhooks:write (all-owned only) nor
-        // credentials:use without an allowlisted login.
-        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+        // credentials:use without an allowlisted login; host scopes need a host grant.
+        (scope) =>
+          scope !== "webhooks:write" &&
+          scope !== "credentials:use" &&
+          scope !== "hosts:execute" &&
+          scope !== "hosts:files",
       ),
       resourceMode: "ALLOWLIST",
       poolMode: "SELECTED",
@@ -2030,8 +2038,12 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
         name: "forbidden foreign host",
         scopes: SERVICE_SCOPES.filter(
           // An allowlist key can hold neither webhooks:write (all-owned only) nor
-          // credentials:use without an allowlisted login.
-          (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+          // credentials:use without an allowlisted login; host scopes need a host grant.
+          (scope) =>
+            scope !== "webhooks:write" &&
+            scope !== "credentials:use" &&
+            scope !== "hosts:execute" &&
+            scope !== "hosts:files",
         ),
         resourceMode: "ALLOWLIST",
         hostIds: [f.host.id],

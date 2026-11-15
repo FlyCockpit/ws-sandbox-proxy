@@ -14,6 +14,12 @@ import {
 } from "../sandbox/contracts";
 import { hostImageCacheInput, listHostImageCache } from "../sandbox/image-store/settings";
 import {
+  liftAgentHostCommandsVeto,
+  liftHostTerminalVeto,
+  lowerAgentHostCommands,
+  lowerHostTerminal,
+} from "../sandbox/services/host-policy";
+import {
   createHost,
   createHostToken,
   deleteHost,
@@ -31,6 +37,26 @@ import {
 } from "../sandbox/services/hosts";
 
 export const sandboxHostsRouter = {
+  liftAgentHostCommandsVeto: liveOwnerSessionProcedure
+    .input(hostIdInput)
+    .handler(({ input, context }) =>
+      liftAgentHostCommandsVeto(sessionPrincipal(context.session.user.id), input),
+    ),
+  liftHostTerminalVeto: liveOwnerSessionProcedure
+    .input(hostIdInput)
+    .handler(({ input, context }) =>
+      liftHostTerminalVeto(sessionPrincipal(context.session.user.id), input),
+    ),
+  lowerAgentHostCommands: liveOwnerSessionProcedure
+    .input(hostIdInput)
+    .handler(({ input, context }) =>
+      lowerAgentHostCommands(sessionPrincipal(context.session.user.id), input),
+    ),
+  lowerHostTerminal: liveOwnerSessionProcedure
+    .input(hostIdInput)
+    .handler(({ input, context }) =>
+      lowerHostTerminal(sessionPrincipal(context.session.user.id), input),
+    ),
   /** The host's image cache (owner only): own entries paged, foreign bytes aggregate. */
   imageCache: protectedProcedure
     .input(hostImageCacheInput)

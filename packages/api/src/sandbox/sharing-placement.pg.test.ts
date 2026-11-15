@@ -134,8 +134,12 @@ it.each(["maxMemoryMiB", "maxVcpu", "maxDiskGiB"] as const)(
         poolIds: [f.pool.id],
         scopes: SERVICE_SCOPES.filter(
           // An allowlist key can hold neither webhooks:write (all-owned only) nor
-          // credentials:use without an allowlisted login.
-          (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+          // credentials:use without an allowlisted login; host scopes need a host grant.
+          (scope) =>
+            scope !== "webhooks:write" &&
+            scope !== "credentials:use" &&
+            scope !== "hosts:execute" &&
+            scope !== "hosts:files",
         ),
       });
       const principal = await authenticateSdkKeySecret(key.secret);
@@ -415,8 +419,12 @@ it("SDK foreign-host exemption is recomputed for a reused context and cannot out
     poolIds: [f.pool.id],
     scopes: SERVICE_SCOPES.filter(
       // An allowlist key can hold neither webhooks:write (all-owned only) nor
-      // credentials:use without an allowlisted login.
-      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      // credentials:use without an allowlisted login; host scopes need a host grant.
+      (scope) =>
+        scope !== "webhooks:write" &&
+        scope !== "credentials:use" &&
+        scope !== "hosts:execute" &&
+        scope !== "hosts:files",
     ),
   });
   const principal = await authenticateSdkKeySecret(key.secret);
@@ -512,8 +520,12 @@ it("the creating P-only SDK key loses use after P to Q attribution (warm and col
     poolIds: [f.pool.id],
     scopes: SERVICE_SCOPES.filter(
       // An allowlist key can hold neither webhooks:write (all-owned only) nor
-      // credentials:use without an allowlisted login.
-      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      // credentials:use without an allowlisted login; host scopes need a host grant.
+      (scope) =>
+        scope !== "webhooks:write" &&
+        scope !== "credentials:use" &&
+        scope !== "hosts:execute" &&
+        scope !== "hosts:files",
     ),
   });
   const principal = await authenticateSdkKeySecret(key.secret);

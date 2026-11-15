@@ -12,6 +12,7 @@ plane.
 | [ADR-003](./adr-003-host-enrollment.md)          | Accepted | Outbound WSS node daemons, `SandboxHost` / `HostToken` pairing.                                     |
 | [ADR-004](./adr-004-runtime-boundary.md)         | Accepted | Control plane talks over the relay; Incus/KVM lives in `crates/sandbox-runtime` on the node daemon. |
 | [ADR-005](./adr-005-e2b-adapter-profile.md)      | Proposed | Native API first; an E2B-shaped adapter is an explicit capability matrix plus unsupported errors.   |
+| [ADR-006](./adr-006-agent-host-access.md)        | Accepted | Scoped agent host commands/files, node-local opt-in, ownership, queued commands and audit.          |
 
 User-facing explanations of these decisions are in the [guide](../guide/README.md).
 

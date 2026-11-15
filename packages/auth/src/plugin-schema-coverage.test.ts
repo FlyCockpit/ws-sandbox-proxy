@@ -13,13 +13,14 @@ import { describe, expect, it, vi } from "vitest";
  * or is required in Prisma where Better Auth may omit it.
  */
 
-const db = vi.hoisted(() => ({}));
+const db = vi.hoisted(() => ({ oauthResource: [], oauthClientResource: [] }));
 vi.mock("@wssp/db", () => ({ default: { $extends: () => ({}) } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: "http://localhost:3000",
     BETTER_AUTH_SECRET: "plugin-schema-coverage-secret-at-least-32-chars",
     NODE_ENV: "test",
+    MCP_ENABLED: true,
   },
   ADMIN_EMAILS: new Set(),
   SIGNUP_ENABLED: true,
@@ -114,12 +115,15 @@ function schemaMismatches(
       const list = type.endsWith("[]");
       const base = list ? type.slice(0, -2) : type;
       const allowed = COMPATIBLE[base];
-      if (allowed && (!allowed.includes(field.type) || field.list !== list))
+      // OAuth allowedScopes is a nullable JSON array: Prisma cannot model nullable scalar lists.
+      const jsonArray = list && field.type === "Json" && !field.list;
+      if (allowed && !jsonArray && (!allowed.includes(field.type) || field.list !== list))
         problems.push(
           `${prismaName}.${name}: Prisma ${field.type}${field.list ? "[]" : ""} vs Better Auth ${type}`,
         );
       const mayBeOmitted = spec.required === false && spec.defaultValue === undefined;
-      if (mayBeOmitted && !field.optional && !field.hasDefault)
+      // Prisma scalar lists may be omitted (empty array on read), unlike required scalars.
+      if (mayBeOmitted && !field.optional && !field.hasDefault && !field.list)
         problems.push(`${prismaName}.${name}: required in Prisma but optional in Better Auth`);
     }
   }
@@ -141,6 +145,14 @@ describe("Better Auth plugin schema coverage", () => {
         "verification",
         "twoFactor",
         "deviceCode",
+        "oauthClient",
+        "oauthResource",
+        "oauthClientResource",
+        "oauthRefreshToken",
+        "oauthAccessToken",
+        "oauthConsent",
+        "oauthClientAssertion",
+        "jwks",
       ]),
     );
     expect(Object.keys(authSchema.twoFactor?.fields ?? {})).toEqual(

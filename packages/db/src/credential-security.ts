@@ -12,12 +12,15 @@ export const PRODUCT_CREDENTIAL_PREFIXES = {
   hostToken: "wssp_host_",
   deviceCredential: "wssp_device_",
   sdkKey: "wssp_sdk_",
+  agentToken: "wssp_agent_",
 } as const;
 
 export const CREDENTIAL_HMAC_CONTEXTS = {
   hostToken: "wssp:host-token:v1",
   deviceCredential: "wssp:device-credential:v1",
   sdkKey: "wssp:sdk-key:v1",
+  agentToken: "wssp:agent-token:v1",
+  hostCommandAudit: "wssp:host-command-audit:v1",
 } as const;
 
 export type ProductCredentialPurpose = keyof typeof PRODUCT_CREDENTIAL_PREFIXES;
@@ -67,6 +70,12 @@ export function parseSdkKeyCredentialSecret(raw: string): ParsedSdkKeyCredential
   return parseProductCredentialForPurpose("sdkKey", raw);
 }
 
+export function parseAgentTokenCredentialSecret(
+  raw: string,
+): ParsedProductCredential<"agentToken"> | null {
+  return parseProductCredentialForPurpose("agentToken", raw);
+}
+
 export function generateProductCredentialSecret<P extends ProductCredentialPurpose>(
   purpose: P,
 ): ParsedProductCredential<P> {
@@ -93,7 +102,10 @@ export function credentialLookupPrefix(credential: ParsedProductCredential): str
   return credential.raw.slice(0, prefix.length + LOOKUP_VISIBLE_RANDOM_CHARS);
 }
 
-function derivePurposeKey(purpose: ProductCredentialPurpose, betterAuthSecret: string): Buffer {
+function derivePurposeKey(
+  purpose: keyof typeof CREDENTIAL_HMAC_CONTEXTS,
+  betterAuthSecret: string,
+): Buffer {
   return createHmac("sha256", Buffer.from(betterAuthSecret, "utf8"))
     .update(CREDENTIAL_HMAC_CONTEXTS[purpose])
     .digest();
@@ -104,13 +116,13 @@ export function hmacDigestForProductPurpose({
   value,
   betterAuthSecret = env.BETTER_AUTH_SECRET,
 }: {
-  purpose: ProductCredentialPurpose;
+  purpose: keyof typeof CREDENTIAL_HMAC_CONTEXTS;
   value: string;
   betterAuthSecret?: string;
 }): string {
   return createHmac("sha256", derivePurposeKey(purpose, betterAuthSecret))
     .update(value)
-    .digest("base64url");
+    .digest(purpose === "hostCommandAudit" ? "hex" : "base64url");
 }
 
 export function verifyProductCredentialDigest({

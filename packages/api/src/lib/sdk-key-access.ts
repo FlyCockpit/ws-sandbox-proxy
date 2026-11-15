@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ORPCError } from "@orpc/server";
+import {
+  AGENT_TOKEN_NO_EXPIRY_BLOCKED_CODE,
+  agentTokenBlockedByPolicy,
+} from "@wssp/config/agent-token-limits";
 import prisma, { type Prisma, type SdkKeyResourceMode } from "@wssp/db";
 import { AccountDeletionConflictError, lockOwnerForAdmission } from "@wssp/db/account-deletion";
 import { authorityTicket } from "@wssp/db/authority";
@@ -7,9 +11,11 @@ import {
   credentialLookupPrefix,
   generateProductCredentialSecret,
   hmacDigestForProductPurpose,
+  parseAgentTokenCredentialSecret,
   parseSdkKeyCredentialSecret,
   verifyProductCredentialDigest,
 } from "@wssp/db/credential-security";
+import { env } from "@wssp/env/server";
 import {
   type AuthorizingPrincipal,
   type Principal,
@@ -65,6 +71,8 @@ export {
 
 export type ServicePrincipal = {
   kind: "sdkKey";
+  credentialKind: "API" | "AGENT_TOKEN" | "OAUTH_GRANT";
+  ownSandboxesOnly: boolean;
   expiresAt: Date | null;
   keyId: string;
   ownerId: string;
@@ -79,6 +87,8 @@ export const sdkKeyListSelect = {
   id: true,
   name: true,
   resourceMode: true,
+  kind: true,
+  ownSandboxesOnly: true,
   poolMode: true,
   scopes: true,
   lookupPrefix: true,
@@ -107,6 +117,8 @@ const sdkKeyCredentialSelect = {
   id: true,
   userId: true,
   resourceMode: true,
+  kind: true,
+  ownSandboxesOnly: true,
   poolMode: true,
   scopes: true,
   lookupPrefix: true,
@@ -126,6 +138,8 @@ type SdkKeyCredentialRow = Prisma.SdkKeyGetPayload<{ select: typeof sdkKeyCreden
 // First lookup on every /v1 request: only what the pre-digest gates read. The
 // allowlists come from revalidateSdkKey's full select after the ticket.
 const sdkKeyLookupSelect = {
+  kind: true,
+  ownSandboxesOnly: true,
   id: true,
   userId: true,
   scopes: true,
@@ -162,6 +176,8 @@ function principalFromRow(
     | "id"
     | "userId"
     | "expiresAt"
+    | "kind"
+    | "ownSandboxesOnly"
     | "resourceMode"
     | "poolMode"
     | "HostAllowlist"
@@ -185,6 +201,8 @@ function principalFromRow(
 
   return {
     kind: "sdkKey",
+    credentialKind: row.kind,
+    ownSandboxesOnly: row.ownSandboxesOnly,
     expiresAt: row.expiresAt,
     keyId: row.id,
     ownerId: row.userId,
@@ -247,8 +265,7 @@ function storedGrantsAllowed(
   action: ServiceAction | "dispatch" | "createDispatch",
 ): boolean {
   if (storedContexts.has(context) && "authorizingKeyId" in context) {
-    if (!(principal.resourceMode === "ALL_OWNED" || context.authorizingKeyId === principal.keyId))
-      return false;
+    if (!(!createdOnly(principal) || context.authorizingKeyId === principal.keyId)) return false;
     // A same-key replay returns the stored receipt (history), never new
     // work; a CREATE's own dispatch launches what its acceptance placed
     // (custody governs use of an existing sandbox).
@@ -716,7 +733,12 @@ async function authorizeCredential(
   }
   const fresh = await revalidateSdkKey(principal.keyId, principal.ownerId, client);
   if (!fresh || !current()) throw forbidden("Credential is inactive.");
+  // OAuth access tokens can carry fewer scopes than their backing grant.
+  // Revalidation may narrow that request ceiling, but must never widen it.
+  const oauthScopes = principal.credentialKind === "OAUTH_GRANT" ? principal.scopes : null;
   Object.assign(principal, fresh);
+  if (oauthScopes)
+    principal.scopes = new Set([...fresh.scopes].filter((scope) => oauthScopes.has(scope)));
   if (buildGrant) principal.scopes = buildGrant;
   if (!hasScopes(principal, SERVICE_ACTION_REQUIREMENTS[action].scopes)) throw forbidden();
   if (intentOnly) return {};
@@ -822,6 +844,19 @@ async function authorizeCredential(
   if (target.retainedReplay) context.retainedReplay = true;
   const retained = storedContexts.has(context) && storedGrantsAllowed(principal, context, action);
   checkServiceAction(principal, action, context);
+  if (SERVICE_ACTION_REQUIREMENTS[action].requiresOwnedHost) {
+    const host =
+      context.sandboxHostId &&
+      (await client.sandboxHost.findFirst({
+        where: { id: context.sandboxHostId, userId: principal.ownerId },
+        select: { id: true },
+      }));
+    if (!host || !hostAllowed(principal, context.sandboxHostId))
+      throw new ORPCError("FORBIDDEN", {
+        message: "Host is not owned by this credential's owner.",
+        data: { code: "host.not_owned" },
+      });
+  }
   // Host authority is owner/credential-scoped above, which a host revision
   // bump does not move; fence the host scope itself from before the existence
   // check to the end of authorization. Otherwise a request resuming after a
@@ -837,7 +872,7 @@ async function authorizeCredential(
     });
     if (!host) {
       const retainedRead =
-        principal.resourceMode === "ALL_OWNED" &&
+        !createdOnly(principal) &&
         (action === "sandboxes.replayCreate" ||
           action === "operations.getReceipt" ||
           (context.sandboxId &&
@@ -978,6 +1013,8 @@ function serviceReadTicket(principal: Principal, scope: { hostId?: string }): ()
   });
   const signature = () =>
     JSON.stringify([
+      principal.ownSandboxesOnly,
+      principal.credentialKind,
       [...principal.scopes].sort(),
       principal.allowedPoolIds === "allUsable"
         ? "allUsable"
@@ -989,7 +1026,13 @@ function serviceReadTicket(principal: Principal, scope: { hostId?: string }): ()
     ]);
   const before = signature();
   const identity = () =>
-    JSON.stringify([principal.keyId, principal.resourceMode, [...principal.scopes].sort()]);
+    JSON.stringify([
+      principal.keyId,
+      principal.resourceMode,
+      principal.ownSandboxesOnly,
+      principal.credentialKind,
+      [...principal.scopes].sort(),
+    ]);
   const identityBefore = identity();
   return () => {
     const changed = resultGuards.getStore()?.retainedWork
@@ -1158,7 +1201,7 @@ export function serviceResourceFilter(
       ],
     };
   }
-  if (key.resourceMode === "ALL_OWNED") return owner;
+  if (!createdOnly(key)) return owner;
   return {
     ...owner,
     Operations: {
@@ -1171,12 +1214,16 @@ export function serviceResourceFilter(
   };
 }
 
-export async function authenticateSdkKeySecret(
+async function authenticateCredentialSecret(
   rawSecret: string,
+  kind: "API" | "AGENT_TOKEN",
   now = new Date(),
 ): Promise<ServicePrincipal | null> {
   const startedAt = Date.now();
-  const credential = parseSdkKeyCredentialSecret(rawSecret);
+  const credential =
+    kind === "API"
+      ? parseSdkKeyCredentialSecret(rawSecret)
+      : parseAgentTokenCredentialSecret(rawSecret);
   if (!credential) {
     return null;
   }
@@ -1186,7 +1233,14 @@ export async function authenticateSdkKeySecret(
     where: { lookupPrefix },
     select: sdkKeyLookupSelect,
   });
-  if (!row || row.revokedAt || isExpired(row.expiresAt, now)) return null;
+  if (
+    !row ||
+    row.kind !== kind ||
+    !row.secretDigest ||
+    row.revokedAt ||
+    isExpired(row.expiresAt, now)
+  )
+    return null;
   const current = authorityTicket({ ownerId: row.userId, credentialId: row.id });
   if (!(await isOwnerCredentialPolicySatisfied(row.User, now))) return null;
   try {
@@ -1196,7 +1250,7 @@ export async function authenticateSdkKeySecret(
   }
   if (
     !verifyProductCredentialDigest({
-      purpose: "sdkKey",
+      purpose: kind === "API" ? "sdkKey" : "agentToken",
       value: credential.raw,
       digest: row.secretDigest,
     })
@@ -1205,23 +1259,32 @@ export async function authenticateSdkKeySecret(
   }
 
   // Throttled and tolerant of a concurrently deleted key: a missing row matches
-  // nothing here and revalidateSdkKey below refuses it.
-  await prisma.sdkKey.updateMany({
-    where: {
-      id: row.id,
-      OR: [
-        { lastUsedAt: null },
-        { lastUsedAt: { lt: new Date(now.getTime() - SDK_KEY_LAST_USED_PRECISION_MS) } },
-      ],
-    },
-    data: { lastUsedAt: now },
-  });
+  // nothing here and revalidateSdkKey below refuses it. A token the no-expiry policy
+  // blocks is not stamped as used (the refusal itself is still decided below).
+  if (!agentTokenBlockedByPolicy(row, env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY))
+    await prisma.sdkKey.updateMany({
+      where: {
+        id: row.id,
+        OR: [
+          { lastUsedAt: null },
+          { lastUsedAt: { lt: new Date(now.getTime() - SDK_KEY_LAST_USED_PRECISION_MS) } },
+        ],
+      },
+      data: { lastUsedAt: now },
+    });
 
   // Durable read AFTER the scoped ticket: a revoke/ban committed between the lookup
   // and the ticket sample is observed here; one racing this read fails the ticket.
-  const fresh = await revalidateSdkKey(row.id, row.userId);
+  // It is also the only no-expiry policy decision on this path (no earlier read is reused).
+  const outcome = await revalidateSdkKeyOutcome(row.id, row.userId);
+  if (outcome === POLICY_BLOCKED) {
+    if (row.kind === "AGENT_TOKEN" && current()) throw new AgentTokenPolicyBlockedError();
+    return null;
+  }
+  const fresh = outcome;
   if (
     !fresh ||
+    fresh.credentialKind !== kind ||
     !current() ||
     isExpired(fresh.expiresAt, new Date(now.getTime() + Date.now() - startedAt))
   )
@@ -1229,11 +1292,28 @@ export async function authenticateSdkKeySecret(
   return fresh;
 }
 
-export async function revalidateSdkKey(
+/** An existing no-expiry agent token presented while the deployment disallows
+ * no-expiry tokens. Thrown only after the secret verified and every other gate
+ * passed, so it never reveals a token the caller does not hold. */
+export class AgentTokenPolicyBlockedError extends Error {
+  readonly code = AGENT_TOKEN_NO_EXPIRY_BLOCKED_CODE;
+  constructor() {
+    super("No-expiry agent tokens are disabled on this deployment.");
+    this.name = "AgentTokenPolicyBlockedError";
+  }
+}
+
+const POLICY_BLOCKED = Symbol("credential-policy-blocked");
+
+/** Every credential (re)validation runs through here, so the no-expiry policy
+ * is applied on first authentication, in-flight dispatch checks, stored
+ * principals and build principals alike. The policy is read once, beside the
+ * row, and the result is returned without any later re-read. */
+async function revalidateSdkKeyOutcome(
   keyId: string,
   ownerId: string,
   client: Prisma.TransactionClient = prisma,
-): Promise<ServicePrincipal | null> {
+): Promise<ServicePrincipal | typeof POLICY_BLOCKED | null> {
   const current = authorityTicket({ ownerId, credentialId: keyId });
   const row = await client.sdkKey.findUnique({
     where: { id: keyId },
@@ -1249,12 +1329,23 @@ export async function revalidateSdkKey(
     !(await isOwnerCredentialPolicySatisfied(row.User, now, settings))
   )
     return null;
+  if (agentTokenBlockedByPolicy(row, env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY))
+    return current() ? POLICY_BLOCKED : null;
   try {
     const principal = principalFromRow(row, new Set(parseServiceScopeSet(row.scopes)));
     return current() && !isExpired(row.expiresAt, new Date()) ? principal : null;
   } catch {
     return null;
   }
+}
+
+export async function revalidateSdkKey(
+  keyId: string,
+  ownerId: string,
+  client: Prisma.TransactionClient = prisma,
+): Promise<ServicePrincipal | null> {
+  const outcome = await revalidateSdkKeyOutcome(keyId, ownerId, client);
+  return outcome === POLICY_BLOCKED ? null : outcome;
 }
 
 /** Caller locks SDK K before H/S. No owner admission, mutation, scheduling or
@@ -1403,6 +1494,8 @@ export async function checkAcceptedDispatchAuthority(
         expiresAt: true,
         revokedAt: true,
         resourceMode: true,
+        kind: true,
+        ownSandboxesOnly: true,
         poolMode: true,
         HostAllowlist: {
           where: { sandboxHostId: { in: hostIds }, SandboxHost: { userId: ownerId } },
@@ -1434,6 +1527,9 @@ export async function checkAcceptedDispatchAuthority(
         (!buildScope || row.scopes.includes(TEMPLATE_BUILD_SCOPE)) &&
         !row.revokedAt &&
         !isExpired(row.expiresAt, new Date()) &&
+        // Accepted work authorized by a no-expiry agent token stops while the
+        // deployment disallows those tokens, like any other lost authority.
+        !agentTokenBlockedByPolicy(row, env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY) &&
         (await isOwnerCredentialPolicySatisfied(row.User, new Date(), settings)),
     );
     if (row && active) {
@@ -1463,7 +1559,11 @@ export async function checkAcceptedDispatchAuthority(
         // that exact initial key. Current usability was checked above.
         const retained =
           creation != null &&
-          (row.resourceMode === "ALL_OWNED" || retainedContext.authorizingKeyId === row.id);
+          (!createdOnly({
+            resourceMode: row.resourceMode,
+            ownSandboxesOnly: row.ownSandboxesOnly,
+          }) ||
+            retainedContext.authorizingKeyId === row.id);
         const host =
           retained ||
           (await client.sandboxHost.findFirst({
@@ -1486,11 +1586,16 @@ export async function checkAcceptedDispatchAuthority(
         active = Boolean(host && revision && pool);
       }
     }
-    if (active && row && isExpired(row.expiresAt, new Date())) active = false;
+    // Final verdict after every read: expiry and the no-expiry policy are judged here, so a
+    // policy read never precedes an await that the verdict then trusts.
+    const policyBlocked = () =>
+      row !== null && agentTokenBlockedByPolicy(row, env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY);
+    if (active && row && (isExpired(row.expiresAt, new Date()) || policyBlocked())) active = false;
     if (!current()) return "indeterminate";
     if (active) {
       input.onActive?.(row?.expiresAt ?? null);
-      input.onActiveAuthority?.(current);
+      // The synchronous gate a relay send consults also re-judges the policy.
+      input.onActiveAuthority?.(() => current() && !policyBlocked());
     }
     return active ? "active" : "inactive";
   } catch {
@@ -1508,6 +1613,17 @@ export async function checkAcceptedDispatchAuthority(
 export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" | "custody">> = {
   "capabilities.get": "custody",
   "hosts.list": "custody",
+  "hosts.get": "custody",
+  "hostCommands.run": "custody",
+  "hostCommands.get": "custody",
+  "hostCommands.writeStdin": "custody",
+  "hostCommands.cancel": "custody",
+  "hostCommands.queue": "custody",
+  "hostFiles.read": "custody",
+  "hostFiles.list": "custody",
+  "hostFiles.write": "custody",
+  "hostFiles.edit": "custody",
+
   "hosts.storagePools": "custody",
   "pools.list": "custody",
   "pools.get": "custody",
@@ -1616,7 +1732,7 @@ async function isOffloadedRestoreTarget(
  * §8.3b (V2): the grants a restore intent of an OFFLOADED sandbox needs from
  * an SDK key, in place of the guest-access usability check: the revision
  * grant, the origin-pool grant and the last host (current custody, §5a),
- * plus the owner's credential policy. The scope (`sandboxes:write`) and the
+ * plus the owner's credential policy. The scope (`sandboxes:manage`) and the
  * owner-scoped lookup were checked by the caller; the creating-key
  * placement rule and the destination are checked at placement.
  */
@@ -1750,4 +1866,38 @@ async function requireCurrentSandboxUsability(
   )
     throw forbidden("Sandbox access is unavailable.");
   // The active member's RI witness proves current contribution. enabled gates new placement only.
+}
+
+/** Creator restriction applies even to an all-owned resource grant. */
+export function createdOnly(key: {
+  resourceMode: SdkKeyResourceMode;
+  ownSandboxesOnly: boolean;
+}): boolean {
+  return key.resourceMode === "ALLOWLIST" || key.ownSandboxesOnly;
+}
+
+export function authenticateSdkKeySecret(raw: string, now = new Date()) {
+  return authenticateCredentialSecret(raw, "API", now);
+}
+export function authenticateAgentTokenSecret(raw: string, now = new Date()) {
+  return authenticateCredentialSecret(raw, "AGENT_TOKEN", now);
+}
+export async function principalForMcpGrant(
+  grantId: string,
+  userId: string,
+  clientId: string,
+): Promise<ServicePrincipal | null> {
+  const current = authorityTicket({ ownerId: userId });
+  const grant = await prisma.mcpGrant.findFirst({
+    where: { id: grantId, userId, clientId, revokedAt: null },
+    select: { sdkKeyId: true },
+  });
+  if (!grant) return null;
+  const principal = await revalidateSdkKey(grant.sdkKeyId, userId);
+  // Re-read the grant after credential validation; a racing revoke must not authenticate.
+  const active = await prisma.mcpGrant.findFirst({
+    where: { id: grantId, userId, clientId, sdkKeyId: grant.sdkKeyId, revokedAt: null },
+    select: { id: true },
+  });
+  return active && current() && principal?.credentialKind === "OAUTH_GRANT" ? principal : null;
 }

@@ -492,6 +492,8 @@ describe("claim gate: the complete attachment set, policy under the locks (pg)",
   const sdkKey = (o: Owner, scopes: string[], resourceMode: "ALL_OWNED" | "ALLOWLIST") =>
     ({
       kind: "sdkKey",
+      credentialKind: "API",
+      ownSandboxesOnly: false,
       ownerId: o.owner,
       keyId: `key-${randomUUID().slice(0, 8)}`,
       expiresAt: null,
@@ -529,19 +531,28 @@ describe("claim gate: the complete attachment set, policy under the locks (pg)",
     await attach(o, s.id, l);
     // No `credentials:use`: refused before any claim.
     await expect(
-      coldResume(o, s.id, sdkKey(o, ["sandboxes:write"], "ALL_OWNED")),
+      coldResume(
+        o,
+        s.id,
+        sdkKey(o, ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"], "ALL_OWNED"),
+      ),
     ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
     // E2-B-03: the create path refuses the same way (not UNSUPPORTED_CAPABILITY).
     expect(() =>
-      requireCreateCredentialsAllowed(sdkKey(o, ["sandboxes:write"], "ALL_OWNED"), [
-        { credentialId: l.credentialId },
-      ]),
+      requireCreateCredentialsAllowed(
+        sdkKey(o, ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"], "ALL_OWNED"),
+        [{ credentialId: l.credentialId }],
+      ),
     ).toThrow(expect.objectContaining({ code: "FORBIDDEN", status: 403 }));
     // The scope, but the login is not on the key's allowlist.
     const hidden = await coldResume(
       o,
       s.id,
-      sdkKey(o, ["sandboxes:write", "credentials:use"], "ALLOWLIST"),
+      sdkKey(
+        o,
+        ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy", "credentials:use"],
+        "ALLOWLIST",
+      ),
     ).catch((error: unknown) => error);
     expect(codeOf(hidden)).toBe("credential.not_found");
     // Drain mode (explicitly off, key present): no new claim, even for a session.

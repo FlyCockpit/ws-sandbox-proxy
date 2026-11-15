@@ -3,6 +3,8 @@
  * `pnpm db:test-migrations` — end-to-end test of the migration tooling
  * against a DISPOSABLE Postgres (a throwaway `postgres:18.6-trixie` docker container,
  * or `--server-url <superuser url>` for one you already run, e.g. CI).
+ * `--container-prefix <name>` names the throwaway container (default
+ * `<app>-test-migrations`).
  *
  * It copies the db tooling + packages/db into a temp git repo (so nothing in
  * this checkout is written) and exercises:
@@ -89,7 +91,13 @@ function freePort() {
 }
 
 async function startPostgres() {
-  const name = `wssp-test-migrations-${randomBytes(4).toString("hex")}`;
+  // `--container-prefix <name>` keeps a shared machine's containers in its own namespace.
+  const prefixIndex = process.argv.indexOf("--container-prefix");
+  const prefix = prefixIndex >= 0 ? process.argv[prefixIndex + 1] : "wssp-test-migrations";
+  if (!prefix || !/^[a-z0-9][a-z0-9_.-]*$/.test(prefix))
+    throw new Error("--container-prefix needs a Docker name prefix ([a-z0-9][a-z0-9_.-]*)");
+  const name = `${prefix}-${randomBytes(4).toString("hex")}`;
+  const password = randomBytes(24).toString("hex");
   const run = sh("docker", [
     "run",
     "-d",
@@ -97,7 +105,8 @@ async function startPostgres() {
     "--name",
     name,
     "-e",
-    "POSTGRES_PASSWORD=postgres",
+    // A per-run password: the port is published on loopback.
+    `POSTGRES_PASSWORD=${password}`,
     "-p",
     // A fixed host port (picked free just now): a random one would change
     // when the contract scenarios restart the container.
@@ -106,7 +115,7 @@ async function startPostgres() {
   ]);
   if (run.code !== 0) throw new Error(`docker run failed: ${run.out}`);
   const port = sh("docker", ["port", name, "5432/tcp"]).out.trim().split("\n")[0].split(":").at(-1);
-  const url = `postgresql://postgres:postgres@127.0.0.1:${port}/postgres`;
+  const url = `postgresql://postgres:${password}@127.0.0.1:${port}/postgres`;
   for (let i = 0; i < 60; i++) {
     const client = new pg.Client({ connectionString: url });
     try {
@@ -262,13 +271,32 @@ async function main() {
     path.join(repo, "scripts/db/lib/scratch-db.mjs")
   );
   const localName = `wssp_test_${runSuffix}`;
+  // The fixture checkout's own default name is the per-run scratch name, so a
+  // shared --server-url never sees the real `wssp`. db:reset:local
+  // refuses EXPECTED_DB, so rename DEFAULT_MAIN_DB in the fixture copy instead.
+  const fixtureNames = path.join(repo, "scripts/db/lib/local-db-name.mjs");
+  const namesSource = readFileSync(fixtureNames, "utf8");
+  const renamed = namesSource.replace(
+    'export const DEFAULT_MAIN_DB = "wssp";',
+    `export const DEFAULT_MAIN_DB = "${localName}";`,
+  );
+  assert.notEqual(renamed, namesSource, "fixture DEFAULT_MAIN_DB rewrite");
+  writeFileSync(fixtureNames, renamed);
   const env = {
     ...process.env,
     EXPECTED_PORT: server.port,
-    EXPECTED_DB: localName,
     CHECKPOINT_DISABLE: "1",
   };
-  delete env.DATABASE_URL;
+  // Never inherit the checkout's target or guard escapes into this fixture.
+  for (const name of [
+    "DATABASE_URL",
+    "SHADOW_DATABASE_URL",
+    "CHECK_DATABASE_URL",
+    "ASSERT_LOCAL_DB_ESCAPE",
+    "ALLOW_NONLOCAL_DB_MIGRATE_APPLY",
+    "EXPECTED_DB",
+  ])
+    delete env[name];
   const localUrl = withDatabase(server.url, localName);
   const node = (script, scriptArgs = [], extraEnv = {}) =>
     sh(process.execPath, [path.join(repo, "scripts/db", script), ...scriptArgs], {
@@ -389,7 +417,7 @@ async function main() {
                 "SELECT count(*)::int AS n FROM pg_constraint WHERE contype='c' AND connamespace='public'::regnamespace",
               )
             ).rows[0].n,
-            144,
+            145,
           );
           assert.equal(
             (
@@ -415,7 +443,7 @@ async function main() {
     );
 
     await step(
-      "fresh multi-migration history skips a configured failing backup hook on real PostgreSQL",
+      "BACKUP_ENABLED=true refuses a fresh multi-migration database when the backup fails; off applies it (real PostgreSQL)",
       async () => {
         const url = await freshDb("fresh_multi");
         const folders = mkdtempSync(path.join(tmpdir(), "wssp-fresh-history-"));
@@ -430,17 +458,38 @@ async function main() {
             mkdirSync(path.join(folders, name));
             writeFileSync(path.join(folders, name, "migration.sql"), wrapTransactional(sql + ";"));
           }
-          const hook = path.join(folders, "must-not-run.sh");
+          const hook = path.join(folders, "failing-backup.sh");
           writeFileSync(hook, "exit 71\n");
           const config = fixtureTempConfig({ url, migrations: folders });
-          let result;
-          try {
-            result = await runtime(url, {
+          const migrate = (env) =>
+            runtime(url, {
               migrationsDir: folders,
               backupHook: hook,
+              env,
               contracts: false,
               runPrisma: (args, options) => fixturePrisma([...args, "--config", config], options),
             });
+          let refused;
+          let result;
+          try {
+            // Owner decision: a brand-new database is not exempt.
+            refused = await migrate({ BACKUP_ENABLED: "true" });
+            assert.equal(refused.code, 1, refused.out);
+            assert.match(
+              refused.out,
+              /pre-migration backup failed \(exit 71\); refusing to migrate/,
+            );
+            assert.equal(
+              (
+                await query(
+                  url,
+                  "SELECT count(*)::int AS n FROM pg_tables WHERE schemaname = 'public'",
+                )
+              ).rows[0].n,
+              0,
+              "nothing was created",
+            );
+            result = await migrate({ BACKUP_ENABLED: "false" });
           } finally {
             rmSync(path.dirname(config), { recursive: true, force: true });
           }
@@ -1012,7 +1061,7 @@ INSERT INTO "string_mode_fixture" VALUES ('backslash\', current_setting('standar
             pollMs: 200,
             waitTimeoutMs: 60_000,
             backupHook: hook,
-            env: { DATABASE_URL: db, PATH: process.env.PATH },
+            env: { DATABASE_URL: db, PATH: process.env.PATH, BACKUP_ENABLED: "true" },
           });
         codes = await Promise.all([leader(), leader()]);
       } finally {

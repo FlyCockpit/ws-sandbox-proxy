@@ -34,6 +34,8 @@ const ACTIVE_TPL = {
 
 const keyRow = (overrides: Record<string, unknown> = {}) => ({
   id: "key-1",
+  kind: "API",
+  ownSandboxesOnly: false,
   name: "ci",
   resourceMode: "ALLOWLIST" as const,
   scopes: ["sandboxes:read"],
@@ -110,7 +112,7 @@ describe("sdkKeysRouter", () => {
     expect(db.sdkKey.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          AND: expect.arrayContaining([{ userId: "user-a", revokedAt: null }]),
+          AND: expect.arrayContaining([{ userId: "user-a", kind: "API", revokedAt: null }]),
         }),
       }),
     );
@@ -169,7 +171,7 @@ describe("sdkKeysRouter", () => {
       (error: ORPCError) => error.code === "NOT_FOUND",
     );
     expect(db.sdkKey.findFirst).toHaveBeenCalledWith({
-      where: { id: "key-1", userId: "user-b", revokedAt: null },
+      where: { id: "key-1", userId: "user-b", kind: "API", revokedAt: null },
       select: { id: true },
     });
     expect(db.sdkKey.updateMany).not.toHaveBeenCalled();
@@ -181,7 +183,7 @@ describe("sdkKeysRouter", () => {
     expect(db.sdkKey.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          AND: [{ userId: "user-b", revokedAt: null }],
+          AND: [{ userId: "user-b", kind: "API", revokedAt: null }],
         },
       }),
     );
@@ -226,7 +228,7 @@ describe("unit (mocked Prisma; no real-DB test yet for the P2003 mapping) — C1
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         where: {
           AND: [
-            { userId: "user-a", revokedAt: null },
+            { userId: "user-a", kind: "API", revokedAt: null },
             { OR: [{ createdAt: { lt: now } }, { createdAt: now, id: { lt: "key-3" } }] },
           ],
         },
@@ -244,9 +246,8 @@ describe("unit (mocked Prisma; no real-DB test yet for the P2003 mapping) — C1
   );
   it.each([
     { hostIds: [], templateRevisionIds: [] },
-    { hostIds: ["host-1"], templateRevisionIds: [] },
     { hostIds: [], templateRevisionIds: ["tpl-1"] },
-  ])("requires both restriction dimensions %j", async (restrictions) => {
+  ])("requires a host or pool grant %j", async (restrictions) => {
     await expect(client().create({ ...mint, ...restrictions })).rejects.toMatchObject({
       code: "BAD_REQUEST",
     });
@@ -374,7 +375,7 @@ describe("unit (mocked Prisma; no real-DB test yet for the P2003 mapping) — C1
     expect(db.sdkKey.update).not.toHaveBeenCalled();
     expect(db.sdkKey.updateMany).toHaveBeenCalledTimes(2);
     expect(db.sdkKey.updateMany).toHaveBeenCalledWith({
-      where: { id: "key-1", userId: "user-a", revokedAt: null },
+      where: { id: "key-1", userId: "user-a", kind: "API", revokedAt: null },
       data: { revokedAt: expect.any(Date) },
     });
   });

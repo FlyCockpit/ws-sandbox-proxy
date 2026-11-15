@@ -27,6 +27,7 @@ import { requireCurrentHostUsability } from "../sharing-access";
 import { requireOwnedSandboxPlacement } from "../sharing-authority";
 
 export type KeyGrant = {
+  ownSandboxesOnly: boolean;
   scopes: ServiceScope[];
   resourceMode: "allOwned" | "allowlist";
   poolMode: "allUsable" | "selected";
@@ -43,6 +44,7 @@ export const getKeyGrant = serviceProcedure(
     const grant = grantOf(principal);
     const viewer = viewerOf(principal);
     return {
+      ownSandboxesOnly: viewer.ownSandboxesOnly,
       scopes: SERVICE_SCOPES.filter((scope) => grant.has(scope)),
       resourceMode: viewer.resourceMode === "ALL_OWNED" ? "allOwned" : "allowlist",
       poolMode: viewer.allowedPoolIds === "allUsable" ? "allUsable" : "selected",

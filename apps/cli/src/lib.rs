@@ -10,6 +10,10 @@ pub mod commands;
 pub mod config;
 pub mod exit;
 pub mod guard_report;
+mod host_context;
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub mod host_process;
 pub mod logging;
 pub mod output;
 pub mod paths;
@@ -27,3 +31,7 @@ mod release_identity;
 mod sandbox_relay_protocol_tests {
     include!("sandbox_relay/protocol_test.rs");
 }
+
+#[cfg(all(test, unix))]
+#[path = "../../../crates/sandbox-runtime/tests/support/managed_child.rs"]
+pub(crate) mod managed_child;

@@ -15,6 +15,12 @@ use wssp::exit::ExitCode;
 use wssp::{commands, exit, logging, output};
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(std::ffi::OsStr::new(wssp::host_process::ENTRY))
+    {
+        std::process::exit(wssp::host_process::run());
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => {

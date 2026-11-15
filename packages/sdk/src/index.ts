@@ -10,8 +10,17 @@ export type {
   CommandOutputPageDto,
   CommunityTemplateCreatedDto,
   EntryInfo,
+  HostAgentAccess,
+  HostCommandInput,
+  HostCommandStatus,
   HostDto,
+  HostFileEdit,
+  HostFileErrorReason,
+  HostFileList,
+  HostFileRead,
+  HostFileWrite,
   HostPage,
+  HostQueuedCommand,
   JsonRouteId,
   OperationDto,
   OperationErrorCode,
@@ -229,6 +238,20 @@ export {
   type UpdateCredentialInstanceInput,
   type WriteCredentialValueInput,
 } from "./credentials";
+export {
+  createHostsApi,
+  type HostCommandQuery,
+  type HostCommandRunResult,
+  type HostCommandStdinInput,
+  type HostCommandsApi,
+  type HostFileEditInput,
+  type HostFileListInput,
+  type HostFileReadInput,
+  type HostFilesApi,
+  type HostFileWriteInput,
+  type HostsApi,
+  type QueueHostCommandInput,
+} from "./hosts";
 export type { PoolCapacityQuery, PoolPageOptions, PoolsApi } from "./pools";
 export {
   type CopyOptions,

@@ -80,6 +80,20 @@ const COMPONENTS: ReadonlyArray<readonly [string, z.ZodType]> = [
   ["OperationResult", operationResultSchema],
   ["Host", hostSchema],
   ["HostPage", hostPageSchema],
+  ...(
+    [
+      "startHostCommand",
+      "writeHostCommandStdin",
+      "queueHostCommand",
+      "readHostFile",
+      "listHostFiles",
+      "writeHostFile",
+      "editHostFile",
+    ] as const
+  ).map((id) => {
+    const route = SDK_ROUTES[id];
+    return [route.response.name, route.response.schema] as const;
+  }),
   ["Pool", poolSchema],
   ["PoolDetail", poolDetailSchema],
   ["PoolCapacity", poolCapacitySchema],
@@ -301,7 +315,7 @@ function errorResponse(route: SdkRoute, status: number): JsonObject {
   if (status === 409) {
     headers["Retry-After"] = {
       description:
-        "Only on capacity, quota and pool refusals with `retryable: true` (the deployment's `CAPACITY_RETRY_AFTER_SECONDS`). Never sent with `retryable: false`.",
+        "On host.node_offline, capacity, quota and pool refusals with `retryable: true` (the deployment's `CAPACITY_RETRY_AFTER_SECONDS`). Never sent with `retryable: false`.",
       schema: { type: "integer", minimum: 1 },
     };
   }

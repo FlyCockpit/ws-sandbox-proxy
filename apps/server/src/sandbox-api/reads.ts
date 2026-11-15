@@ -26,6 +26,7 @@ import {
   sdkListTemplateAvailability,
   sdkListTemplateRevisions,
   sdkListTemplates,
+  toHostDto,
 } from "@wssp/api/sandbox/sdk-reads";
 import { getSandboxCapabilities } from "@wssp/api/sandbox/services/capabilities";
 import { getCommandOutput } from "@wssp/api/sandbox/services/sandboxes";
@@ -55,6 +56,23 @@ import {
 import type { Hono } from "hono";
 import type { z } from "zod";
 import { ZodError } from "zod";
+import {
+  cancelHostCommand,
+  getHostCommand,
+  runHostCommand,
+  writeHostCommandStdin,
+} from "../../../../packages/api/src/sandbox/services/host-commands.js";
+import {
+  editHostFile,
+  listHostDir,
+  readHostFile,
+  writeHostFile,
+} from "../../../../packages/api/src/sandbox/services/host-files.js";
+import {
+  getQueuedHostCommand,
+  queueHostCommand,
+} from "../../../../packages/api/src/sandbox/services/host-queued.js";
+import { getHost } from "../../../../packages/api/src/sandbox/services/hosts.js";
 import type { SandboxApiEnv } from "./auth.js";
 import { commandMutationHandlers } from "./commands.js";
 import { credentialHandlers } from "./credentials.js";
@@ -109,6 +127,27 @@ const CREATED_LOCATION: Partial<Record<JsonRouteId, (value: unknown) => string>>
  */
 export function sdkReadHandlers(registered: readonly SdkRouteId[]): RouteHandlers {
   return {
+    getHost: async (principal, { params }) =>
+      toHostDto(await getHost(principal, { id: params.hostId })),
+    startHostCommand: (principal, { params, body, idempotencyKey }) =>
+      runHostCommand(principal, { ...params, ...body, idempotencyKey }),
+    getHostCommand: (principal, { params, query }) =>
+      getHostCommand(principal, { ...params, ...query }),
+    writeHostCommandStdin: (principal, { params, body, idempotencyKey }) =>
+      writeHostCommandStdin(principal, { ...params, ...body, idempotencyKey }),
+    cancelHostCommand: (principal, { params, idempotencyKey }) =>
+      cancelHostCommand(principal, { ...params, idempotencyKey }),
+    queueHostCommand: (principal, { params, body, idempotencyKey }) =>
+      queueHostCommand(principal, { ...params, ...body, idempotencyKey }),
+    getQueuedHostCommand: (principal, { params }) => getQueuedHostCommand(principal, params),
+    readHostFile: (principal, { params, body, idempotencyKey }) =>
+      readHostFile(principal, { ...params, ...body, idempotencyKey }),
+    listHostFiles: (principal, { params, body, idempotencyKey }) =>
+      listHostDir(principal, { ...params, ...body, idempotencyKey }),
+    writeHostFile: (principal, { params, body, idempotencyKey }) =>
+      writeHostFile(principal, { ...params, ...body, idempotencyKey }),
+    editHostFile: (principal, { params, body, idempotencyKey }) =>
+      editHostFile(principal, { ...params, ...body, idempotencyKey }),
     getOperationResult: (owner, { params, query }, context) =>
       withOperationWait({
         ownerId: owner.ownerId,

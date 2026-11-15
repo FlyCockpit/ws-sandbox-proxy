@@ -409,7 +409,8 @@
       "TEMPLATE_BUILD": "Compilación de plantilla"
     },
     "memberOption": "Host miembro {{n}}",
-    "acceptUnavailable": "Este grupo o invitación ya no está disponible. Pídele al propietario una nueva invitación."
+    "acceptUnavailable": "Este grupo o invitación ya no está disponible. Pídele al propietario una nueva invitación.",
+    "nodeOwnerAccess": "La persona propietaria del nodo tiene acceso completo a los sandboxes que otras personas ejecutan en su nodo."
   },
   "status": {
     "ready": "Conectado",

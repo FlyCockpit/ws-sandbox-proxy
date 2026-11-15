@@ -43,7 +43,7 @@ secrets to sign deliveries) and outbound internet access to owners' endpoints.
 
 Background maintenance runs as BullMQ jobs in the worker runtime (embedded in
 the server unless `WORKER_MODE=external`): a daily sweep of expired auth tokens,
-a backup-freshness check every six hours (unless `BACKUP_ENABLED=false`), webhook
+an opt-in backup-freshness check every six hours (`BACKUP_ENABLED=true`), webhook
 delivery (a dispatcher polls Postgres every 2 seconds) and a daily webhook log
 prune. The
 sandbox relay, operation dispatch and the transfer spool run in the server
@@ -67,9 +67,12 @@ CI gates, recovery and deletion notices. CHECKs/functions/triggers are frozen in
 committed migration SQL; schema comments document constraints, not a startup
 repair mechanism.
 
-A nonfresh migration takes a backup when a mounted `/backups` volume or S3
-destination is configured. No destination warns; configured backup failure
-blocks application. Freshness requires proven catalog emptiness. A due deletion
+Backups default off (`BACKUP_ENABLED=false`), with one server startup notice and
+no readiness penalty. With `BACKUP_ENABLED=true` every migrating start checks for
+a usable destination (a mounted `/backups` volume or S3) and each run with
+pending migrations is preceded by a backup, a brand-new database included; no
+usable destination or a failed backup blocks application. Freshness requires
+proven catalog emptiness. A due deletion
 also takes a pre-drop backup if needed; failure defers deletion. See
 [backup and restore](operations/backup-and-restore.md).
 
@@ -106,7 +109,7 @@ Never bypass admission to make an old release start.
 ## Advanced topologies
 
 `pnpm dokploy:config` supports `app` (embedded jobs, default) and `app-worker`
-(external jobs). Both require PostgreSQL and Valkey. An optional `backup` profile
+(external jobs). Both require PostgreSQL and Valkey. Regenerating with `--backups true` adds an optional `backup` profile
 runs exactly one daily writer per database. Use `--project` with a distinct
 1–32 character lowercase/digit/hyphen stem, a configurable `--url` and
 `--proxy-network`. Generated resources and explicit backup prefixes include

@@ -16,12 +16,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { WebSocketServer } from "ws";
 import { createApp } from "../app.js";
 import { terminalUpgradeLimiter } from "../rate-limit.js";
-import { browserTerminalService } from "./browser-terminal.js";
+import { BrowserTerminal, browserTerminalService } from "./browser-terminal.js";
 import {
   killBrowserClients,
   type Upgrade,
   upgradeBrowserTerminal,
 } from "./browser-terminal-client-harness.js";
+import {
+  type BrowserProbe,
+  killBrowserProbes,
+  type ProbeAttempt,
+  startBrowserProbe,
+} from "./browser-terminal-probe-harness.js";
 import { selectWebSocketSubprotocol } from "./browser-terminal-upgrade.js";
 import { SANDBOX_FRAME_MAX_BYTES, type TerminalFence } from "./protocol.js";
 
@@ -304,6 +310,7 @@ beforeAll(async () => {
 afterAll(async () => {
   bindHostTerminalPolicy(null);
   killBrowserClients();
+  killBrowserProbes();
   browserTerminalService.dispose();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
@@ -369,6 +376,26 @@ function upgrade(options: {
     path: options.path ?? "/api/dashboard/sandboxes/sbx-1/terminal/ws",
     origin: options.origin === null ? null : (options.origin ?? ORIGIN),
   });
+}
+
+/**
+ * One browser process for a scenario's many sequential attempts (budget
+ * scenarios): each attempt is a real upgrade, without booting a process per
+ * attempt. An opened socket is closed by the browser before the next attempt.
+ */
+const probes: BrowserProbe[] = [];
+afterEach(() => {
+  for (const probe of probes.splice(0)) probe.dispose();
+});
+function browserProbe() {
+  const probe = startBrowserProbe(base);
+  probes.push(probe);
+  return (options: { protocols: string[]; cookie?: string } & Partial<ProbeAttempt>) =>
+    probe.attempt({
+      ...options,
+      path: options.path ?? "/api/dashboard/sandboxes/sbx-1/terminal/ws",
+      origin: options.origin === null ? null : (options.origin ?? ORIGIN),
+    });
 }
 
 async function until(check: () => boolean, label: string) {
@@ -722,42 +749,47 @@ describe("budgets", () => {
   it("upgrade budget (real 30/60 s): anonymous attempts from one IP never deny an owner on that IP", async () => {
     const { body } = await createSession();
     const protocols = body.protocols as string[];
+    const attempt = browserProbe();
     for (let i = 0; i < 30; i += 1)
-      expect(await upgrade({ protocols })).toMatchObject({ kind: "refused", status: 401 });
+      expect(await attempt({ protocols })).toMatchObject({ kind: "refused", status: 401 });
     // The 31st anonymous attempt from the IP is over its budget.
-    const anonymous = await upgrade({ protocols });
+    const anonymous = await attempt({ protocols });
     expect(anonymous).toMatchObject({ kind: "refused", status: 429, refusal: "RATE_LIMITED" });
     expect(tickets.size).toBe(1);
     // The owner behind the same IP is keyed by user: still admitted.
-    const owner = await upgrade({ protocols, cookie: "sid=auth-1" });
+    const owner = await attempt({ protocols, cookie: "sid=auth-1" });
     expect(owner.kind).toBe("open");
-    if (owner.kind === "open") owner.close();
   });
 
   it("upgrade budget (real 30/60 s): the 31st authenticated attempt is 429, ticket intact, NO PTY; another user on the IP is unaffected", async () => {
     const { body } = await createSession();
     const protocols = body.protocols as string[];
+    const attempt = browserProbe();
+    // Every refusal is fully answered before the next attempt starts, and the
+    // PTY count is re-read after each one: no refused attempt ever opened one.
+    const opens = ptyOpens();
+    const refused = async (
+      options: { protocols: string[]; cookie: string },
+      status: number,
+      code: string,
+    ) => {
+      expect(await attempt(options)).toEqual({ kind: "refused", status, refusal: code });
+      expect(ptyOpens()).toBe(opens);
+    };
     for (let i = 0; i < 30; i += 1)
-      await refusedWithoutPty(
-        upgrade({ protocols: unknownTicket, cookie: "sid=auth-1" }),
-        401,
-        "TICKET_INVALID",
-      );
-    await refusedWithoutPty(upgrade({ protocols, cookie: "sid=auth-1" }), 429, "RATE_LIMITED");
+      await refused({ protocols: unknownTicket, cookie: "sid=auth-1" }, 401, "TICKET_INVALID");
+    await refused({ protocols, cookie: "sid=auth-1" }, 429, "RATE_LIMITED");
     expect(tickets.size).toBe(1);
     // owner-2 shares the IP but not the bucket.
-    await refusedWithoutPty(
-      upgrade({ protocols: unknownTicket, cookie: "sid=auth-2" }),
-      401,
-      "TICKET_INVALID",
-    );
+    await refused({ protocols: unknownTicket, cookie: "sid=auth-2" }, 401, "TICKET_INVALID");
     // Next minute: the intact ticket (TTL moved past the jump) opens.
     clock += 61_000;
     vi.setSystemTime(clock);
     for (const row of tickets.values()) row.expiresAt = new Date(clock + 30_000);
-    const ok = await upgrade({ protocols, cookie: "sid=auth-1" });
+    const ok = await attempt({ protocols, cookie: "sid=auth-1" });
     expect(ok.kind).toBe("open");
-    if (ok.kind === "open") ok.close();
+    // Exactly one PTY: none of the refusals above opened one late.
+    expect(ptyOpens()).toBe(opens + 1);
   });
 
   it("upgrade budget store failure fails closed (503), ticket intact, NO PTY; recovery opens", async () => {
@@ -848,16 +880,41 @@ describe("redaction", () => {
 });
 
 describe("C55-CO-1: browser liveness through the REAL ws adapter (ping/pong)", () => {
-  // The production singleton, with short liveness bounds for these tests only.
-  const liveness = browserTerminalService as unknown as { heartbeatMs: number; idleMs: number };
-  let saved: [number, number];
+  // The production singleton, with a short heartbeat and a test-driven idle
+  // clock for these tests only. The pings and pongs are real (the ws adapter
+  // and a child-process browser); only the clock the idle bound is measured
+  // on is moved by the test, so no outcome depends on how fast the machine is.
+  const liveness = browserTerminalService as unknown as {
+    heartbeatMs: number;
+    idleMs: number;
+    now: () => number;
+  };
+  let saved: [number, number, () => number];
+  let idleClock = 0;
+  /** Resolvers waiting for the next browser activity (a pong on a silent socket). */
+  let activityWaiters: (() => void)[] = [];
+  const nextActivity = () =>
+    new Promise<void>((resolve) => {
+      activityWaiters.push(resolve);
+    });
   beforeEach(() => {
-    saved = [liveness.heartbeatMs, liveness.idleMs];
+    saved = [liveness.heartbeatMs, liveness.idleMs, liveness.now];
     liveness.heartbeatMs = 50;
     liveness.idleMs = 300;
+    idleClock = 1_000_000;
+    liveness.now = () => idleClock;
+    activityWaiters = [];
+    const activity = BrowserTerminal.prototype.activity;
+    vi.spyOn(BrowserTerminal.prototype, "activity").mockImplementation(function (
+      this: BrowserTerminal,
+    ) {
+      activity.call(this);
+      for (const resolve of activityWaiters.splice(0)) resolve();
+    });
   });
   afterEach(() => {
-    [liveness.heartbeatMs, liveness.idleMs] = saved;
+    vi.mocked(BrowserTerminal.prototype.activity).mockRestore();
+    [liveness.heartbeatMs, liveness.idleMs, liveness.now] = saved;
   });
 
   async function connected(autoPong: boolean) {
@@ -878,7 +935,19 @@ describe("C55-CO-1: browser liveness through the REAL ws adapter (ping/pong)", (
   it("a silent browser that answers pings stays open well past the idle bound", async () => {
     const before = hostFrames("terminal.close").length;
     const inbox = await connected(true);
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    // Six heartbeat rounds: after each pong the idle clock moves 3/4 of the
+    // bound, so the socket outlives 4.5 idle bounds. Every heartbeat measures
+    // from the last pong; without pongs it would be closed by the second round.
+    const closedEarly = inbox.closed.then((closed) => {
+      throw new Error(`closed while answering pings: ${JSON.stringify(closed)}`);
+    });
+    // Handled here: the test's own close below settles it after the rounds.
+    closedEarly.catch(() => undefined);
+    for (let round = 0; round < 6; round += 1) {
+      const pong = nextActivity();
+      idleClock += (liveness.idleMs * 3) / 4;
+      await Promise.race([pong, closedEarly]);
+    }
     expect(inbox.text.filter((frame) => frame.type === "close")).toEqual([]);
     expect(hostFrames("terminal.close").slice(before)).toEqual([]);
     inbox.close();
@@ -888,6 +957,9 @@ describe("C55-CO-1: browser liveness through the REAL ws adapter (ping/pong)", (
   it("a browser that never answers (half-open) is closed detached + timeout with 4401", async () => {
     const before = hostFrames("terminal.close").length;
     const inbox = await connected(false);
+    // No pong ever arrives: once the idle bound has passed since the open, the
+    // next heartbeat closes the socket.
+    idleClock += liveness.idleMs;
     expect(await inbox.closed).toEqual({ code: 4401, reason: "detached" });
     expect(inbox.text.at(-1)).toMatchObject({
       type: "close",
@@ -1088,6 +1160,7 @@ describe("WP8 reattach: v2 subprotocol, resume tickets and the multi-tab budget"
     // shows "Attach again". Neither budget is raised.
     const ids = Array.from({ length: 15 }, (_, i) => `t${i.toString(16).padStart(32, "e")}`);
     for (const id of ids) rows.set(id, { ...rows.get(TERMINAL_ID)! });
+    const attempt = browserProbe();
     for (const [index, id] of ids.entries()) {
       const { status, body } = await mint({
         version: 2,
@@ -1096,9 +1169,9 @@ describe("WP8 reattach: v2 subprotocol, resume tickets and the multi-tab budget"
       expect(status, `tab ${index}`).toBe(200);
       // The upgrade budget is spent at the HTTP upgrade; what the node then
       // answers (here: per-host open and capacity limits) is not budgeted.
-      const result = await upgrade({ protocols: body.protocols as string[], cookie: "sid=auth-1" });
+      // Each tab's socket is closed before the next tab attaches.
+      const result = await attempt({ protocols: body.protocols as string[], cookie: "sid=auth-1" });
       expect(result.kind, `tab ${index}`).toBe("open");
-      if (result.kind === "open") result.close();
     }
     // Headroom remains: 5 more mints pass, the 21st in the minute is refused.
     for (let i = 0; i < 5; i += 1) expect((await mint({ version: 2 })).status).toBe(200);

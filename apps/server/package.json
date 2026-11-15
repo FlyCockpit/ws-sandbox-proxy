@@ -29,7 +29,9 @@
     "rate-limiter-flexible": "catalog:",
     "worker": "workspace:*",
     "ws": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@modelcontextprotocol/server": "catalog:",
+    "@better-auth/mcp": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

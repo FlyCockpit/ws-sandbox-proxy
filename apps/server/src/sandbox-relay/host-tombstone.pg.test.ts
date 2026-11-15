@@ -303,6 +303,8 @@ describe("C21-HOSTFINALIZE (real PostgreSQL): tombstoned host finalization", () 
     });
     const sdk = {
       kind: "sdkKey" as const,
+      credentialKind: "API" as const,
+      ownSandboxesOnly: false,
       keyId: key.id,
       ownerId: seed.owner.ownerId,
       expiresAt: null,

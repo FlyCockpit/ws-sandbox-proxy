@@ -32,6 +32,7 @@ import {
   capabilitiesSchema,
   emptyQuerySchema,
   hostPageSchema,
+  hostSchema,
   operationSchema,
   operationWaitQuerySchema,
   pageQuerySchema,
@@ -52,6 +53,26 @@ import {
   templateRevisionPageSchema,
 } from "./dto";
 import { SDK_ERRORS, type SdkErrorCode } from "./errors";
+import {
+  hostCommandBodySchema,
+  hostCommandParamsSchema,
+  hostCommandQuerySchema,
+  hostCommandStatusSchema,
+  hostCommandStdinBodySchema,
+  hostCommandStdinResultSchema,
+  hostFileEditBodySchema,
+  hostFileEditSchema,
+  hostFileListBodySchema,
+  hostFileListSchema,
+  hostFileReadBodySchema,
+  hostFileReadSchema,
+  hostFileWriteBodySchema,
+  hostFileWriteSchema,
+  hostIdParamsSchema,
+  hostQueuedCommandParamsSchema,
+  hostQueuedCommandSchema,
+  queueHostCommandBodySchema,
+} from "./hosts";
 import {
   actionReceiptSchema,
   appendTemplateRevisionBodySchema,
@@ -561,7 +582,7 @@ const CREDENTIAL_ROUTES = {
     summary:
       "Attach a login. On a READY sandbox its value is installed live (new commands and terminals see its env); on a STOPPED sandbox the attachment is recorded and the lease is claimed at the next start. Naming an account or instance applies to this attach only.",
     feature: "credentials.use",
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     body: attachCredentialBodySchema,
     params: resourceIdParamsSchema,
     query: emptyQuerySchema,
@@ -589,7 +610,7 @@ const CREDENTIAL_ROUTES = {
     summary:
       "Free a login. On a READY sandbox its env leaves at once, every terminal opened with it closes, and its files are copied back (unless `credentialCapture` is `skip`) and scrubbed. On a STOPPED sandbox the attachment ends; a disk that still holds its value must be started first.",
     feature: "credentials.use",
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     body: freeCredentialBodySchema,
     params: sandboxCredentialParamsSchema,
     query: emptyQuerySchema,
@@ -893,7 +914,160 @@ const TEMPLATE_BUILD_ROUTES = {
   },
 } as const satisfies Record<string, SdkRoute>;
 
+const hostErrors = ["host.not_owned", "host.agent_access_off", "host.node_offline"] as const;
+const hostCommandErrors = [...hostErrors, "host.command_not_found"] as const;
+function hostMutation<
+  B extends z.ZodType,
+  R extends z.ZodType,
+  P extends z.ZodObject,
+  const Path extends `/v1/${string}`,
+  const Feature extends "hosts.execute" | "hosts.files",
+  const Name extends string,
+>(
+  path: Path,
+  feature: Feature,
+  body: B,
+  params: P,
+  name: Name,
+  schema: R,
+  successStatus: 200 | 202 = 200,
+) {
+  return {
+    method: "post",
+    path,
+    feature,
+    scopes: [feature === "hosts.execute" ? "hosts:execute" : "hosts:files"],
+    body,
+    params,
+    query: emptyQuerySchema,
+    idempotency: true,
+    successStatus,
+    summary:
+      feature === "hosts.execute"
+        ? "Control a command on a host owned by this key's owner. Commands run as the node daemon user (an Incus admin), with what that user can do; agent host access is off until a person enables it at the node."
+        : "Access text files inside the owned host's node-configured roots.",
+    response: { name, schema },
+    notFound: "sandbox.host_not_found",
+    paginated: false,
+    errors:
+      feature === "hosts.files" ? ([...hostErrors, "host.file_error"] as const) : hostCommandErrors,
+  } as const;
+}
+export const HOST_ROUTES = {
+  getHost: {
+    method: "get",
+    path: "/v1/hosts/{hostId}",
+    summary: "Read a visible host and its effective agent access policy.",
+    feature: "hosts.read",
+    scopes: ["hosts:read"],
+    params: hostIdParamsSchema,
+    query: emptyQuerySchema,
+    response: { name: "Host", schema: hostSchema },
+    notFound: "sandbox.host_not_found",
+    paginated: false,
+  },
+  startHostCommand: hostMutation(
+    "/v1/hosts/{hostId}/commands",
+    "hosts.execute",
+    hostCommandBodySchema,
+    hostIdParamsSchema,
+    "HostCommandStatus",
+    hostCommandStatusSchema,
+    202,
+  ),
+  getHostCommand: {
+    method: "get",
+    path: "/v1/hosts/{hostId}/commands/{commandId}",
+    summary:
+      "Read this credential's host command status and masked base64 output from absolute stream offsets.",
+    feature: "hosts.execute",
+    scopes: ["hosts:execute"],
+    params: hostCommandParamsSchema,
+    query: hostCommandQuerySchema,
+    response: { name: "HostCommandStatus", schema: hostCommandStatusSchema },
+    notFound: "host.command_not_found",
+    paginated: false,
+    errors: hostErrors,
+  },
+  writeHostCommandStdin: hostMutation(
+    "/v1/hosts/{hostId}/commands/{commandId}/stdin",
+    "hosts.execute",
+    hostCommandStdinBodySchema,
+    hostCommandParamsSchema,
+    "HostCommandStdinResult",
+    hostCommandStdinResultSchema,
+  ),
+  cancelHostCommand: hostMutation(
+    "/v1/hosts/{hostId}/commands/{commandId}/cancel",
+    "hosts.execute",
+    emptyBodySchema,
+    hostCommandParamsSchema,
+    "HostCommandStatus",
+    hostCommandStatusSchema,
+  ),
+  queueHostCommand: {
+    ...hostMutation(
+      "/v1/hosts/{hostId}/queued-commands",
+      "hosts.execute",
+      queueHostCommandBodySchema,
+      hostIdParamsSchema,
+      "HostQueuedCommand",
+      hostQueuedCommandSchema,
+      202,
+    ),
+    summary:
+      "Queue a command for a person to run; does not execute it and does not require agent commands enabled at the node.",
+    errors: ["host.not_owned", "host_queue.limit"],
+  },
+  getQueuedHostCommand: {
+    method: "get",
+    path: "/v1/hosts/{hostId}/queued-commands/{id}",
+    summary: "Read the state of a command queued by this credential.",
+    feature: "hosts.execute",
+    scopes: ["hosts:execute"],
+    params: hostQueuedCommandParamsSchema,
+    query: emptyQuerySchema,
+    response: { name: "HostQueuedCommand", schema: hostQueuedCommandSchema },
+    notFound: "host.command_not_found",
+    paginated: false,
+    errors: ["host.not_owned"],
+  },
+  readHostFile: hostMutation(
+    "/v1/hosts/{hostId}/files/read",
+    "hosts.files",
+    hostFileReadBodySchema,
+    hostIdParamsSchema,
+    "HostFileRead",
+    hostFileReadSchema,
+  ),
+  listHostFiles: hostMutation(
+    "/v1/hosts/{hostId}/files/list",
+    "hosts.files",
+    hostFileListBodySchema,
+    hostIdParamsSchema,
+    "HostFileList",
+    hostFileListSchema,
+  ),
+  writeHostFile: hostMutation(
+    "/v1/hosts/{hostId}/files/write",
+    "hosts.files",
+    hostFileWriteBodySchema,
+    hostIdParamsSchema,
+    "HostFileWrite",
+    hostFileWriteSchema,
+  ),
+  editHostFile: hostMutation(
+    "/v1/hosts/{hostId}/files/edit",
+    "hosts.files",
+    hostFileEditBodySchema,
+    hostIdParamsSchema,
+    "HostFileEdit",
+    hostFileEditSchema,
+  ),
+} as const satisfies Record<string, SdkRoute>;
+
 export const JSON_ROUTES = {
+  ...HOST_ROUTES,
   ...WEBHOOK_ROUTES,
   ...TEMPLATE_BUILD_ROUTES,
   ...CREDENTIAL_ROUTES,
@@ -1140,8 +1314,8 @@ export const JSON_ROUTES = {
   createSandbox: {
     ...mutation(
       "/v1/sandboxes",
-      "sandboxes.write",
-      ["sandboxes:write"],
+      "sandboxes.create",
+      ["sandboxes:create"],
       createSandboxBodySchema,
       null,
     ),
@@ -1152,8 +1326,8 @@ export const JSON_ROUTES = {
     path: "/v1/sandboxes/{id}",
     summary:
       "Rename a sandbox. The name must be free among the owner's live sandboxes; the sandbox itself is unchanged.",
-    feature: "sandboxes.write",
-    scopes: ["sandboxes:write"],
+    feature: "sandboxes.manage",
+    scopes: ["sandboxes:manage"],
     idempotency: false,
     successStatus: 200,
     body: updateSandboxBodySchema,
@@ -1166,34 +1340,34 @@ export const JSON_ROUTES = {
   },
   destroySandbox: mutation(
     "/v1/sandboxes/{id}",
-    "sandboxes.write",
-    ["sandboxes:write"],
+    "sandboxes.destroy",
+    ["sandboxes:destroy"],
     teardownBodySchema,
     "sandbox.not_found",
     "delete",
   ),
   stopSandbox: mutation(
     "/v1/sandboxes/{id}/stop",
-    "sandboxes.write",
-    ["sandboxes:write"],
+    "sandboxes.manage",
+    ["sandboxes:manage"],
     teardownBodySchema,
   ),
   reconnectSandbox: mutation(
     "/v1/sandboxes/{id}/reconnect",
-    "sandboxes.write",
-    ["sandboxes:write"],
+    "sandboxes.manage",
+    ["sandboxes:manage"],
     reconnectBodySchema,
   ),
   renewSandboxLease: mutation(
     "/v1/sandboxes/{id}/lease",
-    "sandboxes.write",
-    ["sandboxes:write"],
+    "sandboxes.manage",
+    ["sandboxes:manage"],
     renewBodySchema,
   ),
   captureSandbox: mutation(
     "/v1/sandboxes/{id}/capture",
     "templates.capture",
-    ["sandboxes:write", "templates:write"],
+    ["sandboxes:manage", "templates:write"],
     captureBodySchema,
   ),
   probeSandbox: mutation(
@@ -1327,10 +1501,10 @@ export const SDK_ROUTE_IDS: readonly SdkRouteId[] = Object.freeze(
 
 /** Every feature has an exhaustive route-set; a single mounted endpoint proves nothing about its dependencies. */
 export const SDK_FEATURE_ROUTES = {
-  "sandboxes.write": [
-    "createSandbox",
+  "sandboxes.create": ["createSandbox", "getOperation"],
+  "sandboxes.destroy": ["destroySandbox", "getOperation"],
+  "sandboxes.manage": [
     "updateSandbox",
-    "destroySandbox",
     "stopSandbox",
     "reconnectSandbox",
     "renewSandboxLease",
@@ -1373,7 +1547,16 @@ export const SDK_FEATURE_ROUTES = {
     "associateTemplateAvailability",
     "getOperation",
   ],
-  "hosts.read": ["listHosts"],
+  "hosts.read": ["listHosts", "getHost"],
+  "hosts.execute": [
+    "startHostCommand",
+    "getHostCommand",
+    "writeHostCommandStdin",
+    "cancelHostCommand",
+    "queueHostCommand",
+    "getQueuedHostCommand",
+  ],
+  "hosts.files": ["readHostFile", "listHostFiles", "writeHostFile", "editHostFile"],
   "pools.read": ["listPools", "getPool", "listPoolMembers"],
   "pools.capacity": ["getPoolCapacity"],
   "sandboxes.capacityWait": ["createSandbox", "getSandbox", "getOperation", "destroySandbox"],

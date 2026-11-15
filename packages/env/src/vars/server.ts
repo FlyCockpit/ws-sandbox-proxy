@@ -21,6 +21,9 @@ export const serverVars = {
   BETTER_AUTH_URL: originUrl("BETTER_AUTH_URL"),
   CORS_ORIGIN: originUrl("CORS_ORIGIN").optional(),
   SIGNUP_ENABLED: strictBooleanFlag(),
+  MCP_ENABLED: strictBooleanFlag(true),
+  WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY: strictBooleanFlag(true),
+  WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   // Web Push contact URI sent to push services (RFC 8292 requires a mailto:
@@ -80,8 +83,8 @@ export const serverVars = {
   // the client IP used as the anonymous rate-limit and audit key
   // (apps/server/src/client-ip.ts). Unset means 0: key on the TCP socket peer
   // and ignore X-Forwarded-For. N >= 1 takes the entry N from the right of
-  // [...X-Forwarded-For, socket], falling back to the socket peer on a short
-  // or malformed chain. The generated Dokploy config sets 1 (Traefik). Behind
+  // [...X-Forwarded-For, socket] (an appended `:port` is stripped), falling
+  // back to the socket peer on a short or malformed chain. The generated Dokploy config sets 1 (Traefik). Behind
   // a proxy with 0, every client shares the proxy's single bucket.
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).optional(),
   ADMIN_EMAILS: z.string().optional(),
@@ -90,8 +93,7 @@ export const serverVars = {
   // default keeps a cached public render for up to a minute. Edits to a live
   // URL can take up to this long to appear.
   SSR_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(60),
-  // Master switch for the outbound sandbox host relay WebSocket (`/ws/sandbox-host`).
-  // Off by default until host pairing credentials and dispatch are wired.
+  // Transfer spool for the always-enabled outbound sandbox host relay.
   TRANSFER_SPOOL_DIR: z.string().min(1).default(".data/transfers"),
   // One transfer cap end to end (C30): the node daemon's staging ceiling is
   // 1 GiB (`sandbox_runtime::FILE_MAX_BYTES`), equal to the contracts'

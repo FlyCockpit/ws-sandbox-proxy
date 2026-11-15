@@ -14,7 +14,10 @@ import { useAuthSession } from "@/hooks/use-auth-session";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { formatLeaseDuration, isUnlimitedLeaseEnd } from "@/lib/lease-duration";
+import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
+import { HostAgentAccess, QueuedHostCommands } from "./host-agent-access";
+import { HostAuditList } from "./host-audit-list";
 import { HostImageCacheCard } from "./host-image-cache-card";
 import { HostCard } from "./hosts-page";
 
@@ -27,15 +30,27 @@ export function HostDetailPage({ hostId, lang }: { hostId: string; lang: string 
   });
   useTwoFactorRedirectOnError(lang, [host.error]);
   if (host.isPending) return <SkeletonList count={3} />;
-  if (host.isError || !host.data)
+  if ((host.isError && isQueryAccessError(host.error)) || !host.data)
     return <InlineRetry message={t("hosts:loadFailed")} onRetry={() => void host.refetch()} />;
   return (
     <div className="flex min-w-0 flex-col gap-6">
+      {host.isError ? (
+        <InlineRetry message={t("hosts:loadFailed")} onRetry={() => void host.refetch()} />
+      ) : null}
       <PageHeader title={host.data.label} description={host.data.slug} />
       <ul aria-label={t("hosts:title")}>
         <HostCard host={host.data} lang={lang} now={Date.now()} locale={lang} />
       </ul>
-      <HostLease lease={host.data.lease} draining={host.data.draining} lang={lang} />
+      {host.data.lease ? (
+        <HostLease lease={host.data.lease} draining={host.data.draining} lang={lang} />
+      ) : null}
+      <HostAgentAccess host={host.data} lang={lang} />
+      <QueuedHostCommands hostId={hostId} lang={lang} policy={host.data.terminalPolicy} />
+      <HostAuditList
+        entries={host.data.recentAudit}
+        lang={lang}
+        onRetry={() => void host.refetch()}
+      />
       <HostImageCacheCard hostId={hostId} lang={lang} />
       <HostGuests hostId={hostId} lang={lang} />
       <HostTerminal
@@ -110,10 +125,14 @@ export function HostTerminal({
   hostId,
   lang,
   policy,
+  typeCommand,
+  pretypeOnAttach,
 }: {
   hostId: string;
   lang: string;
   policy: Policy;
+  typeCommand?: string;
+  pretypeOnAttach?: boolean;
 }) {
   const { t } = useTranslation(["terminal", "common"]);
   const unavailable = useSensitiveAccessUnavailable();
@@ -164,6 +183,8 @@ export function HostTerminal({
       ) : null}
       {raise.isError ? <p role="alert">{t("terminal:host.raiseFailed")}</p> : null}
       <TerminalPanel
+        typeCommand={typeCommand}
+        pretypeOnAttach={pretypeOnAttach}
         hostId={hostId}
         lang={lang}
         available={

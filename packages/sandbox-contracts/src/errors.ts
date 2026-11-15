@@ -8,6 +8,12 @@ import { LEASE_FINITE_MAX_MS, LEASE_LIMIT_MIN_MS } from "./lease-limits";
  * SDK typed errors all consume this one table.
  */
 export const SDK_ERRORS = {
+  "host.not_owned": [403, "Host is not owned by this credential's owner."],
+  "host.agent_access_off": [409, "Agent access is disabled on this host."],
+  "host.node_offline": [409, "Host node is offline; retry shortly."],
+  "host.command_not_found": [404, "Host command not found."],
+  "host_queue.limit": [409, "Queued host command limit reached."],
+  "host.file_error": [422, "Host file operation failed."],
   OPERATION_RESULT_NOT_READY: [409, "Operation result is not ready."],
   OPERATION_RESULT_UNSUPPORTED: [400, "Operation has no supported typed result."],
   OPERATION_RESULT_EXPIRED: [410, "Operation result has expired; status remains available."],
@@ -385,6 +391,29 @@ export function isTemplateBuildErrorExtrasCode(code: string): code is TemplateBu
   return Object.hasOwn(TEMPLATE_BUILD_ERROR_EXTRAS, code);
 }
 
+export const HOST_FILE_ERROR_REASONS = [
+  "host_files_off",
+  "policy_changed",
+  "owner_mismatch",
+  "no_roots",
+  "path_denied",
+  "not_found",
+  "not_a_file",
+  "not_a_dir",
+  "too_large",
+  "binary_file",
+  "conflict",
+  "no_match",
+  "match_count",
+  "redacted_span",
+  "exists",
+  "invalid_input",
+  "io_error",
+  "limit",
+] as const;
+export const hostFileErrorReasonSchema = z.enum(HOST_FILE_ERROR_REASONS);
+export type HostFileErrorReason = z.infer<typeof hostFileErrorReasonSchema>;
+
 const errorFields = {
   message: z.string(),
   requestId: z.uuid(),
@@ -417,6 +446,9 @@ const refusalFields = { ...errorFields, retryable: z.boolean() };
 const nonCapacityCodes = SDK_ERROR_CODES.filter(
   (code) =>
     !isRetryableRefusalCode(code) &&
+    code !== "host.agent_access_off" &&
+    code !== "host.node_offline" &&
+    code !== "host.file_error" &&
     code !== "lease_exceeds_policy" &&
     code !== "sandbox.capture_unsupported" &&
     code !== "sandbox.image_quota_exceeded" &&
@@ -449,6 +481,22 @@ export const CAPACITY_QUEUE_SCOPES = ["key", "owner", "pool"] as const;
 export const capacityWaitMaxSchema = z.number().int().min(0).max(CAPACITY_WAIT_MAX_MS);
 export const sdkErrorEnvelopeSchema = z.strictObject({
   error: z.discriminatedUnion("code", [
+    z.strictObject({
+      code: z.literal("host.agent_access_off"),
+      ...errorFields,
+      retryable: z.literal(false),
+    }),
+    z.strictObject({
+      code: z.literal("host.node_offline"),
+      ...errorFields,
+      retryable: z.literal(true),
+      retryAfterSeconds: z.number().int().min(1).max(86_400),
+    }),
+    z.strictObject({
+      code: z.literal("host.file_error"),
+      ...errorFields,
+      data: z.strictObject({ reason: hostFileErrorReasonSchema }),
+    }),
     z.strictObject({ code: z.enum(nonCapacityCodes), ...errorFields }),
     z.strictObject({
       code: z.literal("sandbox.share_quota"),

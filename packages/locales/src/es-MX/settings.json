@@ -58,6 +58,10 @@
       "images": {
         "label": "Imágenes y compilaciones",
         "description": "Dónde se guardan las imágenes de plantillas y tus compilaciones recientes."
+      },
+      "agentTokens": {
+        "label": "Tokens de agentes",
+        "description": "Tokens de agentes y aplicaciones MCP conectadas"
       }
     }
   },

@@ -70,7 +70,13 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
-async function mount(required = true, lang = "en-US", policy = true) {
+async function mount(
+  required = true,
+  lang = "en-US",
+  policy = true,
+  typeCommand?: string,
+  pretypeOnAttach = false,
+) {
   const i18n = createInstance();
   await i18n.init({
     lng: lang,
@@ -85,6 +91,8 @@ async function mount(required = true, lang = "en-US", policy = true) {
         <HostTerminal
           hostId="host-1"
           lang={lang}
+          typeCommand={typeCommand}
+          pretypeOnAttach={pretypeOnAttach}
           policy={
             policy
               ? { hostTerminal: true, requireHostTerminalTotp: required, policyRevision: 3 }
@@ -176,3 +184,29 @@ it("a timeout response with confirmed false remains unconfirmed", async () => {
   await screen.findByText(en.host.unconfirmed);
   expect(screen.queryByText(en.host.confirmed)).toBeNull();
 });
+
+it.each(["env -u ENV /bin/sh -c 'echo safe'", "echo unsafe\n", "echo café"])(
+  "pre-types only a printable single-line queued wrapper after explicit attach: %s",
+  async (command) => {
+    mint.mockResolvedValue({
+      path: "/api/dashboard/hosts/host-1/terminal/ws",
+      protocols: ["wssp.terminal.v1", "wssp.host-terminal.ticket.transient"],
+    });
+    await mount(false, "en-US", true, command, true);
+    expect(mint).not.toHaveBeenCalled();
+    await userEvent.setup().click(screen.getByRole("button", { name: en.actions.attach }));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1));
+    await act(async () => {
+      FakeWebSocket.last().serverOpen();
+      FakeWebSocket.last().serverText({ type: "ready", rows: 30, cols: 100 });
+      await flush();
+    });
+    const pasted = FakeTerminalView.instances[0]?.pasted;
+    expect(pasted).toEqual(/^[\x20-\x7e]+$/.test(command) ? [command] : []);
+    await act(async () => {
+      FakeWebSocket.last().serverText({ type: "ready", rows: 30, cols: 100 });
+      await flush();
+    });
+    expect(pasted).toHaveLength(/^[\x20-\x7e]+$/.test(command) ? 1 : 0);
+  },
+);

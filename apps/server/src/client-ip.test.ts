@@ -122,14 +122,44 @@ describe("resolveClientIp (TRUST_PROXY_HOPS = 1, one reverse proxy)", () => {
     for (const xff of [
       "not-an-ip",
       "8.8.8.8, garbage",
-      "203.0.113.9:443",
-      "[2001:db8::5]",
+      "[not-an-ip]:443",
+      "203.0.113.9:99999x",
+      "1.2.3:443",
       "198.51.100.7/32",
       ", ,",
       "1.2.3.4,,",
     ]) {
       const expected = xff === "1.2.3.4,," ? "1.2.3.4" : "10.0.0.2";
       expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff })), xff).toBe(expected);
+    }
+  });
+
+  it("strips a port a proxy appended to an IPv4 entry", () => {
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "203.0.113.9:5678" }))).toBe(
+      "203.0.113.9",
+    );
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "8.8.8.8, 203.0.113.9:443" }))).toBe(
+      "203.0.113.9",
+    );
+  });
+
+  it("strips a port from a bracketed IPv6 entry (and bare brackets)", () => {
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "[2001:db8::1]:5678" }))).toBe(
+      "2001:db8::1",
+    );
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "[2001:db8::5]" }))).toBe("2001:db8::5");
+  });
+
+  it("leaves a bare IPv6 entry alone (its last group is not a port)", () => {
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "2001:db8::1" }))).toBe("2001:db8::1");
+    expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff: "2001:db8::1:5678" }))).toBe(
+      "2001:db8::1:5678",
+    );
+  });
+
+  it("falls back to the socket peer for garbage with or without a port", () => {
+    for (const xff of ["garbage:443", "[garbage]:443", "999.1.1.1:80", "::1]:80", "1.2.3.4:"]) {
+      expect(resolveClientIp(ctx({ socket: "10.0.0.2", xff })), xff).toBe("10.0.0.2");
     }
   });
 

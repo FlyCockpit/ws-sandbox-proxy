@@ -142,7 +142,7 @@ describe("static OpenAPI document", () => {
     expect(doc.paths["/v1/sandboxes/{id}/files/download"]?.post).toBeDefined();
   });
 
-  it("offers no whole-file base64 or JSON file-content route", () => {
+  it("keeps guest file bytes on binary transports and host text files explicitly bounded", () => {
     for (const id of SDK_ROUTE_IDS) {
       const route: SdkRoute = SDK_ROUTES[id];
       const body = route.body ? JSON.stringify(z.toJSONSchema(route.body)) : "";
@@ -150,6 +150,7 @@ describe("static OpenAPI document", () => {
       // A CLI-login value upload carries credential files as base64 into the
       // vault (never to a guest path), bounded by the definition and the JSON
       // body cap.
+      if (route.path.startsWith("/v1/hosts/")) continue;
       if (id !== "writeStdin" && id !== "sendProcessStdin" && id !== "writeCredentialValue")
         expect(body, id).not.toMatch(/base64|content/i);
       // File bytes move only through the binary transfer transports.
@@ -229,7 +230,12 @@ describe("DTO semantics", () => {
         apiVersion: "v1",
         features: ["commands.run"],
         limits: { pageSizeDefault: 20, pageSizeMax: 100, jsonBodyMaxBytes: 1, transferMaxBytes: 1 },
-        key: { scopes: [], resourceMode: "allOwned", poolMode: "allUsable" },
+        key: {
+          ownSandboxesOnly: false,
+          scopes: [],
+          resourceMode: "allOwned",
+          poolMode: "allUsable",
+        },
       }).success,
     ).toBe(false);
   });
@@ -260,6 +266,9 @@ describe("DTO semantics", () => {
         sdkErrorEnvelopeSchema.safeParse({
           error: {
             ...(isRetryableRefusalCode(code) ? { retryable: false } : {}),
+            ...(code === "host.agent_access_off" ? { retryable: false } : {}),
+            ...(code === "host.node_offline" ? { retryable: true, retryAfterSeconds: 5 } : {}),
+            ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
             ...(code === "sandbox.host_capacity" || code === "sandbox.pool_full"
               ? { reason: "ram" }
               : {}),
@@ -277,6 +286,7 @@ describe("DTO semantics", () => {
             requestId: "0b7c8f5e-2a4d-4c1e-9f3a-6d5e4c3b2a19",
           },
         }).success,
+        code,
       ).toBe(true);
     }
   });

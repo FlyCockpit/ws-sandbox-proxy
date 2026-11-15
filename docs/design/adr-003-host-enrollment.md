@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; host access statements amended by [ADR-006](./adr-006-agent-host-access.md) (2026-11-12).
 
 ## Context
 
@@ -174,7 +174,9 @@ not drained. Zero live guests
 does not bypass host deletion's retained-disk, placement or unfinished-work checks.
 
 The owner uses protected oRPC `sandboxHosts.setHostDraining({id, draining})`.
-It is owner-scoped and session-only; SDK scopes do not grant host administration.
+It is owner-scoped and session-only; SDK scopes do not authorize this drain API.
+Separately, `hosts:execute` permits commands on an opted-in owned node; those
+commands run with the daemon user's Incus-admin power. See [ADR-006](./adr-006-agent-host-access.md).
 The host CLI uses `POST /api/sandbox-host/drain` with the same strict JSON body
 and `Authorization: Bearer wssp_host_…` or `wssp_device_…`. A credential can change
 only its bound host (including among hosts of the same owner). This endpoint is
@@ -205,7 +207,10 @@ retained disk before effects; `liveCount` is accounting only. See
 The Hosts page treats a host as connected only while `status` is `CONNECTED`
 and the last heartbeat is at most 30 seconds old (the daemon beats every 5 s);
 it re-renders at that deadline even when refetches fail. It never holds a host
-credential and offers no host shell or host exec. Delete is offered only with
+credential. Owner-only detail offers an explicit host terminal when locally
+enabled, agent-policy lowering, queued-command review and metadata-only audit.
+Scoped credentials can execute commands and use host file tools on an opted-in
+owned node under [ADR-006](./adr-006-agent-host-access.md). Delete is offered only with
 zero live sandboxes; the server still decides and may leave the deletion
 pending until retained disks, transfers and unfinished work are gone.
 
@@ -399,7 +404,10 @@ pool/revision identity without querying a foreign resource.
 Enrolled credentials authorize only their host transport owner/host/current epoch,
 never a sandbox creator's identity. Owner-only host detail reports current-link
 terminal policy; absent policy is unavailable. Local allow_host_terminal defaults
-off and host_terminal_require_totp defaults required. Dashboard raises are
-online-only with persisted ACK, and cannot enable/lower policy. See
+off and host_terminal_require_totp defaults required. Dashboard raises
+of the TOTP requirement are online-only with persisted ACK. Host-access
+enablement remains node-only; owners can turn off host terminals and agent host
+access in the dashboard, with durable pending lowering replayed on reconnect.
+See [ADR-006](./adr-006-agent-host-access.md),
 [browser terminal auth](./browser-terminal-auth.md) and the explicit
 [qualification checklist](../operations/sharing-terminal-qualification.md).

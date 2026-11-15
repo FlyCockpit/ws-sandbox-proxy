@@ -16,28 +16,58 @@ repository depend on it as `"@wssp/sdk": "workspace:*"`.
 
 Mint a key on the dashboard's **SDK keys** page. It is shown once, starts with
 `wssp_sdk_`, and is sent as `Authorization: Bearer wssp_sdk_…`. Keys are
-owner-scoped: a key only ever reaches its owner's hosts, templates, sandboxes
-and operations, and another owner's resource reads as not found. A key is
-either **all owned** resources or an **allowlist** of at least one host and one
-exact revision (each revision needs pending or available association on a selected owned host). An
+owner-scoped: sandbox data belongs to its owner, and shared-pool grants may
+expose other owners' host metadata. A key uses either **all owned** resources or
+an **allowlist** of selected hosts, exact revisions and pools. Sandbox creation
+needs a usable host/revision or pool/revision grant; host-only tools need a host
+grant. An
 optional expiry and revocation take effect on the next request; there is no
 principal cache.
 
-| Scope                                    | Grants                                                                                                                                                                |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pools:read`                             | List/read allowed pools; members also need `hosts:read`                                                                                                               |
-| `hosts:read`                             | List and read hosts                                                                                                                                                   |
-| `templates:read` / `templates:write`     | Read templates / register a template on a host                                                                                                                        |
-| `sandboxes:read`                         | Read sandboxes; liveness probe                                                                                                                                        |
-| `sandboxes:write`                        | Create, stop, reconnect, renew the lease, destroy                                                                                                                     |
-| `commands:execute`                       | Start commands, write stdin                                                                                                                                           |
-| `commands:read`                          | List/connect to tracked commands; output also needs `operations:read`                                                                                                 |
-| `files:read` / `files:write`             | Stat, list and capture downloads (reading the bytes also needs `operations:read`) / upload, mkdir, move, remove                                                       |
-| `operations:read`                        | Read operations (every wait polls one)                                                                                                                                |
-| `operations:cancel`                      | Cancel an operation (also needs the target's mutation scope)                                                                                                          |
-| `webhooks:write`                         | Manage webhook endpoints and their delivery log (all-owned, all-usable keys only)                                                                                     |
-| `templates:build`                        | Build template revisions from a recipe or Dockerfile, read their logs, cancel them (creating the template by name also needs `templates:write`)                       |
-| `credentials:read` / `credentials:write` | List CLI logins, accounts, instances and events / create and edit them, pause accounts, upload values (values are write-only; allowlist keys see only granted logins) |
+| Scope               | Grants                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `hosts:read`        | List and read visible hosts and their `agentAccess`                                                                 |
+| `hosts:execute`     | Start/read host commands, write stdin, cancel; queue commands for a person                                          |
+| `hosts:files`       | Read, list, write and edit text files inside node-configured roots                                                  |
+| `pools:read`        | List/read allowed pools; members also need `hosts:read`                                                             |
+| `templates:read`    | Read templates and revisions                                                                                        |
+| `templates:write`   | Register templates and revisions; capture also needs `sandboxes:manage`                                             |
+| `templates:build`   | Build revisions, read build logs and cancel builds; creating a named template also needs `templates:write`          |
+| `sandboxes:read`    | Read sandboxes and effective capabilities; liveness probe                                                           |
+| `sandboxes:create`  | Create sandboxes                                                                                                    |
+| `sandboxes:manage`  | Rename, stop, reconnect and renew leases; capture with `templates:write`; attach/free logins with `credentials:use` |
+| `sandboxes:destroy` | Destroy sandboxes                                                                                                   |
+| `commands:read`     | List/connect to tracked commands; output also needs `operations:read`                                               |
+| `commands:execute`  | Start guest commands and write stdin                                                                                |
+| `files:read`        | Guest stat, list and capture downloads; reading results/bytes also needs `operations:read`                          |
+| `files:write`       | Guest upload, mkdir, move and remove                                                                                |
+| `operations:read`   | Read operations and wait for outcomes                                                                               |
+| `operations:cancel` | Cancel an operation; also needs its mutation scope                                                                  |
+| `webhooks:write`    | Manage endpoints and delivery logs with all-owned, all-usable keys                                                  |
+| `credentials:read`  | List CLI logins, accounts, instances and events                                                                     |
+| `credentials:write` | Create/edit CLI logins, accounts and instances; upload write-only values                                            |
+| `credentials:use`   | Attach/free a login; also needs `sandboxes:manage`                                                                  |
+
+Set **Own sandboxes only** (`ownSandboxesOnly`) when minting a key to restrict
+sandbox, guest command, guest file and operation access to sandboxes created by
+that credential. API keys default to false; agent tokens and OAuth grants default
+to true. Allowlist credentials always have this creator restriction. The effective
+setting is returned as `key.ownSandboxesOnly` by `GET /v1/capabilities`.
+
+Host commands and host file tools run as the **node daemon user**: they can do
+whatever that user can do, including Incus administration when the daemon user
+has it. They can reach other users' sandboxes on the node, including shared
+pools.
+**Own sandboxes only does not limit host access.**
+Direct host commands and files work only on hosts the key's owner owns and
+allows, and only after the node owner enables agent host commands at the node
+(`wssp config set-agent-host-commands on`). File tools also need node-configured
+`host_file_roots`. A shared-pool host never qualifies. Queuing a command for a
+person needs ownership and a host grant, but no node opt-in because it executes
+nothing.
+
+The `/v1` SDK accepts API keys only. Agent tokens (`wssp_agent_…`) and OAuth
+grants belong to `/mcp`; they cannot authenticate this client.
 
 `commands:read` on a granted sandbox exposes tracked command descriptions (argv/cwd) from the owner's browser and other SDK keys as well as the calling key. Output attachment also needs `operations:read`. Keep secrets in envs/private configuration rather than argv.
 
@@ -61,6 +91,86 @@ Logical templates expose separate revision and availability pages through
 `revision/<revisionId>` in `template`, with exactly one of `poolId` or an explicit `sandboxHostId`. Sandbox responses retain logical
 `templateId`, exact `templateRevisionId` and nullable `originPoolId`. Appends do
 not expand existing ALLOWLIST grants. Direct placement retains its existing host/revision grants. See [SDK resource grants](../../docs/guide/auth-planes.md#minting-sdk-resource-grants).
+
+## Host commands and files
+
+`client.hosts.get` and `.list` return `agentAccess: {owned: false}` for a
+foreign host, or `{owned: true, hostCommands, hostFiles, hostCommandMaxMs?}` for
+your host. Host command status, stdin and cancellation are credential-scoped:
+another key owned by the same person cannot read or control your command.
+
+`hosts.commands.start` returns a status with a `commandId`; `.get` accepts
+numeric `stdoutOffset`, `stderrOffset`, `maxBytes` (at most 65,536 per stream),
+and `waitMs` (at most 60,000). Output chunks are masked bytes encoded as padded
+base64, with absolute byte offsets and explicit `dropped` flags. `.writeStdin`
+accepts `{data, eof}` with at most 65,536 decoded bytes. `.cancel` returns the
+current status.
+
+`hosts.commands.run` starts once, polls until terminal, and drains remaining
+output. Its result adds `stdoutText`, `stderrText` (last 1 MiB per stream) and
+`truncated` to the final status. A wait deadline or abort detaches; it does not
+cancel the host command. Save the `commandId` from `.start` when you need manual
+recovery. Reuse the original idempotency key after an uncertain submission.
+Execution `timeoutMs` is capped by `hostCommandMaxMs`; `waitTimeoutMs` bounds the
+SDK observer separately.
+
+File reads return `{content, offset, size, etag, truncated}`; lists return at most
+1,000 entries and `truncated`. Writes accept at most 262,144 UTF-8 bytes and
+require `expectedEtag` to replace an existing file (`createOnly` refuses an
+existing file). Edits take 1–20 `{oldText, newText}` pairs; each old text must
+match exactly once, and every replacement commits together. Do not write masked
+`⟦redacted` spans back. `host.file_error` exposes a typed `WsspError.reason`,
+including `conflict`, `path_denied`, `redacted_span` and `binary_file`.
+
+`hosts.queueCommand` returns `{id, state, expiresAt}`. `.getQueuedCommand` reads
+only this credential's queued command. Expiry is 1–168 hours, default 24; only a
+person can decide to run or dismiss it.
+
+<!-- example: examples/hosts.ts -->
+
+```ts
+import { createWsspClient } from "@wssp/sdk";
+
+const wssp = createWsspClient({
+  baseUrl: "https://wssp.example.com",
+  apiKey: process.env.WSSP_SDK_KEY ?? "",
+});
+const hostId = "host_1";
+const host = await wssp.hosts.get(hostId); // hosts:read
+
+// hosts:execute requires your own host, a host grant, and agent commands
+// enabled at the node. Commands run as the node daemon user (which may be an
+// Incus admin) and can reach other users' sandboxes; ownSandboxesOnly does not
+// limit them.
+if (host.agentAccess.owned && host.agentAccess.hostCommands) {
+  const result = await wssp.hosts.commands.run(
+    hostId,
+    { argv: ["uname", "-a"], timeoutMs: 10_000 },
+    { idempotencyKey: "host-uname-1", waitTimeoutMs: 30_000 },
+  );
+  console.log(result.commandId, result.state, result.stdoutText, result.truncated);
+}
+
+// Queueing only asks a person to run it. It works even while agent commands
+// are disabled; the SDK cannot approve, run or dismiss a queued command.
+const queued = await wssp.hosts.queueCommand(hostId, {
+  command: "incus list",
+  reason: "Please inspect the node's current instances",
+  expiresInHours: 24,
+});
+console.log(await wssp.hosts.getQueuedCommand(hostId, queued.id));
+
+// hosts:files: paths must be inside roots the node owner configured. Reads
+// mask secrets. Write a new file, or use the read etag to replace/edit one.
+if (host.agentAccess.owned && host.agentAccess.hostFiles) {
+  const file = await wssp.hosts.files.read(hostId, { path: "/srv/agent-work/note.txt" });
+  await wssp.hosts.files.edit(hostId, {
+    path: "/srv/agent-work/note.txt",
+    expectedEtag: file.etag,
+    edits: [{ oldText: "pending", newText: "reviewed" }],
+  });
+}
+```
 
 ## Quickstart
 
@@ -1127,10 +1237,10 @@ provider accounts (pause lives on the account) and instances (independent token
 sets). Values are **write-only**: an upload returns metadata, and no route ever
 returns a value. An all-owned key sees every login; an allowlist key sees only
 the logins granted at mint. Delivery, copy-back, foreign-host opt-in and re-pin
-are dashboard-only. A key with `credentials:use` (plus `sandboxes:write`) may
-attach and free logins on sandboxes, name them at create, and pin them on a
-cold start; an allowlist key with `credentials:use` must name at least one
-login at mint. A refused upload throws `credential.value_invalid` with
+are dashboard-only. A key with `credentials:use` may attach/free logins or pin
+them on a cold start with `sandboxes:manage`, and name them at create with
+`sandboxes:create`. An allowlist key with `credentials:use` must name at least
+one login at mint. A refused upload throws `credential.value_invalid` with
 `error.valueInvalid` (`entry`, such as `env.TOOL_API_KEY` or
 `bundle.undeclared_path`, and `path` for a file); neither ever holds a value.
 `credentials.leases.list` returns an instance's live leases (the ids
@@ -1172,7 +1282,7 @@ const written = await wssp.credentials.instances.writeValue(login.id, instance.i
 });
 console.log(`instance ${written.instanceId} is ${written.state} at seq ${written.storageSeq}`);
 
-// 4. With `credentials:use` and `sandboxes:write`: attach the login to a
+// 4. With `credentials:use` and `sandboxes:manage`: attach the login to a
 //    running sandbox (new commands and terminals see it), then free it: the
 //    env leaves at once, terminals opened with it close, and the files are
 //    copied back and scrubbed. A stopped sandbox claims an attached login at

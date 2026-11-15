@@ -1,5 +1,6 @@
 import {
   credentialsUseNeedsLogins,
+  hostScopesNeedHostGrant,
   isTemplateOnSelectedHosts,
   SDK_KEY_CREDENTIALS_USE_NEEDS_LOGINS_CODE,
   SDK_KEY_TEMPLATE_NOT_ON_HOST_CODE,
@@ -23,11 +24,14 @@ export { SERVICE_SCOPES, type ServiceScope, unusableScopes };
 
 /** Scope groups in the order the mint form shows them. */
 export const SCOPE_GROUPS: readonly { id: string; scopes: readonly ServiceScope[] }[] = [
+  { id: "hosts", scopes: ["hosts:read", "hosts:execute", "hosts:files"] },
   { id: "pools", scopes: ["pools:read"] },
-  { id: "hosts", scopes: ["hosts:read"] },
   { id: "templates", scopes: ["templates:read", "templates:write", "templates:build"] },
-  { id: "sandboxes", scopes: ["sandboxes:read", "sandboxes:write"] },
-  { id: "commands", scopes: ["commands:execute", "commands:read"] },
+  {
+    id: "sandboxes",
+    scopes: ["sandboxes:read", "sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+  },
+  { id: "commands", scopes: ["commands:read", "commands:execute"] },
   { id: "files", scopes: ["files:read", "files:write"] },
   { id: "operations", scopes: ["operations:read", "operations:cancel"] },
   { id: "webhooks", scopes: ["webhooks:write"] },
@@ -89,6 +93,7 @@ export type SdkKeyDraft = {
   name: string;
   scopes: readonly ServiceScope[];
   resourceMode: ResourceMode;
+  ownSandboxesOnly?: boolean;
   hostIds: readonly string[];
   templateRevisionIds: readonly string[];
   poolIds?: readonly string[];
@@ -142,6 +147,8 @@ export function sdkKeyDraftProblems(
     problems.push("webhooksRequireAllOwned");
   if (credentialsUseNeedsLogins(draft.scopes, draft.resourceMode, draft.credentialIds ?? []))
     problems.push("credentialsUseNeedsLogins");
+  if (hostScopesNeedHostGrant(draft.scopes, draft.resourceMode, draft.hostIds))
+    problems.push("noHosts");
   if (draft.resourceMode === "ALLOWLIST") {
     const hostIds = new Set(selectableHosts(options.hosts).map((host) => host.id));
     const templateRevisionIds = new Set(
@@ -155,7 +162,11 @@ export function sdkKeyDraftProblems(
       problems.push("unknownPool");
     if (draft.hostIds.length === 0 && draft.poolMode !== "ALL_USABLE" && !draft.poolIds?.length)
       problems.push("noHosts");
-    if (draft.templateRevisionIds.length === 0) problems.push("noTemplates");
+    if (
+      draft.scopes.some((scope) => !scope.startsWith("hosts:")) &&
+      draft.templateRevisionIds.length === 0
+    )
+      problems.push("noTemplates");
     if (draft.hostIds.some((id) => !hostIds.has(id))) problems.push("unknownHost");
     if (draft.templateRevisionIds.some((id) => !templateRevisionIds.has(id)))
       problems.push("unknownTemplate");
@@ -189,6 +200,7 @@ export function sdkKeyMintInput(draft: SdkKeyDraft, now: number) {
     ...(allowlist && draft.credentialIds?.length
       ? { credentialIds: [...new Set(draft.credentialIds)] }
       : {}),
+    ...(draft.ownSandboxesOnly !== undefined ? { ownSandboxesOnly: draft.ownSandboxesOnly } : {}),
     expiresAt: expiresAtFor(draft.expiry, now),
   };
 }
@@ -252,6 +264,8 @@ export type CredentialProblem =
   | "webhooksRequireAllOwned"
   | "credentialsUseNeedsLogins"
   | "notFound"
+  | "agentLimit"
+  | "agentExpiryPolicy"
   | "changed"
   | "forbidden"
   | "invalid"
@@ -265,6 +279,8 @@ export function credentialProblem(error: unknown): CredentialProblem {
     shape.data != null && typeof shape.data === "object"
       ? (shape.data as { code?: unknown }).code
       : undefined;
+  if (code === "agent_token.limit") return "agentLimit";
+  if (code === "agent_token.expiry_policy") return "agentExpiryPolicy";
   if (code === SDK_KEY_UNUSABLE_SCOPES_CODE) return "unusableScopes";
   if (code === SDK_KEY_TEMPLATE_NOT_ON_HOST_CODE) return "templateOffHost";
   if (code === SDK_KEY_WEBHOOKS_REQUIRES_ALL_OWNED_CODE) return "webhooksRequireAllOwned";

@@ -9,6 +9,7 @@ import {
   credentialValueInvalidTextSchema,
   type EgressRefusalReason,
   egressRefusalReasonSchema,
+  HOST_FILE_ERROR_REASONS,
   IMAGE_QUOTA_SCOPES,
   isRetryableRefusalCode,
   isSdkErrorCode,
@@ -73,6 +74,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
   let buildExtras: Record<string, unknown> | undefined;
   /** Capacity/quota/pool refusals (`RETRYABLE_REFUSAL_CODES`): required. */
   let retryable: boolean | undefined;
+  let hostFileData: { reason: (typeof HOST_FILE_ERROR_REASONS)[number] } | undefined;
   if (error instanceof ORPCError) {
     const data = error.data;
     const domain = data && typeof data === "object" && "code" in data ? data.code : undefined;
@@ -188,6 +190,15 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
         ...(path?.success ? { path: path.data } : {}),
       };
     }
+    if (code === "host.agent_access_off") retryable = false;
+    if (code === "host.node_offline") {
+      retryable = true;
+      retryAfterSeconds = 1;
+    }
+    if (code === "host.file_error" && data && typeof data === "object" && "reason" in data) {
+      const parsed = z.enum(HOST_FILE_ERROR_REASONS).safeParse(data.reason);
+      if (parsed.success) hostFileData = { reason: parsed.data };
+    }
     if (isTemplateBuildErrorExtrasCode(code) && data && typeof data === "object") {
       const { code: _code, ...fields } = data as Record<string, unknown>;
       // Only the documented fields: anything else in the data is dropped.
@@ -212,6 +223,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
     }
   }
   const requested = code;
+  if (code === "host.file_error" && !hostFileData) code = "INTERNAL_SERVER_ERROR";
   if ((code === "sandbox.host_capacity" || code === "sandbox.pool_full") && reason === undefined)
     code = "INTERNAL_SERVER_ERROR";
   if ((code === "sandbox.share_quota" || code === "sandbox.member_quota") && !resource)
@@ -263,6 +275,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
         code,
         message,
         requestId,
+        ...(code === "host.file_error" && hostFileData ? { data: hostFileData } : {}),
         ...(buildExtras && isTemplateBuildErrorExtrasCode(code) ? buildExtras : {}),
         ...(image && code === "sandbox.template_image_unavailable" ? image : {}),
         ...(valueInvalid && code === "credential.value_invalid" ? valueInvalid : {}),

@@ -1,0 +1,483 @@
+{
+  "server": [
+    {
+      "type": "host.policy.lower",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "target": "hostCommands"
+    },
+    {
+      "type": "host.policy.lower",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "target": "hostTerminal"
+    },
+    {
+      "type": "host.exec.start",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "argv": ["printf", "hello"],
+      "timeoutMs": 1000,
+      "stdin": true
+    },
+    {
+      "type": "host.exec.start",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "timeoutMs": 1000,
+      "stdin": true,
+      "script": "printf hello"
+    },
+    {
+      "type": "host.exec.poll",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "stdoutOffset": 0,
+      "stderrOffset": 0,
+      "maxBytes": 65536
+    },
+    {
+      "type": "host.exec.stdin",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "data": "aGVsbG8=",
+      "eof": false
+    },
+    {
+      "type": "host.exec.cancel",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv"
+    },
+    {
+      "type": "host.file.request",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "path": "/srv/project/test.txt",
+      "op": "read",
+      "offset": 0,
+      "maxBytes": 262144
+    },
+    {
+      "type": "host.file.request",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "path": "/srv/project/test.txt",
+      "op": "list"
+    },
+    {
+      "type": "host.file.request",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "path": "/srv/project/test.txt",
+      "op": "write",
+      "content": "hello",
+      "createOnly": true
+    },
+    {
+      "type": "host.file.request",
+      "connectionEpoch": 1,
+      "requestId": "request-1",
+      "ownerId": "owner-1",
+      "agentPolicyRevision": 2,
+      "path": "/srv/project/test.txt",
+      "op": "edit",
+      "edits": [
+        {
+          "oldText": "hello",
+          "newText": "world"
+        }
+      ],
+      "expectedEtag": "h:abcdefghijklmnopqrstuv"
+    }
+  ],
+  "daemon": [
+    {
+      "type": "host.agent-policy",
+      "connectionEpoch": 1,
+      "sequence": 1,
+      "hostCommands": true,
+      "hostFiles": true,
+      "hostCommandMaxMs": 600000,
+      "agentPolicyRevision": 2
+    },
+    {
+      "type": "host.agent-policy",
+      "connectionEpoch": 1,
+      "sequence": 2,
+      "hostCommands": false,
+      "hostFiles": false,
+      "agentPolicyRevision": 3
+    },
+    {
+      "type": "host.policy.lower.result",
+      "requestId": "request-1",
+      "ok": true
+    },
+    {
+      "type": "host.exec.started",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "startedAt": 1000,
+      "endsBy": 2000
+    },
+    {
+      "type": "host.exec.stdin.result",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "accepted": false,
+      "reason": "policy_changed"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "host_commands_off"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "policy_changed"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "owner_mismatch"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "bad_command"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "bad_cwd"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "limit"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "duplicate"
+    },
+    {
+      "type": "host.exec.rejected",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "reason": "spawn_failed"
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "running",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "succeeded",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "failed",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "cancelled",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "timed_out",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "interrupted",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.exec.status",
+      "requestId": "request-1",
+      "commandId": "abcdefghijklmnopqrstuv",
+      "state": "unknown",
+      "stdout": {
+        "offset": 0,
+        "data": "aGVsbG8=",
+        "dropped": false
+      },
+      "stderr": {
+        "offset": 0,
+        "data": "",
+        "dropped": false
+      },
+      "stdoutBytes": 5,
+      "stderrBytes": 0
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "host_files_off"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "policy_changed"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "owner_mismatch"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "no_roots"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "path_denied"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "not_found"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "not_a_file"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "not_a_dir"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "too_large"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "binary_file"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "conflict"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "no_match"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "match_count"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "redacted_span"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "exists"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "invalid_input"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "io_error"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": false,
+      "error": "limit"
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": true,
+      "result": {
+        "content": "hello",
+        "offset": 0,
+        "size": 5,
+        "etag": "h:abcdefghijklmnopqrstuv",
+        "truncated": false
+      }
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": true,
+      "result": {
+        "entries": [
+          {
+            "name": "test.txt",
+            "kind": "file",
+            "size": 5
+          },
+          {
+            "name": "dir",
+            "kind": "dir"
+          },
+          {
+            "name": "link",
+            "kind": "symlink"
+          }
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": true,
+      "result": {
+        "etag": "h:abcdefghijklmnopqrstuv",
+        "size": 5,
+        "created": true
+      }
+    },
+    {
+      "type": "host.file.result",
+      "requestId": "request-1",
+      "ok": true,
+      "result": {
+        "etag": "h:abcdefghijklmnopqrstuv",
+        "size": 5,
+        "replacements": 1
+      }
+    }
+  ]
+}

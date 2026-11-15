@@ -59,7 +59,7 @@ describe("committed CHECK declarations (real PostgreSQL)", () => {
       new URL("../prisma/migrations/0_init/migration.sql", import.meta.url),
       "utf8",
     );
-    expect(repoChecks).toHaveLength(144);
+    expect(repoChecks).toHaveLength(145);
     const live = (
       await client.query<{ table: string; name: string; valid: boolean }>(
         `SELECT t.relname AS "table", c.conname AS name, c.convalidated AS valid

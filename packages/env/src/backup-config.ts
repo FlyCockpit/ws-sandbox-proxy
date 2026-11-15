@@ -18,6 +18,7 @@ export type BackupConfig = {
 /** Shared location settings used by both backup writers and the monitor. */
 export function backupCommonConfigWarnings(value: BackupConfig): string[] {
   const warnings: string[] = [];
+  if (!value.BACKUP_ENABLED) return warnings;
   if (value.BACKUP_ENABLED && !value.BACKUP_S3_BUCKET) {
     warnings.push(
       "BACKUP_ENABLED=true but BACKUP_S3_BUCKET is not set. Backup freshness monitoring is enabled but no off-site bucket is configured — set BACKUP_S3_BUCKET, then configure the dump-writer and freshness-monitor credentials for the processes that need them.",
@@ -40,6 +41,7 @@ export function backupCommonConfigWarnings(value: BackupConfig): string[] {
 
 /** Freshness monitoring needs a distinct ListBucket-only identity. */
 export function backupMonitorConfigWarnings(value: BackupConfig): string[] {
+  if (!value.BACKUP_ENABLED) return [];
   const warnings = backupCommonConfigWarnings(value);
   if (!value.BACKUP_S3_BUCKET) return warnings;
   if (!value.BACKUP_MONITOR_S3_ACCESS_KEY_ID || !value.BACKUP_MONITOR_S3_SECRET_ACCESS_KEY) {

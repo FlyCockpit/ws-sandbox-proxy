@@ -29,6 +29,8 @@ vi.mock("@wssp/db", async () => ({
 function testPrincipal(ownerId: string): ServicePrincipal {
   return {
     kind: "sdkKey",
+    credentialKind: "API" as const,
+    ownSandboxesOnly: false,
     expiresAt: null,
     keyId: "key-1",
     ownerId,

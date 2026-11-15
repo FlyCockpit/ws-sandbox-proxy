@@ -5,7 +5,7 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeSandboxWriteBudget: async () => {},
 }));
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@wssp/db", async () => {
   const { createMockPrisma } = await import("@wssp/api/test/mock-prisma");
@@ -16,6 +16,7 @@ vi.mock("@wssp/env/server", () => ({
     SANDBOX_REQUEST_HMAC_SECRET: "0123456789abcdef".repeat(4),
     BETTER_AUTH_URL: "http://localhost:3000",
     BETTER_AUTH_SECRET: "sdk-key-test-secret",
+    WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY: true,
   },
 }));
 
@@ -25,6 +26,9 @@ const access = await import("./sdk-key-access");
 const scopes = await import("./service-scopes");
 const authority = await import("@wssp/db/authority");
 const { ORPCError } = await import("@orpc/server");
+const { env: mockedEnv } = (await import("@wssp/env/server")) as unknown as {
+  env: { WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY: boolean };
+};
 
 const now = new Date("2026-09-17T00:00:00Z");
 
@@ -33,9 +37,11 @@ function fullScopePrincipal(
 ): access.ServicePrincipal {
   const principal = {
     kind: "sdkKey",
+    credentialKind: "API",
     expiresAt: null,
     keyId: "key-1",
     ownerId: "user-a",
+    ownSandboxesOnly: false,
     resourceMode: "ALL_OWNED",
     scopes: new Set(scopes.SERVICE_SCOPES),
     allowedHostIds: "allOwned",
@@ -46,6 +52,8 @@ function fullScopePrincipal(
   prisma.sdkKey.findUnique.mockResolvedValue({
     id: principal.keyId,
     userId: principal.ownerId,
+    kind: "API",
+    ownSandboxesOnly: false,
     resourceMode: principal.resourceMode,
     scopes: [...principal.scopes],
     revokedAt: null,
@@ -82,9 +90,11 @@ function allowlistPrincipal(
 ): access.ServicePrincipal {
   const principal = {
     kind: "sdkKey",
+    credentialKind: "API",
     expiresAt: null,
     keyId: "key-allow",
     ownerId: "user-a",
+    ownSandboxesOnly: false,
     resourceMode: "ALLOWLIST",
     scopes: new Set(scopeList),
     allowedHostIds: new Set(hostIds),
@@ -94,6 +104,8 @@ function allowlistPrincipal(
   prisma.sdkKey.findUnique.mockResolvedValue({
     id: principal.keyId,
     userId: principal.ownerId,
+    kind: "API",
+    ownSandboxesOnly: false,
     resourceMode: principal.resourceMode,
     scopes: [...principal.scopes],
     revokedAt: null,
@@ -188,7 +200,11 @@ describe("authorizeServiceAction scope matrix", () => {
   });
 
   it("rejects out-of-allowlist hosts and templates", async () => {
-    const principal = allowlistPrincipal(["host-1"], ["tpl-1"], ["sandboxes:write"]);
+    const principal = allowlistPrincipal(
+      ["host-1"],
+      ["tpl-1"],
+      ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+    );
     await expect(
       access.authorizeServiceAction(principal, "sandboxes.create", {
         sandboxHostId: "host-2",
@@ -205,7 +221,11 @@ describe("authorizeServiceAction scope matrix", () => {
   });
 
   it("treats empty allowlists as granting no restricted resources", async () => {
-    const principal = allowlistPrincipal([], [], ["sandboxes:write"]);
+    const principal = allowlistPrincipal(
+      [],
+      [],
+      ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+    );
     await expect(
       access.authorizeServiceAction(principal, "sandboxes.create", {
         sandboxHostId: "host-1",
@@ -240,6 +260,8 @@ describe("authenticateSdkKeySecret", () => {
     prisma.sdkKey.findUnique.mockResolvedValue({
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       scopes: ["hosts:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -255,6 +277,8 @@ describe("authenticateSdkKeySecret", () => {
     prisma.sdkKey.findUnique.mockResolvedValue({
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       scopes: ["hosts:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -270,6 +294,8 @@ describe("authenticateSdkKeySecret", () => {
     prisma.sdkKey.findUnique.mockResolvedValue({
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       scopes: ["hosts:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -288,6 +314,8 @@ describe("authenticateSdkKeySecret", () => {
     prisma.sdkKey.findUnique.mockResolvedValue({
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALLOWLIST",
       scopes: ["sandboxes:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -303,6 +331,8 @@ describe("authenticateSdkKeySecret", () => {
     const principal = await access.authenticateSdkKeySecret(credential.raw, now);
     expect(principal).toMatchObject({
       ownerId: "user-a",
+      credentialKind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALLOWLIST",
     });
     expect(principal?.allowedHostIds).toEqual(new Set(["host-1"]));
@@ -355,6 +385,8 @@ describe("authenticateSdkKeySecret", () => {
     prisma.sdkKey.findUnique.mockResolvedValue({
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       scopes: ["hosts:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -373,6 +405,134 @@ describe("authenticateSdkKeySecret", () => {
     });
     await expect(access.authenticateSdkKeySecret(credential.raw, now)).resolves.toBeNull();
     expect(prisma.sdkKey.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("no-expiry agent token policy at authentication", () => {
+  const activeOwner = {
+    banned: false,
+    banExpires: null,
+    twoFactorEnabled: true,
+    createdAt: now,
+    role: "user",
+  };
+  function agentRow(
+    credential: ReturnType<typeof crypto.generateProductCredentialSecret>,
+    overrides: Record<string, unknown> = {},
+  ) {
+    return {
+      id: "agent-1",
+      userId: "user-a",
+      kind: "AGENT_TOKEN",
+      ownSandboxesOnly: true,
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      scopes: ["sandboxes:read"],
+      lookupPrefix: crypto.credentialLookupPrefix(credential),
+      secretDigest: crypto.hmacDigestForProductPurpose({
+        purpose: "agentToken",
+        value: credential.raw,
+      }),
+      revokedAt: null,
+      expiresAt: null,
+      HostAllowlist: [],
+      RevisionAllowlist: [],
+      PoolAllowlist: [],
+      User: activeOwner,
+      ...overrides,
+    };
+  }
+  beforeEach(() => {
+    vi.clearAllMocks();
+    prisma.appSetting.findMany.mockResolvedValue([]);
+    prisma.sdkKey.updateMany.mockResolvedValue({ count: 1 });
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+  });
+  afterEach(() => {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+  });
+
+  it("refuses an existing no-expiry agent token with a typed error while the switch is off, and accepts it again once on", async () => {
+    const credential = crypto.generateProductCredentialSecret("agentToken");
+    prisma.sdkKey.findUnique.mockResolvedValue(agentRow(credential) as never);
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    const refused = access.authenticateAgentTokenSecret(credential.raw, now);
+    await expect(refused).rejects.toBeInstanceOf(access.AgentTokenPolicyBlockedError);
+    await expect(refused).rejects.toMatchObject({ code: "agent_token.no_expiry_blocked" });
+    await expect(access.revalidateSdkKey("agent-1", "user-a")).resolves.toBeNull();
+    // Not deleted, revoked or stamped as used.
+    expect(prisma.sdkKey.update).not.toHaveBeenCalled();
+    expect(prisma.sdkKey.updateMany).not.toHaveBeenCalled();
+    expect(prisma.sdkKey.delete).not.toHaveBeenCalled();
+
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+    await expect(access.authenticateAgentTokenSecret(credential.raw, now)).resolves.toMatchObject({
+      keyId: "agent-1",
+      credentialKind: "AGENT_TOKEN",
+    });
+    await expect(access.revalidateSdkKey("agent-1", "user-a")).resolves.toMatchObject({
+      keyId: "agent-1",
+    });
+  });
+
+  it("leaves dated agent tokens and no-expiry SDK keys unaffected while the switch is off", async () => {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    const credential = crypto.generateProductCredentialSecret("agentToken");
+    prisma.sdkKey.findUnique.mockResolvedValue(
+      agentRow(credential, { expiresAt: new Date(Date.now() + 86_400_000) }) as never,
+    );
+    await expect(access.authenticateAgentTokenSecret(credential.raw, now)).resolves.toMatchObject({
+      keyId: "agent-1",
+    });
+
+    const sdk = crypto.generateProductCredentialSecret("sdkKey");
+    prisma.sdkKey.findUnique.mockResolvedValue({
+      ...agentRow(sdk),
+      id: "key-1",
+      kind: "API",
+      secretDigest: access.digestSdkKeySecret(sdk.raw),
+    } as never);
+    await expect(access.authenticateSdkKeySecret(sdk.raw, now)).resolves.toMatchObject({
+      keyId: "key-1",
+      credentialKind: "API",
+    });
+  });
+
+  it("never reports the policy for a wrong secret or a revoked token", async () => {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    const credential = crypto.generateProductCredentialSecret("agentToken");
+    prisma.sdkKey.findUnique.mockResolvedValue(
+      agentRow(credential, { secretDigest: "bad-digest" }) as never,
+    );
+    await expect(access.authenticateAgentTokenSecret(credential.raw, now)).resolves.toBeNull();
+    prisma.sdkKey.findUnique.mockResolvedValue(
+      agentRow(credential, { revokedAt: new Date("2026-01-01") }) as never,
+    );
+    await expect(access.authenticateAgentTokenSecret(credential.raw, now)).resolves.toBeNull();
+  });
+
+  it("decides on the final durable read: a switch turned off after the first lookup still refuses", async () => {
+    const credential = crypto.generateProductCredentialSecret("agentToken");
+    const row = agentRow(credential);
+    prisma.sdkKey.findUnique
+      .mockImplementationOnce((async () => row) as never)
+      .mockImplementationOnce((async () => {
+        // The policy changes between the pre-digest lookup and the final read.
+        mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+        return row;
+      }) as never);
+    await expect(access.authenticateAgentTokenSecret(credential.raw, now)).rejects.toBeInstanceOf(
+      access.AgentTokenPolicyBlockedError,
+    );
+  });
+
+  it("refuses an in-flight agent principal at its next credential check once the switch is off", async () => {
+    const credential = crypto.generateProductCredentialSecret("agentToken");
+    prisma.sdkKey.findUnique.mockResolvedValue(agentRow(credential) as never);
+    const principal = await access.authenticateAgentTokenSecret(credential.raw, now);
+    expect(principal).not.toBeNull();
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    await expect(access.revalidateSdkKey(principal!.keyId, principal!.ownerId)).resolves.toBeNull();
   });
 });
 
@@ -421,7 +581,11 @@ describe("service idempotency replay authorization", () => {
     prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => Promise<unknown>) =>
       fn(prisma),
     );
-    const principal = allowlistPrincipal(["host-1"], ["tpl-1"], ["sandboxes:write"]);
+    const principal = allowlistPrincipal(
+      ["host-1"],
+      ["tpl-1"],
+      ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+    );
     const { hostOwnerId: _transportOwner, ...publicReceipt } = receipt;
     await expect(createSandbox(principal, input)).resolves.toEqual({
       ...publicReceipt,
@@ -429,7 +593,10 @@ describe("service idempotency replay authorization", () => {
     });
     await expect(
       createSandbox(
-        fullScopePrincipal({ keyId: "key-allow", scopes: new Set(["sandboxes:write"]) }),
+        fullScopePrincipal({
+          keyId: "key-allow",
+          scopes: new Set(["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"]),
+        }),
         input,
       ),
     ).resolves.toEqual({
@@ -460,6 +627,8 @@ describe("persisted SDK credentials", () => {
     return {
       id: "key-1",
       userId: "user-a",
+      kind: "API",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       scopes: ["hosts:read"],
       lookupPrefix: crypto.credentialLookupPrefix(credential),
@@ -755,6 +924,75 @@ it("3B dispatch checks rows and stored grants, never mutation scopes or ambiguou
   expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("indeterminate");
 });
 
+it("accepted dispatch by a no-expiry agent token is inactive while the switch is off, active again once on", async () => {
+  fullScopePrincipal();
+  const input = {
+    ownerId: "user-a",
+    principal: { kind: "sdkKey" as const, keyId: "key-1" },
+    context: { sandboxHostId: "host-1", templateRevisionId: "tpl-1", originPoolId: null },
+  };
+  const currentRow = await prisma.sdkKey.findUnique({ where: { id: "key-1" } });
+  prisma.sdkKey.findUnique.mockResolvedValue({
+    ...currentRow,
+    kind: "AGENT_TOKEN",
+    expiresAt: null,
+  } as never);
+  try {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("inactive");
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+    expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("active");
+    // A dated agent token is unaffected by the switch.
+    prisma.sdkKey.findUnique.mockResolvedValue({
+      ...currentRow,
+      kind: "AGENT_TOKEN",
+      expiresAt: new Date(Date.now() + 86_400_000),
+    } as never);
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("active");
+  } finally {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+  }
+});
+
+it("accepted dispatch judges the no-expiry policy after its last read, and its relay gate re-judges it", async () => {
+  fullScopePrincipal();
+  const input = {
+    ownerId: "user-a",
+    principal: { kind: "sdkKey" as const, keyId: "key-1" },
+    context: { sandboxHostId: "host-1", templateRevisionId: "tpl-1", originPoolId: null },
+  };
+  const currentRow = await prisma.sdkKey.findUnique({ where: { id: "key-1" } });
+  prisma.sdkKey.findUnique.mockResolvedValue({
+    ...currentRow,
+    kind: "AGENT_TOKEN",
+    expiresAt: null,
+  } as never);
+  const hostRead = prisma.sandboxHost.findFirst.getMockImplementation();
+  try {
+    // The flag turns off while the host read (after the early check) is pending.
+    prisma.sandboxHost.findFirst.mockImplementationOnce((async (args: unknown) => {
+      mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+      return hostRead ? hostRead(args as never) : { id: "host-1" };
+    }) as never);
+    expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("inactive");
+
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+    let gate: (() => boolean) | undefined;
+    expect(
+      await access.checkAcceptedDispatchAuthority(
+        { ...input, onActiveAuthority: (current) => (gate = current) },
+        prisma,
+      ),
+    ).toBe("active");
+    expect(gate?.()).toBe(true);
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = false;
+    expect(gate?.()).toBe(false);
+  } finally {
+    mockedEnv.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY = true;
+  }
+});
+
 it("3B moved authority fence is indeterminate even when its row is active", async () => {
   fullScopePrincipal();
   const read = prisma.sdkKey.findUnique.getMockImplementation()!;
@@ -840,6 +1078,7 @@ it("ALL_OWNED dispatch uses durable creator ownership on a foreign transport; se
   prisma.sandboxOperation.findFirst.mockResolvedValue(null);
   expect(await access.checkAcceptedDispatchAuthority(input, prisma)).toBe("inactive");
   fullScopePrincipal({
+    ownSandboxesOnly: false,
     resourceMode: "ALLOWLIST",
     allowedHostIds: new Set(),
     allowedRevisionIds: new Set(["tpl-1"]),
@@ -897,6 +1136,8 @@ describe("§5a retained-creator classification (V1)", () => {
   it("currentCustodyAllowed: host leg for ALLOWLIST only, pool leg whenever SELECTED (W1)", () => {
     const key = (over: Partial<Parameters<typeof access.currentCustodyAllowed>[0]>) => ({
       kind: "sdkKey" as const,
+      credentialKind: "API",
+      ownSandboxesOnly: false,
       expiresAt: null,
       keyId: "k",
       ownerId: "o",
@@ -918,6 +1159,7 @@ describe("§5a retained-creator classification (V1)", () => {
     expect(access.currentCustodyAllowed(key({}), at("f", "p", "other"))).toBe(true);
     expect(access.currentCustodyAllowed(key({}), at("f", null, "other"))).toBe(false);
     const allOwnedSelected = key({
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       allowedHostIds: "allOwned",
       allowedPoolIds: new Set(["p"]),

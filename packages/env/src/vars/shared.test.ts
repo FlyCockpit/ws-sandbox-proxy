@@ -10,6 +10,12 @@ describe("migration and backup shared declarations", () => {
     expect(sharedVars.WSSP_INSTANCE_ID.safeParse("worker-1").success).toBe(false);
   });
 
+  it("defaults automatic backups off and keeps per-user credentials on", () => {
+    expect(sharedVars.BACKUP_ENABLED.parse(undefined)).toBe(false);
+    expect(sharedVars.BACKUP_ENABLED.parse("true")).toBe(true);
+    expect(sharedVars.CREDENTIALS_ENABLED.parse(undefined)).toBe(true);
+  });
+
   it("has no implicit shared backup namespace", () => {
     expect(sharedVars.BACKUP_S3_PREFIX.parse(undefined)).toBe("");
     expect(sharedVars.BACKUP_S3_ACCESS_KEY_ID.parse(undefined)).toBeUndefined();

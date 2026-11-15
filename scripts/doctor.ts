@@ -236,6 +236,44 @@ function checkDatabase() {
   }
 }
 
+function checkPreMigrationBackup() {
+  // BACKUP_ENABLED is the switch; a destination alone does not turn automatic
+  // backups on (scripts/db/migrate-runtime.mjs). It also turns on freshness
+  // monitoring in the worker.
+  const enabled = process.env.BACKUP_ENABLED;
+  if (enabled && enabled !== "true" && enabled !== "false") {
+    record({
+      name: "pre-migration backup",
+      status: "fail",
+      detail: `BACKUP_ENABLED must be true or false (got "${enabled}")`,
+      required: false,
+    });
+    return;
+  }
+  if (enabled === "true") {
+    record({
+      name: "pre-migration backup",
+      status: process.env.BACKUP_S3_BUCKET ? "ok" : "warn",
+      detail: process.env.BACKUP_S3_BUCKET
+        ? "BACKUP_ENABLED=true, BACKUP_S3_BUCKET is set"
+        : "BACKUP_ENABLED=true without BACKUP_S3_BUCKET: the app image also needs a writable /backups volume, or its migration refuses to start; freshness monitoring reports setup-missing",
+      required: false,
+    });
+    return;
+  }
+  record({
+    name: "pre-migration backup",
+    status: "ok",
+    detail: "off (default; migrations do not require backups)",
+    hint:
+      "In production, have the deploy take a backup before pending migrations: set BACKUP_ENABLED=true and mount " +
+      "a volume at /backups on the server and/or set BACKUP_S3_BUCKET + BACKUP_S3_*, or take a provider " +
+      "snapshot first. For daily backups regenerate with --backups true (BACKUP_ENABLED and " +
+      "BACKUP_SCHEDULE=daily default on). See docs/operations/backup-and-restore.md.",
+    required: false,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 4. Redis connection (uses `ioredis` from @wssp/queue via workspace exec)
 // ---------------------------------------------------------------------------
@@ -553,6 +591,7 @@ async function main() {
 
   checkPortless();
   await checkEnv();
+  checkPreMigrationBackup();
   // Stop further checks if env failed — they would all fail with confusing
   // messages and the user needs to fix env first.
   const envOk = results.find((r) => r.name === "env (zod schema)")?.status === "ok";

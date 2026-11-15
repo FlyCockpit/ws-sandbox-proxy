@@ -1,6 +1,8 @@
 //! Sandbox host relay protocol: version negotiation, control messages, and
 //! binary stream framing shared by the control plane and `wssp` node daemon.
 
+mod host_access;
+pub use host_access::*;
 mod private_config;
 pub use private_config::{
     PRIVATE_CONFIG_MAX_BYTES, PrivateConfigAck, PrivateConfigInstall, PrivateConfigRef,

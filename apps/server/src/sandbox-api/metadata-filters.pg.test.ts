@@ -104,7 +104,13 @@ async function fixture() {
   const principal = { kind: "session" as const, ownerId: id };
   const key = await createSdkKey(principal, {
     name: "sdk",
-    scopes: ["sandboxes:read", "sandboxes:write", "operations:read"],
+    scopes: [
+      "sandboxes:read",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "operations:read",
+    ],
     resourceMode: "ALL_OWNED",
     hostIds: [],
     templateRevisionIds: [],

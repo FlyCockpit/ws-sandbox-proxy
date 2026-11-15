@@ -109,6 +109,7 @@ async function ownedHost(
       userId,
       deletionRequestedAt: null,
       connectionEpoch: epoch,
+      hostTerminalVetoedAt: null,
       status: "CONNECTED",
       relayProtocolVersion: "1.0",
       relayProtocolEpoch: epoch,
@@ -131,10 +132,10 @@ export async function mintHostTerminalTicket(
       userId: owner.userId,
       deletionRequestedAt: null,
     },
-    select: { id: true },
+    select: { id: true, hostTerminalVetoedAt: true },
   });
   if (!host) throw new ORPCError("NOT_FOUND");
-  if (!policy?.hostTerminal)
+  if (host.hostTerminalVetoedAt || !policy?.hostTerminal)
     throw new ORPCError("CONFLICT", { data: { code: "HOST_TERMINAL_UNAVAILABLE" } });
   if (policy.requireHostTerminalTotp) {
     try {

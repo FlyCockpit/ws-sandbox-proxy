@@ -30,6 +30,7 @@ pub mod slot;
 pub mod store;
 pub mod transfer;
 
+pub(crate) use secret::masking_snapshot;
 pub use secret::{SecretBytes, harden_process};
 
 #[cfg(test)]

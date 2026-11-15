@@ -219,7 +219,7 @@ const sites: Site[] = [
         session(seeded.ownerId),
         createSdkKeyInput.parse({
           name: "sdk",
-          scopes: ["sandboxes:write", "sandboxes:read"],
+          scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy", "sandboxes:read"],
           resourceMode: "ALL_OWNED",
         }),
       );
@@ -423,7 +423,7 @@ describe("SDK key mint vs concurrent template retirement (real PostgreSQL)", () 
       session(seeded.ownerId),
       createSdkKeyInput.parse({
         name: "pinned",
-        scopes: ["sandboxes:write"],
+        scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
         resourceMode: "ALLOWLIST",
         hostIds: [seeded.hostId],
         templateRevisionIds: [seeded.templateId],

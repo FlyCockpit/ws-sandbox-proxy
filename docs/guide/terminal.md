@@ -2,7 +2,9 @@
 
 The sandbox detail page has a browser terminal: an interactive shell **inside
 the sandbox VM**, as the template's guest user. It is never a shell on the
-Incus host. The SDK plane (`/v1`) has no terminal.
+Incus host. Browser terminals require your session. SDK (`/v1`) and MCP
+(`/mcp`) credentials have no PTY; their separate host command/file tools follow
+[ADR-006](../design/adr-006-agent-host-access.md).
 
 ## Attach model
 
@@ -43,7 +45,7 @@ Incus host. The SDK plane (`/v1`) has no terminal.
   `Sec-WebSocket-Protocol` header, never in a URL, and the database stores only
   its digest. Any refusal after it was presented burns it.
 - **Plane separation.** The upgrade refuses an `Authorization` header and any
-  subprotocol carrying a `wssp_sdk_`, `wssp_host_` or `wssp_device_`
+  subprotocol carrying a `wssp_sdk_`, `wssp_agent_`, `wssp_host_` or `wssp_device_`
   credential. The `Origin` must exactly match the configured public origin.
 - **Continuous authorization.** After the upgrade the server re-reads your
   session, account and the sandbox before opening the shell, then every 15
@@ -117,13 +119,44 @@ browser command, cwd, user or env is accepted. An incus-admin host user can
 reach every VM, including foreign guests. API restrictions and disabling host
 terminals do not isolate guests from local administrators.
 
-Local default is off with TOTP required. Enable with
+Local default is off with TOTP required. Enabling requires stdin and stderr
+TTYs, no `WSSP_HOST_COMMAND` or `WSSP_HOST_TERMINAL` marker, no daemon ancestry,
+and typing `on` in a local login session on the node. Enable with
 `wssp config set-host-terminal on`; local off is observed within two seconds,
 closes host PTYs and preserves guest work. Optional mode is local-only via
 `wssp config set-host-terminal-totp optional`. The dashboard can raise the
 requirement on a connected host; only a persisted ACK confirms it. Offline
-requests are not stored; timeout/disconnect needs an explicit retry. There is
-no dashboard enable/lower control.
+TOTP-raise requests are not stored; timeout/disconnect needs an explicit retry.
+There is no dashboard enable control. You can now choose **Turn off** for
+**People may open a host terminal** on the host detail's **Agent access** card. This
+immediately refuses new tickets and attachments, sets a durable server-side
+veto and asks the daemon to persist off and close host PTYs. The node cannot
+undo the veto, even by reporting off. Every hello/report that says on while
+vetoed receives another turn-off request. Only a live owner browser session
+can choose **Allow again** to lift the dashboard block only when the node is
+online and its live report at the current epoch says host terminals are off.
+If it reports on, run `wssp config set-host-terminal off` at the node first and
+wait for the off report. Lifting the block does not turn on the node setting. This supersedes
+the earlier absence of dashboard lowering; see [ADR-006](../design/adr-006-agent-host-access.md).
+Turning off **Agents may run host commands** separately interrupts agent host
+commands and pending file work. Guest terminals are a separate target.
+
+Agent host commands and host file tools run as the daemon user, an Incus
+admin: an agent with host access can do what that user can do, including
+editing its settings and reading its credential. Access is off until a person
+enables it at the node. The node-local raise gate and process-tree cleanup are
+best effort against that uid. See
+[node settings](./hosts.md#node-settings-for-agents-and-terminals) for the
+dashboard emergency veto.
+
+Run the daemon as a service (a system or user unit) and raise settings from a
+separate local login. A daemon started in the same terminal session or scope
+as your shell makes the cgroup check refuse the raise. The marker, ancestry
+and cgroup checks refuse the direct dashboard host-terminal/host-command case,
+but are best effort against the daemon's own uid. A person
+or agent with host execution can escape the process tree with `systemd-run --user`, `setsid`
+followed by killing the supervisor, or cron, or edit `config.toml` directly.
+These checks are not a kernel-enforced sandbox.
 
 Required mode needs enrolled verified TOTP, a ten-minute first/changed-factor
 observation cooldown, and a fresh unused code on every attach/retry. Five proof
@@ -149,3 +182,32 @@ background/resumable terminal, and host terminals never reattach after a relay
 drop. Session/credential/policy changes recheck durable
 authority for both target kinds, with about twenty seconds fallback for missed
 hints. Host-owner custody, pool ownership and admin metadata confer no guest IO.
+
+## Queued host commands
+
+An agent with `hosts:execute` can queue a command for a node you own even when
+agent host commands are off. Open **Queued commands** in the host detail to
+review its command text, reason, credential and expiry. **Dismiss** declines
+it. **Run** records your decision and prepares a wrapper in your host terminal;
+it does not execute it. You still attach explicitly, with a fresh TOTP code
+when required. **Pressing Enter is your decision.**
+
+The panel pre-types only a printable ASCII command on one line, without a
+trailing newline. If it cannot safely pre-type, or a host terminal is unavailable,
+it shows the wrapper to copy. Review the whole wrapper before running it:
+
+```sh
+env -u SUDO_ASKPASS -u BASH_ENV -u ENV /bin/sh -c 'if command -v sudo >/dev/null 2>&1; then sudo -k >/dev/null 2>&1; fi; /bin/sh -c "$1"; s=$?; if command -v sudo >/dev/null 2>&1; then sudo -k >/dev/null 2>&1; fi; exit $s' wssp-queued '<quoted command>'
+```
+
+The application shell-quotes the final command argument, escaping each single
+quote. The wrapper clears askpass/shell-startup variables and invalidates cached
+sudo authentication before and after the command while preserving its exit
+status. It does not automatically run as root; any sudo prompt is for you to
+decide. Queue state **RUN** records the handoff, not proof that you pressed
+Enter or that the command succeeded. The agent can inspect its queue item's
+state but cannot run or dismiss it. Default expiry is 24 hours.
+
+The daemon user is an Incus admin: a human host shell or agent host command can reach every
+sandbox on the node, including other users' sandboxes. **Own sandboxes only**
+does not limit that power. See [node settings](./hosts.md#node-settings-for-agents-and-terminals).

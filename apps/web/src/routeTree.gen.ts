@@ -18,6 +18,8 @@ import { Route as LangAppAdminRouteImport } from './routes/$lang/_app/admin'
 import { Route as LangAppDeviceRouteImport } from './routes/$lang/_app/device'
 import { Route as LangAppForgotPasswordRouteImport } from './routes/$lang/_app/forgot-password'
 import { Route as LangAppLoginRouteImport } from './routes/$lang/_app/login'
+import { Route as LangAppMcpConsentRouteImport } from './routes/$lang/_app/mcp-consent'
+import { Route as LangAppMcpLoginRouteImport } from './routes/$lang/_app/mcp-login'
 import { Route as LangAppResetPasswordRouteImport } from './routes/$lang/_app/reset-password'
 import { Route as LangAppSignupRouteImport } from './routes/$lang/_app/signup'
 import { Route as LangAppVerifyEmailRouteImport } from './routes/$lang/_app/verify-email'
@@ -33,6 +35,7 @@ import { Route as LangAppAuthDashboardOperationsRouteImport } from './routes/$la
 import { Route as LangAppAuthDashboardSandboxesRouteImport } from './routes/$lang/_app/_auth/dashboard/sandboxes'
 import { Route as LangAppAuthDashboardTemplatesRouteImport } from './routes/$lang/_app/_auth/dashboard/templates'
 import { Route as LangAppAuthSettingsIndexRouteImport } from './routes/$lang/_app/_auth/settings/index'
+import { Route as LangAppAuthSettingsAgentTokensRouteImport } from './routes/$lang/_app/_auth/settings/agent-tokens'
 import { Route as LangAppAuthSettingsHostCredentialsRouteImport } from './routes/$lang/_app/_auth/settings/host-credentials'
 import { Route as LangAppAuthSettingsHostsRouteImport } from './routes/$lang/_app/_auth/settings/hosts'
 import { Route as LangAppAuthSettingsImagesRouteImport } from './routes/$lang/_app/_auth/settings/images'
@@ -99,6 +102,16 @@ const LangAppForgotPasswordRoute = LangAppForgotPasswordRouteImport.update({
 const LangAppLoginRoute = LangAppLoginRouteImport.update({
   id: '/login',
   path: '/login',
+  getParentRoute: () => LangAppRouteRoute,
+} as any)
+const LangAppMcpConsentRoute = LangAppMcpConsentRouteImport.update({
+  id: '/mcp-consent',
+  path: '/mcp-consent',
+  getParentRoute: () => LangAppRouteRoute,
+} as any)
+const LangAppMcpLoginRoute = LangAppMcpLoginRouteImport.update({
+  id: '/mcp-login',
+  path: '/mcp-login',
   getParentRoute: () => LangAppRouteRoute,
 } as any)
 const LangAppResetPasswordRoute = LangAppResetPasswordRouteImport.update({
@@ -180,6 +193,12 @@ const LangAppAuthSettingsIndexRoute =
   LangAppAuthSettingsIndexRouteImport.update({
     id: '/',
     path: '/',
+    getParentRoute: () => LangAppAuthSettingsRoute,
+  } as any)
+const LangAppAuthSettingsAgentTokensRoute =
+  LangAppAuthSettingsAgentTokensRouteImport.update({
+    id: '/agent-tokens',
+    path: '/agent-tokens',
     getParentRoute: () => LangAppAuthSettingsRoute,
   } as any)
 const LangAppAuthSettingsHostCredentialsRoute =
@@ -340,6 +359,8 @@ export interface FileRoutesByFullPath {
   '/$lang/device': typeof LangAppDeviceRoute
   '/$lang/forgot-password': typeof LangAppForgotPasswordRoute
   '/$lang/login': typeof LangAppLoginRoute
+  '/$lang/mcp-consent': typeof LangAppMcpConsentRoute
+  '/$lang/mcp-login': typeof LangAppMcpLoginRoute
   '/$lang/reset-password': typeof LangAppResetPasswordRoute
   '/$lang/signup': typeof LangAppSignupRoute
   '/$lang/verify-email': typeof LangAppVerifyEmailRoute
@@ -353,6 +374,7 @@ export interface FileRoutesByFullPath {
   '/$lang/dashboard/operations': typeof LangAppAuthDashboardOperationsRouteWithChildren
   '/$lang/dashboard/sandboxes': typeof LangAppAuthDashboardSandboxesRouteWithChildren
   '/$lang/dashboard/templates': typeof LangAppAuthDashboardTemplatesRouteWithChildren
+  '/$lang/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/settings/hosts': typeof LangAppAuthSettingsHostsRouteWithChildren
   '/$lang/settings/images': typeof LangAppAuthSettingsImagesRoute
@@ -387,6 +409,8 @@ export interface FileRoutesByTo {
   '/$lang/device': typeof LangAppDeviceRoute
   '/$lang/forgot-password': typeof LangAppForgotPasswordRoute
   '/$lang/login': typeof LangAppLoginRoute
+  '/$lang/mcp-consent': typeof LangAppMcpConsentRoute
+  '/$lang/mcp-login': typeof LangAppMcpLoginRoute
   '/$lang/reset-password': typeof LangAppResetPasswordRoute
   '/$lang/signup': typeof LangAppSignupRoute
   '/$lang/verify-email': typeof LangAppVerifyEmailRoute
@@ -394,6 +418,7 @@ export interface FileRoutesByTo {
   '/$lang/admin/settings': typeof LangAppAdminSettingsRoute
   '/$lang/admin/users': typeof LangAppAdminUsersRoute
   '/$lang/admin': typeof LangAppAdminIndexRoute
+  '/$lang/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/settings/images': typeof LangAppAuthSettingsImagesRoute
   '/$lang/settings/profile': typeof LangAppAuthSettingsProfileRoute
@@ -429,6 +454,8 @@ export interface FileRoutesById {
   '/$lang/_app/device': typeof LangAppDeviceRoute
   '/$lang/_app/forgot-password': typeof LangAppForgotPasswordRoute
   '/$lang/_app/login': typeof LangAppLoginRoute
+  '/$lang/_app/mcp-consent': typeof LangAppMcpConsentRoute
+  '/$lang/_app/mcp-login': typeof LangAppMcpLoginRoute
   '/$lang/_app/reset-password': typeof LangAppResetPasswordRoute
   '/$lang/_app/signup': typeof LangAppSignupRoute
   '/$lang/_app/verify-email': typeof LangAppVerifyEmailRoute
@@ -442,6 +469,7 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/dashboard/operations': typeof LangAppAuthDashboardOperationsRouteWithChildren
   '/$lang/_app/_auth/dashboard/sandboxes': typeof LangAppAuthDashboardSandboxesRouteWithChildren
   '/$lang/_app/_auth/dashboard/templates': typeof LangAppAuthDashboardTemplatesRouteWithChildren
+  '/$lang/_app/_auth/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/_app/_auth/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/_app/_auth/settings/hosts': typeof LangAppAuthSettingsHostsRouteWithChildren
   '/$lang/_app/_auth/settings/images': typeof LangAppAuthSettingsImagesRoute
@@ -479,6 +507,8 @@ export interface FileRouteTypes {
     | '/$lang/device'
     | '/$lang/forgot-password'
     | '/$lang/login'
+    | '/$lang/mcp-consent'
+    | '/$lang/mcp-login'
     | '/$lang/reset-password'
     | '/$lang/signup'
     | '/$lang/verify-email'
@@ -492,6 +522,7 @@ export interface FileRouteTypes {
     | '/$lang/dashboard/operations'
     | '/$lang/dashboard/sandboxes'
     | '/$lang/dashboard/templates'
+    | '/$lang/settings/agent-tokens'
     | '/$lang/settings/host-credentials'
     | '/$lang/settings/hosts'
     | '/$lang/settings/images'
@@ -526,6 +557,8 @@ export interface FileRouteTypes {
     | '/$lang/device'
     | '/$lang/forgot-password'
     | '/$lang/login'
+    | '/$lang/mcp-consent'
+    | '/$lang/mcp-login'
     | '/$lang/reset-password'
     | '/$lang/signup'
     | '/$lang/verify-email'
@@ -533,6 +566,7 @@ export interface FileRouteTypes {
     | '/$lang/admin/settings'
     | '/$lang/admin/users'
     | '/$lang/admin'
+    | '/$lang/settings/agent-tokens'
     | '/$lang/settings/host-credentials'
     | '/$lang/settings/images'
     | '/$lang/settings/profile'
@@ -567,6 +601,8 @@ export interface FileRouteTypes {
     | '/$lang/_app/device'
     | '/$lang/_app/forgot-password'
     | '/$lang/_app/login'
+    | '/$lang/_app/mcp-consent'
+    | '/$lang/_app/mcp-login'
     | '/$lang/_app/reset-password'
     | '/$lang/_app/signup'
     | '/$lang/_app/verify-email'
@@ -580,6 +616,7 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/dashboard/operations'
     | '/$lang/_app/_auth/dashboard/sandboxes'
     | '/$lang/_app/_auth/dashboard/templates'
+    | '/$lang/_app/_auth/settings/agent-tokens'
     | '/$lang/_app/_auth/settings/host-credentials'
     | '/$lang/_app/_auth/settings/hosts'
     | '/$lang/_app/_auth/settings/images'
@@ -677,6 +714,20 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/$lang/login'
       preLoaderRoute: typeof LangAppLoginRouteImport
+      parentRoute: typeof LangAppRouteRoute
+    }
+    '/$lang/_app/mcp-consent': {
+      id: '/$lang/_app/mcp-consent'
+      path: '/mcp-consent'
+      fullPath: '/$lang/mcp-consent'
+      preLoaderRoute: typeof LangAppMcpConsentRouteImport
+      parentRoute: typeof LangAppRouteRoute
+    }
+    '/$lang/_app/mcp-login': {
+      id: '/$lang/_app/mcp-login'
+      path: '/mcp-login'
+      fullPath: '/$lang/mcp-login'
+      preLoaderRoute: typeof LangAppMcpLoginRouteImport
       parentRoute: typeof LangAppRouteRoute
     }
     '/$lang/_app/reset-password': {
@@ -782,6 +833,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/$lang/settings/'
       preLoaderRoute: typeof LangAppAuthSettingsIndexRouteImport
+      parentRoute: typeof LangAppAuthSettingsRoute
+    }
+    '/$lang/_app/_auth/settings/agent-tokens': {
+      id: '/$lang/_app/_auth/settings/agent-tokens'
+      path: '/agent-tokens'
+      fullPath: '/$lang/settings/agent-tokens'
+      preLoaderRoute: typeof LangAppAuthSettingsAgentTokensRouteImport
       parentRoute: typeof LangAppAuthSettingsRoute
     }
     '/$lang/_app/_auth/settings/host-credentials': {
@@ -1110,6 +1168,7 @@ const LangAppAuthSettingsWebhooksRouteWithChildren =
   )
 
 interface LangAppAuthSettingsRouteChildren {
+  LangAppAuthSettingsAgentTokensRoute: typeof LangAppAuthSettingsAgentTokensRoute
   LangAppAuthSettingsHostCredentialsRoute: typeof LangAppAuthSettingsHostCredentialsRoute
   LangAppAuthSettingsHostsRoute: typeof LangAppAuthSettingsHostsRouteWithChildren
   LangAppAuthSettingsImagesRoute: typeof LangAppAuthSettingsImagesRoute
@@ -1123,6 +1182,7 @@ interface LangAppAuthSettingsRouteChildren {
 }
 
 const LangAppAuthSettingsRouteChildren: LangAppAuthSettingsRouteChildren = {
+  LangAppAuthSettingsAgentTokensRoute: LangAppAuthSettingsAgentTokensRoute,
   LangAppAuthSettingsHostCredentialsRoute:
     LangAppAuthSettingsHostCredentialsRoute,
   LangAppAuthSettingsHostsRoute: LangAppAuthSettingsHostsRouteWithChildren,
@@ -1178,6 +1238,8 @@ interface LangAppRouteRouteChildren {
   LangAppDeviceRoute: typeof LangAppDeviceRoute
   LangAppForgotPasswordRoute: typeof LangAppForgotPasswordRoute
   LangAppLoginRoute: typeof LangAppLoginRoute
+  LangAppMcpConsentRoute: typeof LangAppMcpConsentRoute
+  LangAppMcpLoginRoute: typeof LangAppMcpLoginRoute
   LangAppResetPasswordRoute: typeof LangAppResetPasswordRoute
   LangAppSignupRoute: typeof LangAppSignupRoute
   LangAppVerifyEmailRoute: typeof LangAppVerifyEmailRoute
@@ -1189,6 +1251,8 @@ const LangAppRouteRouteChildren: LangAppRouteRouteChildren = {
   LangAppDeviceRoute: LangAppDeviceRoute,
   LangAppForgotPasswordRoute: LangAppForgotPasswordRoute,
   LangAppLoginRoute: LangAppLoginRoute,
+  LangAppMcpConsentRoute: LangAppMcpConsentRoute,
+  LangAppMcpLoginRoute: LangAppMcpLoginRoute,
   LangAppResetPasswordRoute: LangAppResetPasswordRoute,
   LangAppSignupRoute: LangAppSignupRoute,
   LangAppVerifyEmailRoute: LangAppVerifyEmailRoute,

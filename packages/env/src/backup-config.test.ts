@@ -5,11 +5,16 @@ describe("backup monitor configuration", () => {
   it("requires an explicit nonempty namespace for a configured bucket", () => {
     for (const prefix of [undefined, "", "/", "///"]) {
       expect(
-        backupCommonConfigWarnings({ BACKUP_S3_BUCKET: "snapshots", BACKUP_S3_PREFIX: prefix }),
+        backupCommonConfigWarnings({
+          BACKUP_ENABLED: true,
+          BACKUP_S3_BUCKET: "snapshots",
+          BACKUP_S3_PREFIX: prefix,
+        }),
       ).toContainEqual(expect.stringContaining("BACKUP_S3_PREFIX is empty"));
     }
     expect(
       backupCommonConfigWarnings({
+        BACKUP_ENABLED: true,
         BACKUP_S3_BUCKET: "snapshots",
         BACKUP_S3_PREFIX: "/wssp/dev/database/",
       }),
@@ -29,7 +34,17 @@ describe("backup monitor configuration", () => {
     ).toEqual([]);
   });
 
-  it("describes the monitor intent independently of writers", () => {
+  it("ignores stale backup configuration while backups are off", () => {
+    const config = {
+      BACKUP_ENABLED: false,
+      BACKUP_S3_BUCKET: "snapshots",
+      BACKUP_S3_REGION: "auto",
+    };
+    expect(backupCommonConfigWarnings(config)).toEqual([]);
+    expect(backupMonitorConfigWarnings(config)).toEqual([]);
+  });
+
+  it("warns only when backups are enabled", () => {
     expect(backupCommonConfigWarnings({ BACKUP_ENABLED: true })).toContainEqual(
       expect.stringContaining("freshness monitoring is enabled"),
     );

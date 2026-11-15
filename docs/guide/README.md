@@ -6,19 +6,20 @@ server (API, dashboard, Postgres, Valkey) and enroll your own Linux machines as
 server over WSS and drives **Incus KVM virtual machines**. A **sandbox** is one
 such VM, booted from a **template** you registered on that host. Your programs
 reach sandboxes through the `/v1` HTTP API (or the `@wssp/sdk` TypeScript
-client), and you reach them in the browser through the dashboard, including a
-terminal.
+client), agents can use [MCP](./auth-planes.md#mcp-plane), and you reach them in the browser
+through the dashboard, including a terminal.
 
-Everything is owned by one user account. There are no organizations, teams or
-shared resources: another owner's host, template, sandbox or operation reads
-as not found. Administrators see cross-owner **metadata** only; an admin role
-never grants command, file or terminal access to someone else's sandbox.
+Every resource has one user owner; there are no organizations or teams.
+[Shared pools](./pools.md) can place your sandboxes on another owner's nodes
+under explicit grants. Those node owners have full local access to your guests.
+Pool use never grants host access to someone else's node. Administrators see
+cross-owner **metadata** only; an admin role never grants command, file or terminal access to someone else's sandbox.
 
 ## Pages
 
 | Page                                                               | What it covers                                                                                                                                                                                                                                                      |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Authentication planes](./auth-planes.md)                          | Browser sessions, SDK keys, host credentials, and why none of them works on another plane                                                                                                                                                                           |
+| [Authentication planes](./auth-planes.md)                          | Browser sessions, API keys, MCP tokens/OAuth grants, host credentials and scoped host access                                                                                                                                                                        |
 | [Host pools](./pools.md)                                           | Pool/member management, placement, grants and capacity fallback                                                                                                                                                                                                     |
 | [Hosts](./hosts.md)                                                | Host prerequisites, enrollment, the systemd service, signals, upgrades, drain, credential rotation                                                                                                                                                                  |
 | [Templates and images](../operations/templates.md)                 | Preparing and registering an Incus VM image (guest agent, user and HOME, tools)                                                                                                                                                                                     |
@@ -34,6 +35,12 @@ never grants command, file or terminal access to someone else's sandbox.
 | [Deployment](../operations/deployment.md) and [infra](../infra.md) | Running the server: images, environment, schema, proxies                                                                                                                                                                                                            |
 
 The wire-level contracts behind these pages live in [docs/design](../design/README.md).
+
+Host commands and file tools require explicit scopes and node-local opt-in on
+a node owned by the credential's user. The daemon is an Incus admin, so these
+tools can reach every sandbox on that node; **Own sandboxes only** does not limit
+them. See [node settings](./hosts.md#node-settings-for-agents-and-terminals) and
+[ADR-006](../design/adr-006-agent-host-access.md).
 
 ## What is not supported
 

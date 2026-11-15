@@ -1,6 +1,7 @@
 import type { Prisma } from "@wssp/db";
 /** Relay-affine capability bridge. Absence is unavailable, never an offline policy. */
 export type LiveHostTerminalPolicy = {
+  nodeHostTerminal?: boolean;
   hostTerminal: boolean;
   requireHostTerminalTotp: boolean;
   policyRevision: number;

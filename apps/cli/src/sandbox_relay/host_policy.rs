@@ -12,6 +12,7 @@ pub(super) struct Policy {
 }
 
 pub(super) struct HostPolicy {
+    agent: super::agent_policy::AgentLatch,
     path: Option<PathBuf>,
     file_seen: bool,
     saved: (bool, bool, u64, u64),
@@ -44,6 +45,7 @@ impl HostPolicy {
     pub fn new(config: &Config, startup: Option<bool>, path: Option<PathBuf>) -> Self {
         let enabled = startup.unwrap_or(config.allow_host_terminal);
         Self {
+            agent: super::agent_policy::AgentLatch::new(config),
             file_seen: path.as_ref().is_some_and(|p| p.exists()),
             path,
             saved: tuple(config),
@@ -101,6 +103,22 @@ impl HostPolicy {
     pub fn take_lease_change(&mut self) -> bool {
         std::mem::take(&mut self.lease_changed)
     }
+    pub fn agent(&self) -> super::agent_policy::AgentPolicy {
+        self.agent.policy.clone()
+    }
+    pub fn block_agent(&mut self) {
+        self.agent.block();
+    }
+    pub fn agent_enable_revision(&self) -> u64 {
+        self.agent.enable_revision()
+    }
+    pub fn take_agent_change(&mut self) -> bool {
+        self.agent.take_change()
+    }
+    pub fn refresh_now(&mut self) -> bool {
+        self.next_read = Instant::now();
+        self.refresh(Instant::now())
+    }
     pub fn refresh(&mut self, now: Instant) -> bool {
         if now < self.next_read {
             return false;
@@ -126,6 +144,7 @@ impl HostPolicy {
             Err(_) => None,
         };
         let Some(config) = read else {
+            self.agent.refresh(None);
             // Fail closed: no open egress for other users' sandboxes while
             // the config cannot be read; settings keep their last value.
             let settings = self.egress.1.clone();
@@ -149,6 +168,7 @@ impl HostPolicy {
             }
             return false;
         };
+        self.agent.refresh(Some(&config));
         self.lease_read_failed = false;
         self.set_egress((config.open_egress_for_others(), config.egress_settings()));
         self.set_guest_sudo_for_others(config.guest_sudo_for_others());
@@ -168,9 +188,11 @@ impl HostPolicy {
         if !next.0 {
             self.latched = true;
         }
+        let witnessed = next.3 > self.saved.3;
         self.saved = next;
         self.policy.enabled = next.0 && !self.latched;
-        self.policy.required = next.1;
+        // Removing TOTP is a raise, even while the terminal is latched off.
+        self.policy.required = next.1 || (self.policy.required && !witnessed);
         self.advance();
         true
     }
@@ -420,5 +442,39 @@ mod lease_tests {
         p.refresh(now);
         assert!(!p.take_lease_change());
         assert_eq!(p.lease_ceiling(), Some(3_600_000));
+    }
+}
+
+#[cfg(test)]
+mod totp_witness_tests {
+    use super::*;
+    #[test]
+    fn host_totp_optional_requires_a_new_setter_witness() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut c = Config::default();
+        c.set_host_terminal(true).unwrap();
+        let mut policy = HostPolicy::new(&c, None, Some(path.clone()));
+        c.host_terminal_require_totp = false;
+        c.host_terminal_policy_revision += 1;
+        std::fs::write(&path, toml::to_string(&c).unwrap()).unwrap();
+        policy.refresh_now();
+        assert!(policy.current().required);
+        c.host_terminal_policy_revision += 1;
+        std::fs::write(&path, toml::to_string(&c).unwrap()).unwrap();
+        policy.refresh_now();
+        assert!(policy.current().required);
+        c.set_host_terminal_totp(true).unwrap();
+        std::fs::write(&path, toml::to_string(&c).unwrap()).unwrap();
+        policy.refresh_now();
+        assert!(policy.current().required);
+        c.set_host_terminal_totp(false).unwrap();
+        std::fs::write(&path, toml::to_string(&c).unwrap()).unwrap();
+        policy.refresh_now();
+        assert!(!policy.current().required);
+        c.host_terminal_require_totp = true;
+        std::fs::write(&path, toml::to_string(&c).unwrap()).unwrap();
+        policy.refresh_now();
+        assert!(policy.current().required, "tightening always applies");
     }
 }

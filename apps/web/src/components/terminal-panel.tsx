@@ -17,6 +17,7 @@ export function TerminalPanel({
   attachCode,
   onAttempt,
   typeCommand,
+  pretypeOnAttach = false,
 }: {
   sandboxId?: string;
   hostId?: string;
@@ -28,6 +29,8 @@ export function TerminalPanel({
   onAttempt?: () => void;
   /** Known text the "Type it for me" button types into the attached terminal. */
   typeCommand?: string;
+  /** Queued host command handoff: type once after the person connects. */
+  pretypeOnAttach?: boolean;
 }) {
   const { t } = useTranslation(["terminal"]);
   const redirect = useTwoFactorRedirect(lang);
@@ -40,6 +43,7 @@ export function TerminalPanel({
   const terminal = useTerminalSession({
     sandboxId,
     hostId,
+    pretypeCommand: pretypeOnAttach ? typeCommand : undefined,
     onCreateError: (error) => {
       if (redirect(error)) return;
       const data = error && typeof error === "object" && "data" in error ? error.data : null;
@@ -158,7 +162,7 @@ export function TerminalPanel({
           <ClipboardPaste aria-hidden="true" className="size-4" />
           {t("terminal:actions.paste")}
         </Button>
-        {typeCommand ? (
+        {typeCommand && !pretypeOnAttach ? (
           <Button
             type="button"
             size="touch"

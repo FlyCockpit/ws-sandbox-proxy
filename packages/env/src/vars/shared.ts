@@ -35,10 +35,10 @@ export const sharedVars = {
   // own pool. Transaction-mode poolers need a pool size that fits the budget.
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
-  // ---- Database backup freshness monitoring. Writers/schedules read script-only
-  // configuration independently. This switch controls monitor intent only.
+  // ---- Automatic database backups are opt-in: migration snapshots, the daily
+  // writer and freshness monitoring. Explicit backup/restore commands still work.
   // The monitor lists snapshots with its own ListBucket-only credentials.
-  BACKUP_ENABLED: strictBooleanFlag(true),
+  BACKUP_ENABLED: strictBooleanFlag(),
   BACKUP_S3_BUCKET: z.string().optional(),
   BACKUP_S3_ACCESS_KEY_ID: z.string().optional(),
   BACKUP_S3_SECRET_ACCESS_KEY: z.string().optional(),

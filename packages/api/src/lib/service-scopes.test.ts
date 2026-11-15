@@ -63,6 +63,21 @@ const expected = {
   },
   "capabilities.get": { scopes: [] },
   "hosts.list": { scopes: ["hosts:read"] },
+  "hosts.get": { scopes: ["hosts:read"], requiresHost: true },
+  "hostCommands.run": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.get": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.writeStdin": {
+    scopes: ["hosts:execute"],
+    requiresHost: true,
+    requiresOwnedHost: true,
+  },
+  "hostCommands.cancel": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.queue": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.read": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.list": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.write": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.edit": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+
   "hosts.storagePools": { scopes: ["hosts:read"], requiresHost: true },
   "pools.list": { scopes: ["pools:read"] },
   "pools.get": { scopes: ["pools:read"], requiresPool: true },
@@ -83,24 +98,24 @@ const expected = {
   "sandboxes.list": { scopes: ["sandboxes:read"] },
   "sandboxes.get": { scopes: ["sandboxes:read"], requiresSandbox: true },
   "sandboxes.probe": { scopes: ["sandboxes:read"], requiresSandbox: true },
-  "sandboxes.createIntent": { scopes: ["sandboxes:write"] },
+  "sandboxes.createIntent": { scopes: ["sandboxes:create"] },
   "sandboxes.replayCreate": {
-    scopes: ["sandboxes:write"],
+    scopes: ["sandboxes:create"],
     requiresSandbox: true,
     requiresPoolWhenPooled: true,
   },
   "sandboxes.create": {
-    scopes: ["sandboxes:write"],
+    scopes: ["sandboxes:create"],
     requiresHost: true,
     requiresTemplate: true,
     requiresPoolWhenPooled: true,
   },
-  "sandboxes.kill": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.stop": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.capture": { scopes: ["sandboxes:write", "templates:write"], requiresSandbox: true },
-  "sandboxes.reconnect": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.setTimeout": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.rename": { scopes: ["sandboxes:write"], requiresSandbox: true },
+  "sandboxes.kill": { scopes: ["sandboxes:destroy"], requiresSandbox: true },
+  "sandboxes.stop": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.capture": { scopes: ["sandboxes:manage", "templates:write"], requiresSandbox: true },
+  "sandboxes.reconnect": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.setTimeout": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.rename": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {
@@ -156,11 +171,11 @@ const expected = {
   "credentialInstances.delete": { scopes: ["credentials:write"] },
   "credentialInstances.writeValue": { scopes: ["credentials:write"] },
   "sandboxCredentials.attach": {
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     requiresSandbox: true,
   },
   "sandboxCredentials.free": {
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     requiresSandbox: true,
   },
   "credentialInstances.listLeases": { scopes: ["credentials:read"] },
@@ -169,11 +184,15 @@ const expected = {
 const allScopes: ServiceScope[] = [
   "pools:read",
   "hosts:read",
+  "hosts:execute",
+  "hosts:files",
   "templates:read",
   "templates:write",
   "templates:build",
   "sandboxes:read",
-  "sandboxes:write",
+  "sandboxes:create",
+  "sandboxes:manage",
+  "sandboxes:destroy",
   "commands:read",
   "commands:execute",
   "files:read",
@@ -186,11 +205,11 @@ const allScopes: ServiceScope[] = [
   "credentials:use",
 ];
 const kindScopes: Record<SandboxOperationKind, [ServiceScope, ServiceScope]> = {
-  CREATE_SANDBOX: ["sandboxes:write", "sandboxes:read"],
-  KILL_SANDBOX: ["sandboxes:write", "sandboxes:read"],
-  STOP_SANDBOX: ["sandboxes:write", "sandboxes:read"],
-  RECONNECT_SANDBOX: ["sandboxes:write", "sandboxes:read"],
-  RENEW_SANDBOX_LEASE: ["sandboxes:write", "sandboxes:read"],
+  CREATE_SANDBOX: ["sandboxes:create", "sandboxes:read"],
+  KILL_SANDBOX: ["sandboxes:destroy", "sandboxes:read"],
+  STOP_SANDBOX: ["sandboxes:manage", "sandboxes:read"],
+  RECONNECT_SANDBOX: ["sandboxes:manage", "sandboxes:read"],
+  RENEW_SANDBOX_LEASE: ["sandboxes:manage", "sandboxes:read"],
   RUN_COMMAND: ["commands:execute", "commands:read"],
   SIGNAL_PROCESS: ["commands:execute", "commands:read"],
   GET_FILE: ["files:read", "files:read"],
@@ -276,7 +295,7 @@ const surface = [
     services: hosts,
     actions: {
       listHosts: "hosts.list",
-      getHost: null,
+      getHost: "hosts.get",
       listHostGuests: null,
       listHostStoragePools: "hosts.storagePools",
       createHost: null,
@@ -290,6 +309,10 @@ const surface = [
       listDeviceCredentials: null,
       revokeDeviceCredential: null,
       imageCache: null,
+      lowerAgentHostCommands: null,
+      lowerHostTerminal: null,
+      liftAgentHostCommandsVeto: null,
+      liftHostTerminalVeto: null,
     },
   },
   {
@@ -496,6 +519,8 @@ function principal(withScopes: readonly ServiceScope[] = allScopes): ServicePrin
   db.sandboxTemplateRevision.findFirst.mockResolvedValue({ id: "tpl-1" } as never);
   return {
     kind: "sdkKey",
+    credentialKind: "API",
+    ownSandboxesOnly: false,
     expiresAt: null,
     ownerId: "user-a",
     keyId: "key-1",
@@ -515,7 +540,7 @@ const context = {
 };
 
 describe("independent SDK scope and service inventory", () => {
-  it("accounts for all 141 real router procedures and every service export", () => {
+  it("accounts for all 145 real router procedures and every service export", () => {
     const actions: string[] = [];
     let count = 0;
     for (const group of surface) {
@@ -542,7 +567,7 @@ describe("independent SDK scope and service inventory", () => {
         );
       expect(Object.keys(group.services).sort()).toEqual(serviceNames.sort());
     }
-    expect(count).toBe(141);
+    expect(count).toBe(145);
     // Owner dashboard reads and qualified usable reads share the same budgets
     // and SDK actions. Only these three explicit aliases may repeat.
     expect(actions.filter((action, index) => actions.indexOf(action) !== index).sort()).toEqual([
@@ -556,6 +581,15 @@ describe("independent SDK scope and service inventory", () => {
     expect(
       [
         ...new Set(actions),
+        "hostCommands.run",
+        "hostCommands.get",
+        "hostCommands.writeStdin",
+        "hostCommands.cancel",
+        "hostCommands.queue",
+        "hostFiles.read",
+        "hostFiles.list",
+        "hostFiles.write",
+        "hostFiles.edit",
         "sandboxes.list",
         "sandboxes.get",
         "sandboxes.createIntent",

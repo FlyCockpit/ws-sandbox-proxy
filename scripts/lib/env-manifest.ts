@@ -231,7 +231,7 @@ export const ENV_GROUPS: EnvGroup[] = [
     id: "backups",
     title: "Database backups — [shared]",
     prompt: "Configure off-site database backups (S3/R2)?",
-    default: true,
+    default: false,
     comment: [
       "Logical pg_dump backups uploaded to a private bucket. Production",
       "requires a dedicated BACKUP_S3_ACCESS_KEY_ID,",
@@ -318,7 +318,7 @@ export const ENV_GROUPS: EnvGroup[] = [
     tuning: true,
     comment: [
       "Outbound WebSocket relay for trusted sandbox node daemons",
-      "(`apps/server/src/sandbox-relay`). Off by default until pairing and dispatch land.",
+      "(`apps/server/src/sandbox-relay`), always enabled with host-plane authentication.",
     ],
   },
   {
@@ -498,7 +498,7 @@ export const ENV_VARS: EnvVar[] = [
     hidden: true,
     default: "off",
     choices: [{ value: "off" }, { value: "daily" }],
-    comment: ["Opt-in UTC daily writer schedule; independent of BACKUP_ENABLED monitoring."],
+    comment: ["Opt-in UTC daily writer schedule; requires BACKUP_ENABLED=true."],
   },
   {
     key: "BACKUP_HOUR_UTC",
@@ -536,13 +536,16 @@ export const ENV_VARS: EnvVar[] = [
   {
     key: "BACKUP_ENABLED",
     group: "backups",
-    source: "default",
-    default: "true",
+    source: "enable",
+    default: "false",
     choices: [{ value: "true" }, { value: "false" }],
-    example: "true",
+    example: "false",
     comment: [
-      "Backup freshness monitoring intent only. Writers and schedules run",
-      "independently; false selects a deliberate provider-only monitor profile.",
+      "Automatic backups default off: no migration snapshots, daily writer or",
+      "freshness alerts. true (strict true|false): a migrating start FAILS when no",
+      "destination (/backups volume or BACKUP_S3_BUCKET) is usable, and pending",
+      "migrations get a dump first, a brand-new database included. Explicit",
+      "backup commands and restore safety snapshots work either way.",
     ],
   },
   {
@@ -637,8 +640,9 @@ export const ENV_VARS: EnvVar[] = [
       "on the TCP socket peer and ignores X-Forwarded-For. Behind a proxy, 0",
       "puts every client in ONE shared bucket (the proxy's address); set the",
       "exact count (the generated Dokploy config sets 1 for Traefik). N >= 1",
-      "takes the entry N from the right of X-Forwarded-For plus the socket peer;",
-      "a short or malformed chain falls back to the socket peer. Above 0, the",
+      "takes the entry N from the right of X-Forwarded-For plus the socket peer",
+      "(an appended :port is stripped); a short or malformed chain falls back",
+      "to the socket peer. Above 0, the",
       "app must be reachable only through that proxy chain.",
     ],
   },
@@ -653,6 +657,39 @@ export const ENV_VARS: EnvVar[] = [
     hint: "These accounts get admin privileges. Emails are trimmed and lowercased. Bootstrap-only: after provisioning, admins persist in the database and this list can be cleared. An empty list with SIGNUP_ENABLED=false (the default) only warns at boot — on a fresh install with no admin yet, nobody can become admin.",
 
     example: "admin@example.com,other@example.com",
+  },
+  {
+    key: "MCP_ENABLED",
+    hidden: true,
+    group: "admin",
+    source: "default",
+    default: "true",
+    example: "true",
+    comment: ["Enable the built-in MCP endpoint and its OAuth provider."],
+  },
+  {
+    key: "WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS",
+    hidden: true,
+    group: "admin",
+    source: "default",
+    default: "90",
+    example: "90",
+    comment: [
+      "Maximum lifetime of newly minted agent tokens in days (1-3650). Existing tokens are unaffected.",
+    ],
+  },
+  {
+    key: "WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY",
+    hidden: true,
+    group: "admin",
+    source: "default",
+    default: "true",
+    example: "true",
+    comment: [
+      "Allow no-expiry (unlimited-lifetime) agent tokens. The mint form preselects 90 days.",
+      "Turn off to require an expiry within WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS on new tokens",
+      "and to refuse existing no-expiry tokens (kept, shown as blocked) until turned back on.",
+    ],
   },
   {
     key: "SIGNUP_ENABLED",

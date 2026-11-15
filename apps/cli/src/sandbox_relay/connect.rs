@@ -328,6 +328,10 @@ fn daemon_capabilities(
         egress_policy,
         terminal: false,
         host_terminal: false,
+        host_commands: false,
+        host_files: false,
+        host_command_max_ms: None,
+        agent_policy_revision: 0,
         require_host_terminal_totp: true,
         policy_revision: 0,
         host_managed_sandbox_ceiling: sandbox_protocol::vm_size_limits()
@@ -410,6 +414,8 @@ pub fn run_connect_with_config(
     trust: &crate::tls::Trust,
     config: &crate::config::Config,
 ) -> Result<()> {
+    // Only the per-command host supervisors are subreapers. Adopting
+    // runtime/PTY orphans here would take them from their existing reapers.
     // WP1 chaos knob: read once, debug builds only (release: always None).
     install_relay_test_timing(super::test_timing::relay_test_timing()?);
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
@@ -1955,8 +1961,14 @@ fn relay_session_prepare(
     let (socket, _response) = connect_relay_socket_with_tls(
         request,
         tungstenite::protocol::WebSocketConfig::default()
-            .max_message_size(Some(4 + 65536 + SANDBOX_BINARY_CHUNK_MAX_BYTES))
-            .max_frame_size(Some(4 + 65536 + SANDBOX_BINARY_CHUNK_MAX_BYTES)),
+            .max_message_size(Some(
+                sandbox_protocol::HOST_CONTROL_MAX_BYTES
+                    .max(4 + 65536 + SANDBOX_BINARY_CHUNK_MAX_BYTES),
+            ))
+            .max_frame_size(Some(
+                sandbox_protocol::HOST_CONTROL_MAX_BYTES
+                    .max(4 + 65536 + SANDBOX_BINARY_CHUNK_MAX_BYTES),
+            )),
         &options.shutdown,
         RELAY_HANDSHAKE_TIMEOUT,
         tls,
@@ -2262,6 +2274,13 @@ fn relay_session_loop(
             capabilities: DaemonCapabilities {
                 host_terminal: local_policy.enabled
                     && matches!(protocol_runtime, sandbox_protocol::RuntimeKind::IncusKvm),
+                host_commands: host_policy.agent().enabled,
+                host_files: host_policy.agent().enabled && !host_policy.agent().roots.is_empty(),
+                host_command_max_ms: host_policy
+                    .agent()
+                    .enabled
+                    .then_some(host_policy.agent().max_ms),
+                agent_policy_revision: host_policy.agent().revision,
                 require_host_terminal_totp: local_policy.required,
                 policy_revision: local_policy.revision,
                 terminal: runtime.pty_capability(),
@@ -2335,6 +2354,10 @@ fn relay_session_loop(
             None
         };
     terminals.configure_host(local_policy, host_opener.clone());
+    let mut host_access =
+        super::host_access::HostAccess::new(&options.host_token, options.state_dir.as_ref());
+    let mut agent_sequence = 0u64;
+    let mut agent_report_pending = true;
     let mut policy_sequence = 0u64;
     let mut policy_report_pending = true;
     let mut lease_sequence = 0u64;
@@ -2391,7 +2414,11 @@ fn relay_session_loop(
     );
 
     loop {
-        if host_policy.refresh(Instant::now()) {
+        // Reload before checking local enable witnesses, so a released lower
+        // block updates file policy and reports in this same iteration.
+        let refreshed_terminal = host_policy.refresh(Instant::now());
+        let lowered_terminal = host_access.tick(host_policy);
+        if refreshed_terminal || lowered_terminal {
             terminals.configure_host(host_policy.current(), host_opener.clone());
             policy_report_pending = true;
         }
@@ -2420,6 +2447,33 @@ fn relay_session_loop(
                 .into(),
             ))?;
             policy_report_pending = false;
+        }
+        if host_policy.take_agent_change() {
+            host_access.changed(host_policy.agent());
+            agent_report_pending = true;
+        }
+        if registered
+            && agent_report_pending
+            && let Some(epoch) = admission_epoch
+        {
+            agent_sequence += 1;
+            socket.send(Message::Text(
+                super::plain_frame(&DaemonControlMessage::HostAgentPolicy(
+                    host_policy
+                        .agent()
+                        .report(u32::try_from(epoch)?, agent_sequence),
+                ))?
+                .into(),
+            ))?;
+            agent_report_pending = false;
+        }
+        if options.shutdown.requested() {
+            host_access.shutdown();
+        }
+        if registered {
+            for frame in host_access.replies() {
+                socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+            }
         }
         // The host lease ceiling is reported separately from the terminal
         // policy: a change never bumps the terminal policy revision. The
@@ -2850,6 +2904,62 @@ fn relay_session_loop(
                     continue;
                 };
                 match control {
+                    ServerControlMessage::HostPolicyLower(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
+                            if req.target == sandbox_protocol::HostPolicyLowerTarget::HostTerminal {
+                                let mut off = host_policy.current(); off.enabled = false;
+                                terminals.configure_host(off, host_opener.clone());
+                            }
+                            host_access.lower(req, options.state_dir.clone(), host_policy);
+                        }
+                    }
+                    ServerControlMessage::HostExecStart(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
+                            if host_policy.refresh(Instant::now()) {
+                                terminals.configure_host(host_policy.current(),host_opener.clone());
+                                policy_report_pending=true;
+                            }
+                            if host_policy.take_agent_change() { host_access.changed(host_policy.agent()); agent_report_pending=true; }
+                            let frame = host_access.start(req,host_policy.agent());
+                            socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+                        }
+                    }
+                    ServerControlMessage::HostExecPoll(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
+                            let frame=host_access.commands.poll(&req.command_id,Some(req.request_id),req.stdout_offset,req.stderr_offset,req.max_bytes);
+                            socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+                        }
+                    }
+                    ServerControlMessage::HostExecStdin(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
+                            if host_policy.refresh(Instant::now()) {
+                                terminals.configure_host(host_policy.current(),host_opener.clone());
+                                policy_report_pending=true;
+                            }
+                            if host_policy.take_agent_change() { host_access.changed(host_policy.agent()); agent_report_pending=true; }
+                            let frame=host_access.stdin(req,host_policy.agent());
+                            socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+                        }
+                    }
+                    ServerControlMessage::HostExecCancel(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
+                            host_access.commands.cancel(&req.command_id,sandbox_protocol::HostExecState::Cancelled);
+                            let frame=host_access.commands.poll(&req.command_id,Some(req.request_id),0,0,0);
+                            socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+                        }
+                    }
+                    ServerControlMessage::HostFileRequest(req) => {
+                        if registered && admission_epoch == Some(u64::from(req.connection_epoch())) {
+                            if host_policy.refresh(Instant::now()) {
+                                terminals.configure_host(host_policy.current(),host_opener.clone());
+                                policy_report_pending=true;
+                            }
+                            if host_policy.take_agent_change() { host_access.changed(host_policy.agent()); agent_report_pending=true; }
+                            if let Some(files)=&mut host_access.files && let Some(frame)=files.request(req) {
+                                socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+                            }
+                        }
+                    }
                     ServerControlMessage::HostTerminalPolicyRaise {
                         connection_epoch,
                         request_id,
@@ -2935,6 +3045,7 @@ fn relay_session_loop(
                         if let Some(node) = relay.egress() {
                             node.set_host_owner(&host_owner_id);
                         }
+                        host_access.register(&host_owner_id, host_policy.agent())?;
                         binding.host_owner_id = host_owner_id;
                         // New dispatches bind to this epoch; carried work stays
                         // bound to its own until the adoption step below.
@@ -4593,6 +4704,10 @@ impl FakeRuntimeKnobs {
     /// The fake runtime these knobs describe; logs each active knob.
     fn build(self) -> sandbox_runtime::FakeRuntime {
         let mut runtime = sandbox_runtime::FakeRuntime::new();
+        // A debug fake daemon needs a verifiable base for local public-API
+        // qualification. This inventory never reaches the Incus runtime.
+        #[cfg(debug_assertions)]
+        runtime.register_image("fake:base", &format!("sha256:{}", "a".repeat(64)), "x86_64");
         if self.enforce_egress {
             tracing::warn!(
                 "{FAKE_ENFORCE_EGRESS_ENV}: the fake runtime advertises egress enforcement it does not perform (local testing only)"

@@ -15,6 +15,11 @@ use std::path::{Path, PathBuf};
 #[serde(default)]
 pub struct Config {
     pub allow_host_terminal: bool,
+    pub allow_agent_host_commands: bool,
+    pub host_command_max_ms: u64,
+    pub host_file_roots: Vec<PathBuf>,
+    pub agent_policy_revision: u64,
+    pub agent_policy_enable_revision: u64,
     #[serde(default = "required_totp")]
     pub host_terminal_require_totp: bool,
     pub host_terminal_policy_revision: u64,
@@ -508,6 +513,11 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             allow_host_terminal: false,
+            allow_agent_host_commands: false,
+            host_command_max_ms: 600_000,
+            host_file_roots: Vec::new(),
+            agent_policy_revision: 0,
+            agent_policy_enable_revision: 0,
             host_terminal_require_totp: true,
             host_terminal_policy_revision: 0,
             host_terminal_enable_revision: 0,
@@ -541,6 +551,79 @@ impl Default for Config {
     }
 }
 impl Config {
+    pub fn set_agent_host_commands(&mut self, enabled: bool) -> Result<()> {
+        self.bump_agent_policy()?;
+        self.allow_agent_host_commands = enabled;
+        if enabled {
+            self.agent_policy_enable_revision = self.agent_policy_revision;
+        }
+        Ok(())
+    }
+    pub fn set_host_command_max_ms(&mut self, ms: u64) -> Result<()> {
+        anyhow::ensure!(
+            sandbox_protocol::valid_host_command_max_ms(ms),
+            "host command time must be 1..86400 seconds"
+        );
+        self.bump_agent_policy()?;
+        if ms > self.host_command_max_ms {
+            self.agent_policy_enable_revision = self.agent_policy_revision;
+        }
+        self.host_command_max_ms = ms;
+        Ok(())
+    }
+    pub fn set_host_file_roots(&mut self, roots: &[PathBuf]) -> Result<()> {
+        anyhow::ensure!(roots.len() <= 32, "at most 32 host file roots are allowed");
+        let mut canonical = Vec::new();
+        for root in roots {
+            anyhow::ensure!(
+                root.is_absolute(),
+                "host file roots must be absolute directories"
+            );
+            let path = root
+                .canonicalize()
+                .map_err(|_| anyhow::anyhow!("host file root is not accessible"))?;
+            anyhow::ensure!(
+                path.parent().is_some() && path.is_dir(),
+                "host file roots must be directories other than `/`"
+            );
+            if !canonical.contains(&path) {
+                canonical.push(path);
+            }
+        }
+        self.bump_agent_policy()?;
+        if canonical.iter().any(|p| !self.host_file_roots.contains(p)) {
+            self.agent_policy_enable_revision = self.agent_policy_revision;
+        }
+        self.host_file_roots = canonical;
+        Ok(())
+    }
+    fn bump_agent_policy(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.agent_policy_revision < sandbox_protocol::HOST_SAFE_INTEGER,
+            "agent policy revision exhausted"
+        );
+        self.agent_policy_revision += 1;
+        Ok(())
+    }
+    pub fn validate_agent_policy(&self) -> Result<()> {
+        anyhow::ensure!(
+            sandbox_protocol::valid_host_command_max_ms(self.host_command_max_ms),
+            "invalid host command time"
+        );
+        anyhow::ensure!(
+            self.agent_policy_revision <= sandbox_protocol::HOST_SAFE_INTEGER
+                && self.agent_policy_enable_revision <= self.agent_policy_revision,
+            "invalid agent policy revision"
+        );
+        anyhow::ensure!(
+            self.host_file_roots.len() <= 32
+                && self.host_file_roots.iter().all(|p| p.is_absolute()
+                    && p.parent().is_some()
+                    && p.canonicalize().is_ok_and(|c| c == *p && c.is_dir())),
+            "invalid host file roots"
+        );
+        Ok(())
+    }
     pub fn set_host_terminal(&mut self, enabled: bool) -> Result<()> {
         self.bump_terminal_policy()?;
         self.allow_host_terminal = enabled;
@@ -551,6 +634,9 @@ impl Config {
     }
     pub fn set_host_terminal_totp(&mut self, required: bool) -> Result<()> {
         self.bump_terminal_policy()?;
+        if !required {
+            self.host_terminal_enable_revision = self.host_terminal_policy_revision;
+        }
         self.host_terminal_require_totp = required;
         Ok(())
     }
@@ -769,6 +855,14 @@ impl Config {
             config.host_terminal_require_totp = true;
             config.host_terminal_policy_revision = 0;
             config.host_terminal_enable_revision = 0;
+        }
+        if config.validate_agent_policy().is_err() {
+            diagnostics.push("invalid host agent policy");
+            config.allow_agent_host_commands = false;
+            config.host_file_roots.clear();
+            config.host_command_max_ms = 600_000;
+            config.agent_policy_revision = 0;
+            config.agent_policy_enable_revision = 0;
         }
         if config.validate_storage().is_err() {
             diagnostics.push("invalid storage_pools configuration");

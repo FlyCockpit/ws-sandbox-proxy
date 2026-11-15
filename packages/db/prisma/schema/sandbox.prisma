@@ -148,6 +148,9 @@ enum SandboxPurpose {
 /// Paired Linux host that runs the sandbox daemon (Incus/KVM). Enrollment and
 /// connection semantics mirror {@link CliDevice} in the model-relay reference.
 model SandboxHost {
+  agentHostCommandsVetoedAt   DateTime?
+  hostTerminalVetoedAt        DateTime?
+  HostQueuedCommands          HostQueuedCommand[]
   HostTerminalTickets         HostTerminalTicket[]
   /// Negotiated protocol fact, private and bound to connectionEpoch.
   relayProtocolVersion        String?
@@ -356,6 +359,10 @@ enum SdkKeyPoolMode {
 
 /// Owner-scoped SDK bearer credential for the `/v1` HTTP plane.
 model SdkKey {
+  kind                SdkKeyKind                  @default(API)
+  ownSandboxesOnly    Boolean                     @default(false)
+  McpGrant            McpGrant?
+  HostQueuedCommands  HostQueuedCommand[]
   id                  String                      @id @default(cuid(2))
   createdAt           DateTime                    @default(now())
   updatedAt           DateTime                    @default(now()) @updatedAt
@@ -365,8 +372,8 @@ model SdkKey {
   resourceMode        SdkKeyResourceMode          @default(ALLOWLIST)
   /// Explicit capability grants; empty is rejected at mint and never authenticates.
   scopes              String[]
-  lookupPrefix        String
-  secretDigest        String
+  lookupPrefix        String?
+  secretDigest        String?
   lastUsedAt          DateTime?
   revokedAt           DateTime?
   expiresAt           DateTime?
@@ -376,9 +383,11 @@ model SdkKey {
   PoolAllowlist       SdkKeyPoolAllowlist[]
   CredentialAllowlist SdkKeyCredentialAllowlist[]
 
+  // @check sdk_key_kind_secret: ("kind" = 'OAUTH_GRANT' AND "lookupPrefix" IS NULL AND "secretDigest" IS NULL) OR ("kind" <> 'OAUTH_GRANT' AND "lookupPrefix" IS NOT NULL AND "secretDigest" IS NOT NULL)
   @@unique([lookupPrefix])
   @@unique([secretDigest])
   @@unique([id, userId])
+  @@index([userId, kind, revokedAt])
   @@index([userId, revokedAt])
   @@index([expiresAt])
   @@map("sdk_key")

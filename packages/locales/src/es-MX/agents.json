@@ -1,0 +1,155 @@
+{
+  "title": "Tokens de agentes",
+  "description": "Credenciales con permisos limitados para agentes que usan MCP. Máximo 10 tokens activos.",
+  "empty": {
+    "title": "Aún no hay tokens de agentes",
+    "description": "Crea un token para conectar un agente. No se muestran los tokens revocados."
+  },
+  "mint": {
+    "action": "Crear token de agente",
+    "title": "Crear un token de agente",
+    "description": "Elige solo los permisos y recursos que necesita tu agente y selecciona una fecha de vencimiento.",
+    "submit": "Crear token",
+    "secretLabel": "Tu nuevo token de agente",
+    "usageHint": "Envíalo como Authorization: Bearer <token> a /mcp. Guárdalo de forma segura; solo se muestra una vez."
+  },
+  "connect": {
+    "title": "Conectar un agente",
+    "description": "URL del endpoint MCP",
+    "oauth": "Usa OAuth para iniciar sesión y aprobar cada aplicación conectada, o configura un token:",
+    "token": "Configura WSSP_AGENT_TOKEN con tu token en tu entorno local. Para OAuth con Codex, ejecuta: codex mcp login wssp.",
+    "copyUrl": "Copiar URL de MCP",
+    "copyCommand": "Copiar comando de conexión",
+    "copyConfig": "Copiar configuración del agente"
+  },
+  "apps": {
+    "title": "Aplicaciones conectadas",
+    "empty": "No hay aplicaciones conectadas.",
+    "revoked": "Aplicación conectada revocada.",
+    "ownOnly": "Solo los sandboxes creados por esta aplicación",
+    "allSandboxes": "Puede acceder a tus otros sandboxes dentro de los recursos autorizados",
+    "revokeTitle": "¿Revocar aplicación conectada?",
+    "revokeDescription": "Revoca el permiso de esta aplicación y sus tokens de actualización. Tendrá que pedirte autorización de nuevo."
+  },
+  "consent": {
+    "title": "¿Permitir acceso al agente?",
+    "description": "{{client}} solicita acceso a tu cuenta.",
+    "destination": "Destino de regreso: {{host}}",
+    "subset": "Selecciona los permisos solicitados que deseas permitir. No se otorgarán los permisos sin seleccionar.",
+    "hostWarning": "El usuario del daemon es administrador de Incus. Los comandos y las herramientas de archivos del host pueden acceder a todos los sandboxes del nodo, incluidos los de otras personas en pools compartidos. “Solo sandboxes propios” no limita el acceso al host. También debes habilitar la opción en el nodo.",
+    "offline": "Permitir acceso cuando no estés presente (offline_access)",
+    "allow": "Permitir",
+    "deny": "Denegar",
+    "invalid": "No se pudo completar esta solicitud de autorización. Vuelve a comenzar desde tu agente.",
+    "denied": "Acceso denegado."
+  },
+  "login": {
+    "title": "Conectar a MCP",
+    "description": "Inicia sesión para revisar el acceso solicitado por {{client}}.",
+    "continue": "Continuar para revisar el acceso",
+    "signIn": "Iniciar sesión",
+    "reauthHint": "Si revocaste esta aplicación, cierra sesión y vuelve a iniciarla para aprobar un permiso nuevo.",
+    "reauthenticate": "Cerrar sesión y volver a iniciarla",
+    "reauthFailed": "No se pudo cerrar sesión. Tu sesión no ha cambiado. Intenta de nuevo."
+  },
+  "host": {
+    "title": "Acceso de agentes",
+    "commands": "Los agentes pueden ejecutar comandos del host",
+    "terminal": "Las personas pueden abrir una terminal del host",
+    "unknown": "Sin reporte del nodo en línea",
+    "on": "Activado",
+    "off": "Desactivado",
+    "turnOff": "Desactivar",
+    "turnOffNamed": "Desactivar: {{setting}}",
+    "enableAtNode": "Ejecuta el daemon como servicio y activa la opción desde otra sesión de inicio local en el nodo. La comprobación local rechaza el caso directo desde la terminal del panel.",
+    "files": "Herramientas de archivos del host: {{state}}",
+    "rootsCommand": "wssp config set-host-file-roots /ruta/absoluta",
+    "maxTime": "Tiempo máximo de comandos del host: {{seconds}} segundos",
+    "confirmTitle": "¿Desactivar el acceso al host?",
+    "confirmDescription": "Esto bloquea el acceso de inmediato y mantiene el bloqueo del panel hasta que elijas Permitir de nuevo. El nodo recibe una solicitud para desactivarlo ahora o cuando se reconecte. No se detienen los procesos iniciados fuera del árbol de procesos del daemon, como tareas cron y unidades de usuario de systemd.",
+    "cancel": "Cancelar",
+    "failed": "No se pudo cambiar el acceso del panel. Intenta de nuevo.",
+    "vetoed": "Bloqueado desde el panel. Este bloqueo permanece hasta que vuelvas a permitir el acceso.",
+    "allowAgain": "Permitir de nuevo",
+    "allowAgainNamed": "Permitir de nuevo: {{setting}}",
+    "liftTitle": "¿Permitir el acceso de nuevo?",
+    "liftDescription": "Esto solo quita el bloqueo del panel. La opción del nodo debe activarse desde una sesión de inicio local en el nodo. Permitir de nuevo no la activa.",
+    "liftUnavailable": "Permitir de nuevo requiere que el nodo esté en línea e informe que esta opción está desactivada. Primero ejecuta {{command}} en el nodo y espera su informe de desactivación.",
+    "tamperWarning": "Algo en el nodo volvió a activarlo. El bloqueo del panel sigue impidiendo el acceso y enviando la solicitud para desactivarlo. Investiga el nodo y revoca su credencial si es necesario. Ejecuta {{command}} en el nodo antes de permitir el acceso de nuevo."
+  },
+  "queue": {
+    "title": "Comandos en cola",
+    "hint": "Los agentes pueden solicitar comandos en tu nodo. Revisa el comando y el motivo antes de decidir. Ejecutar marca la solicitud como entregada; no demuestra que se haya ejecutado.",
+    "credential": "Solicitado por: {{name}}",
+    "deletedCredential": "Credencial eliminada",
+    "expires": "Vence: {{date}}",
+    "states": {
+      "QUEUED": "En cola",
+      "RUN": "Entregado",
+      "DISMISSED": "Descartado",
+      "EXPIRED": "Vencido",
+      "REFUSED": "Rechazado"
+    },
+    "run": "Ejecutar",
+    "dismiss": "Descartar",
+    "empty": "No hay comandos en cola ni recientes.",
+    "failed": "No se pudo decidir sobre este comando. Actualiza e intenta de nuevo.",
+    "close": "Cerrar revisión del comando",
+    "review": "Revisar comando del host",
+    "reviewHint": "Inspecciona el comando completo. Al conectar la terminal, se escribe una vez sin un salto de línea. Presiona Intro solo cuando quieras ejecutarlo.",
+    "copyHint": "La escritura automática no está disponible. Copia el comando y revísalo antes de ejecutarlo en tu propia terminal del host.",
+    "copy": "Copiar comando",
+    "copied": "Comando copiado.",
+    "copyFailed": "Portapapeles no disponible. Selecciona y copia el comando manualmente.",
+    "copyCommand": "Copiar comando solicitado"
+  },
+  "audit": {
+    "title": "Auditoría reciente del host",
+    "empty": "No hay actividad reciente del host.",
+    "actor": {
+      "AGENT": "Agente",
+      "PERSON": "Persona"
+    },
+    "entry": "{{date}} · {{actor}} · {{kind}}",
+    "none": "—",
+    "unavailable": "La auditoría del host no está disponible. Intenta cargar la actividad reciente de nuevo.",
+    "unknownState": "Estado desconocido",
+    "kinds": {
+      "COMMAND": "Comando del host",
+      "COMMAND_QUEUED": "Comando en cola",
+      "QUEUED_RUN": "Comando entregado",
+      "QUEUED_DISMISSED": "Comando descartado",
+      "FILE_READ": "Archivo leído",
+      "FILE_LIST": "Directorio listado",
+      "FILE_WRITE": "Archivo escrito",
+      "FILE_EDIT": "Archivo editado",
+      "POLICY_LOWER": "Acceso desactivado",
+      "POLICY_VETO_LIFT": "Bloqueo del panel eliminado"
+    },
+    "states": {
+      "running": "En ejecución",
+      "succeeded": "Completado",
+      "failed": "Fallido",
+      "cancelled": "Cancelado",
+      "timed_out": "Tiempo agotado",
+      "interrupted": "Interrumpido",
+      "unknown": "Desconocido",
+      "refused": "Rechazado"
+    },
+    "detail": "{{entry}} · {{detail}}"
+  },
+  "revoke": {
+    "typePrompt": "Escribe el nombre del token para confirmar",
+    "copyName": "Copiar nombre del token"
+  },
+  "expiry": {
+    "custom": "Fecha personalizada",
+    "customDate": "Fecha de vencimiento",
+    "never": "Sin vencimiento",
+    "warning": "Este token permanece activo hasta que lo revoques o hasta que el operador deje de permitir tokens sin vencimiento. Guárdalo de forma segura.",
+    "limit": "Los tokens con fecha deben vencer dentro de {{days}} días.",
+    "invalid": "Elige una fecha futura dentro del intervalo permitido.",
+    "close": "Cancelar",
+    "blockedByPolicy": "Bloqueado por la política: este servidor ya no permite tokens sin vencimiento, así que este token se rechaza. No está revocado y vuelve a funcionar si el operador permite tokens sin vencimiento. Crea un token con fecha para que el agente siga funcionando."
+  }
+}

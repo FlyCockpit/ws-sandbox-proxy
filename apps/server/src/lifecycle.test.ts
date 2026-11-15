@@ -6,6 +6,7 @@ const instance = vi.hoisted(() => ({ start: vi.fn(), ready: vi.fn(), stop: vi.fn
 vi.mock("@wssp/db/instance-heartbeat", () => ({ startInstanceHeartbeat: instance.start }));
 const state = vi.hoisted(() => ({
   mode: "embedded",
+  backups: false,
   startTransfers: vi.fn(),
   startContexts: vi.fn(),
   closeContexts: vi.fn(),
@@ -23,6 +24,9 @@ vi.mock("@wssp/db", () => ({
 }));
 vi.mock("@wssp/env/server", () => ({
   env: {
+    get BACKUP_ENABLED() {
+      return state.backups;
+    },
     get WORKER_MODE() {
       return state.mode;
     },
@@ -93,6 +97,7 @@ beforeEach(() => {
   instance.stop.mockResolvedValue(undefined);
   listeners.clear();
   state.mode = "embedded";
+  state.backups = false;
   initializeReservations.mockResolvedValue(undefined);
   sweepHosts.mockResolvedValue({ disconnected: 0 });
   startOutbox.mockReturnValue(async () => {});
@@ -138,6 +143,7 @@ const COLD_IMPORT_TIMEOUT_MS = 30_000;
 
 describe("createServerLifecycle", { timeout: COLD_IMPORT_TIMEOUT_MS }, () => {
   it("owns signals before jobs, starts the default embedded runtime, and rejects re-entry", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const { createServerLifecycle } = await import("./lifecycle");
     const lifecycle = createServerLifecycle();
     const listen = vi.fn(() => ({ close: vi.fn(), closeIdleConnections: vi.fn() }));
@@ -147,6 +153,12 @@ describe("createServerLifecycle", { timeout: COLD_IMPORT_TIMEOUT_MS }, () => {
     expect(lifecycle.isWorkerReady()).toBe(true);
     expect(listen).toHaveBeenCalledOnce();
     await expect(lifecycle.start(listen)).rejects.toThrow("already started");
+    const notices = log.mock.calls
+      .flat()
+      .filter((line) => String(line).includes("Automatic database backups are OFF"));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain("BACKUP_ENABLED=true");
+    expect(notices[0]).toContain("BACKUP_SCHEDULE=daily");
   });
 
   it("initializes reservations before listener/outbox", async () => {

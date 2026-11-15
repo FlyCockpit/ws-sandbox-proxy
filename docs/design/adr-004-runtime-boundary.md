@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; separate host access is defined by [ADR-006](./adr-006-agent-host-access.md) (2026-11-12).
 
 ## Context
 
@@ -59,8 +59,9 @@ of this contract; the relay channel is the
   `incus --project <p> exec --user <uid> --group <gid> --cwd <home> --env HOME=…
   --env SHELL=… --env TERM=xterm-256color -t wssp-sbx-<id> -- <declared-shell>`.
   argv is built structurally; the shell is one element after `--`. No host shell
-  ever runs, the Incus client gets a scrubbed environment, and the guest gets no
-  control-plane credential.
+  runs in this guest PTY opener. The Incus client gets a scrubbed environment,
+  and the guest gets no control-plane credential. Separate host terminals and
+  scoped host commands can run host shells under [ADR-006](./adr-006-agent-host-access.md).
 - **Identity.** The request has no instance-name field. The name derives from
   the sandbox id and is positively bound against Incus metadata (VM type,
   sandbox tag, template and base image) before spawn. The guest UID/GID/HOME/

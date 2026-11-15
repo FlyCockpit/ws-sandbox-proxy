@@ -35,6 +35,7 @@ type SettingsNavPath =
   | "/settings/host-credentials"
   | "/settings/pools"
   | "/settings/sdk-keys"
+  | "/settings/agent-tokens"
   | "/settings/webhooks"
   | "/settings/logins"
   | "/settings/profile"
@@ -182,7 +183,16 @@ export function primarySectionFor(pathname: string): PrimaryNavId | null {
 }
 
 type SettingsHubItem = RouteNavItem & {
-  id: "hosts" | "pools" | "sdkKeys" | "webhooks" | "logins" | "profile" | "security" | "images";
+  id:
+    | "agentTokens"
+    | "hosts"
+    | "pools"
+    | "sdkKeys"
+    | "webhooks"
+    | "logins"
+    | "profile"
+    | "security"
+    | "images";
   path: SettingsNavPath;
   /** One-line card description, in the `settings` namespace. */
   descriptionKey: string;
@@ -230,6 +240,14 @@ export const settingsHubGroups: readonly SettingsHubGroup[] = [
         path: "/settings/sdk-keys",
         labelKey: "settings:hub.items.sdkKeys.label",
         descriptionKey: "settings:hub.items.sdkKeys.description",
+        icon: KeyRound,
+        exact: false,
+      },
+      {
+        id: "agentTokens",
+        path: "/settings/agent-tokens",
+        labelKey: "settings:hub.items.agentTokens.label",
+        descriptionKey: "settings:hub.items.agentTokens.description",
         icon: KeyRound,
         exact: false,
       },

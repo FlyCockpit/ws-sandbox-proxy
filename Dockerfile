@@ -298,7 +298,11 @@ USER node
 RUN node --input-type=module -e 'const {loadPg}=await import("./scripts/db/lib/prisma.mjs");loadPg();await import("./scripts/db/migrate-runtime.mjs");await import("./scripts/backup/lib.mjs");await import("./scripts/backup/s3.mjs");await import("@aws-sdk/client-s3");' \
  && node scripts/backup/restore.mjs --help >/dev/null
 
-ENTRYPOINT ["tini", "--", "docker-entrypoint.sh"]
+# The entrypoint is PID 1 while it migrates (the runner holds the backup
+# writer keys), then unsets BACKUP_S3_ACCESS_KEY_ID / BACKUP_S3_SECRET_ACCESS_KEY
+# and execs tini with the CMD, so tini becomes PID 1 with a clean environment
+# (scripts/docker-entrypoint.sh).
+ENTRYPOINT ["docker-entrypoint.sh"]
 
 EXPOSE 3000
 

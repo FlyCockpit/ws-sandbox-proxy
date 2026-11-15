@@ -29,39 +29,78 @@ pub fn harden_process() -> std::io::Result<()> {
     Ok(())
 }
 
-pub struct SecretBytes(Zeroizing<Vec<u8>>);
+pub struct SecretBytes(Zeroizing<Vec<u8>>, u64);
+
+struct SnapshotEntry {
+    value: Zeroizing<Vec<u8>>,
+    dirty: bool,
+}
+static NEXT_SECRET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static SNAPSHOTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<u64, SnapshotEntry>>,
+> = std::sync::LazyLock::new(Default::default);
+/// Zeroizing read-only copies for output masking. A mutable borrow cannot be
+/// observed safely; until the next immutable expose, callers mask all output.
+pub(crate) fn masking_snapshot() -> (Vec<Zeroizing<Vec<u8>>>, bool) {
+    let entries = SNAPSHOTS.lock().unwrap_or_else(|e| e.into_inner());
+    (
+        entries
+            .values()
+            .filter(|e| !e.value.is_empty())
+            .map(|e| Zeroizing::new(e.value.to_vec()))
+            .collect(),
+        entries.values().any(|e| e.dirty),
+    )
+}
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        SNAPSHOTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.1);
+    }
+}
 
 impl SecretBytes {
     /// Takes ownership of `bytes`; they are wiped when this value drops.
     pub fn new(bytes: Vec<u8>) -> Self {
-        Self(Zeroizing::new(bytes))
+        Self::from_zeroizing(Zeroizing::new(bytes))
     }
 
     /// An empty buffer that can hold `capacity` bytes without reallocating.
     pub fn with_capacity(capacity: usize) -> Self {
-        Self(Zeroizing::new(Vec::with_capacity(capacity)))
+        Self::from_zeroizing(Zeroizing::new(Vec::with_capacity(capacity)))
     }
 
     /// `len` zero bytes, allocated once: decode chunks straight into
     /// [`SecretBytes::expose_mut`] without any reallocation.
     pub fn zeroed(len: usize) -> Self {
-        Self(Zeroizing::new(vec![0u8; len]))
+        Self::from_zeroizing(Zeroizing::new(vec![0u8; len]))
     }
 
     /// Adopts an already-zeroizing buffer (e.g. from the runtime helper).
     pub fn from_zeroizing(bytes: Zeroizing<Vec<u8>>) -> Self {
-        Self(bytes)
+        let id = NEXT_SECRET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        SNAPSHOTS.lock().unwrap_or_else(|e| e.into_inner()).insert(
+            id,
+            SnapshotEntry {
+                value: Zeroizing::new(bytes.to_vec()),
+                dirty: false,
+            },
+        );
+        Self(bytes, id)
     }
 
     /// Wipes the contents now (also done on drop) and empties the buffer.
     pub fn wipe(&mut self) {
         self.0.zeroize();
+        self.publish();
     }
 
     /// Copies `bytes` in. The caller remains responsible for its own copy.
     pub fn copy_from(bytes: &[u8]) -> Self {
         let mut secret = Self::with_capacity(bytes.len());
-        secret.0.extend_from_slice(bytes);
+        secret.extend_from_slice(bytes);
         secret
     }
 
@@ -75,13 +114,37 @@ impl SecretBytes {
             self.0 = grown;
         }
         self.0.extend_from_slice(bytes);
+        self.publish();
     }
 
+    fn publish(&self) {
+        SNAPSHOTS.lock().unwrap_or_else(|e| e.into_inner()).insert(
+            self.1,
+            SnapshotEntry {
+                value: Zeroizing::new(self.0.to_vec()),
+                dirty: false,
+            },
+        );
+    }
     pub fn expose(&self) -> &[u8] {
+        let mut snapshots = SNAPSHOTS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = snapshots.get_mut(&self.1)
+            && entry.dirty
+        {
+            entry.value = Zeroizing::new(self.0.to_vec());
+            entry.dirty = false;
+        }
         &self.0
     }
 
     pub fn expose_mut(&mut self) -> &mut [u8] {
+        if let Some(entry) = SNAPSHOTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&self.1)
+        {
+            entry.dirty = true;
+        }
         &mut self.0
     }
 
@@ -153,5 +216,28 @@ mod tests {
         secret.expose_mut()[0] = b'A';
         assert_eq!(secret.expose()[0], b'A');
         assert!(SecretBytes::new(Vec::new()).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn snapshot_follows_mutation_exposure_and_drop_without_logging_values() {
+        let mut secret = SecretBytes::copy_from(b"masking-snapshot-fixture-unique");
+        let id = secret.1;
+        assert!(
+            masking_snapshot()
+                .0
+                .iter()
+                .any(|v| v.as_slice() == secret.expose())
+        );
+        secret.expose_mut()[0] = b'M';
+        assert!(SNAPSHOTS.lock().unwrap().get(&id).unwrap().dirty);
+        let bytes = secret.expose().to_vec();
+        assert!(!SNAPSHOTS.lock().unwrap().get(&id).unwrap().dirty);
+        assert!(masking_snapshot().0.iter().any(|v| v.as_slice() == bytes));
+        drop(secret);
+        assert!(!SNAPSHOTS.lock().unwrap().contains_key(&id));
     }
 }

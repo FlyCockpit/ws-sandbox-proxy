@@ -112,7 +112,7 @@ describe("SDK principal without a browser session", () => {
       id: "key-1",
       userId: "machine-owner",
       resourceMode: "ALL_OWNED",
-      scopes: ["sandboxes:write"],
+      scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
       revokedAt: null,
       expiresAt: null,
       HostAllowlist: [],
@@ -263,11 +263,13 @@ describe("SDK principal without a browser session", () => {
     await createSandbox(
       {
         kind: "sdkKey",
+        credentialKind: "API",
+        ownSandboxesOnly: false,
         expiresAt: null,
         keyId: "key-1",
         ownerId: "machine-owner",
         resourceMode: "ALL_OWNED",
-        scopes: new Set(["sandboxes:write"]),
+        scopes: new Set(["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"]),
         allowedHostIds: "allOwned",
         allowedRevisionIds: "allOwned",
         allowedPoolIds: "allUsable",

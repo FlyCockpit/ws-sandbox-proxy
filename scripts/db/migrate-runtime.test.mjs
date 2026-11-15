@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, beforeEach, describe, test } from "node:test";
@@ -165,6 +165,13 @@ function fakeDb(init) {
   return db;
 }
 
+/** A backup hook that succeeds without a dump (no "Verified" line). */
+function noopBackupHook() {
+  const hook = path.join(dir, "noop-backup-hook.sh");
+  writeFileSync(hook, "exit 0\n");
+  return hook;
+}
+
 /** Captures console output and Prisma calls; `deploy` decides each deploy. */
 async function runtime(db, { deploy, ...options } = {}) {
   const calls = [];
@@ -174,7 +181,7 @@ async function runtime(db, { deploy, ...options } = {}) {
   console.error = (...a) => lines.push(a.join(" "));
   try {
     const code = await run({
-      env: { DATABASE_URL: URL },
+      env: { DATABASE_URL: URL, BACKUP_ENABLED: "true" },
       migrationsDir: dir,
       pg: /** @type {typeof import("pg")} */ (/** @type {unknown} */ (db.pg)),
       runPrisma: async (args) => {
@@ -182,7 +189,9 @@ async function runtime(db, { deploy, ...options } = {}) {
         if (args[1] === "deploy") return { code: deploy ? await deploy(db) : 0 };
         return { code: 0 };
       },
-      backupHook: path.join(dir, "no-backup-hook.sh"),
+      // BACKUP_ENABLED=true by default: a present hook that dumps nothing (a
+      // missing hook refuses the migration).
+      backupHook: noopBackupHook(),
       connectRetryMs: 0,
       pollMs: 5,
       waitTimeoutMs: 200,
@@ -774,11 +783,104 @@ describe("wait mode", () => {
   });
 });
 
-test("fresh multi-migration install skips even a failing configured backup hook", async () => {
+describe("BACKUP_ENABLED gates the pre-migration backup", () => {
+  let db;
+  const hookLog = path.join(dir, "backup-hook.log");
+  const hook = path.join(dir, "backup-hook.sh");
+  const hookCalls = () => {
+    try {
+      return readFileSync(hookLog, "utf8").trim().split("\n").filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+  /** @param {number} exit */
+  const writeHook = (exit) =>
+    writeFileSync(
+      hook,
+      `#!/usr/bin/env bash\necho "$*" >> ${hookLog}\n[ ${exit} = 0 ] || exit ${exit}\necho "[backup] Verified /backups/pre-migrate-20991231T000000Z.dump (1 bytes)."\n`,
+    );
+  beforeEach(() => {
+    db = fakeDb({ rows: [applied("0_init")] });
+    rmSync(hookLog, { force: true });
+    writeHook(0);
+  });
+  const deploy = (d) => {
+    d.rows.push(applied(NEXT));
+    return 0;
+  };
+
+  for (const value of [undefined, "", "false"]) {
+    test(`off (${JSON.stringify(value)}): no hook call, the migration still runs`, async () => {
+      const env = { DATABASE_URL: URL, ...(value === undefined ? {} : { BACKUP_ENABLED: value }) };
+      const r = await runtime(db, { env, backupHook: hook, deploy });
+      assert.equal(r.code, 0, r.out);
+      assert.deepEqual(hookCalls(), []);
+      assert.deepEqual(r.calls, ["migrate " + "deploy"]);
+    });
+  }
+
+  test("on: the hook runs with --required before the deploy", async () => {
+    const env = { DATABASE_URL: URL, BACKUP_ENABLED: "true" };
+    const r = await runtime(db, { env, backupHook: hook, deploy });
+    assert.equal(r.code, 0, r.out);
+    assert.deepEqual(hookCalls(), ["--required"]);
+    assert.deepEqual(r.calls, ["migrate " + "deploy"]);
+  });
+
+  test("on with no destination (the hook exits 1): the migration is refused", async () => {
+    writeHook(1);
+    const env = { DATABASE_URL: URL, BACKUP_ENABLED: "true" };
+    const r = await runtime(db, { env, backupHook: hook, deploy });
+    assert.equal(r.code, 1, r.out);
+    assert.deepEqual(r.calls, [], "never deploys without the backup");
+    assert.match(r.out, /BACKUP_ENABLED=true and the pre-migration backup failed \(exit 1\)/);
+  });
+
+  test("on with no hook in the image: refused", async () => {
+    const env = { DATABASE_URL: URL, BACKUP_ENABLED: "true" };
+    const missing = path.join(dir, "no-such-backup-hook.sh");
+    const r = await runtime(db, { env, backupHook: missing, deploy });
+    assert.equal(r.code, 1, r.out);
+    assert.deepEqual(r.calls, []);
+    assert.match(r.out, /BACKUP_ENABLED=true but the pre-migration backup hook/);
+  });
+
+  for (const value of ["TRUE", "1", "yes", " true"]) {
+    test(`strict parsing refuses ${JSON.stringify(value)}`, async () => {
+      const env = { DATABASE_URL: URL, BACKUP_ENABLED: value };
+      const r = await runtime(db, { env, backupHook: hook, deploy });
+      assert.equal(r.code, 1, r.out);
+      assert.match(r.out, /BACKUP_ENABLED must be true or false/);
+      assert.deepEqual(hookCalls(), []);
+      assert.deepEqual(r.calls, []);
+    });
+  }
+});
+
+test("BACKUP_ENABLED=true also refuses a brand-new database when the backup fails", async () => {
+  const hook = path.join(dir, "failing-fresh-backup.sh");
+  writeFileSync(hook, "exit 71\n");
+  const db = fakeDb({ rows: [] });
+  const r = await runtime(db, {
+    env: { DATABASE_URL: URL, BACKUP_ENABLED: "true" },
+    backupHook: hook,
+    deploy: (d) => {
+      d.rows.push(applied("0_init"), applied(NEXT));
+      return 0;
+    },
+  });
+  assert.equal(r.code, 1, r.out);
+  assert.deepEqual(r.calls, []);
+  assert.match(r.out, /pre-migration backup failed \(exit 71\); refusing to migrate/);
+});
+
+test("a brand-new database with BACKUP_ENABLED off never calls the hook", async () => {
   const hook = path.join(dir, "must-not-run.sh");
   writeFileSync(hook, "exit 71\n");
   const db = fakeDb({ rows: [] });
   const r = await runtime(db, {
+    env: { DATABASE_URL: URL },
     backupHook: hook,
     deploy: (d) => {
       d.rows.push(applied("0_init"), applied(NEXT));
@@ -810,6 +912,7 @@ test("a catalog change during backup restarts classification and backup before d
     },
   });
   const r = await runtime(db, {
+    env: { DATABASE_URL: URL, BACKUP_ENABLED: "true" },
     backupHook: hook,
     deploy: (d) => {
       d.rows.push(applied(NEXT));
@@ -858,4 +961,57 @@ test("pre-backup and post-backup catalog reads share the single startup budget",
   } finally {
     Date.now = originalNow;
   }
+});
+
+for (const flag of [undefined, "", "false"]) {
+  test(`existing database migrations bypass failing backup hooks when BACKUP_ENABLED=${flag}`, async () => {
+    const hook = path.join(dir, "disabled-backup.sh");
+    writeFileSync(hook, "exit 71\n");
+    const db = fakeDb({ rows: [applied("0_init")] });
+    const result = await runtime(db, {
+      env: { DATABASE_URL: URL, BACKUP_ENABLED: flag },
+      backupHook: hook,
+      deploy: (d) => {
+        d.rows.push(applied(NEXT));
+        return 0;
+      },
+    });
+    assert.equal(result.code, 0, result.out);
+    assert.deepEqual(result.calls, ["migrate deploy"]);
+    assert.doesNotMatch(result.out, /running the pre-migration backup|backup failed/);
+  });
+}
+
+test("invalid BACKUP_ENABLED refuses before database access or migrations in either mode", async () => {
+  for (const flag of ["TRUE", "1", "yes", "FALSE", " true", "false "]) {
+    for (const mode of ["apply", "wait"]) {
+      for (const rows of [[], [applied("0_init")]]) {
+        let connections = 0;
+        const db = fakeDb({ rows });
+        db.pg.Client = class {
+          constructor() {
+            connections++;
+            throw new Error("unexpected database access");
+          }
+        };
+        const result = await runtime(db, {
+          mode,
+          env: { DATABASE_URL: URL, BACKUP_ENABLED: flag },
+        });
+        assert.equal(result.code, 1, result.out);
+        assert.match(result.out, /FATAL: BACKUP_ENABLED must be true or false/);
+        assert.deepEqual(result.calls, []);
+        assert.equal(connections, 0);
+      }
+    }
+  }
+});
+
+test("an enabled failing backup hook still blocks an existing database migration", async () => {
+  const hook = path.join(dir, "enabled-failing-backup.sh");
+  writeFileSync(hook, "exit 71\n");
+  const result = await runtime(fakeDb({ rows: [applied("0_init")] }), { backupHook: hook });
+  assert.equal(result.code, 1, result.out);
+  assert.deepEqual(result.calls, []);
+  assert.match(result.out, /BACKUP_ENABLED=true and the pre-migration backup failed \(exit 71\)/);
 });

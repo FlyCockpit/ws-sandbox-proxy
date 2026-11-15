@@ -81,6 +81,7 @@
     "test:cancel-wire": "cargo build -p wssp --bin wssp --locked && vitest run --config scripts/vitest-cancel-wire.config.ts",
     "test:relay-chaos": "cargo build -p wssp --bin wssp --locked && vitest run --config scripts/vitest-relay-chaos.config.ts",
     "test:relay-chaos:full": "cargo build -p wssp --bin wssp --locked && vitest run --config scripts/vitest-relay-chaos.config.ts --mode full",
+    "test:e2e:mcp": "node --import tsx scripts/e2e/mcp-agent-access.mjs",
     "test:offload:live": "node --import tsx scripts/offload-live.ts",
     "test:relay-chaos:live": "node --import tsx scripts/relay-chaos-live.ts",
     "test:setup": "node --import tsx --test scripts/lib/admin-email-env.test.ts scripts/lib/env-file.test.mjs scripts/dev-docker.test.mjs scripts/theme-apply.test.ts scripts/lib/drift-test-packages.test.ts scripts/lib/relay-chaos-live.test.ts scripts/lib/relay-chaos-front-door.test.ts scripts/offload-live.test.ts scripts/install-pnpm.test.mjs",
@@ -132,7 +133,8 @@
     "turbo": "^2.11.10",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "web-tree-sitter": "0.27.1"
+    "web-tree-sitter": "0.27.1",
+    "@modelcontextprotocol/client": "catalog:"
   },
   "engines": {
     "node": ">=26.13.1"

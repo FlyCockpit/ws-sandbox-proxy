@@ -3,12 +3,16 @@ import type { SandboxOperationKind } from "@wssp/db";
 /** Canonical SDK capability strings from PLAN shared decisions. */
 export const SERVICE_SCOPES = [
   "hosts:read",
+  "hosts:execute",
+  "hosts:files",
   "pools:read",
   "templates:read",
   "templates:write",
   "templates:build",
   "sandboxes:read",
-  "sandboxes:write",
+  "sandboxes:create",
+  "sandboxes:manage",
+  "sandboxes:destroy",
   "commands:read",
   "commands:execute",
   "files:read",
@@ -62,6 +66,17 @@ export function parseServiceScopeSet(scopes: readonly string[]): ServiceScope[] 
 export const SERVICE_ACTIONS = [
   "capabilities.get",
   "hosts.list",
+  "hosts.get",
+  "hostCommands.run",
+  "hostCommands.get",
+  "hostCommands.writeStdin",
+  "hostCommands.cancel",
+  "hostCommands.queue",
+  "hostFiles.read",
+  "hostFiles.list",
+  "hostFiles.write",
+  "hostFiles.edit",
+
   "hosts.storagePools",
   "pools.list",
   "pools.get",
@@ -166,6 +181,7 @@ export type ServiceActionContext = {
 type ActionRequirement = {
   scopes: readonly ServiceScope[];
   requiresHost?: boolean;
+  requiresOwnedHost?: boolean;
   requiresPool?: boolean;
   requiresTemplate?: boolean;
   requiresSandbox?: boolean;
@@ -174,11 +190,11 @@ type ActionRequirement = {
 };
 
 const CANCEL_MUTATION_SCOPE_BY_KIND: Partial<Record<SandboxOperationKind, ServiceScope>> = {
-  CREATE_SANDBOX: "sandboxes:write",
-  KILL_SANDBOX: "sandboxes:write",
-  RECONNECT_SANDBOX: "sandboxes:write",
-  STOP_SANDBOX: "sandboxes:write",
-  RENEW_SANDBOX_LEASE: "sandboxes:write",
+  CREATE_SANDBOX: "sandboxes:create",
+  KILL_SANDBOX: "sandboxes:destroy",
+  RECONNECT_SANDBOX: "sandboxes:manage",
+  STOP_SANDBOX: "sandboxes:manage",
+  RENEW_SANDBOX_LEASE: "sandboxes:manage",
   RUN_COMMAND: "commands:execute",
   GET_FILE: "files:read",
   PUT_FILE: "files:write",
@@ -220,6 +236,21 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   // the response discloses no owner resources (C23).
   "capabilities.get": { scopes: [] },
   "hosts.list": { scopes: ["hosts:read"] },
+  "hosts.get": { scopes: ["hosts:read"], requiresHost: true },
+  "hostCommands.run": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.get": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.writeStdin": {
+    scopes: ["hosts:execute"],
+    requiresHost: true,
+    requiresOwnedHost: true,
+  },
+  "hostCommands.cancel": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostCommands.queue": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.read": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.list": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.write": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+  "hostFiles.edit": { scopes: ["hosts:files"], requiresHost: true, requiresOwnedHost: true },
+
   "hosts.storagePools": { scopes: ["hosts:read"], requiresHost: true },
   "pools.list": { scopes: ["pools:read"] },
   "pools.get": { scopes: ["pools:read"], requiresPool: true },
@@ -244,25 +275,25 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   "sandboxes.list": { scopes: ["sandboxes:read"] },
   "sandboxes.get": { scopes: ["sandboxes:read"], requiresSandbox: true },
   "sandboxes.probe": { scopes: ["sandboxes:read"], requiresSandbox: true },
-  "sandboxes.createIntent": { scopes: ["sandboxes:write"] },
+  "sandboxes.createIntent": { scopes: ["sandboxes:create"] },
   "sandboxes.replayCreate": {
-    scopes: ["sandboxes:write"],
+    scopes: ["sandboxes:create"],
     requiresSandbox: true,
     requiresPoolWhenPooled: true,
   },
   "sandboxes.create": {
-    scopes: ["sandboxes:write"],
+    scopes: ["sandboxes:create"],
     requiresHost: true,
     requiresTemplate: true,
     requiresPoolWhenPooled: true,
   },
-  "sandboxes.kill": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.stop": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.reconnect": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.setTimeout": { scopes: ["sandboxes:write"], requiresSandbox: true },
+  "sandboxes.kill": { scopes: ["sandboxes:destroy"], requiresSandbox: true },
+  "sandboxes.stop": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.reconnect": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.setTimeout": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   // Not an operation and not host-bound (no HOST_USABILITY_ACTIONS entry).
-  "sandboxes.rename": { scopes: ["sandboxes:write"], requiresSandbox: true },
-  "sandboxes.capture": { scopes: ["sandboxes:write", "templates:write"], requiresSandbox: true },
+  "sandboxes.rename": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.capture": { scopes: ["sandboxes:manage", "templates:write"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {
@@ -327,11 +358,11 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   // leaves) the guest, so `credentials:use` is required on top of the
   // sandbox write scope; the per-login allowlist is checked in the service.
   "sandboxCredentials.attach": {
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     requiresSandbox: true,
   },
   "sandboxCredentials.free": {
-    scopes: ["sandboxes:write", "credentials:use"],
+    scopes: ["sandboxes:manage", "credentials:use"],
     requiresSandbox: true,
   },
   "credentialInstances.listLeases": { scopes: ["credentials:read"] },

@@ -371,18 +371,14 @@ export async function startWorkerRuntime(options: {
     }
 
     // Backup freshness is gated on the BACKUP_* config, not on object storage:
-    // backups use their own bucket and credentials. The provider-only profile
-    // (BACKUP_ENABLED=false) has nothing to measure, so it registers nothing.
+    // backups use their own bucket and credentials. The default disabled profile
+    // has nothing to measure, so it registers nothing.
     try {
       requireRunning();
       const action = await syncBackupFreshnessScheduler(checkBackupFreshnessQueue);
       if (action === "upserted") {
         console.log(
           `[check-backup-freshness] Registered job scheduler (${CHECK_BACKUP_FRESHNESS_CRON_PATTERN}).`,
-        );
-      } else {
-        console.log(
-          "[check-backup-freshness] Logical backups are disabled (BACKUP_ENABLED=false); removed job scheduler.",
         );
       }
     } catch (err) {

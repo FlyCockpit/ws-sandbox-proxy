@@ -13,6 +13,7 @@ import { type InstanceHeartbeat, startInstanceHeartbeat } from "@wssp/db/instanc
 import { env } from "@wssp/env/server";
 import { redisConnection } from "@wssp/queue";
 import { startWorkerRuntime, WorkerDrainError, type WorkerRuntime } from "worker/runtime";
+import { bindHostAccess } from "../../../packages/api/src/sandbox/host-access.js";
 import { resetImageRelay } from "./sandbox-image-relay/index.js";
 import { startImageScheduler } from "./sandbox-image-relay/scheduler.js";
 import { browserTerminalService } from "./sandbox-relay/browser-terminal.js";
@@ -128,6 +129,7 @@ export function createServerLifecycle() {
           } finally {
             // Host sockets stay up for the drains' in-flight sends, then close
             // even when a drain rejected (the rejection still fails the exit).
+            bindHostAccess(null);
             await sandboxRelaySessionManager.dispose();
           }
         })();
@@ -210,6 +212,11 @@ export function createServerLifecycle() {
     async start(listen: () => NonNullable<typeof server> | Promise<NonNullable<typeof server>>) {
       if (claimed) throw new Error("Server already started; restart the process to re-enter.");
       claimed = true;
+      if (!env.BACKUP_ENABLED) {
+        console.log(
+          "[backup] Automatic database backups are OFF. Set BACKUP_ENABLED=true with a backup destination; enable the backup service with BACKUP_SCHEDULE=daily for daily backups. See docs/operations/backup-and-restore.md.",
+        );
+      }
       // A fixed label for the step in progress; the startup-failure log names it.
       let step = "dependencies";
       // Optional features never fail boot (owner rule): a failure leaves the
@@ -301,6 +308,7 @@ export function createServerLifecycle() {
         );
         bindHostImageVerifier((input) => sandboxRelaySessionManager.verifyHostImage(input));
         bindHostSandboxProbe((input) => sandboxRelaySessionManager.probeSandbox(input));
+        bindHostAccess(sandboxRelaySessionManager.hostAccess);
         bindHostTerminalPolicy({
           read: (hostId, ownerId) =>
             sandboxRelaySessionManager.hostTerminalPolicies.read(hostId, ownerId),

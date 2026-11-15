@@ -289,8 +289,42 @@ async function ownerRows(
 }
 
 /** One row of every receipt model a finalizable account can hold. */
+async function seedAgentAccess(userId: string) {
+  // OAuth provider rows and the MCP grant (with its secretless backing key).
+  const client = await db.inspect.oauthClient.create({
+    data: { id: `oc-${userId}`, clientId: `client-${userId}`, userId, redirectUris: [] },
+  });
+  const refresh = await db.inspect.oauthRefreshToken.create({
+    data: {
+      token: `rt-${userId}`,
+      clientId: client.clientId,
+      userId,
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+  });
+  await db.inspect.oauthAccessToken.create({
+    data: {
+      token: `at-${userId}`,
+      clientId: client.clientId,
+      userId,
+      refreshId: refresh.id,
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+  });
+  await db.inspect.oauthConsent.create({
+    data: { clientId: client.clientId, userId, scopes: ["sandboxes:read"] },
+  });
+  const backing = await db.inspect.sdkKey.create({
+    data: { userId, name: "oauth", kind: "OAUTH_GRANT", scopes: ["sandboxes:read"] },
+  });
+  await db.inspect.mcpGrant.create({
+    data: { userId, clientId: client.clientId, referenceId: "ref", sdkKeyId: backing.id },
+  });
+}
+
 async function seedEveryReceipt(userId: string) {
   await seedReceipts(userId);
+  await seedAgentAccess(userId);
   await db.inspect.sandboxActionReceipt.create({
     data: {
       digestContext: {
@@ -912,6 +946,8 @@ describe("account deletion inventory against the live schema (DECISIONS: Account
     for (const [table, count] of Object.entries(seeded))
       if (
         table !== "host_terminal_ticket" &&
+        // A queued host command belongs to a host, which blocks deletion.
+        table !== "host_queued_command" &&
         table !== "host_device_credential" &&
         table !== "sandbox_host" &&
         table !== "sandbox_template_availability" &&

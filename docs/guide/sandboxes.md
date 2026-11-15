@@ -843,3 +843,5 @@ timer or refused redispatch alone never proves absence or frees capacity.
 [Host capacity](./hosts.md#capacity-drain-and-deletion) describes configured
 budgets and shared owner reservations; [pools](./pools.md) explains ranking and
 authorized fit diagnostics. Deploy matching server, SDK and daemon builds; see the [capacity and storage qualification](hosts.md#capacity-and-storage-qualification).
+
+SDK scopes separate creation (`sandboxes:create`), stop/reconnect/lease/rename (`sandboxes:manage`) and destruction (`sandboxes:destroy`). Capture also needs `templates:write`. Keys with **own sandboxes only** see and operate only on sandboxes originally created by that key; allowlist keys always have this restriction. Host commands are outside this restriction because the daemon is an Incus admin.

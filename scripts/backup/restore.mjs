@@ -33,7 +33,7 @@
  *      re-run while the restored data is checked or recovered.
  */
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, rmSync } from "node:fs";
 import { mkdtemp, open, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +68,19 @@ const BACKUPS_DIR = "/backups";
 const LOCK_APP_NAME = "wssp-restore-lock";
 
 class Refusal extends Error {}
+
+/**
+ * Exit status of a refused restore — nothing was changed: a usage error,
+ * preview only, a cancelled prompt (or a stop signal before the restore
+ * transaction started), a failed check, or a failed pre-restore snapshot.
+ * 0 is a restore that committed, even when a signal then cut the closing
+ * summary short ("restore completed; then interrupted"). 1 is a restore that
+ * failed while changing the target: rolled back when COMMIT was never sent,
+ * uncertain once it was (read the output). 129/130/143 is one interrupted by a
+ * signal while its transaction was open: rolled back before COMMIT was sent,
+ * uncertain after.
+ */
+export const REFUSED_EXIT = 3;
 
 /** @type {Set<import("node:child_process").ChildProcess>} */
 const children = new Set();
@@ -262,6 +275,16 @@ async function verifyArchive(path, env) {
   const header = (/** @type {string} */ field) =>
     new RegExp(`^;\\s*${field}:?\\s*(.*)$`, "im").exec(list.stdout)?.[1]?.trim() ?? "unknown";
   const entries = list.stdout.split("\n").filter((line) => /^\d+;/.test(line)).length;
+  // pg_restore writes large objects (BLOB / BLOBS / BLOB METADATA entries)
+  // inside their own BEGIN … COMMIT when it writes a script, and that COMMIT
+  // would commit the restore's single transaction halfway (with --replace,
+  // after the schema drop). The wssp schema has none; refuse rather than
+  // restore one in pieces.
+  if (/^\d+;\s+\d+\s+\d+\s+BLOB(S| METADATA)?\s/m.test(list.stdout)) {
+    throw new Refusal(
+      "the archive contains large objects (BLOB entries). pg_restore restores those in their own transaction, which would break this command's single-transaction restore. Nothing was changed; restore this archive by hand with pg_restore.",
+    );
+  }
   const full = await run("pg_restore", ["--file=/dev/null", path], { env });
   if (full.code !== 0) {
     throw new Refusal(
@@ -341,6 +364,11 @@ async function openLockSession(env) {
   let stderr = "";
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
+  });
+  // A spawn failure (no psql in PATH) also emits "close", which ends the
+  // reply wait below as "could not open the lock session" (a refusal).
+  child.on("error", (error) => {
+    stderr ||= error.message;
   });
   /** @type {NodeJS.Timeout | undefined} */
   let heartbeat;
@@ -490,9 +518,25 @@ function applyArchive(archive, env, replace, session, holdSql) {
       stdio: ["ignore", "pipe", "inherit"],
     });
     children.add(dump);
+    // A spawn failure also emits "close" with a non-zero code: COMMIT is then
+    // never sent and the transaction rolls back.
+    dump.on("error", () => {});
     let psqlDone = false;
     let psqlCode = 0;
     let dumpCode = /** @type {number | null} */ (null);
+    // COMMIT counts as done only once the session confirms it: the marker
+    // query written after COMMIT prints only if COMMIT succeeded (ON_ERROR_STOP).
+    // A COMMIT written into a session that was already gone never confirms.
+    const marker = `wssp-restore-committed-${randomBytes(8).toString("hex")}`;
+    let confirmed = false;
+    let tail = "";
+    psql.stdout.on("data", (chunk) => {
+      if (confirmed) return;
+      const seen = tail + chunk;
+      confirmed = seen.includes(marker);
+      if (confirmed) commitConfirmed = true;
+      tail = seen.slice(-marker.length);
+    });
     psql.stdin.on("error", () => {
       dump.kill("SIGTERM");
     });
@@ -515,7 +559,14 @@ CREATE SCHEMA public;
     dump.on("close", (code) => {
       children.delete(dump);
       dumpCode = code ?? 1;
-      if (!psqlDone && dumpCode === 0) psql.stdin.write(`${holdSql}COMMIT;\n`);
+      // psql may already have exited (ON_ERROR_STOP) before its exit was
+      // observed: then COMMIT never reaches the server and nothing committed.
+      if (!psqlDone && psql.exitCode === null && psql.signalCode === null && dumpCode === 0) {
+        // From here on the server may commit at any moment: neither a psql
+        // failure nor a signal may be reported as "rolled back" any more.
+        commitSent = true;
+        psql.stdin.write(`${holdSql}COMMIT;\nSELECT '${marker}';\n`);
+      }
       psql.stdin.end();
     });
     session.exited.then((code) => {
@@ -523,7 +574,14 @@ CREATE SCHEMA public;
       psqlCode = code;
       if (dumpCode === null) dump.kill("SIGTERM");
       const finish = () =>
-        resolvePromise({ ok: psqlCode === 0 && dumpCode === 0, psqlCode, dumpCode });
+        // Committed only if COMMIT was sent and confirmed: a psql that exited 0
+        // before it (its input ended early) left the transaction to roll back.
+        resolvePromise({
+          ok: commitSent && confirmed && psqlCode === 0 && dumpCode === 0,
+          confirmed,
+          psqlCode,
+          dumpCode,
+        });
       if (dumpCode === null) dump.once("close", finish);
       else finish();
     });
@@ -563,15 +621,51 @@ async function localBackups() {
   return entries;
 }
 
-/** @param {string} question */
+/**
+ * Ask on the terminal. Ctrl-C / Ctrl-D at the prompt (readline closes the
+ * interface in raw mode instead of raising SIGINT) is a cancel: nothing has
+ * changed yet, so it is a Refusal (REFUSED_EXIT), not a failed restore.
+ * @param {string} question
+ */
 async function ask(question) {
   const prompt = createInterface({ input: process.stdin, output: process.stdout });
   try {
     return await prompt.question(question);
+  } catch (error) {
+    const code = /** @type {{ code?: string, name?: string }} */ (error)?.code;
+    if (code === "ABORT_ERR" || code === "ERR_USE_AFTER_CLOSE" || error?.name === "AbortError")
+      throw new Refusal("cancelled — nothing was changed.");
+    throw error;
   } finally {
     prompt.close();
   }
 }
+
+/**
+ * Set just before the restore transaction starts (the lock session's BEGIN):
+ * until then every stop signal or error leaves the target untouched.
+ */
+let applyStarted = false;
+/**
+ * Set when COMMIT is written to psql: the server may commit at any moment, so
+ * a failure or signal from now until `committed` has an uncertain outcome.
+ */
+let commitSent = false;
+/**
+ * Set as soon as the restore session confirms COMMIT (its marker query
+ * printed): the restore has committed, even before psql's exit is observed.
+ */
+let commitConfirmed = false;
+/**
+ * Set once a failure has been reported (exit 1): a signal while the process
+ * winds down keeps that status instead of reporting another outcome.
+ */
+let failureReported = false;
+/**
+ * Set once the restore transaction has committed: from then on no error or
+ * signal may be reported as "nothing was changed" or "rolled back".
+ */
+let committed = false;
 
 async function main() {
   let args;
@@ -579,14 +673,55 @@ async function main() {
     args = parseRestoreArgs(process.argv.slice(2));
   } catch (error) {
     if (error instanceof UsageError) {
-      console.error(`FATAL: ${error.message}\n\n${RESTORE_USAGE}`);
-      return 2;
+      // Nothing was touched: a refusal, like every other "nothing changed" exit.
+      console.error(`REFUSED: ${error.message}\n\n${RESTORE_USAGE}`);
+      return REFUSED_EXIT;
     }
     throw error;
   }
   if (args.help) {
     console.log(RESTORE_USAGE);
     return 0;
+  }
+  // Signal handlers first: everything from here on (even scanning /backups
+  // for --list or `latest`, which can stall on a slow mount) is a cancellable
+  // step that changes nothing until the restore transaction starts.
+  /** @type {string | null} */
+  let workDir = null;
+  const cleanup = () => {
+    if (workDir) rmSync(workDir, { recursive: true, force: true });
+  };
+  for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM", "SIGHUP"])) {
+    process.once(signal, () => {
+      // Killing psql before COMMIT rolls the restore back.
+      for (const child of children) child.kill("SIGTERM");
+      cleanup();
+      if (failureReported) process.exit(1);
+      if (committed || commitConfirmed) {
+        // The restore itself finished; only the closing summary was cut short.
+        // Report it as done (exit 0, owner decision 2026-11-14): host.sh then
+        // starts the app, which applies any pending migrations, exactly as
+        // after an uninterrupted restore.
+        console.error(
+          `\nRestore completed; then interrupted by ${signal}. The restored data is in place; only the closing summary was cut short.`,
+        );
+        process.exit(0);
+      }
+      if (!applyStarted) {
+        // Verifying, downloading, checking or the pre-restore snapshot: the
+        // target was never touched.
+        console.error(
+          `\nREFUSED: cancelled by ${signal} before the restore started — nothing was changed.`,
+        );
+        process.exit(REFUSED_EXIT);
+      }
+      console.error(
+        commitSent
+          ? `\nFATAL: interrupted by ${signal} after COMMIT was sent; the outcome for the target is uncertain (the restore may have committed). Keep every writer stopped and inspect the database before trusting it.`
+          : `\nFATAL: interrupted by ${signal} before COMMIT; the unfinished restore transaction is rolled back and the target is unchanged.`,
+      );
+      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
+    });
   }
   if (args.list) {
     const backups = sortBackups(await localBackups());
@@ -640,19 +775,7 @@ async function main() {
   );
   console.log("jobs, other clients). Restore refuses while other sessions are connected.\n");
 
-  const workDir = await mkdtemp(join(tmpdir(), "wssp-restore-"));
-  const cleanup = () => rmSync(workDir, { recursive: true, force: true });
-  for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM", "SIGHUP"])) {
-    process.once(signal, () => {
-      // Killing psql before COMMIT rolls the restore back.
-      for (const child of children) child.kill("SIGTERM");
-      cleanup();
-      console.error(
-        `\nFATAL: interrupted by ${signal}; an unfinished restore transaction is rolled back.`,
-      );
-      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
-    });
-  }
+  workDir = await mkdtemp(join(tmpdir(), "wssp-restore-"));
   try {
     console.log("Verifying source ...");
     const source = await prepareSource(args, workDir);
@@ -786,6 +909,7 @@ async function main() {
         );
       // The lock session itself runs the restore transaction: the locks are
       // never released between the checks and COMMIT.
+      applyStarted = true;
       const result = await applyArchive(
         source.path,
         env,
@@ -794,12 +918,26 @@ async function main() {
         restoreHoldSql(prismaSchemaName(process.env.DATABASE_URL ?? "")),
       );
       if (!result.ok) {
+        failureReported = true;
         console.error(
-          `FATAL: restore failed (psql exit ${result.psqlCode}, pg_restore exit ${result.dumpCode}). The transaction was rolled back; "${database}" is unchanged.`,
+          result.confirmed
+            ? `FATAL: the restore session confirmed COMMIT, then failed (psql exit ${result.psqlCode}). "${database}" is restored (the transaction committed), but the session did not end cleanly. Keep every writer stopped and inspect the database before trusting it.`
+            : commitSent
+              ? `FATAL: restore failed after COMMIT was sent (psql exit ${result.psqlCode}, COMMIT not confirmed). The outcome for "${database}" is uncertain: the restore may have committed before the failure. Keep every writer stopped and inspect the database before trusting it.`
+              : `FATAL: restore failed (psql exit ${result.psqlCode}, pg_restore exit ${result.dumpCode}). COMMIT was never sent, so the transaction was rolled back; "${database}" is unchanged.`,
         );
         return 1;
       }
-      console.log(`\nRestore complete. ${await migrationSummary(env)}.`);
+      committed = true;
+      // The data is restored; a summary query that fails now must not turn a
+      // finished restore into "refused" or "failed".
+      let summary;
+      try {
+        summary = await migrationSummary(env);
+      } catch (error) {
+        summary = `migration summary unavailable (${error instanceof Error ? error.message : String(error)})`;
+      }
+      console.log(`\nRestore complete. ${summary}.`);
     } finally {
       await lock.close();
     }
@@ -825,11 +963,28 @@ See docs/operations/backup-and-restore.md.`);
 try {
   process.exitCode = await main();
 } catch (error) {
-  if (error instanceof Refusal) {
-    console.error(`\nREFUSED: ${error.message}`);
+  if (committed) {
+    // After COMMIT nothing is "refused" any more: the restore itself succeeded.
+    failureReported = true;
+    console.error(
+      `FATAL: the restore was committed, then: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 1;
+  } else if (!applyStarted) {
+    // Every Refusal is raised before the target changes (preview, cancel at a
+    // prompt, failed checks, a failed snapshot), and so is any other error
+    // before the restore transaction started: its own exit code lets callers
+    // (host.sh) tell "nothing was changed" from a failed or uncertain restore.
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `\nREFUSED: ${message}${error instanceof Refusal ? "" : " Nothing was changed."}`,
+    );
+    process.exitCode = REFUSED_EXIT;
   } else {
-    console.error(`FATAL: ${error instanceof Error ? error.message : String(error)}`);
+    failureReported = true;
+    console.error(
+      `FATAL: ${error instanceof Error ? error.message : String(error)}${commitSent ? " COMMIT had been sent: the outcome for the target is uncertain; inspect it before trusting it." : ""}`,
+    );
     process.exitCode = 1;
   }
 }

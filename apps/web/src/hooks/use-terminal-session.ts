@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   IDLE_TERMINAL,
+  PASTE_MAX_BYTES,
   TerminalClient,
   type TerminalClientOptions,
   type TerminalSnapshot,
@@ -32,9 +33,12 @@ export function useTerminalSession({
   hostId,
   onCreateError,
   onPaste,
+  pretypeCommand,
 }: {
   sandboxId?: string;
   hostId?: string;
+  /** One printable line, typed once after an explicit host-terminal attach. */
+  pretypeCommand?: string;
   onCreateError?: (error: unknown) => void;
   /** The outcome of a native paste (Ctrl/Cmd+V, context menu) in the terminal. */
   onPaste?: (outcome: ClipboardOutcome) => void;
@@ -66,6 +70,14 @@ export function useTerminalSession({
       if (status && status !== "idle" && status !== "ended") return;
       // A re-attach starts over: the previous buffer goes with its view.
       clientRef.current?.dispose();
+      let pretyped = false;
+      const command =
+        hostId &&
+        pretypeCommand &&
+        pretypeCommand.length <= PASTE_MAX_BYTES &&
+        /^[\x20-\x7e]+$/.test(pretypeCommand)
+          ? pretypeCommand
+          : undefined;
       const options: TerminalClientOptions = {
         sandboxId,
         serverUrl: env.VITE_SERVER_URL,
@@ -92,7 +104,12 @@ export function useTerminalSession({
         },
         loadView: () => import("@/lib/xterm-view").then((module) => module.createTerminalView),
         onChange: (next) => {
-          if (clientRef.current === client) setSnapshot(next);
+          if (clientRef.current !== client) return;
+          setSnapshot(next);
+          if (next.status === "attached" && command && !pretyped) {
+            pretyped = true;
+            client.paste(command);
+          }
         },
         onCreateError: (error) => onCreateErrorRef.current?.(error),
         onPaste: (outcome) => {
@@ -103,7 +120,7 @@ export function useTerminalSession({
       clientRef.current = client;
       void client.start();
     },
-    [sandboxId, hostId],
+    [sandboxId, hostId, pretypeCommand],
   );
 
   const detach = useCallback(() => {

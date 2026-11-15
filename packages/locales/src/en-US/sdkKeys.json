@@ -8,7 +8,7 @@
   "mint": {
     "action": "Mint SDK key",
     "title": "Mint an SDK key",
-    "description": "Choose only the scopes and resources your code needs. The key cannot manage credentials, hosts or users, or open terminals.",
+    "description": "Choose only the scopes and resources your code needs. Host command and file access requires your own host and node consent.",
     "submit": "Mint key",
     "secretLabel": "Your new SDK key",
     "usageHint": "Send it as Authorization: Bearer <key> to the /v1 API."
@@ -20,7 +20,8 @@
     "allowlistHosts": "Hosts: {{names}}",
     "allowlistTemplates": "Template versions: {{names}}",
     "allowlistPools": "Pools: {{names}}",
-    "allowlistLogins": "Logins: {{names}}"
+    "allowlistLogins": "Logins: {{names}}",
+    "otherSandboxes": "May access your other sandboxes within its resource grants"
   },
   "revoke": {
     "title": "Revoke {{name}}?",
@@ -65,7 +66,10 @@
     "loginsRequired": "With credentials:use, choose at least one login this key may use.",
     "loginsFailed": "Couldn't load your logins.",
     "noLogins": "You have no CLI logins yet.",
-    "moreLogins": "Load more logins"
+    "moreLogins": "Load more logins",
+    "ownSandboxesOnly": "Own sandboxes only",
+    "ownSandboxesOnlyHint": "Only sandboxes originally created with this key, including commands, files and operations. Host commands are not limited by this option.",
+    "hostScopeWarning": "The daemon user is an Incus admin. Host commands and host file tools can reach every sandbox on the node, including other users’ sandboxes in shared pools. “Own sandboxes only” does not limit host access. Host access also requires the setting to be enabled on the node."
   },
   "scopeGroup": {
     "hosts": "Hosts",
@@ -80,7 +84,9 @@
   },
   "scope": {
     "hosts": {
-      "read": "List your hosts."
+      "read": "List your hosts.",
+      "execute": "Run and queue commands on your own hosts.",
+      "files": "Read and change files on your own hosts."
     },
     "templates": {
       "read": "List templates.",
@@ -89,7 +95,9 @@
     },
     "sandboxes": {
       "read": "Read sandboxes and their processes.",
-      "write": "Create, stop, reconnect, renew and kill sandboxes."
+      "create": "Create sandboxes.",
+      "manage": "Stop, reconnect, renew, rename and capture sandboxes.",
+      "destroy": "Destroy sandboxes."
     },
     "commands": {
       "execute": "Run commands, write stdin and signal processes.",
@@ -117,10 +125,10 @@
   },
   "scopeNeeds": {
     "operations": {
-      "cancel": "Also select the scope for the work to cancel (for example sandboxes:write or commands:execute)."
+      "cancel": "Also select the scope for the work to cancel (for example sandboxes:manage or commands:execute)."
     },
     "credentials": {
-      "use": "Also select sandboxes:write."
+      "use": "Also select sandboxes:manage."
     }
   },
   "resourceIdentity": "{{label}} · {{id}}",

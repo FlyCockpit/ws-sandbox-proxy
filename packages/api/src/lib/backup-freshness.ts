@@ -178,7 +178,7 @@ export type BackupFreshness =
   | {
       /**
        * Freshness monitoring is enabled but the off-site bucket is not configured
-       * yet. BACKUP_ENABLED controls monitoring only, never dump writing.
+       * yet. BACKUP_ENABLED gates automatic backups and freshness monitoring.
        */
       state: "setup-missing";
       checkedAt: string;
@@ -209,6 +209,10 @@ type BackupBucket = {
  * validation on these (a backup-only mistake must never crash-loop the server
  * or the worker), so the check reports monitor misconfiguration rather than
  * throwing on every run or, worse, reporting a bucket it cannot address.
+ * One exception lives outside the process: the image entrypoint refuses to
+ * start a server or worker whose monitor key ID equals the writer key ID
+ * (scripts/docker-entrypoint.sh), since the writer key is gone by the time
+ * this runs. The reuse branch here still covers a source start.
  * Returns null when the monitor configuration is fine.
  */
 export function backupFreshnessMisconfiguration(): string | null {
@@ -221,7 +225,7 @@ export function backupFreshnessMisconfiguration(): string | null {
 
 /**
  * True when this deployment intends to monitor off-site backup freshness.
- * BACKUP_ENABLED never controls canonical backup commands or BACKUP_SCHEDULE.
+ * BACKUP_ENABLED gates automatic writers; explicit backup/restore commands remain available.
  * A missing bucket still reports setup-missing when monitoring is enabled.
  */
 export function backupFreshnessEnabled(): boolean {

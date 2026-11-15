@@ -355,22 +355,28 @@ mod lifecycle_pool {
     #[test]
     fn d2_wire_teardown_live_authority_refusal_stays_failed() {
         for kind in ["sandbox.kill", "sandbox.stop"] {
-            let ids = vec!["blocker".into(), "s0".into()];
-            let (_dir, binding, journal, fake, entered, release) = probe_setup(&ids);
+            let ids = vec!["blocker".into(), "blocker2".into(), "s0".into()];
+            let (_dir, binding, journal, fake, entered, release) = probe_setup_gated(&ids, 2);
             let authority = HostAuthority::default();
-            let relay = RelaySupervisor::start(Arc::new(fake), journal.clone(), authority.clone(),
+            // Hold both lifecycle lanes so the refusal is observed before any effect.
+            let relay = RelaySupervisor::start_with_limits(Arc::new(fake), journal.clone(), authority.clone(),
                 #[cfg(target_os = "linux")] None,
+                CommandLimits { host: 1, per_sandbox: 1 },
             );
-            let mut blocker = dispatch("blocker-kill", "sandbox.kill", 2);
-            blocker.sandbox_id = "blocker".into();
-            admit(&relay, &journal, &binding, &authority, blocker);
-            entered.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|e| panic!("runtime gate not reached: {e:?}; {:?}", relay.poll_finished()));
+            for blocker_id in ["blocker", "blocker2"] {
+                let mut blocker = dispatch(&format!("{blocker_id}-kill"), "sandbox.kill", 2);
+                blocker.sandbox_id = blocker_id.into();
+                admit(&relay, &journal, &binding, &authority, blocker);
+                entered.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|e| panic!("runtime gate not reached: {e:?}; {:?}", relay.poll_finished()));
+            }
             let mut teardown = dispatch("refused-wire", kind, 2);
             teardown.sandbox_id = "s0".into();
             admit(&relay, &journal, &binding, &authority, teardown);
             // Revoke this operation without closing the session. A genuine
             // authority refusal remains a fresh C-26 failure, not recovery.
+            assert_eq!(relay.lifecycle.state.lock().unwrap().urgent_queued, 1);
             authority.complete("refused-wire");
+            release.send(()).unwrap();
             release.send(()).unwrap();
             assert_eq!(done(&relay, "refused-wire").state, OperationState::Failed);
             let receipt = journal.lookup("refused-wire").unwrap();

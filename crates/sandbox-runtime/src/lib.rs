@@ -42,7 +42,10 @@ pub use sandbox_protocol::results::EntryInfo;
 pub mod guard;
 mod host_child;
 mod host_pty;
-pub use host_child::{Environment as HostChildEnvironment, command as host_child_command};
+pub use host_child::{
+    Environment as HostChildEnvironment, agent_command as host_agent_command,
+    command as host_child_command,
+};
 pub use host_pty::{HostPtyOpener, LocalHostPtyOpener};
 mod image;
 mod image_validate;

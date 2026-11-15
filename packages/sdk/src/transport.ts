@@ -673,6 +673,7 @@ export function createWsspTransport(options: WsspTransportOptions): WsspTranspor
               : null,
           reason:
             ("reason" in error ? error.reason : undefined) ??
+            (error.code === "host.file_error" ? error.data.reason : undefined) ??
             // Image quota scope doubles as the reason (stored | downloads).
             (error.code === "sandbox.image_quota_exceeded" ? error.scope : undefined) ??
             (kind === "unknown" && status >= 500 ? "server_error" : null),

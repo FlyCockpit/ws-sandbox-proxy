@@ -1,0 +1,94 @@
+enum SdkKeyKind {
+  API
+  AGENT_TOKEN
+  OAUTH_GRANT
+}
+
+model McpGrant {
+  id          String    @id @default(cuid(2))
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
+  userId      String
+  clientId    String
+  referenceId String
+  sdkKeyId    String    @unique
+  revokedAt   DateTime?
+  User        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  SdkKey      SdkKey    @relation(fields: [sdkKeyId, userId], references: [id, userId], onDelete: Cascade)
+
+  @@unique([sdkKeyId, userId])
+  @@unique([userId, clientId, referenceId])
+  @@map("mcp_grant")
+}
+
+enum HostQueuedCommandState {
+  QUEUED
+  RUN
+  DISMISSED
+  EXPIRED
+  REFUSED
+}
+
+model HostQueuedCommand {
+  id            String                 @id @default(cuid(2))
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @default(now()) @updatedAt
+  userId        String
+  sandboxHostId String
+  sdkKeyId      String?
+  command       String
+  reason        String
+  state         HostQueuedCommandState @default(QUEUED)
+  expiresAt     DateTime
+  decidedAt     DateTime?
+  decidedBy     String?
+  User          User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Host          SandboxHost            @relation(fields: [sandboxHostId, userId], references: [id, userId], onDelete: Cascade)
+  SdkKey        SdkKey?                @relation(fields: [sdkKeyId], references: [id], onDelete: SetNull)
+
+  @@index([userId, state, createdAt])
+  @@index([sandboxHostId, state])
+  @@map("host_queued_command")
+}
+
+enum HostAuditKind {
+  COMMAND
+  COMMAND_QUEUED
+  QUEUED_RUN
+  QUEUED_DISMISSED
+  FILE_READ
+  FILE_LIST
+  FILE_WRITE
+  FILE_EDIT
+  POLICY_LOWER
+  POLICY_VETO_LIFT
+}
+
+enum HostAuditActor {
+  AGENT
+  PERSON
+}
+
+/// Never stores command text, output, file content or paths' contents.
+model HostAuditEvent {
+  id            String         @id @default(cuid(2))
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @default(now()) @updatedAt
+  userId        String
+  sandboxHostId String
+  sdkKeyId      String?
+  actor         HostAuditActor
+  kind          HostAuditKind
+  program       String?
+  subjectHmac   String?
+  commandId     String?        @unique
+  state         String?
+  reason        String?
+  exitCode      Int?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+
+  @@index([userId, createdAt])
+  @@index([sandboxHostId, createdAt])
+  @@map("host_audit_event")
+}

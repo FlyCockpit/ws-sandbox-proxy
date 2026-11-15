@@ -67,6 +67,7 @@ type HostRow = {
   lastConnectedAt: Date | null;
   lastHeartbeatAt: Date | null;
   capacity: HostDto["capacity"];
+  agentAccess?: HostDto["agentAccess"];
   storagePools?: HostDto["storagePools"];
   retainedRootCount: number;
   liveCount: number;
@@ -88,6 +89,7 @@ export function toHostDto(row: HostRow): HostDto {
     slug: row.slug,
     label: row.label,
     status: row.status,
+    agentAccess: row.agentAccess ?? { owned: false },
     lastConnectedAt: isoOrNull(row.lastConnectedAt),
     lastHeartbeatAt: isoOrNull(row.lastHeartbeatAt),
     capacity: row.capacity,

@@ -55,6 +55,12 @@ vi.mock("@wssp/db", async () => {
 const { default: prisma } = await import("@wssp/db");
 const db = vi.mocked(prisma, true);
 
+/** A server → host control frame as the tests read it (terminal frames all carry these). */
+type WireFrame = { type: string; requestId: string; fence: TerminalFence } & Record<
+  string,
+  unknown
+>;
+
 class FakeSocket {
   readyState = 1;
   bufferedAmount = 0;
@@ -78,6 +84,24 @@ class FakeSocket {
   }
   frames(type: string) {
     return this.sends.map((s) => JSON.parse(s)).filter((f) => f.type === type);
+  }
+  #parsed: WireFrame[] = [];
+  /**
+   * Every text frame sent so far, parsed once and shared across calls (read
+   * only). `sends` only ever grows, so long scenarios that inspect the wire on
+   * every step stay linear instead of re-parsing the whole history each time.
+   */
+  parsedFrames(): readonly WireFrame[] {
+    for (let index = this.#parsed.length; index < this.sends.length; index += 1)
+      this.#parsed.push(JSON.parse(this.sends[index]!) as WireFrame);
+    return this.#parsed;
+  }
+  /** The most recent frame of `type`, without re-parsing the history. */
+  lastFrame(type: string) {
+    const frames = this.parsedFrames();
+    for (let index = frames.length - 1; index >= 0; index -= 1)
+      if (frames[index]!.type === type) return frames[index]!;
+    return undefined;
   }
   input() {
     return this.binarySends.map((frame) => parseTerminalDataFrame(frame)!);
@@ -657,7 +681,7 @@ describe("C55 close boundary: uncertain reap, idempotence, races", () => {
       attachment,
     });
     if (!result.ok) return { result, attachment } as const;
-    const frame = host.frames("terminal.open").at(-1);
+    const frame = host.lastFrame("terminal.open")!;
     return { result, attachment, fence: frame.fence as TerminalFence, frame } as const;
   };
   const ready = (fence: TerminalFence, requestId: string) =>
@@ -1043,18 +1067,34 @@ describe("C55 slot ledger fuzz (fixed seeds)", () => {
     const counted = (sock: FakeSocket) => shadows.filter((x) => x.sock === sock && !x.released);
     const opensIn = new Map<FakeSocket, number[]>();
 
+    // Runs after every step, so it stays cheap: the wire history is parsed
+    // once per socket and counted per session, and `expect` (which builds a
+    // failure message) only runs for a value that violates the ledger.
     const check = (step: string) => {
       for (const host of hosts) {
         const sock = socks[host];
-        expect(manager.sessionCount(sock), `${step} count ${host}`).toBe(counted(sock).length);
+        const count = manager.sessionCount(sock);
+        const expected = counted(sock).length;
+        if (count !== expected) expect(count, `${step} count ${host}`).toBe(expected);
       }
+      const hostCloses = new Map<FakeSocket, Map<string, number>>();
+      const closesOf = (sock: FakeSocket) => {
+        let bySession = hostCloses.get(sock);
+        if (!bySession) {
+          bySession = new Map();
+          for (const frame of sock.parsedFrames())
+            if (frame.type === "terminal.close")
+              bySession.set(frame.fence.sessionId, (bySession.get(frame.fence.sessionId) ?? 0) + 1);
+          hostCloses.set(sock, bySession);
+        }
+        return bySession;
+      };
       for (const x of shadows) {
-        expect(x.attachment.closes.length, `${step} one notice`).toBeLessThanOrEqual(1);
-        if (x.released) expect(x.attachment.closes.length, `${step} released notified`).toBe(1);
-        const closes = x.sock
-          .frames("terminal.close")
-          .filter((frame) => frame.fence.sessionId === x.fence.sessionId);
-        expect(closes.length, `${step} <=1 host close`).toBeLessThanOrEqual(1);
+        const notices = x.attachment.closes.length;
+        if (notices > 1) expect(notices, `${step} one notice`).toBeLessThanOrEqual(1);
+        if (x.released && notices !== 1) expect(notices, `${step} released notified`).toBe(1);
+        const closes = closesOf(x.sock).get(x.fence.sessionId) ?? 0;
+        if (closes > 1) expect(closes, `${step} <=1 host close`).toBeLessThanOrEqual(1);
       }
     };
 

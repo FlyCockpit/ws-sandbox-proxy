@@ -114,3 +114,17 @@ export function templatesOffSelectedHosts(
     .filter((template) => !isTemplateOnSelectedHosts(template, hosts))
     .map((t) => t.id);
 }
+
+/** Host tools need a directly owned host grant; shared pool access is insufficient. */
+export function hostScopesNeedHostGrant(
+  scopes: readonly ServiceScope[],
+  resourceMode: "ALL_OWNED" | "ALLOWLIST",
+  hostIds: readonly string[],
+): boolean {
+  return (
+    resourceMode === "ALLOWLIST" &&
+    hostIds.length === 0 &&
+    scopes.some((scope) => scope === "hosts:execute" || scope === "hosts:files")
+  );
+}
+export const SDK_KEY_HOST_SCOPES_NEED_HOST_CODE = "sdk_key.host_scopes_need_host";

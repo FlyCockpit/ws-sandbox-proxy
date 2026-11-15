@@ -20,6 +20,7 @@ import {
   deviceVerificationUri,
   requireHostDeviceLoginScope,
 } from "./host-device-login-scope.js";
+import { resolveMcpPlugins } from "./mcp-plugins";
 import {
   notifySessionOwners,
   notifySessionRevocations,
@@ -274,6 +275,7 @@ export const auth = betterAuth({
   },
   disabledPaths: [...DISABLED_BETTER_AUTH_PATHS],
   plugins: [
+    ...resolveMcpPlugins({ enabled: env.MCP_ENABLED ?? true, baseUrl: env.BETTER_AUTH_URL }),
     admin({
       defaultRole: "user",
     }),

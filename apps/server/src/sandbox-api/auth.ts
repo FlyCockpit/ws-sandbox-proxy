@@ -22,6 +22,7 @@ const credentialNames = new Set([
   "credentials",
   "sdkkey",
   "sdktoken",
+  "agenttoken",
   "hosttoken",
   "devicetoken",
   "clientsecret",
@@ -35,7 +36,7 @@ export const sdkAuthentication: MiddlewareHandler<SandboxApiEnv> = async (c, nex
   for (const [name, value] of query) {
     if (
       credentialNames.has(name.toLowerCase().replace(/[-_\s]/g, "")) ||
-      /wssp_(?:sdk|host|device)_|^Bearer /i.test(value)
+      /wssp_(?:sdk|host|device|agent)_|^Bearer /i.test(value)
     ) {
       throw new ORPCError("BAD_REQUEST");
     }
@@ -54,7 +55,7 @@ export const sdkAuthentication: MiddlewareHandler<SandboxApiEnv> = async (c, nex
   const match = header?.match(/^Bearer (wssp_sdk_[A-Za-z0-9_-]+)$/i);
   if (!match) throw new ORPCError("UNAUTHORIZED");
   const principal = await authenticateSdkKeySecret(match[1]!);
-  if (!principal) throw new ORPCError("UNAUTHORIZED");
+  if (principal?.credentialKind !== "API") throw new ORPCError("UNAUTHORIZED");
   c.set("principal", principal);
   await next();
 };

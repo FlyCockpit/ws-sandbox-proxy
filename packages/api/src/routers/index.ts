@@ -2,15 +2,17 @@ import type { RouterClient } from "@orpc/server";
 import { getSignupEnabled } from "@wssp/auth/signup-policy";
 import { ADMIN_EMAILS } from "@wssp/env/server";
 import { isEmailConfigured } from "@wssp/mailer";
-
 import { publicProcedure } from "../index";
 import { adminDataKeysRouter } from "./admin-data-keys";
 import { adminObservabilityRouter } from "./admin-observability";
+import { agentTokensRouter } from "./agent-tokens";
 import { authRouter } from "./auth";
 import { communityTemplatesRouter } from "./community-templates";
 import { hostCredentialsRouter } from "./host-credentials";
+import { hostQueuedCommandsRouter } from "./host-queued-commands";
 import { hostTerminalsRouter } from "./host-terminals";
 import { loginsRouter } from "./logins";
+import { mcpGrantsRouter } from "./mcp-grants";
 import { pushRouter } from "./push";
 import { queueRouter } from "./queue";
 import { sandboxHostsRouter } from "./sandbox-hosts";
@@ -25,6 +27,7 @@ import { usersRouter } from "./users";
 import { webhooksRouter } from "./webhooks";
 
 export const appRouter = {
+  hostQueuedCommands: hostQueuedCommandsRouter,
   health: {
     // No RPC readiness probe: a DB-touching `ready` procedure would be an
     // anonymous datastore-drain vector bounded only by the generic /rpc
@@ -63,6 +66,8 @@ export const appRouter = {
   sandboxTerminals: sandboxTerminalsRouter,
   hostTerminals: hostTerminalsRouter,
   sdkKeys: sdkKeysRouter,
+  agentTokens: agentTokensRouter,
+  mcpGrants: mcpGrantsRouter,
   webhooks: webhooksRouter,
   logins: loginsRouter,
 };

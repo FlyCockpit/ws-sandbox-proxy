@@ -2646,7 +2646,8 @@ it("C53 wire: cookie-session upgrade drives the real host PTY; replay and wrong 
     if (browser.kind !== "open") throw new Error(`refused: ${JSON.stringify(browser)}`);
     expect(browser.protocol).toBe("wssp.terminal.v1");
     await until(() => browser.text.some((f) => f.type === "ready"), "browser ready");
-    expect(await exists("pty-argv")).toBe(true);
+    // Ready proves spawn; the shim still has to run before its argv file exists.
+    await until(() => exists("pty-argv"), "PTY shim recorded its argv");
     browser.sendBinary(Buffer.from("hello\n"));
     await until(() => browser.binary.join("").includes("got:hello"), "echo through the real PTY");
     browser.sendText(JSON.stringify({ type: "close", requestId: "bye" }));
@@ -2665,6 +2666,14 @@ it("C53 wire: cookie-session upgrade drives the real host PTY; replay and wrong 
     expect(replay).toMatchObject({ kind: "refused", status: 401, refusal: "TICKET_INVALID" });
     const wrongPlane = await attempt(await mint(), `Bearer wssp_host_${"B".repeat(43)}`);
     expect(wrongPlane).toMatchObject({ kind: "refused", status: 401, refusal: "CREDENTIAL_PLANE" });
+    // A veto installed after mint still refuses binding before any daemon PTY
+    // allocation. Exercise the fresh durable read, rather than mocking it on.
+    const vetoedProtocols = await mint();
+    store.hosts.get("host-1")!.hostTerminalVetoedAt = new Date();
+    const vetoed = await attempt(vetoedProtocols);
+    if (vetoed.kind !== "open") throw new Error(`refused: ${JSON.stringify(vetoed)}`);
+    expect(await vetoed.closed).toEqual({ code: 4401, reason: "revoked" });
+    expect(vetoed.text.some((f) => f.type === "ready")).toBe(false);
     await delay(500);
     expect(terminalFrames()).toHaveLength(before);
     expect(await exists("pty-argv")).toBe(false);

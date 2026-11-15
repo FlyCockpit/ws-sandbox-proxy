@@ -8,6 +8,9 @@
     "./tsconfig.base.json": "./tsconfig.base.json",
     "./biome.json": "./biome.json",
     "./postcss.config.mjs": "./postcss.config.mjs",
+    "./agent-token-limits": {
+      "default": "./src/agent-token-limits.ts"
+    },
     "./locales": {
       "default": "./src/locales.ts"
     },

@@ -167,6 +167,8 @@ const session = {
 function keyRow() {
   return {
     id: "key-a",
+    kind: "API" as const,
+    ownSandboxesOnly: false,
     userId: "owner-a",
     resourceMode: "ALL_OWNED" as const,
     scopes: ["hosts:read"],
@@ -237,9 +239,13 @@ describe("production bearer application", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("access-control-allow-origin")).toBeNull();
     expect(response.headers.get("cache-control")).toBe("no-store");
-    const doc = (await response.json()) as { paths: Record<string, unknown> };
+    const doc = (await response.json()) as {
+      paths: Record<string, unknown>;
+      components: { schemas: Record<string, unknown> };
+    };
     expect(Object.keys(doc.paths).every((path) => path.startsWith("/v1/"))).toBe(true);
-    expect(JSON.stringify(doc)).not.toMatch(/\/rpc|api-reference|admin/);
+    expect(JSON.stringify(doc)).not.toMatch(/\/rpc|api-reference|\/admin/);
+    expect(Object.keys(doc.components.schemas)).not.toContain("Admin");
     expect(state.charges.map((charge) => charge.prefix)).toEqual(["sdk-http:ip"]);
     expect(state.getSession).not.toHaveBeenCalled();
     expect(db.sdkKey.findUnique).not.toHaveBeenCalled();

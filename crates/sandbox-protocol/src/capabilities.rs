@@ -46,6 +46,18 @@ pub struct DaemonCapabilities {
     /// server opens a guest terminal only on a current session advertising this.
     pub terminal: bool,
     pub host_terminal: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_commands: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_files: bool,
+    #[serde(
+        default,
+        deserialize_with = "crate::egress::present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub host_command_max_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub agent_policy_revision: u64,
     pub require_host_terminal_totp: bool,
     pub policy_revision: u64,
     pub host_managed_sandbox_ceiling: u32,
@@ -118,6 +130,10 @@ impl Default for DaemonCapabilities {
             egress_policy: false,
             terminal: false,
             host_terminal: false,
+            host_commands: false,
+            host_files: false,
+            host_command_max_ms: None,
+            agent_policy_revision: 0,
             require_host_terminal_totp: true,
             policy_revision: 0,
             host_managed_sandbox_ceiling: 250,
@@ -254,4 +270,8 @@ impl HostLeasePolicyV11 {
             && self.sequence <= 9_007_199_254_740_991
             && valid_lease_ceiling(self.max_lease_ms)
     }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }

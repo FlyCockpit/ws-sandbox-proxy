@@ -1,3 +1,4 @@
+import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import type { auth } from "@wssp/auth";
 import { APP_LOCALE_HEADER } from "@wssp/config/locales";
 import { env } from "@wssp/env/web";
@@ -40,6 +41,7 @@ export const authClient = createAuthClient({
     // typed session. Without this, `session.user.locale` is unknown to the
     // type system even though the runtime payload includes it.
     inferAdditionalFields<typeof auth>(),
+    oauthProviderClient(),
     adminClient(),
     twoFactorClient(),
   ],

@@ -120,6 +120,8 @@ function tool(db, command, { mount = "rw" } = {}) {
       ...volume,
       "-e",
       `DATABASE_URL=postgresql://postgres@${PG}:5432/${db}?schema=public`,
+      "-e",
+      "BACKUP_ENABLED=true",
       // For direct pg_dump/pg_restore calls in tests; the scripts derive their
       // own settings from DATABASE_URL.
       "-e",
@@ -275,10 +277,15 @@ try {
   console.log(`Tools: Node ${nodeVersion.stdout.trim()}, PostgreSQL 18 client.`);
   const sourcePrint = fingerprint("app");
 
-  step("pre-migrate: no destination → WARNING and exit 0", () => {
+  step("pre-migrate: no destination → silent exit 0; --required → non-zero", () => {
     const result = tool("app", ["bash", "/app/scripts/backup/pre-migrate.sh"], { mount: "none" });
     assert.equal(result.code, 0, result.out);
-    assert.match(result.out, /WARNING: \[backup\] No pre-migration backup was taken/);
+    assert.doesNotMatch(result.out, /Verified/);
+    const required = tool("app", ["bash", "/app/scripts/backup/pre-migrate.sh", "--required"], {
+      mount: "none",
+    });
+    assert.notEqual(required.code, 0, required.out);
+    assert.match(required.out, /no backup destination/);
   });
 
   step("pre-migrate: unwritable /backups → non-zero", () => {
@@ -315,7 +322,7 @@ try {
 
   step("restore: no --confirm → preview only, nothing changed", () => {
     const result = restore("restored_raw", raw);
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /preview only/);
     assert.match(result.out, /--confirm RESTORE:restored_raw/);
     assert.equal(
@@ -329,7 +336,7 @@ try {
 
   step("restore: wrong --confirm is refused", () => {
     const result = restore("restored_raw", raw, "--confirm", "RESTORE:app");
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /--confirm must be exactly RESTORE:restored_raw/);
     assert.equal(sql("restored_raw", "SELECT to_regclass('public.\"User\"') IS NULL"), "t");
   });
@@ -467,7 +474,7 @@ try {
 
   step("restore: non-empty target without --replace is refused", () => {
     const result = restore("restored_raw", raw, "--confirm", "RESTORE:restored_raw");
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /is not empty/);
     assert.equal(fingerprint("restored_raw"), sourcePrint);
   });
@@ -517,7 +524,7 @@ try {
       "postgres",
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'restored_gz' AND pid <> pg_backend_pid()",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /other connection\(s\)/);
     assert.equal(dumps("pre-restore-").length, 1, "a refused restore must not snapshot");
   });
@@ -542,7 +549,7 @@ try {
       "postgres",
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'restored_gz' AND pid <> pg_backend_pid()",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /Prisma migration is running/);
   });
 
@@ -566,7 +573,7 @@ try {
       "postgres",
       "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'restored_gz' AND pid <> pg_backend_pid()",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /migration runner .* is working on this database/);
   });
 
@@ -579,7 +586,7 @@ try {
       "--confirm",
       "RESTORE:restored_misc",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /plain-SQL dump/);
   });
 
@@ -594,7 +601,7 @@ try {
       "--confirm",
       "RESTORE:restored_misc",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.equal(result.code, 3, result.out);
     assert.match(result.out, /incomplete or corrupt|rejected the archive/);
     assert.equal(
       sql(
@@ -638,7 +645,10 @@ try {
       "RESTORE:restored_misc",
     );
     assert.equal(result.code, 1, result.out);
-    assert.match(result.out, /rolled back/);
+    // A small archive is fully streamed before psql reaches the failing COPY,
+    // so COMMIT may already have been sent: restore then reports the outcome
+    // as uncertain (never "restored"). The contents below prove the rollback.
+    assert.match(result.out, /rolled back|The outcome for "restored_misc" is uncertain/);
     assert.equal(fingerprint("restored_misc"), sourcePrint);
     assert.equal(sql("restored_misc", "SELECT to_regclass('public.ok') IS NULL"), "t");
   });
@@ -703,7 +713,7 @@ try {
       "--confirm",
       "RESTORE:restored_misc",
     );
-    assert.equal(result.code, 1, result.out);
+    assert.notEqual(result.code, 0, result.out);
     assert.doesNotMatch(result.out, /Restore complete/);
     spawnSync("sleep", ["3"]);
     assert.equal(sql("postgres", "SELECT string_agg(got::text, ',') FROM lock_probe"), "false");

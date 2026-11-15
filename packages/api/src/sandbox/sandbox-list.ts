@@ -37,7 +37,10 @@ function sandboxListQuery(owner: Principal, raw: ListSandboxesInput) {
       JSON.stringify({
         owner: owner.ownerId,
         visibility: {
-          creationKey: viewer.resourceMode === "ALLOWLIST" ? recordedKeyIdOf(owner) : null,
+          creationKey:
+            viewer.resourceMode === "ALLOWLIST" || viewer.ownSandboxesOnly
+              ? recordedKeyIdOf(owner)
+              : null,
           hosts: viewer.allowedHostIds === "allOwned" ? null : [...viewer.allowedHostIds].sort(),
           pools:
             viewer.allowedPoolIds === "allUsable"

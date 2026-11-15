@@ -26,13 +26,14 @@ The upgrade selects its consumer by path before consumption: host path
 live-owner auth/Origin/CSRF/upgrade budgets and require one-use digest-only
 30-second tickets. Relabeling a token cannot cross the separate stores.
 Guest tickets pin transport owner and epoch; legacy tickets without that tuple
-are burned. No SDK or admin execution authority is added.
+are burned. These tickets confer no API-key, MCP-credential or admin terminal
+authority. Separate scoped host commands/files follow [ADR-006](./adr-006-agent-host-access.md).
 
 Required host proof uses a fresh unused TOTP step for each attempt,
 durable session/factor/watermark checks, observation cooldown and fail-closed
 budgets. Optional mode removes only the code requirement. A changed policy
 revision invalidates pending tickets/opens and live host PTYs. Dashboard
-raises are online-only and unconfirmed until the daemon persists/reports;
+raises of the TOTP requirement are online-only and unconfirmed until the daemon persists/reports;
 there is no server-owned raised flag. A fail-closed local watcher
 applies hot off within two seconds; durable rereads and OR matching apply to
 viewer-owner, transport-owner and host invalidation scopes.
@@ -77,12 +78,21 @@ foreign egress and budget usage. Withdrawal retains disks for the pool grace
 longer on offline/dead storage. Those notices are shown in the sharing and
 contribution UI.
 
+Dashboard `sandboxHosts.lowerAgentHostCommands` and `lowerHostTerminal` are
+live-owner-only. They durably request off and prevent new work immediately;
+reconnect resends pending lowering until the daemon reports off. Lowering host
+terminals invalidates tickets/opens and closes PTYs. There is no server procedure
+to enable either host-access setting. This differs from raising the TOTP
+requirement, which strengthens an existing terminal policy.
+
 ## Planes
 
 The browser terminal is a **cookie-session** plane, like the dashboard. It is
-separate from the other two planes:
+separate from the other three planes:
 
-- **SDK** (`/v1`, `wssp_sdk_`) has no terminal.
+- **SDK** (`/v1`, kind `API`, `wssp_sdk_`) has no terminal.
+- **MCP** (`/mcp`, kind `AGENT_TOKEN` or `OAUTH_GRANT`) has no terminal. Both
+  credential planes can use scoped host commands/files on an opted-in owned node.
 - **Host** (`/ws/sandbox-host`, `wssp_host_` / `wssp_device_`) carries the PTY
   bytes, but a host credential never opens a browser terminal.
 

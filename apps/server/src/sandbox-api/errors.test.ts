@@ -55,6 +55,7 @@ it("returns only catalog fields for every supported error and redacts unknown an
           ...(code === "capacity_wait_exceeds_policy" ? { maxWaitMs: 3_600_000 } : {}),
           ...(code === "sandbox.capacity_queue_full" ? { scope: "key" } : {}),
           ...(BUILD_FIELDS[code] ?? {}),
+          ...(code === "host.file_error" ? { reason: "path_denied" } : {}),
           ...(code === "sandbox.template_image_unavailable"
             ? { reason: "rebuilding", hint: "rebuild_required" }
             : {}),
@@ -69,7 +70,7 @@ it("returns only catalog fields for every supported error and redacts unknown an
           ? 5
           : code === "TRANSFER_QUOTA"
             ? 5
-            : code === "sandbox.host_reconnecting"
+            : code === "sandbox.host_reconnecting" || code === "host.node_offline"
               ? 1
               : isRetryableRefusalCode(code) && domain
                 ? 17
@@ -98,6 +99,9 @@ it("returns only catalog fields for every supported error and redacts unknown an
             ? { reason: "rebuilding", hint: "rebuild_required" }
             : {}),
           ...(isRetryableRefusalCode(code) ? { retryable: domain } : {}),
+          ...(code === "host.agent_access_off" ? { retryable: false } : {}),
+          ...(code === "host.node_offline" ? { retryable: true } : {}),
+          ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
           ...(retryAfter === undefined ? {} : { retryAfterSeconds: retryAfter }),
         },
       });
@@ -229,6 +233,7 @@ it("E1-B-09 names the refused entry and path on credential.value_invalid, never 
  * be added to PROBES and to the contract, or this test fails.
  */
 const PROBES: Record<string, Record<string, unknown>> = {
+  hostFile: { reason: "path_denied" },
   capacity: { reason: "ram", retryable: true },
   poolReserved: { reason: "reserved", skipped: ["vm_size"], retryable: true },
   quota: { resource: "disk", skipped: ["lease_policy"], retryable: false },

@@ -15,26 +15,50 @@ import {
 const HOUR = 3_600_000;
 
 describe("scheduleConfig", () => {
-  it("is off unless BACKUP_SCHEDULE=daily", () => {
+  it("requires both backup intent and a daily schedule", () => {
+    assert.deepEqual(scheduleConfig({ BACKUP_SCHEDULE: "daily" }), { enabled: false });
+    assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "false", BACKUP_SCHEDULE: "daily" }), {
+      enabled: false,
+    });
     assert.deepEqual(scheduleConfig({}), { enabled: false });
-    assert.deepEqual(scheduleConfig({ BACKUP_SCHEDULE: "off" }), { enabled: false });
-    assert.deepEqual(scheduleConfig({ BACKUP_SCHEDULE: "daily" }), {
+    assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "", BACKUP_SCHEDULE: "daily" }), {
+      enabled: false,
+    });
+    assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "off" }), {
+      enabled: false,
+    });
+    assert.deepEqual(scheduleConfig({ BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily" }), {
       enabled: true,
       hourUtc: 3,
       keep: 14,
     });
     assert.deepEqual(
-      scheduleConfig({ BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "0", BACKUP_KEEP: "30" }),
+      scheduleConfig({
+        BACKUP_ENABLED: "true",
+        BACKUP_SCHEDULE: "daily",
+        BACKUP_HOUR_UTC: "0",
+        BACKUP_KEEP: "30",
+      }),
       { enabled: true, hourUtc: 0, keep: 30 },
     );
   });
+  it("rejects invalid BACKUP_ENABLED even when the schedule is off", () => {
+    for (const flag of ["TRUE", "1", "yes", "FALSE", " true", "false "]) {
+      for (const mode of [undefined, "off", "daily"]) {
+        assert.throws(
+          () => scheduleConfig({ BACKUP_ENABLED: flag, BACKUP_SCHEDULE: mode }),
+          /BACKUP_ENABLED must be true or false/,
+        );
+      }
+    }
+  });
   it("rejects values it would otherwise guess at", () => {
     for (const env of [
-      { BACKUP_SCHEDULE: "hourly" },
-      { BACKUP_SCHEDULE: "true" },
-      { BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "24" },
-      { BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "3.5" },
-      { BACKUP_SCHEDULE: "daily", BACKUP_KEEP: "0" },
+      { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "hourly" },
+      { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "true" },
+      { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "24" },
+      { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily", BACKUP_HOUR_UTC: "3.5" },
+      { BACKUP_ENABLED: "true", BACKUP_SCHEDULE: "daily", BACKUP_KEEP: "0" },
     ])
       assert.throws(() => scheduleConfig(env), /BACKUP_/, JSON.stringify(env));
   });

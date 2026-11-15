@@ -27,6 +27,7 @@ export const NAMESPACES = [
   "sandboxes",
   "operations",
   "sdkKeys",
+  "agents",
   "terminal",
   "webhooks",
   "logins",

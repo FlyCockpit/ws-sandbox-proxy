@@ -110,3 +110,108 @@ describe("current-link host policy (unit; no database authority)", () => {
     expect(r.registry.read("host", "owner")).toBeUndefined();
   });
 });
+it("a pending dashboard lower refuses terminal access even while the live node still reports on", () => {
+  const invalidate = vi.fn();
+  const policies = new HostTerminalPolicies(invalidate);
+  const socket = { send() {} };
+  policies.register(
+    { hostId: "host", ownerId: "owner", epoch: 1, socket, authorized: () => true },
+    { hostTerminal: true, requireHostTerminalTotp: false, policyRevision: 1 },
+  );
+  policies.lower("host", "owner");
+  expect(policies.read("host", "owner")?.hostTerminal).toBe(false);
+  expect(invalidate).toHaveBeenCalledWith("host", "host_terminals_disabled");
+});
+
+it("invalid and valid off reports cannot lift a dashboard veto, nor can a subsequent on report", () => {
+  const policies = new HostTerminalPolicies(vi.fn());
+  const socket = { send() {} };
+  policies.register(
+    { hostId: "host", ownerId: "owner", epoch: 1, socket, authorized: () => true },
+    { hostTerminal: true, requireHostTerminalTotp: false, policyRevision: 1 },
+  );
+  policies.lower("host", "owner");
+  const report = {
+    type: "host.terminal-policy",
+    connectionEpoch: 1,
+    sequence: 1,
+    hostTerminal: false,
+    requireHostTerminalTotp: false,
+    policyRevision: 1,
+  } as const;
+  expect(policies.report("host", socket, report)).toBe(false);
+  expect(policies.read("host", "owner")).toMatchObject({
+    hostTerminal: false,
+    nodeHostTerminal: true,
+  });
+  expect(policies.report("host", socket, { ...report, policyRevision: 2 })).toBe(true);
+  expect(
+    policies.report("host", socket, {
+      ...report,
+      sequence: 2,
+      policyRevision: 3,
+      hostTerminal: true,
+    }),
+  ).toBe(true);
+  expect(policies.read("host", "owner")).toMatchObject({
+    hostTerminal: false,
+    nodeHostTerminal: true,
+  });
+  policies.lift("host", "foreign");
+  expect(policies.read("host", "owner")?.hostTerminal).toBe(false);
+  policies.lift("host", "owner");
+  expect(policies.read("host", "owner")?.hostTerminal).toBe(true);
+});
+
+it("terminal off witnesses use raw reports and remain bound to the connected epoch", () => {
+  const store = new HostTerminalPolicies(vi.fn());
+  const socket = { send: vi.fn() };
+  let connected = true;
+  let authorized = true;
+  const link = {
+    hostId: "host",
+    ownerId: "owner",
+    epoch: 2,
+    socket,
+    authorized: () => authorized,
+    connected: () => connected,
+  };
+  const policy = { hostTerminal: true, requireHostTerminalTotp: true, policyRevision: 1 };
+  store.register(link, policy);
+  store.lower("host", "owner");
+  expect(store.read("host", "owner")?.hostTerminal).toBe(false);
+  expect(store.offWitness("host", "owner")).toBeNull();
+  store.report("host", socket, {
+    type: "host.terminal-policy",
+    connectionEpoch: 2,
+    sequence: 1,
+    hostTerminal: false,
+    requireHostTerminalTotp: true,
+    policyRevision: 2,
+  });
+  expect(store.offWitness("host", "foreign")).toBeNull();
+  const witness = store.offWitness("host", "owner");
+  expect(witness?.epoch).toBe(2);
+  expect(witness?.isOff()).toBe(true);
+  authorized = false;
+  expect(store.offWitness("host", "owner")).toBeNull();
+  expect(witness?.isOff()).toBe(true);
+  connected = false;
+  expect(witness?.isOff()).toBe(false);
+  connected = authorized = true;
+  store.report("host", socket, {
+    type: "host.terminal-policy",
+    connectionEpoch: 2,
+    sequence: 2,
+    hostTerminal: true,
+    requireHostTerminalTotp: true,
+    policyRevision: 3,
+  });
+  expect(witness?.isOff()).toBe(false);
+  store.register({ ...link, epoch: 3 }, { ...policy, hostTerminal: false });
+  expect(witness?.isOff()).toBe(false);
+  const fresh = store.offWitness("host", "owner");
+  expect(fresh?.isOff()).toBe(true);
+  store.remove("host", socket);
+  expect(fresh?.isOff()).toBe(false);
+});

@@ -21,7 +21,7 @@ test("server leads, external worker waits, and all Applications build the select
     assert.ok(server.environment.SANDBOX_REQUEST_HMAC_SECRET);
     assert.deepEqual(
       server.persistentStorage.map((entry) => entry.mountPath),
-      ["/app/.data", "/backups"],
+      ["/app/.data"],
     );
     for (const app of config.applications) {
       const order = app === server ? "stop-first" : "start-first";
@@ -122,13 +122,27 @@ test("writer keys reach startup/backup, monitor keys reach only the selected run
     assert.equal(monitor.environment.BACKUP_S3_PREFIX, server.environment.BACKUP_S3_PREFIX);
     assert.ok(monitor.environment.BACKUP_MONITOR_S3_ACCESS_KEY_ID);
     if (topology === "app-worker") {
-      assert.equal(server.environment.BACKUP_MONITOR_S3_ACCESS_KEY_ID, undefined);
+      // The ID alone, for the entrypoint's reuse check; never the secret.
+      assert.equal(
+        server.environment.BACKUP_MONITOR_S3_ACCESS_KEY_ID,
+        `\${{environment.BACKUP_MONITOR_S3_ACCESS_KEY_ID}}`,
+      );
+      assert.equal(server.environment.BACKUP_MONITOR_S3_SECRET_ACCESS_KEY, undefined);
+      assert.deepEqual(
+        Object.keys(server.environment).filter((key) => key.startsWith("BACKUP_MONITOR_")),
+        ["BACKUP_MONITOR_S3_ACCESS_KEY_ID"],
+      );
       assert.equal(monitor.environment.BACKUP_S3_ACCESS_KEY_ID, undefined);
       assert.equal(monitor.environment.BETTER_AUTH_SECRET, undefined);
     }
-    assert.equal(config.environmentVariablesToSetOnce.BACKUP_ENABLED, "true");
-    assert.match(config.backupSetupRequired, /Daily defaults off/);
-    assert.match(config.backupSetupRequired, /monitor intent only/);
+    assert.equal(config.environmentVariablesToSetOnce.BACKUP_ENABLED, undefined);
+    assert.ok(config.environmentVariablesOptional.BACKUP_ENABLED);
+    assert.equal(config.backupSetupRequired, false);
+    assert.match(config.backupSetup, /Backups default off/);
+    assert.equal(
+      Object.keys(config.environmentVariablesToSetOnce).some((key) => key.startsWith("BACKUP_")),
+      false,
+    );
     for (const optional of Object.values(config.optionalEnvironmentKeys))
       assert.equal(
         optional.some((key) => /^(BACKUP_|RESTORE_|MIGRATE_|WSSP_INSTANCE_ID)/.test(key)),
@@ -139,7 +153,7 @@ test("writer keys reach startup/backup, monitor keys reach only the selected run
 
 test("Compose preserves spool/drain, pins PG18/Valkey9, and wires the opt-in scheduler", () => {
   for (const topology of ["app", "app-worker"] as const) {
-    const compose = generateDokployCompose({ ...defaults, topology });
+    const compose = generateDokployCompose({ ...defaults, topology, backups: true });
     assert.doesNotMatch(
       compose,
       /schema-apply|db-applier|APPLY_SCHEMA|WAIT_FOR_SCHEMA|service_completed_successfully/,
@@ -150,6 +164,8 @@ test("Compose preserves spool/drain, pins PG18/Valkey9, and wires the opt-in sch
     assert.match(compose, /postgres-data:\/var\/lib\/postgresql/);
     assert.match(compose, /--maxmemory-policy", "noeviction"/);
     const server = block(compose, "server");
+    assert.equal(server.match(/^ {6}BACKUP_ENABLED:/gm)?.length, 1);
+    assert.match(server, /BACKUP_ENABLED: "\$\{BACKUP_ENABLED:-true\}"/);
     assert.match(server, /MIGRATE_ON_START: "true"/);
     assert.match(server, /stop_grace_period: 30s/);
     assert.match(server, /order: stop-first/);
@@ -159,10 +175,11 @@ test("Compose preserves spool/drain, pins PG18/Valkey9, and wires the opt-in sch
     assert.match(server, /rule=Host\(`dev.example.com`\)/);
     assert.doesNotMatch(server, /healthcheck:/);
     const backup = block(compose, "backup");
+    assert.match(backup, /BACKUP_ENABLED: "\$\{BACKUP_ENABLED:-true\}"/);
     assert.match(backup, /profiles: \[backup\]/);
     assert.match(backup, /dockerfile: Dockerfile\n/);
     assert.match(backup, /command: backup-schedule/);
-    assert.match(backup, /BACKUP_SCHEDULE: "\$\{BACKUP_SCHEDULE:-off\}"/);
+    assert.match(backup, /BACKUP_SCHEDULE: "\$\{BACKUP_SCHEDULE:-daily\}"/);
     assert.match(backup, /backups:\/backups/);
     assert.match(
       backup,
@@ -177,7 +194,10 @@ test("Compose preserves spool/drain, pins PG18/Valkey9, and wires the opt-in sch
       assert.match(worker, /MIGRATE_ON_START: "false"/);
       assert.match(worker, /order: start-first/);
       assert.doesNotMatch(worker, /BACKUP_S3_ACCESS_KEY_ID|BACKUP_S3_SECRET_ACCESS_KEY|networks:/);
-      assert.doesNotMatch(server, /BACKUP_MONITOR_/);
+      assert.deepEqual(
+        [...server.matchAll(/^\s+(BACKUP_MONITOR_[A-Z0-9_]+):/gm)].map((match) => match[1]),
+        ["BACKUP_MONITOR_S3_ACCESS_KEY_ID"],
+      );
       assert.equal(prefix(worker), prefix(server));
     } else assert.equal(block(compose, "worker"), "");
     for (const match of compose.matchAll(
@@ -274,11 +294,36 @@ test("checklist reflects the actual roles and explicit backup configuration", ()
   assert.equal(config.compose.file, "docker-compose.dokploy.yml");
   assert.deepEqual(config.compose.environmentVariables.postgres, ["POSTGRES_PASSWORD"]);
   assert.ok(config.compose.environmentVariables.server?.includes("BETTER_AUTH_SECRET"));
-  assert.ok(config.compose.environmentVariables.backup?.includes("BACKUP_S3_ACCESS_KEY_ID"));
+  assert.ok(config.compose.optionalEnvironmentVariables.server?.BACKUP_S3_ACCESS_KEY_ID);
   assert.match(config.compose.manualMigration, /server migrate/);
   assert.equal(config.environmentVariablesToSetOnce.DATA_ENCRYPTION_KEY_PREVIOUS, undefined);
   assert.equal(config.environmentVariablesToSetOnce.CREDENTIALS_ENABLED, undefined);
   assert.ok(config.environmentVariablesOptional.CREDENTIALS_ENABLED);
   assert.ok(config.compose.optionalEnvironmentVariables.server?.DATA_ENCRYPTION_KEY_PREVIOUS);
   assert.ok(!config.compose.environmentVariables.server?.includes("DATA_ENCRYPTION_KEY_PREVIOUS"));
+});
+
+test("default Compose needs no backup settings, service or volume", () => {
+  for (const topology of ["app", "app-worker"] as const) {
+    const config = generateDokployConfig({ ...defaults, topology });
+    const compose = generateDokployCompose({ ...defaults, topology });
+    assert.equal(block(compose, "backup"), "");
+    assert.doesNotMatch(compose, /backups:|backups:\/backups|BACKUP_SCHEDULE:/);
+    assert.match(block(compose, "server"), /BACKUP_ENABLED: "\$\{BACKUP_ENABLED:-false\}"/);
+    for (const required of Object.values(config.compose.environmentVariables))
+      assert.equal(
+        required.some((key) => key.startsWith("BACKUP_")),
+        false,
+      );
+    assert.equal(config.compose.environmentVariables.backup, undefined);
+    const optedIn = generateDokployConfig({ ...defaults, topology, backups: true });
+    for (const checklist of [optedIn.backupSetup, optedIn.compose.backups]) {
+      assert.match(checklist, /defaults BACKUP_ENABLED=true and BACKUP_SCHEDULE=daily/);
+      assert.match(checklist, /[Ee]nable the backup profile/);
+      assert.doesNotMatch(checklist, /regenerate|[Ss]et BACKUP_ENABLED/);
+    }
+    assert.ok(
+      optedIn.applications[0]!.persistentStorage.some((entry) => entry.mountPath === "/backups"),
+    );
+  }
 });

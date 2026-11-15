@@ -24,6 +24,18 @@
     },
     "./terminal-proof": {
       "default": "./src/terminal-proof.ts"
+    },
+    "./mcp-config": {
+      "default": "./src/mcp-config.ts"
+    },
+    "./mcp-plugins": {
+      "default": "./src/mcp-plugins.ts"
+    },
+    "./mcp-grant": {
+      "default": "./src/mcp-grant.ts"
+    },
+    "./mcp-consent": {
+      "default": "./src/mcp-consent.ts"
     }
   },
   "scripts": {
@@ -37,7 +49,11 @@
     "@wssp/env": "workspace:*",
     "@wssp/mailer": "workspace:*",
     "better-auth": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@better-auth/mcp": "catalog:",
+    "@better-auth/cimd": "catalog:",
+    "@better-auth/oauth-provider": "catalog:",
+    "@wssp/sandbox-contracts": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

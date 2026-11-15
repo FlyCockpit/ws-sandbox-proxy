@@ -714,8 +714,12 @@ describe("deferred authority (M3) and access loss", () => {
                 poolIds: [f.pool.id],
                 scopes: SERVICE_SCOPES.filter(
                   // An allowlist key can hold neither webhooks:write (all-owned only) nor
-                  // credentials:use without an allowlisted login.
-                  (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+                  // credentials:use without an allowlisted login; host scopes need a host grant.
+                  (scope) =>
+                    scope !== "webhooks:write" &&
+                    scope !== "credentials:use" &&
+                    scope !== "hosts:execute" &&
+                    scope !== "hosts:files",
                 ),
               });
               return created;

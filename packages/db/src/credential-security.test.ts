@@ -15,6 +15,7 @@ const {
   parseDeviceCredentialSecret,
   parseHostTokenCredential,
   parseSdkKeyCredentialSecret,
+  parseAgentTokenCredentialSecret,
   resolveProductCredentialPurpose,
   verifyProductCredentialDigest,
 } = await import("./credential-security");
@@ -23,6 +24,7 @@ const PURPOSE_PARSERS = {
   hostToken: parseHostTokenCredential,
   deviceCredential: parseDeviceCredentialSecret,
   sdkKey: parseSdkKeyCredentialSecret,
+  agentToken: parseAgentTokenCredentialSecret,
 } as const;
 
 describe("credentialSecurity", () => {
@@ -111,13 +113,16 @@ describe("credentialSecurity", () => {
   it("snapshots HMAC context strings for host, device, and SDK purposes", () => {
     expect(CREDENTIAL_HMAC_CONTEXTS).toMatchInlineSnapshot(`
       {
+        "agentToken": "wssp:agent-token:v1",
         "deviceCredential": "wssp:device-credential:v1",
+        "hostCommandAudit": "wssp:host-command-audit:v1",
         "hostToken": "wssp:host-token:v1",
         "sdkKey": "wssp:sdk-key:v1",
       }
     `);
     expect(PRODUCT_CREDENTIAL_PREFIXES).toMatchInlineSnapshot(`
       {
+        "agentToken": "wssp_agent_",
         "deviceCredential": "wssp_device_",
         "hostToken": "wssp_host_",
         "sdkKey": "wssp_sdk_",
@@ -161,4 +166,11 @@ describe("credentialSecurity", () => {
       });
     },
   );
+});
+
+it("host command audit HMACs use a distinct purpose and hexadecimal encoding", () => {
+  const input = "echo fixture";
+  const audit = hmacDigestForProductPurpose({ purpose: "hostCommandAudit", value: input });
+  expect(audit).toMatch(/^[0-9a-f]{64}$/);
+  expect(audit).not.toBe(hmacDigestForProductPurpose({ purpose: "agentToken", value: input }));
 });

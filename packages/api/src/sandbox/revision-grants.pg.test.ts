@@ -79,7 +79,9 @@ async function fixture() {
       "templates:write",
       "hosts:read",
       "sandboxes:read",
-      "sandboxes:write",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
       "operations:read",
     ],
   });

@@ -99,7 +99,7 @@ export type TeardownOptions = MutationOptions & { credentialCapture?: "skip" };
 /** One login to attach; a named account or instance applies to this attach only. */
 export type AttachCredentialInput = z.input<typeof attachCredentialBodySchema>;
 
-/** Live login attach/free on one sandbox (scope `credentials:use` + `sandboxes:write`). */
+/** Live login attach/free on one sandbox (scope `credentials:use` + `sandboxes:manage`). */
 export type SandboxCredentials = {
   /**
    * Attach a login and resolve once it is installed (READY: new commands and

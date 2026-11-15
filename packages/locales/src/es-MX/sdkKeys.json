@@ -40,7 +40,10 @@
     "loginsRequired": "Con credentials:use, elige al menos un inicio de sesión que esta clave pueda usar.",
     "loginsFailed": "No se pudieron cargar tus inicios de sesión.",
     "noLogins": "Todavía no tienes inicios de sesión de CLI.",
-    "moreLogins": "Cargar más inicios de sesión"
+    "moreLogins": "Cargar más inicios de sesión",
+    "ownSandboxesOnly": "Solo sandboxes propios",
+    "ownSandboxesOnlyHint": "Solo sandboxes creados originalmente con esta clave, incluidos comandos, archivos y operaciones. Esta opción no limita los comandos del host.",
+    "hostScopeWarning": "El usuario del daemon es administrador de Incus. Los comandos y las herramientas de archivos del host pueden acceder a todos los sandboxes del nodo, incluidos los de otras personas en pools compartidos. “Solo sandboxes propios” no limita el acceso al host. También debes habilitar la opción en el nodo."
   },
   "list": {
     "scopes": "Alcances",
@@ -49,12 +52,13 @@
     "allowlistHosts": "Hosts: {{names}}",
     "allowlistTemplates": "Versiones de plantilla: {{names}}",
     "allowlistPools": "Grupos: {{names}}",
-    "allowlistLogins": "Inicios de sesión: {{names}}"
+    "allowlistLogins": "Inicios de sesión: {{names}}",
+    "otherSandboxes": "Puede acceder a tus otros sandboxes dentro de los recursos autorizados"
   },
   "mint": {
     "action": "Crear clave de SDK",
     "title": "Crear una clave de SDK",
-    "description": "Elige solo los alcances y recursos que necesita tu código. La clave no puede administrar credenciales, hosts ni usuarios, ni abrir terminales.",
+    "description": "Elige solo los permisos y recursos que necesita tu código. El acceso a comandos y archivos del host requiere un host propio y consentimiento del nodo.",
     "submit": "Crear clave",
     "secretLabel": "Tu nueva clave de SDK",
     "usageHint": "Envíala como Authorization: Bearer <clave> a la API /v1."
@@ -76,7 +80,9 @@
   },
   "scope": {
     "hosts": {
-      "read": "Listar tus hosts."
+      "read": "Listar tus hosts.",
+      "execute": "Ejecutar y poner en cola comandos en tus propios hosts.",
+      "files": "Leer y modificar archivos en tus propios hosts."
     },
     "templates": {
       "read": "Listar plantillas.",
@@ -85,7 +91,9 @@
     },
     "sandboxes": {
       "read": "Leer sandboxes y sus procesos.",
-      "write": "Crear, detener, reconectar, renovar y eliminar sandboxes."
+      "create": "Crear sandboxes.",
+      "manage": "Detener, reconectar, renovar, renombrar y capturar sandboxes.",
+      "destroy": "Destruir sandboxes."
     },
     "commands": {
       "execute": "Ejecutar comandos, escribir en stdin y enviar señales a procesos.",
@@ -124,10 +132,10 @@
   },
   "scopeNeeds": {
     "operations": {
-      "cancel": "Selecciona también el alcance del trabajo que se cancela (por ejemplo sandboxes:write o commands:execute)."
+      "cancel": "Selecciona también el alcance del trabajo que se cancela (por ejemplo sandboxes:manage o commands:execute)."
     },
     "credentials": {
-      "use": "Selecciona también sandboxes:write."
+      "use": "Selecciona también sandboxes:manage."
     }
   },
   "title": "Claves de SDK"

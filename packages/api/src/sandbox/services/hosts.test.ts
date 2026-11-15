@@ -55,3 +55,53 @@ describe("owner host reconciler-health projection", () => {
     },
   );
 });
+it("projects only the last fifty audit metadata rows to the host owner's dashboard", async () => {
+  db.sandboxHost.findFirst.mockResolvedValue({
+    id: "host",
+    userId: "owner",
+    StoragePools: [],
+    createdAt: new Date(),
+    policyReconcilerHealth: null,
+  } as never);
+  db.hostAuditEvent.findMany.mockResolvedValue([]);
+  const { getHost } = await import("./hosts");
+  const result = await getHost({ kind: "session", ownerId: "owner" }, { id: "host" });
+  expect(result.recentAudit).toEqual([]);
+  expect(db.hostAuditEvent.findMany).toHaveBeenCalledWith({
+    where: { userId: "owner", sandboxHostId: "host" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 50,
+    select: { id: true, createdAt: true, actor: true, kind: true, program: true, state: true },
+  });
+});
+
+it("projects only the owner's node-reported agent access", async () => {
+  const { bindHostAccess } = await import("../host-access");
+  const { mockDeep } = await import("vitest-mock-extended");
+  const bridge = mockDeep<import("../host-access").HostAccessBridge>();
+  bridge.read.mockReturnValue({
+    hostCommands: true,
+    hostFiles: false,
+    agentPolicyRevision: 1,
+    lowerPending: false,
+  });
+  bindHostAccess(bridge);
+  try {
+    db.sandboxHost.findMany.mockResolvedValue([
+      { id: "h", userId: "owner", StoragePools: [], createdAt: new Date() },
+    ] as never);
+    const result = await listHosts({ kind: "session", ownerId: "owner" }, { limit: 10 });
+    expect(result.items[0]!.agentAccess).toEqual({
+      owned: true,
+      hostCommands: true,
+      hostFiles: false,
+    });
+    db.sandboxHost.findMany.mockResolvedValue([
+      { id: "h", userId: "someone-else", StoragePools: [], createdAt: new Date() },
+    ] as never);
+    const foreign = await listHosts({ kind: "session", ownerId: "owner" }, { limit: 10 });
+    expect(foreign.items[0]!.agentAccess).toEqual({ owned: false });
+  } finally {
+    bindHostAccess(null);
+  }
+});

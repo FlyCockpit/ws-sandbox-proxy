@@ -90,6 +90,7 @@ export function wireStore(kind: string): FenceStore {
   // revision row cannot change the immutable placement snapshot.
   Object.assign(store.placements.get("placement:sbx-1")!, { artifact: WIRE_FINGERPRINT });
   store.hosts.get("host-1")!.connectionEpoch = 0;
+  store.hosts.get("host-1")!.hostTerminalVetoedAt = null;
   Object.assign(store.operations.get("op-1")!, {
     dispatchAttempt: 0,
     acceptedAttempt: null,
@@ -166,6 +167,37 @@ export function installWireDelegates(
   );
   db.sandboxHost.updateMany.mockImplementation((args) =>
     prismaPromise(prisma.$transaction((tx) => tx.sandboxHost.updateMany(args))),
+  );
+  // Terminal binding revalidation checks the durable veto outside the mint
+  // transaction too. Evaluate the same host predicates on that read.
+  db.sandboxHost.findFirst.mockImplementation((args) =>
+    Object.assign(
+      prismaPromise(
+        Promise.resolve(
+          ([...store.hosts.values()].find((row) =>
+            matches(row, args?.where as Record<string, unknown>),
+          ) ?? null) as never,
+        ),
+      ),
+      {
+        HostQueuedCommands: vi.fn(),
+        HostTerminalTickets: vi.fn(),
+        ImageCache: vi.fn(),
+        User: vi.fn(),
+        HostTokens: vi.fn(),
+        HostDeviceCredentials: vi.fn(),
+        Sandboxes: vi.fn(),
+        TemplateAvailability: vi.fn(),
+        PoolMemberships: vi.fn(),
+        SdkKeyHostAllowlist: vi.fn(),
+        StoragePools: vi.fn(),
+        CredentialPendingCaptures: vi.fn(),
+        CredentialCensus: vi.fn(),
+        CredentialTombstones: vi.fn(),
+        CredentialReturnKeys: vi.fn(),
+        DiskCopies: vi.fn(),
+      },
+    ),
   );
   db.$queryRaw.mockResolvedValue([]);
   db.sandboxOperation.findFirst.mockImplementation((args) =>

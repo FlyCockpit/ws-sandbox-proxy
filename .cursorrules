@@ -60,7 +60,10 @@ These override every other document in this repo.
 1. NEVER run direct `prisma migrate reset|dev|deploy`, schema push, `db drop`,
    or raw `DROP`/`TRUNCATE`/unqualified `DELETE`. Schema changes use committed
    migrations: `pnpm db:migrate <name>`, review SQL, `pnpm db:migrate:apply`.
-   Rebuild only this checkout's exact local DB with `pnpm db:reset:local`.
+   Rebuild only this checkout's exact local DB with `pnpm db:reset:local`; it
+   refuses a database without the disposable-local mark (`pnpm db:worktree` and
+   the dev compose set it). Agents never run `pnpm db:worktree --adopt`, raw
+   `prisma migrate resolve`, or `COMMENT ON DATABASE` (the hook denies them).
 2. NEVER weaken auth: no removing `requireAuth`/`requireAdmin`, no converting
    an authenticated procedure to `publicProcedure`, no disabling a rate limiter,
    no loosening CSRF, CORS, or CSP.
@@ -111,7 +114,8 @@ fail. Review this list and the manifest together before changing either:
 - `packages/db/src/testing/pg.ts`: identity-checked per-file disposable clone drop.
 - `scripts/claude-hooks/settings.json`: fifteen exact declarative deny prefixes
   (`prisma migrate dev/reset`, `prisma db push` and `prisma db drop` in each
-  launcher form); each denies the command, none runs it.
+  launcher form); each denies the command, none runs it. Its unpinned denies
+  for `prisma migrate resolve` and `db:worktree --adopt` only add refusals.
 
 A textual mention is not an invocation. `destructive:audited` applies only to
 proven-inert comments/display strings; it never permits a live command. Hooks
@@ -182,6 +186,12 @@ Safe alternatives:
 - Browser control plane: cookie session plus CSRF and required-2FA policy.
 - SDK plane: `/v1`, `Authorization: Bearer wssp_sdk_…`, no cookie authentication
   or CORS middleware.
+- Agent plane: `POST /mcp`, bearer `wssp_agent_…` or an OAuth access token
+  (DPoP optional), never cookies. Agent tokens and OAuth grants are `SdkKey`
+  rows of kind `AGENT_TOKEN` / `OAUTH_GRANT`; `/v1` accepts only kind `API`.
+  Tools call the same service actions as `/v1`; never expose a person-only
+  procedure (keys, tokens, grants, node settings, queued-command decisions,
+  terminals) as a tool. Keep `docs/mcp-tool-coverage.md` generated.
 - Host plane: `/ws/sandbox-host`, outbound WSS, strictly `wssp_host_` or
   `wssp_device_`. Credentials never authorize another plane.
 - All resource access is owner-scoped. Admin cross-owner access is
@@ -222,6 +232,15 @@ Safe alternatives:
   with a 30 s dead-man; no healthy guard means no new sandboxes. Open egress
   on another user's node needs `allow_open_egress_for_others`. Daemons print the
   guard command and never run `sudo`. See `docs/guide/network.md`.
+- Host access for credentials (`hosts:execute`, `hosts:files`, ADR-006) works
+  only on nodes the credential's own user owns, never through a shared pool,
+  and only while the node-local setting is on. Node settings are raised only
+  at the node (`wssp config …`, local TTY); the server and dashboard may only
+  lower them, and a dashboard lower is a sticky veto only a person lifts.
+  Never add a raise frame, procedure or tool. Host command audits store the
+  credential, node, program and an HMAC, never command text or output.
+  Agent host access means the agent can do what the daemon user can do;
+  it is off until a person enables it at the node. No separate agent user.
 - Do not launch live Incus VMs from agent work (`incus-surface`,
   `wssp connect --runtime incus`) unless the user explicitly asks.
 - CLI-login values are write-only: never return, log or put one in an
@@ -244,7 +263,8 @@ Safe alternatives:
   Concurrent leaders serialize; waiting admits/registers instances without
   application-schema DDL. See `docs/schema-migrations.md` and `docs/infra.md`.
 - Expand/contract delays removals at least seven days and waits for older
-  instances; raw SQL consumers must be audited. Production recovery belongs
+  instances; raw SQL consumers must be audited. The enum-remove sync trigger
+  is `0_wssp_sync_<hash>` so it fires before every app BEFORE trigger. Production recovery belongs
   to the owner; no automatic adoption of a populated no-history database.
 
 ## Web Conventions
@@ -397,10 +417,26 @@ cargo xtask sync-docs --check
 
 ## Deployment
 
+- New deployments default to no automatic DB backups: no required backup storage,
+  service or schedule, no migration backup gate or freshness penalty while off,
+  and one startup notice explaining how to enable them. Backups remain opt-in.
+  `BACKUP_ENABLED=true` with no usable destination fails every migrating start,
+  a brand-new database too (owner decision, no exemption).
+- The entrypoint stays PID 1 through migration and the startup backup check
+  (supervised children, stop signals forwarded, exit 143/130/129), refuses a
+  monitor key equal to the writer key, then drops the backup writer keys and every `BACKUP_S3_*` the process does not read
+  (bucket, prefix, endpoint, region; plus force-path-style for the worker and
+  for a server with the default embedded worker) and
+  `exec tini --` the CMD. `restore` exits 3 for every
+  refusal or cancel before its transaction; `host.sh` restarts writers only
+  after 0 or 3.
+- Per-user gated features disabled only for security default on. Keep global
+  boundary relaxations and node-local owner consent explicit; cost or other
+  non-security opt-outs need an owner decision, not an automatic default change.
 - App plus Postgres 18 and Valkey 9; optional dedicated worker (`app-worker`,
   `WORKER_MODE=external`) and backup profile. No separate migration image.
 - Image commands `migrate`, `backup`, `restore`, `restore-drill` share the
-  canonical runner/backup closure. Exactly one daily backup schedule per DB.
+  canonical runner/backup closure. At most one daily backup schedule per DB.
 - `pnpm dokploy:config` emits the Compose topology. Accept deployments with
   `pnpm dokploy:verify --commit <full-sha>`. Use unique `--project`,
   `--proxy-network`, origins and backup prefixes for co-tenants; no fixed host ports.

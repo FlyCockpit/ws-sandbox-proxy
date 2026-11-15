@@ -5,8 +5,11 @@ import { spawn } from "node:child_process";
  *
  *   node scripts/db/migrate-runtime.mjs apply   (default)
  *     The `migrate` image command and MIGRATE_ON_START=true. Classifies the
- *     database, refuses unsafe states, runs the optional pre-migration backup,
- *     then `prisma migrate deploy`. Exits 0 only when the DB is up to date.
+ *     database, refuses unsafe states, runs the pre-migration backup when
+ *     BACKUP_ENABLED=true (the hook with --required: no destination, or a
+ *     failed dump, refuses the migration; BACKUP_ENABLED unset/false skips
+ *     the hook and migrates without one), then `prisma migrate deploy`.
+ *     Exits 0 only when the DB is up to date.
  *
  *     Everything from the first classification to the final check runs while
  *     this process holds the migration runner lock (a session advisory lock,
@@ -191,6 +194,7 @@ export async function run(options = {}) {
   for (const name of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(name, cancel);
   try {
     if (!databaseUrl) throw new Refusal("DATABASE_URL is not set.");
+    const backupEnabled = parseBackupEnabled(env.BACKUP_ENABLED);
     const role = options.role ?? "server";
     if (role !== "server" && role !== "worker")
       throw new Refusal(`--role must be "server" or "worker" (got "${role}").`);
@@ -213,6 +217,7 @@ export async function run(options = {}) {
         return result;
       },
       backupHook,
+      backupEnabled,
       schema: prismaSchemaName(databaseUrl),
       role,
       instanceId,
@@ -596,7 +601,10 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   if (recoverable.length) facts = await readMutationFacts(ctx, lock.client);
   log(`pending migration(s): ${toApply.join(", ")}`);
   lock.assertHeld("the pre-migration backup");
-  const backup = freshDatabase ? { ran: false, label: null } : await preMigrateBackup(ctx);
+  // A brand-new database is not exempt (owner decision): BACKUP_ENABLED=true with
+  // no usable destination fails the very first start too, so a broken backup
+  // setup shows up on day one rather than at the first upgrade.
+  const backup = await preMigrateBackup(ctx);
   if (JSON.stringify(await readMutationFacts(ctx, lock.client)) !== JSON.stringify(facts)) {
     log(
       "database/history/contract state changed during backup; restarting classification and backup.",
@@ -944,11 +952,17 @@ async function applyDue(ctx, client, lock, { migrations, run, level, now, inputs
   }
   if (!valid.length) return;
   let backup = run.backup?.label ?? null;
-  if (!run.fresh && !run.backup?.ran) {
+  // BACKUP_ENABLED=false (default): no pre-drop dump; deletions run without one.
+  if (ctx.backupEnabled && !run.fresh && !run.backup?.ran) {
     lock.assertHeld("the pre-drop backup");
-    const result = await runBackupHook(ctx, ["--label", "pre-drop", "--keep", "5"]);
-    if (result.missing) warn("no backup hook in this image; deleting without a pre-drop backup.");
-    else if (result.code !== 0) {
+    const result = await runBackupHook(ctx, ["--label", "pre-drop", "--keep", "5", "--required"]);
+    if (result.missing) {
+      loud([
+        "BACKUP_ENABLED=true but this image has no backup hook; scheduled deletions skipped this run.",
+      ]);
+      return;
+    }
+    if (result.code !== 0) {
       loud([
         `the configured pre-drop backup failed (exit ${result.code}); scheduled deletions skipped this run.`,
         "Fix the backup configuration (docs/backup-restore.md).",
@@ -1117,7 +1131,7 @@ async function reportReplayError(ctx, migration) {
 /**
  * Run scripts/backup/pre-migrate.sh with `args`, teeing its output, and read
  * the dump's file name from its "Verified" line (null when no destination is
- * configured: the hook warns and exits 0).
+ * configured: the hook silently exits 0).
  * @returns {Promise<{ missing: boolean, code: number, label: string | null }>}
  */
 async function runBackupHook(ctx, args = []) {
@@ -1154,23 +1168,39 @@ async function runBackupHook(ctx, args = []) {
   return { missing: false, code, label: verified ? path.basename(verified) : null };
 }
 
-/** @returns {Promise<{ ran: boolean, label: string | null }>} */
+/**
+ * BACKUP_ENABLED, the backup switch: unset/empty/"false" → off, "true" → on,
+ * anything else refuses (strict, like the entrypoint and the env schema).
+ * @param {string | undefined} value
+ */
+export function parseBackupEnabled(value) {
+  if (value === undefined || value === "" || value === "false") return false;
+  if (value === "true") return true;
+  throw new Refusal(`BACKUP_ENABLED must be true or false (got "${value}").`);
+}
+
+/**
+ * Off (default): no hook, no IO — migrations never wait on or refuse for
+ * backups (the easy-deployment rule). On: the hook runs with --required, so a
+ * missing destination fails exactly like a failed dump.
+ * @returns {Promise<{ ran: boolean, label: string | null }>}
+ */
 async function preMigrateBackup(ctx) {
+  if (!ctx.backupEnabled) return { ran: false, label: null };
   if (!existsSync(ctx.backupHook)) {
-    warn(
-      `pre-migration backup hook ${path.relative(ROOT, ctx.backupHook)} is not in this image; migrating without a pre-migration backup.`,
+    throw new Refusal(
+      `BACKUP_ENABLED=true but the pre-migration backup hook ${path.relative(ROOT, ctx.backupHook)} is not in this image; refusing to migrate without a backup.`,
     );
-    return { ran: false, label: null };
   }
   log("running the pre-migration backup hook…");
-  const { code, label } = await runBackupHook(ctx);
+  const { code, label } = await runBackupHook(ctx, ["--required"]);
   if (code !== 0) {
     throw new Refusal(
-      `the configured pre-migration backup failed (exit ${code}); refusing to migrate without it. ` +
-        "Fix the backup configuration (docs/backup-restore.md) or remove it deliberately.",
+      `BACKUP_ENABLED=true and the pre-migration backup failed (exit ${code}); refusing to migrate without it. ` +
+        "Fix the backup destination (docs/operations/backup-and-restore.md), or set BACKUP_ENABLED=false to migrate without backups.",
     );
   }
-  return { ran: true, label };
+  return { ran: label !== null, label };
 }
 
 async function deploy(ctx) {

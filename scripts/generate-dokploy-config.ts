@@ -15,6 +15,7 @@ type Options = {
   url: string;
   project?: string;
   proxyNetwork?: string;
+  backups?: boolean;
 };
 const keys = new Set(ENV_VARS.map((variable) => variable.key));
 const sharedKeys = new Set(Object.keys(sharedVars));
@@ -75,8 +76,12 @@ export function generateDokployConfig(options: Options) {
     MIGRATE_ON_START: "true",
     BACKUP_S3_PREFIX: prefix,
     ...refs(writerKeys),
-    ...refs(["BACKUP_HEARTBEAT_URL"]),
-    ...(!worker ? refs(monitorKeys) : {}),
+    ...refs(["BACKUP_ENABLED", "BACKUP_HEARTBEAT_URL"]),
+    // With an external worker the server never runs the freshness check, but
+    // it is the one container that holds the writer key: it gets the monitor
+    // key ID alone (never the secret), so its entrypoint can refuse a reused
+    // key, then drops it before the server starts.
+    ...(!worker ? refs(monitorKeys) : refs([MONITOR_KEY_ID])),
   };
   const workerEnvironment = {
     ...runtime,
@@ -121,12 +126,16 @@ export function generateDokployConfig(options: Options) {
               ownerUid: 1000,
               directoryMode: "0700",
             },
-            {
-              volume: `${projectName(options)}-backups`,
-              mountPath: "/backups",
-              ownerUid: 1000,
-              directoryMode: "0700",
-            },
+            ...(options.backups
+              ? [
+                  {
+                    volume: `${projectName(options)}-backups`,
+                    mountPath: "/backups",
+                    ownerUid: 1000,
+                    directoryMode: "0700",
+                  },
+                ]
+              : []),
           ]
         : [],
     buildArgs: {
@@ -196,8 +205,12 @@ export function generateDokployConfig(options: Options) {
       server: optionalFor(serverKeys, serverEnvironment),
       ...(worker ? { worker: optionalFor(sharedKeys, workerEnvironment) } : {}),
     },
-    backupSetupRequired:
-      "Before storing real data, choose provider backups or enable exactly one daily backup service and external missed-backup alert. Daily defaults off. Fresh empty installs need no snapshot; existing databases without a destination warn; configured backup failures block. BACKUP_ENABLED controls monitor intent only (default true). Writer credentials belong to server startup and the backup service and are stripped before app execution; monitor credentials belong only to the selected worker runtime. Follow docs/operations/deployment.md.",
+    backupSetupRequired: false,
+    backupSetup:
+      (options.backups
+        ? "The generated Compose defaults BACKUP_ENABLED=true and BACKUP_SCHEDULE=daily. Enable the backup profile for daily backups. "
+        : "Backups default off; migrations and readiness work without backup settings. To opt in, regenerate with --backups true and enable the generated backup profile. ") +
+      "Writer keys belong to startup and backup operations; monitor keys belong to the selected worker runtime. See docs/operations/backup-and-restore.md.",
     rolloutContract:
       "The server applies committed migrations before HTTP startup; external workers wait up to 300s and register their instance. Server updates and rollbacks use stop-first so only one process owns the private transfer spool. Keep 30s grace for relay and transfer drain. Accept the expected full commit and repeated readiness with pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha> (Swarm-deployed services; for a plain Compose deployment check GET /ready reports the commit); preserve adjacent-release queue compatibility.",
     releaseContract:
@@ -249,10 +262,16 @@ const WEBHOOK_KEYS = [
   "WEBHOOK_ALLOW_PLAINTEXT_PRIVATE",
 ];
 const OPTIONAL_FORWARDED: Record<string, string> = {
+  ...Object.fromEntries(
+    ENV_VARS.filter((variable) => variable.key.startsWith("BACKUP_")).map((variable) => [
+      variable.key,
+      "Optional backup configuration; define it with an empty value when backups are off (Dokploy rejects a reference to an undefined variable). See docs/operations/backup-and-restore.md.",
+    ]),
+  ),
   DATA_ENCRYPTION_KEY_PREVIOUS:
-    "Leave unset outside an encryption-root rotation; use the same previous root on server and worker during rotation.",
+    "Define it with an empty value outside an encryption-root rotation (Dokploy rejects a reference to an undefined variable); use the same previous root on server and worker during rotation.",
   CREDENTIALS_ENABLED:
-    "Leave unset for the existing CLI-login default; set false on both server and worker to disable.",
+    "Define it with an empty value for the existing CLI-login default (Dokploy rejects a reference to an undefined variable); set false on both server and worker to disable.",
 };
 const writerKeys = [
   "BACKUP_S3_BUCKET",
@@ -263,6 +282,7 @@ const writerKeys = [
   "BACKUP_S3_FORCE_PATH_STYLE",
   "BACKUP_S3_SSE",
 ];
+const MONITOR_KEY_ID = "BACKUP_MONITOR_S3_ACCESS_KEY_ID";
 const monitorKeys = [
   "BACKUP_ENABLED",
   "BACKUP_MAX_AGE_HOURS",
@@ -274,7 +294,7 @@ const monitorKeys = [
   "BACKUP_MONITOR_S3_SECRET_ACCESS_KEY",
 ];
 const backupDefaults: Record<string, string> = {
-  BACKUP_ENABLED: "true",
+  BACKUP_ENABLED: "false",
   BACKUP_MAX_AGE_HOURS: "36",
   BACKUP_S3_REGION: "auto",
   BACKUP_S3_FORCE_PATH_STYLE: "false",
@@ -317,8 +337,9 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
       MIGRATE_ON_START: "true",
       ...refsForCompose(writerKeys),
       BACKUP_HEARTBEAT_URL: composeVar("BACKUP_HEARTBEAT_URL"),
-      ...(!worker ? refsForCompose(monitorKeys) : {}),
+      ...(!worker ? refsForCompose(monitorKeys) : refsForCompose([MONITOR_KEY_ID])),
       BACKUP_S3_PREFIX: prefix,
+      BACKUP_ENABLED: composeVar("BACKUP_ENABLED", options.backups ? "true" : "false"),
     },
     ...(worker
       ? {
@@ -330,18 +351,24 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
             MIGRATE_ON_START: "false",
             ...refsForCompose(monitorKeys),
             BACKUP_S3_PREFIX: prefix,
+            BACKUP_ENABLED: composeVar("BACKUP_ENABLED", options.backups ? "true" : "false"),
           },
         }
       : {}),
-    backup: {
-      DATABASE_URL: databaseUrl,
-      ...refsForCompose(writerKeys),
-      BACKUP_HEARTBEAT_URL: composeVar("BACKUP_HEARTBEAT_URL"),
-      BACKUP_S3_PREFIX: prefix,
-      BACKUP_SCHEDULE: composeVar("BACKUP_SCHEDULE", "off"),
-      BACKUP_HOUR_UTC: composeVar("BACKUP_HOUR_UTC", "3"),
-      BACKUP_KEEP: composeVar("BACKUP_KEEP", "14"),
-    },
+    ...(options.backups
+      ? {
+          backup: {
+            DATABASE_URL: databaseUrl,
+            ...refsForCompose(writerKeys),
+            BACKUP_HEARTBEAT_URL: composeVar("BACKUP_HEARTBEAT_URL"),
+            BACKUP_S3_PREFIX: prefix,
+            BACKUP_ENABLED: composeVar("BACKUP_ENABLED", "true"),
+            BACKUP_SCHEDULE: composeVar("BACKUP_SCHEDULE", "daily"),
+            BACKUP_HOUR_UTC: composeVar("BACKUP_HOUR_UTC", "3"),
+            BACKUP_KEEP: composeVar("BACKUP_KEEP", "14"),
+          },
+        }
+      : {}),
   };
 }
 
@@ -377,7 +404,10 @@ function composeChecklist(options: Options) {
     ),
     manualMigration: "docker compose run --rm server migrate",
     backups:
-      "The backup profile is opt-in; enable it and set BACKUP_SCHEDULE=daily, or use provider backups. Mount /backups on server and backup. Exactly one schedule per database; BACKUP_ENABLED is monitor intent only.",
+      (options.backups
+        ? "The generated Compose includes the shared /backups volume and defaults BACKUP_ENABLED=true and BACKUP_SCHEDULE=daily. Migration snapshots and freshness monitoring are enabled; enable the backup profile for daily backups. "
+        : "Backups default off. Regenerate with --backups true to add the backup profile and shared /backups volume with backups enabled; enable the profile for daily backups. ") +
+      "Exactly one schedule per database.",
   };
 }
 
@@ -413,8 +443,7 @@ ${envLines(role)}
 ${
   role === "server"
     ? `    volumes:
-      - backups:/backups
-      - server-data:/app/.data
+${options.backups ? "      - backups:/backups\n" : ""}      - server-data:/app/.data
     labels:
 ${[
   "traefik.enable=true",
@@ -451,8 +480,8 @@ ${[
 # PostgreSQL 18 + Valkey 9 (noeviction); server-led committed migrations.
 # External workers wait before starting consumers. No database/cache host ports.
 # Server stop-first protects its private spool; keep the 30s drain grace.
-# Daily backups default off. Before real data, choose provider backups or enable
-# the backup profile with BACKUP_SCHEDULE=daily. Exactly one schedule per DB.
+# Backups default off. Regenerate with --backups true for the backup profile
+# and shared volume, then enable the profile. Exactly one schedule per DB.
 # Writer keys are stripped after server startup; monitor uses its own read-only keys.
 name: ${project}
 
@@ -484,7 +513,9 @@ ${envLines("redis")}
       timeout: 5s
       retries: 5
 ${runtime("server")}${options.topology === "app-worker" ? runtime("worker") : ""}
-  backup:
+${
+  options.backups
+    ? `  backup:
     profiles: [backup]
     build:
       context: .
@@ -508,12 +539,13 @@ ${envLines("backup")}
       timeout: 30s
       retries: 1
       start_period: 10m
-
+`
+    : ""
+}
 volumes:
   postgres-data:
   redis-data:
-  backups:
-  server-data:
+${options.backups ? "  backups:\n" : ""}  server-data:
 networks:
   default:
     driver: bridge
@@ -539,16 +571,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           "--url",
           "--project",
           "--proxy-network",
+          "--backups",
         ].includes(key) ||
         fields[key] ||
         !value ||
         value.startsWith("--")
       )
         throw new Error(
-          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--project <stem>] [--proxy-network <name>].",
+          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--project <stem>] [--proxy-network <name>] [--backups true|false].",
         );
       fields[key] = value;
     }
+    if (fields["--backups"] && !["true", "false"].includes(fields["--backups"]))
+      throw new Error("--backups must be true or false.");
     const options = {
       environment: fields["--environment"],
       gitRef: fields["--git-ref"],
@@ -556,6 +591,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       url: fields["--url"],
       project: fields["--project"],
       proxyNetwork: fields["--proxy-network"],
+      backups: fields["--backups"] === "true",
     };
     if (!options.environment || !options.gitRef || !options.url)
       throw new Error("--environment, --git-ref, and --url are required.");

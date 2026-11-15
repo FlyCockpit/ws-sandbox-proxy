@@ -262,8 +262,12 @@ it.each(["mint-first", "revoke-first"] as const)(
         name: "selected",
         scopes: SERVICE_SCOPES.filter(
           // An allowlist key can hold neither webhooks:write (all-owned only) nor
-          // credentials:use without an allowlisted login.
-          (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+          // credentials:use without an allowlisted login; host scopes need a host grant.
+          (scope) =>
+            scope !== "webhooks:write" &&
+            scope !== "credentials:use" &&
+            scope !== "hosts:execute" &&
+            scope !== "hosts:files",
         ),
         resourceMode: "ALLOWLIST",
         poolMode: "SELECTED",
@@ -311,8 +315,12 @@ it("same creating selected key retains cleanup/read after use loss; other select
       name: "selected",
       scopes: SERVICE_SCOPES.filter(
         // An allowlist key can hold neither webhooks:write (all-owned only) nor
-        // credentials:use without an allowlisted login.
-        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+        // credentials:use without an allowlisted login; host scopes need a host grant.
+        (scope) =>
+          scope !== "webhooks:write" &&
+          scope !== "credentials:use" &&
+          scope !== "hosts:execute" &&
+          scope !== "hosts:files",
       ),
       resourceMode: "ALLOWLIST",
       poolMode: "SELECTED",
@@ -505,8 +513,12 @@ it("selected-key IO needs the current foreign attribution selected (§5a W1); pa
     name: "P-only",
     scopes: SERVICE_SCOPES.filter(
       // An allowlist key can hold neither webhooks:write (all-owned only) nor
-      // credentials:use without an allowlisted login.
-      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      // credentials:use without an allowlisted login; host scopes need a host grant.
+      (scope) =>
+        scope !== "webhooks:write" &&
+        scope !== "credentials:use" &&
+        scope !== "hosts:execute" &&
+        scope !== "hosts:files",
     ),
     resourceMode: "ALLOWLIST",
     poolMode: "SELECTED",

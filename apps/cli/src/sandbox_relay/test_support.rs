@@ -76,7 +76,23 @@ pub(crate) fn command_output_ack(data: &[u8]) -> tungstenite::Message {
 pub(crate) fn ack_registration<S: std::io::Read + std::io::Write>(
     wire: &mut tungstenite::WebSocket<S>,
 ) -> Vec<sandbox_protocol::InventoryEntry> {
-    ack_reconciliation_with_policy(wire).0
+    let (census, terminal) = ack_reconciliation_with_policy(wire);
+    loop {
+        let frame = wire.read().expect("initial agent policy");
+        let Ok(text) = frame.to_text() else {
+            continue;
+        };
+        match sandbox_protocol::parse_daemon_control(text).expect("agent policy control") {
+            sandbox_protocol::DaemonControlMessage::HostAgentPolicy(policy) => {
+                assert_eq!(policy.connection_epoch, terminal.connection_epoch);
+                assert_eq!(policy.sequence, 1, "initial agent policy sequence");
+                assert!(policy.is_valid());
+                return census;
+            }
+            sandbox_protocol::DaemonControlMessage::Heartbeat { .. } => {}
+            other => panic!("unexpected {other:?} before initial agent policy"),
+        }
+    }
 }
 
 pub(crate) fn ack_reconciliation_with_policy<S: std::io::Read + std::io::Write>(

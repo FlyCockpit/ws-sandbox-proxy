@@ -376,12 +376,21 @@ describe("/v1 CLI logins (real PostgreSQL)", () => {
 
   it("credentials:use: attach/free need it (403 without), allowlist keys must name a login at mint, the feature is advertised", async () => {
     const ownerId = await owner();
-    const user = await allOwnedKey(ownerId, ["sandboxes:write", "credentials:use"]);
+    const user = await allOwnedKey(ownerId, [
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "credentials:use",
+    ]);
     const caps = (await (await call(user.secret, "GET", "/v1/capabilities")).json()) as {
       features: string[];
     };
     expect(caps.features).toContain("credentials.use");
-    const plain = await allOwnedKey(ownerId, ["sandboxes:write"]);
+    const plain = await allOwnedKey(ownerId, [
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+    ]);
     const send = (secret: string, method: string, path: string, body: unknown) =>
       app.request(path, {
         method,
@@ -432,7 +441,7 @@ describe("/v1 CLI logins (real PostgreSQL)", () => {
         hostIds: [],
         templateRevisionIds: [revision.id],
         credentialIds: [],
-        scopes: ["sandboxes:write", "credentials:use"],
+        scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy", "credentials:use"],
       } as never),
     ).rejects.toMatchObject({ data: { code: "sdk_key.credentials_use_needs_logins" } });
   });

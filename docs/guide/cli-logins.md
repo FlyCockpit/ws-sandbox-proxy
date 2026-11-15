@@ -414,19 +414,19 @@ Four of them are also [webhook events](./webhooks.md):
 
 All routes take `Authorization: Bearer wssp_sdk_…`. Lists are cursor-paged.
 
-| Route                                                                                                   | Scope                                 |                                                                                                               |
-| ------------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `GET, POST /v1/credential-definitions`; `GET, DELETE /v1/credential-definitions/{id}`                   | read / write                          | Versions; `POST` with `{"text": …}` or `{"document": …}`; `DELETE` archives                                   |
-| `GET, POST /v1/credentials`; `GET, PUT, DELETE /v1/credentials/{id}`                                    | read / write                          | Logins; `PUT` changes `name` and `checkpointIntervalMin` only                                                 |
-| `GET /v1/credentials/{id}/events`                                                                       | read                                  | Events                                                                                                        |
-| `GET, POST /v1/credentials/{id}/accounts`; `PUT, DELETE …/accounts/{accountId}`                         | read / write                          | Accounts; `PUT` sets `name` and `paused`                                                                      |
-| `GET, POST …/accounts/{accountId}/instances`; `PUT, DELETE /v1/credentials/{id}/instances/{instanceId}` | read / write                          | Instances; `name`, `maxConcurrent`                                                                            |
-| `PUT …/instances/{instanceId}/value`                                                                    | write                                 | Upload                                                                                                        |
-| `GET …/instances/{instanceId}/leases`                                                                   | read                                  | Live leases (holders): id, kind, state, sandbox, promotable checkpoint                                        |
-| `POST …/instances/{instanceId}/leases/{leaseId}/force-release`                                          | write                                 | Force-release                                                                                                 |
-| `POST /v1/sandboxes/{id}/credentials`; `DELETE /v1/sandboxes/{id}/credentials/{credentialId}`           | `sandboxes:write` + `credentials:use` | Attach, free                                                                                                  |
-| `credentials` on `POST /v1/sandboxes` and `…/reconnect`                                                 | `credentials:use`                     | Create-time choice, resume pins; a start of a sandbox with attached logins needs it too (`FORBIDDEN` without) |
-| `credentialCapture: "skip"` on stop, destroy and free                                                   | `sandboxes:write`                     | Skip copy-back                                                                                                |
+| Route                                                                                                   | Scope                                                         |                                                                                                               |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GET, POST /v1/credential-definitions`; `GET, DELETE /v1/credential-definitions/{id}`                   | read / write                                                  | Versions; `POST` with `{"text": …}` or `{"document": …}`; `DELETE` archives                                   |
+| `GET, POST /v1/credentials`; `GET, PUT, DELETE /v1/credentials/{id}`                                    | read / write                                                  | Logins; `PUT` changes `name` and `checkpointIntervalMin` only                                                 |
+| `GET /v1/credentials/{id}/events`                                                                       | read                                                          | Events                                                                                                        |
+| `GET, POST /v1/credentials/{id}/accounts`; `PUT, DELETE …/accounts/{accountId}`                         | read / write                                                  | Accounts; `PUT` sets `name` and `paused`                                                                      |
+| `GET, POST …/accounts/{accountId}/instances`; `PUT, DELETE /v1/credentials/{id}/instances/{instanceId}` | read / write                                                  | Instances; `name`, `maxConcurrent`                                                                            |
+| `PUT …/instances/{instanceId}/value`                                                                    | write                                                         | Upload                                                                                                        |
+| `GET …/instances/{instanceId}/leases`                                                                   | read                                                          | Live leases (holders): id, kind, state, sandbox, promotable checkpoint                                        |
+| `POST …/instances/{instanceId}/leases/{leaseId}/force-release`                                          | write                                                         | Force-release                                                                                                 |
+| `POST /v1/sandboxes/{id}/credentials`; `DELETE /v1/sandboxes/{id}/credentials/{credentialId}`           | `sandboxes:manage` + `credentials:use`                        | Attach, free                                                                                                  |
+| `credentials` on `POST /v1/sandboxes` and `…/reconnect`                                                 | `credentials:use`                                             | Create-time choice, resume pins; a start of a sandbox with attached logins needs it too (`FORBIDDEN` without) |
+| `credentialCapture: "skip"` on stop, destroy and free                                                   | `sandboxes:manage` (stop/free), `sandboxes:destroy` (destroy) | Skip copy-back                                                                                                |
 
 The login sandbox flow, delivery, copy-back, the foreign-hosts opt-in,
 re-pin and discarding rejected captures are dashboard-only.
@@ -454,7 +454,7 @@ await sandbox.destroy({ credentialCapture: "skip" }); // discard this run's chan
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `credentials:read`  | List definitions, logins, accounts, instances and events. Never a value.                                                                            |
 | `credentials:write` | Create and edit definitions, logins (name, checkpoints), accounts (name, pause) and instances; upload values; force-release. Values are write-only. |
-| `credentials:use`   | Name logins at create, pin them on a start, attach and free them. Needs `sandboxes:write`.                                                          |
+| `credentials:use`   | Name logins at create, pin them on a start, attach and free them. Needs `sandboxes:manage`.                                                         |
 
 **What `credentials:use` discloses.** It puts a login's value into a guest.
 A key that also has `commands:execute` or `files:read` on that sandbox can
@@ -863,3 +863,5 @@ writes on Linux:
 Both files are also valid conformance vectors
 (`packages/login-definition/vectors/valid/`), so they are checked by the
 TypeScript and Rust test suites on every change.
+
+For keys with **own sandboxes only**, attach/free and sandbox-related login operations require that the same key originally created the sandbox. New sandbox creation needs `sandboxes:create`; reconnect needs `sandboxes:manage`, in addition to `credentials:use`. Host command access is not limited by own sandboxes only.

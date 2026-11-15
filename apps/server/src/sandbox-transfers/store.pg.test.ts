@@ -160,6 +160,8 @@ async function seed() {
     });
     return {
       kind: "sdkKey",
+      credentialKind: "API" as const,
+      ownSandboxesOnly: false,
       keyId: key.id,
       ownerId: id,
       expiresAt: null,
@@ -1086,6 +1088,8 @@ it("C27 a key expiring between revalidation and completion voids the read", asyn
   });
   const actor: Principal = {
     kind: "sdkKey",
+    credentialKind: "API" as const,
+    ownSandboxesOnly: false,
     keyId: key.id,
     ownerId: s.principal.ownerId,
     expiresAt: key.expiresAt,
@@ -1146,6 +1150,8 @@ it("C27 a key expiring after the read's in-transaction checks is caught only by 
   });
   const actor: Principal = {
     kind: "sdkKey",
+    credentialKind: "API" as const,
+    ownSandboxesOnly: false,
     keyId: key.id,
     ownerId: s.principal.ownerId,
     expiresAt: key.expiresAt,
@@ -1196,6 +1202,8 @@ it("C27 an SDK key expiring mid-stream ends the upload at the boundary", async (
   });
   const actor: Principal = {
     kind: "sdkKey",
+    credentialKind: "API" as const,
+    ownSandboxesOnly: false,
     keyId: key.id,
     ownerId: s.principal.ownerId,
     expiresAt: key.expiresAt,

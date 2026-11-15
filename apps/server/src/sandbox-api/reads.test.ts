@@ -87,7 +87,9 @@ const ALL_SCOPES = [
   "templates:read",
   "templates:write",
   "sandboxes:read",
-  "sandboxes:write",
+  "sandboxes:create",
+  "sandboxes:manage",
+  "sandboxes:destroy",
   "commands:read",
   "commands:execute",
   "files:read",
@@ -102,6 +104,8 @@ const T = new Date("2026-09-26T12:00:00.000Z");
 function keyRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "key-a",
+    kind: "API",
+    ownSandboxesOnly: false,
     userId: "owner-a",
     resourceMode: "ALL_OWNED",
     poolMode: "ALL_USABLE",
@@ -346,6 +350,8 @@ afterEach(() => vi.restoreAllMocks());
 
 const concretePath = (path: string) =>
   path
+    .replaceAll("{hostId}", "host1")
+    .replaceAll("{commandId}", "abcdefghijklmnopqrstuv")
     .replace(
       "{id}",
       path.includes("operations")
@@ -403,6 +409,9 @@ describe("route and schema coverage", () => {
         "getCommandOutput",
         "getSandbox",
         "listHosts",
+        "getHost",
+        "getHostCommand",
+        "getQueuedHostCommand",
         "listSandboxes",
         "listTemplates",
         "listTemplateRevisions",
@@ -423,6 +432,7 @@ describe("route and schema coverage", () => {
     for (const id of SDK_ROUTE_IDS) {
       const route = SDK_ROUTES[id];
       if (route.method !== "get") continue;
+      if (["getHost", "getHostCommand", "getQueuedHostCommand"].includes(id)) continue; // Host adapters: host-access.test.ts and host-access.pg.test.ts.
       if (["getOperationResult", "getSandboxCapabilities", "connectProcess"].includes(id)) continue; // Real services covered in fs-process.pg.test.ts.
       if (SDK_ROUTES[id].feature === "webhooks.write") continue; // Real services: webhooks.pg.test.ts.
       if (SDK_ROUTES[id].feature === "credentials.read") continue; // Real services: credentials.pg.test.ts.
@@ -684,6 +694,8 @@ describe("disclosure", () => {
       const { sdkReadHandlers } = await import("./reads.js");
       const principal: import("@wssp/api/lib/sdk-key-access").ServicePrincipal = {
         kind: "sdkKey",
+        credentialKind: "API",
+        ownSandboxesOnly: false,
         ownerId: "owner-a",
         keyId: "key-a",
         expiresAt: null,
@@ -750,7 +762,12 @@ describe("disclosure", () => {
       },
       ports: { ingress: false, proxy: false },
       network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
-      key: { scopes: ["sandboxes:read"], resourceMode: "allowlist", poolMode: "selected" },
+      key: {
+        scopes: ["sandboxes:read"],
+        resourceMode: "allowlist",
+        poolMode: "selected",
+        ownSandboxesOnly: false,
+      },
     });
     const { sdkReadHandlers } = await import("./reads.js");
     const partial = await sdkReadHandlers([

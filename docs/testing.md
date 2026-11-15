@@ -485,7 +485,7 @@ Approving the new slug creates the host. Then, in the dashboard:
    ([templates](./operations/templates.md)). For L2 to cover an image fetch,
    the image must not already be on the host.
 3. **SDK keys**: mint a `wssp_sdk_…` key with `hosts:read`, `sandboxes:read`,
-   `sandboxes:write`, `commands:execute`, `commands:read` and
+   `sandboxes:create`, `sandboxes:manage`, `sandboxes:destroy`, `commands:execute`, `commands:read` and
    `operations:read`, for all owned resources or for `chaos-01` and that
    revision.
 

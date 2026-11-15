@@ -1,15 +1,16 @@
 # Authentication planes
 
-WS Sandbox Proxy has three authentication planes. Each has its own credential, endpoint
+WS Sandbox Proxy has four authentication planes. Each has its own credential, endpoint
 and checks, and **a credential from one plane is refused on every other
-plane**. All three resolve to the same owner model: every host, template,
+plane**. All four resolve to the same owner model: every host, template,
 sandbox, operation and transfer belongs to exactly one user account.
 
-| Plane   | Who                                     | Endpoint                                           | Credential                                                        |
-| ------- | --------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------- |
-| Browser | You, in the dashboard                   | `/rpc`, `/api/dashboard/…`, the terminal WebSocket | Better Auth cookie session, CSRF, required-2FA policy             |
-| SDK     | Your programs                           | `/v1/…`                                            | `Authorization: Bearer wssp_sdk_…`                                |
-| Host    | The `wssp connect` daemon on your hosts | `/ws/sandbox-host` (outbound WSS)                  | `wssp_host_…` (dashboard token) or `wssp_device_…` (device login) |
+| Plane   | Who                                     | Endpoint                                           | Credential                                                          |
+| ------- | --------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- |
+| Browser | You, in the dashboard                   | `/rpc`, `/api/dashboard/…`, the terminal WebSocket | Better Auth cookie session, CSRF, required-2FA policy               |
+| SDK     | Your programs                           | `/v1/…`                                            | `Authorization: Bearer wssp_sdk_…`                                  |
+| MCP     | Your agents                             | `/mcp`                                             | `wssp_agent_…` bearer token or OAuth access token backed by a grant |
+| Host    | The `wssp connect` daemon on your hosts | `/ws/sandbox-host` (outbound WSS)                  | `wssp_host_…` (dashboard token) or `wssp_device_…` (device login)   |
 
 ## Browser plane
 
@@ -31,7 +32,7 @@ sandbox, operation and transfer belongs to exactly one user account.
 
 ## SDK plane
 
-- Keys are minted on the **SDK keys** page and shown once. A key has
+- Keys (credential kind `SdkKeyKind.API`) are minted on the **SDK keys** page and shown once. A key has
   [scopes](../../packages/sdk/README.md#keys-and-scopes), a resource mode
   (all owned resources, or an allowlist of hosts, exact revisions and pools) and an
   optional expiry. Revoke a key on the same page.
@@ -57,6 +58,59 @@ sandbox, operation and transfer belongs to exactly one user account.
   it: revoking the key does not delete or disable its endpoints. See
   [webhooks](./webhooks.md).
 
+## MCP plane
+
+- Connect agents to `/mcp` using a person-minted agent token (`SdkKeyKind.AGENT_TOKEN`,
+  `wssp_agent_…`) or OAuth access token backed by an `SdkKeyKind.OAUTH_GRANT` credential.
+  The backing OAuth row has no bearer secret of its own. `/v1` accepts only
+  `SdkKeyKind.API` keys; `/mcp` refuses API keys and does not authenticate cookies.
+- Use **Settings → Agent tokens** to mint, list or revoke tokens and review
+  **Connected apps**. The person picks the expiry: a preset, a custom date, or
+  no expiry. Operators can turn off no-expiry tokens
+  (`WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY`) and cap expiring ones
+  (`WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS`, default 90). Turning no-expiry off
+  also blocks existing no-expiry tokens (`agent_token.no_expiry_blocked`)
+  until it is turned back on; they are listed as **Blocked by policy**, not
+  revoked. At most ten unrevoked, unexpired tokens (no-expiry and blocked
+  tokens included) can be active. Copy its secret once into the
+  agent's secret store. OAuth consent shows the client, requested scopes,
+  selected resource grants and **Own sandboxes only**; host scopes start
+  unchecked. Only a person can consent or manage credentials.
+- MCP tools use the same credential authorization as the native API: stored
+  scopes, owner policy, allowlists, custody and creator limits. OAuth access
+  token scopes are intersected with the backing grant's stored scopes on
+  every request. Revoking a connected app revokes its grant and refresh tokens.
+- API keys default **Own sandboxes only** off; agent tokens and OAuth grants
+  default it on. ALLOWLIST credentials are always creator-restricted for
+  sandboxes. Host access is a separate authority, described below.
+- The MCP URL is your server origin followed by `/mcp`. **Agent tokens**
+  shows connection instructions; keep bearer secrets out of URLs.
+
+## Scoped host access
+
+`hosts:execute` allows host commands, their status/output, stdin, cancellation
+and queuing a command for a person. `hosts:files` allows host file
+read/list/write/edit. `hosts:read` remains discovery only. Select a host grant
+(all owned or explicit owned hosts) when minting either host scope; a shared
+pool alone never qualifies. Host-only credentials do not need a template
+revision grant.
+
+Both `/v1` and `/mcp` can reach these tools, but only on nodes owned by the
+credential's own user, with the host grant and local opt-in. The server checks
+ownership and effective policy before dispatch; the daemon rechecks against the
+owner from `hello.ok` and the live policy revision. Pool use never permits host
+access to someone else's node. Only the starting credential can inspect,
+write stdin to or cancel its host command.
+
+**The daemon user is an Incus admin. Host commands and host file tools can
+reach every sandbox on its node, including other users' shared-pool sandboxes.
+Own sandboxes only does not limit them.** Local command/file and terminal
+settings start off. The dashboard or node can turn them off; only an interactive
+person on the node can turn them on. Lowering interrupts affected work. See
+[node settings](./hosts.md#node-settings-for-agents-and-terminals) and
+[ADR-006](../design/adr-006-agent-host-access.md), which supersedes the earlier
+blanket restriction on SDK host execution. Browser terminals remain session-only.
+
 ## Host plane
 
 - The daemon connects **outbound**; hosts need no inbound ports. HTTPS/WSS is
@@ -81,11 +135,13 @@ sandbox, operation and transfer belongs to exactly one user account.
 
 ## Plane separation, as enforced
 
-| Presented                       | Browser `/rpc` | SDK `/v1`                | Host `/ws/sandbox-host` | Terminal upgrade             |
-| ------------------------------- | -------------- | ------------------------ | ----------------------- | ---------------------------- |
-| Cookie session                  | accepted       | ignored, `UNAUTHORIZED`  | ignored, refused        | accepted with a valid ticket |
-| `wssp_sdk_…` bearer             | no session     | accepted                 | refused                 | refused (`CREDENTIAL_PLANE`) |
-| `wssp_host_…` / `wssp_device_…` | no session     | refused (`UNAUTHORIZED`) | accepted                | refused (`CREDENTIAL_PLANE`) |
+| Presented                                     | Browser `/rpc` | SDK `/v1`    | MCP `/mcp`               | Host `/ws/sandbox-host` | Terminal upgrade             |
+| --------------------------------------------- | -------------- | ------------ | ------------------------ | ----------------------- | ---------------------------- |
+| Cookie session                                | accepted       | ignored, 401 | ignored, 401             | ignored, refused        | accepted with valid ticket   |
+| `wssp_sdk_…` (`SdkKeyKind.API`)               | no session     | accepted     | refused, 401             | refused                 | refused (`CREDENTIAL_PLANE`) |
+| `wssp_agent_…` (`SdkKeyKind.AGENT_TOKEN`)     | no session     | refused, 401 | accepted                 | refused                 | refused (`CREDENTIAL_PLANE`) |
+| OAuth access token (`SdkKeyKind.OAUTH_GRANT`) | no session     | refused, 401 | accepted with live grant | refused                 | refused (`CREDENTIAL_PLANE`) |
+| `wssp_host_…` / `wssp_device_…`               | no session     | refused, 401 | refused, 401             | accepted                | refused (`CREDENTIAL_PLANE`) |
 
 The terminal upgrade refuses any `Authorization` header and any offered
 subprotocol carrying a machine-credential prefix before it reads the cookie
@@ -94,6 +150,8 @@ subprotocol carrying a machine-credential prefix before it reads the cookie
 ## Rotating credentials
 
 - **SDK key:** mint a new key, deploy it, revoke the old one.
+- **Agent token:** mint a replacement on Agent tokens, update the agent, then
+  revoke the old token. For OAuth, revoke the connected app and authorize again.
 - **Host token:** mint a new token, update the environment variable the daemon
   reads, restart the daemon, then revoke the old token (its live connection
   closes with 4003).
@@ -101,7 +159,7 @@ subprotocol carrying a machine-credential prefix before it reads the cookie
   the host, and revoke the old credential in the dashboard. `wssp logout` only
   removes local state; it does not revoke anything server-side.
 - **`BETTER_AUTH_SECRET`:** rotating it invalidates every session **and every
-  product credential** (host tokens, device credentials, SDK keys). Treat it as
+  product credential** (host tokens, device credentials, SDK keys, agent tokens). Treat it as
   a full re-enrollment.
 
 Retained sandbox authority names the exact
@@ -113,8 +171,9 @@ Pooled SDK resources additionally require the retained origin-pool grant, togeth
 
 ## Minting SDK resource grants
 
-An ALLOWLIST key needs explicit grants for each exact revision and host;
-pooled placement also requires the pool. New revisions and memberships never
+An ALLOWLIST key used for sandbox placement needs explicit grants for each
+exact revision and host; pooled placement also requires the pool. Host-only
+keys can omit revisions but still need a directly allowed owned host. New revisions and memberships never
 expand a key's existing grants. ALL_OWNED keys cover owned resources within
 their scopes, expiry and account policy.
 
@@ -133,7 +192,7 @@ their scopes, expiry and account policy.
    Direct placement needs host + revision; pooled placement adds the pool.
 4. Select only the needed action scopes. For discovery use `pools:read`,
    `hosts:read` (also required for members) and `templates:read`. Creating
-   requires `sandboxes:write`; inspect sandboxes with `sandboxes:read` and
+   requires `sandboxes:create`; inspect sandboxes with `sandboxes:read` and
    operations with `operations:read`. Command output additionally needs
    `commands:read` and `operations:read`; execution needs `commands:execute`.
    Choose a name and expiry and mint. The page displays exact grants beside
@@ -215,7 +274,9 @@ selected keys cannot inherit history. Shared use confers no host management or
 other creator's guest IO. Share RAM/vCPU/disk caps are optional additional caps.
 
 Host terminals and share/invite/consent management stay cookie-only through
-registered live-owner gates, with CSRF. Neither SDK nor admin/impersonation grants
+registered live-owner gates, with CSRF. SDK and MCP credentials never grant
+browser terminal authority; their separate host commands/files follow
+[ADR-006](../design/adr-006-agent-host-access.md). Admin/impersonation grants no
 execution authority. Host and guest tickets use separate stores/path-specific
 prefixes. Invitation signup requires token plus target email and mailbox proof;
 existing-account bearer acceptance explicitly warns about forwarding. See
@@ -235,3 +296,5 @@ authorized session, inspect operation history or recover the original intent
 using its original idempotency key. A new-key retry can duplicate an effect.
 Operation status exposes catalog errors and metadata; protected result reads
 separately authorize guest payloads. Admin status grants no guest authority.
+
+Credentials may enable **own sandboxes only**, including with all-owned resources. Such a credential can access only sandboxes whose original create used that credential, including commands, files and operation results. This restriction does not limit host commands or host file tools: the daemon is an Incus admin and can reach every sandbox on its node.

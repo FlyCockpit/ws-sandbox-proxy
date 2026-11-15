@@ -1,8 +1,17 @@
 import { ORPCError } from "@orpc/server";
+import {
+  agentTokenBlockedByPolicy,
+  agentTokenExpiryRejection,
+} from "@wssp/config/agent-token-limits";
 import prisma, { type Prisma } from "@wssp/db";
 import { lockOwnerForAdmission } from "@wssp/db/account-deletion";
 import { withAuthorityChange } from "@wssp/db/authority";
-import { credentialLookupPrefix } from "@wssp/db/credential-security";
+import {
+  credentialLookupPrefix,
+  generateProductCredentialSecret,
+  hmacDigestForProductPurpose,
+} from "@wssp/db/credential-security";
+import { env } from "@wssp/env/server";
 import { z } from "zod";
 import { cursorPage, cursorPageInput, pageTake, withCursor } from "../../lib/pagination";
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from "../../lib/prisma-errors";
@@ -15,7 +24,9 @@ import {
 } from "../../lib/sdk-key-access";
 import {
   credentialsUseNeedsLogins,
+  hostScopesNeedHostGrant,
   SDK_KEY_CREDENTIALS_USE_NEEDS_LOGINS_CODE,
+  SDK_KEY_HOST_SCOPES_NEED_HOST_CODE,
   SDK_KEY_TEMPLATE_NOT_ON_HOST_CODE,
   SDK_KEY_UNUSABLE_SCOPES_CODE,
   SDK_KEY_WEBHOOKS_REQUIRES_ALL_OWNED_CODE,
@@ -64,6 +75,7 @@ export const createSdkKeyInput = z
     /** CLI logins an ALLOWLIST key may see and use. */
     credentialIds: z.array(entityId).max(200).default([]),
     expiresAt: z.coerce.date().nullable().optional(),
+    ownSandboxesOnly: z.boolean().default(false),
   })
   .strict()
   .superRefine((input, ctx) => {
@@ -82,7 +94,8 @@ export const createSdkKeyInput = z
       return;
     }
     if (
-      input.templateRevisionIds.length === 0 ||
+      (input.templateRevisionIds.length === 0 &&
+        input.scopes.some((scope) => !scope.startsWith("hosts:"))) ||
       (input.hostIds.length === 0 && input.poolMode !== "ALL_USABLE" && input.poolIds.length === 0)
     ) {
       ctx.addIssue({
@@ -94,8 +107,9 @@ export const createSdkKeyInput = z
   });
 export type CreateSdkKeyInput = Omit<
   z.infer<typeof createSdkKeyInput>,
-  "poolIds" | "credentialIds"
+  "poolIds" | "credentialIds" | "ownSandboxesOnly"
 > & {
+  ownSandboxesOnly?: boolean;
   poolIds?: string[];
   credentialIds?: string[];
 };
@@ -118,6 +132,8 @@ function ownedSdkKeyListSelect(ownerId: string) {
 function serializeSdkKey(row: Prisma.SdkKeyGetPayload<{ select: typeof sdkKeyListSelect }>) {
   return {
     id: row.id,
+    kind: row.kind,
+    ownSandboxesOnly: row.ownSandboxesOnly,
     name: row.name,
     resourceMode: row.resourceMode,
     poolMode: row.poolMode,
@@ -127,6 +143,11 @@ function serializeSdkKey(row: Prisma.SdkKeyGetPayload<{ select: typeof sdkKeyLis
     revokedAt: row.revokedAt,
     expiresAt: row.expiresAt,
     createdAt: row.createdAt,
+    /** An unrevoked no-expiry agent token refused while this deployment
+     * disallows no-expiry tokens. It is kept and works again once allowed. */
+    blockedByPolicy:
+      row.revokedAt === null &&
+      agentTokenBlockedByPolicy(row, env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY),
     hostAllowlist: row.HostAllowlist.map((entry) => ({
       id: entry.sandboxHostId,
       slug: entry.SandboxHost.slug,
@@ -261,9 +282,9 @@ async function resolveOwnedCredentials(
   return unique;
 }
 
-export const listSdkKeys = serviceProcedure(
+export const listCredentialKeys = serviceProcedure(
   { sessionOnly: true },
-  async (owner: Principal, input: ListSdkKeysInput) => {
+  async (owner: Principal, input: ListSdkKeysInput, kind: "API" | "AGENT_TOKEN") => {
     const parsed = listSdkKeysInput.safeParse(input);
     if (!parsed.success)
       throw new ORPCError("BAD_REQUEST", { message: "Invalid SDK key list input." });
@@ -272,6 +293,7 @@ export const listSdkKeys = serviceProcedure(
       where: withCursor(
         {
           userId: owner.ownerId,
+          kind,
           ...(input.includeRevoked ? {} : { revokedAt: null }),
         },
         "createdAt",
@@ -290,13 +312,35 @@ export const listSdkKeys = serviceProcedure(
   },
 );
 
-export const createSdkKey = serviceProcedure(
+export const mintCredentialKey = serviceProcedure(
   { sessionOnly: true },
-  async (owner: Principal, input: CreateSdkKeyInput) => {
-    const parsed = createSdkKeyInput.safeParse(input);
+  async (owner: Principal, input: CreateSdkKeyInput, kind: "API" | "AGENT_TOKEN") => {
+    const parsed = createSdkKeyInput.safeParse({
+      ...input,
+      ownSandboxesOnly: input.ownSandboxesOnly ?? kind === "AGENT_TOKEN",
+    });
     if (!parsed.success) throw new ORPCError("BAD_REQUEST", { message: "Invalid SDK key input." });
     input = parsed.data;
     const scopes = parseServiceScopeSet(input.scopes);
+    // Agent tokens: the caller chose an expiry (a date, or null = never) and it fits the
+    // deployment's mint policy. Re-checked here so no shared-mint caller can skip it.
+    if (
+      kind === "AGENT_TOKEN" &&
+      (input.expiresAt === undefined ||
+        agentTokenExpiryRejection(input.expiresAt, Date.now(), {
+          allowNoExpiry: env.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY,
+          maxLifetimeDays: env.WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS,
+        }) !== null)
+    )
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Agent token expiry is outside this deployment's policy.",
+        data: { code: "agent_token.expiry_policy" },
+      });
+    if (hostScopesNeedHostGrant(scopes, input.resourceMode, input.hostIds))
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Host scopes need at least one owned host grant.",
+        data: { code: SDK_KEY_HOST_SCOPES_NEED_HOST_CODE },
+      });
     if (unusableScopes(scopes).length > 0) {
       throw new ORPCError("BAD_REQUEST", {
         message: "Every scope must authorize something given the other selected scopes.",
@@ -320,7 +364,8 @@ export const createSdkKey = serviceProcedure(
     if (poolMode === "ALL_USABLE" && (input.poolIds?.length ?? 0) > 0)
       throw new ORPCError("BAD_REQUEST", { message: "ALL_USABLE keys cannot select pools." });
     await consumeSandboxWriteBudget(owner.ownerId, "pool");
-    const credential = generateSdkKeySecret();
+    const credential =
+      kind === "API" ? generateSdkKeySecret() : generateProductCredentialSecret("agentToken");
     const selectedPools = input.poolIds?.length
       ? await prisma.sandboxPool.findMany({
           where: { id: { in: input.poolIds } },
@@ -336,6 +381,21 @@ export const createSdkKey = serviceProcedure(
           ...selectedPools.map((pool) => pool.userId),
         ]);
         await lockOwnerPlacement(tx, owner.ownerId);
+        if (kind === "AGENT_TOKEN") {
+          const active = await tx.sdkKey.count({
+            where: {
+              userId: owner.ownerId,
+              kind,
+              revokedAt: null,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            },
+          });
+          if (active >= 10)
+            throw new ORPCError("CONFLICT", {
+              message: "Active agent token limit reached.",
+              data: { code: "agent_token.limit" },
+            });
+        }
         const allowlists = await resolveOwnedAllowlists(
           tx,
           owner.ownerId,
@@ -352,12 +412,17 @@ export const createSdkKey = serviceProcedure(
         return tx.sdkKey.create({
           data: {
             userId: owner.ownerId,
+            kind,
+            ownSandboxesOnly: input.ownSandboxesOnly ?? kind === "AGENT_TOKEN",
             name: input.name,
             resourceMode: input.resourceMode,
             poolMode,
             scopes,
             lookupPrefix: credentialLookupPrefix(credential),
-            secretDigest: digestSdkKeySecret(credential.raw),
+            secretDigest:
+              kind === "API"
+                ? digestSdkKeySecret(credential.raw)
+                : hmacDigestForProductPurpose({ purpose: "agentToken", value: credential.raw }),
             expiresAt: input.expiresAt ?? null,
             HostAllowlist: {
               create: allowlists.hosts.map((sandboxHostId) => ({ sandboxHostId })),
@@ -390,12 +455,12 @@ export const createSdkKey = serviceProcedure(
   },
 );
 
-export const revokeSdkKey = serviceProcedure(
+export const revokeCredentialKey = serviceProcedure(
   { sessionOnly: true },
-  async (owner: Principal, input: RevokeSdkKeyInput) => {
+  async (owner: Principal, input: RevokeSdkKeyInput, kind: "API" | "AGENT_TOKEN") => {
     // Unknown ids answer before the change: each change keys process memory by id.
     const known = await prisma.sdkKey.findFirst({
-      where: { id: input.id, userId: owner.ownerId, revokedAt: null },
+      where: { id: input.id, userId: owner.ownerId, kind, revokedAt: null },
       select: { id: true },
     });
     if (!known) throw new ORPCError("NOT_FOUND", { message: "SDK key not found." });
@@ -405,7 +470,7 @@ export const revokeSdkKey = serviceProcedure(
         prisma.$transaction(async (tx) => {
           await lockOwnerForAdmission(tx, owner.ownerId);
           return tx.sdkKey.updateMany({
-            where: { id: input.id, userId: owner.ownerId, revokedAt: null },
+            where: { id: input.id, userId: owner.ownerId, kind, revokedAt: null },
             data: { revokedAt: new Date() },
           });
         }),
@@ -415,4 +480,17 @@ export const revokeSdkKey = serviceProcedure(
     notifyCapacityChanged("all");
     return { ok: true as const };
   },
+);
+
+export const listSdkKeys = serviceProcedure(
+  { sessionOnly: true },
+  (owner: Principal, input: ListSdkKeysInput) => listCredentialKeys(owner, input, "API"),
+);
+export const createSdkKey = serviceProcedure(
+  { sessionOnly: true },
+  (owner: Principal, input: CreateSdkKeyInput) => mintCredentialKey(owner, input, "API"),
+);
+export const revokeSdkKey = serviceProcedure(
+  { sessionOnly: true },
+  (owner: Principal, input: RevokeSdkKeyInput) => revokeCredentialKey(owner, input, "API"),
 );

@@ -338,7 +338,9 @@ export function ExpirySelect({
   id,
   value,
   onChange,
+  presets = EXPIRY_PRESETS,
 }: {
+  presets?: readonly ExpiryPreset[];
   id: string;
   value: ExpiryPreset;
   onChange: (value: ExpiryPreset) => void;
@@ -354,7 +356,7 @@ export function ExpirySelect({
           if (isExpiryPreset(value)) onChange(value);
         }}
       >
-        {EXPIRY_PRESETS.map((preset) => (
+        {presets.map((preset) => (
           <SelectItem key={preset} value={preset}>
             {t(`credentials:expiry.${preset}`)}
           </SelectItem>

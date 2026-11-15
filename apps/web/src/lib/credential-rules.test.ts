@@ -50,7 +50,14 @@ describe("scope dependencies", () => {
     expect(unusableScopes(["commands:read", "operations:read"])).toEqual([]);
     expect(unusableScopes(["operations:cancel"])).toEqual(["operations:cancel"]);
     expect(unusableScopes(["operations:cancel", "operations:read"])).toEqual(["operations:cancel"]);
-    for (const mutation of ["sandboxes:write", "commands:execute", "files:read", "files:write"]) {
+    for (const mutation of [
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "commands:execute",
+      "files:read",
+      "files:write",
+    ]) {
       expect(unusableScopes(["operations:cancel", mutation as never])).toEqual([]);
     }
     expect(unusableScopes([...SERVICE_SCOPES])).toEqual([]);
@@ -77,7 +84,12 @@ describe("scope dependencies", () => {
 
 describe("credentials:use login allowlist", () => {
   const allowlist = {
-    scopes: ["sandboxes:write", "credentials:use"] as SdkKeyDraft["scopes"],
+    scopes: [
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "credentials:use",
+    ] as SdkKeyDraft["scopes"],
     resourceMode: "ALLOWLIST" as const,
     hostIds: ["h1"],
     templateRevisionIds: ["t1"],
@@ -90,10 +102,15 @@ describe("credentials:use login allowlist", () => {
       sdkKeyDraftProblems(draft({ ...allowlist, credentialIds: ["cred_1"] }), { hosts, templates }),
     ).toEqual([]);
     expect(
-      sdkKeyDraftProblems(draft({ scopes: ["sandboxes:write", "credentials:use"] }), {
-        hosts,
-        templates,
-      }),
+      sdkKeyDraftProblems(
+        draft({
+          scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy", "credentials:use"],
+        }),
+        {
+          hosts,
+          templates,
+        },
+      ),
     ).toEqual([]);
   });
 
@@ -110,9 +127,19 @@ describe("credentials:use login allowlist", () => {
     expect(
       credentialProblem({ status: 400, data: { code: "sdk_key.credentials_use_needs_logins" } }),
     ).toBe("credentialsUseNeedsLogins");
+    expect(credentialProblem({ status: 400, data: { code: "agent_token.expiry_policy" } })).toBe(
+      "agentExpiryPolicy",
+    );
     expect(credentialsUseRevealsValues(["credentials:use", "commands:execute"])).toBe(true);
     expect(credentialsUseRevealsValues(["credentials:use", "files:read"])).toBe(true);
-    expect(credentialsUseRevealsValues(["credentials:use", "sandboxes:write"])).toBe(false);
+    expect(
+      credentialsUseRevealsValues([
+        "credentials:use",
+        "sandboxes:create",
+        "sandboxes:manage",
+        "sandboxes:destroy",
+      ]),
+    ).toBe(false);
     expect(credentialsUseRevealsValues(["commands:execute", "files:read"])).toBe(false);
   });
 });

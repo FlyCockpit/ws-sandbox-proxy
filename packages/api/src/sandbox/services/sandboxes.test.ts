@@ -43,6 +43,8 @@ const now = new Date("2026-09-24T00:00:00Z");
 function principal(overrides: Partial<ServicePrincipal> = {}): ServicePrincipal {
   const principal = {
     kind: "sdkKey",
+    credentialKind: "API",
+    ownSandboxesOnly: false,
     expiresAt: null,
     keyId: "key-1",
     ownerId: "user-a",
@@ -551,7 +553,8 @@ const replayCases: {
       timeoutMs: renewal.timeoutMs,
     },
     run: (p) => {
-      if (p.scopes.has("sandboxes:write")) db.$transaction.mockRejectedValueOnce({ code: "P2002" });
+      if (p.scopes.has("sandboxes:create"))
+        db.$transaction.mockRejectedValueOnce({ code: "P2002" });
       return services.setSandboxTimeout(p, renewal);
     },
   },
@@ -613,6 +616,8 @@ describe("all replay entries authorize current principals", () => {
       resourceMode: "ALLOWLIST",
       scopes: ["commands:execute"],
       lookupPrefix: credentialLookupPrefix(secret),
+      kind: "API",
+      ownSandboxesOnly: false,
       secretDigest: digestSdkKeySecret(secret.raw),
       revokedAt: null,
       expiresAt: null,

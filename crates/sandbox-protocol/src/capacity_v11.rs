@@ -347,6 +347,14 @@ checked!(DaemonCapabilitiesBaseV11, RawDaemonCapabilitiesBaseV11, {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", try_from = "serde_json::Value")]
 pub struct DaemonCapabilitiesV11 {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_commands: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub host_files: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_command_max_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "is_zero_agent_policy_revision")]
+    pub agent_policy_revision: u64,
     #[serde(flatten)]
     pub base: DaemonCapabilitiesBaseV11,
     pub max_lease_ms: Option<u64>,
@@ -489,6 +497,29 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
         if disk_offload && !image.as_ref().is_some_and(|image| image.fetch) {
             return Err(VmSizeError);
         }
+        let mut optional_bool = |name| match object.remove(name) {
+            None => Ok(false),
+            Some(serde_json::Value::Bool(v)) => Ok(v),
+            _ => Err(VmSizeError),
+        };
+        let host_commands = optional_bool("hostCommands")?;
+        let host_files = optional_bool("hostFiles")?;
+        let host_command_max_ms = match object.remove("hostCommandMaxMs") {
+            None => None,
+            Some(v) => Some(v.as_u64().ok_or(VmSizeError)?),
+        };
+        let agent_policy_revision = match object.remove("agentPolicyRevision") {
+            None => 0,
+            Some(v) => v.as_u64().ok_or(VmSizeError)?,
+        };
+        if !crate::valid_host_agent_policy(
+            host_commands,
+            host_files,
+            host_command_max_ms,
+            agent_policy_revision,
+        ) {
+            return Err(VmSizeError);
+        }
         let terminal_resume = match object.remove("terminalResume") {
             None => None,
             Some(raw) => {
@@ -503,6 +534,10 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
             }
         };
         Ok(Self {
+            host_commands,
+            host_files,
+            host_command_max_ms,
+            agent_policy_revision,
             base: DaemonCapabilitiesBaseV11::try_from(value)?,
             max_lease_ms,
             image,
@@ -554,6 +589,10 @@ checked!(HostHelloV11, RawHostHelloV11, {
     // WP7: a reconnect while quiescing; only with the `quiesce` capability.
     quiescing: bool,
 }, v, (!v.quiescing || v.daemon.capabilities.quiesce) && v.r#type == "hello" && !v.id.is_empty() && v.id.chars().count() <= 128 && v.supported_protocol_versions.len() == 1 && v.daemon.host_id == v.inventory.host_id && v.daemon.label.chars().count() <= 256 && v.daemon.version.as_ref().is_none_or(|v| v.chars().count() <= 128) && vm_size_limits().is_ok_and(|l| v.storage_pools.len() <= l.storage_pool_max) && unique_pools(v.storage_pools.iter().map(|p| (p.name.as_str(), p.marker.as_str()))));
+
+fn is_zero_agent_policy_revision(value: &u64) -> bool {
+    *value == 0
+}
 
 #[cfg(test)]
 mod tests {

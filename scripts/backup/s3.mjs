@@ -379,8 +379,19 @@ export async function uploadBackupAndHeartbeat(
 
 async function main() {
   const [command, file] = process.argv.slice(2);
+  if (command === "check-config") {
+    // Startup check (pre-migrate.sh --startup-notice with BACKUP_ENABLED=true):
+    // validate the settings only — no network, no credentials printed.
+    try {
+      backupS3Config();
+    } catch (error) {
+      console.error(`FATAL: [backup] ${error instanceof Error ? error.message : String(error)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (command !== "upload" || !file) {
-    console.error("usage: node s3.mjs upload <file>");
+    console.error("usage: node s3.mjs upload <file> | node s3.mjs check-config");
     process.exitCode = 2;
     return;
   }

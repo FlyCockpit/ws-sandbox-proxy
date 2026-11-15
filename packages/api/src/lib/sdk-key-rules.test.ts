@@ -14,10 +14,24 @@ describe("SDK-key mint rules shared by the server and the web form", () => {
     expect(unusableScopes(["operations:cancel"])).toEqual(["operations:cancel"]);
     expect(unusableScopes(["commands:read"])).toEqual([]);
     expect(unusableScopes(["commands:read", "operations:read"])).toEqual([]);
-    expect(unusableScopes(["operations:cancel", "sandboxes:write"])).toEqual([]);
-    // `credentials:use` puts a login into a sandbox: it needs `sandboxes:write`.
+    expect(
+      unusableScopes([
+        "operations:cancel",
+        "sandboxes:create",
+        "sandboxes:manage",
+        "sandboxes:destroy",
+      ]),
+    ).toEqual([]);
+    // `credentials:use` puts a login into a sandbox: it needs `sandboxes:manage`.
     expect(unusableScopes(["credentials:use"])).toEqual(["credentials:use"]);
-    expect(unusableScopes(["credentials:use", "sandboxes:write"])).toEqual([]);
+    expect(
+      unusableScopes([
+        "credentials:use",
+        "sandboxes:create",
+        "sandboxes:manage",
+        "sandboxes:destroy",
+      ]),
+    ).toEqual([]);
     for (const scope of SERVICE_SCOPES) {
       if (scope === "operations:cancel" || scope === "commands:read" || scope === "credentials:use")
         continue;
@@ -26,11 +40,22 @@ describe("SDK-key mint rules shared by the server and the web form", () => {
   });
 
   it("credentials:use on an allowlist key needs at least one allowlisted login", () => {
-    const scopes = ["sandboxes:write", "credentials:use"] as const;
+    const scopes = [
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "credentials:use",
+    ] as const;
     expect(credentialsUseNeedsLogins(scopes, "ALLOWLIST", [])).toBe(true);
     expect(credentialsUseNeedsLogins(scopes, "ALLOWLIST", ["cred-1"])).toBe(false);
     expect(credentialsUseNeedsLogins(scopes, "ALL_OWNED", [])).toBe(false);
-    expect(credentialsUseNeedsLogins(["sandboxes:write"], "ALLOWLIST", [])).toBe(false);
+    expect(
+      credentialsUseNeedsLogins(
+        ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+        "ALLOWLIST",
+        [],
+      ),
+    ).toBe(false);
   });
 
   it("webhooks:write is mintable only on ALL_OWNED + ALL_USABLE keys", () => {
@@ -61,4 +86,14 @@ describe("SDK-key mint rules shared by the server and the web form", () => {
     expect(templatesOffSelectedHosts([active, elsewhere, retired], ["h1"])).toEqual(["t2", "t3"]);
     expect(templatesOffSelectedHosts([active, elsewhere], ["h1", "h2"])).toEqual([]);
   });
+});
+
+it("host execution/file scopes need a directly owned host grant, not only a pool", async () => {
+  const { hostScopesNeedHostGrant } = await import("./sdk-key-rules");
+  for (const scope of ["hosts:execute", "hosts:files"] as const) {
+    expect(hostScopesNeedHostGrant([scope], "ALLOWLIST", [])).toBe(true);
+    expect(hostScopesNeedHostGrant([scope], "ALLOWLIST", ["owned-host"])).toBe(false);
+    expect(hostScopesNeedHostGrant([scope], "ALL_OWNED", [])).toBe(false);
+  }
+  expect(hostScopesNeedHostGrant(["hosts:read"], "ALLOWLIST", [])).toBe(false);
 });

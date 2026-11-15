@@ -12,6 +12,18 @@ CREATE SCHEMA IF NOT EXISTS "public";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- CreateEnum
+CREATE TYPE "SdkKeyKind" AS ENUM ('API', 'AGENT_TOKEN', 'OAUTH_GRANT');
+
+-- CreateEnum
+CREATE TYPE "HostQueuedCommandState" AS ENUM ('QUEUED', 'RUN', 'DISMISSED', 'EXPIRED', 'REFUSED');
+
+-- CreateEnum
+CREATE TYPE "HostAuditKind" AS ENUM ('COMMAND', 'COMMAND_QUEUED', 'QUEUED_RUN', 'QUEUED_DISMISSED', 'FILE_READ', 'FILE_LIST', 'FILE_WRITE', 'FILE_EDIT', 'POLICY_LOWER', 'POLICY_VETO_LIFT');
+
+-- CreateEnum
+CREATE TYPE "HostAuditActor" AS ENUM ('AGENT', 'PERSON');
+
+-- CreateEnum
 CREATE TYPE "TemplateBuildState" AS ENUM ('AWAITING_CONTEXT', 'QUEUED', 'PLACING', 'RUNNING', 'STOPPING', 'CAPTURING', 'CANCELLING', 'SUCCEEDED', 'FAILED', 'CANCELLED');
 
 -- CreateEnum
@@ -148,6 +160,60 @@ CREATE TYPE "ImageUploadSessionState" AS ENUM ('OPEN', 'COMPLETE', 'ABORTED');
 
 -- CreateEnum
 CREATE TYPE "WebhookDeliveryState" AS ENUM ('PENDING', 'IN_FLIGHT', 'SUCCEEDED', 'FAILED', 'CANCELLED');
+
+-- CreateTable
+CREATE TABLE "mcp_grant" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userId" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "referenceId" TEXT NOT NULL,
+    "sdkKeyId" TEXT NOT NULL,
+    "revokedAt" TIMESTAMP(3),
+
+    CONSTRAINT "mcp_grant_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "host_queued_command" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userId" TEXT NOT NULL,
+    "sandboxHostId" TEXT NOT NULL,
+    "sdkKeyId" TEXT,
+    "command" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "state" "HostQueuedCommandState" NOT NULL DEFAULT 'QUEUED',
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "decidedAt" TIMESTAMP(3),
+    "decidedBy" TEXT,
+
+    CONSTRAINT "host_queued_command_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "host_audit_event" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "userId" TEXT NOT NULL,
+    "sandboxHostId" TEXT NOT NULL,
+    "sdkKeyId" TEXT,
+    "actor" "HostAuditActor" NOT NULL,
+    "kind" "HostAuditKind" NOT NULL,
+    "program" TEXT,
+    "subjectHmac" TEXT,
+    "commandId" TEXT,
+    "state" TEXT,
+    "reason" TEXT,
+    "exitCode" INTEGER,
+    "startedAt" TIMESTAMP(3),
+    "finishedAt" TIMESTAMP(3),
+
+    CONSTRAINT "host_audit_event_pkey" PRIMARY KEY ("id")
+);
 
 -- CreateTable
 CREATE TABLE "user" (
@@ -298,6 +364,161 @@ CREATE TABLE "account_image_policy" (
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "account_image_policy_pkey" PRIMARY KEY ("userId")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_client" (
+    "id" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "clientSecret" TEXT,
+    "clientDiscoveryId" TEXT,
+    "disabled" BOOLEAN DEFAULT false,
+    "skipConsent" BOOLEAN,
+    "enableEndSession" BOOLEAN,
+    "subjectType" TEXT,
+    "scopes" TEXT[],
+    "clientCredentialsScopes" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "userId" TEXT,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "name" TEXT,
+    "uri" TEXT,
+    "icon" TEXT,
+    "contacts" TEXT[],
+    "tos" TEXT,
+    "policy" TEXT,
+    "softwareId" TEXT,
+    "softwareVersion" TEXT,
+    "softwareStatement" TEXT,
+    "redirectUris" TEXT[],
+    "postLogoutRedirectUris" TEXT[],
+    "backchannelLogoutUri" TEXT,
+    "backchannelLogoutSessionRequired" BOOLEAN,
+    "tokenEndpointAuthMethod" TEXT,
+    "applicationType" TEXT,
+    "jwks" TEXT,
+    "jwksUri" TEXT,
+    "grantTypes" TEXT[],
+    "responseTypes" TEXT[],
+    "requirePKCE" BOOLEAN,
+    "dpopBoundAccessTokens" BOOLEAN DEFAULT false,
+    "referenceId" TEXT,
+    "metadata" JSONB,
+
+    CONSTRAINT "oauth_client_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_resource" (
+    "id" TEXT NOT NULL,
+    "identifier" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "accessTokenTtl" INTEGER,
+    "refreshTokenTtl" INTEGER,
+    "signingAlgorithm" TEXT,
+    "signingKeyId" TEXT,
+    "allowedScopes" JSONB,
+    "customClaims" JSONB,
+    "dpopBoundAccessTokensRequired" BOOLEAN DEFAULT false,
+    "disabled" BOOLEAN DEFAULT false,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+    "policyVersion" INTEGER DEFAULT 1,
+    "metadata" JSONB,
+
+    CONSTRAINT "oauth_resource_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_client_resource" (
+    "id" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "resourceId" TEXT NOT NULL,
+    "metadata" JSONB,
+    "createdAt" TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "oauth_client_resource_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_refresh_token" (
+    "id" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "sessionId" TEXT,
+    "userId" TEXT NOT NULL,
+    "referenceId" TEXT,
+    "authorizationCodeId" TEXT,
+    "resources" TEXT[],
+    "requestedUserInfoClaims" TEXT[],
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "revoked" TIMESTAMP(3),
+    "rotatedAt" TIMESTAMP(3),
+    "rotationReplayResponse" TEXT,
+    "rotationReplayExpiresAt" TIMESTAMP(3),
+    "authTime" TIMESTAMP(3),
+    "confirmation" JSONB,
+    "scopes" TEXT[],
+
+    CONSTRAINT "oauth_refresh_token_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_access_token" (
+    "id" TEXT NOT NULL,
+    "token" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "sessionId" TEXT,
+    "userId" TEXT,
+    "referenceId" TEXT,
+    "authorizationCodeId" TEXT,
+    "resources" TEXT[],
+    "requestedUserInfoClaims" TEXT[],
+    "refreshId" TEXT,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "revoked" TIMESTAMP(3),
+    "confirmation" JSONB,
+    "scopes" TEXT[],
+
+    CONSTRAINT "oauth_access_token_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_consent" (
+    "id" TEXT NOT NULL,
+    "clientId" TEXT NOT NULL,
+    "userId" TEXT,
+    "referenceId" TEXT,
+    "resources" TEXT[],
+    "requestedUserInfoClaims" TEXT[],
+    "scopes" TEXT[],
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "oauth_consent_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "oauth_client_assertion" (
+    "id" TEXT NOT NULL,
+    "expiresAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "oauth_client_assertion_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "jwks" (
+    "id" TEXT NOT NULL,
+    "publicKey" TEXT NOT NULL,
+    "privateKey" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "expiresAt" TIMESTAMP(3),
+    "alg" TEXT,
+    "crv" TEXT,
+
+    CONSTRAINT "jwks_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -757,6 +978,8 @@ CREATE TABLE "data_key_epoch" (
 
 -- CreateTable
 CREATE TABLE "sandbox_host" (
+    "agentHostCommandsVetoedAt" TIMESTAMP(3),
+    "hostTerminalVetoedAt" TIMESTAMP(3),
     "relayProtocolVersion" TEXT,
     "relayProtocolEpoch" INTEGER,
     "id" TEXT NOT NULL,
@@ -858,6 +1081,8 @@ CREATE TABLE "host_device_credential" (
 
 -- CreateTable
 CREATE TABLE "sdk_key" (
+    "kind" "SdkKeyKind" NOT NULL DEFAULT 'API',
+    "ownSandboxesOnly" BOOLEAN NOT NULL DEFAULT false,
     "id" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -866,8 +1091,8 @@ CREATE TABLE "sdk_key" (
     "poolMode" "SdkKeyPoolMode" NOT NULL DEFAULT 'SELECTED',
     "resourceMode" "SdkKeyResourceMode" NOT NULL DEFAULT 'ALLOWLIST',
     "scopes" TEXT[],
-    "lookupPrefix" TEXT NOT NULL,
-    "secretDigest" TEXT NOT NULL,
+    "lookupPrefix" TEXT,
+    "secretDigest" TEXT,
     "lastUsedAt" TIMESTAMP(3),
     "revokedAt" TIMESTAMP(3),
     "expiresAt" TIMESTAMP(3),
@@ -1925,6 +2150,30 @@ CREATE TABLE "webhook_delivery_attempt" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "mcp_grant_sdkKeyId_key" ON "mcp_grant"("sdkKeyId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "mcp_grant_sdkKeyId_userId_key" ON "mcp_grant"("sdkKeyId", "userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "mcp_grant_userId_clientId_referenceId_key" ON "mcp_grant"("userId", "clientId", "referenceId");
+
+-- CreateIndex
+CREATE INDEX "host_queued_command_userId_state_createdAt_idx" ON "host_queued_command"("userId", "state", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "host_queued_command_sandboxHostId_state_idx" ON "host_queued_command"("sandboxHostId", "state");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "host_audit_event_commandId_key" ON "host_audit_event"("commandId");
+
+-- CreateIndex
+CREATE INDEX "host_audit_event_userId_createdAt_idx" ON "host_audit_event"("userId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "host_audit_event_sandboxHostId_createdAt_idx" ON "host_audit_event"("sandboxHostId", "createdAt");
+
+-- CreateIndex
 CREATE INDEX "user_role_idx" ON "user"("role");
 
 -- CreateIndex
@@ -1980,6 +2229,63 @@ CREATE UNIQUE INDEX "push_subscription_endpoint_key" ON "push_subscription"("end
 
 -- CreateIndex
 CREATE INDEX "push_subscription_userId_idx" ON "push_subscription"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "oauth_client_clientId_key" ON "oauth_client"("clientId");
+
+-- CreateIndex
+CREATE INDEX "oauth_client_userId_idx" ON "oauth_client"("userId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "oauth_resource_identifier_key" ON "oauth_resource"("identifier");
+
+-- CreateIndex
+CREATE INDEX "oauth_client_resource_clientId_idx" ON "oauth_client_resource"("clientId");
+
+-- CreateIndex
+CREATE INDEX "oauth_client_resource_resourceId_idx" ON "oauth_client_resource"("resourceId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "oauth_client_resource_clientId_resourceId_key" ON "oauth_client_resource"("clientId", "resourceId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "oauth_refresh_token_token_key" ON "oauth_refresh_token"("token");
+
+-- CreateIndex
+CREATE INDEX "oauth_refresh_token_clientId_idx" ON "oauth_refresh_token"("clientId");
+
+-- CreateIndex
+CREATE INDEX "oauth_refresh_token_sessionId_idx" ON "oauth_refresh_token"("sessionId");
+
+-- CreateIndex
+CREATE INDEX "oauth_refresh_token_userId_idx" ON "oauth_refresh_token"("userId");
+
+-- CreateIndex
+CREATE INDEX "oauth_refresh_token_authorizationCodeId_idx" ON "oauth_refresh_token"("authorizationCodeId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "oauth_access_token_token_key" ON "oauth_access_token"("token");
+
+-- CreateIndex
+CREATE INDEX "oauth_access_token_clientId_idx" ON "oauth_access_token"("clientId");
+
+-- CreateIndex
+CREATE INDEX "oauth_access_token_sessionId_idx" ON "oauth_access_token"("sessionId");
+
+-- CreateIndex
+CREATE INDEX "oauth_access_token_userId_idx" ON "oauth_access_token"("userId");
+
+-- CreateIndex
+CREATE INDEX "oauth_access_token_authorizationCodeId_idx" ON "oauth_access_token"("authorizationCodeId");
+
+-- CreateIndex
+CREATE INDEX "oauth_access_token_refreshId_idx" ON "oauth_access_token"("refreshId");
+
+-- CreateIndex
+CREATE INDEX "oauth_consent_clientId_idx" ON "oauth_consent"("clientId");
+
+-- CreateIndex
+CREATE INDEX "oauth_consent_userId_idx" ON "oauth_consent"("userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sandbox_template_build_buildSandboxId_key" ON "sandbox_template_build"("buildSandboxId");
@@ -2199,6 +2505,9 @@ CREATE UNIQUE INDEX "host_device_credential_lookupPrefix_key" ON "host_device_cr
 
 -- CreateIndex
 CREATE UNIQUE INDEX "host_device_credential_secretDigest_key" ON "host_device_credential"("secretDigest");
+
+-- CreateIndex
+CREATE INDEX "sdk_key_userId_kind_revokedAt_idx" ON "sdk_key"("userId", "kind", "revokedAt");
 
 -- CreateIndex
 CREATE INDEX "sdk_key_userId_revokedAt_idx" ON "sdk_key"("userId", "revokedAt");
@@ -2744,6 +3053,21 @@ CREATE INDEX "webhook_delivery_eventId_idx" ON "webhook_delivery"("eventId");
 CREATE UNIQUE INDEX "webhook_delivery_attempt_deliveryId_attempt_key" ON "webhook_delivery_attempt"("deliveryId", "attempt");
 
 -- AddForeignKey
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "mcp_grant" ADD CONSTRAINT "mcp_grant_sdkKeyId_userId_fkey" FOREIGN KEY ("sdkKeyId", "userId") REFERENCES "sdk_key"("id", "userId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_queued_command" ADD CONSTRAINT "host_queued_command_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_queued_command" ADD CONSTRAINT "host_queued_command_sandboxHostId_userId_fkey" FOREIGN KEY ("sandboxHostId", "userId") REFERENCES "sandbox_host"("id", "userId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "host_queued_command" ADD CONSTRAINT "host_queued_command_sdkKeyId_fkey" FOREIGN KEY ("sdkKeyId") REFERENCES "sdk_key"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "session" ADD CONSTRAINT "session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -2760,6 +3084,42 @@ ALTER TABLE "push_subscription" ADD CONSTRAINT "push_subscription_userId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "account_image_policy" ADD CONSTRAINT "account_image_policy_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_client" ADD CONSTRAINT "oauth_client_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_client_resource" ADD CONSTRAINT "oauth_client_resource_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "oauth_client"("clientId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_client_resource" ADD CONSTRAINT "oauth_client_resource_resourceId_fkey" FOREIGN KEY ("resourceId") REFERENCES "oauth_resource"("identifier") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_refresh_token" ADD CONSTRAINT "oauth_refresh_token_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "oauth_client"("clientId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_refresh_token" ADD CONSTRAINT "oauth_refresh_token_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "session"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_refresh_token" ADD CONSTRAINT "oauth_refresh_token_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "oauth_client"("clientId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_sessionId_fkey" FOREIGN KEY ("sessionId") REFERENCES "session"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_access_token" ADD CONSTRAINT "oauth_access_token_refreshId_fkey" FOREIGN KEY ("refreshId") REFERENCES "oauth_refresh_token"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_consent" ADD CONSTRAINT "oauth_consent_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "oauth_client"("clientId") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "oauth_consent" ADD CONSTRAINT "oauth_consent_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "sandbox_template_build_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;
@@ -3229,6 +3589,7 @@ ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_cpu_cap_ckee537a76" CHEC
 ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_max_lease_ck7dac77c4" CHECK ("daemonMaxLeaseMs" IS NULL OR "daemonMaxLeaseMs" BETWEEN 300000 AND 2073600000);
 ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_egress_guard_reason_ck65752f63" CHECK ("daemonEgressGuardReason" IS NULL OR length("daemonEgressGuardReason") <= 64);
 ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_image_cache_ckaf508d7d" CHECK (("imageCacheCapBytes" IS NULL OR "imageCacheCapBytes" >= 0) AND ("imageCacheUsedBytes" IS NULL OR "imageCacheUsedBytes" >= 0) AND ("imageCacheForeignBytes" IS NULL OR "imageCacheForeignBytes" >= 0));
+ALTER TABLE "sdk_key" ADD CONSTRAINT "sdk_key_kind_secret_ckd067d5ec" CHECK (("kind" = 'OAUTH_GRANT' AND "lookupPrefix" IS NULL AND "secretDigest" IS NULL) OR ("kind" <> 'OAUTH_GRANT' AND "lookupPrefix" IS NOT NULL AND "secretDigest" IS NOT NULL));
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_community_ckec7c7d96" CHECK ("communitySource" IS NULL OR "communitySource" IN ('ubuntu-26.04'));
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_capture_keep_ck827f58be" CHECK ("captureKeep" BETWEEN 1 AND 50 AND ("pruneAfterDays" IS NULL OR "pruneAfterDays" BETWEEN 1 AND 3650) AND cardinality("captureScrubPaths") <= 64);
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_vm_size_ckece5d0b1" CHECK ("cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0);

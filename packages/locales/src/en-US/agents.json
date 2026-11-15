@@ -1,0 +1,155 @@
+{
+  "title": "Agent tokens",
+  "description": "Scoped credentials for agents using MCP. At most 10 active tokens.",
+  "empty": {
+    "title": "No agent tokens yet",
+    "description": "Mint a token to connect an agent. Revoked tokens are not listed."
+  },
+  "mint": {
+    "action": "Mint agent token",
+    "title": "Mint an agent token",
+    "description": "Choose only the scopes and resources your agent needs, and select an expiry.",
+    "submit": "Mint token",
+    "secretLabel": "Your new agent token",
+    "usageHint": "Send it as Authorization: Bearer <token> to /mcp. Store it securely; it is shown only once."
+  },
+  "connect": {
+    "title": "Connect an agent",
+    "description": "MCP endpoint URL",
+    "oauth": "Use OAuth to sign in and approve each connected app, or configure a token:",
+    "token": "Set WSSP_AGENT_TOKEN to your agent token in your local environment. For OAuth with Codex, run: codex mcp login wssp.",
+    "copyUrl": "Copy MCP URL",
+    "copyCommand": "Copy connection command",
+    "copyConfig": "Copy agent configuration"
+  },
+  "apps": {
+    "title": "Connected apps",
+    "empty": "No connected apps.",
+    "revoked": "Connected app revoked.",
+    "ownOnly": "Only sandboxes created by this app",
+    "allSandboxes": "May access your other sandboxes within its resource grants",
+    "revokeTitle": "Revoke connected app?",
+    "revokeDescription": "Revoke this app’s grant and refresh tokens. It must ask you again before accessing resources."
+  },
+  "consent": {
+    "title": "Allow agent access?",
+    "description": "{{client}} is requesting access to your account.",
+    "destination": "Return destination: {{host}}",
+    "subset": "Select the requested permissions you want to allow. Unselected permissions will not be granted.",
+    "hostWarning": "The daemon user is an Incus admin. Host commands and host file tools can reach every sandbox on the node, including other users’ sandboxes in shared pools. “Own sandboxes only” does not limit host access. Host access also requires the setting to be enabled on the node.",
+    "offline": "Allow access while you are away (offline_access)",
+    "allow": "Allow",
+    "deny": "Deny",
+    "invalid": "This authorization request could not be completed. Start again from your agent.",
+    "denied": "Access denied."
+  },
+  "login": {
+    "title": "Connect to MCP",
+    "description": "Sign in to review the access requested by {{client}}.",
+    "continue": "Continue to review access",
+    "signIn": "Sign in",
+    "reauthHint": "If you revoked this app, sign out and sign in again to approve a new grant.",
+    "reauthenticate": "Sign out and sign in again",
+    "reauthFailed": "Could not sign out. Your session is unchanged. Try again."
+  },
+  "host": {
+    "title": "Agent access",
+    "commands": "Agents may run host commands",
+    "terminal": "People may open a host terminal",
+    "unknown": "No live node report",
+    "on": "On",
+    "off": "Off",
+    "turnOff": "Turn off",
+    "turnOffNamed": "Turn off: {{setting}}",
+    "enableAtNode": "Run the daemon as a service and turn on from a separate local login on the node. The direct dashboard host terminal is refused by the local gate.",
+    "files": "Host file tools: {{state}}",
+    "rootsCommand": "wssp config set-host-file-roots /absolute/path",
+    "maxTime": "Host command time cap: {{seconds}} seconds",
+    "confirmTitle": "Turn off host access?",
+    "confirmDescription": "This blocks access immediately and keeps the dashboard block until you choose Allow again. The node receives a turn-off request now or when it reconnects. Processes started outside the daemon process tree, such as cron jobs and systemd user units, are not stopped.",
+    "cancel": "Cancel",
+    "failed": "Could not change dashboard access. Try again.",
+    "vetoed": "Blocked by the dashboard. This block stays in place until you allow access again.",
+    "allowAgain": "Allow again",
+    "allowAgainNamed": "Allow again: {{setting}}",
+    "liftTitle": "Allow access again?",
+    "liftDescription": "This only lifts the dashboard block. The node setting must still be turned on in a local login session on the node. Allowing again does not turn it on.",
+    "liftUnavailable": "Allow again requires the node to be online and report this setting off. Run {{command}} at the node first, then wait for its off report.",
+    "tamperWarning": "Something on the node turned it back on. The dashboard block still refuses access and keeps sending the turn-off request. Investigate the node and revoke its credential if needed. Run {{command}} at the node before allowing access again."
+  },
+  "queue": {
+    "title": "Queued commands",
+    "hint": "Agents can request commands on your node. Review the command and reason before deciding. Run marks the request as handed off; it does not prove execution.",
+    "credential": "Requested by: {{name}}",
+    "deletedCredential": "Deleted credential",
+    "expires": "Expires: {{date}}",
+    "states": {
+      "QUEUED": "Queued",
+      "RUN": "Handed off",
+      "DISMISSED": "Dismissed",
+      "EXPIRED": "Expired",
+      "REFUSED": "Refused"
+    },
+    "run": "Run",
+    "dismiss": "Dismiss",
+    "empty": "No queued or recent commands.",
+    "failed": "Could not decide this command. Refresh and try again.",
+    "close": "Close command review",
+    "review": "Review host command",
+    "reviewHint": "Inspect the complete wrapper. After you connect the terminal, it is pre-typed once without a newline. Press Enter only when you are ready to run it.",
+    "copyHint": "Automatic pre-typing is unavailable. Copy the wrapper and review it before running it in your own host terminal.",
+    "copy": "Copy wrapper",
+    "copied": "Wrapper copied.",
+    "copyFailed": "Clipboard unavailable. Select and copy the wrapper manually.",
+    "copyCommand": "Copy requested command"
+  },
+  "audit": {
+    "title": "Recent host audit",
+    "empty": "No recent host activity.",
+    "actor": {
+      "AGENT": "Agent",
+      "PERSON": "Person"
+    },
+    "entry": "{{date}} · {{actor}} · {{kind}}",
+    "none": "—",
+    "unavailable": "Host audit is unavailable. Retry to load recent activity.",
+    "unknownState": "Unknown state",
+    "kinds": {
+      "COMMAND": "Host command",
+      "COMMAND_QUEUED": "Command queued",
+      "QUEUED_RUN": "Command handed off",
+      "QUEUED_DISMISSED": "Command dismissed",
+      "FILE_READ": "File read",
+      "FILE_LIST": "Directory listed",
+      "FILE_WRITE": "File written",
+      "FILE_EDIT": "File edited",
+      "POLICY_LOWER": "Access turned off",
+      "POLICY_VETO_LIFT": "Dashboard block lifted"
+    },
+    "states": {
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "timed_out": "Timed out",
+      "interrupted": "Interrupted",
+      "unknown": "Unknown",
+      "refused": "Refused"
+    },
+    "detail": "{{entry}} · {{detail}}"
+  },
+  "revoke": {
+    "typePrompt": "Type the token name to confirm",
+    "copyName": "Copy token name"
+  },
+  "expiry": {
+    "custom": "Custom date",
+    "customDate": "Expiry date",
+    "never": "No expiry",
+    "warning": "This token remains active until you revoke it, or until the operator stops allowing no-expiry tokens. Store it securely.",
+    "limit": "Dated tokens must expire within {{days}} days.",
+    "invalid": "Choose a future expiry within the allowed date range.",
+    "close": "Cancel",
+    "blockedByPolicy": "Blocked by policy: this server no longer allows tokens without an expiry, so this token is refused. It is not revoked and works again if the operator allows no-expiry tokens. Mint a dated token to keep the agent working."
+  }
+}

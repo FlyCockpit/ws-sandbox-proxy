@@ -347,7 +347,8 @@
       "CREDENTIAL_LOGIN": "Login",
       "TEMPLATE_BUILD": "Template build"
     },
-    "memberOption": "Member host {{n}}"
+    "memberOption": "Member host {{n}}",
+    "nodeOwnerAccess": "The node owner has full access to sandboxes other users run on their node."
   },
   "guestStates": {
     "REQUESTED": "Requested",

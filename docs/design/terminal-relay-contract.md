@@ -1,7 +1,7 @@
 # Terminal relay contract
 
 The host relay carries a terminal channel that binds one browser attachment
-to one guest PTY (the `PtySession` from
+to one typed host or guest PTY (the guest `PtySession` from
 [ADR-004 § Terminal PTY](./adr-004-runtime-boundary.md#terminal-pty)).
 This note defines the wire contract. The browser upgrade and its
 authentication ([browser terminal authentication](./browser-terminal-auth.md)), the UI and lifecycle hardening build on it.
@@ -37,6 +37,23 @@ host terminals off, TOTP required and revision zero. Local settings, hot reports
 and PTY activation enforce that policy. The policy tuple is live-link state, never a
 remembered host database column. `HostInventoryUpdate` stays health-only:
 policy and static capacity rewrites are refused there.
+
+### Agent host access and remote off
+
+[ADR-006](./adr-006-agent-host-access.md) defines separate scoped host commands
+and files. They use `host.exec.*` and `host.file.*`, not terminal tickets or
+PTY frames. Hello advertises `hostCommands`, `hostFiles`, `hostCommandMaxMs`
+(only when commands are on), and `agentPolicyRevision`; false/zero optional
+fields are omitted. `host.agent-policy` carries current epoch and monotonic
+sequence. The server checks owned-node authority and effective policy before
+dispatch; the daemon checks owner, epoch and live revision again.
+
+`host.policy.lower` targets `hostCommands` or `hostTerminal`. The daemon persists
+off, stops affected commands/file work or host PTYs, reports policy, and returns
+`host.policy.lower.result`. Pending dashboard lowering is durable and replayed
+on reconnect; reported policy itself remains live-link state. No server frame
+can enable host access. The existing `host.terminal-policy.raise` only requires
+TOTP; it does not enable terminals. See the [node commands](../guide/hosts.md#node-settings-for-agents-and-terminals).
 
 ### Journal version
 

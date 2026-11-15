@@ -33,6 +33,92 @@ RAM/vCPU/disk fit from current discovery and an exact revision or explicit sizes
 the server rechecks authority, source and all resource dimensions on acceptance.
 Admin observability remains metadata-only and exposes no guest execution authority.
 
+## Node settings for agents and terminals
+
+Open **Settings → Hosts → Details** for the node's **Agent access** card. It
+shows the node-reported settings **Agents may run host commands** and **People
+may open a host terminal**. Both are off by default. You can turn either off
+from the dashboard or on the node. Raising must be done in a local login
+session on the node. Dashboard lowering sets a durable server-side veto:
+the node cannot undo it by reporting off or reconnecting. Every hello/report
+that says on while vetoed receives another turn-off request. **Allow again**
+is a person-only action that lifts the dashboard block only while the node is
+online and its live report at the current epoch says the setting is off. It
+does not turn the node setting on. If the node still reports on, first run
+`wssp config set-agent-host-commands off` or `wssp config set-host-terminal off`
+at the node and wait for its off report. The card warns if something on the node turned it back on
+while vetoed. Lowering agent access cancels in-flight
+host commands and pending file work; lowering terminals closes host PTYs.
+
+**Trust model.** Agent host access means the agent can do what the wssp daemon
+user can do. It is off until a person enables it at the node. Agent host
+commands and host file tools run as the daemon user, an Incus admin: they can
+reach every sandbox on this node, including other users' shared-pool
+sandboxes. **Own sandboxes only does not limit host commands or host file
+tools.** An agent with host commands can read the daemon's credential or edit
+its config; the local raise gate and process-tree cleanup are best effort
+against that uid. Cron jobs and systemd user units outside the tracked process
+tree can survive lowering. Enable it only for agents you trust with that
+account. The emergency stop is the dashboard veto plus credential revocation;
+after an agent had host commands, audit the daemon user's
+`~/.config/systemd/user` units and enabled links, crontab, wssp `config.toml`
+and shell startup files (`.profile`, `.bashrc`, `.zshrc`) if you no longer
+trust it.
+
+Run these as the daemon user in a local login session on the node:
+
+```sh
+wssp config set-agent-host-commands on
+wssp config set-host-command-max-time 600
+wssp config set-host-file-roots /srv/projects /home/operator/work
+wssp config set-host-terminal on
+```
+
+Use existing absolute directories you intend to expose for file roots. At most
+32 roots are accepted, never `/`; no roots means file tools remain disabled.
+The command time cap defaults to 600 seconds, with a range of 1–86400 seconds.
+Enabling either setting, raising the cap or adding roots requires stdin and
+stderr TTYs and typing `on`; there is no `--yes`. The environment variable
+`WSSP_HOST_COMMAND` and `WSSP_HOST_TERMINAL` must be absent, and the process
+must have no daemon ancestry. A startup
+`wssp connect --host-terminal on` override uses the same gate. Revision latches
+reduce accidental config changes; unreadable config fails closed.
+
+Run the daemon as a service (a system or user unit) and raise settings from a
+separate local login. A daemon started in the same terminal session or scope
+as your shell makes the cgroup check refuse the raise. The marker, ancestry
+and cgroup checks refuse the direct dashboard host-terminal/host-command case,
+but are best effort against the daemon's own uid. A person or agent with host
+execution can escape the process tree with `systemd-run --user`, `setsid`
+followed by killing the supervisor, or cron, or edit `config.toml` directly.
+These checks are not a kernel-enforced sandbox.
+
+Lowering never prompts:
+
+```sh
+wssp config set-agent-host-commands off
+wssp config set-host-command-max-time 60
+wssp config clear-host-file-roots
+wssp config set-host-terminal off
+```
+
+`set-host-file-roots` replaces the roots; removing roots also lowers access.
+Sensitive daemon config/state, credential/journal keys and `/proc`, `/sys` and
+`/dev` remain denied even inside a configured root. Host file reads and command
+output are masked on the daemon before delivery. Audit records contain the
+credential, node, program and a command/path HMAC, never command text or output.
+Queued commands intentionally retain text for your review; see
+[queued host commands](./terminal.md#queued-host-commands).
+
+The API/MCP credential still needs `hosts:execute` or `hosts:files`, an owned
+host grant and current account authority. Host access is allowed only on nodes
+owned by that credential's own user, checked before server dispatch and again
+by the daemon against the owner from `hello.ok`. Shared-pool access never
+permits host access to someone else's node. These controls are independent of
+guest command/file scopes and guest terminal attachment. See
+[ADR-006](../design/adr-006-agent-host-access.md) for the decision and
+[CLI reference](../../apps/cli/docs/cli-reference.md) for syntax.
+
 ## Requirements
 
 Check these three first. A host that misses one connects but cannot run a
@@ -1507,9 +1593,12 @@ Local configuration owns `allow_host_terminal=false` and
 and `wssp config set-host-terminal-totp required|optional` locally; the startup
 `wssp connect --host-terminal on|off` override does not override later local
 changes. Hot off is fail-closed within two seconds without restarting guests.
-The dashboard can only raise TOTP on an authenticated connected host, after
-persisted acknowledgement. Offline/timeout requests are unconfirmed and never
-queued. Only local access can lower it. See [terminal](./terminal.md).
+The dashboard can raise the TOTP requirement on an authenticated connected
+host, after persisted acknowledgement; offline/timeout TOTP raises are unconfirmed
+and never queued. Only local access can make TOTP optional. Separately, the
+owner can turn host terminals or agent host access off in the dashboard,
+including durable offline lowering. Enabling host access is node-only. See
+[node settings](#node-settings-for-agents-and-terminals) and [terminal](./terminal.md).
 
 ### Credential revocation stops the VMs
 

@@ -12,9 +12,13 @@ pnpm dokploy:config --environment production --git-ref <immutable-tag> --url htt
 
 Import the generated Compose file into Dokploy. `app` (default) runs one server
 with embedded jobs plus Postgres 18 and Valkey 9 (`noeviction`). `--topology
-app-worker` adds a dedicated worker and sets `WORKER_MODE=external`. Enable the
-optional `backup` profile separately. No role uses a dedicated migration image.
-Fill listed variables with complete literal values; inject secrets on the platform.
+app-worker` adds a dedicated worker and sets `WORKER_MODE=external`. Backups default off; no backup settings, volume or sidecar are required.
+Regenerate with `--backups true` to add the optional backup profile and volume. No role uses a dedicated migration image.
+For the default Compose deployment, set only `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
+`BETTER_AUTH_SECRET` and `SANDBOX_REQUEST_HMAC_SECRET` (strong URL-safe secrets).
+The generator sets the HTTPS auth origin. SMTP, data encryption and backups
+are optional; add `ADMIN_EMAILS` and SMTP to bootstrap the first admin.
+Inject secrets as complete literal values on the platform.
 
 Choose a unique `--project` stem (1–32 lowercase letters/digits/hyphens),
 `--url` domain and `--proxy-network` for each deployment. Generated volumes,
@@ -70,21 +74,45 @@ after a seven-day soak and instance/restore holds. The local change flow is
 See [schema migrations](../schema-migrations.md) and
 [the startup contract](../infra.md#migration-startup-contract).
 
-Mounted `/backups` or S3 enables the pre-migration safety backup. Missing
-destinations warn; configured failures block migrations. Allow 510 seconds for
+`BACKUP_ENABLED` defaults to `false`: migrations and scheduled deletions proceed
+without backups, even if old backup destination settings remain. The server logs
+one backups-off notice at startup; readiness stays healthy. With
+`BACKUP_ENABLED=true` the runner requires a pre-migration (and pre-drop) dump to
+a mounted `/backups` volume or S3: with no usable destination a migrating start
+fails, on a brand-new database too, and a failed dump blocks migrations. Allow 510 seconds for
 startup, including runner admission, and 30 seconds for graceful shutdown.
 
 ## Enable Postgres backups
 
-Enable the Compose `backup` profile **and** set `BACKUP_SCHEDULE=daily` to run
-the optional daily backup service; it defaults off. Keep exactly one daily
+Regenerate with `--backups true` using the same project, origin and release, then
+enable the Compose `backup` profile. This opt-in adds the shared backup volume
+and sets defaults `BACKUP_ENABLED=true` and `BACKUP_SCHEDULE=daily`. Explicit
+environment values override these defaults; set both to enable automatic backups. Keep exactly one daily
 schedule per database. Mount the shared `/backups` volume and configure an
 explicit per-app/environment/origin `BACKUP_S3_PREFIX` for off-site copies.
 
 Writer credentials belong to startup/backup operations; long-running app
-processes unset them after admission. Freshness monitors use separate
-ListBucket-only keys in the chosen worker runtime. `BACKUP_ENABLED` controls
-monitoring, never writing. Provider backups/PITR can be used with a recorded
+processes never see them. The entrypoint is PID 1 while the migration runner (its
+child) holds them, then unsets `BACKUP_S3_ACCESS_KEY_ID` /
+`BACKUP_S3_SECRET_ACCESS_KEY` and every other `BACKUP_S3_*` the process does
+not read, and execs `tini` with the app, so `/proc/1/environ` and the app's
+environment are clean. Each process keeps only `BACKUP_S3_BUCKET`, `_PREFIX`,
+`_ENDPOINT` and `_REGION` (boot warnings and the admin freshness card), plus
+`_FORCE_PATH_STYLE` wherever a worker runtime runs (its freshness check lists
+the bucket with the monitor key): the worker, and the server unless
+`WORKER_MODE=external` (the default embedded worker runs inside it). `_SSE` and
+any other writer-only setting are dropped; if the settings cannot be listed,
+the start fails rather than keeping them. A server or worker whose
+`BACKUP_MONITOR_S3_ACCESS_KEY_ID` equals `BACKUP_S3_ACCESS_KEY_ID` is refused
+before anything runs (the running process keeps the monitor key, and once the
+writer key is gone it can no longer detect the reuse). With an external worker
+the generated server also gets the monitor key ID alone, never its secret, for
+this check; the entrypoint drops it before the server starts. Docker container configuration still holds
+them; do not treat process unsetting as removal from container metadata. A stop
+signal during startup (`docker stop`, Ctrl-C, a hang-up) is forwarded to the
+running step and the container exits `143`/`130`/`129` without starting the app. Freshness monitors use separate
+ListBucket-only keys in the chosen worker runtime. `BACKUP_ENABLED` gates automatic migration/pre-drop snapshots, the daily writer
+and freshness monitoring; explicit backup and restore commands remain available. Provider backups/PITR can be used with a recorded
 retention and alert policy. Run a restore drill before storing real data:
 [backup and restore](./backup-and-restore.md).
 
@@ -99,7 +127,7 @@ retention and alert policy. Run a restore drill before storing real data:
 4. Deploy the matching worker in `app-worker`; its follower wait must succeed.
 5. Run `pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha>`. Sign up with an `ADMIN_EMAILS` address and
    verify email.
-6. Enable backups and run a restore drill before relying on the environment.
+6. Optionally enable backups and run a restore drill. The deployment runs without them.
 
 `pnpm dokploy:config` topologies: `app` (default) and `app-worker`. Omitting the worker container never removes jobs — it
 only moves them (`WORKER_MODE`).
@@ -287,10 +315,11 @@ WebSocket paths both need the existing exact-Origin/cookie upgrade path.
 ## One-shot operations
 
 Run these owner-controlled jobs on the database's private Docker network with
-platform-injected environment and the deployment's mounted `/backups` volume:
+platform-injected environment. Mount `/backups` only for operations that need
+local backup storage; `migrate` needs no backup volume when backups are off:
 
 ```sh
-docker run --rm --network <db-network> --env-file <protected-operation-env> -v <backups-volume>:/backups <immutable-app-image> migrate
+docker run --rm --network <db-network> --env-file <protected-operation-env> <immutable-app-image> migrate
 docker run --rm --network <db-network> --env-file <protected-operation-env> -v <backups-volume>:/backups <immutable-app-image> backup
 docker run --rm --network <db-network> --env-file <protected-operation-env> -v <backups-volume>:/backups <immutable-app-image> restore /backups/<file>
 ```

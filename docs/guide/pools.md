@@ -7,6 +7,24 @@ Pool owners manage settings and the roster; contributors manage their own
 contributions. These writes require a live browser owner session; SDK discovery
 is read-only.
 
+## Trust the node owner
+
+A node owner has full access to sandboxes other users run on their node. The
+daemon user is an Incus admin and can reach every VM, including your guest's
+files, memory and credentials. Dashboard/API guest visibility restrictions and
+turning host terminals off do not isolate a guest from its local administrator.
+The node owner can opt their own credentials into host commands and file tools;
+**Own sandboxes only** does not limit those tools.
+
+Pool users never get host access to someone else's node. Pool membership, a
+host discovery result and guest execution grants do not grant a host terminal,
+host commands or host file tools. Server ownership checks and the daemon's
+`hello.ok` owner check both enforce this rule. See
+[agent host access](../design/adr-006-agent-host-access.md) and
+[node settings](./hosts.md#node-settings-for-agents-and-terminals).
+
+## Placement
+
 Create accepts a template selector and exactly one of `poolId` or
 `sandboxHostId`. A pool filters joint per-VM, charged RAM, aggregate vCPU, healthy storage,
 root-disk budget and fixed retained-allocation guard fit. Choose each host's

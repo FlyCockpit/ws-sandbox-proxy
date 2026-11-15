@@ -245,7 +245,12 @@ function fakeServer(config: {
         },
         ports: { ingress: false, proxy: false },
         network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
-        key: { scopes: [], resourceMode: "allOwned", poolMode: "allUsable" },
+        key: {
+          ownSandboxesOnly: false,
+          scopes: [],
+          resourceMode: "allOwned",
+          poolMode: "allUsable",
+        },
       });
     }
 

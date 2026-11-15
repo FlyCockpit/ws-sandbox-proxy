@@ -84,6 +84,7 @@ describe("principal-kinds helper mapping", () => {
   it("views a session over every owned and usable resource", () => {
     expect(viewerOf(session)).toEqual({
       ownerId: "user-1",
+      ownSandboxesOnly: false,
       resourceMode: "ALL_OWNED",
       allowedHostIds: "allOwned",
       allowedPoolIds: "allUsable",
@@ -115,6 +116,7 @@ describe("principal-kinds helper mapping", () => {
     // A key that no longer revalidates sees nothing, not the session view.
     expect(viewerOf(buildKeyLost)).toEqual({
       ownerId: "user-1",
+      ownSandboxesOnly: true,
       resourceMode: "ALLOWLIST",
       allowedHostIds: new Set(),
       allowedPoolIds: new Set(),
@@ -125,7 +127,7 @@ describe("principal-kinds helper mapping", () => {
   it("grants a build read-class scopes only, and no browser or budget identity", () => {
     const grant = grantOf(buildWithKey);
     expect([...grant].every((scope) => scope.endsWith(":read"))).toBe(true);
-    expect(grant.has("sandboxes:write")).toBe(false);
+    expect(grant.has("sandboxes:create")).toBe(false);
     expect(grant.has("commands:execute")).toBe(false);
     expect(isBrowserSession(buildWithKey)).toBe(false);
     expect(budgetSubjectOf(buildWithKey)).toBeNull();

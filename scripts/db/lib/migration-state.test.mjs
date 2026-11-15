@@ -7,6 +7,7 @@ import {
   classify,
   MIGRATION_RUNNER_LOCK_KEY,
   migrationConnectionString,
+  migrationInFlight,
   PRISMA_ADVISORY_LOCK,
   pgConnectionString,
   prismaSchemaName,
@@ -236,4 +237,91 @@ test("native and pg migration URLs pin standard strings after supplied startup o
   const pg = new URL(pgConnectionString(input));
   assert.equal(pg.searchParams.has("schema"), false);
   assert.ok(pg.searchParams.get("options").endsWith("-c standard_conforming_strings=on"));
+});
+
+test("migrationInFlight names Prisma's lock, then the runner lock, else null", () => {
+  assert.equal(migrationInFlight({ inProgress: false, runnerActive: false }), null);
+  assert.match(
+    migrationInFlight({ inProgress: true, runnerActive: true }) ?? "",
+    /Prisma's migration lock/,
+  );
+  assert.match(migrationInFlight({ inProgress: false, runnerActive: true }) ?? "", /runner lock/);
+});
+
+test("Prisma's lock is reported before the history table exists (a first deploy in flight)", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "migration-no-history-lock-"));
+  try {
+    mkdirSync(path.join(dir, "0_init"));
+    writeFileSync(path.join(dir, "0_init", "migration.sql"), "SELECT 1;\n");
+    for (const prismaHeld of [false, true]) {
+      const client = {
+        escapeIdentifier: (name) => `"${name}"`,
+        end: async () => {},
+        query: async (sql, params = []) => {
+          if (/pg_locks/.test(sql))
+            return { rows: [{ held: prismaHeld && params[0] === PRISMA_ADVISORY_LOCK }] };
+          if (/to_regclass/.test(sql)) return { rows: [{ t: null }] };
+          if (/WITH owned AS/.test(sql)) return { rows: [{ occupied: false }] };
+          throw new Error(`unexpected query: ${sql}`);
+        },
+      };
+      const result = await readMigrationState({
+        databaseUrl: "postgresql://u:p@localhost/app",
+        migrationsDir: dir,
+        pg: /** @type {typeof import("pg")} */ (/** @type {unknown} */ ({})),
+        client: /** @type {import("pg").Client} */ (/** @type {unknown} */ (client)),
+      });
+      assert.equal(result.state, "pending");
+      assert.equal(result.inProgress, prismaHeld);
+      assert.equal(result.runnerActive, false);
+      assert.equal(migrationInFlight(result) !== null, prismaHeld);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Prisma's lock taken between the first lock read and the history read still counts as in flight", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "migration-late-lock-"));
+  try {
+    mkdirSync(path.join(dir, "0_init"));
+    writeFileSync(path.join(dir, "0_init", "migration.sql"), "SELECT 1;\n");
+    const [{ checksum }] = readMigrationsFolder(dir);
+    let held = false;
+    const client = {
+      escapeIdentifier: (name) => `"${name}"`,
+      end: async () => {},
+      query: async (sql, params = []) => {
+        if (/pg_locks/.test(sql))
+          return { rows: [{ held: held && params[0] === PRISMA_ADVISORY_LOCK }] };
+        if (/to_regclass/.test(sql)) {
+          // Another deploy takes Prisma's lock and inserts its unfinished row now.
+          held = true;
+          return { rows: [{ t: "_prisma_migrations" }] };
+        }
+        return {
+          rows: [
+            {
+              migration_name: "0_init",
+              checksum,
+              finished_at: null,
+              rolled_back_at: null,
+              logs: null,
+            },
+          ],
+        };
+      },
+    };
+    const result = await readMigrationState({
+      databaseUrl: "postgresql://u:p@localhost/app",
+      migrationsDir: dir,
+      pg: /** @type {typeof import("pg")} */ (/** @type {unknown} */ ({})),
+      client: /** @type {import("pg").Client} */ (/** @type {unknown} */ (client)),
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.inProgress, true, "the lock read after the history decides");
+    assert.notEqual(migrationInFlight(result), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

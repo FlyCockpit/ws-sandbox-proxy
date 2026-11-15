@@ -75,6 +75,10 @@ export const HOST_PROCEDURE_INVENTORY = {
   listDeviceCredentials: hostServices.listDeviceCredentials,
   revokeDeviceCredential: hostServices.revokeDeviceCredential,
   imageCache: imageSettingServices.listHostImageCache,
+  lowerAgentHostCommands: hostServices.lowerAgentHostCommands,
+  lowerHostTerminal: hostServices.lowerHostTerminal,
+  liftAgentHostCommandsVeto: hostServices.liftAgentHostCommandsVeto,
+  liftHostTerminalVeto: hostServices.liftHostTerminalVeto,
 } as const;
 
 export const TEMPLATE_PROCEDURE_INVENTORY = {

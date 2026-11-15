@@ -109,7 +109,10 @@ reverse proxies you run between the client and the server.
 - **`N` ≥ 1:** the key is the entry `N` positions left of the socket peer in
   `[...X-Forwarded-For, socket]`. When the chain is shorter than that, or the
   selected entry is not an IP address, the key is the socket peer, never a
-  client-supplied entry. The server must be reachable only through those
+  client-supplied entry. A port the proxy appended to the selected entry is
+  stripped first (`203.0.113.9:5678` and `[2001:db8::1]:5678` both work; a
+  bare IPv6 address is used as is), so proxies that append ports by default,
+  such as Azure Application Gateway, need no change. The server must be reachable only through those
   proxies (the generated Compose publishes no host port), and each proxy must
   append the address it received the request from. A value above your real
   proxy count lets clients choose their own key again, so count exactly.
@@ -334,13 +337,36 @@ instance. The entrypoint generates a fresh optional UUID `WSSP_INSTANCE_ID` per
 start; never configure a stable value manually.
 
 `BACKUP_SCHEDULE=off|daily` defaults off; `BACKUP_HOUR_UTC=3` and
-`BACKUP_KEEP=14` control the daily writer. `BACKUP_ENABLED` controls the independent
-freshness monitor. S3 requires an explicit nonempty per-deployment
+`BACKUP_KEEP=14` control the daily writer. `BACKUP_ENABLED=false` is the default:
+automatic migration/pre-drop snapshots, the daily writer and freshness monitoring
+are off, with one server startup notice and no health/readiness penalty. Explicit
+backup and restore-snapshot commands remain available. Enable automatic backups
+with `BACKUP_ENABLED=true`; daily writing also needs `BACKUP_SCHEDULE=daily`. S3 requires an explicit nonempty per-deployment
 `BACKUP_S3_PREFIX`; writer and ListBucket-only monitor credentials are separate.
 `BACKUP_HEARTBEAT_URL` is pinged only after successful off-site upload. A real
-mounted `/backups` volume or S3 enables pre-migration backups; configured failure
+mounted `/backups` volume or S3 enables pre-migration backups only when
+`BACKUP_ENABLED=true`; an enabled, configured backup failure
 blocks migration. See [backup and restore](./backup-and-restore.md).
 
 Local Postgres/Valkey host ports may be selected with `DEV_POSTGRES_PORT` and
 `DEV_REDIS_PORT`; use matching local `DATABASE_URL` and `REDIS_URL`. Production
 Compose publishes no host ports.
+
+## Agent token expiry
+
+| Variable                             | Default | Meaning                                                                                                                                         |
+| ------------------------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY`   | `true`  | Allow no-expiry agent tokens. Off: new tokens need an expiry and existing no-expiry tokens are blocked (below). Literal `true` or `false` only. |
+| `WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS` | `90`    | Maximum lifetime of newly minted dated agent tokens in days, an integer from 1 to 3650.                                                         |
+
+The browser reads both settings through the authenticated agent-token policy
+procedure. The server checks the policy again at mint time. The lifetime cap
+applies to new tokens only. Turning `WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY` off also
+refuses every existing no-expiry agent token at authentication (MCP returns 401
+with `agent_token.no_expiry_blocked`) and at each later credential check, so
+queued work it authorized loses authority too; the tokens are kept, shown as
+blocked by policy, and work again once the flag is back on. Like every variable
+here it is read at startup: restart to apply a change (instances may disagree
+briefly during a rolling deploy). Dated agent tokens, OAuth
+grants and SDK keys are unaffected. Tokens without an expiry, blocked or not,
+still count toward the ten-active-token cap until revoked.

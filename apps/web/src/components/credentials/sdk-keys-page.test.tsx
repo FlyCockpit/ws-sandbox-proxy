@@ -40,6 +40,9 @@ const server = vi.hoisted(() => ({
   revokeFailures: 0,
   secrets: [] as string[],
   seq: 0,
+  allowNoExpiry: true,
+  maxLifetimeDays: 90,
+  policyError: null as unknown,
 }));
 
 const navigate = vi.hoisted(() => vi.fn());
@@ -89,7 +92,7 @@ vi.mock("@/utils/orpc", () => {
       },
     }),
   });
-  return {
+  const mocked = {
     orpc: {
       settings: { getAll: { key: () => ["settings", "getAll"] } },
       sandboxPools: { listUsable: picker("listPools", () => server.pools) },
@@ -185,11 +188,32 @@ vi.mock("@/utils/orpc", () => {
       },
     },
   };
+  return {
+    orpc: {
+      ...mocked.orpc,
+      agentTokens: {
+        ...mocked.orpc.sdkKeys,
+        expiryPolicy: {
+          queryOptions: () => ({
+            queryKey: ["agentTokens", "expiryPolicy"],
+            queryFn: async () => {
+              if (server.policyError) throw server.policyError;
+              return {
+                allowNoExpiry: server.allowNoExpiry,
+                maxLifetimeDays: server.maxLifetimeDays,
+              };
+            },
+          }),
+        },
+      },
+    },
+  };
 });
 
+import enAgents from "@wssp/locales/src/en-US/agents.json";
 import { ORPHAN_REVOKE_RETRY_MS } from "@/hooks/use-one-time-secret";
 import { useOrphanCredentials } from "@/stores/orphan-credentials";
-import { SdkKeysPage } from "./sdk-keys-page";
+import { CredentialGrantEditor, ScopePicker, SdkKeysPage } from "./sdk-keys-page";
 
 // Real dialogs and queries: under a loaded parallel run the default 1 s wait
 // for async UI is too tight (a timing flake, not a behavior difference).
@@ -209,6 +233,7 @@ beforeAll(async () => {
         common: enCommon,
         dashboard: enDashboard,
         sdkKeys: enSdkKeys,
+        agents: enAgents,
         credentials: enCredentials,
       },
     },
@@ -218,14 +243,14 @@ beforeAll(async () => {
 });
 
 let client: QueryClient;
-function mount() {
+function mount(agent = false) {
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
-        <SdkKeysPage lang="en-US" />
+        <SdkKeysPage lang="en-US" agent={agent} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -237,6 +262,9 @@ const row = (id: string) => document.querySelector<HTMLElement>(`li[data-credent
 const scopeBox = (scope: string) => within(dialog()).getByRole("checkbox", { name: scope });
 
 beforeEach(() => {
+  server.allowNoExpiry = true;
+  server.maxLifetimeDays = 90;
+  server.policyError = null;
   server.pools = [];
   server.keys = [];
   server.hosts = [
@@ -316,7 +344,7 @@ describe("sdk key list", () => {
         resourceMode: "ALLOWLIST",
         poolMode: "ALL_USABLE",
         poolIds: [],
-        scopes: ["sandboxes:read", "sandboxes:write"],
+        scopes: ["sandboxes:read", "sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
         lookupPrefix: "wssp_sdk_abcdefghijkl",
         lastUsedAt: new Date(now - 2 * 3_600_000),
         revokedAt: null,
@@ -336,7 +364,9 @@ describe("sdk key list", () => {
     expect(within(key).getByText("wssp_sdk_abcdefghijkl…")).toBeTruthy();
     expect([...key.querySelectorAll("[data-scope]")].map((node) => node.textContent)).toEqual([
       "sandboxes:read",
-      "sandboxes:write",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
     ]);
     // M7-S11: the allowlist names each host and template, not just counts.
     expect(key.querySelector("[data-allowlist=hosts]")?.textContent).toBe("Hosts: Desk (desk-01)");
@@ -402,7 +432,7 @@ describe("resource allowlists", () => {
     const user = userEvent.setup();
     mount();
     await openMint(user);
-    await user.click(scopeBox("sandboxes:write"));
+    await user.click(scopeBox("sandboxes:create"));
     await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
     await within(dialog()).findByRole("checkbox", { name: "Alpha (alpha)" });
     expect(within(dialog()).queryByRole("checkbox", { name: "Beta (beta)" })).toBeNull();
@@ -430,7 +460,7 @@ describe("resource allowlists", () => {
     const user = userEvent.setup();
     mount();
     await openMint(user);
-    await user.click(scopeBox("sandboxes:write"));
+    await user.click(scopeBox("sandboxes:create"));
     await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
     await user.click(await within(dialog()).findByRole("checkbox", { name: "Alpha (alpha)" }));
     await user.click(within(dialog()).getByRole("checkbox", { name: /Ubuntu \(ubuntu\)/ }));
@@ -451,7 +481,7 @@ describe("resource allowlists", () => {
     const user = userEvent.setup();
     mount();
     await openMint(user);
-    await user.click(scopeBox("sandboxes:write"));
+    await user.click(scopeBox("sandboxes:create"));
     await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
     await user.click(within(dialog()).getByRole("radio", { name: enSdkKeys.poolMode.SELECTED }));
     await within(dialog()).findByRole("checkbox", { name: "Alpha (alpha)" });
@@ -485,7 +515,8 @@ describe("resource allowlists", () => {
     await screen.findByText(enCredentials.reveal.onceWarning);
     expect(calls("create")[0]?.input).toEqual({
       name: "ci",
-      scopes: ["sandboxes:write"],
+      scopes: ["sandboxes:create"],
+      ownSandboxesOnly: false,
       resourceMode: "ALLOWLIST",
       poolMode: "SELECTED",
       poolIds: [],
@@ -743,7 +774,7 @@ it("mints selected pool grants alongside independent host/revision grants with a
   const user = userEvent.setup();
   mount();
   await openMint(user);
-  await user.click(scopeBox("sandboxes:write"));
+  await user.click(scopeBox("sandboxes:create"));
   await user.click(scopeBox("pools:read"));
   await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
   await user.click(within(dialog()).getByRole("radio", { name: enSdkKeys.poolMode.SELECTED }));
@@ -783,7 +814,7 @@ it("distinguishes same-label exact revisions and verified/pending selected-host 
   const user = userEvent.setup();
   mount();
   await openMint(user);
-  await user.click(scopeBox("sandboxes:write"));
+  await user.click(scopeBox("sandboxes:create"));
   await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
   await user.click(await within(dialog()).findByRole("checkbox", { name: "Alpha (alpha)" }));
   const verified = within(dialog()).getByRole("checkbox", {
@@ -814,7 +845,7 @@ it("does not mint with a selected pool removed from the loaded choices", async (
   const user = userEvent.setup();
   mount();
   await openMint(user);
-  await user.click(scopeBox("sandboxes:write"));
+  await user.click(scopeBox("sandboxes:create"));
   const form = within(dialog());
   await user.click(form.getByRole("radio", { name: /Only selected hosts/ }));
   await user.click(await form.findByRole("checkbox", { name: "Alpha (alpha)" }));
@@ -860,4 +891,206 @@ it("identifies owned pools in both selected grants and revision discovery", asyn
   expect(within(dialog()).getByRole("option", { name: /My pool/ }).textContent).toContain(
     enSdkKeys.form.ownedPool,
   );
+});
+
+it("mints own-sandboxes-only when the checkbox is selected", async () => {
+  const user = userEvent.setup();
+  mount();
+  await openMint(user);
+  await user.click(scopeBox("sandboxes:read"));
+  const ownOnly = within(dialog()).getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly });
+  expect(ownOnly.getAttribute("aria-checked")).toBe("false");
+  await user.click(ownOnly);
+  await submit(user);
+  await screen.findByText(enCredentials.reveal.onceWarning);
+  expect(calls("create")[0]?.input).toMatchObject({ ownSandboxesOnly: true });
+});
+
+it("uses the deployment expiry policy for agent tokens and submits own-only by default", async () => {
+  const user = userEvent.setup();
+  mount(true);
+  await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
+  await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  expect(
+    within(dialog())
+      .getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly })
+      .getAttribute("aria-checked"),
+  ).toBe("true");
+  expect(within(dialog()).getByLabelText(enCredentials.form.expiry).textContent).toContain(
+    enCredentials.expiry["90d"],
+  );
+  await user.click(scopeBox("hosts:read"));
+  await user.click(within(dialog()).getByLabelText(enCredentials.form.expiry));
+  expect(screen.getByRole("option", { name: enAgents.expiry.never })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: enCredentials.expiry["365d"] })).toBeNull();
+  await user.click(screen.getByRole("option", { name: enCredentials.expiry["30d"] }));
+  await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
+  await screen.findByText(enCredentials.reveal.onceWarning);
+  expect(calls("create")[0]?.input).toMatchObject({
+    ownSandboxesOnly: true,
+    expiresAt: expect.any(Date),
+  });
+  const input = calls("create")[0]?.input as { expiresAt: Date };
+  expect(input.expiresAt.getTime() - Date.now()).toBeGreaterThan(29 * 86400000);
+});
+
+it("shows the active agent-token cap refusal", async () => {
+  server.mintError = { code: "CONFLICT", data: { code: "agent_token.limit" } };
+  const user = userEvent.setup();
+  mount(true);
+  await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
+  await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await user.click(scopeBox("hosts:read"));
+  await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
+  expect(await screen.findByText(enCredentials.problem.agentLimit)).toBeTruthy();
+});
+
+it("offers only requested scopes in the shared scope picker", async () => {
+  const change = vi.fn();
+  render(
+    <I18nextProvider i18n={i18n}>
+      <ScopePicker offered={["hosts:read", "hosts:execute"]} value={[]} onChange={change} />
+    </I18nextProvider>,
+  );
+  expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+  expect(screen.queryByRole("checkbox", { name: "sandboxes:destroy" })).toBeNull();
+  await userEvent.setup().click(screen.getByRole("checkbox", { name: "hosts:execute" }));
+  expect(change).toHaveBeenCalledWith(["hosts:execute"]);
+});
+
+it("consent defaults host scopes off and own-only on, submits a subset, and can deny without a valid form", async () => {
+  const onConsent = vi.fn();
+  const deny = vi.fn();
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <CredentialGrantEditor
+          lang="en-US"
+          mode="consent"
+          consentName="client"
+          requestedScopes={["hosts:read", "hosts:execute", "sandboxes:read"]}
+          onConsent={onConsent}
+          onClose={deny}
+        />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  const user = userEvent.setup();
+  expect(screen.getByRole("checkbox", { name: "hosts:execute" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
+  expect(screen.getByRole("checkbox", { name: "hosts:read" }).getAttribute("aria-checked")).toBe(
+    "false",
+  );
+  expect(
+    screen
+      .getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly })
+      .getAttribute("aria-checked"),
+  ).toBe("true");
+  await user.click(screen.getByRole("checkbox", { name: "hosts:read" }));
+  await user.click(screen.getByRole("checkbox", { name: "sandboxes:read" }));
+  await user.click(screen.getByRole("button", { name: enAgents.consent.allow }));
+  await waitFor(() =>
+    expect(onConsent).toHaveBeenCalledWith(
+      expect.objectContaining({ scopes: ["hosts:read"], ownSandboxesOnly: true }),
+    ),
+  );
+  await user.click(screen.getByRole("checkbox", { name: "hosts:read" }));
+  await user.click(screen.getByRole("button", { name: enAgents.consent.deny }));
+  expect(deny).toHaveBeenCalledOnce();
+});
+
+it("only offers no expiry when allowed, warns, and lists Never expires after mint", async () => {
+  const user = userEvent.setup();
+  mount(true);
+  await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
+  await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await user.click(scopeBox("hosts:read"));
+  await selectOption(
+    user,
+    within(dialog()).getByLabelText(enCredentials.form.expiry),
+    enAgents.expiry.never,
+  );
+  expect(within(dialog()).getByText(enAgents.expiry.warning)).toBeTruthy();
+  await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
+  await screen.findByText(enCredentials.reveal.onceWarning);
+  expect(calls("create")[0]?.input).toMatchObject({ expiresAt: null });
+  await screen.findByText(enCredentials.dates.noExpiry);
+});
+
+it("filters presets, hides no expiry when disabled, and submits a bounded custom date", async () => {
+  server.allowNoExpiry = false;
+  server.maxLifetimeDays = 7;
+  const user = userEvent.setup();
+  mount(true);
+  await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
+  await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await user.click(scopeBox("hosts:read"));
+  await user.click(within(dialog()).getByLabelText(enCredentials.form.expiry));
+  expect(screen.queryByRole("option", { name: enAgents.expiry.never })).toBeNull();
+  expect(screen.queryByRole("option", { name: enCredentials.expiry["30d"] })).toBeNull();
+  expect(screen.queryByRole("option", { name: enCredentials.expiry["90d"] })).toBeNull();
+  await user.click(screen.getByRole("option", { name: enAgents.expiry.custom }));
+  const input = within(dialog()).getByLabelText(enAgents.expiry.customDate) as HTMLInputElement;
+  expect(input.type).toBe("date");
+  const { localDateInputValue, latestAgentTokenCustomDate } = await import(
+    "@/lib/agent-token-expiry"
+  );
+  expect(input.min).toBe(localDateInputValue(new Date()));
+  expect(input.max).toBe(localDateInputValue(latestAgentTokenCustomDate(new Date(), 7)));
+  await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
+  expect(calls("create")).toHaveLength(0);
+  expect(await within(dialog()).findByText(enAgents.expiry.invalid)).toBeTruthy();
+  const { fireEvent } = await import("@testing-library/react");
+  fireEvent.change(input, { target: { value: input.max } });
+  await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
+  await screen.findByText(enCredentials.reveal.onceWarning);
+  const sent = calls("create")[0]?.input as { expiresAt: Date };
+  expect(sent.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  expect(sent.expiresAt.getTime()).toBeLessThanOrEqual(Date.now() + 7 * 86_400_000);
+  expect(sent.expiresAt.getHours()).toBe(23);
+});
+
+it("marks an existing no-expiry agent token as blocked by policy, without hiding or revoking it", async () => {
+  const now = Date.now();
+  const base = {
+    resourceMode: "ALL_OWNED",
+    poolMode: "ALL_USABLE",
+    poolIds: [],
+    scopes: ["hosts:read"],
+    lastUsedAt: null,
+    revokedAt: null,
+    createdAt: new Date(now - 86_400_000),
+    hostAllowlist: [],
+    revisionAllowlist: [],
+    ownSandboxesOnly: true,
+  };
+  server.keys = [
+    {
+      ...base,
+      id: "agent-never",
+      name: "never",
+      lookupPrefix: "wssp_agent_neverneverne",
+      expiresAt: null,
+      blockedByPolicy: true,
+    },
+    {
+      ...base,
+      id: "agent-dated",
+      name: "dated",
+      lookupPrefix: "wssp_agent_datedatedate",
+      expiresAt: new Date(now + 7 * 86_400_000),
+      blockedByPolicy: false,
+    },
+  ];
+  mount(true);
+  await screen.findByText("wssp_agent_neverneverne…");
+  const blocked = row("agent-never");
+  expect(blocked.getAttribute("data-blocked-by-policy")).toBe("true");
+  expect(within(blocked).getByText(enAgents.expiry.blockedByPolicy)).toBeTruthy();
+  expect(within(blocked).getByRole("button", { name: enCredentials.revoke.action })).toBeTruthy();
+  const dated = row("agent-dated");
+  expect(dated.getAttribute("data-blocked-by-policy")).toBeNull();
+  expect(within(dated).queryByText(enAgents.expiry.blockedByPolicy)).toBeNull();
 });

@@ -19,6 +19,7 @@
  */
 import { createHash } from "node:crypto";
 import type { HostLease } from "@wssp/api/sandbox/lease-wire";
+import type { HostCommandStatus } from "@wssp/sandbox-contracts";
 import {
   SANDBOX_RELAY_PROTOCOL_VERSION,
   TRANSFER_CHUNK_BYTES,
@@ -120,6 +121,37 @@ function fakeExitCode(script: string): number {
 }
 
 export class FakeNodeDaemon {
+  /** Host access test-double state: no real host command or filesystem effects. */
+  agentPolicy = {
+    hostCommands: false,
+    hostFiles: false,
+    hostCommandMaxMs: 600000,
+    agentPolicyRevision: 0,
+  };
+  private agentSequence = 0;
+  readonly hostCommands = new Map<string, HostCommandStatus>();
+  async reportAgentPolicy() {
+    const hello = this.received.findLast((f) => f.type === "hello.ok");
+    if (!hello) throw new Error("not connected");
+    await this.text({
+      type: "host.agent-policy",
+      connectionEpoch: hello.connectionEpoch,
+      sequence: ++this.agentSequence,
+      hostCommands: this.agentPolicy.hostCommands,
+      hostFiles: this.agentPolicy.hostFiles,
+      agentPolicyRevision: this.agentPolicy.agentPolicyRevision,
+      ...(this.agentPolicy.hostCommands
+        ? { hostCommandMaxMs: this.agentPolicy.hostCommandMaxMs }
+        : {}),
+    });
+  }
+  async finishHostCommand(commandId: string) {
+    const status = this.hostCommands.get(commandId);
+    if (!status) throw new Error("unknown host command");
+    Object.assign(status, { state: "succeeded", exitCode: 0, finishedAt: Date.now() });
+    await this.text({ type: "host.exec.status", ...status });
+  }
+
   /** Durable across crashes (the host's disk). */
   readonly journal = new Map<string, JournalEntry>();
   readonly leases = new Map<string, LeaseRow>();
@@ -269,6 +301,7 @@ export class FakeNodeDaemon {
 
   /** Connect (or reconnect after a crash): hello, receipt replay, census, reconcile. */
   async connect(): Promise<void> {
+    this.agentSequence = 0;
     const socket = new DaemonSocket(this);
     this.socket = socket;
     const seen = this.received.length;
@@ -299,6 +332,16 @@ export class FakeNodeDaemon {
           terminal: this.options.terminal ?? false,
           hostManagedSandboxCeiling: 250,
           hostTerminal: false,
+          ...(this.agentPolicy.hostCommands
+            ? {
+                hostCommands: true,
+                hostFiles: this.agentPolicy.hostFiles,
+                hostCommandMaxMs: this.agentPolicy.hostCommandMaxMs,
+              }
+            : {}),
+          ...(this.agentPolicy.agentPolicyRevision
+            ? { agentPolicyRevision: this.agentPolicy.agentPolicyRevision }
+            : {}),
           requireHostTerminalTotp: true,
           policyRevision: 0,
           maxOutputChunkBytes: 8192,
@@ -451,6 +494,113 @@ export class FakeNodeDaemon {
     const message = JSON.parse(data) as Json;
     this.received.push(message);
     switch (message.type) {
+      case "host.policy.lower":
+        if (message.target === "hostCommands") {
+          this.agentPolicy.hostCommands = false;
+          this.agentPolicy.hostFiles = false;
+          this.agentPolicy.agentPolicyRevision++;
+          for (const status of this.hostCommands.values())
+            if (status.state === "running")
+              Object.assign(status, { state: "cancelled", finishedAt: Date.now() });
+          this.track(
+            this.reportAgentPolicy().then(() =>
+              this.text(
+                { type: "host.policy.lower.result", requestId: message.requestId, ok: true },
+                socket,
+              ),
+            ),
+          );
+        } else
+          this.track(
+            this.text(
+              { type: "host.policy.lower.result", requestId: message.requestId, ok: true },
+              socket,
+            ),
+          );
+        return;
+      case "host.exec.start": {
+        const commandId = message.commandId as string;
+        const reason =
+          message.ownerId !== this.identity.userId
+            ? "owner_mismatch"
+            : !this.agentPolicy.hostCommands
+              ? "host_commands_off"
+              : message.agentPolicyRevision !== this.agentPolicy.agentPolicyRevision
+                ? "policy_changed"
+                : undefined;
+        if (reason) {
+          this.track(
+            this.text(
+              { type: "host.exec.rejected", requestId: message.requestId, commandId, reason },
+              socket,
+            ),
+          );
+          return;
+        }
+        const startedAt = Date.now();
+        const endsBy = startedAt + (message.timeoutMs as number);
+        this.hostCommands.set(commandId, {
+          commandId,
+          state: "running",
+          startedAt,
+          endsBy,
+          stdout: { offset: 0, data: "", dropped: false },
+          stderr: { offset: 0, data: "", dropped: false },
+          stdoutBytes: 0,
+          stderrBytes: 0,
+        });
+        this.track(
+          this.text(
+            {
+              type: "host.exec.started",
+              requestId: message.requestId,
+              commandId,
+              startedAt,
+              endsBy,
+            },
+            socket,
+          ),
+        );
+        return;
+      }
+      case "host.exec.poll":
+      case "host.exec.cancel": {
+        const status = this.hostCommands.get(message.commandId as string);
+        if (!status) return;
+        if (message.type === "host.exec.cancel")
+          Object.assign(status, { state: "cancelled", finishedAt: Date.now() });
+        this.track(
+          this.text({ type: "host.exec.status", requestId: message.requestId, ...status }, socket),
+        );
+        return;
+      }
+      case "host.exec.stdin":
+        this.track(
+          this.text(
+            {
+              type: "host.exec.stdin.result",
+              requestId: message.requestId,
+              commandId: message.commandId,
+              accepted: true,
+            },
+            socket,
+          ),
+        );
+        return;
+      case "host.file.request":
+        this.track(
+          this.text(
+            {
+              type: "host.file.result",
+              requestId: message.requestId,
+              ok: false,
+              error: "not_found",
+            },
+            socket,
+          ),
+        );
+        return;
+
       case "allocation.attest.request":
         this.track(
           this.text(

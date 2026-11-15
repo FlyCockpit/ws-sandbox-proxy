@@ -98,6 +98,9 @@ function envelope(code: SdkErrorCode, extra: Record<string, unknown> = {}): Resp
   return json(status, {
     error: {
       ...(isRetryableRefusalCode(code) ? { retryable: true } : {}),
+      ...(code === "host.agent_access_off" ? { retryable: false } : {}),
+      ...(code === "host.node_offline" ? { retryable: true, retryAfterSeconds: 5 } : {}),
+      ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
       ...(code === "sandbox.host_capacity" || code === "sandbox.pool_full"
         ? { reason: "ram" }
         : {}),
@@ -119,6 +122,7 @@ function envelope(code: SdkErrorCode, extra: Record<string, unknown> = {}): Resp
 }
 
 function expectedReason(code: SdkErrorCode): string | null {
+  if (code === "host.file_error") return "path_denied";
   if (code === "sandbox.host_capacity" || code === "sandbox.pool_full") return "ram";
   if (code === "sandbox.capture_unsupported") return "storage";
   if (code === "sandbox.image_quota_exceeded") return "stored";
@@ -367,8 +371,14 @@ describe("requests", () => {
   );
 });
 
-/** Expected kind of every catalog code on a read; mutations turn 5xx into `unknown`. */
+/** Expected read kind; mutations turn ambiguous 5xx errors into `unknown`. */
 const READ_KIND: Record<SdkErrorCode, WsspErrorKind> = {
+  "host.not_owned": "authorization",
+  "host.agent_access_off": "conflict",
+  "host.node_offline": "unavailable",
+  "host.command_not_found": "not_found",
+  "host_queue.limit": "capacity",
+  "host.file_error": "invalid_request",
   OPERATION_RESULT_EXPIRED: "gone",
   OPERATION_RESULT_NOT_READY: "conflict",
   OPERATION_RESULT_QUOTA: "capacity",
@@ -541,7 +551,13 @@ describe("HTTP status and error matrix", () => {
     expect(WSSP_ERROR_KINDS).toContain(readError.kind);
     // Build refusals carry their typed fields on `build`, nowhere else.
     expect(readError.build).toEqual(BUILD_FIELDS[code] ?? null);
-    expect(readError.retryable).toBe(isRetryableRefusalCode(code) ? true : null);
+    expect(readError.retryable).toBe(
+      code === "host.agent_access_off"
+        ? false
+        : code === "host.node_offline" || isRetryableRefusalCode(code)
+          ? true
+          : null,
+    );
   });
 
   it("keeps expired content, missing resources and unknown outcomes distinct", async () => {

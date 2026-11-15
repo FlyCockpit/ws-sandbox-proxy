@@ -30,7 +30,40 @@ principal cache. It verifies owner policy, HMAC, expiry, revocation and the
 owner-scoped authority tickets. Resource handlers must call existing
 `serviceProcedure` functions using the resulting principal. Those services
 revalidate scopes and ownership and fence results and failures against revocation.
-No browser session is fabricated from a key.
+No browser session is fabricated from a key. `/v1` accepts only API credentials;
+agent tokens (`wssp_agent_…`) and OAuth grant credentials authenticate `/mcp` only.
+
+The ordered scopes are:
+
+| Scope               | Authority                                                            |
+| ------------------- | -------------------------------------------------------------------- |
+| `hosts:read`        | Host metadata                                                        |
+| `hosts:execute`     | Owned host commands, stdin/cancel and queued commands                |
+| `hosts:files`       | Owned host text file tools                                           |
+| `pools:read`        | Pool metadata and capacity                                           |
+| `templates:read`    | Templates and revisions                                              |
+| `templates:write`   | Register revisions and capture templates                             |
+| `templates:build`   | Build revisions and read build logs                                  |
+| `sandboxes:read`    | Sandbox reads and probes                                             |
+| `sandboxes:create`  | Create/replay create                                                 |
+| `sandboxes:manage`  | Rename, stop, reconnect, lease; capture also needs `templates:write` |
+| `sandboxes:destroy` | Destroy                                                              |
+| `commands:read`     | Guest command metadata/output                                        |
+| `commands:execute`  | Guest command start/stdin                                            |
+| `files:read`        | Guest file observations/downloads                                    |
+| `files:write`       | Guest file mutations/uploads                                         |
+| `operations:read`   | Operation status/results                                             |
+| `operations:cancel` | Cancellation plus the target's mutation scope                        |
+| `webhooks:write`    | Endpoint and delivery management                                     |
+| `credentials:read`  | CLI-login metadata                                                   |
+| `credentials:write` | CLI-login management and write-only values                           |
+| `credentials:use`   | Login attach/free plus `sandboxes:manage`                            |
+
+`ownSandboxesOnly` restricts sandbox, command, guest file and operation access to
+sandboxes created by this credential. Effective creator restriction is
+`resourceMode === "ALLOWLIST" || ownSandboxesOnly`. API keys default false;
+agent tokens and OAuth grants default true. Capabilities report the explicit
+boolean at `key.ownSandboxesOnly`. Host access is outside that restriction.
 
 `Origin` neither authenticates nor rejects a bearer request. No `/v1` response
 includes CORS access-control grants. An authenticated `OPTIONS` request returns
@@ -55,7 +88,9 @@ Only one control-plane server replica is supported.
 IP selection uses `resolveClientIp` and the `TRUST_PROXY_HOPS` policy: unset or
 0 keys on the socket peer and ignores forwarding; N selects the entry N hops
 from the right of `[...X-Forwarded-For, socket]`, falling back to the socket
-peer when the chain is short or the entry is not an IP literal. There is no
+peer when the chain is short or the entry is not an IP literal. A port suffix
+on the selected entry (`v4:port`, `[v6]:port`) is stripped before the `isIP`
+check; a bare IPv6 literal is used unchanged. There is no
 private-hop heuristic. Operators restrict direct access to the proxy chain.
 
 The default JSON body cap is **1,048,576 bytes (1 MiB)**. Actual stream bytes
@@ -226,15 +261,15 @@ generator (`pnpm -F @wssp/sandbox-contracts openapi:write` regenerates it).
 
 ## Read endpoints
 
-| Route                            | Scope                               | Result                                                                                  |
-| -------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `GET /v1/capabilities`           | any active key                      | `apiVersion`, enabled `features`, `limits`, the key's own `scopes` and `resourceMode`   |
-| `GET /v1/hosts`                  | `hosts:read`                        | `{items, nextCursor}` of hosts                                                          |
-| `GET /v1/templates`              | `templates:read`                    | `{items, nextCursor}` of templates, retired ones included                               |
-| `GET /v1/sandboxes`              | `sandboxes:read`                    | `{items, nextCursor}` of READY sandboxes by default; explicit `states` includes history |
-| `GET /v1/sandboxes/{id}`         | `sandboxes:read`                    | one sandbox; 404 `sandbox.not_found`                                                    |
-| `GET /v1/operations/{id}`        | `operations:read`                   | operation status metadata; 404 `sandbox.operation_not_found`                            |
-| `GET /v1/operations/{id}/output` | `operations:read` + `commands:read` | incremental command output page; see [Command output](#command-output)                  |
+| Route                            | Scope                               | Result                                                                                                 |
+| -------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `GET /v1/capabilities`           | any active key                      | `apiVersion`, enabled `features`, `limits`, the key's own `scopes`, `resourceMode`, `ownSandboxesOnly` |
+| `GET /v1/hosts`                  | `hosts:read`                        | `{items, nextCursor}` of hosts                                                                         |
+| `GET /v1/templates`              | `templates:read`                    | `{items, nextCursor}` of templates, retired ones included                                              |
+| `GET /v1/sandboxes`              | `sandboxes:read`                    | `{items, nextCursor}` of READY sandboxes by default; explicit `states` includes history                |
+| `GET /v1/sandboxes/{id}`         | `sandboxes:read`                    | one sandbox; 404 `sandbox.not_found`                                                                   |
+| `GET /v1/operations/{id}`        | `operations:read`                   | operation status metadata; 404 `sandbox.operation_not_found`                                           |
+| `GET /v1/operations/{id}/output` | `operations:read` + `commands:read` | incremental command output page; see [Command output](#command-output)                                 |
 
 Lists are newest first. `limit` is a decimal string from 1 to 100 (default 20);
 `cursor` is the opaque `nextCursor` of the previous page. Undeclared, repeated or
@@ -286,7 +321,7 @@ Outcomes stay distinct:
 
 `/v1/capabilities` lists a feature only when every route that provides it is
 registered by the running server. In addition to the read features, the API exposes
-`sandboxes.write`, `sandboxes.probe`, `commands.execute`, `operations.cancel`,
+`sandboxes.create`, `sandboxes.manage`, `sandboxes.destroy`, `hosts.execute`, `hosts.files`, `sandboxes.probe`, `commands.execute`, `operations.cancel`,
 `files.metadata` and `templates.write`; `commands.read` is also exposed. Any authenticated key may read capabilities (the action requires no
 scope); it discloses the key's own grant but no allowlisted resource IDs.
 `limits` also carries `transferMaxBytes` (the configured `TRANSFER_MAX_BYTES`
@@ -295,6 +330,72 @@ upload or capturing a download.
 
 GET routes never read a request body (the Node adapter discards GET bodies), so
 413 and 415 cannot occur on them; those codes apply to the action routes below.
+
+## Owned host commands and text files
+
+Host commands run as the node daemon user, who is an **Incus admin**. They and
+host file tools can reach all sandboxes on the node, including other users'
+sandboxes in shared pools. `ownSandboxesOnly` does not limit this authority.
+Every host command/file action requires the host's database owner to equal the
+credential owner and the host to pass the credential's host grant. Shared-pool
+access never satisfies ownership. Direct commands/files also require the node
+owner to enable agent host commands locally; files require configured roots.
+
+Host DTOs include `agentAccess`: `{owned: false}` for foreign hosts, or
+`{owned: true, hostCommands, hostFiles, hostCommandMaxMs?}` for owned hosts.
+Flags describe effective live access, including pending policy lowering.
+
+| Route                                                 | Scope           | Success/body                                                                            |
+| ----------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------- |
+| `GET /v1/hosts/{hostId}`                              | `hosts:read`    | 200 Host                                                                                |
+| `POST /v1/hosts/{hostId}/commands`                    | `hosts:execute` | 202 status; exactly one `argv`/`script`, optional `cwd`, `timeoutMs`, `stdin`, `waitMs` |
+| `GET /v1/hosts/{hostId}/commands/{commandId}`         | `hosts:execute` | 200 status; `stdoutOffset`, `stderrOffset`, `maxBytes`, `waitMs` query                  |
+| `POST /v1/hosts/{hostId}/commands/{commandId}/stdin`  | `hosts:execute` | 200 `{commandId, accepted, reason?}`; `{data, eof}`                                     |
+| `POST /v1/hosts/{hostId}/commands/{commandId}/cancel` | `hosts:execute` | 200 status; empty body                                                                  |
+| `POST /v1/hosts/{hostId}/queued-commands`             | `hosts:execute` | 202 `{id, state, expiresAt}`; `{command, reason, expiresInHours?}`                      |
+| `GET /v1/hosts/{hostId}/queued-commands/{id}`         | `hosts:execute` | 200 `{id, state, expiresAt}`                                                            |
+| `POST /v1/hosts/{hostId}/files/read`                  | `hosts:files`   | 200 `{content, offset, size, etag, truncated}`; `{path, offset?, maxBytes?}`            |
+| `POST /v1/hosts/{hostId}/files/list`                  | `hosts:files`   | 200 `{entries, truncated}`; `{path}`                                                    |
+| `POST /v1/hosts/{hostId}/files/write`                 | `hosts:files`   | 200 `{etag, size, created}`; `{path, content, expectedEtag?, createOnly?}`              |
+| `POST /v1/hosts/{hostId}/files/edit`                  | `hosts:files`   | 200 `{etag, size, replacements}`; `{path, edits, expectedEtag?}`                        |
+
+All host POST routes require `Idempotency-Key`; they return their typed result
+directly, without a sandbox operation receipt. Commands and queued command reads
+are credential-scoped: another credential of the same owner receives 404.
+Queueing executes nothing and works while node agent access is off; only a
+person can run or dismiss a queued command. Expiry is 1–168 hours (default 24),
+with at most 50 queued commands per owner.
+
+`argv` has 1–256 items, at most 4,096 UTF-8 bytes each and 16,384 total;
+`script` has at most 16,384 UTF-8 bytes. NUL is refused. `timeoutMs` is positive,
+at most 86,400,000 and capped by the node's configured maximum; `waitMs` is
+0–60,000. Status is `{commandId, state, exitCode?, signal?, startedAt?, endsBy?,
+finishedAt?, stdout, stderr, stdoutBytes, stderrBytes}`. Command IDs are 22
+base64url characters; timestamps are epoch milliseconds and signal is a POSIX
+signal number. States are `running`, `succeeded`, `failed`, `cancelled`,
+`timed_out`, `interrupted`, `unknown`. Each stream is `{offset, data, dropped}`:
+padded base64 of masked bytes, absolute masked byte offsets, up to 65,536 bytes
+per stream/poll. Stdin takes at most 65,536 decoded bytes and an explicit `eof`.
+
+File paths stay within node-configured roots and exclude sensitive daemon paths.
+Reads default to 65,536 bytes, maximum 262,144; lists have at most 1,000 entries
+(`name`, `kind: file|dir|symlink|other`, optional `size`). Writes have at most
+262,144 UTF-8 bytes; replacing requires `expectedEtag`, while `createOnly`
+refuses existing files. Edits contain 1–20 `{oldText, newText}` pairs, each
+matching exactly once; changes commit together. The `Idempotency-Key` does
+not replay host file writes or edits; a retried edit without `expectedEtag`
+can apply twice. Files to edit are at most 4 MiB.
+Writes and edits refuse `⟦redacted` spans. ETags are opaque `h:` plus 22
+base64url characters; file reads mask secrets.
+
+Host errors use the existing envelope: `host.not_owned` (403),
+`host.agent_access_off` (409, `retryable: false`), `host.node_offline` (409,
+`retryable: true`, positive `retryAfterSeconds` and `Retry-After`),
+`host.command_not_found` (404), `host_queue.limit` (409), and `host.file_error`
+(422, `error.data.reason`). File reasons are `host_files_off`, `policy_changed`,
+`owner_mismatch`, `no_roots`, `path_denied`, `not_found`, `not_a_file`, `not_a_dir`,
+`too_large`, `binary_file`, `conflict`, `no_match`, `match_count`, `redacted_span`,
+`exists`, `invalid_input`, `io_error`, `limit`.
 
 ## Logical templates and revision authority
 
@@ -343,11 +444,11 @@ and replay even when the sandbox subsequently changes generation or is deleted.
 
 | Method and path                          | Required action scope                          | Body                                                                                                                                           |
 | ---------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/sandboxes`                     | `sandboxes:write`                              | exactly one of `poolId`/`sandboxHostId`, `template` selector, optional `name`, `envs`, `metadata`, relative `timeoutMs`, `lifecycle`, `egress` |
-| `DELETE /v1/sandboxes/{id}`              | `sandboxes:write`                              | empty; destroy the VM                                                                                                                          |
-| `POST /v1/sandboxes/{id}/stop`           | `sandboxes:write`                              | empty                                                                                                                                          |
-| `POST /v1/sandboxes/{id}/reconnect`      | `sandboxes:write`                              | optional `mode: warm or cold` (omitted adapts to READY/STOPPED), relative `timeoutMs`                                                          |
-| `POST /v1/sandboxes/{id}/lease`          | `sandboxes:write`                              | relative integer `timeoutMs` (may shorten)                                                                                                     |
+| `POST /v1/sandboxes`                     | `sandboxes:create`                             | exactly one of `poolId`/`sandboxHostId`, `template` selector, optional `name`, `envs`, `metadata`, relative `timeoutMs`, `lifecycle`, `egress` |
+| `DELETE /v1/sandboxes/{id}`              | `sandboxes:destroy`                            | empty; destroy the VM                                                                                                                          |
+| `POST /v1/sandboxes/{id}/stop`           | `sandboxes:manage`                             | empty                                                                                                                                          |
+| `POST /v1/sandboxes/{id}/reconnect`      | `sandboxes:manage`                             | optional `mode: warm or cold` (omitted adapts to READY/STOPPED), relative `timeoutMs`                                                          |
+| `POST /v1/sandboxes/{id}/lease`          | `sandboxes:manage`                             | relative integer `timeoutMs` (may shorten)                                                                                                     |
 | `POST /v1/sandboxes/{id}/probe`          | `sandboxes:read`                               | empty                                                                                                                                          |
 | `POST /v1/sandboxes/{id}/commands`       | `commands:execute`                             | exactly one of `script` or `argv`; optional `envs` string map, `cwd`, `timeoutMs`                                                              |
 | `POST /v1/operations/{id}/stdin`         | `commands:execute`                             | canonical `contentBase64`, optional `eof`                                                                                                      |
@@ -360,7 +461,7 @@ and replay even when the sandbox subsequently changes generation or is deleted.
 | `POST /v1/sandboxes/{id}/files/download` | `files:read`                                   | `path`; queues one GET_FILE capture (see the ranged download contract below)                                                                   |
 | `POST /v1/templates`                     | `templates:write`                              | host, slug, label, image alias, optional architecture and guest identity; see OpenAPI                                                          |
 
-`PUT /v1/sandboxes/{id}` (`sandboxes:write`, body `{name}`) renames a
+`PUT /v1/sandboxes/{id}` (`sandboxes:manage`, body `{name}`) renames a
 sandbox. It is not an action: no `Idempotency-Key`, no receipt, no operation
 and no webhook; it answers 200 with the fresh `Sandbox`. A malformed name is
 400 `sandbox.name_invalid` (create maps a bad `name` the same way; other

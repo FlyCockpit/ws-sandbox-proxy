@@ -36,10 +36,15 @@ WS Sandbox Proxy (`wssp`, the name of its CLI and node daemon) is a self-hosted 
 - `packages/auth` / `packages/db` / `packages/env` — auth, Prisma, env validation
 - `crates/sandbox-protocol` / `crates/sandbox-runtime` — relay contract and Incus runtime
 
-Three authentication planes never share credentials: browser cookie sessions
+Four authentication planes never share credentials: browser cookie sessions
 (CSRF, required-2FA policy) for the dashboard, `Authorization: Bearer wssp_sdk_…`
-keys for programs on `/v1`, and `wssp_host_…` / `wssp_device_…` credentials
-for node daemons on `/ws/sandbox-host`. Admin routes (`/{lang}/admin`) 404 for
+API keys on `/v1`, `wssp_agent_…` tokens or OAuth grants on `/mcp`, and
+`wssp_host_…` / `wssp_device_…` credentials for node daemons on
+`/ws/sandbox-host`. Scoped host commands/files require node-local opt-in on a
+node owned by the credential's user. The daemon user is an Incus admin: those
+tools can reach every sandbox on the node, including other users' shared-pool
+sandboxes; **Own sandboxes only** does not limit them. See
+[ADR-006](docs/design/adr-006-agent-host-access.md). Admin routes (`/{lang}/admin`) 404 for
 non-admins, and admin observability is metadata-only: it never grants
 execution, file or terminal access. See the [guide](docs/guide/README.md).
 
@@ -254,8 +259,10 @@ See the [filesystem and command behavior](docs/guide/sandboxes.md#filesystem-and
   currently verified, eligible hosts. Full/unavailable pools refuse immediately
   so callers can choose a fallback; accepted sandboxes keep their original
   host, exact revision and private defaults. Stop keeps disk, not RAM.
-- **No cross-owner pools.** Pools, hosts and revisions belong to one account.
-  Adding a revision never expands restricted keys automatically.
+- **Pools are shared by explicit invitation only.** A node owner keeps full
+  access to every sandbox that runs on their node, including other users'
+  sandboxes; pool users never get host access to someone else's node. Adding
+  a revision never expands restricted keys automatically.
 - Snapshots, restore and fork are not supported yet
   (`UNSUPPORTED_CAPABILITY`).
 

@@ -30,6 +30,12 @@ import { isPrivateIp } from "./private-ip.js";
  * (client-supplied) entry: when the chain is shorter than N + 1, or the
  * selected entry is not an IP literal, the request did not arrive through the
  * configured proxies and is keyed on the socket peer instead.
+ *
+ * Some proxies (for example Azure Application Gateway) append the client
+ * address with its source port by default. After choosing the entry, a port
+ * suffix is stripped (`1.2.3.4:5678` → `1.2.3.4`, `[2001:db8::1]:5678` →
+ * `2001:db8::1`) before the `isIP` check. A bare IPv6 literal is left alone;
+ * anything else that is not an IP literal still falls back to the socket peer.
  */
 export function resolveClientIp(c: Context): string {
   const socket = getConnInfo(c).remote.address || "unknown";
@@ -45,9 +51,29 @@ export function resolveClientIp(c: Context): string {
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
   // `forwarded[forwarded.length - hops]` is N-from-right in [...xff, socket].
-  const candidate = forwarded[forwarded.length - hops];
-  if (candidate === undefined || isIP(candidate) === 0) return socket;
+  const selected = forwarded[forwarded.length - hops];
+  if (selected === undefined) return socket;
+  const candidate = stripForwardedPort(selected);
+  if (isIP(candidate) === 0) return socket;
   return candidate;
+}
+
+/**
+ * Remove a port a proxy appended to the selected entry. `[v6]:port` and
+ * `v4:port` lose the port; `[v6]` without a port loses its brackets. A bare
+ * IPv6 literal (two or more colons, no brackets) is returned unchanged, so its
+ * last group is never mistaken for a port. The caller still validates the
+ * result with `isIP`.
+ */
+function stripForwardedPort(entry: string): string {
+  const bracketed = /^\[([^\]]+)\](?::(\d{1,5}))?$/.exec(entry);
+  if (bracketed) {
+    const host = bracketed[1] ?? "";
+    return isIP(host) === 6 ? host : entry;
+  }
+  const v4WithPort = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.exec(entry);
+  if (v4WithPort) return v4WithPort[1] ?? entry;
+  return entry;
 }
 
 let warnedUntrustedForwarded = false;

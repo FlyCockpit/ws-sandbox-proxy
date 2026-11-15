@@ -14,8 +14,9 @@ type Link = {
   ownerId: string;
   epoch: number;
   authorized(): boolean;
+  connected?(): boolean;
 };
-type Entry = { link: Link; policy: HostTerminalPolicy; sequence: number };
+type Entry = { link: Link; policy: HostTerminalPolicy; sequence: number; lowerPending?: boolean };
 export class HostTerminalPolicies {
   private entries = new Map<string, Entry>();
   private pending = new Map<
@@ -41,10 +42,18 @@ export class HostTerminalPolicies {
     this.settle(hostId, false);
     this.invalidate(hostId);
   }
-  read(hostId: string, ownerId: string): (HostTerminalPolicy & { epoch: number }) | undefined {
+  read(
+    hostId: string,
+    ownerId: string,
+  ): (HostTerminalPolicy & { epoch: number; nodeHostTerminal: boolean }) | undefined {
     const entry = this.entries.get(hostId);
     if (!entry || entry.link.ownerId !== ownerId || !entry.link.authorized()) return;
-    return { ...entry.policy, epoch: entry.link.epoch };
+    return {
+      ...entry.policy,
+      nodeHostTerminal: entry.policy.hostTerminal,
+      hostTerminal: entry.policy.hostTerminal && !entry.lowerPending,
+      epoch: entry.link.epoch,
+    };
   }
   report(hostId: string, socket: Link["socket"], report: Report): boolean {
     const entry = this.entries.get(hostId);
@@ -83,6 +92,27 @@ export class HostTerminalPolicies {
     )
       this.settle(hostId, true);
     return true;
+  }
+  offWitness(hostId: string, ownerId: string) {
+    const entry = this.entries.get(hostId);
+    if (!entry || !this.read(hostId, ownerId) || entry.policy.hostTerminal) return null;
+    return {
+      epoch: entry.link.epoch,
+      isOff: () =>
+        this.entries.get(hostId) === entry &&
+        (entry.link.connected?.() ?? entry.link.authorized()) &&
+        entry.policy.hostTerminal === false,
+    };
+  }
+  lower(hostId: string, ownerId: string): void {
+    const entry = this.entries.get(hostId);
+    if (entry?.link.ownerId !== ownerId) return;
+    entry.lowerPending = true;
+    this.invalidate(hostId, "host_terminals_disabled");
+  }
+  lift(hostId: string, ownerId: string): void {
+    const entry = this.entries.get(hostId);
+    if (entry?.link.ownerId === ownerId) entry.lowerPending = false;
   }
   /** Called by the registered live-owner, host-owner, CSRF/budgeted procedure. */
   raise(hostId: string, ownerId: string, timeoutMs = 5000): Promise<boolean> {

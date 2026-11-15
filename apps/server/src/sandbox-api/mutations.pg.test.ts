@@ -53,7 +53,7 @@ const { createSdkKey } = await import("../../../../packages/api/src/sandbox/serv
 const { SERVICE_SCOPES } = await import("@wssp/api/lib/service-scopes");
 const { unusableScopes } = await import("../../../../packages/api/src/lib/sdk-key-rules");
 /** Every scope but `missing`, minus any scope it alone made usable (for
- * example credentials:use without sandboxes:write): mint refuses those. */
+ * example credentials:use without sandboxes:manage): mint refuses those. */
 function withoutScope(missing: string) {
   const rest = SERVICE_SCOPES.filter((scope) => scope !== missing);
   const unusable = new Set(unusableScopes(rest));
@@ -161,6 +161,8 @@ const routeIds = SDK_ROUTE_IDS.filter(
     // Rename answers with the Sandbox itself, not a receipt (its own test below).
     id !== "updateSandbox" &&
     SDK_ROUTES[id].feature !== "webhooks.write" &&
+    // Host routes answer directly (no receipt); host-access tests cover them.
+    !SDK_ROUTES[id].path.startsWith("/v1/hosts/") &&
     SDK_ROUTES[id].feature !== "templates.build" &&
     SDK_ROUTES[id].feature?.startsWith("credentials.") !== true,
 );
@@ -1717,7 +1719,7 @@ it("P2-8: POST /v1/sandboxes/{id}/capture spends the shared image budget (429 on
 
 it("captureSandbox: each declared scope is required, and a host without the image cache refuses with capture_unsupported", async () => {
   const required = [...SDK_ROUTES.captureSandbox.scopes];
-  expect(required.sort()).toEqual(["sandboxes:write", "templates:write"]);
+  expect(required.sort()).toEqual(["sandboxes:manage", "templates:write"]);
   const f = await fixture(required);
   const refused = await request(f, "captureSandbox");
   expect(refused.status).toBe(409);
@@ -1812,7 +1814,7 @@ it("PUT /v1/sandboxes/{id} renames with a 200 Sandbox, typed refusals and the wr
     { kind: "session", ownerId: f.id },
     {
       name: "reader",
-      scopes: withoutScope("sandboxes:write"),
+      scopes: withoutScope("sandboxes:manage"),
       resourceMode: "ALL_OWNED",
       hostIds: [],
       templateRevisionIds: [],

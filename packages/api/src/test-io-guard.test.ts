@@ -18,6 +18,7 @@ describe("test I/O guard", () => {
     expect(Reflect.get(net.Socket.prototype.connect, testIoGuardKey)).toBe(true);
   });
 
+  // The nested Vitest startup can exceed five seconds in the parallel workspace run.
   it("fails the suite when code catches a blocked TCP attempt", () => {
     const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     const repoRoot = path.resolve(apiRoot, "../..");
@@ -40,5 +41,5 @@ describe("test I/O guard", () => {
     expect(`${result.stdout}${result.stderr}`).toContain(
       "Test I/O guard blocked 1 TCP connection attempt(s)",
     );
-  });
+  }, 30_000);
 });

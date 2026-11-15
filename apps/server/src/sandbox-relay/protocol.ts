@@ -2,6 +2,7 @@ import { KEY_FREE_CLEANUP_KINDS } from "@wssp/api/sandbox/contracts";
 import { type HostLease, leaseWireSchema } from "@wssp/api/sandbox/lease-wire";
 import {
   type BuildCopyV11,
+  hostHelloV11Schema as baseHostHelloV11Schema,
   CREDENTIAL_CAPTURE_DISPATCH_KINDS,
   CREDENTIAL_SPEC_DISPATCH_KINDS,
   type CredentialSpecRefV11,
@@ -29,7 +30,6 @@ import {
   failureSchema,
   hostAdmissionV11Schema,
   hostEgressStateV11Schema,
-  hostHelloV11Schema,
   hostInventoryUpdateV11Schema,
   hostLeaseCeilingSchema,
   isCanonicalEgressPolicyWire,
@@ -68,6 +68,23 @@ import {
   vmSizeSchema,
 } from "@wssp/sandbox-contracts";
 import { z } from "zod";
+import {
+  agentPolicyFields,
+  HOST_CONTROL_MAX_BYTES,
+  type HostServerMessage,
+  hostDaemonSchemas,
+  hostServerMessageSchema,
+  validAgentPolicy,
+} from "./host-access-protocol.js";
+
+const hostHelloV11Schema = baseHostHelloV11Schema.safeExtend({
+  daemon: baseHostHelloV11Schema.shape.daemon.extend({
+    capabilities: baseHostHelloV11Schema.shape.daemon.shape.capabilities
+      .extend(agentPolicyFields)
+      .refine(validAgentPolicy),
+  }),
+});
+
 import commandLimits from "../../../../packages/config/src/sandbox-command-limits.json";
 import receiptLimits from "../../../../packages/config/src/sandbox-receipt-limits.json";
 import terminalLimits from "../../../../packages/config/src/sandbox-terminal-limits.json";
@@ -90,8 +107,10 @@ type NegotiatedVersion = RelayProtocolVersion;
 
 export const SANDBOX_JSON_CONTROL_MAX_BYTES = COMMAND_LIMITS.jsonControlMaxBytes;
 export const SANDBOX_BINARY_CHUNK_MAX_BYTES = 1024 * 1024;
-export const SANDBOX_FRAME_MAX_BYTES =
-  4 + SANDBOX_JSON_CONTROL_MAX_BYTES + SANDBOX_BINARY_CHUNK_MAX_BYTES;
+export const SANDBOX_FRAME_MAX_BYTES = Math.max(
+  HOST_CONTROL_MAX_BYTES,
+  4 + SANDBOX_JSON_CONTROL_MAX_BYTES + SANDBOX_BINARY_CHUNK_MAX_BYTES,
+);
 const SANDBOX_STREAM_WINDOW_CHUNKS = 4;
 
 const messageIdSchema = z.string().trim().min(1).max(128);
@@ -645,7 +664,7 @@ export const DISPATCH_AUDIT_PAGE_MAX = 64;
 export const PENDING_RECEIPTS_MAX = 4;
 const dispatchAuditPageSchema = z.number().int().min(0).max(1024);
 
-const daemonControlMessageSchema = z.discriminatedUnion("type", [
+const coreDaemonControlMessageSchema = z.discriminatedUnion("type", [
   hostTerminalPolicyControlV11Schema.options[0],
   hostLeasePolicyControlV11Schema,
   hostQuiesceV11Schema,
@@ -925,6 +944,7 @@ const daemonControlMessageSchema = z.discriminatedUnion("type", [
   egressRefusedV11Schema,
   ...daemonCredentialMessageSchemas,
 ]);
+const daemonControlMessageSchema = z.union([coreDaemonControlMessageSchema, ...hostDaemonSchemas]);
 export type DaemonControlMessage = z.infer<typeof daemonControlMessageSchema>;
 
 const negotiatedCapabilitiesSchema = z
@@ -975,6 +995,7 @@ export type CensusEntryResult = {
 };
 
 export type ServerControlMessage =
+  | HostServerMessage
   | EgressBlocklistV11
   | z.infer<typeof allocationRequestSchema>
   | z.infer<typeof journalKeyInstallSchema>
@@ -1285,6 +1306,25 @@ export function encodeServerControlMessage(
   message: ServerControlMessage,
   protocolVersion: string,
 ): string {
+  if (message.type.startsWith("host.policy.") && message.type !== "host.policy.lower")
+    throw new SandboxRelayDispatchValidationError("Unsupported host policy request.");
+  if (
+    message.type.startsWith("host.exec.") ||
+    message.type === "host.policy.lower" ||
+    message.type === "host.file.request"
+  ) {
+    const encoded = JSON.stringify(hostServerMessageSchema.parse(message));
+    if (
+      Buffer.byteLength(encoded) >
+      (["host.exec.start", "host.exec.stdin", "host.file.request"].includes(message.type)
+        ? HOST_CONTROL_MAX_BYTES
+        : SANDBOX_JSON_CONTROL_MAX_BYTES)
+    )
+      throw new SandboxRelayDispatchValidationError("Host control frame exceeds bound.");
+    if (!knownRelayProtocolVersion(protocolVersion))
+      throw new SandboxRelayDispatchValidationError("Unknown negotiated protocol version.");
+    return encoded;
+  }
   if (!knownRelayProtocolVersion(protocolVersion))
     throw new SandboxRelayDispatchValidationError("Unknown negotiated protocol version.");
   if (
@@ -1510,7 +1550,15 @@ export function parseDaemonControlFrame(
   protocolVersion?: string,
 ): DaemonControlMessage {
   const bytes = checkDaemonControlFrameSize(Buffer.byteLength(frame, "utf8"), protocolVersion);
-  return validateDaemonControlMessage(JSON.parse(frame), bytes);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(frame);
+  } catch (error) {
+    if (bytes > SANDBOX_JSON_CONTROL_MAX_BYTES)
+      throw new SandboxRelayProtocolError("JSON control frame exceeds 64 KiB.");
+    throw error;
+  }
+  return validateDaemonControlMessage(parsed, bytes);
 }
 
 /**
@@ -1529,13 +1577,18 @@ export function parseParsedDaemonControlFrame(
 function checkDaemonControlFrameSize(bytes: number, protocolVersion: string | undefined): number {
   if (protocolVersion !== undefined && !knownRelayProtocolVersion(protocolVersion))
     throw new SandboxRelayProtocolError("Unknown negotiated protocol version.");
-  if (bytes > SANDBOX_JSON_CONTROL_MAX_BYTES) {
-    throw new SandboxRelayProtocolError("JSON control frame exceeds 64 KiB.");
+  if (bytes > HOST_CONTROL_MAX_BYTES) {
+    throw new SandboxRelayProtocolError("JSON control frame exceeds host bound.");
   }
   return bytes;
 }
 
 function validateDaemonControlMessage(parsed: unknown, bytes: number): DaemonControlMessage {
+  const type = parsed && typeof parsed === "object" && "type" in parsed ? parsed.type : undefined;
+  const hostAccess =
+    typeof type === "string" && (type === "host.exec.status" || type === "host.file.result");
+  if (bytes > SANDBOX_JSON_CONTROL_MAX_BYTES && !hostAccess)
+    throw new SandboxRelayProtocolError("JSON control frame exceeds 64 KiB.");
   const message = daemonControlMessageSchema.parse(parsed);
   if (
     (message.type === "operation.result" || message.type === "operation.receipt") &&

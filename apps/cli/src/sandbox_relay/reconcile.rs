@@ -142,7 +142,8 @@ impl DeferredPushes {
         use sandbox_protocol::ServerControlMessage as M;
         matches!(
             message,
-            M::HostTerminalPolicyRaise { .. }
+            M::HostPolicyLower(_)
+                | M::HostTerminalPolicyRaise { .. }
                 | M::TerminalOpen { .. }
                 | M::TerminalResize { .. }
                 | M::TerminalClose { .. }

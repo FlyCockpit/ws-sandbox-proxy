@@ -9,6 +9,7 @@ import {
   withAuthorityChange,
 } from "@wssp/db/authority";
 import {
+  type HostAgentAccess,
   hostStoragePoolSchema,
   policyReconcilerHealthSchema,
   VM_SIZE_LIMITS,
@@ -22,7 +23,7 @@ import {
   isOwnerCredentialPolicySatisfied,
   ownerCredentialPolicyUserSelect,
 } from "../../lib/owner-credential-policy";
-import { cursorPage, pageTake, withCursor } from "../../lib/pagination";
+import { cursorPage, cursorPageInput, pageTake, withCursor } from "../../lib/pagination";
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from "../../lib/prisma-errors";
 import {
   authorizeServiceAction,
@@ -46,6 +47,7 @@ import type {
 } from "../contracts";
 import { forgetOffloadedDisks, forgetSandboxOwners } from "../disk-offload/forget";
 import { egressGuardLeased } from "../egress-guard";
+import { readHostAgentPolicy } from "../host-access";
 import {
   assertHostDeletable,
   hostDrainStatus,
@@ -59,6 +61,7 @@ import { readHostTerminalPolicy } from "../host-terminal-policy";
 import { LEASE_UNLIMITED_DEADLINE_MS } from "../lease-limits";
 import { assertOwnerHostCapacity } from "../owner-host-cap";
 import { lockPoolGraph } from "../pool-locks";
+import { isBrowserSession } from "../principal-kinds";
 import { lockCurrentHostEpoch, RelayFenceRejected, requireRelayFence } from "../relay-fence";
 import { discoverHostPaths, notifySharingAccessChanged } from "../sharing-access";
 import { readContributionPool } from "./sharing";
@@ -110,6 +113,9 @@ function storageView(
 }
 const hostSelect = {
   id: true,
+  userId: true,
+  agentHostCommandsVetoedAt: true,
+  hostTerminalVetoedAt: true,
   StoragePools: {
     where: { configured: true },
     orderBy: { marker: "asc" },
@@ -155,8 +161,14 @@ const hostSelect = {
   updatedAt: true,
 } satisfies Prisma.SandboxHostSelect;
 
-function hostView(row: Prisma.SandboxHostGetPayload<{ select: typeof hostSelect }>) {
+function hostView(
+  row: Prisma.SandboxHostGetPayload<{ select: typeof hostSelect }>,
+  ownerId?: string,
+) {
   const {
+    userId: _userId,
+    agentHostCommandsVetoedAt: _agentLower,
+    hostTerminalVetoedAt: _terminalLower,
     policyReconcilerHealth,
     StoragePools,
     memoryReservedMiB,
@@ -184,7 +196,24 @@ function hostView(row: Prisma.SandboxHostGetPayload<{ select: typeof hostSelect 
   const age = row.lastHeartbeatAt ? Date.now() - row.lastHeartbeatAt.getTime() : -1;
   const health = policyReconcilerHealthSchema.safeParse(policyReconcilerHealth);
   // Explicit disclosure projection: no raw capabilities/unknown metadata.
+  const agent = readHostAgentPolicy(row.id, row.userId);
+  const agentAccess: HostAgentAccess =
+    ownerId === row.userId
+      ? {
+          owned: true as const,
+          hostCommands:
+            !row.deletionRequestedAt &&
+            !row.agentHostCommandsVetoedAt &&
+            agent?.hostCommands === true,
+          hostFiles:
+            !row.deletionRequestedAt && !row.agentHostCommandsVetoedAt && agent?.hostFiles === true,
+          ...(agent?.hostCommandMaxMs === undefined
+            ? {}
+            : { hostCommandMaxMs: agent.hostCommandMaxMs }),
+        }
+      : { owned: false as const };
   return {
+    agentAccess,
     ...hostDrainStatus({ ...visible, memoryReservedMiB, vcpuReserved: row.vcpuReserved }),
     capacity: {
       ...capacity,
@@ -266,25 +295,60 @@ export const listHosts = serviceProcedure(
     });
     await authorizeServiceAction(owner, "hosts.list");
     await pool?.check();
-    return cursorPage(rows.map(hostView), input.limit, "createdAt");
+    return cursorPage(
+      rows.map((row) => hostView(row, owner.ownerId)),
+      input.limit,
+      "createdAt",
+    );
   },
 );
 
 /** Owner-only dashboard detail. Foreign pool use never resolves this selector. */
 export const getHost = serviceProcedure(
-  { sessionOnly: true },
+  { action: "hosts.get", target: (input: HostIdInput) => ({ sandboxHostId: input.id }) },
   async (owner: Principal, input: HostIdInput) => {
     const row = await prisma.sandboxHost.findFirst({
-      where: { id: input.id, userId: owner.ownerId },
+      where: { id: input.id, ...serviceResourceFilter(owner, "host") },
       select: hostSelect,
     });
     if (!row) throw new ORPCError("NOT_FOUND");
     return {
-      ...hostView(row),
-      terminalPolicy: row.deletionRequestedAt
-        ? null
-        : (readHostTerminalPolicy(row.id, owner.ownerId) ?? null),
-      lease: await hostLeaseView(row.id, owner.ownerId),
+      ...hostView(row, owner.ownerId),
+      terminalPolicy:
+        row.userId !== owner.ownerId || row.deletionRequestedAt
+          ? null
+          : (() => {
+              const policy = readHostTerminalPolicy(row.id, owner.ownerId);
+              return policy
+                ? { ...policy, hostTerminal: policy.hostTerminal && !row.hostTerminalVetoedAt }
+                : null;
+            })(),
+      lease:
+        isBrowserSession(owner) && row.userId === owner.ownerId
+          ? await hostLeaseView(row.id, owner.ownerId)
+          : { ceilingMs: null, drain: { live: 0, unlimited: 0, emptyBy: null } },
+      recentAudit:
+        isBrowserSession(owner) && row.userId === owner.ownerId
+          ? await prisma.hostAuditEvent.findMany({
+              where: { userId: owner.ownerId, sandboxHostId: row.id },
+              orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+              take: cursorPageInput.parse({ limit: 50 }).limit,
+              select: {
+                id: true,
+                createdAt: true,
+                actor: true,
+                kind: true,
+                program: true,
+                state: true,
+              },
+            })
+          : [],
+      agentPolicy:
+        isBrowserSession(owner) && row.userId === owner.ownerId
+          ? readHostAgentPolicy(row.id, owner.ownerId)
+          : null,
+      agentHostCommandsVetoedAt: isBrowserSession(owner) ? row.agentHostCommandsVetoedAt : null,
+      hostTerminalVetoedAt: isBrowserSession(owner) ? row.hostTerminalVetoedAt : null,
     };
   },
 );
@@ -423,7 +487,7 @@ export const createHost = serviceProcedure(
             select: hostSelect,
           });
         })
-        .then(hostView);
+        .then((row) => hostView(row, owner.ownerId));
     } catch (error) {
       if (isPrismaUniqueViolation(error)) {
         throw new ORPCError("CONFLICT", { message: "A host with this slug already exists." });
@@ -459,7 +523,7 @@ export const updateHost = serviceProcedure(
               select: hostSelect,
             });
       requireRelayFence(host != null);
-      return hostView(host);
+      return hostView(host, owner.ownerId);
     });
   },
 );
@@ -773,3 +837,10 @@ export const revokeHostToken = serviceProcedure(
     );
   },
 );
+
+export {
+  liftAgentHostCommandsVeto,
+  liftHostTerminalVeto,
+  lowerAgentHostCommands,
+  lowerHostTerminal,
+} from "./host-policy";

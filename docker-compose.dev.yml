@@ -7,6 +7,14 @@
 #   pnpm dev:services          # start in background
 #   docker compose -f docker-compose.dev.yml down   # stop
 #   docker compose -f docker-compose.dev.yml down -v # stop + delete data
+#
+# Each checkout uses its own database on this one Postgres (`wssp` in
+# the main checkout, `wssp_wt_<hash>` in a git worktree, plus
+# `<name>_shadow`). `pnpm db:worktree` creates them; `pnpm db:reset:local`
+# recreates only this checkout's database. Reset drops only databases marked
+# disposable: `wssp` is marked by the init script below on a fresh
+# volume, the others by `pnpm db:worktree`. A volume initialized before the
+# mark existed is adopted once by a person: `pnpm db:worktree --adopt`.
 
 services:
   postgres:
@@ -24,6 +32,8 @@ services:
       - "127.0.0.1:${DEV_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql
+      # Marks POSTGRES_DB as a disposable local database on first init.
+      - ./scripts/db/dev-postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s

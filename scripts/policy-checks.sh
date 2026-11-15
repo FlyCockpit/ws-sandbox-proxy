@@ -2245,7 +2245,11 @@ hits="$(
 # apps/web/src/lib/host-status.ts holds GUARD_INSTALL_COMMAND, a display-only
 # string the host card prints for the node owner to run themselves (the
 # "print the command" half of this rule); nothing executes it.
-hits="$(filter_paths "$hits" scripts/policy-checks.sh scripts/claude-hooks/pre-tool-use.mjs scripts/claude-hooks/settings.json apps/web/src/lib/host-status.ts)"
+# packages/api/src/sandbox/host-queued-wrapper.ts builds the queued-command
+# wrapper text (ADR-006) that a person reviews and runs in their own host
+# terminal; it only drops cached sudo credentials (`sudo -k`) and the server
+# never executes it.
+hits="$(filter_paths "$hits" scripts/policy-checks.sh scripts/claude-hooks/pre-tool-use.mjs scripts/claude-hooks/settings.json apps/web/src/lib/host-status.ts packages/api/src/sandbox/host-queued-wrapper.ts)"
 report "Do not run sudo from agent-owned scripts. Print the command block and ask the developer to run it." "$hits"
 
 # AGENTS.md rule 8: "Every list query is bounded (`cursorPageInput` + `take`)".

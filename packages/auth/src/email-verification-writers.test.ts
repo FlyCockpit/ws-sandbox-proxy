@@ -10,7 +10,7 @@ const reviewed: Record<string, string> = {
   "packages/db/src/terminal-proof.ts":
     "9ff895e70988d9ec5cf686e8bf8976c8889ee8f2510580803de7c0a46f6441bd",
   "packages/api/src/sandbox/host-terminal-tickets.ts":
-    "3362fb4b0172ad69ce0be9fd98a8cb58db5d7eede54b50bfda2dea5e3a0c728d",
+    "ec42d2b5527551376ad0e4d2fc882414e1cf4ee93fddb6a3c88d8f39baa00bc3",
   "packages/auth/src/terminal-hooks.ts":
     "fd5892eec0910cf1162b1ebfb89d224e6d564fd0f321326922d3113cfa9ce42d",
   "packages/api/src/sandbox/services/sharing.ts":
@@ -31,7 +31,7 @@ const reviewed: Record<string, string> = {
     "fdefe353a9bec8bbe260b57df4f043f53a8d4decb0eda5cde2c510da068a56f9",
   "packages/db/src/admin-governance.ts":
     "8dfdfe8c74e4776dff92c9a32c4bae6e4f233b389632c5c5afe3e7666f72071e",
-  "packages/auth/src/index.ts": "f8749c63a14a9bd79b6ace7c538d5b0cfc0d7ab69435d9d816558177f260c244",
+  "packages/auth/src/index.ts": "eba06783efc3ad681463c5e6aa37d056343b082aae886e7f8c979c37e8a03232",
   "packages/api/src/routers/users.ts":
     "99d459a0be0cda733a10c0371afdf12a52effe253e41355034587297a503d800",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).

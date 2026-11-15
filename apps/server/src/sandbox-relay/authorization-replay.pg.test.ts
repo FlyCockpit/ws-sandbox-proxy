@@ -111,7 +111,7 @@ async function seed() {
       lookupPrefix: randomUUID(),
       secretDigest: randomUUID(),
       resourceMode: "ALLOWLIST",
-      scopes: ["sandboxes:write"],
+      scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
       HostAllowlist: { create: { sandboxHostId: host.id } },
       RevisionAllowlist: { create: { templateRevisionId: revision.id } },
     },
@@ -337,7 +337,7 @@ it("revoking_key_a_does_not_fail_key_b_operation", async () => {
       name: "sibling",
       lookupPrefix: randomUUID(),
       secretDigest: randomUUID(),
-      scopes: ["sandboxes:write"],
+      scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
     },
   });
   vi.mocked(manager.dispatchOperation).mockImplementationOnce(async () => {

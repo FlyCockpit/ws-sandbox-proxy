@@ -51,9 +51,14 @@ const paging = {
 export function SharingNotice({ contribution = false }: { contribution?: boolean }) {
   const { t } = useTranslation("hosts");
   return (
-    <p className="text-sm text-muted-foreground" data-sharing-notice="">
-      {t(contribution ? "hosts:sharing.contributionNotice" : "hosts:sharing.trust")}
-    </p>
+    <>
+      <p className="text-sm text-muted-foreground" data-sharing-notice="">
+        {t(contribution ? "hosts:sharing.contributionNotice" : "hosts:sharing.trust")}
+      </p>
+      <p className="text-sm text-muted-foreground" data-node-owner-access="">
+        {t("hosts:sharing.nodeOwnerAccess")}
+      </p>
+    </>
   );
 }
 function More({

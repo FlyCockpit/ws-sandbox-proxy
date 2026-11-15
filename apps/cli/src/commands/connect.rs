@@ -97,6 +97,9 @@ pub fn run(args: &ConnectArgs) -> Result<()> {
         }
     };
 
+    if matches!(args.host_terminal, Some(crate::commands::config::OnOff::On)) {
+        crate::commands::config::confirm_host_access_raise()?;
+    }
     // CLI logins: credential plaintext lives in daemon memory while
     // installing, capturing or proxying; keep it out of core dumps and
     // same-user ptrace. Best effort, before any relay thread starts.

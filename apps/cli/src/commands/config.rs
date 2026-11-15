@@ -29,6 +29,20 @@ pub struct Args {
 
 #[derive(Debug, clap::Subcommand)]
 enum Sub {
+    /// Allow agents to run host commands and use host file tools. The daemon user is an Incus admin: these tools can reach every sandbox on this node, including other users' sandboxes in shared pools. A credential's "own sandboxes only" setting does not limit host commands. Enabling requires local stdin and stderr TTYs, verified process ancestry outside the daemon, and typed confirmation.
+    SetAgentHostCommands {
+        #[arg(value_enum)]
+        value: OnOff,
+    },
+    /// Cap each host command at 1..86400 seconds (default 600). Raising requires local confirmation.
+    SetHostCommandMaxTime { seconds: u64 },
+    /// Set up to 32 absolute host file roots (never `/`). Adding roots requires local confirmation.
+    SetHostFileRoots {
+        #[arg(required=true, num_args=1..=32)]
+        paths: Vec<std::path::PathBuf>,
+    },
+    /// Disable host file tools by clearing their roots. Never prompts.
+    ClearHostFileRoots,
     /// Enable or disable host terminals locally.
     SetHostTerminal {
         #[arg(value_enum)]
@@ -136,7 +150,76 @@ pub enum TotpMode {
 
 pub fn run(args: &Args) -> Result<()> {
     match &args.command {
+        Sub::SetAgentHostCommands { value } => {
+            if matches!(value, OnOff::On) {
+                confirm_host_access_raise()?;
+            }
+            Config::update(|cfg| cfg.set_agent_host_commands(matches!(value, OnOff::On)))?;
+            set_bool(
+                args.json,
+                "allowAgentHostCommands",
+                matches!(value, OnOff::On),
+                "agent host commands",
+            )?;
+        }
+        Sub::SetHostCommandMaxTime { seconds } => {
+            let ms = seconds
+                .checked_mul(1000)
+                .filter(|v| sandbox_protocol::valid_host_command_max_ms(*v))
+                .context("host command time must be 1..86400 seconds")?;
+            let current = Config::load()?;
+            let confirmed = ms > current.host_command_max_ms;
+            if confirmed {
+                confirm_host_access_raise()?;
+            }
+            Config::update(|cfg| {
+                anyhow::ensure!(
+                    confirmed || ms <= cfg.host_command_max_ms,
+                    "policy changed; retry the local command"
+                );
+                cfg.set_host_command_max_ms(ms)
+            })?;
+            if args.json {
+                output::json(&SetValue {
+                    key: "hostCommandMaxMs",
+                    value: ms.to_string(),
+                })?;
+            } else {
+                output::line(format!("set host command time cap to {seconds} seconds"))?;
+            }
+        }
+        Sub::SetHostFileRoots { paths } => {
+            let mut proposed = Config::load()?;
+            proposed.set_host_file_roots(paths)?;
+            let current = Config::load()?;
+            let confirmed = proposed
+                .host_file_roots
+                .iter()
+                .any(|p| !current.host_file_roots.contains(p));
+            if confirmed {
+                confirm_host_access_raise()?;
+            }
+            Config::update(|cfg| {
+                anyhow::ensure!(
+                    confirmed
+                        || proposed
+                            .host_file_roots
+                            .iter()
+                            .all(|p| cfg.host_file_roots.contains(p)),
+                    "policy changed; retry the local command"
+                );
+                cfg.set_host_file_roots(&proposed.host_file_roots)
+            })?;
+            set_bool(args.json, "hostFiles", !paths.is_empty(), "host file roots")?;
+        }
+        Sub::ClearHostFileRoots => {
+            Config::update(|cfg| cfg.set_host_file_roots(&[]))?;
+            set_bool(args.json, "hostFiles", false, "host file roots")?;
+        }
         Sub::SetHostTerminal { value } => {
+            if matches!(value, OnOff::On) {
+                confirm_host_access_raise()?;
+            }
             Config::update(|cfg| cfg.set_host_terminal(matches!(value, OnOff::On)))?;
             if args.json {
                 output::json(&SetValue {
@@ -148,6 +231,9 @@ pub fn run(args: &Args) -> Result<()> {
             }
         }
         Sub::SetHostTerminalTotp { value } => {
+            if !matches!(value, TotpMode::Required) {
+                confirm_host_access_raise()?;
+            }
             Config::update(|cfg| cfg.set_host_terminal_totp(matches!(value, TotpMode::Required)))?;
             if args.json {
                 output::json(&SetValue {
@@ -370,6 +456,10 @@ pub fn run(args: &Args) -> Result<()> {
             if args.json {
                 output::json(&ConfigJson {
                     allow_host_terminal: config.allow_host_terminal,
+                    allow_agent_host_commands: config.allow_agent_host_commands,
+                    host_command_max_ms: config.host_command_max_ms,
+                    host_file_roots: &config.host_file_roots,
+                    agent_policy_revision: config.agent_policy_revision,
                     host_terminal_require_totp: config.host_terminal_require_totp,
                     host_terminal_policy_revision: config.host_terminal_policy_revision,
                     max_lease: config.max_lease.to_string(),
@@ -600,6 +690,10 @@ struct SetValue {
 #[serde(rename_all = "camelCase")]
 struct ConfigJson<'a> {
     allow_host_terminal: bool,
+    allow_agent_host_commands: bool,
+    host_command_max_ms: u64,
+    host_file_roots: &'a [std::path::PathBuf],
+    agent_policy_revision: u64,
     host_terminal_require_totp: bool,
     host_terminal_policy_revision: u64,
     max_lease: String,
@@ -640,4 +734,52 @@ fn set_bool(json: bool, key: &'static str, on: bool, what: &str) -> Result<()> {
 #[serde(rename_all = "camelCase")]
 struct CaFileSelection<'a> {
     ca_file: Option<&'a Path>,
+}
+
+/// This gate is deliberately independent of JSON output and has no bypass flag.
+pub(crate) fn confirm_host_access_raise() -> Result<()> {
+    use std::io::{IsTerminal, Write};
+    check_raise_context(
+        std::io::stdin().is_terminal(),
+        std::io::stderr().is_terminal(),
+        std::env::var_os("WSSP_HOST_COMMAND").is_some()
+            || std::env::var_os("WSSP_HOST_TERMINAL").is_some(),
+    )?;
+    crate::host_context::check()?;
+    let mut stderr = std::io::stderr().lock();
+    writeln!(
+        stderr,
+        "the daemon user is an Incus admin; host access can reach every sandbox on this node, including other users' shared-pool sandboxes. own sandboxes only does not limit host commands."
+    )?;
+    write!(stderr, "type on to enable or raise host access: ")?;
+    stderr.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    anyhow::ensure!(answer.trim() == "on", "host access raise was not confirmed");
+    Ok(())
+}
+fn check_raise_context(stdin_tty: bool, stderr_tty: bool, host_command: bool) -> Result<()> {
+    anyhow::ensure!(!host_command, "a host command cannot raise host access");
+    anyhow::ensure!(
+        stdin_tty && stderr_tty,
+        "raising host access requires local stdin and stderr TTYs"
+    );
+    Ok(())
+}
+#[cfg(test)]
+mod host_raise_tests {
+    use super::*;
+    #[test]
+    fn raises_need_both_ttys_and_no_marker() {
+        for (stdin, stderr, marker) in [
+            (false, false, false),
+            (false, true, false),
+            (true, false, false),
+            (true, true, true),
+            (false, false, true),
+        ] {
+            assert!(check_raise_context(stdin, stderr, marker).is_err());
+        }
+        assert!(check_raise_context(true, true, false).is_ok());
+    }
 }

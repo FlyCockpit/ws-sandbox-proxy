@@ -19,11 +19,16 @@ pub mod supervisor;
 
 mod files;
 
+mod agent_policy;
 mod clock;
 mod egress_hints;
 mod egress_state;
 mod evidence;
 mod expiry;
+mod host_access;
+mod host_exec;
+mod host_files;
+mod host_mask;
 mod host_policy;
 mod host_reports;
 pub mod quiesce;
@@ -50,3 +55,6 @@ pub(crate) fn plain_frame(
 }
 #[cfg(test)]
 mod test_support;
+
+#[cfg(all(test, target_os = "linux"))]
+mod host_access_wire_tests;

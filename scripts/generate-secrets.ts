@@ -510,12 +510,6 @@ for (const group of groupsForFile("root")) {
       say("");
       const enabled = await askConfirm(`  ${group.prompt}`, group.default ?? false);
       if (!enabled) {
-        // BACKUP_ENABLED defaults to true, so declining backups must say so
-        // explicitly or the freshness check alerts on backups that never run.
-        if (group.id === "backups") {
-          values.set("BACKUP_ENABLED", "false");
-          say("  BACKUP_ENABLED: false");
-        }
         continue;
       }
     }

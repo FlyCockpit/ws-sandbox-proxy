@@ -49,6 +49,7 @@ const DASHBOARD_PAGES = [
 ];
 
 const SETTINGS_PAGES = [
+  "agent-tokens",
   "host-credentials",
   "hosts",
   "hosts/$hostId",

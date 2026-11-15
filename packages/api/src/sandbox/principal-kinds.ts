@@ -27,6 +27,7 @@ export function assertNever(value: never, error?: Error): never {
 export type PlacementViewer = {
   readonly ownerId: string;
   readonly resourceMode: SdkKeyResourceMode;
+  readonly ownSandboxesOnly: boolean;
   readonly allowedHostIds: "allOwned" | ReadonlySet<string>;
   readonly allowedPoolIds: "allUsable" | ReadonlySet<string>;
   readonly allowedRevisionIds: "allOwned" | ReadonlySet<string>;
@@ -50,6 +51,7 @@ function sessionViewer(ownerId: string): PlacementViewer {
   return {
     ownerId,
     resourceMode: "ALL_OWNED",
+    ownSandboxesOnly: false,
     allowedHostIds: "allOwned",
     allowedPoolIds: "allUsable",
     allowedRevisionIds: "allOwned",
@@ -62,6 +64,7 @@ function closedViewer(ownerId: string): PlacementViewer {
   return {
     ownerId,
     resourceMode: "ALLOWLIST",
+    ownSandboxesOnly: true,
     allowedHostIds: new Set(),
     allowedPoolIds: new Set(),
     allowedRevisionIds: new Set(),

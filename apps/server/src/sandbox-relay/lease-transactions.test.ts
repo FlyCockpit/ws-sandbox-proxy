@@ -120,6 +120,7 @@ function setup(init: Parameters<typeof createFenceStore>[0] = {}) {
   db.sandboxHost.findFirst.mockImplementation((args) =>
     Object.assign(prismaPromise(Promise.resolve(find(store.hosts, args?.where) as never)), {
       User: vi.fn(),
+      HostQueuedCommands: vi.fn(),
       HostTerminalTickets: vi.fn(),
       HostTokens: vi.fn(),
       HostDeviceCredentials: vi.fn(),
@@ -1487,6 +1488,8 @@ it.each(["kill", "absent stop"])(
       getSandbox(
         {
           kind: "sdkKey",
+          credentialKind: "API" as const,
+          ownSandboxesOnly: false,
           expiresAt: null,
           keyId: "history-key",
           ownerId: "user-1",

@@ -12,7 +12,7 @@ import { create } from "zustand";
  * shell, so this holds whether or not a credential page is mounted.
  */
 
-export type OrphanScope = "hostToken" | "sdkKey";
+export type OrphanScope = "hostToken" | "sdkKey" | "agentToken";
 export type OrphanEntry = { ownerId: string; scope: OrphanScope; id: string; label: string };
 
 /** At most this many unrevoked orphans are kept per owner and scope. */

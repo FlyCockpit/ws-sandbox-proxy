@@ -117,3 +117,22 @@ describe("sandbox HMAC secret schema", () => {
     }
   });
 });
+
+describe("agent token expiry policy", () => {
+  it("allows no expiry by default and parses only strict boolean flags", () => {
+    const schema = serverVars.WSSP_AGENT_TOKEN_ALLOW_NO_EXPIRY;
+    expect(schema.parse(undefined)).toBe(true);
+    expect(schema.parse("true")).toBe(true);
+    expect(schema.parse("false")).toBe(false);
+    for (const value of ["", "TRUE", "False", "1", "0", "yes", true, false])
+      expect(schema.safeParse(value).success).toBe(false);
+  });
+  it("defaults to 90 days and bounds integer lifetimes to 1..3650", () => {
+    const schema = serverVars.WSSP_AGENT_TOKEN_MAX_LIFETIME_DAYS;
+    expect(schema.parse(undefined)).toBe(90);
+    expect(schema.parse("1")).toBe(1);
+    expect(schema.parse("3650")).toBe(3650);
+    for (const value of ["", "0", "3651", "-1", "1.5", "many", Infinity, NaN])
+      expect(schema.safeParse(value).success).toBe(false);
+  });
+});

@@ -65,7 +65,7 @@ fn terminal_command_for(
     home: &std::path::Path,
 ) -> Result<portable_pty::CommandBuilder, crate::RuntimeError> {
     let forbidden = |v: &str| {
-        ["wssp_host_", "wssp_device_", "wssp_sdk_"]
+        ["wssp_host_", "wssp_device_", "wssp_sdk_", "wssp_agent_"]
             .iter()
             .any(|p| v.contains(p))
     };
@@ -90,6 +90,7 @@ fn terminal_command_for(
         ("LANG", "C.UTF-8"),
         ("LC_ALL", "C.UTF-8"),
         ("HISTFILE", "/dev/null"),
+        ("WSSP_HOST_TERMINAL", "1"),
         ("USER", name),
         ("LOGNAME", name),
     ] {
@@ -116,7 +117,8 @@ mod terminal_tests {
         assert_eq!(env.get("HOME").map(String::as_str), Some("/tmp"));
         assert_eq!(env.get("USER").map(String::as_str), Some("daemon-user"));
         assert_eq!(env.get("HISTFILE").map(String::as_str), Some("/dev/null"));
-        assert_eq!(env.len(), 9);
+        assert_eq!(env.get("WSSP_HOST_TERMINAL").map(String::as_str), Some("1"));
+        assert_eq!(env.len(), 10);
         for key in [
             "SSH_AUTH_SOCK",
             "WSSP_HOST_TOKEN",
@@ -149,5 +151,62 @@ mod terminal_tests {
                 user.name
             );
         }
+    }
+}
+
+/// Commands requested by an owner credential use only a minimal, scrubbed host environment.
+pub fn agent_command(program: impl AsRef<OsStr>) -> Command {
+    let mut command = command(program, Environment::PathOnly);
+    command
+        .env_clear()
+        .envs(agent_environment(std::env::vars_os()));
+    command.env("TERM", "dumb").env("WSSP_HOST_COMMAND", "1");
+    command
+}
+fn agent_environment(
+    values: impl IntoIterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    values
+        .into_iter()
+        .filter(|(key, value)| {
+            let key = key.to_string_lossy();
+            !key.starts_with("WSSP_")
+                && (matches!(
+                    key.as_ref(),
+                    "PATH" | "HOME" | "USER" | "LOGNAME" | "LANG" | "TZ"
+                ) || key.starts_with("LC_"))
+                && !["wssp_sdk_", "wssp_host_", "wssp_device_", "wssp_agent_"]
+                    .iter()
+                    .any(|p| value.to_string_lossy().contains(p))
+        })
+        .collect()
+}
+#[cfg(test)]
+mod agent_tests {
+    use super::*;
+    #[test]
+    fn host_environment_is_an_allowlist_and_drops_token_values() {
+        let input = [
+            ("PATH", "/bin"),
+            ("HOME", "/tmp"),
+            ("LANG", "wssp_agent_fake"),
+            ("LC_ALL", "C"),
+            ("TZ", "wssp_sdk_fake"),
+            ("WSSP_HOST_TOKEN", "refused"),
+            ("SHELL", "/bin/sh"),
+            ("LD_PRELOAD", "refused"),
+            ("INCUS_DIR", "refused"),
+        ];
+        let env = agent_environment(input.map(|(k, v)| (k.into(), v.into())));
+        assert_eq!(env.len(), 3);
+        let child = agent_command("/bin/true");
+        assert_eq!(
+            child
+                .get_envs()
+                .find(|(k, _)| *k == "WSSP_HOST_COMMAND")
+                .unwrap()
+                .1,
+            Some(OsStr::new("1"))
+        );
     }
 }

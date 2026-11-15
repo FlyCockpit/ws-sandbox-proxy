@@ -163,7 +163,7 @@ async function seed(placement: "direct" | "pool" = "direct") {
       lookupPrefix: randomUUID(),
       secretDigest: randomUUID(),
       resourceMode: "ALL_OWNED",
-      scopes: ["sandboxes:write"],
+      scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
     },
   });
   await db.inspect.sandboxOperation.update({

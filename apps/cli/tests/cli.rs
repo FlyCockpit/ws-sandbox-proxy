@@ -933,12 +933,7 @@ fn host_terminal_setters_are_local_atomic_and_inspectable() {
     let initial = json_stdout(command);
     assert_eq!(initial["allowHostTerminal"], false);
     assert_eq!(initial["hostTerminalRequireTotp"], true);
-    for (sub, value) in [
-        ("set-host-terminal", "on"),
-        ("set-host-terminal-totp", "optional"),
-        ("set-host-terminal", "off"),
-        ("set-host-terminal", "off"),
-    ] {
+    for (sub, value) in [("set-host-terminal", "off"), ("set-host-terminal", "off")] {
         cli(tmp.path())
             .args(["config", sub, value])
             .assert()
@@ -948,8 +943,8 @@ fn host_terminal_setters_are_local_atomic_and_inspectable() {
     command.args(["config", "show", "--json"]);
     let saved = json_stdout(command);
     assert_eq!(saved["allowHostTerminal"], false);
-    assert_eq!(saved["hostTerminalRequireTotp"], false);
-    assert_eq!(saved["hostTerminalPolicyRevision"], 4);
+    assert_eq!(saved["hostTerminalRequireTotp"], true);
+    assert_eq!(saved["hostTerminalPolicyRevision"], 2);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1077,4 +1072,68 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
     });
     assert_eq!(shown["openEgressForOthers"], false);
     assert_eq!(shown["egressDnsUpstreams"], serde_json::json!([]));
+}
+
+#[test]
+fn host_access_raises_refuse_non_ttys_and_command_marker_but_lowering_is_unattended() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["config", "set-agent-host-commands", "on"],
+        vec!["config", "set-host-terminal", "on"],
+        vec!["config", "set-host-terminal-totp", "optional"],
+        vec!["config", "set-host-command-max-time", "601"],
+    ] {
+        cli(tmp.path())
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains(
+                "requires local stdin and stderr TTYs",
+            ));
+        cli(tmp.path())
+            .env("WSSP_HOST_COMMAND", "1")
+            .args(&args)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains(
+                "a host command cannot raise host access",
+            ));
+    }
+    cli(tmp.path())
+        .args(["config", "set-host-file-roots"])
+        .arg(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "requires local stdin and stderr TTYs",
+        ));
+    for args in [
+        ["config", "set-agent-host-commands", "off"],
+        ["config", "set-host-terminal", "off"],
+        ["config", "set-host-command-max-time", "60"],
+    ] {
+        cli(tmp.path())
+            .env("WSSP_HOST_COMMAND", "1")
+            .args(args)
+            .assert()
+            .success();
+    }
+    cli(tmp.path())
+        .env("WSSP_HOST_COMMAND", "1")
+        .args(["config", "clear-host-file-roots"])
+        .assert()
+        .success();
+    cli(tmp.path())
+        .args(["connect", "--runtime", "fake", "--host-terminal", "on"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "requires local stdin and stderr TTYs",
+        ));
+    let mut command = cli(tmp.path());
+    command.args(["config", "show", "--json"]);
+    let config = json_stdout(command);
+    assert_eq!(config["allowAgentHostCommands"], false);
+    assert_eq!(config["hostCommandMaxMs"], 60000);
+    assert_eq!(config["hostFileRoots"], serde_json::json!([]));
 }

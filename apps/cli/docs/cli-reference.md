@@ -64,6 +64,57 @@ wssp config [OPTIONS] <COMMAND>
 | --- | --- | --- |
 | `--json` | Emit JSON instead of human-readable text |  |
 
+### `wssp config set-agent-host-commands`
+
+Allow agents to run host commands and use host file tools. The daemon user is an Incus admin: these tools can reach every sandbox on this node, including other users' sandboxes in shared pools. A credential's "own sandboxes only" setting does not limit host commands. Enabling requires local stdin and stderr TTYs, verified process ancestry outside the daemon, and typed confirmation.
+
+```text
+wssp config set-agent-host-commands [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp config set-host-command-max-time`
+
+Cap each host command at 1..86400 seconds (default 600). Raising requires local confirmation.
+
+```text
+wssp config set-host-command-max-time [OPTIONS] <SECONDS>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SECONDS>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp config set-host-file-roots`
+
+Set up to 32 absolute host file roots (never `/`). Adding roots requires local confirmation.
+
+```text
+wssp config set-host-file-roots [OPTIONS] <PATHS>...
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<PATHS>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp config clear-host-file-roots`
+
+Disable host file tools by clearing their roots. Never prompts.
+
+```text
+wssp config clear-host-file-roots [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
 ### `wssp config set-host-terminal`
 
 Enable or disable host terminals locally.

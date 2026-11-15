@@ -192,6 +192,21 @@ macro_rules! daemon_control {
     };
 }
 daemon_control! {
+    #[serde(rename = "host.agent-policy")]
+    HostAgentPolicy(crate::HostAgentPolicyV11),
+    #[serde(rename = "host.policy.lower.result")]
+    HostPolicyLowerResult(crate::HostPolicyLowerResultV11),
+    #[serde(rename = "host.exec.started")]
+    HostExecStarted(crate::HostExecStartedV11),
+    #[serde(rename = "host.exec.rejected")]
+    HostExecRejected(crate::HostExecRejectedV11),
+    #[serde(rename = "host.exec.status")]
+    HostExecStatus(crate::HostExecStatusV11),
+    #[serde(rename = "host.exec.stdin.result")]
+    HostExecStdinResult(crate::HostExecStdinResultV11),
+    #[serde(rename = "host.file.result")]
+    HostFileResult(crate::HostFileResultV11),
+
     #[serde(rename = "host.terminal-policy")]
     HostTerminalPolicy(crate::HostTerminalPolicyV11),
     #[serde(rename = "host.lease-policy")]
@@ -859,6 +874,19 @@ pub struct AllocationProbe {
     deny_unknown_fields
 )]
 pub enum ServerControlMessage {
+    #[serde(rename = "host.policy.lower")]
+    HostPolicyLower(crate::HostPolicyLowerV11),
+    #[serde(rename = "host.exec.start")]
+    HostExecStart(crate::HostExecStartV11),
+    #[serde(rename = "host.exec.poll")]
+    HostExecPoll(crate::HostExecPollV11),
+    #[serde(rename = "host.exec.stdin")]
+    HostExecStdin(crate::HostExecStdinV11),
+    #[serde(rename = "host.exec.cancel")]
+    HostExecCancel(crate::HostExecCancelV11),
+    #[serde(rename = "host.file.request")]
+    HostFileRequest(crate::HostFileRequestV11),
+
     #[serde(rename = "host.terminal-policy.raise")]
     HostTerminalPolicyRaise {
         connection_epoch: u32,
@@ -1147,7 +1175,7 @@ pub(crate) fn encode_daemon_control(
     validate_daemon_receipt(message)?;
     let text = serde_json::to_string(&DaemonControlEncoder(message))
         .map_err(|_| ControlError::Serialize)?;
-    if text.len() > json_control_max_bytes() {
+    if text.len() > daemon_control_limit(message) {
         return Err(ControlError::TooLarge);
     }
     Ok(text)
@@ -1247,10 +1275,13 @@ pub fn parse_daemon_control_for_version(
 }
 
 pub fn parse_server_control(text: &str) -> Result<ServerControlMessage, ControlError> {
-    if text.len() > json_control_max_bytes() {
+    if text.len() > crate::HOST_CONTROL_MAX_BYTES {
         return Err(ControlError::TooLarge);
     }
     let message = serde_json::from_str(text).map_err(|_| ControlError::Parse)?;
+    if text.len() > server_control_limit(&message) {
+        return Err(ControlError::TooLarge);
+    }
     validate_server_admission(&message)?;
     validate_server_terminal(&message)?;
     validate_server_env(&message)?;
@@ -1262,7 +1293,7 @@ pub fn encode_server_control(message: &ServerControlMessage) -> Result<String, C
     validate_server_terminal(message)?;
     validate_server_env(message)?;
     let text = serde_json::to_string(message).map_err(|_| ControlError::Serialize)?;
-    if text.len() > json_control_max_bytes() {
+    if text.len() > server_control_limit(message) {
         return Err(ControlError::TooLarge);
     }
     Ok(text)
@@ -1476,6 +1507,13 @@ fn terminal_request(request_id: &str, fence: &TerminalFence) -> bool {
 
 fn validate_server_terminal(message: &ServerControlMessage) -> Result<(), ControlError> {
     let valid = match message {
+        ServerControlMessage::HostPolicyLower(frame) => frame.is_valid(),
+        ServerControlMessage::HostExecStart(frame) => frame.is_valid(),
+        ServerControlMessage::HostExecPoll(frame) => frame.is_valid(),
+        ServerControlMessage::HostExecStdin(frame) => frame.is_valid(),
+        ServerControlMessage::HostExecCancel(frame) => frame.is_valid(),
+        ServerControlMessage::HostFileRequest(frame) => frame.is_valid(),
+
         ServerControlMessage::HostTerminalPolicyRaise {
             connection_epoch,
             request_id,
@@ -1530,6 +1568,20 @@ fn validate_server_terminal(message: &ServerControlMessage) -> Result<(), Contro
 
 fn validate_daemon_terminal(message: &DaemonControlMessage) -> Result<(), ControlError> {
     let valid = match message {
+        DaemonControlMessage::HostAgentPolicy(frame) => frame.is_valid(),
+        DaemonControlMessage::HostPolicyLowerResult(frame) => frame.is_valid(),
+        DaemonControlMessage::HostExecStarted(frame) => frame.is_valid(),
+        DaemonControlMessage::HostExecRejected(frame) => frame.is_valid(),
+        DaemonControlMessage::HostExecStatus(frame) => frame.is_valid(),
+        DaemonControlMessage::HostExecStdinResult(frame) => frame.is_valid(),
+        DaemonControlMessage::HostFileResult(frame) => frame.is_valid(),
+
+        DaemonControlMessage::Hello { daemon, .. } => crate::valid_host_agent_policy(
+            daemon.capabilities.host_commands,
+            daemon.capabilities.host_files,
+            daemon.capabilities.host_command_max_ms,
+            daemon.capabilities.agent_policy_revision,
+        ),
         DaemonControlMessage::HostTerminalPolicy(policy) => policy.is_valid(),
         DaemonControlMessage::HostLeasePolicy(policy) => policy.is_valid(),
         DaemonControlMessage::HostQuiesce(quiesce) => quiesce.is_valid(),
@@ -1570,10 +1622,13 @@ fn validate_daemon_terminal(message: &DaemonControlMessage) -> Result<(), Contro
 }
 
 pub fn parse_daemon_control(text: &str) -> Result<DaemonControlMessage, ControlError> {
-    if text.len() > json_control_max_bytes() {
+    if text.len() > crate::HOST_CONTROL_MAX_BYTES {
         return Err(ControlError::TooLarge);
     }
     let message = serde_json::from_str(text).map_err(|_| ControlError::Parse)?;
+    if text.len() > daemon_control_limit(&message) {
+        return Err(ControlError::TooLarge);
+    }
     validate_daemon_receipt(&message)?;
     if matches!(message, DaemonControlMessage::OperationReceipt { .. })
         && text.len() > crate::RECEIPT_LIMITS.receipt_bytes
@@ -2142,5 +2197,28 @@ impl HostTerminalPolicyControlV11 {
                     && valid_terminal_id(request_id)
             }
         }
+    }
+}
+
+fn server_control_limit(message: &ServerControlMessage) -> usize {
+    if matches!(
+        message,
+        ServerControlMessage::HostFileRequest(_)
+            | ServerControlMessage::HostExecStdin(_)
+            | ServerControlMessage::HostExecStart(_)
+    ) {
+        crate::HOST_CONTROL_MAX_BYTES
+    } else {
+        json_control_max_bytes()
+    }
+}
+fn daemon_control_limit(message: &DaemonControlMessage) -> usize {
+    if matches!(
+        message,
+        DaemonControlMessage::HostFileResult(_) | DaemonControlMessage::HostExecStatus(_)
+    ) {
+        crate::HOST_CONTROL_MAX_BYTES
+    } else {
+        json_control_max_bytes()
     }
 }

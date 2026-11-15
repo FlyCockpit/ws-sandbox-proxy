@@ -22,7 +22,8 @@ Walk this checklist before taking real traffic. Pair it with
 - Forced 2FA defaults in `packages/auth/src/two-factor-policy.ts` stay on for
   admins.
 - Response compression is enabled on the TLS-terminating proxy.
-- Off-site backups are configured and a restore drill has passed. See
+- Backups are opt-in. If enabled, off-site backups are configured and a restore
+  drill has passed. See
   [backup-and-restore.md](./backup-and-restore.md).
 - Production secrets are not copied into local `.env` files.
 - `DATA_ENCRYPTION_KEY` (if set) is stored apart from database backups; see
@@ -50,8 +51,9 @@ in seconds. Redis failures refuse admission with
 Set `TRUST_PROXY_HOPS` to the exact number of trusted reverse proxies (the
 generated Dokploy config sets `1` for Traefik). Unset or `0` keys on the socket
 peer and ignores `X-Forwarded-For`; behind a proxy that puts every client in
-one shared bucket. A short or malformed chain falls back to the socket peer,
-never the leftmost entry. For values above `0`, restrict app access to the
+one shared bucket. A port appended to the selected entry (`1.2.3.4:5678`,
+`[2001:db8::1]:5678`) is stripped before validation. A short or malformed chain
+falls back to the socket peer, never the leftmost entry. For values above `0`, restrict app access to the
 trusted proxy chain. See
 [client IP configuration](./environment-variables.md#client-ip-and-reverse-proxies).
 

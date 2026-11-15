@@ -15,11 +15,12 @@ vi.mock("@wssp/queue", async () => ({
 }));
 
 describe("webhook worker import graph", () => {
+  // Import/transform time under the parallel workspace verifier is not a latency contract.
   it("never reaches @wssp/env/server", async () => {
     await expect(import("./handlers/deliver-webhook")).resolves.toBeDefined();
     await expect(import("./handlers/reap-webhook-log")).resolves.toBeDefined();
     await expect(import("./webhook-dispatcher")).resolves.toBeDefined();
     await expect(import("@wssp/api/webhooks/render")).resolves.toBeDefined();
     await expect(import("@wssp/api/webhooks/deliver")).resolves.toBeDefined();
-  });
+  }, 30_000);
 });

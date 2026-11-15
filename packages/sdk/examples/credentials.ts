@@ -30,7 +30,7 @@ const written = await wssp.credentials.instances.writeValue(login.id, instance.i
 });
 console.log(`instance ${written.instanceId} is ${written.state} at seq ${written.storageSeq}`);
 
-// 4. With `credentials:use` and `sandboxes:write`: attach the login to a
+// 4. With `credentials:use` and `sandboxes:manage`: attach the login to a
 //    running sandbox (new commands and terminals see it), then free it: the
 //    env leaves at once, terminals opened with it close, and the files are
 //    copied back and scrubbed. A stopped sandbox claims an attached login at

@@ -1,6 +1,7 @@
 import { useForm, useStore } from "@tanstack/react-form";
-import { type QueryClient, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
+import type { AgentTokenExpiryPolicy } from "@wssp/config/agent-token-limits";
 import { Button } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
 import {
@@ -36,6 +37,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import { type OneTimeSecret, useOneTimeSecret } from "@/hooks/use-one-time-secret";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
+import { agentTokenExpiry, agentTokenExpiryPresets } from "@/lib/agent-token-expiry";
 import {
   CREDENTIAL_NAME_MAX,
   type CredentialProblem,
@@ -53,7 +55,9 @@ import {
   unusableScopes,
 } from "@/lib/credential-rules";
 import { toMs } from "@/lib/host-status";
+import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
+import { AgentTokenExpirySelect } from "./agent-token-expiry-select";
 
 /**
  * SDK keys (C45): owner-scoped `wssp_sdk_` keys for the /v1 API, with scopes,
@@ -77,14 +81,12 @@ const pickerPages = {
 type KeyPage = Awaited<ReturnType<AppRouterClient["sdkKeys"]["list"]>>;
 type KeyItem = KeyPage["items"][number];
 
-function invalidateSdkKeys(queryClient: QueryClient) {
-  void queryClient.invalidateQueries({ queryKey: orpc.sdkKeys.list.key() });
-}
-
-export function SdkKeysPage({ lang }: { lang: string }) {
-  const { t, i18n } = useTranslation(["sdkKeys", "credentials", "dashboard", "common"]);
+export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boolean }) {
+  const api = agent ? orpc.agentTokens : orpc.sdkKeys;
+  const ns = agent ? "agents" : "sdkKeys";
+  const { t, i18n } = useTranslation(["sdkKeys", "agents", "credentials", "dashboard", "common"]);
   const keys = useInfiniteQuery({
-    ...orpc.sdkKeys.list.infiniteOptions({
+    ...api.list.infiniteOptions({
       input: (cursor: string | undefined) => ({ limit: DASHBOARD_PAGE_LIMIT, cursor }),
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage: { nextCursor: string | null }) =>
@@ -98,8 +100,11 @@ export function SdkKeysPage({ lang }: { lang: string }) {
   // until the owner dismisses it (M7-S4).
   const queryClient = useQueryClient();
   const oneTime = useOneTimeSecret<{ id: string }>({
-    scope: "sdkKey",
-    revoke: (id) => orpc.sdkKeys.revoke.call({ id }).finally(() => invalidateSdkKeys(queryClient)),
+    scope: agent ? "agentToken" : "sdkKey",
+    revoke: (id) =>
+      api.revoke
+        .call({ id })
+        .finally(() => void queryClient.invalidateQueries({ queryKey: api.list.key() })),
   });
   const now = Date.now();
   const rows = keys.data?.pages.flatMap((page) => page.items);
@@ -108,8 +113,8 @@ export function SdkKeysPage({ lang }: { lang: string }) {
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
         back={<SettingsBackLink lang={lang} />}
-        title={t("sdkKeys:title")}
-        description={t("sdkKeys:description")}
+        title={t(`${ns}:title`)}
+        description={t(`${ns}:description`)}
         actions={
           <Button
             type="button"
@@ -118,17 +123,17 @@ export function SdkKeysPage({ lang }: { lang: string }) {
             onClick={() => setMinting(true)}
           >
             <Plus aria-hidden="true" />
-            {t("sdkKeys:mint.action")}
+            {t(`${ns}:mint.action`)}
           </Button>
         }
       />
       {oneTime.revealed ? (
         <OneTimeSecretPanel
           secret={oneTime.revealed.secret}
-          label={t("sdkKeys:mint.secretLabel")}
+          label={t(`${ns}:mint.secretLabel`)}
           onDone={oneTime.clear}
         >
-          <p className="text-sm text-muted-foreground">{t("sdkKeys:mint.usageHint")}</p>
+          <p className="text-sm text-muted-foreground">{t(`${ns}:mint.usageHint`)}</p>
         </OneTimeSecretPanel>
       ) : null}
       <OrphanedCredentialsAlert orphans={oneTime.orphans} onRetry={oneTime.retryOrphan} />
@@ -146,16 +151,23 @@ export function SdkKeysPage({ lang }: { lang: string }) {
         empty={
           <EmptyState
             className="rounded-xl border px-4"
-            title={t("sdkKeys:empty.title")}
-            description={t("sdkKeys:empty.description")}
+            title={t(`${ns}:empty.title`)}
+            description={t(`${ns}:empty.description`)}
           />
         }
       >
         {(items) => (
           <>
-            <ul aria-label={t("sdkKeys:title")} className="flex min-w-0 flex-col gap-3">
+            <ul aria-label={t(`${ns}:title`)} className="flex min-w-0 flex-col gap-3">
               {items.map((key) => (
-                <SdkKeyRow key={key.id} sdkKey={key} now={now} lang={lang} locale={i18n.language} />
+                <SdkKeyRow
+                  agent={agent}
+                  key={key.id}
+                  sdkKey={key}
+                  now={now}
+                  lang={lang}
+                  locale={i18n.language}
+                />
               ))}
             </ul>
             <LoadMore
@@ -167,7 +179,12 @@ export function SdkKeysPage({ lang }: { lang: string }) {
         )}
       </QueryBoundary>
       {minting ? (
-        <MintSdkKeyDialog lang={lang} oneTime={oneTime} onClose={() => setMinting(false)} />
+        <CredentialGrantEditor
+          mode={agent ? "agent" : "sdk"}
+          lang={lang}
+          oneTime={oneTime}
+          onClose={() => setMinting(false)}
+        />
       ) : null}
     </div>
   );
@@ -175,28 +192,33 @@ export function SdkKeysPage({ lang }: { lang: string }) {
 
 function SdkKeyRow({
   sdkKey,
+  agent = false,
   now,
   lang,
   locale,
 }: {
   sdkKey: KeyItem;
+  agent?: boolean;
   now: number;
   lang: string;
   locale: string;
 }) {
-  const { t } = useTranslation(["sdkKeys", "credentials"]);
+  const { t } = useTranslation(["sdkKeys", "agents", "credentials"]);
+  const api = agent ? orpc.agentTokens : orpc.sdkKeys;
   const revoke = useRevoke(
     lang,
-    (id) => orpc.sdkKeys.revoke.call({ id }),
+    (id) => api.revoke.call({ id }),
     t("sdkKeys:revoke.done"),
-    invalidateSdkKeys,
+    (client) => void client.invalidateQueries({ queryKey: api.list.key() }),
   );
   const expires = toMs(sdkKey.expiresAt);
   const expired = expires != null && expires <= now;
+  const blockedByPolicy = agent && sdkKey.blockedByPolicy === true;
   return (
     <li
       data-credential-id={sdkKey.id}
       data-expired={expired ? "true" : undefined}
+      data-blocked-by-policy={blockedByPolicy ? "true" : undefined}
       className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
     >
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
@@ -262,7 +284,7 @@ function SdkKeyRow({
           </p>
         </div>
       )}
-      <p data-pool-mode={sdkKey.poolMode}>
+      <p className="text-sm" data-pool-mode={sdkKey.poolMode}>
         {t(
           sdkKey.poolMode === "ALL_USABLE"
             ? "sdkKeys:poolMode.ALL_USABLE"
@@ -291,6 +313,11 @@ function SdkKeyRow({
           })}
         </p>
       ) : null}
+      <p className="text-sm">
+        {t(
+          sdkKey.ownSandboxesOnly ? "sdkKeys:form.ownSandboxesOnly" : "sdkKeys:list.otherSandboxes",
+        )}
+      </p>
       <CredentialDates
         createdAt={sdkKey.createdAt}
         lastUsedAt={sdkKey.lastUsedAt}
@@ -298,6 +325,11 @@ function SdkKeyRow({
         now={now}
         locale={locale}
       />
+      {blockedByPolicy ? (
+        <p data-policy-notice="" className="text-sm text-destructive">
+          {t("agents:expiry.blockedByPolicy")}
+        </p>
+      ) : null}
       {revoke.problem ? (
         <p role="alert" className="text-sm text-destructive">
           {t(`credentials:problem.${revoke.problem}`)}
@@ -309,8 +341,8 @@ function SdkKeyRow({
         title={t("sdkKeys:revoke.title", { name: sdkKey.name })}
         description={t("sdkKeys:revoke.description")}
         confirmToken={sdkKey.name}
-        typePrompt={t("sdkKeys:revoke.typePrompt")}
-        copyAriaLabel={t("sdkKeys:revoke.copyName")}
+        typePrompt={t(agent ? "agents:revoke.typePrompt" : "sdkKeys:revoke.typePrompt")}
+        copyAriaLabel={t(agent ? "agents:revoke.copyName" : "sdkKeys:revoke.copyName")}
         confirmLabel={t("credentials:revoke.confirm")}
         pendingLabel={t("credentials:revoke.pending")}
         isPending={revoke.mutation.isPending}
@@ -341,21 +373,80 @@ const DEFAULT_DRAFT: SdkKeyDraft = {
   poolMode: "ALL_USABLE",
   credentialIds: [],
   expiry: "90d",
+  ownSandboxesOnly: false,
 };
 
-function MintSdkKeyDialog({
+type CredentialGrantEditorProps = {
+  lang: string;
+  mode?: "sdk" | "agent" | "consent";
+  requestedScopes?: readonly ServiceScope[];
+  consentName?: string;
+  onConsent?: (input: ReturnType<typeof sdkKeyMintInput>) => Promise<void>;
+  oneTime?: OneTimeSecret<{ id: string }>;
+  onClose: () => void;
+};
+
+export function CredentialGrantEditor(props: CredentialGrantEditorProps) {
+  return props.mode === "agent" ? <AgentTokenGrantEditor {...props} /> : <GrantEditor {...props} />;
+}
+
+function AgentTokenGrantEditor(props: CredentialGrantEditorProps) {
+  const { t } = useTranslation(["agents"]);
+  const policy = useQuery({
+    ...orpc.agentTokens.expiryPolicy.queryOptions(),
+    meta: { skipGlobalErrorToast: true },
+  });
+  useTwoFactorRedirectOnError(props.lang, [policy.error]);
+  if (policy.data && !isQueryAccessError(policy.error))
+    return (
+      <>
+        {policy.isError ? <InlineRetry onRetry={() => void policy.refetch()} /> : null}
+        <GrantEditor {...props} expiryPolicy={policy.data} />
+      </>
+    );
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+    >
+      <DialogContent showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t("agents:mint.title")}</DialogTitle>
+        </DialogHeader>
+        <QueryBoundary query={policy} skeleton={<SkeletonList />}>
+          {() => null}
+        </QueryBoundary>
+        <Button type="button" size="touch" variant="outline" onClick={props.onClose}>
+          {t("agents:expiry.close")}
+        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function GrantEditor({
   lang,
   oneTime,
   onClose,
-}: {
-  lang: string;
-  oneTime: OneTimeSecret<{ id: string }>;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation(["sdkKeys", "credentials", "common"]);
+  mode = "sdk",
+  requestedScopes,
+  consentName = "",
+  onConsent,
+  expiryPolicy,
+}: CredentialGrantEditorProps & { expiryPolicy?: AgentTokenExpiryPolicy }) {
+  const { t } = useTranslation(["sdkKeys", "agents", "credentials", "common"]);
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
   const expiryId = useId();
+  const ns = mode === "agent" ? "agents" : "sdkKeys";
+  const api = mode === "agent" ? orpc.agentTokens : orpc.sdkKeys;
+  const [agentExpiryChoice, setAgentExpiryChoice] = useState(() => {
+    const presets = agentTokenExpiryPresets(Math.min(90, expiryPolicy?.maxLifetimeDays ?? 90));
+    return presets.at(-1) ?? "custom";
+  });
+  const [agentCustomDate, setAgentCustomDate] = useState("");
   const [revisionPoolId, setRevisionPoolId] = useState("");
   const [problem, setProblem] = useState<CredentialProblem | null>(null);
   const [attempted, setAttempted] = useState(false);
@@ -372,16 +463,44 @@ function MintSdkKeyDialog({
     for (const issue of sdkKeyDraftProblems(draft, options))
       context.addIssue({ code: "custom", message: t(`credentials:draft.${issue}`) });
   });
+  const initialDraft: SdkKeyDraft = {
+    ...DEFAULT_DRAFT,
+    name: consentName,
+    ownSandboxesOnly: mode !== "sdk",
+    scopes: requestedScopes?.filter((scope) => !scope.startsWith("hosts:")) ?? [],
+  };
   const form = useForm({
-    defaultValues: DEFAULT_DRAFT,
+    defaultValues: initialDraft,
     validators: { onChange: draftValidator, onSubmit: draftValidator },
     onSubmit: async ({ value }) => {
       setAttempted(true);
       if (sdkKeyDraftProblems(value, options).length > 0) return;
+      if (
+        mode === "agent" &&
+        (!expiryPolicy ||
+          agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy) ===
+            undefined)
+      )
+        return;
       setProblem(null);
       try {
+        if (mode === "consent" && onConsent) {
+          await onConsent(sdkKeyMintInput(value, Date.now()));
+          return;
+        }
+        if (!oneTime) return;
         const outcome = await oneTime.run(
-          () => orpc.sdkKeys.create.call(sdkKeyMintInput(value, Date.now())),
+          () => {
+            const input = sdkKeyMintInput(value, Date.now());
+            if (mode === "agent") {
+              const expiresAt =
+                expiryPolicy &&
+                agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy);
+              if (expiresAt === undefined) throw new Error("Invalid agent token expiry");
+              return orpc.agentTokens.create.call({ ...input, expiresAt });
+            }
+            return orpc.sdkKeys.create.call(input);
+          },
           (result) => ({ secret: result.secret, meta: { id: result.key.id } }),
           // Closed while minting: nobody saw this key, so revoke the orphan.
           (result) => ({ id: result.key.id, label: result.key.name }),
@@ -397,9 +516,14 @@ function MintSdkKeyDialog({
             void hostsQuery.refetch();
             void templatesQuery.refetch();
           }
+          // The deployment's expiry policy changed under the open dialog: reload it.
+          if (next === "agentExpiryPolicy")
+            void queryClient.invalidateQueries({
+              queryKey: orpc.agentTokens.expiryPolicy.queryKey(),
+            });
         }
       } finally {
-        invalidateSdkKeys(queryClient);
+        void queryClient.invalidateQueries({ queryKey: api.list.key() });
       }
     },
   });
@@ -437,223 +561,286 @@ function MintSdkKeyDialog({
   const problems = attempted ? sdkKeyDraftProblems(values, options) : [];
   // Cancelling discards a mint still in flight (it is revoked, never shown).
   const close = () => {
-    oneTime.discardPending();
+    oneTime?.discardPending();
     onClose();
   };
 
+  const content = (
+    <form
+      noValidate
+      className="flex min-w-0 flex-col gap-4"
+      onSubmit={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setAttempted(true);
+        void form.handleSubmit();
+      }}
+    >
+      {mode !== "consent" ? (
+        <form.Field name="name">
+          {(field) => (
+            <TextField
+              inputClassName="min-h-11"
+              field={field}
+              label={t("credentials:form.name")}
+              autoComplete="off"
+              inputMode="text"
+              maxLength={CREDENTIAL_NAME_MAX}
+            />
+          )}
+        </form.Field>
+      ) : null}
+      <form.Field name="scopes">
+        {(field) => (
+          <ScopePicker
+            offered={requestedScopes}
+            value={field.state.value}
+            onChange={field.handleChange}
+          />
+        )}
+      </form.Field>
+      <form.Field name="poolMode">
+        {(field) => (
+          <fieldset>
+            <legend>{t("sdkKeys:poolMode.title")}</legend>
+            {(["ALL_USABLE", "SELECTED"] as const).map((mode) => (
+              <label key={mode} className="flex min-h-11 items-center gap-3">
+                <input
+                  type="radio"
+                  name="poolMode"
+                  autoComplete="off"
+                  checked={field.state.value === mode}
+                  onChange={() => field.handleChange(mode)}
+                />
+                {t(`sdkKeys:poolMode.${mode}`)}
+              </label>
+            ))}
+          </fieldset>
+        )}
+      </form.Field>
+      <p>{t("sdkKeys:poolMode.immutable")}</p>
+      {values.poolMode === "SELECTED" ? (
+        <form.Field name="poolIds">
+          {(field) => (
+            <PoolGrantPicker
+              pools={pools}
+              query={poolsQuery}
+              selected={field.state.value ?? []}
+              onChange={field.handleChange}
+            />
+          )}
+        </form.Field>
+      ) : null}
+      {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
+        <label className="flex min-h-11 flex-col gap-2">
+          {t("sdkKeys:poolMode.revisionContext")}
+          <select
+            className="min-h-11 rounded border bg-background"
+            autoComplete="off"
+            value={revisionPoolId}
+            onChange={(e) => setRevisionPoolId(e.target.value)}
+          >
+            <option value="">{t("sdkKeys:form.pools")}</option>
+            {pools.map((pool) => (
+              <option key={pool.id} value={pool.id}>
+                {pool.label} · {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} ·{" "}
+                {pool.id}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <form.Field name="resourceMode">
+        {(field) => (
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
+            <RadioGroup
+              aria-label={t("sdkKeys:form.resources")}
+              name="resourceMode"
+              value={field.state.value}
+              onValueChange={(value: ResourceMode) => field.handleChange(value)}
+            >
+              {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
+                (mode) => (
+                  <label key={mode} className="flex min-h-11 items-start gap-3 text-sm">
+                    <RadioGroupItem value={mode} className="mt-1" />
+                    <span className="min-w-0">
+                      <span className="block">{t(`sdkKeys:form.mode.${mode}`)}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {t(`sdkKeys:form.modeHint.${mode}`)}
+                      </span>
+                    </span>
+                  </label>
+                ),
+              )}
+            </RadioGroup>
+          </div>
+        )}
+      </form.Field>
+      {values.resourceMode === "ALLOWLIST" ? (
+        <AllowlistPicker
+          hosts={hosts}
+          templates={templates}
+          hostIds={values.hostIds}
+          templateRevisionIds={values.templateRevisionIds}
+          hostsFailed={hostsQuery.isError}
+          templatesFailed={templatesQuery.isError}
+          loading={hostsQuery.isPending || templatesQuery.isPending}
+          onRetry={() => {
+            void hostsQuery.refetch();
+            void templatesQuery.refetch();
+          }}
+          moreHosts={{
+            hasNextPage: hostsQuery.hasNextPage,
+            isFetchingNextPage: hostsQuery.isFetchingNextPage,
+            onLoadMore: () => void hostsQuery.fetchNextPage(),
+          }}
+          moreTemplates={{
+            hasNextPage: templatesQuery.hasNextPage,
+            isFetchingNextPage: templatesQuery.isFetchingNextPage,
+            onLoadMore: () => void templatesQuery.fetchNextPage(),
+          }}
+          onHosts={(hostIds) => {
+            form.setFieldValue("hostIds", hostIds);
+            // A template runs only on its own host: drop templates
+            // whose host is no longer selected.
+            const allowed = new Set(
+              selectableTemplates(templates, hostIds).map((template) => template.id),
+            );
+            form.setFieldValue(
+              "templateRevisionIds",
+              values.templateRevisionIds.filter((id) => allowed.has(id)),
+            );
+          }}
+          onTemplates={(templateRevisionIds) =>
+            form.setFieldValue("templateRevisionIds", templateRevisionIds)
+          }
+        />
+      ) : null}
+      {credentialsUseRevealsValues(values.scopes) ? (
+        <p
+          role="note"
+          data-credentials-use-disclosure=""
+          className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
+        >
+          {t("sdkKeys:form.credentialsUseDisclosure")}
+        </p>
+      ) : null}
+      {values.resourceMode === "ALLOWLIST" ? (
+        <form.Field name="credentialIds">
+          {(field) => (
+            <LoginAllowlistPicker
+              lang={lang}
+              selected={field.state.value ?? []}
+              required={values.scopes.includes("credentials:use")}
+              onChange={field.handleChange}
+            />
+          )}
+        </form.Field>
+      ) : null}
+      <form.Field name="ownSandboxesOnly">
+        {(field) => (
+          <label className="flex min-h-11 items-center gap-3 text-sm">
+            <Checkbox
+              checked={field.state.value ?? false}
+              onCheckedChange={(value) => field.handleChange(value === true)}
+            />
+            <span>{t("sdkKeys:form.ownSandboxesOnly")}</span>
+          </label>
+        )}
+      </form.Field>
+      <p className="text-xs text-muted-foreground">{t("sdkKeys:form.ownSandboxesOnlyHint")}</p>
+      {/* The consent page already shows this warning above the form. */}
+      {mode !== "consent" &&
+      values.scopes.some((scope) => scope === "hosts:execute" || scope === "hosts:files") ? (
+        <p
+          role="note"
+          className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
+        >
+          {t("sdkKeys:form.hostScopeWarning")}
+        </p>
+      ) : null}
+      {mode === "agent" && expiryPolicy ? (
+        <>
+          <AgentTokenExpirySelect
+            id={expiryId}
+            policy={expiryPolicy}
+            value={agentExpiryChoice}
+            onChange={setAgentExpiryChoice}
+            customDate={agentCustomDate}
+            onCustomDateChange={setAgentCustomDate}
+          />
+          {attempted &&
+          agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy) ===
+            undefined ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t("agents:expiry.invalid")}
+            </p>
+          ) : null}
+        </>
+      ) : mode !== "consent" ? (
+        <form.Field name="expiry">
+          {(field) => (
+            <ExpirySelect id={expiryId} value={field.state.value} onChange={field.handleChange} />
+          )}
+        </form.Field>
+      ) : null}
+      {problems.length > 0 ? (
+        <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
+          {problems.map((item) => (
+            <li key={item}>{t(`credentials:draft.${item}`)}</li>
+          ))}
+        </ul>
+      ) : null}
+      {problem ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t(`credentials:problem.${problem}`)}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        <form.Subscribe selector={(state) => state.isSubmitting}>
+          {(submitting) => (
+            <Button type="submit" size="touch" disabled={submitting}>
+              {submitting
+                ? t("credentials:form.minting")
+                : t(mode === "consent" ? "agents:consent.allow" : `${ns}:mint.submit`)}
+            </Button>
+          )}
+        </form.Subscribe>
+        <Button type="button" variant="outline" size="touch" onClick={close}>
+          {t(mode === "consent" ? "agents:consent.deny" : "common:actions.cancel")}
+        </Button>
+      </div>
+    </form>
+  );
+  if (mode === "consent") return content;
   return (
-    <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+    >
       <DialogContent
         showCloseButton={false}
         className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
       >
         <DialogHeader>
-          <DialogTitle>{t("sdkKeys:mint.title")}</DialogTitle>
-          <DialogDescription>{t("sdkKeys:mint.description")}</DialogDescription>
+          <DialogTitle>{t(`${ns}:mint.title`)}</DialogTitle>
+          <DialogDescription>{t(`${ns}:mint.description`)}</DialogDescription>
         </DialogHeader>
-        <form
-          noValidate
-          className="flex min-w-0 flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setAttempted(true);
-            void form.handleSubmit();
-          }}
-        >
-          <form.Field name="name">
-            {(field) => (
-              <TextField
-                inputClassName="min-h-11"
-                field={field}
-                label={t("credentials:form.name")}
-                autoComplete="off"
-                inputMode="text"
-                maxLength={CREDENTIAL_NAME_MAX}
-              />
-            )}
-          </form.Field>
-          <form.Field name="scopes">
-            {(field) => <ScopePicker value={field.state.value} onChange={field.handleChange} />}
-          </form.Field>
-          <form.Field name="poolMode">
-            {(field) => (
-              <fieldset>
-                <legend>{t("sdkKeys:poolMode.title")}</legend>
-                {(["ALL_USABLE", "SELECTED"] as const).map((mode) => (
-                  <label key={mode} className="flex min-h-11 items-center gap-3">
-                    <input
-                      type="radio"
-                      name="poolMode"
-                      autoComplete="off"
-                      checked={field.state.value === mode}
-                      onChange={() => field.handleChange(mode)}
-                    />
-                    {t(`sdkKeys:poolMode.${mode}`)}
-                  </label>
-                ))}
-              </fieldset>
-            )}
-          </form.Field>
-          <p>{t("sdkKeys:poolMode.immutable")}</p>
-          {values.poolMode === "SELECTED" ? (
-            <form.Field name="poolIds">
-              {(field) => (
-                <PoolGrantPicker
-                  pools={pools}
-                  query={poolsQuery}
-                  selected={field.state.value ?? []}
-                  onChange={field.handleChange}
-                />
-              )}
-            </form.Field>
-          ) : null}
-          {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
-            <label className="flex min-h-11 flex-col gap-2">
-              {t("sdkKeys:poolMode.revisionContext")}
-              <select
-                className="min-h-11 rounded border bg-background"
-                autoComplete="off"
-                value={revisionPoolId}
-                onChange={(e) => setRevisionPoolId(e.target.value)}
-              >
-                <option value="">{t("sdkKeys:form.pools")}</option>
-                {pools.map((pool) => (
-                  <option key={pool.id} value={pool.id}>
-                    {pool.label} ·{" "}
-                    {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} · {pool.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <form.Field name="resourceMode">
-            {(field) => (
-              <div className="flex min-w-0 flex-col gap-1">
-                <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
-                <RadioGroup
-                  aria-label={t("sdkKeys:form.resources")}
-                  name="resourceMode"
-                  value={field.state.value}
-                  onValueChange={(value: ResourceMode) => field.handleChange(value)}
-                >
-                  {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
-                    (mode) => (
-                      <label key={mode} className="flex min-h-11 items-start gap-3 text-sm">
-                        <RadioGroupItem value={mode} className="mt-1" />
-                        <span className="min-w-0">
-                          <span className="block">{t(`sdkKeys:form.mode.${mode}`)}</span>
-                          <span className="block text-xs text-muted-foreground">
-                            {t(`sdkKeys:form.modeHint.${mode}`)}
-                          </span>
-                        </span>
-                      </label>
-                    ),
-                  )}
-                </RadioGroup>
-              </div>
-            )}
-          </form.Field>
-          {values.resourceMode === "ALLOWLIST" ? (
-            <AllowlistPicker
-              hosts={hosts}
-              templates={templates}
-              hostIds={values.hostIds}
-              templateRevisionIds={values.templateRevisionIds}
-              hostsFailed={hostsQuery.isError}
-              templatesFailed={templatesQuery.isError}
-              loading={hostsQuery.isPending || templatesQuery.isPending}
-              onRetry={() => {
-                void hostsQuery.refetch();
-                void templatesQuery.refetch();
-              }}
-              moreHosts={{
-                hasNextPage: hostsQuery.hasNextPage,
-                isFetchingNextPage: hostsQuery.isFetchingNextPage,
-                onLoadMore: () => void hostsQuery.fetchNextPage(),
-              }}
-              moreTemplates={{
-                hasNextPage: templatesQuery.hasNextPage,
-                isFetchingNextPage: templatesQuery.isFetchingNextPage,
-                onLoadMore: () => void templatesQuery.fetchNextPage(),
-              }}
-              onHosts={(hostIds) => {
-                form.setFieldValue("hostIds", hostIds);
-                // A template runs only on its own host: drop templates
-                // whose host is no longer selected.
-                const allowed = new Set(
-                  selectableTemplates(templates, hostIds).map((template) => template.id),
-                );
-                form.setFieldValue(
-                  "templateRevisionIds",
-                  values.templateRevisionIds.filter((id) => allowed.has(id)),
-                );
-              }}
-              onTemplates={(templateRevisionIds) =>
-                form.setFieldValue("templateRevisionIds", templateRevisionIds)
-              }
-            />
-          ) : null}
-          {credentialsUseRevealsValues(values.scopes) ? (
-            <p
-              role="note"
-              data-credentials-use-disclosure=""
-              className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
-            >
-              {t("sdkKeys:form.credentialsUseDisclosure")}
-            </p>
-          ) : null}
-          {values.resourceMode === "ALLOWLIST" ? (
-            <form.Field name="credentialIds">
-              {(field) => (
-                <LoginAllowlistPicker
-                  lang={lang}
-                  selected={field.state.value ?? []}
-                  required={values.scopes.includes("credentials:use")}
-                  onChange={field.handleChange}
-                />
-              )}
-            </form.Field>
-          ) : null}
-          <form.Field name="expiry">
-            {(field) => (
-              <ExpirySelect id={expiryId} value={field.state.value} onChange={field.handleChange} />
-            )}
-          </form.Field>
-          {problems.length > 0 ? (
-            <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
-              {problems.map((item) => (
-                <li key={item}>{t(`credentials:draft.${item}`)}</li>
-              ))}
-            </ul>
-          ) : null}
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`credentials:problem.${problem}`)}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <form.Subscribe selector={(state) => state.isSubmitting}>
-              {(submitting) => (
-                <Button type="submit" size="touch" disabled={submitting}>
-                  {submitting ? t("credentials:form.minting") : t("sdkKeys:mint.submit")}
-                </Button>
-              )}
-            </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={close}>
-              {t("common:actions.cancel")}
-            </Button>
-          </div>
-        </form>
+        {content}
       </DialogContent>
     </Dialog>
   );
 }
 
-function ScopePicker({
+export function ScopePicker({
   value,
   onChange,
+  offered,
 }: {
+  offered?: readonly ServiceScope[];
   value: readonly ServiceScope[];
   onChange: (next: ServiceScope[]) => void;
 }) {
@@ -663,52 +850,57 @@ function ScopePicker({
     <fieldset className="flex min-w-0 flex-col gap-3">
       <legend className="text-sm font-medium">{t("sdkKeys:form.scopes")}</legend>
       <p className="text-xs text-muted-foreground">{t("sdkKeys:form.scopesHint")}</p>
-      {SCOPE_GROUPS.map((group) => (
-        <div key={group.id} className="flex min-w-0 flex-col gap-1">
-          <p className="text-xs font-medium text-muted-foreground">
-            {t(`sdkKeys:scopeGroup.${group.id}`)}
-          </p>
-          {group.scopes.map((scope) => {
-            const key = scopeKey(scope);
-            const base = `scope-${key.replace(".", "-")}`;
-            return (
-              <div key={scope} className="flex min-w-0 flex-col">
-                <label className="flex min-h-11 items-start gap-3 text-sm">
-                  <Checkbox
-                    name="scopes"
-                    value={scope}
-                    checked={value.includes(scope)}
-                    aria-labelledby={`${base}-name`}
-                    aria-describedby={
-                      unusable.has(scope) ? `${base}-text ${base}-hint` : `${base}-text`
-                    }
-                    aria-invalid={unusable.has(scope) || undefined}
-                    onCheckedChange={(checked) => onChange(toggle(value, scope, checked))}
-                    className="mt-1"
-                  />
-                  <span className="min-w-0">
-                    <span id={`${base}-name`} className="block font-mono text-xs">
-                      {scope}
+      {SCOPE_GROUPS.map((group) => ({
+        ...group,
+        scopes: group.scopes.filter((scope) => !offered || offered.includes(scope)),
+      }))
+        .filter((group) => group.scopes.length > 0)
+        .map((group) => (
+          <div key={group.id} className="flex min-w-0 flex-col gap-1">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t(`sdkKeys:scopeGroup.${group.id}`)}
+            </p>
+            {group.scopes.map((scope) => {
+              const key = scopeKey(scope);
+              const base = `scope-${key.replace(".", "-")}`;
+              return (
+                <div key={scope} className="flex min-w-0 flex-col">
+                  <label className="flex min-h-11 items-start gap-3 text-sm">
+                    <Checkbox
+                      name="scopes"
+                      value={scope}
+                      checked={value.includes(scope)}
+                      aria-labelledby={`${base}-name`}
+                      aria-describedby={
+                        unusable.has(scope) ? `${base}-text ${base}-hint` : `${base}-text`
+                      }
+                      aria-invalid={unusable.has(scope) || undefined}
+                      onCheckedChange={(checked) => onChange(toggle(value, scope, checked))}
+                      className="mt-1"
+                    />
+                    <span className="min-w-0">
+                      <span id={`${base}-name`} className="block font-mono text-xs">
+                        {scope}
+                      </span>
+                      <span id={`${base}-text`} className="block text-xs text-muted-foreground">
+                        {t(`sdkKeys:scope.${key}`)}
+                      </span>
                     </span>
-                    <span id={`${base}-text`} className="block text-xs text-muted-foreground">
-                      {t(`sdkKeys:scope.${key}`)}
-                    </span>
-                  </span>
-                </label>
-                {unusable.has(scope) ? (
-                  <p
-                    id={`${base}-hint`}
-                    data-scope-needs={scope}
-                    className="text-xs text-destructive"
-                  >
-                    {t(`sdkKeys:scopeNeeds.${key}`)}
-                  </p>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      ))}
+                  </label>
+                  {unusable.has(scope) ? (
+                    <p
+                      id={`${base}-hint`}
+                      data-scope-needs={scope}
+                      className="text-xs text-destructive"
+                    >
+                      {t(`sdkKeys:scopeNeeds.${key}`)}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ))}
     </fieldset>
   );
 }

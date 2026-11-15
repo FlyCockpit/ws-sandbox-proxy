@@ -14,7 +14,15 @@ import {
 import { isSensitiveSessionTwoFactorPolicySatisfied } from "@wssp/api/lib/sensitive-session-two-factor-gate";
 import { appRouter } from "@wssp/api/routers/index";
 import { safeErrorLog } from "@wssp/api/sandbox/sensitive-errors";
+import {
+  activeMcpConsent,
+  recordMcpConsent,
+  revokedMcpConsent,
+  revokeMcpOAuthTokens,
+} from "@wssp/api/sandbox/services/mcp-consent";
+import { bindMcpGrantTokenRevocation } from "@wssp/api/sandbox/services/mcp-grants";
 import { auth, type Session } from "@wssp/auth";
+import { bindMcpGrantServices } from "@wssp/auth/mcp-grant";
 import { TWO_FACTOR_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
 import { ORPC_BATCH_MAX_SIZE } from "@wssp/config/orpc-batch";
 import { THEME_INIT_SCRIPT } from "@wssp/config/theme-init";
@@ -46,6 +54,12 @@ import {
   loadLocaleModulePreloads,
   resolveLocaleModulePreload,
 } from "./locale-modulepreload.js";
+import { createMcpApi } from "./mcp/endpoint.js";
+import { mcpAuthorizeScopeGuard } from "./mcp-authorize-scope-guard.js";
+import { createMcpDiscoveryForwarder, MCP_WELL_KNOWN_PATHS } from "./mcp-discovery.js";
+import { mcpOauthRateLimits } from "./mcp-oauth-rate-limit.js";
+import { createMcpOauthFlagGate, isMcpOauthRawPath } from "./mcp-oauth-route-match.js";
+import { cloneRequestOntoPublicOrigin } from "./public-request-url.js";
 import {
   authLimiter,
   createRateLimiterMiddleware,
@@ -139,6 +153,26 @@ export async function createApp(
   // this static bootstrap can't carry a per-request nonce, so it uses a hash.
   const themeInitCspHash = `'sha256-${createHash("sha256").update(THEME_INIT_SCRIPT).digest("base64")}'`;
   mountSecurityHeaders(app, { cspConnectSrc, themeInitCspHash });
+
+  bindMcpGrantServices({
+    record: recordMcpConsent,
+    active: activeMcpConsent,
+    revoked: revokedMcpConsent,
+  });
+  bindMcpGrantTokenRevocation(revokeMcpOAuthTokens);
+  // Credential-only MCP and discovery own every method before browser CORS.
+  app.route("/", createMcpApi(auth));
+  app.use("/api/auth/*", createMcpOauthFlagGate({ enabled: () => env.MCP_ENABLED !== false }));
+  app.use("/api/auth/*", mcpOauthRateLimits);
+  for (const path of MCP_WELL_KNOWN_PATHS) {
+    app.all(
+      path,
+      createMcpDiscoveryForwarder({
+        enabled: env.MCP_ENABLED !== false,
+        handler: (request) => auth.handler(request),
+      }),
+    );
+  }
 
   // This terminal subapp must precede every browser middleware and catch-all.
   app.route("/v1", createSandboxApi());
@@ -412,12 +446,20 @@ export async function createApp(
 
   // Owner enrollment gate for deviceAuthorization claim/approve/deny (verified
   // email + forced 2FA). Mounted before the Better Auth handler.
+  app.use("/api/auth/oauth2/authorize", mcpAuthorizeScopeGuard);
   app.use("/api/auth/*", deviceOwnerGate);
   app.post("/api/auth/device", deviceDecisionHandler);
   app.post("/api/auth/device/approve", deviceDecisionHandler);
   app.post("/api/auth/device/deny", deviceDecisionHandler);
 
-  app.on(["POST", "GET"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+  app.on(["POST", "GET"], "/api/auth/*", (c) => {
+    if (!isMcpOauthRawPath(new URL(c.req.raw.url).pathname)) return auth.handler(c.req.raw);
+    try {
+      return auth.handler(cloneRequestOntoPublicOrigin(c.req.raw));
+    } catch {
+      return c.newResponse(null, 400);
+    }
+  });
 
   // Resolve the Better-Auth session once per request on paths that need it.
   // Mounted BEFORE the rate limiters so they can key on the user id without
@@ -657,7 +699,6 @@ export async function createApp(
   });
 
   if (env.NODE_ENV === "production") {
-    const { serveStatic } = await import("@hono/node-server/serve-static");
     const { fileURLToPath, pathToFileURL } = await import("node:url");
     const { dirname, join } = await import("node:path");
 
@@ -669,31 +710,10 @@ export async function createApp(
     // so we hand both an absolute path computed from import.meta.url.
     const webDist = join(dirname(fileURLToPath(import.meta.url)), "../../web/dist");
 
-    // Serve static client assets (JS, CSS, images)
-    // Vite/rolldown content-hashes every file under /assets, so each URL is
-    // immutable: a code change produces a new filename, never a new body at the
-    // same URL. Safe to cache for a year. This middleware runs before the
-    // serveStatic below (sets the header, then defers to it).
-    // IMPORTANT: do NOT add long caching to the catch-all /* serveStatic or the
-    // SSR shell — index.html and version.json must stay revalidated so new
-    // deploys are picked up.
-    app.use("/assets/*", async (c, next) => {
-      c.header("Cache-Control", "public, max-age=31536000, immutable");
-      await next();
-    });
-    app.use("/assets/*", serveStatic({ root: join(webDist, "client") }));
-
-    // `build.manifest: true` (apps/web/vite.config.ts) writes the client Vite
-    // manifest INTO the static root at `.vite/manifest.json`, and Hono's
-    // serveStatic happily serves dotfile directories. That file maps every source
-    // path to its hashed asset — including admin-only route chunks — and its
-    // node_modules keys leak the exact installed version of every dependency,
-    // which is free reconnaissance for anyone probing for a known CVE. The server
-    // reads it from disk at startup; nothing needs it over HTTP. Deny it before
-    // the catch-all static handler can find it. See locale-modulepreload.ts.
-    app.all("/.vite/*", (c) => c.text("Not Found", 404));
-
-    app.use("/*", serveStatic({ root: join(webDist, "client") }));
+    // Static client routes (hashed /assets with a plain 404 for a missing file,
+    // the .vite manifest denied, then the catch-all static root) ahead of SSR.
+    const { mountStaticClient } = await import("./static-client.js");
+    mountStaticClient(app, join(webDist, "client"));
 
     // Mount TanStack Start for SSR — handles all non-static requests. The bundle
     // is produced by `apps/web` at build time and doesn't exist when this file is

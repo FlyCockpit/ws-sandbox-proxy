@@ -124,6 +124,10 @@
       "images": {
         "label": "Images & builds",
         "description": "Where template images are kept and your recent builds."
+      },
+      "agentTokens": {
+        "label": "Agent tokens",
+        "description": "Agent tokens and connected MCP apps"
       }
     }
   }

@@ -422,3 +422,16 @@ it("host ticket sizes match shared relay bounds, including 512 rows and 1024 col
   const { ticket } = await mint(f.owner, { ...f.input, rows: 512, cols: 1024 });
   expect(await consume(ticket)).toMatchObject({ rows: 512, cols: 1024 });
 });
+
+it("durable dashboard veto refuses mint even when the live policy bridge reports on", async () => {
+  const f = await fixture(false);
+  await db.inspect.sandboxHost.update({
+    where: { id: f.host.id },
+    data: { hostTerminalVetoedAt: new Date() },
+  });
+  await expect(mint(f.owner, f.input)).rejects.toMatchObject({
+    code: "CONFLICT",
+    data: { code: "HOST_TERMINAL_UNAVAILABLE" },
+  });
+  expect(await db.inspect.hostTerminalTicket.count({ where: { userId: f.id } })).toBe(0);
+});

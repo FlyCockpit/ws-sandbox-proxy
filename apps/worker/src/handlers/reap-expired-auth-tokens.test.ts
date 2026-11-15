@@ -1,3 +1,7 @@
+vi.mock("../../../../packages/api/src/sandbox/host-retention.js", () => ({
+  sweepHostAccessRetention: vi.fn(async () => ({ queued: 0, audit: 0 })),
+}));
+
 import type { ReapExpiredAuthTokensJobData } from "@wssp/queue";
 import type { Job } from "bullmq";
 import type { MockInstance } from "vitest";

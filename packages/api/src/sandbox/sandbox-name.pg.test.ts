@@ -340,7 +340,7 @@ describe("8: only the owner renames, through the shared gate", () => {
     expect(await storedName(victim.id)).toBe("victim-name");
   });
 
-  it("a key without sandboxes:write, a build principal, a DELETED and a managed sandbox are refused", async () => {
+  it("a key without sandboxes:manage, a build principal, a DELETED and a managed sandbox are refused", async () => {
     const { owner, victim } = await setup();
     const readOnly = await key(
       createSdkKey(owner.owner, {

@@ -3,7 +3,7 @@
  * `pnpm db:test-migrations` (scripts/db/test-migrations.mjs) against its
  * DISPOSABLE server. The real runner (migrate-runtime.mjs) and real Prisma
  * apply hand-built fixture folders in temp directories; the migration role is
- * a non-superuser `wssp_app` that owns every scratch database here.
+ * a non-superuser `wssp_app_<run>` (per-run name and password) that owns every scratch database here.
  *
  * Scenario numbers follow the expand/contract plan's test list:
  *   2 the soak, then the drop · 3 an old heartbeat blocks · 4 rollback
@@ -38,6 +38,8 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
   const work = mkdtempSync(path.join(tmpdir(), "wssp-contracts-e2e-"));
   const runSuffix = randomBytes(4).toString("hex");
   const appRole = `wssp_app_${runSuffix}`;
+  // A per-run password too: with `--server-url` the role lives on a shared server.
+  const appPassword = randomBytes(18).toString("hex");
   const dbNames = new Map();
   const createdDatabases = new Set();
   const { adminClient, removeDatabase } = await lib("lib/scratch-db.mjs");
@@ -45,7 +47,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
     if (!dbNames.has(db)) dbNames.set(db, `wssp_test_${randomBytes(6).toString("hex")}`);
     return dbNames.get(db);
   };
-  const urlFor = (db, { user = appRole, password = "wssp_app", schema } = {}) => {
+  const urlFor = (db, { user = appRole, password = appPassword, schema } = {}) => {
     const url = new URL(serverUrl);
     url.username = user;
     url.password = password;
@@ -84,7 +86,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       }
     }
   };
-  await q(serverUrl, `CREATE ROLE "${appRole}" LOGIN PASSWORD 'wssp_app'`);
+  await q(serverUrl, `CREATE ROLE "${appRole}" LOGIN PASSWORD '${appPassword}'`);
 
   // --- fixture folders --------------------------------------------------------
   const F0 = "0_init";
@@ -165,7 +167,15 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
   };
 
   const apply = async (db, names, options = {}) => {
-    const { mode = "apply", id, role, folders = FOLDERS, image = IMAGE, schema } = options;
+    const {
+      mode = "apply",
+      id,
+      role,
+      folders = FOLDERS,
+      image = IMAGE,
+      schema,
+      backupEnabled = "true",
+    } = options;
     const url = urlFor(db, { schema });
     const dir = dirOf(folders, names);
     const config = tempConfig({ url, migrations: dir });
@@ -179,7 +189,11 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
         mode,
         role,
         pg: options.pg ?? pg,
-        env: { DATABASE_URL: url, ...(id ? { WSSP_INSTANCE_ID: id } : {}) },
+        env: {
+          DATABASE_URL: url,
+          ...(backupEnabled === undefined ? {} : { BACKUP_ENABLED: backupEnabled }),
+          ...(id ? { WSSP_INSTANCE_ID: id } : {}),
+        },
         migrationsDir: dir,
         runPrisma: (args, opts) =>
           prisma([...args, "--config", config], { ...opts, capture: true }).then((r) => {
@@ -382,7 +396,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
         rmSync(hookLog, { force: true });
         const r = await apply(s1, B);
         assert.equal(r.code, 0, r.out);
-        assert.deepEqual(hookCalls(), ["--label pre-drop --keep 5"]);
+        assert.deepEqual(hookCalls(), ["--label pre-drop --keep 5 --required"]);
         assert.match(r.out, /DATA DELETED: column "t"\."x"/);
         assert.match(r.out, /DATA DELETED: value "B" of enum "E" \(rows moved to "A"\)/);
         assert.match(r.out, /backup: pre-drop-20991231T000000Z\.dump/);
@@ -445,6 +459,23 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
         rmSync(path.join(work, "hook-fail"));
       }
     });
+    await step(
+      "contracts 10d: BACKUP_ENABLED=false → no pre-drop hook, the due deletion still runs",
+      async () => {
+        // The hook would fail; off means it is never called, so it cannot block.
+        writeFileSync(path.join(work, "hook-fail"), "");
+        rmSync(hookLog, { force: true });
+        try {
+          const r = await apply(s1, D, { backupEnabled: "false" });
+          assert.equal(r.code, 0, r.out);
+          assert.deepEqual(hookCalls(), []);
+          assert.doesNotMatch(r.out, /pre-drop backup failed/);
+          assert.ok((await row(s1, F3)).contract_attempts > 1, "the deletion was attempted");
+        } finally {
+          rmSync(path.join(work, "hook-fail"));
+        }
+      },
+    );
     await step(
       "contracts: the pre-deploy catalog read does not wait behind ACCESS EXCLUSIVE",
       async () => {
@@ -712,7 +743,7 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
           await createDb(s4);
           await prepare(s4);
           const exec = (args) =>
-            sh("docker", ["exec", "-e", "PGPASSWORD=wssp_app", container, ...args]);
+            sh("docker", ["exec", "-e", `PGPASSWORD=${appPassword}`, container, ...args]);
           let dump = exec([
             "pg_dump",
             "-h",
@@ -816,7 +847,12 @@ export async function contractScenarios({ step, serverUrl, container, repo, pg, 
       // fixture trigger sorts after the generated sync triggers, so this test
       // measures cached-plan survival rather than alphabetical trigger order.
       `CREATE FUNCTION "w_note"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW."s" = 'A'::"S" THEN NEW."note" := 'is-a'; END IF; RETURN NEW; END $$;`,
-      `CREATE TRIGGER "zz_fixture_note" BEFORE INSERT OR UPDATE ON "w" FOR EACH ROW EXECUTE FUNCTION "w_note"();`,
+      // BEFORE triggers fire in name order (byte order). "__w_note" sorts like
+      // the earliest possible unquoted trigger name: before
+      // "wssp_sync_*", after the generated "0_wssp_sync_<hash>".
+      // It must see the remapped value ("note" = 'is-a' below), which proves
+      // the sync trigger fires first.
+      `CREATE TRIGGER "__w_note" BEFORE INSERT OR UPDATE ON "w" FOR EACH ROW EXECUTE FUNCTION "w_note"();`,
       `CREATE PROCEDURE "pp"(INOUT r TEXT) LANGUAGE plpgsql AS $$ DECLARE x "S" := 'A'; BEGIN r := x::text; END $$;`,
     ].join("\n");
     const ENUM_FOLDERS = {

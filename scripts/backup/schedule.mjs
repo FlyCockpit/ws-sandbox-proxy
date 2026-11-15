@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The optional daily backup — the `backup` service of the generated Dokploy
- * compose (image command `backup-schedule`). OFF unless BACKUP_SCHEDULE=daily.
+ * compose (image command `backup-schedule`). OFF unless BACKUP_ENABLED=true and BACKUP_SCHEDULE=daily.
  *
  *   node schedule.mjs run      the long-running loop (the service's command)
  *   node schedule.mjs health   the service's healthcheck (exit 0 healthy)
@@ -13,6 +13,7 @@
  * restore drill (host.sh) read it like any other dump.
  *
  * Settings (read here only, never by the app):
+ *   BACKUP_ENABLED    false (default) | true; gates the automatic writer
  *   BACKUP_SCHEDULE   off (default) | daily
  *   BACKUP_HOUR_UTC   hour of the daily run, 0-23 (default 3)
  *   BACKUP_KEEP       days of daily dumps kept in /backups, one (the newest)
@@ -69,6 +70,9 @@ const log = (message) => console.log(`[backup] ${message}`);
  * @returns {{ enabled: false } | { enabled: true, hourUtc: number, keep: number }}
  */
 export function scheduleConfig(env) {
+  if (env.BACKUP_ENABLED && !["true", "false"].includes(env.BACKUP_ENABLED))
+    throw new Error("BACKUP_ENABLED must be true or false.");
+  if (env.BACKUP_ENABLED !== "true") return { enabled: false };
   const mode = (env.BACKUP_SCHEDULE ?? "").trim() || "off";
   if (mode === "off") return { enabled: false };
   if (mode !== "daily")
@@ -366,7 +370,9 @@ async function runLoop() {
   };
   writeStatus(status);
   if (!config.enabled) {
-    log("scheduled backups are OFF. Set BACKUP_SCHEDULE=daily on this service to turn them on.");
+    log(
+      "scheduled backups are OFF. Set BACKUP_ENABLED=true and BACKUP_SCHEDULE=daily on this service to turn them on.",
+    );
     // Idle (a stopped service would be restarted by its restart policy).
     await new Promise(() => setInterval(() => {}, DAY_MS));
     return 0;

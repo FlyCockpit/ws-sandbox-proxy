@@ -63,11 +63,7 @@
         "sileo"
       ]
     },
-    "apps/server": {
-      // better-auth is consumed via @wssp/auth; declared directly so the
-      // native binary / auth handler graph stays in this app's deploy image.
-      "ignoreDependencies": ["better-auth"]
-    },
+    "apps/server": {},
     "apps/worker": {},
     "packages/ui": {
       "entry": ["src/components/**/*.tsx", "src/styles/**/*.css"]

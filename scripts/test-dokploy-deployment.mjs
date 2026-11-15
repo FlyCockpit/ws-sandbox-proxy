@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { readMigrationsFolder } from "./db/lib/migration-state.mjs";
 import { run as runMigrations } from "./db/migrate-runtime.mjs";
@@ -16,6 +18,21 @@ import {
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const fixtureEnvironment = { PATH: `${dirname(process.execPath)}:/usr/bin:/bin` };
+
+// The entrypoint repeats a stop's TERM only where /proc exists (have_proc);
+// without it each signal sends one TERM, by design, since the image always
+// has /proc. Tests of the repeat path therefore skip on hosts without /proc
+// (macOS). ENTRYPOINT_TEST_ASSUME_NO_PROC=1, read only here, simulates such a
+// host on Linux: those tests skip and every fixture entrypoint runs with its
+// /proc detection removed, so the rest exercise the no-/proc fallback.
+const procDetection = "if [ -r /proc/self/stat ]; then have_proc=true; fi";
+const assumeNoProc = process.env.ENTRYPOINT_TEST_ASSUME_NO_PROC === "1";
+const needsProc =
+  !assumeNoProc && existsSync("/proc/self/stat")
+    ? {}
+    : { skip: "needs /proc (Linux); the image always has it" };
+/** `test` for the /proc repeat path: skipped (with that reason) without /proc. */
+const procTest = (name, fn) => test(name, needsProc, fn);
 
 const expectedCommit = "a".repeat(40);
 
@@ -325,19 +342,44 @@ exec '${process.execPath}' '${join(dir, "command.cjs")}' "$@"
 `,
     { mode: 0o755 },
   );
+  // tini stub: marks what it starts, then execs it (the real tini forwards
+  // signals and reaps; the entrypoint execs it as PID 1).
+  await writeFile(
+    join(dir, "bin", "tini"),
+    `#!/bin/sh
+[ "$1" = -- ] && shift
+FIXTURE_TINI=1 exec "$@"
+`,
+    { mode: 0o755 },
+  );
   await writeFile(
     join(dir, "command.cjs"),
     `
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({args, id: process.env.WSSP_INSTANCE_ID ?? null, writer: Boolean(process.env.BACKUP_S3_SECRET_ACCESS_KEY), commit: process.env.BUILD_VERSION ?? null}) + '\\n');
+fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({args, id: process.env.WSSP_INSTANCE_ID ?? null, writer: Boolean(process.env.BACKUP_S3_SECRET_ACCESS_KEY || process.env.BACKUP_S3_ACCESS_KEY_ID), bucket: process.env.BACKUP_S3_BUCKET ?? null, backupS3: Object.keys(process.env).filter((name) => name.startsWith('BACKUP_S3_')).sort(), monitor: Object.keys(process.env).filter((name) => name.startsWith('BACKUP_MONITOR_S3_')).sort(), tini: Boolean(process.env.FIXTURE_TINI), commit: process.env.BUILD_VERSION ?? null}) + '\\n');
+if (process.env.FIXTURE_NOTICE_FAIL && args.includes('--startup-notice')) process.exit(1);
+if (process.env.FIXTURE_NOTICE_HANG && args.includes('--startup-notice')) {
+  // A stalled /backups mount: the check never finishes on its own.
+  process.on('SIGTERM', () => { fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({noticeTerm: true}) + '\\n'); process.exit(143); });
+  setInterval(() => {}, 1000);
+  console.log('notice-started');
+}
 if (process.env.FIXTURE_REFUSE && args.includes('apply')) process.exit(7);
 if (process.env.FIXTURE_HOLD && args.includes('apply')) {
   const timer = setInterval(() => {}, 1000);
-  process.on('SIGTERM', () => setTimeout(() => {
-    fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({drained: true}) + '\\n');
-    clearInterval(timer);
-  }, 60));
+  // Like the real runner, whose TERM handler only requests its cancellation,
+  // a repeated TERM (the entrypoint repeats it until the child is gone)
+  // changes nothing while it drains.
+  let draining = false;
+  process.on('SIGTERM', () => {
+    if (draining) return;
+    draining = true;
+    setTimeout(() => {
+      fs.appendFileSync(process.env.FIXTURE_LOG, JSON.stringify({drained: true}) + '\\n');
+      clearInterval(timer);
+    }, 60);
+  });
   setTimeout(() => { clearInterval(timer); process.exitCode = 99; }, 3000).unref();
   console.log('admission-started');
 }
@@ -345,44 +387,444 @@ if (process.env.FIXTURE_HOLD && args.includes('apply')) {
   );
   const source = await readFile(join(root, "scripts/docker-entrypoint.sh"), "utf8");
   const script = join(dir, "entrypoint.sh");
-  await writeFile(
-    script,
-    source.replaceAll("/app/scripts/", `${dir}/scripts/`).replaceAll("/app/apps/", `${dir}/apps/`),
-  );
+  let fixtureSource = source
+    .replaceAll("/app/scripts/", `${dir}/scripts/`)
+    .replaceAll("/app/apps/", `${dir}/apps/`);
+  if (assumeNoProc) {
+    assert.ok(fixtureSource.includes(procDetection), "the /proc detection line exists");
+    fixtureSource = fixtureSource.replace(procDetection, "");
+  }
+  await writeFile(script, fixtureSource);
   await mkdir(join(dir, "scripts/backup"), { recursive: true });
   for (const name of ["restore.sh", "pre-migrate.sh"])
     await writeFile(
       join(dir, "scripts/backup", name),
       `#!/bin/sh\nexec node '${dir}/scripts/backup/${name}' "$@"\n`,
     );
-  const run = async (args, env = {}) => {
+  /**
+   * @param {string[]} args
+   * @param {Record<string, string>} env
+   * @param {{ signalOn?: string, signal?: NodeJS.Signals, sent?: boolean, script?: string, timeoutMs?: number, onSpawn?: (child: import("node:child_process").ChildProcess) => void }} [stop]
+   *   send `signal` to the entrypoint once its output contains `signalOn`;
+   *   `script` runs a modified copy instead of the entrypoint; `onSpawn` gets
+   *   the entrypoint's ChildProcess
+   */
+  const run = async (args, env = {}, stop = {}) => {
     const log = join(dir, "commands");
     await writeFile(log, "");
-    const child = spawn("sh", [script, ...args], {
+    const child = spawn("sh", [stop.script ?? script, ...args], {
       env: { PATH: `${dir}/bin:${fixtureEnvironment.PATH}`, FIXTURE_LOG: log, ...env },
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, so a hung run is reaped with every fixture child.
+      detached: true,
     });
+    stop.onSpawn?.(child);
+    // The entrypoint's own exit; `close` also waits for every process that
+    // still holds its output pipes.
+    const exited = new Promise((resolveCode, reject) => {
+      child.once("error", reject);
+      child.once("exit", (exitCode, exitSignal) => resolveCode(exitCode ?? exitSignal));
+    });
+    const closed = new Promise((resolveClose) => child.once("close", resolveClose));
     let output = "";
     child.stdout.on("data", (chunk) => {
       output += chunk;
       if (env.FIXTURE_HOLD && output.includes("admission-started")) child.kill("SIGTERM");
+      if (stop.signalOn && !stop.sent && output.includes(stop.signalOn)) {
+        stop.sent = true;
+        child.kill(stop.signal ?? "SIGTERM");
+      }
     });
     child.stderr.on("data", (chunk) => {
       output += chunk;
     });
-    const code = await new Promise((resolveCode, reject) => {
-      child.once("error", reject);
-      child.once("close", resolveCode);
-    });
-    const commands = (await readFile(log, "utf8")).trim();
+    /** @type {NodeJS.Timeout | undefined} */
+    let timer;
+    let code;
+    try {
+      // Bounded: a regression that ignores a stop signal fails instead of hanging.
+      code = await Promise.race([
+        exited,
+        new Promise((resolveTimeout) => {
+          timer = setTimeout(() => resolveTimeout("timeout"), stop.timeoutMs ?? 20_000);
+        }),
+      ]);
+      assert.notEqual(code, "timeout", `the entrypoint did not exit in time:\n${output}`);
+      // The entrypoint has exited: it must not have left a child running (a
+      // stop that never reached the child). Allow 1 s for exits already under
+      // way, then fail; the group is reaped either way.
+      let survivors = true;
+      for (let attempt = 0; attempt < 10 && survivors; attempt++) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+        try {
+          process.kill(-child.pid, 0);
+        } catch {
+          survivors = false;
+        }
+      }
+      assert.equal(
+        survivors,
+        false,
+        `processes left running after the entrypoint exited:\n${output}`,
+      );
+    } finally {
+      clearTimeout(timer);
+      // Reap the whole group, even after a clean exit: a fixture child left
+      // behind would hold the pipes and hang the suite.
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // The group is already gone (ESRCH).
+      }
+      await exited.catch(() => {});
+      await closed;
+    }
+    const lines = (await readFile(log, "utf8")).trim();
+    const all = lines ? lines.split("\n").map((line) => JSON.parse(line)) : [];
+    // The backups startup notice/check is reported separately.
+    const isNotice = (entry) => entry.args?.includes("--startup-notice");
     return {
       code,
       output,
-      commands: commands ? commands.split("\n").map((line) => JSON.parse(line)) : [],
+      all,
+      commands: all.filter((entry) => !isNotice(entry)),
+      notices: all.filter(isNotice),
     };
   };
   return { dir, run };
 }
+
+for (const [signal, status] of [
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+  ["SIGHUP", 129],
+]) {
+  test(`${signal} during a hanging startup check exits ${status}; the check gets TERM; the runner and CMD never start`, async (t) => {
+    const { run } = await entrypointFixture(t);
+    for (const args of [["migrate"], ["node", "apps/server/dist/index.mjs"]]) {
+      const result = await run(
+        args,
+        {
+          DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+          REDIS_URL: "redis://localhost",
+          BETTER_AUTH_SECRET: "fixture-only",
+          BACKUP_ENABLED: "true",
+          FIXTURE_NOTICE_HANG: "1",
+        },
+        { signalOn: "notice-started", signal },
+      );
+      assert.equal(result.code, status, result.output);
+      assert.equal(result.notices.length, 1);
+      // TERM for every stop signal: a background child of sh starts with
+      // SIGINT ignored, so only TERM reliably stops it.
+      assert.ok(
+        result.all.some((entry) => entry.noticeTerm),
+        `the check got TERM: ${JSON.stringify(result.all)}`,
+      );
+      assert.deepEqual(
+        result.commands.filter((entry) => entry.args),
+        [],
+        "neither the runner nor the CMD started",
+      );
+    }
+  });
+}
+
+test("entrypoint stop-signal traps (TERM/INT/HUP) are installed before validation and any child, and cover the fork", async () => {
+  const source = await readFile(join(root, "scripts/docker-entrypoint.sh"), "utf8");
+  const body = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  const traps = [
+    "trap 'stop_startup TERM 143' TERM",
+    "trap 'stop_startup INT 130' INT",
+    "trap 'stop_startup HUP 129' HUP",
+  ].map((line) => body.indexOf(line));
+  assert.ok(
+    traps.every((index) => index > 0),
+    "the TERM, INT and HUP traps exist, each keeping its own status",
+  );
+  const trap = Math.max(...traps);
+  // The strict-switch validation and every child come after all three traps.
+  for (const step of [
+    "BACKUP_ENABLED must be true or false",
+    "$(node",
+    "supervise node",
+    "supervise bash",
+    "exec tini",
+  ]) {
+    const first = body.indexOf(step);
+    assert.ok(first > trap, `${step} comes after the traps`);
+  }
+  // A signal between the fork and the PID assignment is only recorded (the
+  // trap does not exit while a child is being launched); afterwards the child
+  // is identified by its start time and gets TERM until it is gone.
+  assert.match(
+    body,
+    /stop_startup\(\) \{\n\s*stop_signal="\$1"\n\s*\[ "\$stopping" = false \] \|\| \[ "\$have_proc" = false \] \|\| return 0\n\s*if \[ -n "\$child_pid" \]; then\n\s*stopping=true\n\s*stop_child\n\s*elif \[ "\$launching_child" = false \]; then\n\s*exit "\$2"\n\s*fi\n\s*\}/,
+    "stop_startup only records a signal that lands while a child is launched",
+  );
+  assert.match(
+    body,
+    /launching_child=true\n\s*"\$@" &\n\s*child_pid=\$!\n\s*if \[ "\$have_proc" = true \]; then\n\s*proc_start "\$child_pid"\n\s*child_start=\$proc_start_value\n\s*fi\n\s*launching_child=false\n/,
+    "supervise records the child's identity before it acts on a pending signal",
+  );
+  assert.match(
+    body,
+    /if \[ -n "\$stop_signal" \]; then\n\s*stopping=true\n\s*stop_child\n\s*wait "\$child_pid"/,
+    "a pending or interrupting stop signal is forwarded until the child is gone",
+  );
+  // The trap path (stop_startup -> term_child -> child_alive -> proc_start)
+  // never forks: no command substitution or external command in it.
+  const fnBody = (name) => body.match(new RegExp(`\\n${name}\\(\\) \\{\\n([\\s\\S]*?)\\n\\}`))?.[1];
+  for (const name of ["stop_startup", "term_child", "child_alive", "proc_start"]) {
+    const fn = fnBody(name);
+    assert.ok(fn, `${name} exists`);
+    assert.doesNotMatch(fn, /\$\(|`|\bcat\b|\bsleep\b/, `${name} never forks`);
+  }
+  // No step resets the handlers to the default (which PID 1 ignores).
+  assert.doesNotMatch(body, /trap -( |$)/m);
+});
+
+// Copies of the entrypoint with a stop signal injected at the exact gap,
+// without production hooks.
+async function entrypointCopy(dir, name, edit) {
+  const source = await readFile(join(dir, "entrypoint.sh"), "utf8");
+  const lines = source.split("\n");
+  const out = edit(lines);
+  assert.notDeepEqual(out, lines, `${name}: the injection point was not found`);
+  const path = join(dir, name);
+  await writeFile(path, out.join("\n"));
+  return path;
+}
+const injectBefore = (lines, target, injected) =>
+  lines.flatMap((line) => (line.trim() === target ? [injected, line] : [line]));
+const hangingCheckEnv = {
+  DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+  REDIS_URL: "redis://localhost",
+  BETTER_AUTH_SECRET: "fixture-only",
+  BACKUP_ENABLED: "true",
+  FIXTURE_NOTICE_HANG: "1",
+};
+
+for (const [signal, status] of [
+  ["SIGTERM", 143],
+  ["SIGINT", 130],
+  ["SIGHUP", 129],
+]) {
+  const name = signal.slice(3);
+  // Every test in this loop needs the /proc repeat path.
+  const test = procTest;
+  test(`entrypoint ${signal} in the fork window (after the fork, before the PID is known) still stops a hanging startup check; exits ${status}`, async (t) => {
+    const { run, dir } = await entrypointFixture(t);
+    const script = await entrypointCopy(dir, `launch-gap-${name}.sh`, (lines) =>
+      injectBefore(lines, "child_pid=$!", `  kill -${name} "$$"`),
+    );
+    // The TERM reaches the child within microseconds of its fork, where the
+    // forked shell can still swallow it with the trap it inherited: a single
+    // TERM was lost in about 40% of runs here. Repeat the case.
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const result = await run(["node", "apps/server/dist/index.mjs"], hangingCheckEnv, {
+        script,
+        timeoutMs: 8_000,
+      });
+      assert.equal(result.code, status, `attempt ${attempt}: ${result.output}`);
+      assert.deepEqual(
+        result.commands.filter((entry) => entry.args),
+        [],
+        "neither the runner nor the CMD started",
+      );
+    }
+  });
+
+  test(`entrypoint ${signal}: a child that misses the first TERM is still stopped (the TERM is repeated until it is gone); exits ${status}`, async (t) => {
+    const { run, dir } = await entrypointFixture(t);
+    // The child swallows the first TERM it gets (then execs the command),
+    // standing in for a TERM swallowed by the forked shell's inherited trap.
+    // The stop is sent only once its trap is in place, so the first TERM is
+    // always missed, however the processes are scheduled.
+    const ready = join(dir, `deaf-ready-${name}`);
+    const script = await entrypointCopy(dir, `deaf-child-${name}.sh`, (lines) =>
+      injectBefore(
+        lines.map((line) =>
+          line.trim() === '"$@" &'
+            ? `  ( n=0; trap 'n=$((n + 1))' TERM; : > '${ready}'; while [ "$n" -lt 1 ]; do sleep 0.05; done; trap - TERM; exec "$@" ) &`
+            : line,
+        ),
+        "child_pid=$!",
+        `  while [ ! -e '${ready}' ]; do :; done; kill -${name} "$$"`,
+      ),
+    );
+    assert.match(
+      await readFile(script, "utf8"),
+      /trap 'n=\$\(\(n \+ 1\)\)' TERM; : > '[^']+'; while \[ "\$n" -lt 1 \]/,
+    );
+    const result = await run(["node", "apps/server/dist/index.mjs"], hangingCheckEnv, {
+      script,
+      timeoutMs: 8_000,
+    });
+    assert.equal(result.code, status, result.output);
+    assert.ok(result.notices.length <= 1);
+    assert.deepEqual(
+      result.commands.filter((entry) => entry.args),
+      [],
+      "neither the runner nor the CMD started",
+    );
+  });
+
+  test(`entrypoint ${signal} just before supervise's wait still stops a child that misses the first TERM; exits ${status}`, async (t) => {
+    const { run, dir } = await entrypointFixture(t);
+    // The signal lands after the "no stop pending" check, right before
+    // `wait`: the handler runs first, then `wait` blocks. The handler must
+    // itself repeat the TERM, or the deaf child runs to its end.
+    const ready = join(dir, `wait-gap-ready-${name}`);
+    const script = await entrypointCopy(dir, `wait-gap-${name}.sh`, (lines) =>
+      injectBefore(
+        lines.map((line) =>
+          line.trim() === '"$@" &'
+            ? `  ( n=0; trap 'n=$((n + 1))' TERM; : > '${ready}'; while [ "$n" -lt 1 ]; do sleep 0.05; done; trap - TERM; exec "$@" ) &`
+            : line,
+        ),
+        'wait "$child_pid"',
+        `    while [ ! -e '${ready}' ]; do :; done; kill -${name} "$$"`,
+      ),
+    );
+    const result = await run(["node", "apps/server/dist/index.mjs"], hangingCheckEnv, {
+      script,
+      timeoutMs: 8_000,
+    });
+    assert.equal(result.code, status, result.output);
+    assert.deepEqual(
+      result.commands.filter((entry) => entry.args),
+      [],
+      "neither the runner nor the CMD started",
+    );
+  });
+}
+
+procTest(
+  "entrypoint repeated stop signals while the handler drains a child do not delay the exit; the last one sets the status",
+  async (t) => {
+    const { run, dir } = await entrypointFixture(t);
+    // TERM arrives while supervise waits (as from `docker stop`); the handler
+    // then repeats TERM until the child, which swallows the first three, is gone; HUPs
+    // arrive during that drain. Each nested trap must only record itself, and
+    // must not stretch the 0.2 s pause: in dash a nested trap leaves $? at the
+    // outer trap's status (here the interrupted wait's), so the pause cannot
+    // branch on sleep's status.
+    // (The /proc repeat path: without /proc nothing drains, and the test would
+    // only check signal timing.)
+    const ready = join(dir, "drain-ready");
+    const script = await entrypointCopy(dir, "drain-repeat.sh", (lines) =>
+      lines.map((line) =>
+        line.trim() === '"$@" &'
+          ? `  ( n=0; trap 'n=$((n + 1))' TERM; : > '${ready}'; while [ "$n" -lt 3 ]; do sleep 0.05; done; trap - TERM; exec "$@" ) &`
+          : line,
+      ),
+    );
+    const exists = (path) =>
+      readFile(path).then(
+        () => true,
+        () => false,
+      );
+    let first = 0;
+    // Bounded, and stopped once the run is over (even a failed one).
+    let over = false;
+    /** @type {Promise<void> | undefined} */
+    let sender;
+    let result;
+    try {
+      result = await run(["node", "apps/server/dist/index.mjs"], hangingCheckEnv, {
+        script,
+        timeoutMs: 8_000,
+        onSpawn: (child) => {
+          sender = (async () => {
+            const deadline = Date.now() + 8_000;
+            while (!over && !(await exists(ready))) {
+              if (Date.now() > deadline) return;
+              await delay(10);
+            }
+            if (over) return;
+            // Let supervise reach its wait.
+            await delay(50);
+            first = Date.now();
+            child.kill("SIGTERM");
+            // One HUP inside each 0.2 s pause of the drain.
+            for (let i = 0; i < 3; i++) {
+              await delay(i === 0 ? 60 : 200);
+              if (over) return;
+              child.kill("SIGHUP");
+            }
+          })();
+        },
+      });
+    } finally {
+      over = true;
+      await sender;
+    }
+    const elapsed = Date.now() - first;
+    assert.equal(result.code, 129, result.output);
+    assert.ok(first > 0, "the child became ready");
+    // About 0.6 s (three 0.2 s pauses); each stretched pause would add up to
+    // 1 s (2.5 s or more in all).
+    assert.ok(elapsed < 1_500, `the entrypoint took ${elapsed} ms after the first stop`);
+  },
+);
+
+test("entrypoint without /proc, every stop signal still sends one TERM: a later signal stops a child that swallowed the first", async (t) => {
+  const { run, dir } = await entrypointFixture(t);
+  // /proc detection forced off (the fallback outside Linux): nothing repeats
+  // the TERM, so the stop guard must not swallow a later signal's TERM. The
+  // first TERM (recorded during the launch) is swallowed by the child; the
+  // second stop signal must stop it.
+  const ready = join(dir, "noproc-ready");
+  const script = await entrypointCopy(dir, "noproc.sh", (lines) =>
+    injectBefore(
+      lines.map((line) => {
+        if (line.trim() === procDetection) return "";
+        return line.trim() === '"$@" &'
+          ? `  ( n=0; trap 'n=$((n + 1))' TERM; : > '${ready}'; while [ "$n" -lt 1 ]; do sleep 0.05; done; trap - TERM; exec "$@" ) &`
+          : line;
+      }),
+      "child_pid=$!",
+      `  while [ ! -e '${ready}' ]; do :; done; kill -TERM "$$"`,
+    ),
+  );
+  assert.doesNotMatch(await readFile(script, "utf8"), /have_proc=true/);
+  const exists = (path) =>
+    readFile(path).then(
+      () => true,
+      () => false,
+    );
+  let over = false;
+  /** @type {Promise<void> | undefined} */
+  let sender;
+  let result;
+  try {
+    result = await run(["node", "apps/server/dist/index.mjs"], hangingCheckEnv, {
+      script,
+      timeoutMs: 8_000,
+      onSpawn: (child) => {
+        sender = (async () => {
+          const deadline = Date.now() + 8_000;
+          while (!over && !(await exists(ready))) {
+            if (Date.now() > deadline) return;
+            await delay(10);
+          }
+          // The first TERM has been swallowed by now; then a second stop.
+          await delay(300);
+          if (!over) child.kill("SIGHUP");
+        })();
+      },
+    });
+  } finally {
+    over = true;
+    await sender;
+  }
+  assert.equal(result.code, 129, result.output);
+  assert.ok(result.notices.length <= 1);
+});
 
 test("all seven image commands dispatch before normal auth/Redis validation without registering an instance", async (t) => {
   const { run, dir } = await entrypointFixture(t);
@@ -423,7 +865,47 @@ test("all seven image commands dispatch before normal auth/Redis validation with
     ]);
     assert.equal(result.commands[0].id, null);
     assert.equal(result.commands[0].writer, true);
+    // `migrate` runs the runner as PID 1's child (and checks the backups
+    // switch first); every other one-shot is exec'd under tini.
+    assert.equal(result.commands[0].tini, args[0] !== "migrate");
+    assert.equal(result.notices.length, args[0] === "migrate" ? 1 : 0);
   }
+});
+
+test("BACKUP_ENABLED is strict, and a failing startup check stops the migration", async (t) => {
+  const { run } = await entrypointFixture(t);
+  const env = {
+    DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+    REDIS_URL: "redis://localhost",
+    BETTER_AUTH_SECRET: "fixture-only",
+  };
+  for (const args of [["migrate"], ["backup"], ["node", "apps/server/dist/index.mjs"]]) {
+    const bad = await run(args, { ...env, BACKUP_ENABLED: "yes" });
+    assert.equal(bad.code, 1);
+    assert.match(bad.output, /BACKUP_ENABLED must be true or false/);
+    assert.equal(bad.commands.length + bad.notices.length, 0);
+  }
+  // BACKUP_ENABLED=true with no destination: pre-migrate.sh --startup-notice
+  // fails (stubbed here), so neither the server nor `migrate` runs the runner.
+  for (const args of [["migrate"], ["node", "apps/server/dist/index.mjs"]]) {
+    const result = await run(args, { ...env, BACKUP_ENABLED: "true", FIXTURE_NOTICE_FAIL: "1" });
+    assert.equal(result.code, 1, result.output);
+    assert.equal(result.notices.length, 1);
+    assert.equal(result.commands.length, 0);
+  }
+  // A server that only waits (MIGRATE_ON_START=false) needs no destination
+  // when backups are on, and a waiting worker never checks.
+  const waiting = await run(["node", "apps/server/dist/index.mjs"], {
+    ...env,
+    MIGRATE_ON_START: "false",
+    BACKUP_ENABLED: "true",
+    FIXTURE_NOTICE_FAIL: "1",
+  });
+  assert.equal(waiting.code, 0, waiting.output);
+  assert.equal(waiting.notices.length, 0);
+  const worker = await run(["node", "apps/worker/dist/index.mjs"], env);
+  assert.equal(worker.code, 0, worker.output);
+  assert.equal(worker.notices.length, 0);
 });
 
 test("server apply and worker wait precede app execution, with fresh per-start identity and stripped writer keys", async (t) => {
@@ -433,6 +915,8 @@ test("server apply and worker wait precede app execution, with fresh per-start i
     REDIS_URL: "redis://localhost",
     BETTER_AUTH_SECRET: "fixture-only",
     BACKUP_S3_SECRET_ACCESS_KEY: "fixture-only",
+    BACKUP_S3_ACCESS_KEY_ID: "fixture-only",
+    BACKUP_S3_BUCKET: "fixture-bucket",
   };
   const ids = new Set();
   for (const [role, mode] of [
@@ -453,10 +937,56 @@ test("server apply and worker wait precede app execution, with fresh per-start i
     assert.match(id, /^[0-9a-f-]{36}$/);
     assert.equal(result.commands[1].id, id);
     assert.equal(result.commands[0].writer, true);
+    assert.equal(result.commands[0].tini, false, "the runner is PID 1's child, not tini's");
     assert.equal(result.commands[1].writer, false);
+    // The monitor's non-secret location settings stay; the app runs under tini.
+    assert.equal(result.commands[1].bucket, "fixture-bucket");
+    assert.equal(result.commands[1].tini, true);
+    // Only a migrating container checks/announces backups.
+    assert.equal(result.notices.length, mode === "apply" ? 1 : 0);
     ids.add(id);
   }
   assert.equal(ids.size, 3);
+  // Least privilege: each process keeps only the BACKUP_S3_* it reads. The
+  // server reads the location (boot warnings, the admin freshness card); the
+  // worker's freshness check also builds an S3 client (_FORCE_PATH_STYLE).
+  // Writer keys and writer-only settings (_SSE, an unknown future one) go; the
+  // runner before them still gets everything.
+  const everyBackupS3 = {
+    BACKUP_S3_BUCKET: "fixture-bucket",
+    BACKUP_S3_PREFIX: "fixture/prefix",
+    BACKUP_S3_ENDPOINT: "https://s3.fixture.invalid",
+    BACKUP_S3_REGION: "eu-west-1",
+    BACKUP_S3_FORCE_PATH_STYLE: "true",
+    BACKUP_S3_SSE: "AES256",
+    BACKUP_S3_ACCESS_KEY_ID: "fixture-only",
+    BACKUP_S3_SECRET_ACCESS_KEY: "fixture-only",
+    BACKUP_S3_FUTURE_WRITER_SETTING: "fixture-only",
+  };
+  // The default embedded worker (WORKER_MODE unset/embedded) runs inside the
+  // server, so the server keeps _FORCE_PATH_STYLE unless WORKER_MODE=external.
+  const location = ["BUCKET", "ENDPOINT", "PREFIX", "REGION"];
+  const withPathStyle = ["BUCKET", "ENDPOINT", "FORCE_PATH_STYLE", "PREFIX", "REGION"];
+  for (const [role, extra, kept] of [
+    ["server", {}, withPathStyle],
+    ["server", { WORKER_MODE: "embedded" }, withPathStyle],
+    ["server", { WORKER_MODE: "external" }, location],
+    ["worker", {}, withPathStyle],
+  ]) {
+    const result = await run(["node", `apps/${role}/dist/index.mjs`], {
+      ...env,
+      ...everyBackupS3,
+      ...extra,
+    });
+    assert.equal(result.code, 0, result.output);
+    const [runner, app] = result.commands;
+    assert.deepEqual(runner.backupS3, Object.keys(everyBackupS3).sort(), `${role} runner`);
+    assert.deepEqual(
+      app.backupS3,
+      kept.map((name) => `BACKUP_S3_${name}`),
+      `${role} process`,
+    );
+  }
   const refused = await run(["node", "apps/server/dist/index.mjs"], {
     ...env,
     FIXTURE_REFUSE: "true",
@@ -472,6 +1002,107 @@ test("server apply and worker wait precede app execution, with fresh per-start i
   });
   assert.equal(invalid.code, 1);
   assert.equal(invalid.commands.length, 0);
+});
+
+test("a monitor key that is the dump-writer key refuses the server and worker start before anything runs", async (t) => {
+  const { run } = await entrypointFixture(t);
+  const reused = {
+    DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+    REDIS_URL: "redis://localhost",
+    BETTER_AUTH_SECRET: "fixture-only",
+    BACKUP_S3_BUCKET: "fixture-bucket",
+    BACKUP_S3_ACCESS_KEY_ID: "fixture-writer-key",
+    BACKUP_S3_SECRET_ACCESS_KEY: "fixture-writer-secret",
+    BACKUP_MONITOR_S3_ACCESS_KEY_ID: "fixture-writer-key",
+    BACKUP_MONITOR_S3_SECRET_ACCESS_KEY: "fixture-writer-secret",
+  };
+  for (const role of ["server", "worker"]) {
+    for (const MIGRATE_ON_START of ["true", "false"]) {
+      const bad = await run(["node", `apps/${role}/dist/index.mjs`], {
+        ...reused,
+        MIGRATE_ON_START,
+      });
+      assert.equal(bad.code, 1, bad.output);
+      assert.match(bad.output, /BACKUP_MONITOR_S3_ACCESS_KEY_ID matches BACKUP_S3_ACCESS_KEY_ID/);
+      // Refused before the startup check, the runner and the CMD.
+      assert.equal(bad.all.length, 0, `${role} ${MIGRATE_ON_START}`);
+      // The key value itself is never echoed.
+      assert.doesNotMatch(bad.output, /fixture-writer-key/);
+    }
+  }
+  // A distinct monitor key, or none, starts normally; so does a monitor key
+  // with no writer key in this container.
+  for (const extra of [
+    { BACKUP_MONITOR_S3_ACCESS_KEY_ID: "fixture-monitor-key" },
+    { BACKUP_MONITOR_S3_ACCESS_KEY_ID: "", BACKUP_MONITOR_S3_SECRET_ACCESS_KEY: "" },
+    { BACKUP_S3_ACCESS_KEY_ID: "", BACKUP_S3_SECRET_ACCESS_KEY: "" },
+  ]) {
+    for (const role of ["server", "worker"]) {
+      const ok = await run(["node", `apps/${role}/dist/index.mjs`], { ...reused, ...extra });
+      assert.equal(ok.code, 0, `${role} ${JSON.stringify(extra)}: ${ok.output}`);
+      assert.equal(ok.commands.at(-1).args[0], `apps/${role}/dist/index.mjs`);
+    }
+  }
+  // External worker topology: the server holds the writer key and gets the
+  // monitor key ID alone. A reused ID is refused; a distinct one is checked,
+  // then dropped before the server starts (the pair lives in the worker).
+  const external = { ...reused, WORKER_MODE: "external" };
+  delete external.BACKUP_MONITOR_S3_SECRET_ACCESS_KEY;
+  const externalBad = await run(["node", "apps/server/dist/index.mjs"], external);
+  assert.equal(externalBad.code, 1, externalBad.output);
+  assert.match(externalBad.output, /BACKUP_MONITOR_S3_ACCESS_KEY_ID matches/);
+  assert.equal(externalBad.all.length, 0);
+  const externalOk = await run(["node", "apps/server/dist/index.mjs"], {
+    ...external,
+    BACKUP_MONITOR_S3_ACCESS_KEY_ID: "fixture-monitor-key",
+  });
+  assert.equal(externalOk.code, 0, externalOk.output);
+  const [externalRunner, externalApp] = externalOk.commands;
+  assert.deepEqual(externalRunner.monitor, ["BACKUP_MONITOR_S3_ACCESS_KEY_ID"]);
+  assert.deepEqual(externalApp.monitor, [], "the server never keeps the ID-only forward");
+  // A full monitor pair set by hand on any process is kept as before.
+  for (const extra of [{}, { WORKER_MODE: "external" }]) {
+    const pair = await run(["node", "apps/server/dist/index.mjs"], {
+      ...reused,
+      ...extra,
+      BACKUP_MONITOR_S3_ACCESS_KEY_ID: "fixture-monitor-key",
+    });
+    assert.equal(pair.code, 0, pair.output);
+    assert.deepEqual(pair.commands.at(-1).monitor, [
+      "BACKUP_MONITOR_S3_ACCESS_KEY_ID",
+      "BACKUP_MONITOR_S3_SECRET_ACCESS_KEY",
+    ]);
+  }
+  // The worker keeps its ID even without a secret (its own warnings report it).
+  const workerIdOnly = await run(["node", "apps/worker/dist/index.mjs"], {
+    ...external,
+    BACKUP_MONITOR_S3_ACCESS_KEY_ID: "fixture-monitor-key",
+  });
+  assert.deepEqual(workerIdOnly.commands.at(-1).monitor, ["BACKUP_MONITOR_S3_ACCESS_KEY_ID"]);
+  // The one-shot backup commands keep the writer keys by design; the check is
+  // for the long-running processes only.
+  const backup = await run(["backup"], reused);
+  assert.doesNotMatch(backup.output, /BACKUP_MONITOR_S3_ACCESS_KEY_ID matches/);
+});
+
+test("a failure listing the backup settings stops the start instead of keeping them all", async (t) => {
+  const { run, dir } = await entrypointFixture(t);
+  // sh ignores a failed command substitution in a `for` word list; the
+  // entrypoint must check the listing itself.
+  await writeFile(join(dir, "bin", "sed"), "#!/bin/sh\nexit 4\n", { mode: 0o755 });
+  const result = await run(["node", "apps/server/dist/index.mjs"], {
+    DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+    REDIS_URL: "redis://localhost",
+    BETTER_AUTH_SECRET: "fixture-only",
+    BACKUP_S3_BUCKET: "fixture-bucket",
+    BACKUP_S3_SSE: "AES256",
+  });
+  assert.equal(result.code, 1, result.output);
+  assert.match(result.output, /FATAL: could not list the backup settings to drop/);
+  assert.ok(
+    !result.commands.some((entry) => entry.args[0]?.startsWith("apps/")),
+    "the app never starts",
+  );
 });
 
 test("agent dev startup invokes runtime apply against the pinned Compose database after generate", async () => {
@@ -503,7 +1134,7 @@ test("entrypoint shutdown forwards cancellation and waits for migration child dr
     FIXTURE_HOLD: "true",
   });
   assert.equal(result.code, 143, result.output);
-  assert.equal(result.commands.length, 2);
+  assert.equal(result.commands.length, 2, JSON.stringify(result.all));
   assert.deepEqual(result.commands[1], { drained: true });
 });
 

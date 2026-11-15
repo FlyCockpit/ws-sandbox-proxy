@@ -56,12 +56,16 @@ export const pageQuerySchema = z
 
 export const SDK_SCOPES = [
   "hosts:read",
+  "hosts:execute",
+  "hosts:files",
   "pools:read",
   "templates:read",
   "templates:write",
   "templates:build",
   "sandboxes:read",
-  "sandboxes:write",
+  "sandboxes:create",
+  "sandboxes:manage",
+  "sandboxes:destroy",
   "commands:read",
   "commands:execute",
   "files:read",
@@ -488,12 +492,24 @@ export const sandboxDiskSchema = z
   .strict();
 export type SandboxDiskDto = z.infer<typeof sandboxDiskSchema>;
 
+export const hostAgentAccessSchema = z.discriminatedUnion("owned", [
+  z.strictObject({ owned: z.literal(false) }),
+  z.strictObject({
+    owned: z.literal(true),
+    hostCommands: z.boolean(),
+    hostFiles: z.boolean(),
+    hostCommandMaxMs: z.number().int().min(1_000).max(86_400_000).optional(),
+  }),
+]);
+export type HostAgentAccess = z.infer<typeof hostAgentAccessSchema>;
+
 export const hostSchema = z
   .object({
     id: resourceIdSchema,
     slug: z.string(),
     label: z.string(),
     status: z.enum(HOST_STATUSES),
+    agentAccess: hostAgentAccessSchema,
     lastConnectedAt: isoDateTimeSchema.nullable(),
     lastHeartbeatAt: isoDateTimeSchema.nullable(),
     retainedRootCount: z.number().int().min(0),
@@ -885,7 +901,9 @@ export type SandboxPage = z.infer<typeof sandboxPageSchema>;
  * route that provides it is registered by the running server.
  */
 export const SDK_FEATURES = [
-  "sandboxes.write",
+  "sandboxes.create",
+  "sandboxes.manage",
+  "sandboxes.destroy",
   "sandboxes.vmSize",
   "sandboxes.probe",
   "commands.execute",
@@ -896,6 +914,8 @@ export const SDK_FEATURES = [
   "files.download",
   "templates.write",
   "hosts.read",
+  "hosts.execute",
+  "hosts.files",
   "pools.read",
   "templates.read",
   "sandboxes.read",
@@ -1150,6 +1170,7 @@ export const capabilitiesSchema = z
     key: z
       .object({
         scopes: z.array(z.enum(SDK_SCOPES)),
+        ownSandboxesOnly: z.boolean(),
         resourceMode: z.enum(["allOwned", "allowlist"]),
         poolMode: z.enum(["allUsable", "selected"]),
       })

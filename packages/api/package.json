@@ -361,6 +361,30 @@
     },
     "./webhooks/constants": {
       "default": "./src/webhooks/constants.ts"
+    },
+    "./sandbox/services/mcp-grants": {
+      "default": "./src/sandbox/services/mcp-grants.ts"
+    },
+    "./sandbox/services/mcp-consent": {
+      "default": "./src/sandbox/services/mcp-consent.ts"
+    },
+    "./sandbox/services/host-commands": {
+      "default": "./src/sandbox/services/host-commands.ts"
+    },
+    "./sandbox/services/host-files": {
+      "default": "./src/sandbox/services/host-files.ts"
+    },
+    "./sandbox/services/host-queued": {
+      "default": "./src/sandbox/services/host-queued.ts"
+    },
+    "./sandbox/services/hosts": {
+      "default": "./src/sandbox/services/hosts.ts"
+    },
+    "./sandbox/services/sdk-keys": {
+      "default": "./src/sandbox/services/sdk-keys.ts"
+    },
+    "./mcp/tool-contracts": {
+      "default": "./src/mcp/tool-contracts.ts"
     }
   },
   "scripts": {

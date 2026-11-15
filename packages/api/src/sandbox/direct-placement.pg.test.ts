@@ -543,7 +543,7 @@ it.each(["session", "ALL_OWNED"] as const)(
               await createSdkKey(f.owner, {
                 name: "create",
                 resourceMode: "ALL_OWNED",
-                scopes: ["sandboxes:write"],
+                scopes: ["sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
                 hostIds: [],
                 templateRevisionIds: [],
               })

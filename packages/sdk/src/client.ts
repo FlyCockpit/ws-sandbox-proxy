@@ -1,6 +1,7 @@
 import { type CommandsApi, createCommandsApi } from "./commands";
 import { type CredentialsApi, createCredentialsApi } from "./credentials";
 import { createFilesApi, type FilesApi } from "./files";
+import { createHostsApi, type HostsApi } from "./hosts";
 import { createOperationsApi, type OperationsApi } from "./operations";
 import { type PollingOptions, resolvePolling } from "./polling";
 import { createPoolsApi, type PoolsApi } from "./pools";
@@ -21,6 +22,7 @@ export type WsspClient = {
   readonly sandboxes: SandboxesApi;
   readonly templates: TemplatesApi;
   readonly pools: PoolsApi;
+  readonly hosts: HostsApi;
   readonly operations: OperationsApi;
   readonly commands: CommandsApi;
   readonly transfers: TransfersApi;
@@ -53,6 +55,7 @@ export function createWsspClient(options: WsspClientOptions): WsspClient {
     transport,
     templates: createTemplatesApi(transport),
     pools: createPoolsApi(transport),
+    hosts: createHostsApi(transport, polling),
     sandboxes: createSandboxesApi(transport, polling, { commands, files }),
     operations: createOperationsApi(transport, polling),
     commands,

@@ -154,6 +154,10 @@ export async function readMigrationState({
   try {
     const runner = await client.query(ADVISORY_HELD_SQL, [MIGRATION_RUNNER_LOCK_KEY]);
     base.runnerActive = Boolean(runner.rows[0].held);
+    // Prisma's lock for the early returns: a database with no history table
+    // yet can still be mid-deploy (its first `migrate deploy`).
+    const prismaLock = await client.query(ADVISORY_HELD_SQL, [PRISMA_ADVISORY_LOCK]);
+    base.inProgress = Boolean(prismaLock.rows[0].held);
     const table = await client.query(
       "SELECT to_regclass(format('%I._prisma_migrations', $1::text)) AS t",
       [schema],
@@ -177,6 +181,9 @@ export async function readMigrationState({
     // An empty/entirely rolled-back history is no proof of a fresh catalog.
     if (rows.every((row) => row.rolled_back_at) && !(await isManagedSchemaEmpty(client, schema)))
       return { ...base, state: "no-history-nonempty" };
+    // Read it again AFTER the history: a deploy that took the lock and wrote an
+    // unfinished row between the two reads must count as in flight, never as a
+    // failed row to resolve.
     const lock = await client.query(ADVISORY_HELD_SQL, [PRISMA_ADVISORY_LOCK]);
     return classify(base, local, rows, lock.rows[0].held);
   } catch (error) {
@@ -184,6 +191,65 @@ export async function readMigrationState({
   } finally {
     if (!existingClient) await client.end().catch(() => {});
   }
+}
+
+/**
+ * Why touching a `failed` row right now would be unsafe, or null. A row with
+ * no finished_at is only a failure when nobody is still applying it: while
+ * Prisma's lock is held its migration is mid-flight, and while the runner lock
+ * is held a deploy runner (or a restore) owns the history. Marking such a row
+ * rolled back would let a second `migrate deploy` re-run a migration that is
+ * still executing. `db:migrate:apply` refuses on it; the production runner
+ * applies the same rule to Prisma's lock (it waits, then refuses) and is itself
+ * the runner-lock holder.
+ * @param {{ inProgress: boolean, runnerActive: boolean }} state
+ */
+export function migrationInFlight(state) {
+  if (state.inProgress)
+    return "another session holds Prisma's migration lock (Prisma Migrate is applying a migration right now)";
+  if (state.runnerActive)
+    return "another session holds the migration runner lock (a deploy runner or a restore is working on this database)";
+  return null;
+}
+
+/**
+ * Take the migration runner lock without waiting, on a dedicated session, for
+ * a local wrapper that resolves or deploys migrations. Production runners and
+ * restore.mjs take the same key, so while it is held none of them can start.
+ * @param {{ databaseUrl: string, pg: typeof import("pg"), applicationName?: string,
+ *   connectTimeoutMs?: number }} options
+ * @returns {Promise<{ release: () => Promise<void> } | null>} null when another session holds it
+ */
+export async function tryHoldRunnerLock({
+  databaseUrl,
+  pg,
+  applicationName = "wssp-db-apply",
+  connectTimeoutMs = 10_000,
+}) {
+  const client = new pg.Client({
+    connectionString: pgConnectionString(databaseUrl),
+    connectionTimeoutMillis: connectTimeoutMs,
+    application_name: applicationName,
+  });
+  try {
+    await client.connect();
+    const result = await client.query(
+      `SELECT pg_try_advisory_lock(${MIGRATION_RUNNER_LOCK_KEY}) AS acquired`,
+    );
+    if (!result.rows[0]?.acquired) {
+      await client.end().catch(() => {});
+      return null;
+    }
+  } catch (error) {
+    await client.end().catch(() => {});
+    throw new Error(`cannot take the migration runner lock (${safeError(error)})`);
+  }
+  return {
+    release: async () => {
+      await client.query(`SELECT pg_advisory_unlock(${MIGRATION_RUNNER_LOCK_KEY})`).catch(() => {});
+      await client.end().catch(() => {});
+    },
+  };
 }
 
 /** Pure classification, exported for unit tests. */
