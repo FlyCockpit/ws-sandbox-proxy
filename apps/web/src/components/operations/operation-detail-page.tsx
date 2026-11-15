@@ -32,6 +32,7 @@ import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
+import { formatDateTime } from "@/lib/format-date-time";
 import { hostConnectionState, nextHostStateChangeAt } from "@/lib/host-status";
 import {
   type CancelAnswer,
@@ -41,7 +42,6 @@ import {
   cancelProblem,
   durationMs,
   formatDuration,
-  formatTimestamp,
   isOperationPending,
   operationTone,
 } from "@/lib/operation-rules";
@@ -363,18 +363,18 @@ function OperationDetail({
             )}
           </Field>
           <Field label={t("operations:detail.fields.created")}>
-            {formatTimestamp(operation.createdAt, locale)}
+            {formatDateTime(operation.createdAt, locale, { seconds: true })}
           </Field>
           <Field label={t("operations:detail.fields.dispatched")}>
             {operation.dispatchedAt ? (
-              formatTimestamp(operation.dispatchedAt, locale)
+              formatDateTime(operation.dispatchedAt, locale, { seconds: true })
             ) : (
               <span className="text-muted-foreground">{t("operations:detail.notDispatched")}</span>
             )}
           </Field>
           <Field label={t("operations:detail.fields.completed")}>
             {operation.completedAt ? (
-              formatTimestamp(operation.completedAt, locale)
+              formatDateTime(operation.completedAt, locale, { seconds: true })
             ) : (
               <span className="text-muted-foreground">{t("operations:detail.notCompleted")}</span>
             )}

@@ -9,6 +9,7 @@ import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import {
   BUILD_LIST_REFETCH_MS,
   type BuildPhase,
@@ -178,7 +179,10 @@ export function BuildRow({
             {showTemplate ? " · " : null}
             {build.tag}
             {" · "}
-            <span className="font-normal text-muted-foreground">
+            <span
+              className="font-normal text-muted-foreground"
+              title={dateTimeTitle(created, locale)}
+            >
               {formatRelativeTime(created, locale, now)}
             </span>
           </span>

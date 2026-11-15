@@ -292,12 +292,38 @@ addresses, and keeps re-resolving them while the sandbox runs. Consequences:
 ## Qualification status
 
 The enforcement above is tested against shims and the fake runtime in CI.
-**Live hardware qualification is outstanding**: the scenarios in
+
+**Live smoke run (2026-11-15).** An open-egress smoke test ran on two real
+Incus/KVM hosts (same LAN, both also on a CGNAT-range overlay network), each
+with a healthy egress guard and daemon 1.0.0. A community Ubuntu 26.04
+template was built on one host and reached the other through peer image
+distribution. One sandbox at a time (1 vCPU, 1024 MiB, egress `open`) then
+ran on each host. It proved, on both hosts:
+
+- the sandbox got a bridge DHCP lease and default route, resolved DNS through
+  the bridge resolver, and reached the public internet (HTTPS `200`, and TCP
+  443 to a public IPv4 address);
+- TCP connects from the guest timed out (dropped) to the sandbox's own
+  gateway, the LAN router, both hosts' LAN addresses, both hosts' overlay
+  (`100.64.0.0/10`) addresses and each host's own Incus bridge address. The
+  hosts' SSH and DNS listeners on those addresses and the router's web ports
+  answered from the hosts themselves, so those drops were the host's
+  enforcement (the egress guard and the bridge ACLs together; the run did not
+  tell which layer dropped each packet), not dead addresses;
+- TCP to `169.254.169.254`, `10.0.0.1` and `172.16.0.1` also timed out, but
+  those addresses had no live listener to compare against, so this shows only
+  that nothing answered;
+- outbound SMTP (tcp/25) was rejected immediately;
+- destroy left no instances, no `wsn-*` bridges and a healthy guard.
+
+It probed TCP only, with no grants, so it did **not** cover deny-all or
+allowlist (approved/denied endpoint) mode, the shared-IP limitation, DNS
+rebinding and grant expiry, IPv6, UDP or other protocols, lateral
+sandbox-to-sandbox or cross-owner traffic (only one sandbox ran at a time),
+or guest-root escape attempts. The full
 [host isolation qualification](../operations/host-isolation-qualification.md)
-(approved and denied endpoints, the shared-IP limitation, DNS rebinding and
-expiry, IPv6, lateral traffic, guest-root escape attempts) have not been run
-on a real Incus/KVM host. Treat the guarantees as designed and unit-proven,
-not as independently qualified.
+is still outstanding: treat the guarantees beyond the smoke's open-mode
+blocks as designed and unit-proven, not as independently qualified.
 
 Retained sandbox authority names the exact
 revision and the sandbox's current host (or, while offloaded, the host it last

@@ -13,11 +13,11 @@ import { Skeleton } from "@wssp/ui/components/skeleton";
 import { KeyRound } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { WideContent } from "@/components/wide-content";
+import { formatDateTime } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 
 import { AdminConfirmDialog } from "./admin-confirm-dialog";
@@ -88,7 +88,6 @@ export function DataKeyCard() {
   }
   const data = status.data;
   const number = new Intl.NumberFormat(i18n.language);
-  const date = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" });
 
   return (
     <Card data-testid="data-key-card">
@@ -121,7 +120,7 @@ export function DataKeyCard() {
               )}
               <p className="text-xs text-muted-foreground">
                 {t("admin:dataKey.switchedAt", {
-                  at: date.format(new Date(data.epoch.switchedAt)),
+                  at: formatDateTime(data.epoch.switchedAt, i18n.language),
                 })}
               </p>
             </>
@@ -507,7 +506,6 @@ function BlockingHosts({ kidR }: { kidR: string }) {
     },
     onError: (error) => setProblem(refusal(error)),
   });
-  const date = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" });
   const rows = hosts.data?.pages.flatMap((page) => page.items) ?? [];
   if (hosts.isPending) return <Skeleton className="h-8 w-full" />;
   if (hosts.isError)
@@ -527,7 +525,7 @@ function BlockingHosts({ kidR }: { kidR: string }) {
             <span className="text-muted-foreground">
               {host.ackedAt
                 ? t("admin:dataKey.returnKeys.ackedAt", {
-                    at: date.format(new Date(host.ackedAt)),
+                    at: formatDateTime(host.ackedAt, i18n.language),
                   })
                 : t("admin:dataKey.returnKeys.notAcked")}
             </span>

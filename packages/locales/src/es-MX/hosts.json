@@ -335,7 +335,7 @@
     "open": "Abrir {{label}}",
     "heartbeat": "Visto por última vez {{age}}",
     "ram": "RAM",
-    "vcpu": "vCPU",
+    "vcpu": "Presupuesto de vCPU",
     "memoryUse": "{{used}} de {{total}} MiB",
     "vcpuUse": "{{used}} de {{total}} vCPU"
   },
@@ -491,6 +491,7 @@
     "hint": "Las reservas de RAM incluyen la RAM del invitado y un costo fijo del host. Las vCPU se suman independientemente del máximo por VM. Son compromisos, no uso medido. Reducir un presupuesto conserva las reservas existentes.",
     "overcommitted": "Los sandboxes en ejecución usan más de lo que este host permite",
     "vcpuBudget": "Presupuesto total de vCPU",
+    "vcpuBudgetHint": "El presupuesto de vCPU son vCPU programables, no hilos de CPU. Salvo que el operador defina --sandbox-vcpu-budget (o sandbox_vcpu_budget en el TOML del daemon), el daemon lo fija en {{multiplier}} × los hilos de CPU del host (como máximo {{max}}), así que los sandboxes pueden sobrecomprometer las CPU hasta {{multiplier}}×.",
     "vcpuReserved": "vCPU reservadas",
     "vcpuAvailable": "vCPU disponibles",
     "vcpuOvercommitted": "vCPU por encima del límite"

@@ -16,6 +16,7 @@ import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { formatDateTime } from "@/lib/format-date-time";
 import { formatLeaseDuration } from "@/lib/lease-duration";
 import { orpc } from "@/utils/orpc";
 
@@ -275,9 +276,9 @@ export function PoolCapacityDialog({
                           cpu: entry.cpuCount,
                           memory: entry.memoryMiB,
                           disk: entry.diskGiB,
-                          since: new Date(entry.enqueuedAt).toLocaleString(lang),
+                          since: formatDateTime(entry.enqueuedAt, lang),
                           deadline: entry.deadlineAt
-                            ? new Date(entry.deadlineAt).toLocaleString(lang)
+                            ? formatDateTime(entry.deadlineAt, lang)
                             : t("hosts:poolCapacity.unlimited"),
                           blocker: entry.blocker
                             ? t(`hosts:poolCapacity.blocker.${entry.blocker}`)

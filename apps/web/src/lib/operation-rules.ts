@@ -152,13 +152,6 @@ export function formatDuration(ms: number, locale: string): string {
   return rest === 0 ? fmt(minutes, "minute") : `${fmt(minutes, "minute")} ${fmt(rest, "second")}`;
 }
 
-/** Absolute local date and time for a server timestamp. */
-export function formatTimestamp(value: Date | string, locale: string): string {
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }).format(
-    new Date(value),
-  );
-}
-
 type ErrorShape = { code?: unknown; status?: unknown; data?: unknown };
 
 function shapeOf(error: unknown): ErrorShape {

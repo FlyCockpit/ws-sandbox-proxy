@@ -14,7 +14,7 @@ import { CommandOutputView } from "@/components/operations/command-output-view";
 import { observationProblem, useSandboxObservation } from "@/hooks/use-sandbox-observation";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
 import { displayText } from "@/lib/command-output-buffer";
-import { formatTimestamp } from "@/lib/operation-rules";
+import { formatDateTime } from "@/lib/format-date-time";
 import { isOperationActive } from "@/lib/sandbox-rules";
 import { orpc } from "@/utils/orpc";
 import { ObservationError, ObservationNotice } from "./sandbox-observation";
@@ -290,7 +290,9 @@ function AuthorizedProcesses({ sandboxId }: { sandboxId: string }) {
                           <dt className="text-xs text-muted-foreground">
                             {t("sandboxes:observations.startedAtLabel")}
                           </dt>
-                          <dd>{formatTimestamp(item.startedAt, i18n.language)}</dd>
+                          <dd>
+                            {formatDateTime(item.startedAt, i18n.language, { seconds: true })}
+                          </dd>
                         </div>
                       </dl>
                       {item.argsTruncated ? (

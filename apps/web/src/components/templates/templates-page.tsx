@@ -63,6 +63,7 @@ import { useSubmissionFence } from "@/hooks/use-submission-fence";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { hostConnectionState, toMs } from "@/lib/host-status";
 import { isLaunchableRevision } from "@/lib/template-build-rules";
 import {
@@ -365,7 +366,7 @@ function TemplateCard({
           <dt className="text-xs text-muted-foreground">
             {retired == null ? t("templates:fields.created") : t("templates:fields.archived")}
           </dt>
-          <dd>
+          <dd title={dateTimeTitle(retired ?? created, locale)}>
             {(retired ?? created) == null
               ? "—"
               : formatRelativeTime((retired ?? created) as number, locale, now)}
@@ -1014,7 +1015,12 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
                 {t("appendWithSize")}
               </Button>
             ) : null}
-            <RevisionAvailability templateId={templateId} revisionId={revision.id} lang={lang} />
+            <RevisionAvailability
+              templateId={templateId}
+              revisionId={revision.id}
+              upstream={revision.sourceKind === "UPSTREAM"}
+              lang={lang}
+            />
             <AdvancedDetails>
               <div className="flex min-w-0 flex-col gap-1">
                 <span className="text-xs text-muted-foreground">{t("revisionId")}</span>
@@ -1058,13 +1064,21 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
   );
 }
 
+/**
+ * Host evidence for one revision. An UPSTREAM pin's AVAILABLE row only says the
+ * host holds the pinned community image (a build input it downloaded); it was
+ * never registered, recipe-built or verified as a launchable template image, so
+ * it never reads as "Verified image".
+ */
 function RevisionAvailability({
   templateId,
   revisionId,
+  upstream,
   lang,
 }: {
   templateId: string;
   revisionId: string;
+  upstream: boolean;
   lang: string;
 }) {
   const { t } = useTranslation("templates");
@@ -1085,7 +1099,9 @@ function RevisionAvailability({
     <div className="mt-2 flex min-w-0 flex-col gap-1">
       {available.isPending ? <SkeletonList count={1} className="rounded-xl border" /> : null}
       {available.data?.pages[0]?.items.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{t("noAvailability")}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(upstream ? "upstreamAvailability.none" : "noAvailability")}
+        </p>
       ) : null}
       {available.isError ? (
         <InlineRetry message={t("availabilityFailed")} onRetry={() => void available.refetch()} />
@@ -1096,7 +1112,13 @@ function RevisionAvailability({
             <p className="break-words">
               <ResourceIdentity label={entry.Host.label} slug={entry.Host.slug} />
               {" · "}
-              <span>{t(`availability.${entry.status}`)}</span>
+              {upstream && entry.status === "AVAILABLE" ? (
+                <span data-upstream-availability="" title={t("upstreamAvailability.hint")}>
+                  {t("upstreamAvailability.AVAILABLE")}
+                </span>
+              ) : (
+                <span>{t(`availability.${entry.status}`)}</span>
+              )}
             </p>
           </div>
         )),

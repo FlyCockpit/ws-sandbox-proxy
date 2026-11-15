@@ -3,9 +3,9 @@ import { Button } from "@wssp/ui/components/button";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { CheckCircle2, RefreshCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
 import { InlineRetry } from "@/components/inline-retry";
 import { WideContent } from "@/components/wide-content";
+import { formatDateTime } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 
 import { BackupStatusCard } from "./backup-status-card";
@@ -102,7 +102,6 @@ function QueueCounts() {
 
 function FailedJobs() {
   const { t, i18n } = useTranslation(["admin", "common"]);
-  const dates = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" });
   const failed = useQuery({
     ...orpc.queue.listFailed.queryOptions({ input: { limit: FAILED_JOB_LIMIT } }),
     // Polls with its own inline state; a toast per failed poll would spam.
@@ -178,7 +177,7 @@ function FailedJobs() {
                   <p>
                     {t("admin:observability.maintenance.attempts", { count: job.attemptsMade })}
                   </p>
-                  <time dateTime={at.toISOString()}>{dates.format(at)}</time>
+                  <time dateTime={at.toISOString()}>{formatDateTime(at, i18n.language)}</time>
                 </div>
               </li>
             );

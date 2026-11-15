@@ -8,6 +8,7 @@ import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { FormSelect } from "@/components/form-select";
 import { ResourceIdentity } from "@/components/resource-identity";
+import { dateTimeTitle, formatDateTime } from "@/lib/format-date-time";
 
 import { hostConnectionState } from "@/lib/host-status";
 import {
@@ -129,7 +130,7 @@ export function ReceiptLine({
           state: t(`sandboxes:receipt.state.${receipt.state}`),
         })}
         {Number.isFinite(created) ? (
-          <span className="text-muted-foreground">
+          <span className="text-muted-foreground" title={dateTimeTitle(created, locale)}>
             {" · "}
             {t("sandboxes:receipt.since", { when: formatRelativeTime(created, locale, now) })}
           </span>
@@ -269,7 +270,7 @@ export function CapacityWaitLine({
       {t("sandboxes:capacityWait.line", {
         position: wait.position,
         deadline: wait.deadlineAt
-          ? new Date(wait.deadlineAt).toLocaleString(lang)
+          ? formatDateTime(wait.deadlineAt, lang)
           : t("sandboxes:capacityWait.noDeadline"),
         blocker: wait.blocker ? t(`hosts:poolCapacity.blocker.${wait.blocker}`) : "—",
       })}

@@ -15,6 +15,7 @@ import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DiskLocationBadge } from "@/components/sandboxes/sandbox-parts";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
+import { formatDateTime } from "@/lib/format-date-time";
 import { type DiskView, formatBytes } from "@/lib/sandbox-rules";
 import { orpc } from "@/utils/orpc";
 
@@ -91,7 +92,7 @@ export function DiskCard({
         {disk.offloadedAt ? (
           <div className="min-w-0">
             <dt className="text-xs text-muted-foreground">{t("sandboxes:disk.storedAt")}</dt>
-            <dd>{new Date(disk.offloadedAt).toLocaleString(locale)}</dd>
+            <dd>{formatDateTime(disk.offloadedAt, locale)}</dd>
           </div>
         ) : null}
         <div className="min-w-0 sm:col-span-2">

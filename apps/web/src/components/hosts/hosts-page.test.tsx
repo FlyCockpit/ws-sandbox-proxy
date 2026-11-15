@@ -892,7 +892,17 @@ describe("commands and layout", () => {
       expect(within(row).queryByRole("button")).toBeNull();
       expect(row.querySelector('[data-slot="copy-field"]')).toBeNull();
       expect(row.querySelector('[data-host-meter="memory"]')).not.toBeNull();
-      expect(row.querySelector('[data-host-meter="vcpu"]')).not.toBeNull();
+      // The vCPU number is the daemon's schedulable budget (by default CPU
+      // threads × 2), never presented as bare vCPU or as CPU threads.
+      const vcpu = row.querySelector<HTMLElement>('[data-host-meter="vcpu"]')!;
+      expect(vcpu.textContent).toContain(enHosts.row.vcpu);
+      expect(enHosts.row.vcpu).toBe("vCPU budget");
+      expect(vcpu.getAttribute("title")).toBe(
+        enHosts.vmCapacity.vcpuBudgetHint
+          .replaceAll("{{multiplier}}", "2")
+          .replaceAll("{{max}}", "8192"),
+      );
+      expect(vcpu.getAttribute("title")).toContain("2 × the host's CPU threads");
     }
     expect(document.querySelector("[data-host-enroll]")).toBeNull();
     await user.click(screen.getByRole("button", { name: enHosts.enroll.action }));
@@ -984,6 +994,13 @@ it.each(["en-US", "es-MX"])(
     expect(field("memoryReservedMiB")).toBe("3072 MiB");
     expect(field("memoryAvailableMiB")).toBe("1024 MiB");
     expect(field("maxCpuCount")).toBe("4 vCPU");
+    expect(field("vcpuBudget")).toBe("8 vCPU");
+    const budgetHint = document.querySelector("[data-vcpu-budget-hint]")?.textContent;
+    expect(budgetHint).toBe(
+      (lang === "en-US" ? enHosts : esHosts).vmCapacity.vcpuBudgetHint
+        .replaceAll("{{multiplier}}", "2")
+        .replaceAll("{{max}}", "8192"),
+    );
     server.hosts[0]!.capacity = {
       ...server.hosts[0]!.capacity,
       memoryBudgetMiB: 2048,

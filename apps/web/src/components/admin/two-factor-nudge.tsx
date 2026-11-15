@@ -4,9 +4,9 @@ import { buttonVariants } from "@wssp/ui/components/button";
 import { cn } from "@wssp/ui/lib/utils";
 import { ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
@@ -65,7 +65,16 @@ export function TwoFactorNudge() {
         <ShieldAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
         <div className="flex-1 space-y-1">
           <p className="font-medium">{title}</p>
-          <p className="text-yellow-900/90 dark:text-yellow-100/90">{message}</p>
+          <p
+            className="text-yellow-900/90 dark:text-yellow-100/90"
+            title={
+              enrollment.status === "grace"
+                ? dateTimeTitle(enrollment.deadlineMs, i18n.language)
+                : undefined
+            }
+          >
+            {message}
+          </p>
           <p className="text-yellow-900/80 dark:text-yellow-100/80">
             {t("twoFactorNudge.configurable")}
           </p>

@@ -13,8 +13,8 @@ import { cn } from "@wssp/ui/lib/utils";
 import type { TFunction } from "i18next";
 import { AlertTriangle, DatabaseBackup } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
 import { InlineRetry } from "@/components/inline-retry";
+import { formatDateTime } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 
 /** Headline copy for a verdict. `null` means the worker recorded none — unknown, not healthy. */
@@ -55,10 +55,7 @@ function describeReason(
 function StatusTime({ label, value }: { label: string; value: string }) {
   const { i18n } = useTranslation();
   // The UI locale, not the browser default (M7-S16).
-  const formatted = new Intl.DateTimeFormat(i18n.language, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+  const formatted = formatDateTime(value, i18n.language);
   return (
     <p className="text-xs text-muted-foreground">
       {label} <time dateTime={new Date(value).toISOString()}>{formatted}</time>

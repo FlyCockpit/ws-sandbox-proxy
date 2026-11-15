@@ -25,6 +25,7 @@ import { LoadMore } from "@/components/load-more";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { formatDateTime } from "@/lib/format-date-time";
 import { PASTE_MAX_BYTES } from "@/lib/terminal-client";
 import { orpc } from "@/utils/orpc";
 import { HostTerminal } from "./host-detail-page";
@@ -294,9 +295,7 @@ export function QueuedHostCommands({
                       name: row.credentialName ?? t("queue.deletedCredential"),
                     })}
                   </p>
-                  <p>
-                    {t("queue.expires", { date: new Date(row.expiresAt).toLocaleString(lang) })}
-                  </p>
+                  <p>{t("queue.expires", { date: formatDateTime(row.expiresAt, lang) })}</p>
                   <p>{t(`queue.states.${row.state}`)}</p>
                   {row.state === "QUEUED" ? (
                     <div className="flex flex-wrap gap-2">

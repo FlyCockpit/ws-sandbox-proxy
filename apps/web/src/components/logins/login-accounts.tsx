@@ -44,6 +44,7 @@ import { StartLoginDialog, type StartLoginTarget } from "@/components/logins/sta
 import { QueryBoundary } from "@/components/query-boundary";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import {
   definitionFiles,
   fileToBase64,
@@ -692,7 +693,7 @@ function InstanceRow({
           </div>
         ) : null}
       </div>
-      <p className="text-muted-foreground">
+      <p className="text-muted-foreground" title={dateTimeTitle(lastSaved, i18n.language)}>
         {instance.maxConcurrent === null
           ? t("logins:instances.holdersUnlimited", { count: instance.activeLeases })
           : t("logins:instances.holders", {

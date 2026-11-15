@@ -27,6 +27,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { credentialErrorCode } from "@/lib/credential-errors";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
@@ -211,7 +212,10 @@ function SessionBody({ lang, session }: { lang: string; session: LoginSession })
           {t(`logins:session.stateHint.${state}`)}
         </p>
         {open ? (
-          <p className="text-sm text-muted-foreground">
+          <p
+            className="text-sm text-muted-foreground"
+            title={dateTimeTitle(session.expiresAt, i18n.language)}
+          >
             {t("logins:session.expires", {
               when: formatRelativeTime(Date.parse(session.expiresAt), i18n.language, Date.now()),
             })}

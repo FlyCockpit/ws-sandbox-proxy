@@ -13,6 +13,7 @@ import { TerminalPanel } from "@/components/terminal-panel";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { formatDateTime } from "@/lib/format-date-time";
 import { formatLeaseDuration, isUnlimitedLeaseEnd } from "@/lib/lease-duration";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
@@ -108,7 +109,7 @@ function HostLease({
             : lease.drain.live === 0 || lease.drain.emptyBy === null
               ? t("hosts:lease.drainEmpty")
               : t("hosts:lease.drainBy", {
-                  date: new Date(lease.drain.emptyBy).toLocaleString(lang),
+                  date: formatDateTime(lease.drain.emptyBy, lang),
                 })}
         </p>
       ) : null}
@@ -264,7 +265,7 @@ function HostGuests({ hostId, lang }: { hostId: string; lang: string }) {
               {t("hosts:sharing.expires", {
                 date:
                   guest.leaseExpiresAt && !isUnlimitedLeaseEnd(guest.leaseExpiresAt)
-                    ? new Date(guest.leaseExpiresAt).toLocaleString(lang)
+                    ? formatDateTime(guest.leaseExpiresAt, lang)
                     : t("hosts:sharing.unlimited"),
               })}
             </li>

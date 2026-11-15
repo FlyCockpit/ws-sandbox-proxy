@@ -17,7 +17,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import type { FetchOutputPage, OutputTiming } from "@/hooks/use-command-output";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { formatBytes } from "@/lib/format-bytes";
-import { formatTimestamp } from "@/lib/operation-rules";
+import { formatDateTime } from "@/lib/format-date-time";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { isNotFound } from "@/lib/sandbox-rules";
 import {
@@ -255,10 +255,10 @@ function BuildDetail({
           {t(`templates:builds.acceptedBy.${build.acceptedBy}`)}
         </Field>
         <Field label={t("templates:builds.detail.created")}>
-          {formatTimestamp(build.createdAt, locale)}
+          {formatDateTime(build.createdAt, locale, { seconds: true })}
         </Field>
         <Field label={t("templates:builds.detail.completed")}>
-          {build.completedAt ? formatTimestamp(build.completedAt, locale) : "—"}
+          {build.completedAt ? formatDateTime(build.completedAt, locale, { seconds: true }) : "—"}
         </Field>
         <Field label={t("templates:builds.detail.minutes")}>{minutes}</Field>
         <Field label={t("templates:builds.detail.context")}>

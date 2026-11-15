@@ -595,6 +595,11 @@
   "setTag": "Asignar etiqueta a esta revisión",
   "tagLabel": "Etiqueta",
   "title": "Plantillas",
+  "upstreamAvailability": {
+    "AVAILABLE": "Base upstream en el host",
+    "hint": "El host guarda esta imagen upstream fijada como entrada de compilación. No es una imagen de plantilla verificada: ningún sandbox se inicia desde ella.",
+    "none": "Ninguno de tus hosts muestra todavía esta imagen upstream. El host que prepara una revisión a partir de ella la descarga del índice de la comunidad."
+  },
   "usability": {
     "usable": "Disponible",
     "archived": "Archivada",

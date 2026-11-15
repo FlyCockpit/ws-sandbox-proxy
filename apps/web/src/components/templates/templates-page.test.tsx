@@ -907,6 +907,71 @@ it("a community template is wssp-managed: badges, no writes, no launch actions o
   expect(within(dialog()).getByRole("button", { name: enTemplates.retireRevision })).toBeTruthy();
 });
 
+it("an upstream pin held on a host never reads as a verified image", async () => {
+  server.templates = [templateRow({ communitySource: "ubuntu-26.04", communityRefresh: true })];
+  server.revisions = [
+    {
+      ...templateRow(),
+      id: "revision-1",
+      templateId: "tpl-a",
+      revision: 1,
+      sourceKind: "UPSTREAM",
+      image: null,
+      builtWithWsspRecipe: false,
+    },
+    {
+      ...templateRow(),
+      id: "revision-2",
+      templateId: "tpl-a",
+      revision: 2,
+      sourceKind: "BUILD",
+      builtWithWsspRecipe: true,
+    },
+    {
+      ...templateRow(),
+      id: "revision-3",
+      templateId: "tpl-a",
+      revision: 3,
+      sourceKind: "UPSTREAM",
+    },
+  ];
+  const evidence = (id: string, revisionId: string) => ({
+    id,
+    revisionId,
+    hostId: "host-a",
+    Host: { id: "host-a", label: "Alpha", slug: "alpha" },
+    status: "AVAILABLE",
+  });
+  server.availability = [
+    evidence("evidence-1", "revision-1"),
+    evidence("evidence-2", "revision-2"),
+  ];
+  await mount();
+  await screen.findByText("ubuntu v1");
+  const revision = (id: string) => document.querySelector<HTMLElement>(`[data-revision="${id}"]`)!;
+  const upstream = await waitFor(() => {
+    const row = revision("revision-1").querySelector<HTMLElement>("[data-availability]");
+    expect(row).toBeTruthy();
+    return row!;
+  });
+  expect(upstream.textContent).toContain(enTemplates.upstreamAvailability.AVAILABLE);
+  expect(upstream.textContent).not.toContain(enTemplates.availability.AVAILABLE);
+  expect(upstream.querySelector("[data-upstream-availability]")?.getAttribute("title")).toBe(
+    enTemplates.upstreamAvailability.hint,
+  );
+  const built = await waitFor(() => {
+    const row = revision("revision-2").querySelector<HTMLElement>("[data-availability]");
+    expect(row).toBeTruthy();
+    return row!;
+  });
+  expect(built.textContent).toContain(enTemplates.availability.AVAILABLE);
+  expect(built.querySelector("[data-upstream-availability]")).toBeNull();
+  await waitFor(() =>
+    expect(revision("revision-3").textContent).toContain(enTemplates.upstreamAvailability.none),
+  );
+  expect(revision("revision-3").textContent).not.toContain(enTemplates.noAvailability);
+});
+
 it("pages exact revisions and host verification evidence independently", async () => {
   server.pageSize = 1;
   server.templates = [templateRow()];

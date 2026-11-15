@@ -749,10 +749,19 @@ it is doing so. Every rule carries the comment `wssp-guard managed`.
 `--configure-firewalld` creates a `wssp-guard` zone that holds `wsn+` with only those
 ports open, and a `wssp-guard-out` policy (ingress zone `wssp-guard`, egress
 `ANY`, target `ACCEPT`) that routes it out. It requires firewalld 1.0 or later,
-and moves `wsn+` out of the `trusted` zone if it was there. Either flag refuses
-with a clear message when that firewall is not installed or not running.
-`sudo wssp guard uninstall --configure-ufw` (or `--configure-firewalld`) removes
-only what `wssp guard install` added.
+and moves `wsn+` out of the `trusted` zone if it was there.
+`--configure-firewalld` refuses with a clear message when firewalld is not
+installed or not running (`firewall-cmd --state`). `--configure-ufw` does not
+check that ufw is enabled: it refuses when ufw is not installed (or a `ufw`
+command fails), but on an inactive ufw it still adds the rules, and they take
+effect when ufw is enabled. To see whether ufw is enforcing rules, run
+`sudo ufw status` (`Status: active`); `systemctl is-active ufw` reports only
+the boot unit, which can be active while ufw itself is disabled.
+`sudo wssp guard uninstall --configure-ufw` removes every ufw rule tagged
+`wssp-guard managed`, including the tagged rules install put in place of
+untagged duplicates and of the broad rule; those originals are not restored.
+`sudo wssp guard uninstall --configure-firewalld` deletes the `wssp-guard` zone
+and the `wssp-guard-out` policy; it does not move `wsn+` back into `trusted`.
 
 To add the ufw rules yourself:
 

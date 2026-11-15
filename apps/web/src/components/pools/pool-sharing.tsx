@@ -32,6 +32,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
+import { formatDateTime } from "@/lib/format-date-time";
 import { formatGraceDuration } from "@/lib/format-duration";
 import { leaseLimitText, parseLeaseLimit } from "@/lib/lease-duration";
 import { orpc } from "@/utils/orpc";
@@ -602,7 +603,7 @@ export function PoolSharing({
                 ) : (
                   <span>
                     {t("hosts:sharing.expires", {
-                      date: new Date(invite.expiresAt).toLocaleString(lang),
+                      date: formatDateTime(invite.expiresAt, lang),
                     })}
                   </span>
                 )}

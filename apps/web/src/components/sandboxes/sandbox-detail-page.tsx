@@ -53,6 +53,7 @@ import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useSharingRestoration } from "@/hooks/use-sharing-restoration";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
+import { dateTimeTitle, formatDateTime } from "@/lib/format-date-time";
 import { formatGraceDuration } from "@/lib/format-duration";
 import { hostConnectionState, nextHostStateChangeAt } from "@/lib/host-status";
 import { isQueryAccessError } from "@/lib/query-access-error";
@@ -508,7 +509,7 @@ function SandboxDetail({
       {sandbox.accessGraceUntil ? (
         <p role="alert" data-access-grace="">
           {t("sandboxes:sharing.loss", {
-            date: new Date(sandbox.accessGraceUntil).toLocaleString(locale),
+            date: formatDateTime(sandbox.accessGraceUntil, locale),
           })}
         </p>
       ) : null}
@@ -563,7 +564,9 @@ function SandboxDetail({
             </span>
           </Field>
           <Field label={t("sandboxes:fields.created")}>
-            {formatRelativeTime(new Date(sandbox.createdAt).getTime(), locale, now)}
+            <span title={dateTimeTitle(sandbox.createdAt, locale)}>
+              {formatRelativeTime(new Date(sandbox.createdAt).getTime(), locale, now)}
+            </span>
           </Field>
           <Field label={t("sandboxes:fields.labels")} wide>
             {labels.length === 0 ? (
@@ -1233,6 +1236,10 @@ function LifetimeCard({
             when: formatRelativeTime(term.expiresAt, locale, now),
             action: t(`sandboxes:expiry.action.${term.onExpire}`),
           });
+  const termTitle = (term: LeaseTerm | null) =>
+    term == null || term.unlimited || isUnlimitedLeaseEnd(term.expiresAt)
+      ? undefined
+      : dateTimeTitle(term.expiresAt, locale);
   const deadline = sandbox.leaseExpiresAt ? new Date(sandbox.leaseExpiresAt).getTime() : null;
   // A lease from READY: until the host reports READY the stored deadline is
   // only the provisioning backstop (timeout plus the provision maximum), not
@@ -1241,7 +1248,10 @@ function LifetimeCard({
   const hostExpiry =
     sandbox.hostExpiryConfirmedAt == null || sandbox.hostExpiryAction == null ? null : (
       <Field label={t("sandboxes:lifetime.hostEnforced")} wide>
-        <span data-host-expiry={sandbox.hostExpiryRevision ?? ""}>
+        <span
+          data-host-expiry={sandbox.hostExpiryRevision ?? ""}
+          title={dateTimeTitle(sandbox.hostExpiryConfirmedAt, locale)}
+        >
           {t(
             sandbox.hostExpiryAction === "DESTROY"
               ? "sandboxes:lifetime.hostExpiry.deleted"
@@ -1277,7 +1287,14 @@ function LifetimeCard({
       <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
         {hostExpiry}
         <Field label={t("sandboxes:lifetime.deadline")}>
-          <span data-lease-deadline="">
+          <span
+            data-lease-deadline=""
+            title={
+              startsAtReady || deadline == null
+                ? undefined
+                : termTitle({ expiresAt: deadline, onExpire: "stop" })
+            }
+          >
             {startsAtReady
               ? t("sandboxes:lifetime.startsAtReady")
               : describe(
@@ -1291,7 +1308,10 @@ function LifetimeCard({
           </span>
         </Field>
         <Field label={t("sandboxes:lifetime.requested")}>
-          <span data-lease-requested="">
+          <span
+            data-lease-requested=""
+            title={startsAtReady ? undefined : termTitle(lease.requested)}
+          >
             {startsAtReady ? t("sandboxes:lifetime.startsAtReady") : describe(lease.requested)}
           </span>
           <span className="block text-xs text-muted-foreground">
@@ -1299,7 +1319,11 @@ function LifetimeCard({
           </span>
         </Field>
         <Field label={t("sandboxes:lifetime.effective")} wide>
-          <span data-lease-effective="" data-lease-ack={lease.ack}>
+          <span
+            data-lease-effective=""
+            data-lease-ack={lease.ack}
+            title={termTitle(lease.effective)}
+          >
             {lease.effective == null
               ? t("sandboxes:lifetime.notAcknowledged")
               : describe(lease.effective)}

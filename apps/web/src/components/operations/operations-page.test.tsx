@@ -181,6 +181,28 @@ describe("operations list", () => {
     }
   });
 
+  it("a row's relative time carries the absolute time and zone on hover", async () => {
+    // Deterministic: a fixed zone (with DST) and fixed instants, en-US.
+    vi.stubEnv("TZ", "America/Chicago");
+    try {
+      server.current.operations = [
+        operationRow({ id: "op-winter", createdAt: new Date("2026-01-15T09:28:04Z") }),
+        operationRow({ id: "op-summer", createdAt: new Date("2026-07-15T09:28:04Z") }),
+      ];
+      mount();
+      await waitFor(() => expect(rows()).toHaveLength(2));
+      const title = (id: string) =>
+        document
+          .querySelector(`tr[data-operation-id="${id}"] td`)
+          ?.getAttribute("title")
+          ?.replace(/[\u202f\u00a0]/g, " ");
+      expect(title("op-winter")).toBe("Jan 15, 2026, 3:28:04 AM CST");
+      expect(title("op-summer")).toBe("Jul 15, 2026, 4:28:04 AM CDT");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("reads with the URL's filters and writes filter changes back to the URL", async () => {
     server.current.operations = [
       operationRow({ id: "op-a", sandboxId: "sbx-2", state: "RUNNING" }),

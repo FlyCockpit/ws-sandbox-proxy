@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { InlineRetry } from "@/components/inline-retry";
+import { formatDateTime } from "@/lib/format-date-time";
 
 // Explicit metadata projection: command text, paths and output are never rendered.
 const auditEntries = z
@@ -58,7 +59,7 @@ export function HostAuditList({
                 .reduce(
                   (entryText, detail) => t("audit.detail", { entry: entryText, detail }),
                   t("audit.entry", {
-                    date: new Date(entry.createdAt).toLocaleString(lang),
+                    date: formatDateTime(entry.createdAt, lang),
                     actor: t(`audit.actor.${entry.actor}`),
                     kind: t(`audit.kinds.${entry.kind}`),
                   }),

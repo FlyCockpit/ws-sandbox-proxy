@@ -1,10 +1,12 @@
 import { Link } from "@tanstack/react-router";
 import type { AppRouterClient } from "@wssp/api/routers/index";
+import { VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { Badge } from "@wssp/ui/components/badge";
 import { cn } from "@wssp/ui/lib/utils";
 import { ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { dateTimeTitle } from "@/lib/format-date-time";
 import {
   formatAge,
   type HostConnectionState,
@@ -94,7 +96,7 @@ export function HostRow({
             ) : null}
           </div>
           <p className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>
+            <span title={dateTimeTitle(beat, locale)}>
               {t("row.heartbeat", {
                 age: beat == null ? t("heartbeat.never") : formatAge(beat, locale, now),
               })}
@@ -114,6 +116,10 @@ export function HostRow({
             <Meter
               kind="vcpu"
               label={t("row.vcpu")}
+              hint={t("vmCapacity.vcpuBudgetHint", {
+                multiplier: VM_SIZE_LIMITS.hostVcpuBudgetDefaultThreadsMultiplier,
+                max: VM_SIZE_LIMITS.hostVcpuBudgetMax,
+              })}
               used={host.capacity.vcpuReserved}
               total={host.capacity.vcpuBudget}
               valueText={(used, total) => t("row.vcpuUse", { used, total })}
@@ -132,9 +138,12 @@ function Meter({
   used,
   total,
   valueText,
+  hint,
 }: {
   kind: string;
   label: string;
+  /** What the number means, on hover (the vCPU budget is not CPU threads). */
+  hint?: string;
   used: number | null;
   total: number | null;
   valueText: (used: number, total: number) => string;
@@ -142,14 +151,14 @@ function Meter({
   const { t } = useTranslation("hosts");
   if (used == null || total == null || total <= 0)
     return (
-      <p data-host-meter={kind} className="text-xs text-muted-foreground">
+      <p data-host-meter={kind} title={hint} className="text-xs text-muted-foreground">
         {label}: {t("daemon.notReported")}
       </p>
     );
   const percent = Math.min(100, Math.round((used / total) * 100));
   const text = valueText(used, total);
   return (
-    <div data-host-meter={kind} className="flex min-w-0 flex-col gap-1">
+    <div data-host-meter={kind} title={hint} className="flex min-w-0 flex-col gap-1">
       <div className="flex min-w-0 justify-between gap-2 text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className="tabular-nums">{text}</span>

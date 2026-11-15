@@ -234,6 +234,7 @@
     "hint": "RAM holds include guest RAM plus fixed host overhead. vCPU is summed independently of the per-VM cap. These are commitments, not measured usage. Shrinking a budget preserves existing holds.",
     "overcommitted": "Running sandboxes use more than this host allows",
     "vcpuBudget": "Total vCPU budget",
+    "vcpuBudgetHint": "The vCPU budget is schedulable vCPU, not CPU threads. Unless the operator sets --sandbox-vcpu-budget (or sandbox_vcpu_budget in the daemon's TOML), the daemon sets it to {{multiplier}} × the host's CPU threads (at most {{max}}), so sandboxes may overcommit the CPUs up to {{multiplier}}×.",
     "vcpuReserved": "Reserved vCPU",
     "vcpuAvailable": "Available vCPU",
     "vcpuOvercommitted": "vCPU over the limit"
@@ -491,7 +492,7 @@
     "open": "Open {{label}}",
     "heartbeat": "Last seen {{age}}",
     "ram": "RAM",
-    "vcpu": "vCPU",
+    "vcpu": "vCPU budget",
     "memoryUse": "{{used}} of {{total}} MiB",
     "vcpuUse": "{{used}} of {{total}} vCPU"
   }

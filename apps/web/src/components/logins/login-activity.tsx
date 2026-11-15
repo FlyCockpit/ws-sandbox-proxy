@@ -8,6 +8,7 @@ import type { LoginItem } from "@/components/logins/logins-shared";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -146,7 +147,11 @@ export function LoginActivity({ lang, login }: { lang: string; login: LoginItem 
                         </span>
                       ) : null}
                     </span>
-                    <time dateTime={event.at} className="text-muted-foreground">
+                    <time
+                      dateTime={event.at}
+                      title={dateTimeTitle(event.at, i18n.language)}
+                      className="text-muted-foreground"
+                    >
                       {formatRelativeTime(Date.parse(event.at), i18n.language, now)}
                     </time>
                   </li>

@@ -17,7 +17,6 @@ import { Boxes, ListChecks, Server, Timer, Users, Webhook } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
@@ -38,6 +37,7 @@ import {
   sandboxListInput,
   switchObservabilityTab,
 } from "@/lib/admin-observability-search";
+import { formatDateTime } from "@/lib/format-date-time";
 import { orpc } from "@/utils/orpc";
 
 import { MaintenanceStatus } from "./maintenance-status";
@@ -664,12 +664,8 @@ function TableSkeleton({ columns }: { columns: number }) {
 
 function useDateFormatter() {
   const { i18n, t } = useTranslation("admin");
-  const formatter = new Intl.DateTimeFormat(i18n.language, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
   return (value: Date | string | null | undefined) =>
-    value ? formatter.format(new Date(value)) : t("observability.notAvailable");
+    value ? formatDateTime(value, i18n.language) : t("observability.notAvailable");
 }
 
 function Pill({ tone, children }: { tone: "ok" | "warn" | "muted" | "bad"; children: ReactNode }) {

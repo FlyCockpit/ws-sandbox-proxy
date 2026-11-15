@@ -1,6 +1,7 @@
 import { useForm } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { env } from "@wssp/env/web";
 import {
   AlertDialog,
@@ -46,6 +47,7 @@ import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { formatBytes } from "@/lib/format-bytes";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import {
   formatAge,
   GUARD_FIREWALL_COMMAND,
@@ -372,7 +374,9 @@ export function HostCard({
       <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">{t("hosts:heartbeat.label")}</dt>
-          <dd>{beat == null ? t("hosts:heartbeat.never") : formatAge(beat, locale, now)}</dd>
+          <dd title={dateTimeTitle(beat, locale)}>
+            {beat == null ? t("hosts:heartbeat.never") : formatAge(beat, locale, now)}
+          </dd>
         </div>
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">{t("hosts:capacity.label")}</dt>
@@ -452,6 +456,12 @@ export function HostCard({
           ))}
         </dl>
         <p className="text-xs text-muted-foreground">{t("hosts:vmCapacity.hint")}</p>
+        <p data-vcpu-budget-hint="" className="text-xs text-muted-foreground">
+          {t("hosts:vmCapacity.vcpuBudgetHint", {
+            multiplier: VM_SIZE_LIMITS.hostVcpuBudgetDefaultThreadsMultiplier,
+            max: VM_SIZE_LIMITS.hostVcpuBudgetMax,
+          })}
+        </p>
       </section>
       <p data-retained-roots="" className="text-sm">
         {t("hosts:storage.roots", { count: host.retainedRootCount })}
@@ -835,7 +845,7 @@ function StorageCard({ pool, now, locale }: { pool: StorageSummary; now: number;
               free: formatBytes(Number(pool.freeBytes ?? 0), locale),
             })}
       </p>
-      <p>
+      <p title={dateTimeTitle(report, locale)}>
         {t("storage.reported", {
           age: report === null ? t("heartbeat.never") : formatAge(report, locale, now),
         })}

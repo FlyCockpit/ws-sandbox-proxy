@@ -21,7 +21,6 @@ import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormSelect } from "@/components/form-select";
 import { ResourceIdentity } from "@/components/resource-identity";
-
 import type { Orphan } from "@/hooks/use-one-time-secret";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
 import {
@@ -31,6 +30,7 @@ import {
   type ExpiryPreset,
   isExpiryPreset,
 } from "@/lib/credential-rules";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { type HostConnectionState, hostConnectionState, toMs } from "@/lib/host-status";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -236,18 +236,20 @@ export function CredentialDates({
     <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
       <div className="min-w-0">
         <dt className="text-xs text-muted-foreground">{t("credentials:dates.created")}</dt>
-        <dd>{created == null ? "—" : formatRelativeTime(created, locale, now)}</dd>
+        <dd title={dateTimeTitle(created, locale)}>
+          {created == null ? "—" : formatRelativeTime(created, locale, now)}
+        </dd>
       </div>
       <div className="min-w-0">
         <dt className="text-xs text-muted-foreground">{t("credentials:dates.lastUsed")}</dt>
-        <dd data-last-used="">
+        <dd data-last-used="" title={dateTimeTitle(used, locale)}>
           {used == null ? t("credentials:dates.neverUsed") : formatRelativeTime(used, locale, now)}
         </dd>
       </div>
       {expires === undefined ? null : (
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">{t("credentials:dates.expires")}</dt>
-          <dd data-expiry="">
+          <dd data-expiry="" title={dateTimeTitle(expires, locale)}>
             {expires == null
               ? t("credentials:dates.noExpiry")
               : expires <= now

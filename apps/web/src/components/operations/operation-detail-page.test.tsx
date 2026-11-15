@@ -235,6 +235,30 @@ describe("reading an operation", () => {
   });
 });
 
+describe("operation timestamps", () => {
+  it("shows created, dispatched and completed with seconds and the time zone", async () => {
+    vi.stubEnv("TZ", "UTC");
+    try {
+      server.current.operations = [
+        operationRow({
+          state: "SUCCEEDED",
+          createdAt: new Date("2026-11-15T09:28:04Z"),
+          dispatchedAt: new Date("2026-11-15T09:28:05Z"),
+          completedAt: new Date("2026-11-15T09:30:04Z"),
+        }),
+      ];
+      mount();
+      await waitFor(() => expect(pill()).toBe("SUCCEEDED"));
+      const text = (document.body.textContent ?? "").replace(/[\u202f\u00a0]/g, " ");
+      expect(text).toContain("Nov 15, 2026, 9:28:04 AM UTC");
+      expect(text).toContain("Nov 15, 2026, 9:28:05 AM UTC");
+      expect(text).toContain("Nov 15, 2026, 9:30:04 AM UTC");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
 describe("operation identity", () => {
   it("keeps the operation ID in a copyable ID row, not the subtitle, and says commands are not stored", async () => {
     server.current.operations = [operationRow({ kind: "RUN_COMMAND", state: "SUCCEEDED" })];

@@ -25,6 +25,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { hostConnectionState, nextHostStateChangeAt } from "@/lib/host-status";
 import {
   isOperationActive,
@@ -242,7 +243,17 @@ function SandboxRow({
             </div>
             <div className="min-w-0">
               <dt>{t("sandboxes:fields.expires")}</dt>
-              <dd className="font-medium text-foreground">
+              <dd
+                className="font-medium text-foreground"
+                title={
+                  sandbox.state === "DELETED" ||
+                  deadline == null ||
+                  sandbox.leasePendingReady ||
+                  isUnlimitedLeaseEnd(deadline)
+                    ? undefined
+                    : dateTimeTitle(deadline, locale)
+                }
+              >
                 {sandbox.state === "DELETED" || deadline == null
                   ? "—"
                   : sandbox.leasePendingReady
@@ -259,7 +270,10 @@ function SandboxRow({
             </div>
             <div className="min-w-0">
               <dt>{t("sandboxes:fields.created")}</dt>
-              <dd className="font-medium text-foreground">
+              <dd
+                className="font-medium text-foreground"
+                title={dateTimeTitle(sandbox.createdAt, locale)}
+              >
                 {formatRelativeTime(new Date(sandbox.createdAt).getTime(), locale, now)}
               </dd>
             </div>

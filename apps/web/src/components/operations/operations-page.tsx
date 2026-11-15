@@ -20,6 +20,7 @@ import { QueryBoundary } from "@/components/query-boundary";
 import { SkeletonList } from "@/components/skeleton-list";
 import { WideContent } from "@/components/wide-content";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import {
   durationMs,
   formatDuration,
@@ -262,7 +263,7 @@ function OperationRow({
     // Every cell is vertically centred: the sandbox and Open links are 44 px
     // touch targets, so top-aligned text cells sat higher than them (M7-S7).
     <tr data-operation-id={item.id} data-operation-state={item.state}>
-      <td className="p-3 align-middle tabular-nums" title={new Date(item.createdAt).toISOString()}>
+      <td className="p-3 align-middle tabular-nums" title={dateTimeTitle(item.createdAt, locale)}>
         {formatRelativeTime(created, locale, now)}
       </td>
       <td className="p-3 align-middle font-medium">{t(`operations:kind.${item.kind}`)}</td>

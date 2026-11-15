@@ -169,6 +169,11 @@
     "MISSING": "Image missing",
     "REJECTED": "Image rejected"
   },
+  "upstreamAvailability": {
+    "AVAILABLE": "Upstream base on host",
+    "hint": "The host holds this pinned upstream image as a build input. It is not a verified template image: sandboxes never launch from it.",
+    "none": "None of your hosts lists this upstream image yet. The host that prepares a revision from it downloads it from the community index."
+  },
   "manageRevision": "Manage revision",
   "tagLabel": "Tag",
   "setTag": "Point tag to this revision",

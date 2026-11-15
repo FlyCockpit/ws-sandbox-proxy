@@ -30,6 +30,7 @@ import {
 import { QueryBoundary } from "@/components/query-boundary";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle } from "@/lib/format-date-time";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
@@ -139,7 +140,10 @@ export function InstanceRecovery({
                         </Link>
                       ) : null}
                     </div>
-                    <span className="text-muted-foreground">
+                    <span
+                      className="text-muted-foreground"
+                      title={dateTimeTitle(lease.checkpoint?.at, i18n.language)}
+                    >
                       {lease.checkpoint
                         ? t("logins:leases.checkpoint", {
                             seq: lease.checkpoint.storageSeq,
@@ -196,7 +200,11 @@ export function InstanceRecovery({
           <>
             <ul aria-label={t("logins:rejected.label")} className="flex flex-col gap-1 text-sm">
               {items.map((capture) => (
-                <li key={capture.captureId} className="break-words">
+                <li
+                  key={capture.captureId}
+                  className="break-words"
+                  title={dateTimeTitle(capture.at, i18n.language)}
+                >
                   {t("logins:rejected.item", {
                     reason: capture.reason,
                     when: formatRelativeTime(Date.parse(capture.at), i18n.language, now),

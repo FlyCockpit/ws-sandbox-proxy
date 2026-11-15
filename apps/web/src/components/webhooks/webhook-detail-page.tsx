@@ -51,6 +51,7 @@ import {
   KindsChoice,
 } from "@/components/webhooks/webhooks-page";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { dateTimeTitle, formatDateTime } from "@/lib/format-date-time";
 import {
   ROTATION_OVERLAPS,
   WEBHOOK_DEFAULT_OPERATION_KINDS,
@@ -259,11 +260,11 @@ function EndpointSummary({
         {endpoint.previousSecretExpiresAt ? (
           <p>
             {t("webhooks:detail.previousSecretUntil", {
-              date: new Date(endpoint.previousSecretExpiresAt).toLocaleString(locale),
+              date: formatDateTime(endpoint.previousSecretExpiresAt, locale),
             })}
           </p>
         ) : null}
-        <p>
+        <p title={dateTimeTitle(endpoint.health.lastSuccessAt, locale)}>
           {t("webhooks:detail.lastSuccess", {
             when: endpoint.health.lastSuccessAt
               ? formatRelativeTime(ms(endpoint.health.lastSuccessAt) ?? now, locale, now)
@@ -271,7 +272,7 @@ function EndpointSummary({
           })}
         </p>
         {endpoint.health.lastFailureAt ? (
-          <p>
+          <p title={dateTimeTitle(endpoint.health.lastFailureAt, locale)}>
             {t("webhooks:detail.lastFailure", {
               when: formatRelativeTime(ms(endpoint.health.lastFailureAt) ?? now, locale, now),
               errorClass: endpoint.health.lastFailureClass
@@ -707,7 +708,10 @@ function DeliveryRow({
           </span>
         </p>
         <p className="text-muted-foreground">
-          {formatRelativeTime(ms(delivery.createdAt) ?? now, locale, now)} ·{" "}
+          <span title={dateTimeTitle(delivery.createdAt, locale)}>
+            {formatRelativeTime(ms(delivery.createdAt) ?? now, locale, now)}
+          </span>{" "}
+          ·{" "}
           {t("webhooks:deliveries.attempts", {
             count: delivery.attemptCount,
             max: delivery.maxAttempts,
@@ -715,9 +719,11 @@ function DeliveryRow({
           {delivery.lastErrorClass
             ? ` · ${t(`webhooks:errorClass.${delivery.lastErrorClass}`)}`
             : ""}
-          {next
-            ? ` · ${t("webhooks:deliveries.nextAttempt", { when: formatRelativeTime(next, locale, now) })}`
-            : ""}
+          {next ? (
+            <span data-next-attempt="" title={dateTimeTitle(next, locale)}>
+              {` · ${t("webhooks:deliveries.nextAttempt", { when: formatRelativeTime(next, locale, now) })}`}
+            </span>
+          ) : null}
         </p>
       </div>
       <Button type="button" size="touch" variant="outline" onClick={onOpen}>

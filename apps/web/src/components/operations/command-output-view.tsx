@@ -8,7 +8,7 @@ import {
   useCommandOutput,
 } from "@/hooks/use-command-output";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
-import { formatTimestamp } from "@/lib/operation-rules";
+import { formatDateTime } from "@/lib/format-date-time";
 import { formatBytes } from "@/lib/sandbox-rules";
 import { orpc } from "@/utils/orpc";
 
@@ -165,7 +165,9 @@ function AuthorizedCommandOutputView({
       ) : null}
       {snapshot?.expiresAt && status === "complete" ? (
         <p className="text-xs text-muted-foreground">
-          {t("operations:output.expiresAt", { when: formatTimestamp(snapshot.expiresAt, locale) })}
+          {t("operations:output.expiresAt", {
+            when: formatDateTime(snapshot.expiresAt, locale, { seconds: true }),
+          })}
         </p>
       ) : null}
     </section>
