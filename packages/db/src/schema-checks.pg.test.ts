@@ -59,7 +59,7 @@ describe("committed CHECK declarations (real PostgreSQL)", () => {
       new URL("../prisma/migrations/0_init/migration.sql", import.meta.url),
       "utf8",
     );
-    expect(repoChecks).toHaveLength(145);
+    expect(repoChecks).toHaveLength(146);
     const live = (
       await client.query<{ table: string; name: string; valid: boolean }>(
         `SELECT t.relname AS "table", c.conname AS name, c.convalidated AS valid
@@ -202,7 +202,23 @@ describe("VM size storage (real PostgreSQL)", () => {
 });
 
 it("capacity disk/charge/hold CHECKs enforce bounds independently of current overhead policy", async () => {
-  for (const table of ["sandbox_template_revision", "sandbox_instance", "sandbox_placement"]) {
+  // A revision's floor and default: 1 <= min <= default <= 2048.
+  const revision = repoChecks.find((item) => item.name === "sandbox_revision_root_disk")!;
+  for (const [min, def, valid] of [
+    [0, 32, false],
+    [1, 1, true],
+    [8, 32, true],
+    [32, 8, false],
+    [2048, 2048, true],
+    [8, 2049, false],
+  ] as const) {
+    const result = await client.query<{ valid: boolean }>(
+      `SELECT (${revision.expression}) AS valid FROM (SELECT $1::int AS "minDiskGiB", $2::int AS "defaultDiskGiB") revision`,
+      [min, def],
+    );
+    expect(result.rows[0]?.valid).toBe(valid);
+  }
+  for (const table of ["sandbox_instance", "sandbox_placement"]) {
     const check = repoChecks.find(
       (item) =>
         item.table === table &&

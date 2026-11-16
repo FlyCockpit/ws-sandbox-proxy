@@ -43,6 +43,8 @@ const templateForDispatch = {
   cpuCount: 1,
   memoryMiB: 1024,
   diskGiB: 32,
+  defaultDiskGiB: 32,
+  minDiskGiB: 32,
   hostOwnerId: "test-user-id",
   currentPlacementId: "placement-1",
   storagePoolId: "storage-1",

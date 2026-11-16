@@ -53,3 +53,20 @@ it("excludes hosts with fresh heartbeats but expired egress guard leases from ca
     true,
   );
 });
+
+it("a template's disk defaults to its revision's default, and a disk below its minimum is refused like the create", async () => {
+  const f = await poolFixture(db);
+  await db.inspect.sandboxTemplateRevision.update({
+    where: { id: f.revision.id },
+    data: { minDiskGiB: 8, defaultDiskGiB: 32 },
+  });
+  await expect(
+    poolCapacityView(f.owner, { id: f.pool.id, template: "base", diskGiB: 4 }),
+  ).rejects.toMatchObject({ data: { code: "sandbox.disk_below_image" } });
+  await expect(
+    poolCapacityView(f.owner, { id: f.pool.id, template: "base", diskGiB: 8 }),
+  ).resolves.toBeDefined();
+  await expect(
+    poolCapacityView(f.owner, { id: f.pool.id, template: "base" }),
+  ).resolves.toBeDefined();
+});

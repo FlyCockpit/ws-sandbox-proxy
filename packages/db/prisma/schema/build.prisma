@@ -83,7 +83,10 @@ model SandboxTemplateBuild {
   principalKey          String
   cpuCount              Int
   memoryMiB             Int
+  /// The build VM's disk: the published revision's `minDiskGiB`.
   diskGiB               Int
+  /// The published revision's `defaultDiskGiB` (>= diskGiB).
+  defaultDiskGiB        Int
   /// The egress request only; the effective policy lives on the build sandbox.
   egressRequest         Json?
   egressPresets         String[]                   @default([])
@@ -156,7 +159,7 @@ model SandboxTemplateBuild {
   // @check template_build_principal: ("principalKind"::text = 'sdkKey') = ("authorizingKeyId" IS NOT NULL) AND ("principalKind"::text = 'system') = ("triggeredByRevisionId" IS NOT NULL) AND "principalKey" = CASE "principalKind"::text WHEN 'sdkKey' THEN 'k:' || "authorizingKeyId" WHEN 'session' THEN 's' ELSE 'sys' END
   // @check template_build_target: ("poolId" IS NULL) <> ("requestedHostId" IS NULL) AND "targetKey" = coalesce("poolId", "requestedHostId")
   // @check template_build_minutes: "timeoutMinutes" BETWEEN 1 AND 1440 AND "reservedMinutes" BETWEEN 0 AND "timeoutMinutes" AND ("chargedMinutes" IS NULL OR "chargedMinutes" BETWEEN 0 AND "reservedMinutes") AND (NOT "minutesSettled" OR "chargedMinutes" IS NOT NULL) AND extract(day FROM "chargeMonth") = 1
-  // @check template_build_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0 AND "diskGiB" >= 1 AND "diskGiB" <= 2048
+  // @check template_build_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0 AND "diskGiB" >= 1 AND "diskGiB" <= 2048 AND "defaultDiskGiB" >= "diskGiB" AND "defaultDiskGiB" <= 2048
   // @check template_build_recipe: octet_length("recipe"::text) <= 65536 AND "recipeDigest" ~ '^[0-9a-f]{64}$' AND "buildDigest" ~ '^[0-9a-f]{64}$' AND ("sourceFormat"::text = 'DOCKERFILE') = ("dockerfileText" IS NOT NULL) AND ("dockerfileText" IS NULL OR octet_length("dockerfileText") <= 65536) AND jsonb_typeof("buildArgs") = 'object' AND cardinality("egressPresets") <= 16
   // @check template_build_context: ("contextSha256" IS NULL) = ("contextBytes" IS NULL) AND ("contextSha256" IS NULL OR "contextSha256" ~ '^[0-9a-f]{64}$') AND ("contextBytes" IS NULL OR "contextBytes" > 0)
   // @check template_build_progress: "stepIndex" >= -1 AND jsonb_typeof("steps") = 'array' AND jsonb_array_length("steps") <= 256 AND ("phase" IS NULL OR length("phase") <= 64) AND ("failureStepIndex" IS NULL OR "failureStepIndex" >= 0) AND ("failureTail" IS NULL OR octet_length("failureTail") <= 8192)
@@ -168,7 +171,7 @@ model SandboxTemplateBuild {
   // @check template_build_error_code: "errorCode" IS NULL OR "errorCode" IN ('build_step_failed', 'build_step_unknown', 'build_step_timeout', 'build_step_host_disconnected', 'build_timeout', 'build_context_timeout', 'build_context_mismatch', 'build_context_expired', 'build_context_failed', 'build_placement_failed', 'build_capture_failed', 'build_capture_lease_expired', 'build_store_failed', 'build_authority_lost', 'build_host_lost', 'build_internal', 'build_cancelled', 'build_verify_failed', 'build_upstream_unavailable')
   // @check template_build_verify: (NOT "verifyRequired" AND "verifySandboxId" IS NULL AND "verifyDeadlineAt" IS NULL) OR ("verifyRequired" AND "noCache")
   // Compares origin as text: the initial migration creates the enum before this CHECK.
-  // @check template_build_origin: "origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = '6a9f748c5980b996b63b97f818ac825df00c943572d07ee977097f0a92d88ed3' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL)
+  // @check template_build_origin: "origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = 'eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL)
 
   @@unique([id, userId])
   @@unique([userId, idempotencyKey])

@@ -25,6 +25,7 @@ import { getUsablePool } from "./services/sharing";
 import { consumePoolCapacityRead } from "./sharing-budgets";
 import { shareUsage } from "./sharing-quota";
 import { resolveTemplateRevision } from "./template-resolution";
+import { assertDiskFitsImage } from "./vm-size-input";
 
 export type PoolCapacityInput = {
   id: string;
@@ -137,7 +138,11 @@ export async function poolCapacityView(
   };
   const size: VmSize | null = revision
     ? resolveVmSize(
-        { cpuCount: revision.cpuCount, memoryMiB: revision.memoryMiB, diskGiB: revision.diskGiB },
+        {
+          cpuCount: revision.cpuCount,
+          memoryMiB: revision.memoryMiB,
+          diskGiB: revision.defaultDiskGiB,
+        },
         overrides,
       )
     : input.cpuCount !== undefined && input.memoryMiB !== undefined && input.diskGiB !== undefined
@@ -146,6 +151,8 @@ export async function poolCapacityView(
           {},
         )
       : null;
+  // The same refusal as the create: a disk below the image's root never fits.
+  if (revision && size) assertDiskFitsImage(revision, size.diskGiB);
   const now = await hostDatabaseNow(prisma);
   const sql = placementSql({
     viewer: viewerOf(owner),

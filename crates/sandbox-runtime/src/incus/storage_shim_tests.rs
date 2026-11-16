@@ -685,3 +685,69 @@ fn storage_delete_remains_available_for_size_conflict_but_requires_root_and_netw
         );
     }
 }
+
+/// Root growth runs once per create, as guest root, against the create's
+/// own root disk; a root that did not grow fails the create with its typed
+/// readiness reason, and the warm reconnect never runs it.
+#[test]
+fn storage_create_grows_the_root_to_its_disk_and_fails_typed_when_it_did_not() {
+    use sandbox_protocol::{ReadinessFailureReason, SandboxErrorCode};
+    let (runtime, log) = fixture();
+    let statedir = log.parent().unwrap().to_path_buf();
+    let disk_root = root(&runtime, "pool-a");
+    let req = CreateSandboxRequest::for_test("sbx-1", "create");
+    runtime.create_sandbox_on_storage(&req, &disk_root).unwrap();
+    let disk = u64::from(disk_root.disk_gi_b) * GIB_BYTES;
+    assert_eq!(
+        fs::read_to_string(statedir.join("root-log")).unwrap(),
+        format!("grow {disk}\n")
+    );
+    runtime
+        .reconnect_sandbox_on_storage(&reconnect(&req), &disk_root)
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(statedir.join("root-log")).unwrap(),
+        format!("grow {disk}\n"),
+        "reconnect never grows"
+    );
+    // Allocation recovery of the create (its key) re-runs the check, and a
+    // root that is not (or no longer) grown fails it; other queries never run it.
+    fs::write(
+        statedir.join("root-verdict"),
+        format!("{disk} 8589934592 8588886016 ext4 8588886016 partition 8300000000"),
+    )
+    .unwrap();
+    assert!(
+        runtime
+            .query_sandbox("sbx-1", None, Some(&req.template_digest))
+            .is_ok()
+    );
+    let recovered = runtime
+        .query_sandbox(
+            "sbx-1",
+            Some(&req.idempotency_key),
+            Some(&req.template_digest),
+        )
+        .unwrap_err();
+    assert_eq!(
+        recovered.readiness_reason(),
+        Some(ReadinessFailureReason::RootDiskNotGrown)
+    );
+    fs::remove_file(statedir.join("root-verdict")).unwrap();
+
+    let (runtime, log) = fixture();
+    let statedir = log.parent().unwrap().to_path_buf();
+    let root2 = root(&runtime, "pool-a");
+    // An 8 GiB image root that never grew on the disk.
+    fs::write(
+        statedir.join("root-verdict"),
+        format!("{disk} 8589934592 8588886016 ext4 8588886016 partition 8300000000"),
+    )
+    .unwrap();
+    let error = runtime.create_sandbox_on_storage(&req, &root2).unwrap_err();
+    assert_eq!(error.code, SandboxErrorCode::GuestUnavailable);
+    assert_eq!(
+        error.readiness_reason(),
+        Some(ReadinessFailureReason::RootDiskNotGrown)
+    );
+}

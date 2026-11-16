@@ -185,6 +185,7 @@ async function owner() {
         cpuCount: 1,
         memoryMiB: 1024,
         diskGiB: 32,
+        defaultDiskGiB: 32,
         timeoutMinutes: 10,
         reservedMinutes: 10,
         chargeMonth: new Date("2026-11-01T00:00:00Z"),

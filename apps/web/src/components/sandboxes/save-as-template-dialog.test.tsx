@@ -90,7 +90,7 @@ async function mount(lang: string) {
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
         <SaveAsTemplateDialog
-          sandbox={{ id: "sbx-1", template: { id: "tpl-1", label: "Base" } }}
+          sandbox={{ id: "sbx-1", diskGiB: 12, template: { id: "tpl-1", label: "Base" } }}
           lang={lang}
           onClose={onClose}
         />

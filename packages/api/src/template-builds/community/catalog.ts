@@ -24,7 +24,13 @@ export type CommunityImageEntry = {
   tested: true;
   /** Default template slug. */
   slug: string;
-  resources: { cpuCount: number; memoryMiB: number; diskGiB: number };
+  /**
+   * The prep build VM's size. `diskGiB` is the published base's
+   * `minDiskGiB` (its root never shrinks, so it is every derived template's
+   * floor): small on purpose. `defaultDiskGiB` is what a create from the base
+   * gets when it omits a size.
+   */
+  resources: { cpuCount: number; memoryMiB: number; diskGiB: number; defaultDiskGiB: number };
   /** Upstream disk bound (index client, server zod and daemon). */
   maxDiskBytes: number;
   /** The prep recipe's step budget (the build's own timeout). */
@@ -39,7 +45,11 @@ export const COMMUNITY_IMAGES: readonly CommunityImageEntry[] = Object.freeze([
     architecture: "x86_64",
     tested: true,
     slug: "ubuntu-26-04",
-    resources: Object.freeze({ cpuCount: 2, memoryMiB: 2048, diskGiB: 32 }),
+    // 8 GiB root: the prepared image uses ~0.95 GB (947 MiB, one kernel; the
+    // upstream qcow2 is 4 GiB virtual), leaving ~7 GiB for apt upgrades
+    // (a second kernel during an upgrade is ~0.3 GB) and small installs.
+    // Creates still default to 32 GiB and the root grows on first boot.
+    resources: Object.freeze({ cpuCount: 2, memoryMiB: 2048, diskGiB: 8, defaultDiskGiB: 32 }),
     maxDiskBytes: 4 * 1024 ** 3,
     recipeTimeoutMinutes: 30,
   }) as CommunityImageEntry,
@@ -123,6 +133,7 @@ test "$(id -Gn user)" = user
 rm -f /etc/sudoers.d/90-cloud-init-users
 install -d -m 0755 /etc/cloud/cloud.cfg.d
 printf 'users: []\\n' > /etc/cloud/cloud.cfg.d/99-wssp-no-default-user.cfg
+printf 'growpart:\\n  mode: "off"\\nresize_rootfs: false\\n' > /etc/cloud/cloud.cfg.d/99-wssp-root-growth.cfg
 install -d -m 0755 /etc/polkit-1/rules.d
 cat > /etc/polkit-1/rules.d/10-wssp-no-linger.rules <<'WSSP_RULE'
 ${LINGER_RULE}
@@ -136,7 +147,9 @@ chmod 0644 /etc/polkit-1/rules.d/10-wssp-no-linger.rules`,
       script: `set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends python3 util-linux git tar ca-certificates`,
+apt-get install -y --no-install-recommends python3 util-linux git tar ca-certificates cloud-guest-utils e2fsprogs
+command -v growpart >/dev/null
+command -v resize2fs >/dev/null`,
     },
     {
       type: "run",
@@ -170,7 +183,7 @@ ${LINGER_ASSERT}`,
  * `template_build_origin` CHECK; `catalog.test.ts` recomputes it.
  */
 export const UBUNTU_CLOUD_PREP_V1_DIGEST =
-  "6a9f748c5980b996b63b97f818ac825df00c943572d07ee977097f0a92d88ed3";
+  "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
 
 /**
  * `UBUNTU_CLOUD_SMOKE_V1`: run as the guest user in the verify VM (`guestSudo`

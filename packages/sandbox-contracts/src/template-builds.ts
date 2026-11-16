@@ -15,7 +15,7 @@ import { emptyBodySchema } from "./mutations";
 import { commandOutputPageSchema, outputMaxBytesQuerySchema } from "./output";
 import type { SdkRoute } from "./routes";
 import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from "./transfers";
-import { vmSizeOverridesSchema } from "./vm-size";
+import { vmDiskGiBSchema, vmSizeOverridesSchema } from "./vm-size";
 
 /**
  * Template builds (`/v1/template-builds`): a recipe (canonical JSON or a
@@ -190,8 +190,14 @@ export const templateBuildCreateFieldsSchema = z
       .optional(),
     poolId: resourceIdSchema.optional(),
     sandboxHostId: resourceIdSchema.optional(),
-    /** Build VM size; overrides the recipe's resources, which override the base. */
+    /**
+     * Build VM size; overrides the recipe's resources, which override the
+     * base. The build VM's `diskGiB` becomes the revision's `minDiskGiB`
+     * (default: the base's `minDiskGiB` + 2 GiB).
+     */
     ...vmSizeOverridesSchema.shape,
+    /** The revision's `defaultDiskGiB` (default: the base's default, at least the build disk). */
+    defaultDiskGiB: vmDiskGiBSchema.optional(),
     /** Step time budget; capture time is not counted. Default min(30, maxMinutes). */
     timeoutMinutes: z.number().int().min(1).max(1440).optional(),
     waitForCapacityMs: capacityWaitRequestSchema.optional(),

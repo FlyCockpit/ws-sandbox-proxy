@@ -14,7 +14,6 @@ import {
   storagePoolV11Schema,
   vmCapacitySchema,
   vmLiveMemoryChargeMiB,
-  vmRevisionSizeSchema,
   vmRootChargeGiB,
   vmSizeOverridesSchema,
   vmSizeSchema,
@@ -24,7 +23,11 @@ describe("strict 1.0 TS/Rust fixtures", () => {
   const codecs = {
     size: vmSizeSchema,
     overrides: vmSizeOverridesSchema,
-    revision: vmRevisionSizeSchema,
+    // The shared fixture's `revision` kind is the daemon's VM-size default
+    // resolution (Rust `revision_defaults`), not the control plane's revision row.
+    revision: vmSizeOverridesSchema.transform((overrides) =>
+      resolveVmSize({ cpuCount: 1, memoryMiB: 1024, diskGiB: 32 }, overrides),
+    ),
     capacity: vmCapacitySchema,
     pool: storagePoolV11Schema,
     hello: hostHelloV11Schema,
@@ -118,7 +121,17 @@ it("Prisma defaults and managed numeric bounds match the canonical policy", asyn
     new URL("../../db/prisma/schema/sandbox.prisma", import.meta.url),
     "utf8",
   );
-  for (const model of ["SandboxTemplateRevision", "Sandbox", "SandboxPlacement"]) {
+  const revisionBlock = schema.split("model SandboxTemplateRevision {")[1]?.split("\n}")[0];
+  expect(revisionBlock).toMatch(
+    new RegExp(`defaultDiskGiB\\s+Int\\s+@default\\(${limits.diskGiBDefault}\\)`),
+  );
+  expect(revisionBlock).toMatch(
+    new RegExp(`minDiskGiB\\s+Int\\s+@default\\(${limits.diskGiBDefault}\\)`),
+  );
+  expect(revisionBlock).toContain(
+    `"minDiskGiB" >= ${limits.diskGiBMin} AND "minDiskGiB" <= "defaultDiskGiB" AND "defaultDiskGiB" <= ${limits.diskGiBMax}`,
+  );
+  for (const model of ["Sandbox", "SandboxPlacement"]) {
     const block = schema.split(`model ${model} {`)[1]?.split("\n}")[0];
     expect(block).toBeDefined();
     for (const [key, value] of [

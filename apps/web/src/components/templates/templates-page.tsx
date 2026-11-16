@@ -469,7 +469,7 @@ function RegisterTemplateDialog({
 }: {
   lang: string;
   logical?: TemplateItem;
-  initialSize?: { cpuCount: number; memoryMiB: number; diskGiB: number };
+  initialSize?: { cpuCount: number; memoryMiB: number; defaultDiskGiB: number; minDiskGiB: number };
   onClose: () => void;
 }) {
   const { t } = useTranslation(["templates", "hosts", "common"]);
@@ -572,7 +572,8 @@ function RegisterTemplateDialog({
         ? {
             cpuCount: String(initialSize.cpuCount),
             memoryMiB: String(initialSize.memoryMiB),
-            diskGiB: String(initialSize.diskGiB),
+            defaultDiskGiB: String(initialSize.defaultDiskGiB),
+            minDiskGiB: String(initialSize.minDiskGiB),
           }
         : {}),
     },
@@ -798,11 +799,26 @@ function RegisterTemplateDialog({
                     />
                   )}
                 </form.Field>
-                <form.Field name="diskGiB">
+                <form.Field name="defaultDiskGiB">
                   {(field) => (
                     <TextField
                       field={field}
-                      label={t("templates:form.diskGiB")}
+                      label={t("templates:form.defaultDiskGiB")}
+                      type="number"
+                      inputMode="numeric"
+                      min={VM_SIZE_LIMITS.diskGiBMin}
+                      max={VM_SIZE_LIMITS.diskGiBMax}
+                      step={1}
+                      autoComplete="off"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="minDiskGiB">
+                  {(field) => (
+                    <TextField
+                      field={field}
+                      label={t("templates:form.minDiskGiB")}
                       type="number"
                       inputMode="numeric"
                       min={VM_SIZE_LIMITS.diskGiBMin}
@@ -961,7 +977,8 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
   const [prefill, setPrefill] = useState<{
     cpuCount: number;
     memoryMiB: number;
-    diskGiB: number;
+    defaultDiskGiB: number;
+    minDiskGiB: number;
   } | null>(null);
   const { t } = useTranslation("templates");
   const revisions = useInfiniteQuery({
@@ -993,8 +1010,11 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
               {t("revisionSize", {
                 cpuCount: revision.cpuCount,
                 memoryMiB: revision.memoryMiB,
-                diskGiB: revision.diskGiB,
+                defaultDiskGiB: revision.defaultDiskGiB,
               })}
+            </p>
+            <p data-revision-min-disk="" className="text-xs tabular-nums text-muted-foreground">
+              {t("revisionMinDisk", { minDiskGiB: revision.minDiskGiB })}
             </p>
             <RevisionImageBadges revision={revision} lang={lang} />
             <PublishRevisionButton revision={revision} lang={lang} />
@@ -1008,7 +1028,8 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
                   setPrefill({
                     cpuCount: revision.cpuCount,
                     memoryMiB: revision.memoryMiB,
-                    diskGiB: revision.diskGiB,
+                    defaultDiskGiB: revision.defaultDiskGiB,
+                    minDiskGiB: revision.minDiskGiB,
                   })
                 }
               >

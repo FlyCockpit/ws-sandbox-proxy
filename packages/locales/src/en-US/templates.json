@@ -114,8 +114,9 @@
     "envsHint": "Private JSON string map: up to 64 entries, names 128 UTF-8 bytes, values 4096 bytes, sorted JSON 16384 bytes total. Sandbox and command values override these defaults. HOME, SHELL and TERM are reserved. Changing defaults requires a new revision.",
     "cpuCount": "Default vCPUs",
     "memoryMiB": "Default memory (MiB)",
-    "sizeHint": "Revision defaults: 1–32 vCPUs, 512–65536 MiB in steps of 256, and 1–2048 GiB root disk (default 32). Each append saves a new immutable revision; fields do not inherit another revision.",
-    "diskGiB": "Root disk (GiB)",
+    "sizeHint": "Revision defaults: 1–32 vCPUs, 512–65536 MiB in steps of 256, and a 1–2048 GiB default root disk (32 if unchanged). The minimum root disk is the image's own root: sandboxes may not be smaller, and a larger root grows on first boot. Leave it blank to use the default as the minimum. Each append saves a new immutable revision; fields do not inherit another revision.",
+    "defaultDiskGiB": "Default root disk (GiB)",
+    "minDiskGiB": "Minimum root disk (GiB, optional)",
     "poolImageRef": "Incus image fingerprint",
     "poolImageRefHint": "Exact public image identity: sha256: followed by 64 lowercase hexadecimal characters. Pool members cannot resolve image aliases."
   },
@@ -136,7 +137,8 @@
     "envs": "Enter a valid private environment map within the supported limits.",
     "cpuCount": "Enter a whole vCPU count from 1 to 32.",
     "memoryMiB": "Enter 512–65536 MiB in steps of 256.",
-    "diskGiB": "Enter a whole root size from 1 to 2048 GiB.",
+    "defaultDiskGiB": "Enter a whole default root size from 1 to 2048 GiB.",
+    "minDiskGiB": "Enter a whole minimum from 1 GiB up to the default root size, or leave it blank.",
     "poolImageRef": "Enter sha256: followed by the 64-character lowercase image fingerprint.",
     "noPoolMember": "Choose a pool and a member to verify the exact image fingerprint."
   },
@@ -184,7 +186,8 @@
   "noAvailability": "No host associations yet. Verify this revision on a host to launch it.",
   "retirePrompt": "Type the revision ID to confirm",
   "copyRevision": "Copy revision ID",
-  "revisionSize": "Defaults: {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{diskGiB}} GiB",
+  "revisionSize": "Defaults: {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB disk",
+  "revisionMinDisk": "Minimum disk: {{minDiskGiB}} GiB (the image's root; smaller sandboxes are refused)",
   "appendWithSize": "Append with these defaults",
   "images": {
     "source": {
@@ -479,8 +482,9 @@
       "resources": "Build VM size (optional)",
       "cpu": "vCPUs",
       "memory": "Memory (MiB)",
-      "disk": "Disk (GiB)",
-      "resourcesHint": "Leave empty to use the recipe's or the base template's size.",
+      "disk": "Build disk (GiB)",
+      "defaultDisk": "Default sandbox disk (GiB)",
+      "resourcesHint": "Leave empty to use the recipe's or the base template's size. The build disk becomes the new template's minimum disk (blank: the base's minimum + 2 GiB), so keep it small; the default sandbox disk is what creates get when they omit a size (blank: the base's default).",
       "timeout": "Time limit (minutes)",
       "timeoutHint": "Counts step time only; at most {{max}} minutes.",
       "numberInvalid": "Enter a whole number in range, or leave it empty.",

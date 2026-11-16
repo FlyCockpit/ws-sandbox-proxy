@@ -294,6 +294,8 @@ const OPERATION_ERRORS = {
     "Root for the guest user (guestSudo) is unavailable in this image; the sandbox did not start.",
   guest_root_granted:
     "The image grants the guest user root although guestSudo is off; the sandbox did not start.",
+  root_disk_not_grown:
+    "The guest's root filesystem did not grow to the sandbox's disk; the sandbox did not start.",
   lease_expired: "Sandbox lease expired.",
   lease_exceeds_policy: "Requested lease exceeds the allowed maximum.",
   not_found: "Resource not found.",

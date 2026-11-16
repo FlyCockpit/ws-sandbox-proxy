@@ -39,7 +39,7 @@ export const SDK_ERRORS = {
   "sandbox.vm_size_mismatch": [409, "VM size conflicts with the accepted allocation."],
   "sandbox.disk_below_image": [
     400,
-    "The requested disk is smaller than the template image's root disk; request at least the revision's diskGiB.",
+    "The requested disk is smaller than the template image's root disk; request at least the revision's minDiskGiB.",
   ],
   "sandbox.metadata_invalid": [400, "Metadata exceeds the allowed shape or size."],
   "sandbox.name_invalid": [
@@ -337,6 +337,8 @@ export const READINESS_FAILURE_REASONS = [
   "guest_sudo_unavailable",
   /** guestSudo is off but the image grants the guest user root (hygiene audit). */
   "guest_root_granted",
+  /** The create's disk exceeds the image's root and the guest root did not grow to it. */
+  "root_disk_not_grown",
 ] as const;
 export const readinessFailureReasonSchema = z.enum(READINESS_FAILURE_REASONS);
 export type ReadinessFailureReason = z.infer<typeof readinessFailureReasonSchema>;

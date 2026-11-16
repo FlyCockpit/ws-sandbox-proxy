@@ -555,7 +555,9 @@ it("activates strict disk create/DTO fields", async () => {
   expect(createSandboxBodySchema.safeParse({ ...base, poolId: "pool", diskGiB: 32 }).success).toBe(
     false,
   );
-  expect(templateRevisionSchema.shape.diskGiB.safeParse(32).success).toBe(true);
+  expect(templateRevisionSchema.shape.defaultDiskGiB.safeParse(32).success).toBe(true);
+  expect(templateRevisionSchema.shape.minDiskGiB.safeParse(8).success).toBe(true);
+  expect(templateRevisionSchema.shape).not.toHaveProperty("diskGiB");
   expect(sandboxSchema.shape.storageMarker.safeParse(null).success).toBe(true);
   expect(sandboxSchema.shape.storageMarker.safeParse("/host/path").success).toBe(false);
   expect(hostSchema.shape).not.toHaveProperty("maxLiveSandboxes");
@@ -568,10 +570,28 @@ it("activates strict disk create/DTO fields", async () => {
 
 it("stages independent revision disk inputs without inheriting a previous revision", async () => {
   const { templateBodySchema, appendTemplateRevisionBodySchema } = await import("./mutations");
+  const { vmRevisionSizeSchema } = await import("./vm-size");
   const input = { hostId: "host", slug: "base", label: "Base", imageRef: "images:base" };
-  expect(templateBodySchema.parse(input)).not.toHaveProperty("diskGiB");
-  expect(templateBodySchema.parse({ ...input, diskGiB: 64 }).diskGiB).toBe(64);
+  expect(templateBodySchema.parse(input)).not.toHaveProperty("defaultDiskGiB");
+  expect(templateBodySchema.safeParse({ ...input, diskGiB: 64 }).success).toBe(false);
+  expect(templateBodySchema.parse({ ...input, defaultDiskGiB: 64 }).defaultDiskGiB).toBe(64);
   const { slug: _slug, label: _label, ...append } = input;
-  expect(appendTemplateRevisionBodySchema.parse({ ...append, diskGiB: 32 }).diskGiB).toBe(32);
-  expect(appendTemplateRevisionBodySchema.safeParse({ ...append, diskGiB: 0 }).success).toBe(false);
+  expect(
+    appendTemplateRevisionBodySchema.parse({ ...append, defaultDiskGiB: 32, minDiskGiB: 8 }),
+  ).toMatchObject({ defaultDiskGiB: 32, minDiskGiB: 8 });
+  expect(appendTemplateRevisionBodySchema.safeParse({ ...append, defaultDiskGiB: 0 }).success).toBe(
+    false,
+  );
+  // The floor defaults to the default and never exceeds it.
+  expect(vmRevisionSizeSchema.parse({})).toEqual({
+    cpuCount: 1,
+    memoryMiB: 1024,
+    defaultDiskGiB: 32,
+    minDiskGiB: 32,
+  });
+  expect(vmRevisionSizeSchema.parse({ defaultDiskGiB: 16, minDiskGiB: 8 })).toMatchObject({
+    defaultDiskGiB: 16,
+    minDiskGiB: 8,
+  });
+  expect(vmRevisionSizeSchema.safeParse({ defaultDiskGiB: 8, minDiskGiB: 16 }).success).toBe(false);
 });

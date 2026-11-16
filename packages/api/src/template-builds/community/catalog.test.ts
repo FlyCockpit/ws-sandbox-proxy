@@ -14,10 +14,24 @@ describe("community catalog (community-base S5)", () => {
       product: "ubuntu:resolute:amd64:cloud",
       architecture: "x86_64",
       tested: true,
-      resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 32 },
+      // A small floor (the published base's minDiskGiB, inherited by every
+      // derived template) and the unchanged 32 GiB create default.
+      resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 8, defaultDiskGiB: 32 },
       maxDiskBytes: 4 * 1024 ** 3,
       recipeTimeoutMinutes: 30,
     });
+  });
+
+  it("hands root growth to wssp: cloud-init growpart off, grow tools asserted", () => {
+    const scripts = UBUNTU_CLOUD_PREP_V1.steps.map((step) =>
+      step.type === "run" ? step.script : "",
+    );
+    expect(scripts.join("\n")).toContain(
+      "printf 'growpart:\\n  mode: \"off\"\\nresize_rootfs: false\\n' > /etc/cloud/cloud.cfg.d/99-wssp-root-growth.cfg",
+    );
+    expect(scripts[2]).toContain("cloud-guest-utils e2fsprogs");
+    expect(scripts[2]).toContain("command -v growpart >/dev/null");
+    expect(scripts[2]).toContain("command -v resize2fs >/dev/null");
   });
 
   it("pins the prep recipe digest (the template_build_origin CHECK carries the same literal)", async () => {

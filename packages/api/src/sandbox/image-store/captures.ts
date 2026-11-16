@@ -6,6 +6,7 @@ import { Prisma as PrismaValue } from "@wssp/db/client";
 import {
   CAPTURE_SCRUB_PATHS_MAX,
   validScrubPath,
+  vmDiskGiBSchema,
   vmLiveMemoryChargeMiB,
   vmRootChargeGiB,
 } from "@wssp/sandbox-contracts";
@@ -38,6 +39,7 @@ import {
   captureBusy,
   capturePolicyForbidden,
   captureUnsupported,
+  diskBelowImage,
   diskOffloaded,
   hostCapacityConflict,
   imageQuotaExceeded,
@@ -84,6 +86,8 @@ export type CaptureSandboxInput = {
   templateId?: string;
   tag?: string;
   scrubPaths?: string[];
+  /** The new revision's default disk (at least the sandbox's disk). */
+  defaultDiskGiB?: number;
 };
 
 const ACTIVE_CAPTURE_STATES = ["PENDING", "CAPTURED", "STORING"] as const;
@@ -99,6 +103,7 @@ export const captureSessionInput = z
     templateId: entityId.optional(),
     tag: z.string().regex(TAG_PATTERN).optional(),
     scrubPaths: z.array(z.string().min(1).max(4096).refine(validScrubPath)).max(16).optional(),
+    defaultDiskGiB: vmDiskGiBSchema.optional(),
   })
   .strict();
 
@@ -150,6 +155,7 @@ export const captureSandbox = serviceProcedure(
           templateId: build?.templateId ?? input.templateId ?? null,
           tag,
           scrubPaths: input.scrubPaths ?? [],
+          defaultDiskGiB: input.defaultDiskGiB ?? null,
         },
         kind: "CAPTURE_TEMPLATE",
         action: "sandboxes.capture",
@@ -278,6 +284,10 @@ export const captureSandbox = serviceProcedure(
               throw imageQuotaExceeded("stored");
           }
         }
+        // The image is the sandbox's whole root: the revision's floor. A
+        // default below it could never be created.
+        if (input.defaultDiskGiB !== undefined && input.defaultDiskGiB < sandbox.diskGiB)
+          throw diskBelowImage();
         const hold = captureHold(sandbox.diskGiB);
         if (
           host.daemonMemoryBudgetMiB === null ||
@@ -351,6 +361,8 @@ export const captureSandbox = serviceProcedure(
             chargedVcpu: hold.vcpu,
             diskChargeGiB: hold.diskGiB,
             storagePoolId: sandbox.storagePoolId,
+            // A build's capture takes the build's default at finalize.
+            defaultDiskGiB: buildId === null ? (input.defaultDiskGiB ?? null) : null,
             ...(buildId !== null ? { buildId, buildAttempt } : {}),
           },
         });
@@ -653,10 +665,14 @@ export async function finalizeCapture(
         ...manifest,
         cpuCount: built?.cpuCount ?? parent.cpuCount,
         memoryMiB: built?.memoryMiB ?? parent.memoryMiB,
-        // The image is the source VM's whole root: its disk is both the
-        // revision's default and the smallest disk a sandbox from it can use
-        // (assertDiskFitsImage), so it must not be inflated by the parent's.
-        diskGiB: sandbox.diskGiB,
+        // The image is the source VM's whole root: its disk is the smallest a
+        // sandbox from it can use (assertDiskFitsImage). The default is the
+        // build's, the capture's request, or the parent's, never below it.
+        minDiskGiB: sandbox.diskGiB,
+        defaultDiskGiB: Math.max(
+          built?.defaultDiskGiB ?? capture.defaultDiskGiB ?? parent.defaultDiskGiB,
+          sandbox.diskGiB,
+        ),
         manifestDigest: createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
         sourceKind: built ? "BUILD" : "CAPTURE",
         parentRevisionId: parent.id,
@@ -824,6 +840,7 @@ async function lockFinalizingBuild(tx: Prisma.TransactionClient, buildId: string
       cpuCount: true,
       memoryMiB: true,
       diskGiB: true,
+      defaultDiskGiB: true,
       readyAt: true,
       stoppedAt: true,
       reservedMinutes: true,
@@ -848,7 +865,7 @@ async function buildRevisionFields(tx: Prisma.TransactionClient, build: Finalizi
     recipeDigest: build.recipeDigest,
     cpuCount: build.cpuCount,
     memoryMiB: build.memoryMiB,
-    diskGiB: build.diskGiB,
+    defaultDiskGiB: build.defaultDiskGiB,
     env: exec.plan.env,
     defaultCwd: exec.plan.workdir,
     startCmd: exec.start?.command ?? null,

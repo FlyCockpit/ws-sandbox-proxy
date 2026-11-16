@@ -52,7 +52,7 @@ describe("registration form schema (the server's createTemplateInput)", () => {
       architecture: "x86_64",
       cpuCount: 1,
       memoryMiB: 1024,
-      diskGiB: 32,
+      defaultDiskGiB: 32,
       guestUid: 1000,
       guestGid: 1000,
       guestHome: "/home/user",
@@ -61,6 +61,12 @@ describe("registration form schema (the server's createTemplateInput)", () => {
     });
     // An empty guest version is omitted, not sent as "".
     expect(templateDraftInput(draft())).not.toHaveProperty("guestVersion");
+    // A blank minimum is omitted (the server takes the default as the floor).
+    expect(templateDraftInput(draft())).not.toHaveProperty("minDiskGiB");
+    expect(parseTemplateDraft(draft({ minDiskGiB: "8" }))).toMatchObject({
+      defaultDiskGiB: 32,
+      minDiskGiB: 8,
+    });
   });
 
   it.each([
@@ -73,6 +79,10 @@ describe("registration form schema (the server's createTemplateInput)", () => {
     [{ memoryMiB: "511" }, "memoryMiB"],
     [{ memoryMiB: "1025" }, "memoryMiB"],
     [{ memoryMiB: "65792" }, "memoryMiB"],
+    [{ defaultDiskGiB: "" }, "defaultDiskGiB"],
+    [{ defaultDiskGiB: "2049" }, "defaultDiskGiB"],
+    [{ minDiskGiB: "0" }, "minDiskGiB"],
+    [{ minDiskGiB: "64" }, "minDiskGiB"],
     [{ slug: "Bad_Slug" }, "slug"],
     [{ slug: "" }, "slug"],
     [{ label: "   " }, "label"],

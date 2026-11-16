@@ -2580,6 +2580,14 @@ PYIMAGE
           printf 'WSSP_SUDO %s %s\n' "$8" "$verdict" >&2
           exit 0
           ;;
+        *"wssp root-grow-helper"*)
+          printf '%s %s\n' "$7" "$9" >> "$statedir/root-log"
+          part=$(( $9 - 1048576 ))
+          verdict="$9 $9 $part ext4 $part partition $part"
+          if [ -f "$statedir/root-verdict" ]; then verdict=$(cat "$statedir/root-verdict"); fi
+          printf 'WSSP_ROOT %s %s\n' "$8" "$verdict" >&2
+          exit 0
+          ;;
         *"Plan §10 retire helper"*)
           verdict=absent
           if [ -f "$statedir/retire-verdict" ]; then verdict=$(cat "$statedir/retire-verdict"); fi
@@ -6712,7 +6720,7 @@ fn c14_crash_reconciliation_requires_persisted_readiness_and_live_guest_evidence
                 "user.flycockpit.template_digest": request.template_digest,
                 "volatile.base_image": &request.template_digest[7..],
                 "user.flycockpit.readiness": serde_json::to_string(&super::client::ReadinessSpec {
-                    guest: request.guest.clone(), architecture: "x86_64".into(), mode: Default::default(), privilege: Default::default(),
+                    guest: request.guest.clone(), architecture: "x86_64".into(), mode: Default::default(), privilege: Default::default(), root_disk_bytes: None,
                 }).unwrap()
             },
             "devices": { "eth0": pinned_nic },

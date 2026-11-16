@@ -60,7 +60,8 @@ export type CommunityImageChoice = {
   id: string;
   label: string;
   architecture: string;
-  resources: { cpuCount: number; memoryMiB: number; diskGiB: number };
+  /** The prep build's size: `diskGiB` becomes the base's `minDiskGiB`. */
+  resources: { cpuCount: number; memoryMiB: number; diskGiB: number; defaultDiskGiB: number };
 };
 
 /** The tested picker entries, and why creation is disabled (if it is). */
@@ -200,7 +201,11 @@ async function upsertUpstreamRevision(
       templateId,
       revision: (last?.revision ?? 0) + 1,
       ...manifest,
-      ...entry.resources,
+      // Hidden build base: its floor and default are the prep build's disk.
+      cpuCount: entry.resources.cpuCount,
+      memoryMiB: entry.resources.memoryMiB,
+      minDiskGiB: entry.resources.diskGiB,
+      defaultDiskGiB: entry.resources.diskGiB,
       manifestDigest: await sha256Hex(canonicalJson(manifest)),
       sourceKind: "UPSTREAM",
     },

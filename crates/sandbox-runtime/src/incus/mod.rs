@@ -18,6 +18,7 @@ mod guest_sudo;
 mod kvm;
 pub(crate) mod network;
 pub(crate) mod pty;
+mod root_grow;
 mod server_lease;
 mod storage;
 #[cfg(test)]

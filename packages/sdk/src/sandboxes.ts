@@ -656,6 +656,7 @@ export function createSandboxesApi(
           body: {
             ...(input.templateId ? { templateId: input.templateId } : {}),
             ...(input.scrubPaths ? { scrubPaths: input.scrubPaths } : {}),
+            ...(input.defaultDiskGiB !== undefined ? { defaultDiskGiB: input.defaultDiskGiB } : {}),
           },
           idempotencyKey: k,
           signal: s,
@@ -1054,7 +1055,12 @@ export function createSandboxesApi(
 }
 
 /** `sandbox.captureTemplate` input: defaults to the sandbox's own template. */
-export type CaptureTemplateInput = { templateId?: string; scrubPaths?: string[] };
+export type CaptureTemplateInput = {
+  templateId?: string;
+  scrubPaths?: string[];
+  /** The new revision's `defaultDiskGiB` (>= this sandbox's disk, its minimum). */
+  defaultDiskGiB?: number;
+};
 export type CaptureResult = { operationId: string; revisionId: string };
 
 /** True for a create that failed because no host could provide the image. */

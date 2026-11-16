@@ -144,3 +144,60 @@ describe("reuse keys on the resolved VM size (§3.2 cache, §3.6 join)", () => {
     expect(again).toMatchObject({ joined: true, build: { id: other.build.id } });
   });
 });
+
+describe("sized builds (disk minimum vs default)", () => {
+  it("an unsized build uses the base's minimum + 2 GiB; its revision's floor is the build disk, its default the base's", async () => {
+    const f = await buildOwnerFixture(db);
+    // A small base floor with the community 32 GiB default.
+    await db.inspect.sandboxTemplateRevision.update({
+      where: { id: f.base.id },
+      data: { minDiskGiB: 8, defaultDiskGiB: 32 },
+    });
+    const accepted = await acceptTemplateBuild(f.session, request(f, "small"));
+    expect(
+      await db.inspect.sandboxTemplateBuild.findUniqueOrThrow({
+        where: { id: accepted.build.id },
+        select: { diskGiB: true, defaultDiskGiB: true },
+      }),
+    ).toEqual({ diskGiB: 10, defaultDiskGiB: 32 });
+    const revision = await completeBuild(db, daemon, f, accepted.build.id);
+    expect(
+      await db.inspect.sandboxTemplateRevision.findUniqueOrThrow({
+        where: { id: revision },
+        select: { minDiskGiB: true, defaultDiskGiB: true },
+      }),
+    ).toEqual({ minDiskGiB: 10, defaultDiskGiB: 32 });
+  });
+
+  it("an explicit build disk and default are kept; below the base's floor or a default below the build disk is refused", async () => {
+    const f = await buildOwnerFixture(db);
+    await db.inspect.sandboxTemplateRevision.update({
+      where: { id: f.base.id },
+      data: { minDiskGiB: 8, defaultDiskGiB: 32 },
+    });
+    const sized = await acceptTemplateBuild(
+      f.session,
+      request(f, "sized-disk", { resources: { diskGiB: 12 }, defaultDiskGiB: 64 }),
+    );
+    expect(
+      await db.inspect.sandboxTemplateBuild.findUniqueOrThrow({
+        where: { id: sized.build.id },
+        select: { diskGiB: true, defaultDiskGiB: true },
+      }),
+    ).toEqual({ diskGiB: 12, defaultDiskGiB: 64 });
+    // Only the default differs: a different result, not a join.
+    const otherDefault = await acceptTemplateBuild(
+      f.session,
+      request(f, "sized-disk", { resources: { diskGiB: 12 }, defaultDiskGiB: 48 }),
+    );
+    expect(otherDefault.joined).toBe(false);
+    for (const over of [
+      { resources: { diskGiB: 6 } },
+      { resources: { diskGiB: 12 }, defaultDiskGiB: 10 },
+    ]) {
+      await expect(
+        acceptTemplateBuild(f.session, request(f, "refused", over)),
+      ).rejects.toMatchObject({ data: { code: "sandbox.disk_below_image" } });
+    }
+  });
+});

@@ -317,7 +317,7 @@ const reviewed = new Map([
   ],
   ["crates/sandbox-runtime/src/incus/client.rs|to_string ( & request . lease )", 1],
   [
-    "crates/sandbox-runtime/src/incus/client.rs|to_string ( & ReadinessSpec { guest : request . guest . clone ( ) , architecture : request . architecture . clone ( ) . unwrap_or_default ( ) , mode : request . readiness , privilege , } )",
+    "crates/sandbox-runtime/src/incus/client.rs|to_string ( & ReadinessSpec { guest : request . guest . clone ( ) , architecture : request . architecture . clone ( ) . unwrap_or_default ( ) , mode : request . readiness , privilege , root_disk_bytes , } )",
     1,
   ],
   ["crates/sandbox-runtime/src/incus/dns.rs|to_string ( state )", 1],

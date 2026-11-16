@@ -40,8 +40,25 @@ Builds are not `docker build`. The output is a KVM VM image, the base is a
 WS Sandbox Proxy template (never a Docker image), and there is no per-step layer cache:
 either the whole recipe matches an earlier successful build (the existing
 revision is reused) or every step runs. The match includes the resolved VM
-size (`cpuCount`, `memoryMiB`, `diskGiB`), so a build that differs only in size
-neither reuses nor joins a build of another size.
+size (`cpuCount`, `memoryMiB`, `diskGiB`) and the new revision's
+`defaultDiskGiB`, so a build that differs only in size neither reuses nor joins
+a build of another size.
+
+### Disk size
+
+The build VM's disk becomes the new revision's `minDiskGiB`: the image is that
+VM's whole root, and roots never shrink, so it is also the floor of every
+template built or captured from it. Builds therefore default to a small disk:
+the base's `minDiskGiB` plus 2 GiB of headroom for what the steps install
+(10 GiB on the 8 GiB community base). A recipe or request that installs more
+sets `resources.diskGiB` (request: top-level `diskGiB`); one below the base's
+minimum is refused with `sandbox.disk_below_image`.
+
+The new revision's `defaultDiskGiB` (what creates get when they omit a size) is
+the request's `defaultDiskGiB`, else the base's default, never below the build
+disk: a build on the community base keeps the 32 GiB default. A sandbox created
+larger than the minimum grows its root filesystem at create
+([root disk](./sandboxes.md#root-disk-minimum-and-default)).
 
 A build carries two digests, shown on its page under their API names.
 `buildDigest` is the match key: the recipe plus the resolved base revision,
@@ -77,7 +94,7 @@ The canonical recipe is JSON:
 | `from`       | `{template, tag?}` (a template slug; no tag means `latest`) or `{revisionId}`                                                                      |
 | `args`       | Values for declared ARGs. A build request can override them; an undeclared name is refused                                                         |
 | `steps`      | Up to 256, applied in order (below)                                                                                                                |
-| `resources`  | CPU, guest RAM and disk of the build VM and the defaults of the new revision; omitted values come from the base                                    |
+| `resources`  | CPU, guest RAM and disk of the build VM; CPU and RAM are the new revision's defaults, the disk its minimum ([disk size](#disk-size))               |
 | `egress`     | The build VM's egress request ([egress](#egress))                                                                                                  |
 | `scrubPaths` | Up to 16 extra absolute guest paths removed at capture, on top of the mandatory scrub list                                                         |
 | `start`      | `{command, ready?, readyTimeoutMs?}`: run at every boot of a sandbox from the revision (see [Start and ready commands](#start-and-ready-commands)) |
@@ -383,7 +400,8 @@ from a user build in four ways.
   new revision shows **Verifying** and no sandbox, tag or grant can use it.
   WS Sandbox Proxy boots it in a fresh verify VM under the build's own principal, runs a
   fixed smoke as the guest user, and kills the verify VM before the build
-  ends. Only a passing smoke publishes the revision and moves `latest`. The
+  ends. The verify VM uses the revision's default disk (32 GiB), above the
+  8 GiB build disk, so its create also proves the root grows. Only a passing smoke publishes the revision and moves `latest`. The
   whole build reserves 40 minutes: 30 for the recipe and 10 for the verify
   window.
 - **No guest root.** Build and verify VMs always run with `guestSudo` off;

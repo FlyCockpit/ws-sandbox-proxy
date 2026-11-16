@@ -157,6 +157,8 @@ export function createFenceStore(init: {
           cpuCount: 1,
           memoryMiB: 1024,
           diskGiB: 32,
+          defaultDiskGiB: 32,
+          minDiskGiB: 32,
           ...r,
         },
       ]),
@@ -957,6 +959,7 @@ export function installFenceTransaction(
             ...(["sandboxes", "placements", "templates"].includes(name)
               ? { cpuCount: 1, memoryMiB: 1024, diskGiB: 32 }
               : {}),
+            ...(name === "templates" ? { defaultDiskGiB: 32, minDiskGiB: 32 } : {}),
             ...(name === "operations"
               ? {
                   dispatchAttempt: 0,

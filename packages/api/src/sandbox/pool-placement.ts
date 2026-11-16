@@ -789,7 +789,11 @@ export async function resolvePlacement(
     });
   const revision = await resolveTemplateRevision(tx, owner, input.template);
   const size = resolveVmSize(
-    { cpuCount: revision.cpuCount, memoryMiB: revision.memoryMiB, diskGiB: revision.diskGiB },
+    {
+      cpuCount: revision.cpuCount,
+      memoryMiB: revision.memoryMiB,
+      diskGiB: revision.defaultDiskGiB,
+    },
     inputSizeOverrides(input),
   );
   assertDiskFitsImage(revision, size.diskGiB);

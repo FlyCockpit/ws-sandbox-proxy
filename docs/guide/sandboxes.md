@@ -795,12 +795,15 @@ examples against the current API.
 ## VM size
 
 Native API and SDK create accept independent optional `cpuCount` / `memoryMiB` / `diskGiB`.
-Omitting a dimension uses that exact revision's immutable default; revision
-registration/append defaults each omitted dimension to 1 vCPU / 1024 MiB / 32 GiB.
+Omitting a dimension uses that exact revision's immutable default (its
+`cpuCount`, `memoryMiB` and `defaultDiskGiB`); revision registration/append
+defaults each omitted dimension to 1 vCPU / 1024 MiB / 32 GiB.
 CPU must be an integer 1–32 and memory an integer 512–65536 MiB in 256 MiB steps.
-Disk must be an integer 1–2048 GiB; oversized images fail instead of enlarging
-the root. Dashboard forms support all three dimensions; a blank create field
-independently inherits the accepted revision. No resize or live migration is
+Disk must be an integer from the revision's `minDiskGiB` to 2048 GiB (see
+[root disk: minimum and default](#root-disk-minimum-and-default)). Dashboard
+forms support all three dimensions; a blank create field independently
+inherits the accepted revision, and the create form shows the chosen
+revision's minimum and default disk. No resize or live migration is
 supported; a stopped disk moves only through [disk offload](#disk-offload).
 
 Get/find/list and bound `Sandbox.sandbox`/get expose actual accepted size.
@@ -826,11 +829,45 @@ them. Cold start bypasses new-root cap/drain but still needs healthy original
 storage and live-resource fit. Missing storage never authorizes a replacement;
 only a verified stored copy can be restored elsewhere ([disk offload](#disk-offload)).
 
-A captured or built revision (`sourceKind` CAPTURE or BUILD) carries its source
-VM's whole root disk, and its `diskGiB` is that size. A create (or a build on
-such a base) asking for a smaller `diskGiB` is a 400 `sandbox.disk_below_image`
-before anything is dispatched; omit `diskGiB` or ask for at least the
-revision's. A base (MANUAL) revision's `diskGiB` is only a default.
+### Root disk: minimum and default
+
+Every revision has two disk sizes, both in its DTO:
+
+- `minDiskGiB`: the image's own root disk. A captured or built revision
+  (`sourceKind` CAPTURE or BUILD) carries its source VM's whole root, so its
+  minimum is that VM's disk; a registered (MANUAL) revision's minimum is the
+  `minDiskGiB` given at registration (default: its `defaultDiskGiB`), since wssp
+  cannot see inside the image. A create (or a build on the revision) asking for
+  less is a 400 `sandbox.disk_below_image` before anything is dispatched.
+- `defaultDiskGiB`: what a create gets when it omits `diskGiB`. It is never
+  below the minimum.
+
+The community Ubuntu base has an 8 GiB minimum and a 32 GiB default, so a
+create that names no size still gets 32 GiB, and templates built on the base
+stay small (see [sized builds](./template-builds.md#disk-size)).
+
+**Root growth.** A create larger than the image's root needs the guest's root
+filesystem to grow to the disk. The node daemon does this itself at every
+create, as part of readiness (it does not rely on cloud-init): a fixed helper
+runs as guest root, grows the root partition with `growpart` and the
+filesystem online (`resize2fs` for ext4, `xfs_growfs`, `btrfs filesystem
+resize max`), then measures the partition and the filesystem's own size. A
+root that does not reach the disk (to within a few MiB) fails the create with
+`root_disk_not_grown` (`guest_unavailable` with that `details.reason`), and the
+VM is destroyed like any create readiness failure. An image whose root sits on
+LVM, LUKS or md is not grown; it passes only when it already fills the disk.
+Start and reconnect never re-run it (a disk never changes after create), and
+neither does a restore of an offloaded disk. The check is guest-attested
+hygiene, like `guest_root_granted`: a guest with root can misreport its own
+disk, and nothing in capacity accounting uses it. Images need `python3` (as
+for every create), `growpart` (`cloud-guest-utils`) and the filesystem's grow
+tool; an image registered at exactly its own root size needs none of them.
+
+Roots never shrink: a capture's minimum is the captured sandbox's own disk. To
+keep a captured template small, capture a sandbox created at (or near) its
+revision's minimum; `POST /v1/sandboxes/{id}/capture` (and the dashboard's
+Save as template) take an optional `defaultDiskGiB` for the new revision
+(default: the source revision's default, at least the captured disk).
 
 Invalid size is a safe 400 `sandbox.vm_size_invalid`; unsupported valid size is
 409 / SDK `unsupported`, and immutable mismatch is `conflict`. SDK local schema

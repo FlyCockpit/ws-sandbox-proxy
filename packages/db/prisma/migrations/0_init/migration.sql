@@ -569,6 +569,7 @@ CREATE TABLE "sandbox_template_build" (
     "cpuCount" INTEGER NOT NULL,
     "memoryMiB" INTEGER NOT NULL,
     "diskGiB" INTEGER NOT NULL,
+    "defaultDiskGiB" INTEGER NOT NULL,
     "egressRequest" JSONB,
     "egressPresets" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "timeoutMinutes" INTEGER NOT NULL,
@@ -1162,7 +1163,8 @@ CREATE TABLE "sandbox_logical_template" (
 
 -- CreateTable
 CREATE TABLE "sandbox_template_revision" (
-    "diskGiB" INTEGER NOT NULL DEFAULT 32,
+    "defaultDiskGiB" INTEGER NOT NULL DEFAULT 32,
+    "minDiskGiB" INTEGER NOT NULL DEFAULT 32,
     "cpuCount" INTEGER NOT NULL DEFAULT 1,
     "memoryMiB" INTEGER NOT NULL DEFAULT 1024,
     "id" TEXT NOT NULL,
@@ -1951,6 +1953,7 @@ CREATE TABLE "sandbox_template_capture" (
     "chargedMemoryMiB" INTEGER NOT NULL DEFAULT 0,
     "chargedVcpu" INTEGER NOT NULL DEFAULT 0,
     "diskChargeGiB" INTEGER NOT NULL DEFAULT 0,
+    "defaultDiskGiB" INTEGER,
     "storagePoolId" TEXT,
     "errorCode" TEXT,
     "symlinkedPaths" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -3583,7 +3586,7 @@ ALTER TABLE "account_image_policy" ADD CONSTRAINT "account_image_policy_admin_ck
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_principal_ck9d51b3b8" CHECK (("principalKind"::text = 'sdkKey') = ("authorizingKeyId" IS NOT NULL) AND ("principalKind"::text = 'system') = ("triggeredByRevisionId" IS NOT NULL) AND "principalKey" = CASE "principalKind"::text WHEN 'sdkKey' THEN 'k:' || "authorizingKeyId" WHEN 'session' THEN 's' ELSE 'sys' END);
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_target_ckc3626963" CHECK (("poolId" IS NULL) <> ("requestedHostId" IS NULL) AND "targetKey" = coalesce("poolId", "requestedHostId"));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_minutes_ckaff9aed0" CHECK ("timeoutMinutes" BETWEEN 1 AND 1440 AND "reservedMinutes" BETWEEN 0 AND "timeoutMinutes" AND ("chargedMinutes" IS NULL OR "chargedMinutes" BETWEEN 0 AND "reservedMinutes") AND (NOT "minutesSettled" OR "chargedMinutes" IS NOT NULL) AND extract(day FROM "chargeMonth") = 1);
-ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_vm_size_ckc744d624" CHECK ("cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0 AND "diskGiB" >= 1 AND "diskGiB" <= 2048);
+ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_vm_size_ck1ee6588b" CHECK ("cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0 AND "diskGiB" >= 1 AND "diskGiB" <= 2048 AND "defaultDiskGiB" >= "diskGiB" AND "defaultDiskGiB" <= 2048);
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_recipe_ck85034c96" CHECK (octet_length("recipe"::text) <= 65536 AND "recipeDigest" ~ '^[0-9a-f]{64}$' AND "buildDigest" ~ '^[0-9a-f]{64}$' AND ("sourceFormat"::text = 'DOCKERFILE') = ("dockerfileText" IS NOT NULL) AND ("dockerfileText" IS NULL OR octet_length("dockerfileText") <= 65536) AND jsonb_typeof("buildArgs") = 'object' AND cardinality("egressPresets") <= 16);
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_context_ckac6d057c" CHECK (("contextSha256" IS NULL) = ("contextBytes" IS NULL) AND ("contextSha256" IS NULL OR "contextSha256" ~ '^[0-9a-f]{64}$') AND ("contextBytes" IS NULL OR "contextBytes" > 0));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_progress_ck8540d445" CHECK ("stepIndex" >= -1 AND jsonb_typeof("steps") = 'array' AND jsonb_array_length("steps") <= 256 AND ("phase" IS NULL OR length("phase") <= 64) AND ("failureStepIndex" IS NULL OR "failureStepIndex" >= 0) AND ("failureTail" IS NULL OR octet_length("failureTail") <= 8192));
@@ -3594,7 +3597,7 @@ ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_outcome_ck73
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_wait_ckbf6848aa" CHECK (("waitForCapacityMs" IS NULL OR "waitForCapacityMs" BETWEEN 1000 AND 2073600000) AND ("waitForCapacityMs" IS NULL OR "poolId" IS NOT NULL) AND ("errorDetail" IS NULL OR ("errorCode" IS NOT NULL AND "errorDetail" ~ '^[a-z0-9_.]{1,64}$')));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_error_code_cka31ed2c8" CHECK ("errorCode" IS NULL OR "errorCode" IN ('build_step_failed', 'build_step_unknown', 'build_step_timeout', 'build_step_host_disconnected', 'build_timeout', 'build_context_timeout', 'build_context_mismatch', 'build_context_expired', 'build_context_failed', 'build_placement_failed', 'build_capture_failed', 'build_capture_lease_expired', 'build_store_failed', 'build_authority_lost', 'build_host_lost', 'build_internal', 'build_cancelled', 'build_verify_failed', 'build_upstream_unavailable'));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_verify_ck423d125a" CHECK ((NOT "verifyRequired" AND "verifySandboxId" IS NULL AND "verifyDeadlineAt" IS NULL) OR ("verifyRequired" AND "noCache"));
-ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_origin_ckaac0ed9d" CHECK ("origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = '6a9f748c5980b996b63b97f818ac825df00c943572d07ee977097f0a92d88ed3' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL));
+ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_origin_ck651c67d2" CHECK ("origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = 'eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL));
 ALTER TABLE "sandbox_build_context" ADD CONSTRAINT "sandbox_build_context_shape_ck4f029215" CHECK ("totalBytes" > 0 AND "receivedBytes" BETWEEN 0 AND "totalBytes" AND "expectedSha256" ~ '^[0-9a-f]{64}$' AND "importAttempt" >= 0 AND (state::text = 'ADOPTED') = ("transferId" IS NOT NULL) AND (state::text NOT IN ('SEALED', 'ADOPTED') OR "receivedBytes" = "totalBytes") AND ("errorCode" IS NULL OR (state::text IN ('ABORTED', 'EXPIRED') AND "errorCode" IN ('build_context_timeout', 'build_context_expired', 'build_context_mismatch', 'build_context_failed'))) AND (state::text NOT IN ('OPEN', 'SEALED') OR "reservationHeld"));
 ALTER TABLE "sandbox_build_context_chunk" ADD CONSTRAINT "sandbox_build_context_chunk_shape_ck629ad63f" CHECK ("offset" >= 0 AND "length" > 0);
 ALTER TABLE "credential_definition" ADD CONSTRAINT "credential_definition_version_cke7b16127" CHECK ("version" >= 1);
@@ -3634,7 +3637,7 @@ ALTER TABLE "sdk_key" ADD CONSTRAINT "sdk_key_kind_secret_ckd067d5ec" CHECK (("k
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_community_ckec7c7d96" CHECK ("communitySource" IS NULL OR "communitySource" IN ('ubuntu-26.04'));
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_capture_keep_ck827f58be" CHECK ("captureKeep" BETWEEN 1 AND 50 AND ("pruneAfterDays" IS NULL OR "pruneAfterDays" BETWEEN 1 AND 3650) AND cardinality("captureScrubPaths") <= 64);
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_vm_size_ckece5d0b1" CHECK ("cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0);
-ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_root_disk_ck6734e9b5" CHECK ("diskGiB" >= 1 AND "diskGiB" <= 2048);
+ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_root_disk_ck093d92a5" CHECK ("minDiskGiB" >= 1 AND "minDiskGiB" <= "defaultDiskGiB" AND "defaultDiskGiB" <= 2048);
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_number_ckd4d6dbf3" CHECK ("revision" > 0 AND "guestUid" > 0 AND "guestGid" > 0);
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_template_build_ck51f21c23" CHECK (("sourceKind"::text = 'BUILD') = ("buildId" IS NOT NULL) AND ("buildId" IS NULL OR "recipeDigest" ~ '^[0-9a-f]{64}$') AND ("defaultCwd" IS NULL OR ("defaultCwd" LIKE '/%' AND octet_length("defaultCwd") <= 4096)) AND ("startCmd" IS NULL OR octet_length("startCmd") <= 4096) AND ("readyCmd" IS NULL OR octet_length("readyCmd") <= 4096) AND ("readyTimeoutMs" IS NULL OR "readyTimeoutMs" BETWEEN 1000 AND 600000));
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_retired_reason_ck8496a093" CHECK ("retiredReason" IS NULL OR "retiredReason" IN ('manual', 'retention', 'auto_prune', 'verify_failed', 'superseded'));
@@ -3713,6 +3716,7 @@ ALTER TABLE "sandbox_image_transfer" ADD CONSTRAINT "sandbox_image_transfer_shap
 ALTER TABLE "sandbox_image_link" ADD CONSTRAINT "sandbox_image_link_shape_ck9e5a0d60" CHECK ("role" IN ('SOURCE', 'DEST') AND "partNumber" BETWEEN 1 AND 10000 AND "tokenDigest" ~ '^[0-9a-f]{64}$' AND "expiresAt" > "createdAt" AND "hostEpoch" > 0);
 ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_shape_ckbb831d5d" CHECK (cardinality("scrubPaths") <= 80 AND "chargedMemoryMiB" >= 0 AND "chargedVcpu" >= 0 AND "diskChargeGiB" >= 0 AND ("fingerprint" IS NULL OR "fingerprint" ~ '^sha256:[0-9a-f]{64}$') AND (NOT "resourcesHeld" OR "storagePoolId" IS NOT NULL OR "diskChargeGiB" = 0));
 ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_build_attempt_ck67c06fdb" CHECK ("buildAttempt" >= 0 AND ("buildId" IS NOT NULL OR "buildAttempt" = 0));
+ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_default_disk_ckca9d5ce0" CHECK ("defaultDiskGiB" IS NULL OR ("defaultDiskGiB" >= 1 AND "defaultDiskGiB" <= 2048));
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_intent_ck3be86db2" CHECK ((state::text = 'WAITING' AND "intent" IS NOT NULL AND "endedAt" IS NULL) OR (state::text <> 'WAITING' AND "intent" IS NULL AND "endedAt" IS NOT NULL));
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_bypass_ck70dd6c14" CHECK ("bypassCount" >= 0);
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_deadline_cka867a222" CHECK ("deadlineAt" IS NULL OR "deadlineAt" > "enqueuedAt");

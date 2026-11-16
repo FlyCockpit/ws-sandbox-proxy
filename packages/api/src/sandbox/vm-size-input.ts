@@ -1,5 +1,7 @@
 import { ORPCError } from "@orpc/server";
 import {
+  type RevisionSizeOverrides,
+  revisionSizeOverridesSchema,
   type VmSizeOverrides,
   vmRevisionSizeSchema,
   vmSizeOverridesSchema,
@@ -17,27 +19,26 @@ export function validateVmSizeOverrides(input: VmSizeOverrides): VmSizeOverrides
 }
 
 /**
- * A captured or built revision's image carries the source VM's whole root
- * disk (its `diskGiB`), so a sandbox from it needs at least that disk. Refuse
- * a smaller request up front instead of letting the host fail the create. A
- * MANUAL (base) revision's `diskGiB` is only a default.
+ * A revision's `minDiskGiB` is its image's root disk (a captured or built
+ * image carries the source VM's whole root; a registered one its declared
+ * floor), so a sandbox or build VM from it needs at least that disk. Refuse a
+ * smaller request up front instead of letting the host fail the create.
  */
-export function assertDiskFitsImage(
-  revision: { sourceKind: "MANUAL" | "CAPTURE" | "BUILD" | "UPSTREAM"; diskGiB: number },
-  diskGiB: number,
-): void {
-  // An UPSTREAM image's declared disk is the catalog default, not a captured
-  // root: like a MANUAL registration it does not bound the VM's disk (S6).
-  if (
-    revision.sourceKind !== "MANUAL" &&
-    revision.sourceKind !== "UPSTREAM" &&
-    diskGiB < revision.diskGiB
-  )
-    throw diskBelowImage();
+export function assertDiskFitsImage(revision: { minDiskGiB: number }, diskGiB: number): void {
+  if (diskGiB < revision.minDiskGiB) throw diskBelowImage();
 }
 
-export function revisionVmSize(input: VmSizeOverrides) {
-  return vmRevisionSizeSchema.parse(validateVmSizeOverrides(input));
+/** A registered revision's size: `minDiskGiB` defaults to, and never exceeds, `defaultDiskGiB`. */
+export function revisionVmSize(input: RevisionSizeOverrides) {
+  const parsed = revisionSizeOverridesSchema.safeParse({
+    cpuCount: input.cpuCount,
+    memoryMiB: input.memoryMiB,
+    defaultDiskGiB: input.defaultDiskGiB,
+    minDiskGiB: input.minDiskGiB,
+  });
+  const size = parsed.success ? vmRevisionSizeSchema.safeParse(parsed.data) : null;
+  if (!size?.success) throw vmSizeInvalid();
+  return size.data;
 }
 
 /** Values-free classification shared by browser input boundaries. `sandboxName`:
@@ -66,6 +67,10 @@ export function rethrowLaunchInputValidationError(
   if (paths.includes("metadata"))
     throw new ORPCError("BAD_REQUEST", { data: { code: "sandbox.metadata_invalid" } });
   if (paths.includes("egress")) throw egressPolicyInvalid();
-  if (paths.includes("cpuCount") || paths.includes("memoryMiB") || paths.includes("diskGiB"))
+  if (
+    ["cpuCount", "memoryMiB", "diskGiB", "defaultDiskGiB", "minDiskGiB"].some((field) =>
+      paths.includes(field),
+    )
+  )
     throw vmSizeInvalid();
 }

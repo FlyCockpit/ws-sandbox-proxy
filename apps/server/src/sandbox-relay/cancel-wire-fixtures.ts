@@ -1061,6 +1061,22 @@ if mode.startswith("readiness-"):
             verdict = planted.read_text().strip() if planted.exists() else {"grant": "granted", "revoke": "revoked"}.get(sudo_mode, "clean") + " sudo_ws"
             print("WSSP_SUDO " + sudo_nonce + " " + verdict, file=sys.stderr, flush=True)
             sys.exit(0)
+        # The root-grow-helper (guest root, create only): a grown root unless
+        # the test plants "root-verdict" (the record body after the nonce).
+        if argv_exec[:5] == ["python3", "-I", "-S", "-B", "-c"] and "wssp root-grow-helper" in argv_exec[5]:
+            assert "--user" in args and args[args.index("--user") + 1] == "0", args
+            root_mode, root_nonce, root_disk, root_budget = argv_exec[6:]
+            assert root_mode == "grow" and root_disk.isdigit() and root_budget.isdigit(), argv_exec[6:]
+            with open(root / "root-execs", "a") as log:
+                log.write(root_disk + "\n")
+            part = str(int(root_disk) - 1048576)
+            planted = root / "root-verdict"
+            body = planted.read_text().strip() if planted.exists() else " ".join([root_disk, root_disk, part, "ext4", part, "partition", part])
+            if body == "ungrown":
+                # An 8 GiB image root that never grew on this disk.
+                body = " ".join([root_disk, "8589934592", "8588886016", "ext4", "8588886016", "partition", "8300000000"])
+            print("WSSP_ROOT " + root_nonce + " " + body, file=sys.stderr, flush=True)
+            sys.exit(0)
         if metadata_mkdir(argv_exec):
             sys.exit(0)
         if len(argv_exec) > 3 and argv_exec[3] == "wssp-readiness":
@@ -1152,6 +1168,18 @@ if argv[:5] == ["python3", "-I", "-S", "-B", "-c"] and "wssp guest-sudo-helper" 
     planted = root / ("sudo-verdict-" + sudo_mode)
     verdict = planted.read_text().strip() if planted.exists() else {"grant": "granted", "revoke": "revoked"}.get(sudo_mode, "clean") + " sudo_ws"
     print("WSSP_SUDO " + sudo_nonce + " " + verdict, file=sys.stderr, flush=True)
+    sys.exit(0)
+# The root-grow-helper (guest root, create only), as in the readiness branch.
+if argv[:5] == ["python3", "-I", "-S", "-B", "-c"] and "wssp root-grow-helper" in argv[5]:
+    assert options[3:9] == ["--user", "0", "--group", "0", "--cwd", "/"], options
+    root_mode, root_nonce, root_disk, root_budget = argv[6:]
+    assert root_mode == "grow" and root_disk.isdigit() and root_budget.isdigit(), argv[6:]
+    part = str(int(root_disk) - 1048576)
+    planted = root / "root-verdict"
+    body = planted.read_text().strip() if planted.exists() else " ".join([root_disk, root_disk, part, "ext4", part, "partition", part])
+    if body == "ungrown":
+        body = " ".join([root_disk, "8589934592", "8588886016", "ext4", "8588886016", "partition", "8300000000"])
+    print("WSSP_ROOT " + root_nonce + " " + body, file=sys.stderr, flush=True)
     sys.exit(0)
 # Plan §10: the root retire helper (guest root, cwd /, no guest env). The
 # attempt's scope is modelled by its guest process group (the pid file the

@@ -36,12 +36,60 @@ export type VmSize = z.infer<typeof vmSizeSchema>;
 export const vmSizeOverridesSchema = vmSizeSchema.partial();
 export type VmSizeOverrides = z.infer<typeof vmSizeOverridesSchema>;
 
-/** A revision append is self-contained; it never inherits another revision. */
-export const vmRevisionSizeSchema = z.strictObject({
-  cpuCount: vmCpuCountSchema.default(limits.cpuCountDefault),
-  memoryMiB: vmMemoryMiBSchema.default(limits.memoryMiBDefault),
-  diskGiB: vmDiskGiBSchema.default(limits.diskGiBDefault),
+/**
+ * A revision's size: CPU and memory defaults, the disk a create gets when it
+ * omits `diskGiB` (`defaultDiskGiB`) and the image's root disk, below which no
+ * create or build may go (`minDiskGiB`, at most the default).
+ */
+export const revisionSizeOverridesSchema = z.strictObject({
+  cpuCount: vmCpuCountSchema.optional(),
+  memoryMiB: vmMemoryMiBSchema.optional(),
+  defaultDiskGiB: vmDiskGiBSchema.optional(),
+  minDiskGiB: vmDiskGiBSchema.optional(),
 });
+export type RevisionSizeOverrides = z.infer<typeof revisionSizeOverridesSchema>;
+
+/**
+ * A revision append is self-contained; it never inherits another revision.
+ * An omitted `minDiskGiB` is the default: wssp cannot see a registered image's
+ * root, so a smaller floor is the registrant's explicit claim.
+ */
+export const vmRevisionSizeSchema = revisionSizeOverridesSchema
+  .transform((size) => {
+    const defaultDiskGiB = size.defaultDiskGiB ?? limits.diskGiBDefault;
+    return {
+      cpuCount: size.cpuCount ?? limits.cpuCountDefault,
+      memoryMiB: size.memoryMiB ?? limits.memoryMiBDefault,
+      defaultDiskGiB,
+      minDiskGiB: size.minDiskGiB ?? defaultDiskGiB,
+    };
+  })
+  .refine((size) => size.minDiskGiB <= size.defaultDiskGiB, {
+    message: "minDiskGiB must not exceed defaultDiskGiB.",
+    path: ["minDiskGiB"],
+  });
+export type VmRevisionSize = z.infer<typeof vmRevisionSizeSchema>;
+
+/** The create defaults of a revision (its disk default, not its floor). */
+export function revisionDefaultSize(revision: {
+  cpuCount: number;
+  memoryMiB: number;
+  defaultDiskGiB: number;
+}): VmSize {
+  return {
+    cpuCount: revision.cpuCount,
+    memoryMiB: revision.memoryMiB,
+    diskGiB: revision.defaultDiskGiB,
+  };
+}
+
+/**
+ * Headroom a build adds over its base's `minDiskGiB` when neither the request
+ * nor the recipe sizes the disk. Small on purpose: the build's disk becomes
+ * the published revision's floor and every descendant's (roots never shrink);
+ * a recipe that needs more says so with `diskGiB`.
+ */
+export const BUILD_DISK_HEADROOM_GIB = 2;
 
 export function resolveVmSize(revision: VmSize, overrides: VmSizeOverrides): VmSize {
   const defaults = vmSizeSchema.parse(revision);

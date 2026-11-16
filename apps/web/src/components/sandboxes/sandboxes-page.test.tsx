@@ -976,6 +976,7 @@ it.each([
 
 it.each([
   ["sandbox.vm_size_invalid", "sizeInvalid"],
+  ["sandbox.disk_below_image", "diskBelowImage"],
   ["sandbox.metadata_invalid", "labels"],
   ["sandbox.egress_policy_invalid", "egress"],
   ["BAD_REQUEST", "invalid"],
@@ -1239,7 +1240,9 @@ it("create offers a retry when lifetime discovery fails and restores the choices
 });
 
 it("blank size remains omitted through lost-response retry after template defaults change", async () => {
-  server.current.templates = [fakeTemplate({ cpuCount: 2, memoryMiB: 2048, diskGiB: 48 })];
+  server.current.templates = [
+    fakeTemplate({ cpuCount: 2, memoryMiB: 2048, defaultDiskGiB: 48, minDiskGiB: 8 }),
+  ];
   server.current.lostResponses.createSandbox = 1;
   const user = userEvent.setup();
   await openCreate(user);
@@ -1251,6 +1254,9 @@ it("blank size remains omitted through lost-response retry after template defaul
   expect(cpu.value).toBe("");
   expect(memory.value).toBe("");
   const disk = form.getByLabelText(enSandboxes.create.diskGiB) as HTMLInputElement;
+  // The chosen revision's floor and default are shown and bound the field.
+  expect(disk.getAttribute("min")).toBe("8");
+  expect(form.getByText(/Root disk: 48 GiB if left blank; at least 8 GiB/)).toBeTruthy();
   await user.type(disk, "64");
   await user.clear(disk);
   expect(disk.value).toBe("");
@@ -1268,7 +1274,9 @@ it("blank size remains omitted through lost-response retry after template defaul
   expect(first).not.toHaveProperty("cpuCount");
   expect(first).not.toHaveProperty("memoryMiB");
   expect(first).not.toHaveProperty("diskGiB");
-  server.current.templates = [fakeTemplate({ cpuCount: 8, memoryMiB: 8192, diskGiB: 128 })];
+  server.current.templates = [
+    fakeTemplate({ cpuCount: 8, memoryMiB: 8192, defaultDiskGiB: 128, minDiskGiB: 8 }),
+  ];
   await act(() => client.invalidateQueries({ queryKey: ["sandboxTemplates"] }));
   await waitFor(() =>
     expect(form.getByLabelText(enSandboxes.create.revision).textContent).toContain(

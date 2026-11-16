@@ -12,7 +12,7 @@ import { isSafeMapText } from "./map-primitives";
 import { metadataSchema } from "./metadata";
 import { sandboxNameSchema } from "./sandbox-name";
 import { templateSelectorSchema } from "./template-selector";
-import { vmSizeOverridesSchema } from "./vm-size";
+import { revisionSizeOverridesSchema, vmDiskGiBSchema, vmSizeOverridesSchema } from "./vm-size";
 
 export const idempotencyKeySchema = z
   .string()
@@ -197,6 +197,13 @@ export const captureBodySchema = z
       )
       .max(CAPTURE_EXTRA_SCRUB_PATHS_MAX)
       .optional(),
+    /**
+     * The new revision's `defaultDiskGiB`. Its `minDiskGiB` is always the
+     * sandbox's own disk (a root never shrinks), so capture a sandbox created
+     * small to keep the template small. Omitted: the source revision's
+     * default, at least the sandbox's disk.
+     */
+    defaultDiskGiB: vmDiskGiBSchema.optional(),
   })
   .strict();
 /** Command duration only; observation and lease budgets stay strictly positive. */
@@ -289,7 +296,8 @@ const templateDefinitionBodySchema = z
     hostId: resourceIdSchema.optional(),
     poolId: resourceIdSchema.optional(),
     memberId: resourceIdSchema.optional(),
-    ...vmSizeOverridesSchema.shape,
+    /** `minDiskGiB` defaults to `defaultDiskGiB`; set it to the image's real root to allow smaller creates. */
+    ...revisionSizeOverridesSchema.shape,
     slug: z
       .string()
       .min(1)

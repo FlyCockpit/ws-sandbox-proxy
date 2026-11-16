@@ -363,7 +363,8 @@ function templateRow(overrides: Record<string, unknown> = {}) {
     sandboxCount: 0,
     cpuCount: 1,
     memoryMiB: 1024,
-    diskGiB: 32,
+    defaultDiskGiB: 32,
+    minDiskGiB: 32,
     ...overrides,
   };
 }
@@ -654,7 +655,7 @@ describe("register a template", () => {
     expect(calls("createTemplate")[0]?.input).toEqual({
       cpuCount: 1,
       memoryMiB: 1024,
-      diskGiB: 32,
+      defaultDiskGiB: 32,
       hostId: "host-a",
       envs: {},
       slug: "ubuntu-dev",
@@ -1119,16 +1120,23 @@ it.each(["en-US", "es-MX"])(
 );
 
 it("appends explicitly prefilled size as a new revision without changing the source", async () => {
-  server.templates = [templateRow({ cpuCount: 2, memoryMiB: 2048, diskGiB: 48 })];
+  server.templates = [
+    templateRow({ cpuCount: 2, memoryMiB: 2048, defaultDiskGiB: 48, minDiskGiB: 12 }),
+  ];
   const user = userEvent.setup();
   await mount();
-  expect(await screen.findByText("Defaults: 2 vCPU · 2048 MiB · 48 GiB")).toBeTruthy();
+  expect(await screen.findByText("Defaults: 2 vCPU · 2048 MiB · 48 GiB disk")).toBeTruthy();
+  expect(
+    screen.getByText("Minimum disk: 12 GiB (the image's root; smaller sandboxes are refused)"),
+  ).toBeTruthy();
   await user.click(screen.getByRole("button", { name: enTemplates.appendWithSize }));
   const form = within(dialog());
   const cpu = form.getByLabelText(enTemplates.form.cpuCount);
   const memory = form.getByLabelText(enTemplates.form.memoryMiB);
-  const disk = form.getByLabelText(enTemplates.form.diskGiB);
+  const disk = form.getByLabelText(enTemplates.form.defaultDiskGiB);
+  const minDisk = form.getByLabelText(enTemplates.form.minDiskGiB);
   expect((disk as HTMLInputElement).value).toBe("48");
+  expect((minDisk as HTMLInputElement).value).toBe("12");
   await user.clear(disk);
   await user.type(disk, "64");
   expect((cpu as HTMLInputElement).value).toBe("2");
@@ -1148,9 +1156,15 @@ it("appends explicitly prefilled size as a new revision without changing the sou
     templateId: "tpl-a",
     cpuCount: 2,
     memoryMiB: 3072,
-    diskGiB: 64,
+    defaultDiskGiB: 64,
+    minDiskGiB: 12,
   });
-  expect(server.templates[0]).toMatchObject({ cpuCount: 2, memoryMiB: 2048, diskGiB: 48 });
+  expect(server.templates[0]).toMatchObject({
+    cpuCount: 2,
+    memoryMiB: 2048,
+    defaultDiskGiB: 48,
+    minDiskGiB: 12,
+  });
   expect(calls("createTemplate")).toHaveLength(0);
 });
 

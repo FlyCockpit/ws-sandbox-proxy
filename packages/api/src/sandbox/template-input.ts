@@ -1,4 +1,4 @@
-import { defaultEnvSchema, vmSizeOverridesSchema } from "@wssp/sandbox-contracts";
+import { defaultEnvSchema, revisionSizeOverridesSchema } from "@wssp/sandbox-contracts";
 import { z } from "zod";
 import { cursorPageInput } from "../lib/pagination";
 import { entityId, resourceSlugSchema, shortText } from "../lib/schemas";
@@ -25,7 +25,7 @@ const templateDefinitionInput = z
     hostId: entityId.optional(),
     poolId: entityId.optional(),
     memberId: entityId.optional(),
-    ...vmSizeOverridesSchema.shape,
+    ...revisionSizeOverridesSchema.shape,
     envs: defaultEnvSchema.optional(),
     slug: resourceSlugSchema,
     label: shortText.max(TEMPLATE_LABEL_MAX),

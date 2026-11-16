@@ -1914,3 +1914,18 @@ describe("sandboxes.update (rename)", () => {
     expect(error.code).toBe(code);
   });
 });
+
+it("a capture forwards its defaultDiskGiB for the new revision", async () => {
+  const { client, calls } = harness(envelope("sandbox.disk_below_image"));
+  await expect(
+    client.sandboxes.captureTemplate(
+      "sbx_1",
+      { templateId: "tpl_1", defaultDiskGiB: 64 },
+      { idempotencyKey: "capture-disk" },
+    ),
+  ).rejects.toMatchObject({ code: "sandbox.disk_below_image" });
+  expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+    templateId: "tpl_1",
+    defaultDiskGiB: 64,
+  });
+});

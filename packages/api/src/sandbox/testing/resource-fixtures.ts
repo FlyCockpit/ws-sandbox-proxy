@@ -30,7 +30,10 @@ export async function seedTemplateRevision(
       architecture?: string;
       cpuCount?: number;
       memoryMiB?: number;
+      /** The revision's default disk (32 when omitted). */
       diskGiB?: number;
+      /** The revision's floor (1 when omitted: a registered image of unknown root). */
+      minDiskGiB?: number;
       guestUid?: number;
       guestGid?: number;
       guestHome?: string;
@@ -63,7 +66,8 @@ export async function seedTemplateRevision(
       revision: 1,
       cpuCount: data.cpuCount ?? 1,
       memoryMiB: data.memoryMiB ?? 1024,
-      diskGiB: data.diskGiB,
+      defaultDiskGiB: data.diskGiB ?? 32,
+      minDiskGiB: data.minDiskGiB ?? 1,
       ...manifest,
       manifestDigest: createHash("sha256").update(JSON.stringify(manifest)).digest("hex"),
       retiredAt: data.retiredAt,
@@ -127,8 +131,8 @@ export async function seedSandboxInstance(
             storagePoolId: pool.id,
             storagePoolName: pool.name,
             storageMarker: pool.marker,
-            rootChargeGiB: vmRootChargeGiB(data.diskGiB ?? revision.diskGiB),
-            diskGiB: data.diskGiB ?? revision.diskGiB,
+            rootChargeGiB: vmRootChargeGiB(data.diskGiB ?? revision.defaultDiskGiB),
+            diskGiB: data.diskGiB ?? revision.defaultDiskGiB,
             diskReservationHeld: data.state !== "DELETED",
           }
         : {}),

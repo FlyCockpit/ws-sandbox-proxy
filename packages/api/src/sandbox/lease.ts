@@ -317,6 +317,7 @@ export async function commitSandboxLeaseRenewal(
 const READINESS_PUBLIC_CODES: Partial<Record<ReadinessFailureReason, string>> = {
   guest_sudo_unavailable: "guest_sudo_unavailable",
   guest_root_granted: "guest_root_granted",
+  root_disk_not_grown: "root_disk_not_grown",
 };
 
 /** Own H and S before calling; both rows and time must be sampled under S.

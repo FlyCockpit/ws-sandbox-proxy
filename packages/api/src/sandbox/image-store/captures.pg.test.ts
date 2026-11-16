@@ -124,6 +124,39 @@ async function hostResult(f: Awaited<ReturnType<typeof fixture>>, operationId: s
   );
 }
 
+describe("capture disk minimum and default", () => {
+  it("a capture's floor is the sandbox's disk; an explicit default is kept and one below the floor is refused", async () => {
+    const f = await fixture();
+    await expect(
+      captureSandbox(f.owner, {
+        id: f.sandbox.id,
+        idempotencyKey: randomUUID(),
+        tag: "nightly",
+        defaultDiskGiB: 8,
+      }),
+    ).rejects.toMatchObject({ data: { code: "sandbox.disk_below_image" } });
+    const { operationId } = await captureSandbox(f.owner, {
+      id: f.sandbox.id,
+      idempotencyKey: randomUUID(),
+      tag: "nightly",
+      defaultDiskGiB: 24,
+    });
+    await db.inspect.sandboxOperation.update({
+      where: { id: operationId },
+      data: { state: "ACCEPTED" },
+    });
+    expect(await hostResult(f, operationId, 7)).toBe(true);
+    const outcome = await finalizeCapture(operationId);
+    expect(outcome.kind).toBe("finalized");
+    expect(
+      await db.inspect.sandboxTemplateRevision.findUniqueOrThrow({
+        where: { id: outcome.kind === "finalized" ? outcome.revisionId : "" },
+        select: { minDiskGiB: true, defaultDiskGiB: true },
+      }),
+    ).toEqual({ minDiskGiB: 16, defaultDiskGiB: 24 });
+  });
+});
+
 describe("capture lifecycle against real PostgreSQL", () => {
   it("acceptance → host result → finalizer: revision, availability, artifact, tag, retention, hold released exactly once", async () => {
     const f = await fixture();
@@ -164,8 +197,10 @@ describe("capture lifecycle against real PostgreSQL", () => {
       captureTag: "nightly",
       incusFingerprint: fp(1),
       revision: 2,
-      // The image is the captured VM's 16 GiB root, not the parent's default.
-      diskGiB: 16,
+      // The image is the captured VM's 16 GiB root (its floor); creates
+      // still default to the parent's 32 GiB.
+      minDiskGiB: 16,
+      defaultDiskGiB: 32,
       capturedWithGuestRoot: true,
       builtWithWsspRecipe: false,
     });

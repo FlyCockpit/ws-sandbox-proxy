@@ -35,7 +35,7 @@ export type WsspRecipeFacts = {
 export async function communityPrepBuildDigest(input: {
   baseRevisionId: string;
   baseFingerprint: string;
-  resources: { cpuCount: number; memoryMiB: number; diskGiB: number };
+  resources: { cpuCount: number; memoryMiB: number; diskGiB: number; defaultDiskGiB: number };
 }): Promise<string> {
   const parsed = parseRecipe(UBUNTU_CLOUD_PREP_V1, {});
   return buildDigest({

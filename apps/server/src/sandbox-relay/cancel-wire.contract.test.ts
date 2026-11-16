@@ -245,7 +245,8 @@ async function setup(
   const create =
     mode === "readiness-create" ||
     mode === "readiness-adopt-create" ||
-    mode === "readiness-create-root";
+    mode === "readiness-create-root" ||
+    mode === "readiness-create-disk";
   store = wireStore(
     mode === "stat-missing"
       ? "STAT_PATH"
@@ -458,6 +459,9 @@ async function setup(
     } else if (mode === "readiness-create") {
       // The very first start's identity readiness fails.
       await writeFile(join(dir, "fail-readiness"), "");
+    } else if (mode === "readiness-create-disk") {
+      // Identity readiness passes; the guest root never grew to the disk.
+      await writeFile(join(dir, "root-verdict"), "ungrown");
     } else if (mode === "readiness-create-root") {
       // Identity readiness passes; the create-time hygiene audit finds a
       // static root grant (guestSudo off, guestRoot false).
@@ -2000,6 +2004,26 @@ it.each(["readiness-create", "readiness-reconnect"])(
     );
   },
 );
+
+it("root growth wire: a create whose root did not grow fails root_disk_not_grown and is destroyed", async () => {
+  await setup("readiness-create-disk");
+  await until(
+    () => store.operations.get("op-1")!.state === "FAILED",
+    "readiness cleanup committed",
+  );
+  expect(
+    frames.find((frame) => frame.type === "operation.result" && frame.operationId === "op-1"),
+  ).toMatchObject({
+    state: "unknown_outcome",
+    error: { code: "guest_unavailable", reason: "root_disk_not_grown" },
+  });
+  // The helper measured against the create's own root disk.
+  const disks = (await readFile(join(dir, "root-execs"), "utf8")).trim().split("\n");
+  expect(disks.length).toBeGreaterThan(0);
+  expect(store.operations.get("op-1")).toMatchObject({ errorCode: "root_disk_not_grown" });
+  expect(store.sandboxes.get("sbx-1")).toMatchObject({ state: "STOPPING", generation: 2 });
+  expect([...store.operations.values()].filter((op) => op.kind === "KILL_SANDBOX")).toHaveLength(1);
+});
 
 it("guestSudo wire: a create whose image grants root statically fails guest_root_granted and is destroyed", async () => {
   await setup("readiness-create-root");

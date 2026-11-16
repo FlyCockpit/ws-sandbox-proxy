@@ -77,12 +77,16 @@ for selecting exact revisions and hosts.
 ## Dashboard revision size defaults
 
 **Templates → Register template** has explicit **Default vCPUs** and
-**Default memory (MiB)** and **Root disk (GiB)** inputs, initially 1, 1024 and 32. CPU is a whole count
+**Default memory (MiB)**, **Default root disk (GiB)** and **Minimum root disk
+(GiB, optional)** inputs, initially 1, 1024, 32 and blank. The minimum is the
+image's own root size (creates below it are refused; blank: the default is the
+minimum, since wssp cannot see inside a registered image). CPU is a whole count
 from 1 to 32; memory is 512–65536 MiB in 256 MiB steps. For the browser
 recipe, enter 2 and 2048. Registration verifies the image without starting a
 VM or reserving memory; the defaults may exceed the verification host's cap.
 
-Each paged revision card shows its saved CPU/RAM/root defaults. **Add revision**
+Each paged revision card shows its saved CPU/RAM/root defaults and its minimum
+root disk. **Add revision**
 starts a new registration form with explicit 1/1024/32 values. **Append with these
 defaults** copies only that revision's CPU/RAM/root into the new form; choose a
 verification host and image alias again. You can edit the copied values before
@@ -363,7 +367,10 @@ it (`fromTemplate("ubuntu-26-04")`) like any other base.
   and stops cloud-init from recreating a default user. It installs the polkit
   rule that refuses linger to everyone but root (see
   [Deny self-linger](#deny-self-linger)), then `python3`, `util-linux`, `git`,
-  `tar` and `ca-certificates`. Finally it runs `cloud-init clean --logs --seed`,
+  `tar`, `ca-certificates`, `cloud-guest-utils` and `e2fsprogs` (asserting
+  `growpart` and `resize2fs`). It turns cloud-init's own root growth off
+  (`growpart: off`, `resize_rootfs: false`): the node daemon grows and checks
+  the root at every create instead. Finally it runs `cloud-init clean --logs --seed`,
   empties `/etc/machine-id` and checks that no passwordless grant remains. Its
   last step runs as `user` and asserts that privilege escalation and linger
   are both refused. The revision shows **Built by WS Sandbox Proxy's base recipe**.
@@ -450,10 +457,13 @@ revisions for restricted SDK keys. See [pools](../guide/pools.md).
 
 ## Immutable CPU and guest RAM defaults
 
-Register and append accept optional independent `cpuCount` / `memoryMiB` / `diskGiB`.
-Omission normalizes to 1 vCPU / 1024 MiB / 32 GiB for each new revision; append does not
+Register and append accept optional independent `cpuCount` / `memoryMiB` /
+`defaultDiskGiB` / `minDiskGiB`. Omission normalizes to 1 vCPU / 1024 MiB / 32 GiB
+for each new revision, and `minDiskGiB` to the default; append does not
 inherit the previous revision. CPU is 1–32, RAM 512–65536 MiB in 256 MiB steps.
-Disk is an integer 1–2048 GiB; images must fit and are never silently enlarged.
+Disks are integers 1–2048 GiB with `minDiskGiB` ≤ `defaultDiskGiB`; declare the
+image's real root as `minDiskGiB` to allow smaller creates (a create below the
+image's real root fails on the host). A larger disk grows the root at create.
 A revision's defaults may exceed the verification host's budget: registration
 verifies an image without launching a VM or reserving RAM. Changing only size
 policy preserves the artifact/architecture/guest `manifestDigest` and exact

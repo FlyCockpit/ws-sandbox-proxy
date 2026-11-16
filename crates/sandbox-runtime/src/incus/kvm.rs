@@ -892,6 +892,17 @@ impl SandboxRuntime for IncusKvmRuntime {
                     )?;
                     Ok(spec)
                 })?;
+            // Allocation recovery of a fresh create (its create key) re-runs the
+            // root growth check the crash may have cut short; idempotent for a
+            // grown root. Never for other queries (probes, expiry, reconnect).
+            if let (Some(_), Some(disk_bytes)) = (create_key, spec.root_disk_bytes) {
+                self.client
+                    .with_verified_enforcement(sandbox_id, true, || {
+                        self.client
+                            .with_guest(&spec.guest)
+                            .guest_root_grow_step(&instance, disk_bytes)
+                    })?;
+            }
             // R2: allocation recovery re-applies guest sudo from the spec in
             // its own fenced section (never the create-time audit). A grant
             // failure is GuestUnavailable with its reason, which triggers the
@@ -1647,6 +1658,7 @@ fn finish_create(
         request.architecture.as_deref(),
         GuestSudoStep::for_create(request.guest_privilege),
         request.readiness,
+        RootGrowth::for_create(runtime, request),
     )?;
 
     let egress_denied_grants = recorded_denied_grants(runtime, &request.sandbox_id);
@@ -1703,6 +1715,7 @@ fn reconcile_existing_create(
         request.vm_size,
         GuestSudoStep::for_create(request.guest_privilege),
         request.readiness,
+        RootGrowth::for_create(runtime, request),
     )
     .map_err(crate::effect::PostIssueError::from_final_start)?;
     let egress_denied_grants = recorded_denied_grants(runtime, &request.sandbox_id);
@@ -1735,6 +1748,7 @@ fn check_readiness(
     architecture: Option<&str>,
     sudo: GuestSudoStep,
     mode: crate::ReadinessMode,
+    root: RootGrowth,
 ) -> Result<u32, RuntimeError> {
     // C37: readiness includes the network/DNS policy fence — revocation
     // markers must have committed and the live bridge/ACL must read back
@@ -1828,6 +1842,15 @@ fn check_readiness(
                         return Err(super::client::boot_unsettled());
                     }
                 }
+            }
+            // Root growth (create only): its own fenced section once the guest
+            // is known ready, before guest sudo. Idempotent, so a restart's
+            // re-pass grows and measures again.
+            if let RootGrowth::Create { disk_bytes } = root {
+                let step = clamped(&wait)?;
+                step.with_verified_enforcement(sandbox_id, true, || {
+                    clamped(&wait)?.guest_root_grow_step(name, disk_bytes)
+                })?;
             }
             // Guest sudo (plan step 11, M2): its own short fenced section once
             // the guest is known ready, never inside the identity closure. The
@@ -1937,6 +1960,28 @@ fn check_readiness(
 /// The persisted readiness spec's `privilege.sudo` must equal the lease's
 /// (I3, step 10): a mismatch is refused as `guest_check`. A pre-feature spec
 /// reads false, as does a pre-feature lease.
+/// Whether readiness grows and checks the guest root (create only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootGrowth {
+    /// A fresh create: grow the root to the configured disk and verify it.
+    Create { disk_bytes: u64 },
+    /// Start, reconnect, a restore of a stored disk, or no known root disk.
+    Skip,
+}
+
+impl RootGrowth {
+    /// A create grows to its bound root disk. A restore launches the
+    /// sandbox's own stored disk (same size, already grown): nothing to do.
+    fn for_create(runtime: &IncusKvmRuntime, request: &crate::CreateSandboxRequest) -> Self {
+        match (&request.restore, &runtime.client.expected_root) {
+            (None, Some(root)) => Self::Create {
+                disk_bytes: root.size_bytes(),
+            },
+            _ => Self::Skip,
+        }
+    }
+}
+
 fn guest_sudo_spec_check(
     client: &IncusClient,
     name: &BoundInstance,
@@ -1973,6 +2018,7 @@ fn start_if_stopped(
     vm_size: sandbox_protocol::VmSize,
     sudo: GuestSudoStep,
     mode: crate::ReadinessMode,
+    root: RootGrowth,
 ) -> EffectOutcome<u32> {
     let restarts = std::cell::Cell::new(0);
     pre::phase(
@@ -1998,7 +2044,8 @@ fn start_if_stopped(
         |issued| {
             issued
                 .observe(|| {
-                    check_readiness(client, name, architecture, sudo, mode).map(|n| restarts.set(n))
+                    check_readiness(client, name, architecture, sudo, mode, root)
+                        .map(|n| restarts.set(n))
                 })
                 .map_err(Into::into)
         },
@@ -2434,6 +2481,8 @@ impl IncusKvmRuntime {
                         // declared identity (the daemon refuses bootstrap
                         // and build reconnects, I12).
                         crate::ReadinessMode::Standard,
+                        // The disk never changes after create.
+                        RootGrowth::Skip,
                     )
                     .map(|proof| {
                         let signals = super::exec::probe_group_signals(&client, &bound);

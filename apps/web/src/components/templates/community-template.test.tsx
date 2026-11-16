@@ -105,7 +105,7 @@ const tested = {
   id: "ubuntu-26.04",
   label: "Ubuntu 26.04 LTS",
   architecture: "x86_64",
-  resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 10 },
+  resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 8, defaultDiskGiB: 32 },
 };
 
 beforeEach(() => {

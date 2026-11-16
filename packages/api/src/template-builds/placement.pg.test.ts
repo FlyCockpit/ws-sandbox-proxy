@@ -90,6 +90,7 @@ async function seedBuild(
       cpuCount: 1,
       memoryMiB: 1024,
       diskGiB: 8,
+      defaultDiskGiB: 8,
       timeoutMinutes: 60,
       reservedMinutes: 60,
       chargeMonth: new Date("2026-11-01T00:00:00Z"),

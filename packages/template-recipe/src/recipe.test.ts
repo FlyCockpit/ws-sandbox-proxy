@@ -329,7 +329,7 @@ describe("digests", () => {
       args: {},
       contextSha256: null,
       egressRequest: null,
-      resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 10 },
+      resources: { cpuCount: 2, memoryMiB: 2048, diskGiB: 10, defaultDiskGiB: 32 },
     };
     const digest = await buildDigest(input);
     const variants = await Promise.all([
@@ -343,7 +343,8 @@ describe("digests", () => {
       buildDigest({ ...input, resources: { ...input.resources, cpuCount: 4 } }),
       buildDigest({ ...input, resources: { ...input.resources, memoryMiB: 4096 } }),
       buildDigest({ ...input, resources: { ...input.resources, diskGiB: 20 } }),
+      buildDigest({ ...input, resources: { ...input.resources, defaultDiskGiB: 64 } }),
     ]);
-    expect(new Set([digest, ...variants]).size).toBe(8);
+    expect(new Set([digest, ...variants]).size).toBe(9);
   });
 });

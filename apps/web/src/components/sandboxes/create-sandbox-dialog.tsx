@@ -72,6 +72,7 @@ const DEFINITE: ReadonlySet<SandboxProblem> = new Set([
   "capacityStorage",
   "capacityCeiling",
   "sizeInvalid",
+  "diskBelowImage",
   "sizeUnsupported",
   "hostUnavailable",
   "poolPolicyChanged",
@@ -291,7 +292,7 @@ export function CreateSandboxDialog({ lang, onClose }: { lang: string; onClose: 
   const advisorySize = {
     cpuCount: values.cpuCount.trim() ? Number(values.cpuCount) : revision?.cpuCount,
     memoryMiB: values.memoryMiB.trim() ? Number(values.memoryMiB) : revision?.memoryMiB,
-    diskGiB: values.diskGiB.trim() ? Number(values.diskGiB) : revision?.diskGiB,
+    diskGiB: values.diskGiB.trim() ? Number(values.diskGiB) : revision?.defaultDiskGiB,
   };
 
   // One set of grant fields: the allowlist when internet access is off, the
@@ -616,7 +617,8 @@ export function CreateSandboxDialog({ lang, onClose }: { lang: string; onClose: 
                         architecture: revision.architecture,
                         cpuCount: revision.cpuCount,
                         memoryMiB: revision.memoryMiB,
-                        diskGiB: revision.diskGiB,
+                        defaultDiskGiB: revision.defaultDiskGiB,
+                        minDiskGiB: revision.minDiskGiB,
                       })}
                     </SelectItem>
                   ))}
@@ -639,6 +641,13 @@ export function CreateSandboxDialog({ lang, onClose }: { lang: string; onClose: 
             {values.templateMode === "logical" ? (
               <p data-size-advisory="" className="text-xs text-muted-foreground">
                 {t("sandboxes:create.latestSizeHint")}
+              </p>
+            ) : revision ? (
+              <p data-disk-advisory="" className="text-xs tabular-nums text-muted-foreground">
+                {t("sandboxes:create.revisionDiskHint", {
+                  defaultDiskGiB: revision.defaultDiskGiB,
+                  minDiskGiB: revision.minDiskGiB,
+                })}
               </p>
             ) : null}
             <div className="grid min-w-0 gap-3 sm:grid-cols-2">
@@ -679,7 +688,7 @@ export function CreateSandboxDialog({ lang, onClose }: { lang: string; onClose: 
                     label={t("sandboxes:create.diskGiB")}
                     type="number"
                     inputMode="numeric"
-                    min={VM_SIZE_LIMITS.diskGiBMin}
+                    min={revision?.minDiskGiB ?? VM_SIZE_LIMITS.diskGiBMin}
                     max={VM_SIZE_LIMITS.diskGiBMax}
                     step={1}
                     autoComplete="off"

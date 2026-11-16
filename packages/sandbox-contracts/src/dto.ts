@@ -14,6 +14,9 @@ import {
   storagePoolV11Schema,
   VM_SIZE_LIMITS,
   vmCapacitySchema,
+  vmCpuCountSchema,
+  vmDiskGiBSchema,
+  vmMemoryMiBSchema,
   vmSizeSchema,
 } from "./vm-size";
 /**
@@ -255,6 +258,8 @@ export const OPERATION_ERROR_CODES = [
   "guest_sudo_not_permitted",
   "guest_sudo_unavailable",
   "guest_root_granted",
+  // The create's disk is larger than the image's root and the root did not grow.
+  "root_disk_not_grown",
   "guest_operation_failed",
   "guest_permission_denied",
   "guest_unavailable",
@@ -618,7 +623,15 @@ export const templateRevisionSchema = z
     id: resourceIdSchema,
     templateId: resourceIdSchema,
     revision: z.number().int().positive(),
-    ...vmSizeSchema.shape,
+    cpuCount: vmCpuCountSchema,
+    memoryMiB: vmMemoryMiBSchema,
+    /** The disk a create gets when it omits `diskGiB`. */
+    defaultDiskGiB: vmDiskGiBSchema,
+    /**
+     * The image's root disk: a create or build below it is refused with
+     * `sandbox.disk_below_image`; above it the guest root grows to the disk.
+     */
+    minDiskGiB: vmDiskGiBSchema,
     incusFingerprint: z.string(),
     architecture: z.string(),
     guest: z

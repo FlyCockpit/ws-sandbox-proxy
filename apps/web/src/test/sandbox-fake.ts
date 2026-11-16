@@ -749,7 +749,8 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
                   size.data.cpuCount ?? template?.cpuCount ?? VM_SIZE_LIMITS.cpuCountDefault,
                 memoryMiB:
                   size.data.memoryMiB ?? template?.memoryMiB ?? VM_SIZE_LIMITS.memoryMiBDefault,
-                diskGiB: size.data.diskGiB ?? template?.diskGiB ?? VM_SIZE_LIMITS.diskGiBDefault,
+                diskGiB:
+                  size.data.diskGiB ?? template?.defaultDiskGiB ?? VM_SIZE_LIMITS.diskGiBDefault,
                 metadata: createSandboxInput.shape.metadata.parse(input.metadata ?? {}),
                 // Mirrors the server on the creator's own node: the request's
                 // mode (inferred like `inferEgressMode`) is effective, and
@@ -1124,7 +1125,8 @@ export function fakeTemplate(overrides: Row = {}): Row {
     revision: 1,
     cpuCount: VM_SIZE_LIMITS.cpuCountDefault,
     memoryMiB: VM_SIZE_LIMITS.memoryMiBDefault,
-    diskGiB: VM_SIZE_LIMITS.diskGiBDefault,
+    defaultDiskGiB: VM_SIZE_LIMITS.diskGiBDefault,
+    minDiskGiB: VM_SIZE_LIMITS.diskGiBDefault,
     availability: [{ hostId: overrides.sandboxHostId ?? "host-1", status: "AVAILABLE" }],
     sandboxHostId: "host-1",
     retiredAt: null,

@@ -116,7 +116,7 @@ it("E1-A-04 a captured revision refuses a disk smaller than its image, direct an
   // A captured image is the source VM's whole 32 GiB root.
   await db.inspect.sandboxTemplateRevision.update({
     where: { id: f.revision.id },
-    data: { sourceKind: "CAPTURE", diskGiB: 32 },
+    data: { sourceKind: "CAPTURE", minDiskGiB: 32, defaultDiskGiB: 32 },
   });
   const before = await counts(f.id);
   for (const target of [{ sandboxHostId: f.host.id }, { poolId: f.pool.id }])
@@ -138,10 +138,11 @@ it("E1-A-04 a captured revision refuses a disk smaller than its image, direct an
       idempotencyKey: randomUUID(),
     }),
   ).resolves.toMatchObject({ sandboxHostId: f.host.id, diskGiB: 32 });
-  // A base (MANUAL) revision's diskGiB is only a default.
+  // Any revision's floor is its minDiskGiB, whatever its source: a registered
+  // (MANUAL) image declared with an 8 GiB root places a 16 GiB sandbox.
   await db.inspect.sandboxTemplateRevision.update({
     where: { id: f.revision.id },
-    data: { sourceKind: "MANUAL" },
+    data: { sourceKind: "MANUAL", minDiskGiB: 8 },
   });
   await expect(
     createSandbox(key.principal, {

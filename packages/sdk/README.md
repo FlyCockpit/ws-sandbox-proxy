@@ -1422,11 +1422,15 @@ These definitive refusals make one submission; 429/5xx/lost responses retain
 same-key retry behavior. Invalid local size inputs fail before any fetch.
 Invalid remote sizes use `sandbox.vm_size_invalid`; valid sizes exceeding a
 per-VM cap use `sandbox.vm_size_unsupported`; pinned conflicts use
-`sandbox.vm_size_mismatch`. A captured or built revision's image is its
-source VM's whole root disk, so a create from it with a `diskGiB` below the
-revision's `diskGiB` is refused up front with `sandbox.disk_below_image` (400,
-`invalid_request`); omit `diskGiB` or request at least that size. Explicit
-defaults and omission remain distinct idempotency intents.
+`sandbox.vm_size_mismatch`. Every revision has a `minDiskGiB` (its image's
+root disk: a captured or built image is its source VM's whole root) and a
+`defaultDiskGiB` (what a create gets when it omits `diskGiB`). A create below
+`minDiskGiB` is refused up front with `sandbox.disk_below_image` (400,
+`invalid_request`); omit `diskGiB` or request at least that size. A larger
+disk grows the guest's root filesystem at create; if it cannot (an image
+without `growpart`/`resize2fs`, or an unsupported root layout), the create
+fails with `root_disk_not_grown` (`kind: "unsupported"`) and the VM is
+destroyed. Explicit defaults and omission remain distinct idempotency intents.
 
 Discovery includes disk limits/defaults, fixed overhead, and the managed-root
 ceiling. Per-sandbox features require a connected host with the complete capacity

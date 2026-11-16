@@ -161,6 +161,7 @@
     "guest_sudo_not_permitted": "This host's owner does not allow root (sudo) in other users' sandboxes; the sandbox did not start. Create a new sandbox",
     "guest_sudo_unavailable": "Root (sudo) was requested, but the grant failed: the image lacks a usable `sudo` or refused the rule; the sandbox did not start",
     "guest_root_granted": "The image already gives the guest user root (a sudoers rule, the `sudo` group, docker or doas) although root was not requested; the sandbox did not start",
+    "root_disk_not_grown": "The image's root filesystem could not grow to this sandbox's disk (it lacks growpart or a resize tool, or its root layout is unsupported); the sandbox did not start. Create it at the template's minimum disk, or fix the image",
     "restore_no_allowed_host": "No allowed host had room for the restore",
     "credential.not_attached": "A login this restore names is no longer attached to the sandbox",
     "credential.not_found": "A login attached to this sandbox no longer exists",

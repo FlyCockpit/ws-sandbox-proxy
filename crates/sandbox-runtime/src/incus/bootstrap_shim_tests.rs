@@ -119,6 +119,7 @@ fn seed_spec(log: &Path, request: &CreateSandboxRequest) {
             architecture: "x86_64".into(),
             mode: request.readiness,
             privilege: Default::default(),
+            root_disk_bytes: None,
         })
         .unwrap(),
     )

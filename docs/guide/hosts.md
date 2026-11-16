@@ -1091,7 +1091,11 @@ source sandbox's pool, on top of the sandbox's own retained charge. A stopped
 32-GiB sandbox therefore holds 33 GiB, and capturing it needs another 65 GiB
 free in the pool's cap. With a 99-GiB cap that capture fits only while nothing
 else on the pool holds disk. Any other 32-GiB sandbox makes it fail with
-`sandbox.host_capacity` (`reason: disk`).
+`sandbox.host_capacity` (`reason: disk`). The charge follows the sandbox's own
+disk, not its template's default: a sandbox created at a template's minimum
+(10 GiB for a build on the 8 GiB community base) holds 11 GiB stopped and
+needs another 21 GiB to capture, and the resulting revision's minimum is
+10 GiB.
 
 Connect automatically creates and retains a 1-GiB filesystem custom volume
 `wssp-pool-marker` in each configured pool/project. Its volume config ID and

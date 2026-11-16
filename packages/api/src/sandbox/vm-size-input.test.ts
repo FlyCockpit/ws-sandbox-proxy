@@ -9,12 +9,22 @@ import {
 
 it("normalizes a self-contained revision without filling create omission", () => {
   expect(validateVmSizeOverrides({})).toEqual({});
-  expect(revisionVmSize({})).toEqual({ diskGiB: 32, cpuCount: 1, memoryMiB: 1024 });
-  expect(revisionVmSize({ memoryMiB: 2048 })).toEqual({
-    diskGiB: 32,
+  expect(revisionVmSize({})).toEqual({
+    defaultDiskGiB: 32,
+    minDiskGiB: 32,
+    cpuCount: 1,
+    memoryMiB: 1024,
+  });
+  expect(revisionVmSize({ memoryMiB: 2048, defaultDiskGiB: 16, minDiskGiB: 4 })).toEqual({
+    defaultDiskGiB: 16,
+    minDiskGiB: 4,
     cpuCount: 1,
     memoryMiB: 2048,
   });
+  // A floor above the default is a size error, never a silent clamp.
+  expect(() => revisionVmSize({ defaultDiskGiB: 8, minDiskGiB: 16 })).toThrow(
+    expect.objectContaining({ data: { code: "sandbox.vm_size_invalid" } }),
+  );
 });
 it.each([
   [["metadata", "egress", "cpuCount"], "sandbox.metadata_invalid"],
@@ -35,15 +45,12 @@ it.each([
   }
 });
 
-it("refuses a disk below a captured or built image, never below a base default (E1-A-04)", () => {
-  for (const sourceKind of ["CAPTURE", "BUILD"] as const) {
-    expect(() => assertDiskFitsImage({ sourceKind, diskGiB: 32 }, 16)).toThrow(
-      expect.objectContaining({ data: { code: "sandbox.disk_below_image" } }),
-    );
-    expect(() => assertDiskFitsImage({ sourceKind, diskGiB: 32 }, 32)).not.toThrow();
-    expect(() => assertDiskFitsImage({ sourceKind, diskGiB: 32 }, 64)).not.toThrow();
-  }
-  expect(() => assertDiskFitsImage({ sourceKind: "MANUAL", diskGiB: 32 }, 8)).not.toThrow();
+it("refuses a disk below any revision's minDiskGiB, whatever its source (E1-A-04)", () => {
+  expect(() => assertDiskFitsImage({ minDiskGiB: 8 }, 4)).toThrow(
+    expect.objectContaining({ data: { code: "sandbox.disk_below_image" } }),
+  );
+  expect(() => assertDiskFitsImage({ minDiskGiB: 8 }, 8)).not.toThrow();
+  expect(() => assertDiskFitsImage({ minDiskGiB: 8 }, 64)).not.toThrow();
 });
 
 it("maps a top-level `name` issue to sandbox.name_invalid only for a sandbox create", () => {

@@ -397,7 +397,7 @@ it("B5 revision size is self-contained launch policy, independent of image verif
   });
   bindHostImageVerifier(async () => ({ incusFingerprint: FP, architecture: "x86_64" }));
   const logical = await f.templates.createTemplate({
-    diskGiB: 32,
+    defaultDiskGiB: 32,
     hostId: f.host.id,
     slug: "size-policy",
     label: "Size policy",
@@ -406,7 +406,7 @@ it("B5 revision size is self-contained launch policy, independent of image verif
     memoryMiB: 65536,
   });
   const first = await f.templates.getTemplateRevision({ id: logical.firstRevisionId });
-  expect(first).toMatchObject({ diskGiB: 32, cpuCount: 32, memoryMiB: 65536 });
+  expect(first).toMatchObject({ defaultDiskGiB: 32, cpuCount: 32, memoryMiB: 65536 });
   const second = await f.templates.appendRevision({
     hostId: f.host.id,
     templateId: logical.id,
@@ -419,19 +419,19 @@ it("B5 revision size is self-contained launch policy, independent of image verif
     imageRef: "images:base",
   });
   expect(second).toMatchObject({
-    diskGiB: 32,
+    defaultDiskGiB: 32,
     cpuCount: 1,
     memoryMiB: 2048,
     manifestDigest: first.manifestDigest,
   });
   expect(third).toMatchObject({
-    diskGiB: 32,
+    defaultDiskGiB: 32,
     cpuCount: 1,
     memoryMiB: 1024,
     manifestDigest: first.manifestDigest,
   });
   expect(await f.templates.getTemplateRevision({ id: first.id })).toMatchObject({
-    diskGiB: 32,
+    defaultDiskGiB: 32,
     cpuCount: 32,
     memoryMiB: 65536,
   });

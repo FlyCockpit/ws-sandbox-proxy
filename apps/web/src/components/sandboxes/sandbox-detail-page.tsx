@@ -105,6 +105,7 @@ const DEFINITE: ReadonlySet<SandboxProblem> = new Set([
   "keyReused",
   "hostCapacity",
   "sizeInvalid",
+  "diskBelowImage",
   "sizeUnsupported",
   "sizeMismatch",
   "hostUnavailable",

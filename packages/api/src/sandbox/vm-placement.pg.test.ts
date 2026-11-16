@@ -188,7 +188,7 @@ it("PG 2/3/10: deterministic joint ranking, original allocation replay, source a
   });
   await db.inspect.sandboxTemplateRevision.update({
     where: { id: f.revision.id },
-    data: { diskGiB: 64, memoryMiB: 2048 },
+    data: { defaultDiskGiB: 64, memoryMiB: 2048 },
   });
   expect((await createSandbox(f.owner, input)).id).toBe(accepted.id);
   expect(await db.inspect.sandboxTemplateAvailability.count({ where: { userId: f.id } })).toBe(2);

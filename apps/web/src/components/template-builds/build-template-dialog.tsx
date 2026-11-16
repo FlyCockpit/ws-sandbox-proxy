@@ -71,6 +71,7 @@ type Draft = {
   cpuCount: string;
   memoryMiB: string;
   diskGiB: string;
+  defaultDiskGiB: string;
   timeoutMinutes: string;
 };
 type Submission = {
@@ -152,6 +153,7 @@ export function BuildTemplateDialog({
       cpuCount: "",
       memoryMiB: "",
       diskGiB: "",
+      defaultDiskGiB: "",
       timeoutMinutes: "",
     } as Draft,
     validators: {
@@ -180,6 +182,12 @@ export function BuildTemplateDialog({
             t("templates:builds.dialog.numberInvalid"),
           ),
         diskGiB: z
+          .string()
+          .refine(
+            optionalInt(VM_SIZE_LIMITS.diskGiBMin, VM_SIZE_LIMITS.diskGiBMax),
+            t("templates:builds.dialog.numberInvalid"),
+          ),
+        defaultDiskGiB: z
           .string()
           .refine(
             optionalInt(VM_SIZE_LIMITS.diskGiBMin, VM_SIZE_LIMITS.diskGiBMax),
@@ -263,6 +271,9 @@ export function BuildTemplateDialog({
           : {}),
         ...(intOrUndefined(value.diskGiB) !== undefined
           ? { diskGiB: intOrUndefined(value.diskGiB) }
+          : {}),
+        ...(intOrUndefined(value.defaultDiskGiB) !== undefined
+          ? { defaultDiskGiB: intOrUndefined(value.defaultDiskGiB) }
           : {}),
         ...(intOrUndefined(value.timeoutMinutes) !== undefined
           ? { timeoutMinutes: intOrUndefined(value.timeoutMinutes) }
@@ -625,6 +636,20 @@ export function BuildTemplateDialog({
                   <TextField
                     field={field}
                     label={t("templates:builds.dialog.disk")}
+                    type="number"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    min={VM_SIZE_LIMITS.diskGiBMin}
+                    max={VM_SIZE_LIMITS.diskGiBMax}
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+              <form.Field name="defaultDiskGiB">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("templates:builds.dialog.defaultDisk")}
                     type="number"
                     inputMode="numeric"
                     autoComplete="off"

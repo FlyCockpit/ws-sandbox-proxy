@@ -51,6 +51,7 @@ function buildRow(id: string, over: Record<string, string> = {}) {
     cpuCount: "2",
     memoryMiB: "2048",
     diskGiB: "32",
+    defaultDiskGiB: "32",
     timeoutMinutes: "60",
     reservedMinutes: "60",
     chargeMonth: "'2026-11-01'",

@@ -99,7 +99,9 @@ export type TemplateDraft = {
   guestVersion: string;
   cpuCount: string;
   memoryMiB: string;
-  diskGiB: string;
+  defaultDiskGiB: string;
+  /** Blank: the default is the floor. */
+  minDiskGiB: string;
 };
 
 export const DEFAULT_TEMPLATE_DRAFT: TemplateDraft = {
@@ -116,7 +118,8 @@ export const DEFAULT_TEMPLATE_DRAFT: TemplateDraft = {
   guestVersion: "",
   cpuCount: String(VM_SIZE_LIMITS.cpuCountDefault),
   memoryMiB: String(VM_SIZE_LIMITS.memoryMiBDefault),
-  diskGiB: String(VM_SIZE_LIMITS.diskGiBDefault),
+  defaultDiskGiB: String(VM_SIZE_LIMITS.diskGiBDefault),
+  minDiskGiB: "",
 };
 
 export type TemplateDraftProblem =
@@ -136,7 +139,8 @@ export type TemplateDraftProblem =
   | "guestVersion"
   | "cpuCount"
   | "memoryMiB"
-  | "diskGiB";
+  | "defaultDiskGiB"
+  | "minDiskGiB";
 
 const FIELD_PROBLEMS = [
   "slug",
@@ -151,7 +155,8 @@ const FIELD_PROBLEMS = [
   "guestVersion",
   "cpuCount",
   "memoryMiB",
-  "diskGiB",
+  "defaultDiskGiB",
+  "minDiskGiB",
 ] as const satisfies readonly TemplateDraftProblem[];
 
 function integerOrNaN(value: string): number {
@@ -176,7 +181,8 @@ export function templateDraftInput(draft: TemplateDraft) {
       : { hostId: draft.hostId }),
     cpuCount: integerOrNaN(draft.cpuCount),
     memoryMiB: integerOrNaN(draft.memoryMiB),
-    diskGiB: integerOrNaN(draft.diskGiB),
+    defaultDiskGiB: integerOrNaN(draft.defaultDiskGiB),
+    ...(draft.minDiskGiB.trim() ? { minDiskGiB: integerOrNaN(draft.minDiskGiB) } : {}),
     slug: draft.slug.trim(),
     label: draft.label.trim(),
     imageRef: draft.imageRef.trim(),
@@ -212,7 +218,15 @@ export function templateDraftProblems(
     if (state === "unavailable") problems.add("hostUnavailable");
     if (state === "draining") problems.add("hostDraining");
   }
-  const parsed = createTemplateInput.safeParse(templateDraftInput(draft));
+  const input = templateDraftInput(draft);
+  const parsed = createTemplateInput.safeParse(input);
+  // The floor never exceeds the default (the server refuses it as a size).
+  if (
+    input.minDiskGiB !== undefined &&
+    Number.isInteger(input.defaultDiskGiB) &&
+    input.minDiskGiB > input.defaultDiskGiB
+  )
+    problems.add("minDiskGiB");
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       const field = issue.path[0];

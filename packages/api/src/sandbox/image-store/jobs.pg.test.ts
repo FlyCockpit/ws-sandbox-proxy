@@ -732,11 +732,11 @@ describe("origin-pin GC (peer mode: captured copies of retired revisions)", () =
       (id, "userId", "templateId", tag, "principalKind", "idempotencyKey", "requestBodyHash",
        recipe, "recipeDigest", "buildDigest", "sourceFormat", "baseRevisionId", "baseFingerprint",
        "requestedHostId", "targetKey", "principalKey", "cpuCount", "memoryMiB", "diskGiB",
-       "timeoutMinutes", "reservedMinutes", "chargeMonth", state, "updatedAt")
+       "defaultDiskGiB", "timeoutMinutes", "reservedMinutes", "chargeMonth", state, "updatedAt")
       VALUES (${randomUUID()}, ${f.ownerId}, ${base.revision.templateId}, 'latest', 'session',
         ${randomUUID()}, 'h', '{}'::jsonb, ${"a".repeat(64)}, ${"b".repeat(64)}, 'RECIPE',
         ${base.revision.id}, ${base.fingerprint}, ${f.host.id}, ${f.host.id}, 's', 1, 1024, 8,
-        10, 10, date_trunc('month', now())::date, 'QUEUED', now())`;
+        8, 10, 10, date_trunc('month', now())::date, 'QUEUED', now())`;
     const released = await pass();
     for (const kept of [live, shared, running, fetching, base])
       expect(released).not.toContain(kept.fingerprint);

@@ -3,10 +3,12 @@ import prisma, { type Prisma } from "@wssp/db";
 import { lockOwnerForAdmission } from "@wssp/db/account-deletion";
 import { Prisma as PrismaValue } from "@wssp/db/client";
 import {
+  BUILD_DISK_HEADROOM_GIB,
   CAPACITY_WAIT_MAX_MS,
   type CapacityWaitRequest,
   resolveVmSize,
   type TemplateBuildCreateBody,
+  VM_SIZE_LIMITS,
   type VmSizeOverrides,
 } from "@wssp/sandbox-contracts";
 import {
@@ -24,7 +26,7 @@ import {
 import { authorizeServiceIntent, serviceResourceFilter } from "../lib/sdk-key-access";
 import type { Principal } from "../sandbox/contracts";
 import { lockOwnerPlacement } from "../sandbox/direct-placement";
-import { hostNotFound, templateNotFound } from "../sandbox/errors";
+import { diskBelowImage, hostNotFound, templateNotFound } from "../sandbox/errors";
 import { buildIdOf, grantOf, isBrowserSession, recordedKeyIdOf } from "../sandbox/principal-kinds";
 import { loadRevisionDefaults } from "../sandbox/revision-config";
 import { requirePoolUse } from "../sandbox/sharing-authority";
@@ -70,6 +72,8 @@ export type CreateTemplateBuildInput = {
   sandboxHostId?: string;
   /** Override the recipe's resources (themselves overriding the base). */
   resources?: VmSizeOverrides;
+  /** The published revision's default disk (default: the base's, at least the build disk). */
+  defaultDiskGiB?: number;
   timeoutMinutes?: number;
   waitForCapacityMs?: CapacityWaitRequest;
   /** Required exactly when the recipe has a COPY step. */
@@ -401,6 +405,7 @@ export async function acceptTemplateBuild(
       poolId: input.poolId ?? null,
       sandboxHostId: input.sandboxHostId ?? null,
       resources: input.resources ?? {},
+      defaultDiskGiB: input.defaultDiskGiB ?? null,
       timeoutMinutes,
       waitForCapacityMs,
       contextSha256: input.contextSha256 ?? null,
@@ -480,15 +485,23 @@ export async function acceptTemplateBuild(
     let size: { cpuCount: number; memoryMiB: number; diskGiB: number };
     try {
       size = resolveVmSize(
-        { cpuCount: base.cpuCount, memoryMiB: base.memoryMiB, diskGiB: base.diskGiB },
+        {
+          cpuCount: base.cpuCount,
+          memoryMiB: base.memoryMiB,
+          // Unsized builds stay small: the build disk is the published
+          // revision's floor, and every descendant's.
+          diskGiB: Math.min(base.minDiskGiB + BUILD_DISK_HEADROOM_GIB, VM_SIZE_LIMITS.diskGiBMax),
+        },
         { ...(parsed.recipe.resources ?? {}), ...(input.resources ?? {}) },
       );
     } catch {
       throw recipeInvalid("recipe_resources_invalid");
     }
-    // The build VM's root holds the base image: a captured or built base
-    // needs at least its own disk (the same refusal as a sandbox create).
+    // The build VM's root holds the base image: it needs at least the base's
+    // floor (the same refusal as a sandbox create).
     assertDiskFitsImage(base, size.diskGiB);
+    const defaultDiskGiB = input.defaultDiskGiB ?? Math.max(base.defaultDiskGiB, size.diskGiB);
+    if (defaultDiskGiB < size.diskGiB) throw diskBelowImage();
     const digest = await buildDigest({
       recipeDigest,
       baseRevisionId: base.id,
@@ -498,7 +511,7 @@ export async function acceptTemplateBuild(
       egressRequest: parsed.egress?.request ?? null,
       // The resolved size, not the raw overrides: the same effective VM
       // reached through recipe or request values is the same result.
-      resources: size,
+      resources: { ...size, defaultDiskGiB },
     });
     const targetKey = input.poolId ?? (input.sandboxHostId as string);
     const common = {
@@ -522,6 +535,7 @@ export async function acceptTemplateBuild(
       requestedHostId: input.sandboxHostId ?? null,
       targetKey,
       ...size,
+      defaultDiskGiB,
       egressRequest: parsed.egress
         ? (parsed.egress.request as unknown as Prisma.InputJsonValue)
         : undefined,

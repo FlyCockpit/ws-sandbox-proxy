@@ -59,6 +59,10 @@ pub enum ReadinessFailureReason {
     /// `guestSudo` is off but the image grants the guest user root
     /// statically (create-time hygiene audit; not a security control).
     GuestRootGranted,
+    /// The create's disk is larger than the image's root, and the guest's
+    /// root partition or filesystem did not grow to it (create-time check;
+    /// guest-attested hygiene, not a security control).
+    RootDiskNotGrown,
 }
 
 impl ReadinessFailureReason {
@@ -76,6 +80,7 @@ impl ReadinessFailureReason {
             Self::GuestCheck => "guest_check",
             Self::GuestSudoUnavailable => "guest_sudo_unavailable",
             Self::GuestRootGranted => "guest_root_granted",
+            Self::RootDiskNotGrown => "root_disk_not_grown",
         }
     }
 }

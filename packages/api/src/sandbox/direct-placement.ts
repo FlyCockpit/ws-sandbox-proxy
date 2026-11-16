@@ -60,7 +60,11 @@ export async function resolveDirectPlacement(
   const size =
     resolved?.size ??
     resolveVmSize(
-      { cpuCount: revision.cpuCount, memoryMiB: revision.memoryMiB, diskGiB: revision.diskGiB },
+      {
+        cpuCount: revision.cpuCount,
+        memoryMiB: revision.memoryMiB,
+        diskGiB: revision.defaultDiskGiB,
+      },
       overrides,
     );
   await authorizeServiceAction(

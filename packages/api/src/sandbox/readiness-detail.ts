@@ -20,6 +20,8 @@ const READINESS_FAILURE_DETAIL: Record<ReadinessFailureReason, string> = {
     "guestSudo was requested but the image has no usable `sudo` or the grant did not take effect",
   guest_root_granted:
     "guestSudo is off but the image grants the guest user root (a sudoers rule, a privileged group or doas)",
+  root_disk_not_grown:
+    "the guest root partition or filesystem did not grow to the sandbox's disk (no growpart or resize tool, or an unsupported root layout)",
 };
 
 const DETAIL_PREFIX = "Sandbox guest readiness failed (";

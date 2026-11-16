@@ -1,5 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { Button } from "@wssp/ui/components/button";
 import {
   Dialog,
@@ -53,7 +54,10 @@ function captureProblem(error: unknown): string {
     case "sandbox.template_store_unavailable":
       return "store";
     case "sandbox.capture_invalid":
+    case "sandbox.vm_size_invalid":
       return "invalid";
+    case "sandbox.disk_below_image":
+      return "defaultDisk";
     default:
       return "failed";
   }
@@ -69,7 +73,7 @@ export function SaveAsTemplateDialog({
   lang,
   onClose,
 }: {
-  sandbox: { id: string; template: { id: string; label: string } };
+  sandbox: { id: string; diskGiB: number; template: { id: string; label: string } };
   lang: string;
   onClose: () => void;
 }) {
@@ -91,7 +95,12 @@ export function SaveAsTemplateDialog({
     meta: { skipGlobalErrorToast: true },
   });
   const form = useForm({
-    defaultValues: { templateId: sandbox.template.id, tag: "latest", scrubPaths: "" },
+    defaultValues: {
+      templateId: sandbox.template.id,
+      tag: "latest",
+      scrubPaths: "",
+      defaultDiskGiB: "",
+    },
     validators: {
       onSubmit: z.object({
         templateId: z.string().min(1),
@@ -100,6 +109,16 @@ export function SaveAsTemplateDialog({
           const paths = splitPaths(v);
           return paths.length <= SCRUB_PATHS_MAX && paths.every((p) => p.startsWith("/"));
         }, t("sandboxes:capture.invalidPaths")),
+        // Blank, or a whole size from this sandbox's disk (the new floor) up.
+        defaultDiskGiB: z.string().refine(
+          (v) => {
+            const trimmed = v.trim();
+            if (!trimmed) return true;
+            const n = /^\d{1,4}$/.test(trimmed) ? Number(trimmed) : Number.NaN;
+            return n >= sandbox.diskGiB && n <= VM_SIZE_LIMITS.diskGiBMax;
+          },
+          t("sandboxes:capture.invalidDefaultDisk", { diskGiB: sandbox.diskGiB }),
+        ),
       }),
     },
     onSubmit: async ({ value }) => {
@@ -108,6 +127,9 @@ export function SaveAsTemplateDialog({
         templateId: value.templateId,
         tag: value.tag,
         scrubPaths: splitPaths(value.scrubPaths),
+        ...(value.defaultDiskGiB.trim()
+          ? { defaultDiskGiB: Number(value.defaultDiskGiB.trim()) }
+          : {}),
       };
       try {
         const input = intents.current.for(
@@ -189,6 +211,24 @@ export function SaveAsTemplateDialog({
                   inputMode="text"
                   maxLength={63}
                   inputClassName="min-h-11 font-mono"
+                />
+              )}
+            </form.Field>
+            <p data-capture-min-disk="" className="text-xs text-muted-foreground">
+              {t("sandboxes:capture.minDiskHint", { diskGiB: sandbox.diskGiB })}
+            </p>
+            <form.Field name="defaultDiskGiB">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("sandboxes:capture.defaultDisk")}
+                  type="number"
+                  inputMode="numeric"
+                  min={sandbox.diskGiB}
+                  max={VM_SIZE_LIMITS.diskGiBMax}
+                  step={1}
+                  autoComplete="off"
+                  inputClassName="min-h-11"
                 />
               )}
             </form.Field>

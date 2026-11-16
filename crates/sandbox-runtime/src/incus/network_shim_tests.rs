@@ -4204,6 +4204,7 @@ fn query_sandbox_running_unenforced_surfaces_cleanup_code() {
             architecture: "x86_64".into(),
             mode: Default::default(),
             privilege: Default::default(),
+            root_disk_bytes: None,
         })
         .unwrap(),
     )

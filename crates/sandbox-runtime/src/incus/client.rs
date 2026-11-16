@@ -501,6 +501,11 @@ pub(super) struct ReadinessSpec {
     /// pre-feature spec reads `{sudo: false}`.
     #[serde(default)]
     pub privilege: SpecPrivilege,
+    /// The disk a fresh create grew its root to (none for a restore or
+    /// without a bound root disk), so allocation recovery of that create
+    /// re-runs the root growth check. A pre-feature spec reads none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_disk_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1920,11 +1925,16 @@ impl IncusClient {
                 pre::guest(&before, &request.guest)?;
                 let fingerprint = pre::launch_image(&before, request)?;
                 let privilege = SpecPrivilege::of(request.guest_privilege);
+                let root_disk_bytes = match (&request.restore, &self.expected_root) {
+                    (None, Some(root)) => Some(root.size_bytes()),
+                    _ => None,
+                };
                 let spec = serde_json::to_string(&ReadinessSpec {
                     guest: request.guest.clone(),
                     architecture: request.architecture.clone().unwrap_or_default(),
                     mode: request.readiness,
                     privilege,
+                    root_disk_bytes,
                 })
                 .map_err(|_| {
                     RuntimeError::new(

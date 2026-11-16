@@ -651,6 +651,7 @@ export type SandboxProblem =
   | "capacityStorage"
   | "capacityCeiling"
   | "sizeInvalid"
+  | "diskBelowImage"
   | "sizeUnsupported"
   | "sizeMismatch"
   | "hostUnavailable"
@@ -710,8 +711,9 @@ export function sandboxProblem(error: unknown): SandboxProblem {
     case "capacity_wait_exceeds_policy":
       return "waitExceedsPolicy";
     case "sandbox.vm_size_invalid":
-    case "sandbox.disk_below_image":
       return "sizeInvalid";
+    case "sandbox.disk_below_image":
+      return "diskBelowImage";
     case "sandbox.vm_size_unsupported":
       return "sizeUnsupported";
     case "sandbox.vm_size_mismatch":

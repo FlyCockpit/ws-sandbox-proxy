@@ -81,23 +81,24 @@ export type BuildDigestInput = {
   egressRequest: RecipeEgressRequest | null;
   /**
    * The resolved build VM size (base < recipe `resources` < request
-   * overrides). It sizes the build and becomes the published revision's
-   * defaults, so builds that differ only in size are different results.
+   * overrides) and the published revision's default disk. The build VM's
+   * disk becomes the revision's `minDiskGiB`, so builds that differ only in
+   * size are different results.
    */
-  resources: { cpuCount: number; memoryMiB: number; diskGiB: number };
+  resources: { cpuCount: number; memoryMiB: number; diskGiB: number; defaultDiskGiB: number };
 };
 
 /**
  * The whole-recipe cache key component: recipe, resolved
  * base, effective args, context, the normalized egress request and the
  * resolved VM size. Both the cache lookup and active-build dedupe key on it.
- * `v: 2` added the VM size; v1 digests never match (one rebuild, no reuse of
- * a differently sized result).
+ * `v: 2` added the VM size; `v: 3` the published default disk. Older digests
+ * never match (one rebuild, no reuse of a differently sized result).
  */
 export function buildDigest(input: BuildDigestInput): Promise<string> {
   return sha256Hex(
     canonicalJson({
-      v: 2,
+      v: 3,
       recipe: input.recipeDigest,
       base: { revisionId: input.baseRevisionId, fingerprint: input.baseFingerprint },
       args: input.args,
@@ -107,6 +108,7 @@ export function buildDigest(input: BuildDigestInput): Promise<string> {
         cpuCount: input.resources.cpuCount,
         memoryMiB: input.resources.memoryMiB,
         diskGiB: input.resources.diskGiB,
+        defaultDiskGiB: input.resources.defaultDiskGiB,
       },
     }),
   );

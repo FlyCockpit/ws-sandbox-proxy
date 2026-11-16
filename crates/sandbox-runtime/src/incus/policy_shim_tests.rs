@@ -527,6 +527,7 @@ fn policy_reconciler_probe_owns_the_shared_inspection_gate() {
             architecture: "x86_64".into(),
             mode: Default::default(),
             privilege: Default::default(),
+            root_disk_bytes: None,
         })
         .unwrap(),
     )

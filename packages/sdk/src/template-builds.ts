@@ -51,6 +51,8 @@ export type TemplateBuildOptions = {
   cpuCount?: number;
   memoryMiB?: number;
   diskGiB?: number;
+  /** The new revision's `defaultDiskGiB` (default: the base's, at least the build disk). */
+  defaultDiskGiB?: number;
   /** Values of the recipe's ARG steps. */
   buildArgs?: Record<string, string>;
   /** Directory packed (ustar) and uploaded as the COPY context. Required with COPY. */
@@ -404,6 +406,9 @@ export function createTemplateBuildsApi(transport: WsspTransport): TemplateBuild
             ...(options.cpuCount !== undefined ? { cpuCount: options.cpuCount } : {}),
             ...(options.memoryMiB !== undefined ? { memoryMiB: options.memoryMiB } : {}),
             ...(options.diskGiB !== undefined ? { diskGiB: options.diskGiB } : {}),
+            ...(options.defaultDiskGiB !== undefined
+              ? { defaultDiskGiB: options.defaultDiskGiB }
+              : {}),
             ...(options.timeoutMinutes !== undefined
               ? { timeoutMinutes: options.timeoutMinutes }
               : {}),

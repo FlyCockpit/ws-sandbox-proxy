@@ -117,7 +117,7 @@
     },
     "sandbox.disk_below_image": {
       "status": 400,
-      "message": "The requested disk is smaller than the template image's root disk; request at least the revision's diskGiB."
+      "message": "The requested disk is smaller than the template image's root disk; request at least the revision's minDiskGiB."
     },
     "sandbox.metadata_invalid": {
       "status": 400,
@@ -6882,6 +6882,11 @@
                     "multipleOf": 256
                   },
                   "diskGiB": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2048
+                  },
+                  "defaultDiskGiB": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 2048
@@ -18989,7 +18994,12 @@
                     "maximum": 65536,
                     "multipleOf": 256
                   },
-                  "diskGiB": {
+                  "defaultDiskGiB": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2048
+                  },
+                  "minDiskGiB": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 2048
@@ -19634,7 +19644,12 @@
                     "maximum": 65536,
                     "multipleOf": 256
                   },
-                  "diskGiB": {
+                  "defaultDiskGiB": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2048
+                  },
+                  "minDiskGiB": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 2048
@@ -23705,6 +23720,11 @@
                       "type": "string",
                       "description": "Absolute guest path; `*` matches within the last segment only."
                     }
+                  },
+                  "defaultDiskGiB": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2048
                   }
                 },
                 "additionalProperties": false
@@ -33186,7 +33206,12 @@
             "maximum": 65536,
             "multipleOf": 256
           },
-          "diskGiB": {
+          "defaultDiskGiB": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2048
+          },
+          "minDiskGiB": {
             "type": "integer",
             "minimum": 1,
             "maximum": 2048
@@ -33363,7 +33388,8 @@
           "revision",
           "cpuCount",
           "memoryMiB",
-          "diskGiB",
+          "defaultDiskGiB",
+          "minDiskGiB",
           "incusFingerprint",
           "architecture",
           "guest",
@@ -34387,6 +34413,7 @@
                       "guest_sudo_not_permitted",
                       "guest_sudo_unavailable",
                       "guest_root_granted",
+                      "root_disk_not_grown",
                       "guest_operation_failed",
                       "guest_permission_denied",
                       "guest_unavailable",
@@ -34477,7 +34504,8 @@
                   "guest_tooling",
                   "guest_check",
                   "guest_sudo_unavailable",
-                  "guest_root_granted"
+                  "guest_root_granted",
+                  "root_disk_not_grown"
                 ]
               },
               "createdAt": {
@@ -39995,6 +40023,7 @@
                           "guest_sudo_not_permitted",
                           "guest_sudo_unavailable",
                           "guest_root_granted",
+                          "root_disk_not_grown",
                           "guest_operation_failed",
                           "guest_permission_denied",
                           "guest_unavailable",
@@ -40541,6 +40570,7 @@
                           "guest_sudo_not_permitted",
                           "guest_sudo_unavailable",
                           "guest_root_granted",
+                          "root_disk_not_grown",
                           "guest_operation_failed",
                           "guest_permission_denied",
                           "guest_unavailable",

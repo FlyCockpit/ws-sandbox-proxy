@@ -461,7 +461,11 @@ model SandboxTemplate {
 }
 
 model SandboxTemplateRevision {
-  diskGiB               Int                           @default(32)
+  /// The disk a create gets when it omits `diskGiB`. Every writer sets both
+  /// disk columns; the defaults only keep hand-written fixtures valid.
+  defaultDiskGiB        Int                           @default(32)
+  /// The image's root disk: no create or build may use a smaller disk.
+  minDiskGiB            Int                           @default(32)
   /// Immutable configured allocation.
   cpuCount              Int                           @default(1)
   memoryMiB             Int                           @default(1024)
@@ -519,7 +523,7 @@ model SandboxTemplateRevision {
   Sandboxes             Sandbox[]
   Placements            SandboxPlacement[]
   // @check sandbox_revision_vm_size: "cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0
-  // @check sandbox_revision_root_disk: "diskGiB" >= 1 AND "diskGiB" <= 2048
+  // @check sandbox_revision_root_disk: "minDiskGiB" >= 1 AND "minDiskGiB" <= "defaultDiskGiB" AND "defaultDiskGiB" <= 2048
 
   @@unique([id, userId])
   @@unique([id, templateId, userId])
@@ -1828,6 +1832,9 @@ model SandboxTemplateCapture {
   chargedMemoryMiB Int                  @default(0)
   chargedVcpu      Int                  @default(0)
   diskChargeGiB    Int                  @default(0)
+  /// The published revision's default disk (null: the source revision's
+  /// default, at least the captured root).
+  defaultDiskGiB   Int?
   storagePoolId    String?
   errorCode        String?
   symlinkedPaths   String[]             @default([])
@@ -1851,6 +1858,7 @@ model SandboxTemplateCapture {
 
   // @check sandbox_template_capture_shape: cardinality("scrubPaths") <= 80 AND "chargedMemoryMiB" >= 0 AND "chargedVcpu" >= 0 AND "diskChargeGiB" >= 0 AND ("fingerprint" IS NULL OR "fingerprint" ~ '^sha256:[0-9a-f]{64}$') AND (NOT "resourcesHeld" OR "storagePoolId" IS NOT NULL OR "diskChargeGiB" = 0)
   // @check sandbox_template_capture_build_attempt: "buildAttempt" >= 0 AND ("buildId" IS NOT NULL OR "buildAttempt" = 0)
+  // @check sandbox_template_capture_default_disk: "defaultDiskGiB" IS NULL OR ("defaultDiskGiB" >= 1 AND "defaultDiskGiB" <= 2048)
   @@unique([operationId, sandboxId, userId])
   @@unique([buildId, buildAttempt])
   @@index([hostId, state])

@@ -166,6 +166,7 @@ const buildSelect = {
   cpuCount: true,
   memoryMiB: true,
   diskGiB: true,
+  defaultDiskGiB: true,
   egressRequest: true,
   timeoutMinutes: true,
   waitForCapacityMs: true,
@@ -401,6 +402,7 @@ export function freezeInput(
     | "cpuCount"
     | "memoryMiB"
     | "diskGiB"
+    | "defaultDiskGiB"
     | "egressRequest"
     | "timeoutMinutes"
     | "waitForCapacityMs"
@@ -493,9 +495,11 @@ export function freezeInput(
       return { key, input: { id, idempotencyKey: key } };
     case "vcreate":
       // The verify VM (S9): the pending revision as the guest user, the
-      // build's own target and size, deny-all egress, guestSudo pinned off,
-      // a lease of the verify window, killed on expiry. Never a capacity
-      // wait (T4.1).
+      // build's own target and CPU/memory at the revision's DEFAULT disk
+      // (above its floor, so the create's root growth check proves the
+      // image grows before it is published), deny-all egress, guestSudo
+      // pinned off, a lease of the verify window, killed on expiry. Never a
+      // capacity wait (T4.1).
       if (!verify.revisionId) throw new Error("Verify revision missing.");
       return {
         key,
@@ -504,7 +508,7 @@ export function freezeInput(
           ...(build.poolId ? { poolId: build.poolId } : { sandboxHostId: build.requestedHostId }),
           cpuCount: build.cpuCount,
           memoryMiB: build.memoryMiB,
-          diskGiB: build.diskGiB,
+          diskGiB: build.defaultDiskGiB,
           idempotencyKey: key,
           timeoutMs: VERIFY_WINDOW_MINUTES * 60_000,
           lifecycle: { onTimeout: "kill" },

@@ -333,6 +333,7 @@ SELECT 'sandbox_template_build:fx_build' AS violation WHERE NOT EXISTS (
     AND "cpuCount" IS NOT DISTINCT FROM 1
     AND "memoryMiB" IS NOT DISTINCT FROM 1024
     AND "diskGiB" IS NOT DISTINCT FROM 32
+    AND "defaultDiskGiB" IS NOT DISTINCT FROM 32
     AND "timeoutMinutes" IS NOT DISTINCT FROM 10
     AND "reservedMinutes" IS NOT DISTINCT FROM 10
     AND "chargeMonth" IS NOT DISTINCT FROM '2026-11-01'

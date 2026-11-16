@@ -69,6 +69,7 @@ const FAILED_KIND_BY_OPERATION_CODE = {
   guest_sudo_not_permitted: "unsupported",
   guest_sudo_unavailable: "unsupported",
   guest_root_granted: "conflict",
+  root_disk_not_grown: "unsupported",
   digest_key_changed: "conflict",
   digest_key_unavailable: "conflict",
   receipt_digest_pruned: "conflict",

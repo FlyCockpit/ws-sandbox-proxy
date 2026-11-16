@@ -137,7 +137,7 @@ it("storage composite owner/host FKs restrict retained roots and allow detached 
       manifestDigest: "d".repeat(64),
     },
   });
-  expect(revision.diskGiB).toBe(32);
+  expect(revision).toMatchObject({ defaultDiskGiB: 32, minDiskGiB: 32 });
   const data = {
     hostOwnerId: a,
     userId: a,
