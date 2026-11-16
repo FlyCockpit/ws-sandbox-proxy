@@ -22,6 +22,7 @@ import {
 import { toast } from "@wssp/ui/components/sileo";
 import { Switch } from "@wssp/ui/components/switch";
 import { TextField } from "@wssp/ui/components/text-field";
+import type { TFunction } from "i18next";
 import { Plus } from "lucide-react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -64,9 +65,7 @@ import { formatRelativeTime } from "@/utils/relative-time";
  * metadata (state, holders, last capture).
  */
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
-
-function nameSchema(t: Translate) {
+function nameSchema(t: TFunction) {
   return z.object({
     name: z.string().trim().max(80, t("logins:form.nameTooLong")),
   });
@@ -78,7 +77,7 @@ function maxConcurrentProblem(value: string): boolean {
   return !/^\d+$/.test(trimmed) || Number(trimmed) < 1 || Number(trimmed) > 100_000;
 }
 
-function instanceSchema(t: Translate) {
+function instanceSchema(t: TFunction) {
   return z.object({
     name: z.string().trim().max(80, t("logins:form.nameTooLong")),
     maxConcurrent: z

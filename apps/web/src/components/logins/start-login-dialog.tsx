@@ -14,6 +14,7 @@ import {
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
+import type { TFunction } from "i18next";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -60,8 +61,6 @@ const cursorPages = {
   getNextPageParam: (lastPage: { nextCursor: string | null }) => lastPage.nextCursor ?? undefined,
 };
 
-type Translate = (key: string, options?: Record<string, unknown>) => string;
-
 type StartLoginDraft = {
   name: string;
   placement: "host" | "pool";
@@ -80,7 +79,7 @@ function parseEgressDomains(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-function draftSchema(t: Translate) {
+function draftSchema(t: TFunction) {
   return z
     .object({
       name: z.string().trim().max(80, t("logins:form.nameTooLong")),

@@ -410,7 +410,7 @@
     "@wssp/sandbox-contracts": "workspace:*",
     "@wssp/template-recipe": "workspace:*",
     "rate-limiter-flexible": "catalog:",
-    "web-push": "^3.6.7",
+    "web-push": "^4.0.0",
     "zod": "catalog:"
   },
   "devDependencies": {

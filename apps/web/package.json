@@ -19,7 +19,7 @@
     "@orpc/server": "catalog:",
     "@orpc/tanstack-query": "catalog:",
     "@prisma/client": "catalog:",
-    "@tailwindcss/vite": "^4.3.4",
+    "@tailwindcss/vite": "^4.3.5",
     "@tanstack/react-form": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
@@ -47,7 +47,7 @@
     "react-i18next": "catalog:",
     "sileo": "catalog:",
     "zod": "catalog:",
-    "zustand": "^5.0.16",
+    "zustand": "^5.1.0",
     "@better-auth/oauth-provider": "catalog:"
   },
   "devDependencies": {

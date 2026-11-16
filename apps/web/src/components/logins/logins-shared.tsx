@@ -1,5 +1,6 @@
 import { type QueryClient, useQuery } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import type { DefinitionIssue, LoginProblem } from "@/lib/login-rules";
 import { orpc } from "@/utils/orpc";
@@ -77,17 +78,11 @@ export function DefinitionIssues({ issues }: { issues: readonly DefinitionIssue[
 }
 
 /** "Account 2" when unnamed. */
-export function accountLabel(
-  t: (key: string, options?: Record<string, unknown>) => string,
-  account: Pick<AccountItem, "name" | "ordinal">,
-) {
+export function accountLabel(t: TFunction, account: Pick<AccountItem, "name" | "ordinal">) {
   return account.name ?? t("logins:accounts.unnamed", { ordinal: account.ordinal });
 }
 
 /** "Instance 3" when unnamed. */
-export function instanceLabel(
-  t: (key: string, options?: Record<string, unknown>) => string,
-  instance: Pick<InstanceItem, "name" | "ordinal">,
-) {
+export function instanceLabel(t: TFunction, instance: Pick<InstanceItem, "name" | "ordinal">) {
   return instance.name ?? t("logins:instances.unnamed", { ordinal: instance.ordinal });
 }

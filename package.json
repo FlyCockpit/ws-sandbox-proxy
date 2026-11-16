@@ -118,14 +118,14 @@
   },
   "devDependencies": {
     "@babel/parser": "catalog:",
-    "@biomejs/biome": "^2.6.5",
+    "@biomejs/biome": "^2.6.6",
     "@inquirer/prompts": "^8.7.5",
     "@shadcn/lint": "0.2.5",
     "@types/node": "catalog:",
     "@wssp/config": "workspace:*",
-    "knip": "^6.44.1",
+    "knip": "^6.44.2",
     "lefthook": "^2.2.2",
-    "oxlint": "^1.91.0",
+    "oxlint": "^1.92.0",
     "pg": "catalog:",
     "react-doctor": "^0.9.22",
     "tree-sitter-bash": "0.25.1",
@@ -133,7 +133,7 @@
     "turbo": "^2.11.10",
     "typescript": "catalog:",
     "vitest": "catalog:",
-    "web-tree-sitter": "0.27.1",
+    "web-tree-sitter": "0.27.2",
     "@modelcontextprotocol/client": "catalog:"
   },
   "engines": {
