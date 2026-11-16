@@ -10,8 +10,30 @@ import { deploymentFiniteMaxMs } from "../sandbox/lease-policy";
  * instead of failing boot, and inconsistent byte budgets are clamped down.
  */
 
-/** Slack between the end of the capture window and the build VM's lease. */
+/** Slack between the end of the storage window and the build VM's lease. */
 export const TEMPLATE_BUILD_LEASE_SLACK_MINUTES = 15;
+/**
+ * The storage window: how long a build's recorded capture may take to reach
+ * the image store (S3 mode, or a foreign builder) after the capture window.
+ * The build VM must live through it (its upload re-checks the VM's dispatch
+ * authority), so the lease reserves it, and the finalizer never lets a build
+ * capture store past the VM's actual lease.
+ */
+export const TEMPLATE_BUILD_STORE_WINDOW_MINUTES = 60;
+
+/** What a build VM's lease reserves after its last step: the capture window,
+ * the storage window and the slack. The create lease is the build timeout
+ * plus this; the re-anchor after the last step is this alone. */
+export function templateBuildReserveMinutes(captureWindowMinutes: number): number {
+  return (
+    captureWindowMinutes + TEMPLATE_BUILD_STORE_WINDOW_MINUTES + TEMPLATE_BUILD_LEASE_SLACK_MINUTES
+  );
+}
+
+/** The build VM's lease at create: the build timeout plus the reserve. */
+export function templateBuildLeaseMs(timeoutMinutes: number, captureWindowMinutes: number): number {
+  return (timeoutMinutes + templateBuildReserveMinutes(captureWindowMinutes)) * 60_000;
+}
 /** Longest a sealed context may wait for placement (code constant, §3.7). */
 export const TEMPLATE_BUILD_CONTEXT_SEALED_MAX_MS = 6 * 60 * 60 * 1000;
 
@@ -84,15 +106,13 @@ export function resolveTemplateBuildsConfig(input: {
   const captureWindowMinutes = vars.TEMPLATE_BUILD_CAPTURE_WINDOW_MINUTES;
   const configuredMaxMinutes = vars.TEMPLATE_BUILD_MAX_MINUTES;
   const room =
-    Math.floor(input.leaseCeilingMs / 60_000) -
-    captureWindowMinutes -
-    TEMPLATE_BUILD_LEASE_SLACK_MINUTES;
+    Math.floor(input.leaseCeilingMs / 60_000) - templateBuildReserveMinutes(captureWindowMinutes);
   const fits = room >= 1;
   const maxMinutes = fits ? Math.min(configuredMaxMinutes, room) : 0;
   const maxMinutesClamped = fits && maxMinutes < configuredMaxMinutes;
   if (maxMinutesClamped)
     adjustments.push(
-      `TEMPLATE_BUILD_MAX_MINUTES lowered to ${maxMinutes} so build + TEMPLATE_BUILD_CAPTURE_WINDOW_MINUTES + ${TEMPLATE_BUILD_LEASE_SLACK_MINUTES} min fits SANDBOX_MAX_TIMEOUT_MS`,
+      `TEMPLATE_BUILD_MAX_MINUTES lowered to ${maxMinutes} so build + TEMPLATE_BUILD_CAPTURE_WINDOW_MINUTES + ${TEMPLATE_BUILD_STORE_WINDOW_MINUTES} min storage + ${TEMPLATE_BUILD_LEASE_SLACK_MINUTES} min fits SANDBOX_MAX_TIMEOUT_MS`,
     );
 
   const contextStagedBytes = vars.TEMPLATE_BUILD_CONTEXT_STAGED_BYTES;

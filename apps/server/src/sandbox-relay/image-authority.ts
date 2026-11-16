@@ -124,6 +124,7 @@ async function workload(
         principal,
         operationKind: kind,
         context: {
+          operationId: op.id,
           sandboxId: op.sandboxId,
           sandboxHostId: target.hostId,
           templateRevisionId: op.Sandbox.templateRevisionId,

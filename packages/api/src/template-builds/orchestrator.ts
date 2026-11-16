@@ -27,7 +27,8 @@ import {
 import { startCommunityRefreshSchedule } from "./community/refresh-schedule";
 import {
   TEMPLATE_BUILD_CONTEXT_SEALED_MAX_MS,
-  TEMPLATE_BUILD_LEASE_SLACK_MINUTES,
+  templateBuildLeaseMs,
+  templateBuildReserveMinutes,
   templateBuildsConfig,
 } from "./config";
 import {
@@ -364,11 +365,6 @@ function limitsAt(now: Date): DecideLimits {
   };
 }
 
-/** The create lease (§3.3): timeoutMinutes + captureWindow + 15 min, kill. */
-export function buildLeaseMs(timeoutMinutes: number, captureWindowMinutes: number): number {
-  return (timeoutMinutes + captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000;
-}
-
 /** A step's timeout: the build's remaining time, at most the command cap. */
 export function stepTimeoutMs(deadlineAt: Date | null, now: Date): number {
   const remaining = deadlineAt ? deadlineAt.getTime() - now.getTime() : 0;
@@ -447,7 +443,7 @@ export function freezeInput(
           memoryMiB: build.memoryMiB,
           diskGiB: build.diskGiB,
           idempotencyKey: key,
-          timeoutMs: buildLeaseMs(build.timeoutMinutes, captureWindowMinutes),
+          timeoutMs: templateBuildLeaseMs(build.timeoutMinutes, captureWindowMinutes),
           lifecycle: { onTimeout: "kill" },
           // DG-6: a build VM never has guestSudo (root steps are D1 only).
           guestSudo: false,
@@ -487,8 +483,10 @@ export function freezeInput(
         input: {
           id,
           idempotencyKey: key,
-          // Re-anchor the lease at the actual stop: window + slack (§3.3).
-          timeoutMs: (captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000,
+          // Re-anchor the lease at the actual stop: capture window + storage
+          // window + slack (§3.3), so the VM outlives a recorded capture's
+          // upload to the image store.
+          timeoutMs: templateBuildReserveMinutes(captureWindowMinutes) * 60_000,
         },
       };
     case "stop":
@@ -1334,7 +1332,7 @@ export async function scanTemplateBuildCandidates(now: Date, take = TEMPLATE_BUI
 
 /**
  * The cleanup invariant (§3.10), one pass: kill every live build VM whose
- * build is gone, cancelling, terminal or past its capture host result; abort
+ * build is gone, cancelling, terminal or past its FINALIZED capture; abort
  * the unadopted context of ended builds; mark cleanup DONE when nothing of a
  * terminal build is left. Kills use the build principal's key-free cleanup
  * class with `tb:<buildId>:kill:0:<attempt>`, the attempt raised only when

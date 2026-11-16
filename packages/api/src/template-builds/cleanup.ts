@@ -1,13 +1,18 @@
 import type { SandboxState, TemplateBuildState, TemplateCaptureState } from "@wssp/db";
 import { Prisma as PrismaValue } from "@wssp/db/client";
-import { CAPTURE_RESULT_RECORDED } from "./decide";
+import { CAPTURE_STORING } from "./build-authority";
+import { CAPTURE_VM_RELEASED } from "./decide";
 
 /**
  * The cleanup invariant:
  *
  * > Every non-DELETED sandbox with `buildId IS NOT NULL` is killed (cleanup
- * > class, key-free) when its build is missing, CANCELLING, terminal, or
- * > CAPTURING with the current capture attempt's host result recorded.
+ * > class, key-free) when its build is missing, terminal, CANCELLING
+ * > unless it is a user build (not `verifyRequired`) whose current capture
+ * > attempt was recorded before the cancel and is still storing
+ * > (CAPTURED/STORING, unmarked: that result wins and its upload needs the
+ * > VM; a community build's cancel always wins, S9), or CAPTURING with the current capture attempt
+ * > FINALIZED (its image stored).
  *
  * Cleanup is a property of state, not a step of any path: deadline, step
  * failure, cancel and capture success only change the build state, and this
@@ -18,24 +23,42 @@ import { CAPTURE_RESULT_RECORDED } from "./decide";
  * two tables below, and the unit test enumerates every state × capture case.
  */
 
-/** Build states whose VM is never needed again. */
+/** Ended build states: no VM of the build is needed again. */
+const ENDED_BUILD_STATES: readonly TemplateBuildState[] = ["SUCCEEDED", "FAILED", "CANCELLED"];
+
+/** Build states whose VM is never needed again, except that a CANCELLING
+ * user build keeps its build VM while a capture recorded before the cancel stores
+ * (see `buildVmMustDie`). */
 export const BUILD_VM_DEAD_STATES: readonly TemplateBuildState[] = [
   "CANCELLING",
-  "SUCCEEDED",
-  "FAILED",
-  "CANCELLED",
+  ...ENDED_BUILD_STATES,
 ];
 
-/** Must the VM of a build in this state (null: the build row is gone) die? */
+/** Must the VM of a build in this state (null: the build row is gone) die?
+ * `captureState`/`captureCancelMarked` describe the current capture attempt
+ * (`captureCancelMarked`: its `buildCancelledAt` is set); `verifyRequired`
+ * marks a community build, whose cancel always wins (S9). */
 export function buildVmMustDie(
-  build: { state: TemplateBuildState; captureState: TemplateCaptureState | null } | null,
+  build: {
+    state: TemplateBuildState;
+    captureState: TemplateCaptureState | null;
+    captureCancelMarked: boolean;
+    verifyRequired: boolean;
+  } | null,
 ): boolean {
   if (build === null) return true;
-  if (BUILD_VM_DEAD_STATES.includes(build.state)) return true;
+  if (build.state === "CANCELLING")
+    return !(
+      !build.verifyRequired &&
+      build.captureState !== null &&
+      CAPTURE_STORING.includes(build.captureState) &&
+      !build.captureCancelMarked
+    );
+  if (ENDED_BUILD_STATES.includes(build.state)) return true;
   return (
     build.state === "CAPTURING" &&
     build.captureState !== null &&
-    CAPTURE_RESULT_RECORDED.includes(build.captureState)
+    CAPTURE_VM_RELEASED.includes(build.captureState)
   );
 }
 
@@ -56,14 +79,20 @@ export function verifyVmMustDie(build: { state: TemplateBuildState } | null): bo
  * the same transaction as CHECKs that name them).
  */
 export function buildVmMustDieSql() {
+  const current = PrismaValue.sql`(c."operationId" = b."captureOperationId"
+          OR (c."buildId" = b.id AND c."buildAttempt" = b."captureAttempt"))
+        AND c."userId" = b."userId"`;
   return PrismaValue.sql`(b.id IS NULL
-    OR b.state::text IN (${PrismaValue.join(BUILD_VM_DEAD_STATES)})
+    OR b.state::text IN (${PrismaValue.join(ENDED_BUILD_STATES)})
+    OR (b.state::text = 'CANCELLING' AND (b."verifyRequired" OR NOT EXISTS (
+      SELECT 1 FROM sandbox_template_capture c
+      WHERE ${current}
+        AND c.state::text IN (${PrismaValue.join(CAPTURE_STORING)})
+        AND c."buildCancelledAt" IS NULL)))
     OR (b.state::text = 'CAPTURING' AND EXISTS (
       SELECT 1 FROM sandbox_template_capture c
-      WHERE (c."operationId" = b."captureOperationId"
-          OR (c."buildId" = b.id AND c."buildAttempt" = b."captureAttempt"))
-        AND c."userId" = b."userId"
-        AND c.state::text IN (${PrismaValue.join(CAPTURE_RESULT_RECORDED)}))))`;
+      WHERE ${current}
+        AND c.state::text IN (${PrismaValue.join(CAPTURE_VM_RELEASED)}))))`;
 }
 
 /** Sandbox states a kill can be accepted in (plus a capacity wait, which a

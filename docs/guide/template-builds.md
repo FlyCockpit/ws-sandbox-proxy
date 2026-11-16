@@ -28,13 +28,24 @@ commands, files or terminals.
 CAPTURING: an in-flight capture loses to the cancel (no revision is created
 and the tag does not move), and the image the builder produced is released
 and evicted. Only a capture whose host result was already recorded before
-the cancel still publishes (the build then ends SUCCEEDED).
+the cancel still publishes (the build then ends SUCCEEDED); with an S3 image
+store the build VM stays until that image is stored. A
+[community base build](#community-base-builds) is the exception: it verifies
+before it publishes, so a cancel always wins, and its capture fails and its VM
+is killed at once.
 
 The capture holds the build VM's root disk twice over (the root plus the copy)
 on the builder's storage pool, and the VM's memory. When the builder has no
 room for that hold yet, the build stays CAPTURING with phase
 `capture_waiting_capacity` ("Waiting for disk or memory on the builder host")
 and retries until room frees up or the capture window ends.
+
+The build VM's lease is the build timeout plus about two and a quarter hours
+by default: the capture window (60 minutes), a 60-minute window to store the
+image and 15 minutes of slack. The deployment's lease ceiling
+(`SANDBOX_MAX_TIMEOUT_MS`) and the builder's own ceiling must allow it, and a
+capture that cannot reach the image store before the VM's lease ends fails the
+build with `build_store_failed`.
 
 Builds are not `docker build`. The output is a KVM VM image, the base is a
 WS Sandbox Proxy template (never a Docker image), and there is no per-step layer cache:

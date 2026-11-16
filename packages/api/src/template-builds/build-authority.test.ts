@@ -31,9 +31,8 @@ const { ORPCError } = await import("@orpc/server");
 const access = await import("../lib/sdk-key-access");
 const { requireCurrentHostUsability } = await import("../sandbox/sharing-access");
 const { loadBuildPrincipal } = await import("./principal");
-const { buildActionClass, buildStepAllowed, isBuildAuthorityLost } = await import(
-  "./build-authority"
-);
+const { buildActionClass, buildStepAllowed, captureOutlivesCancel, isBuildAuthorityLost } =
+  await import("./build-authority");
 
 const OWNER = "owner-1";
 const BUILD = "build-1";
@@ -134,6 +133,37 @@ describe("loadBuildPrincipal", () => {
     const build = await principal("key-1");
     expect(build.keyId).toBe("key-1");
     expect(build.key).toBeNull();
+  });
+});
+
+describe("captureOutlivesCancel (§3.3: a recorded capture wins over the cancel)", () => {
+  const capture = { state: "STORING" as const, buildAttempt: 1, buildCancelledAt: null };
+  const build = { state: "CANCELLING" as const, captureAttempt: 1, verifyRequired: false };
+  const ok = { operationKind: "CAPTURE_TEMPLATE", build, capture };
+
+  it("admits only the current, unmarked, still-storing capture's own operation", () => {
+    expect(captureOutlivesCancel(ok)).toBe(true);
+    expect(captureOutlivesCancel({ ...ok, capture: { ...capture, state: "CAPTURED" } })).toBe(true);
+    expect(captureOutlivesCancel({ ...ok, build: { ...build, state: "CAPTURING" } })).toBe(true);
+  });
+
+  it.each([
+    ["another operation kind", { ...ok, operationKind: "RUN_COMMAND" }],
+    ["no capture row for the operation", { ...ok, capture: null }],
+    [
+      "a capture recorded after the cancel",
+      { ...ok, capture: { ...capture, buildCancelledAt: new Date() } },
+    ],
+    ["a pending capture", { ...ok, capture: { ...capture, state: "PENDING" as const } }],
+    ["a finalized capture", { ...ok, capture: { ...capture, state: "FINALIZED" as const } }],
+    ["a superseded attempt", { ...ok, capture: { ...capture, buildAttempt: 0 } }],
+    ["an ended build", { ...ok, build: { ...build, state: "CANCELLED" as const } }],
+    [
+      "a community build (its cancel always wins, S9)",
+      { ...ok, build: { ...build, verifyRequired: true } },
+    ],
+  ])("refuses %s", (_name, input) => {
+    expect(captureOutlivesCancel(input)).toBe(false);
   });
 });
 

@@ -24,13 +24,24 @@ const BUILD_STATES = [
 ] as const;
 const CAPTURE_STATES = [null, "PENDING", "CAPTURED", "STORING", "FINALIZED", "FAILED"] as const;
 
-/** §3.10: killed when the build is missing, CANCELLING, terminal, or
- * CAPTURING with the capture's host result recorded. */
-function expected(state: (typeof BUILD_STATES)[number], capture: (typeof CAPTURE_STATES)[number]) {
-  if (["CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"].includes(state)) return true;
+/** §3.10: killed when the build is missing, terminal, CANCELLING (unless a
+ * capture recorded before the cancel is still storing), or CAPTURING with the
+ * capture FINALIZED (its image stored). */
+function expected(
+  state: (typeof BUILD_STATES)[number],
+  capture: (typeof CAPTURE_STATES)[number],
+  marked: boolean,
+  verifyRequired: boolean,
+) {
+  if (["SUCCEEDED", "FAILED", "CANCELLED"].includes(state)) return true;
+  if (state === "CANCELLING")
+    // A user build's recorded result wins over the cancel and its upload
+    // needs the VM; a community build's cancel always wins (S9).
+    return verifyRequired || !((capture === "CAPTURED" || capture === "STORING") && !marked);
   return (
     state === "CAPTURING" &&
-    (capture === "CAPTURED" || capture === "STORING" || capture === "FINALIZED")
+    // The VM outlives the S3 upload (CAPTURED/STORING): only FINALIZED frees it.
+    capture === "FINALIZED"
   );
 }
 
@@ -50,16 +61,27 @@ describe("cleanup predicate (§3.10, r3 N18)", () => {
 
   for (const state of BUILD_STATES)
     for (const captureState of CAPTURE_STATES)
-      it(`${state} with capture ${captureState ?? "none"} → ${expected(state, captureState)}`, () => {
-        expect(buildVmMustDie({ state, captureState })).toBe(expected(state, captureState));
-      });
+      for (const marked of [false, true])
+        for (const verifyRequired of [false, true])
+          it(`${verifyRequired ? "community " : ""}${state} with capture ${captureState ?? "none"}${marked ? " (cancel-marked)" : ""} → ${expected(state, captureState, marked, verifyRequired)}`, () => {
+            expect(
+              buildVmMustDie({ state, captureState, captureCancelMarked: marked, verifyRequired }),
+            ).toBe(expected(state, captureState, marked, verifyRequired));
+          });
 
   it("the SQL builder encodes the same tables (missing row, dead states, recorded capture)", () => {
     const sql = buildVmMustDieSql();
     expect(sql.sql).toContain("b.id IS NULL");
     expect(sql.sql).toContain("b.state::text = 'CAPTURING'");
+    expect(sql.sql).toContain(`b.state::text = 'CANCELLING' AND (b."verifyRequired" OR NOT EXISTS`);
+    expect(sql.sql).toContain(`c."buildCancelledAt" IS NULL`);
     expect(sql.sql).toContain(`c."operationId" = b."captureOperationId"`);
-    expect(sql.values).toEqual([...BUILD_VM_DEAD_STATES, "CAPTURED", "STORING", "FINALIZED"]);
+    expect(sql.values).toEqual([
+      ...BUILD_VM_DEAD_STATES.filter((s) => s !== "CANCELLING"),
+      "CAPTURED",
+      "STORING",
+      "FINALIZED",
+    ]);
     // A live build never matches: no live state is a parameter.
     for (const live of ["AWAITING_CONTEXT", "QUEUED", "PLACING", "RUNNING", "STOPPING"])
       expect(sql.values).not.toContain(live);
@@ -134,7 +156,14 @@ describe("verify-VM cleanup (community-base T2, review4 U2)", () => {
         ["CANCELLING", "SUCCEEDED", "FAILED", "CANCELLED"].includes(state),
       );
     // The build VM must die in the same CAPTURING+FINALIZED state.
-    expect(buildVmMustDie({ state: "CAPTURING", captureState: "FINALIZED" })).toBe(true);
+    expect(
+      buildVmMustDie({
+        state: "CAPTURING",
+        captureState: "FINALIZED",
+        captureCancelMarked: false,
+        verifyRequired: false,
+      }),
+    ).toBe(true);
     expect(verifyVmMustDie({ state: "CAPTURING" })).toBe(false);
   });
 

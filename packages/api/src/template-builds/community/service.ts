@@ -17,7 +17,7 @@ import {
 } from "../../sandbox/principal-kinds";
 import { writeRevisionDefaults } from "../../sandbox/revision-config";
 import { requirePoolUse } from "../../sandbox/sharing-authority";
-import { TEMPLATE_BUILD_LEASE_SLACK_MINUTES, templateBuildsConfig } from "../config";
+import { templateBuildLeaseMs, templateBuildsConfig } from "../config";
 import { ACTIVE_BUILD_STATES } from "../decide";
 import { buildExecPlan, initialStepRecords } from "../exec-plan";
 import { buildError, chargeMonthOf, insertBuildLocked } from "../service";
@@ -115,8 +115,7 @@ function preflight(principal: Principal, entry: CommunityImageEntry) {
   // A misfit is refused, never truncated (S8).
   if (
     timeoutMinutes > config.maxMinutes ||
-    (timeoutMinutes + config.captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000 >
-      config.leaseCeilingMs
+    templateBuildLeaseMs(timeoutMinutes, config.captureWindowMinutes) > config.leaseCeilingMs
   )
     throw buildError("SERVICE_UNAVAILABLE", "template.build_disabled", {
       reason: "community_timeout_exceeds_max",
@@ -659,8 +658,7 @@ async function refreshCommunityTemplateLocked(
   const timeoutMinutes = communityTimeoutMinutes(entry);
   if (
     timeoutMinutes > config.maxMinutes ||
-    (timeoutMinutes + config.captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000 >
-      config.leaseCeilingMs
+    templateBuildLeaseMs(timeoutMinutes, config.captureWindowMinutes) > config.leaseCeilingMs
   )
     return { kind: "skipped", reason: "timeout_misfit" };
   const latest = await tx.sandboxTemplateTag.findFirst({

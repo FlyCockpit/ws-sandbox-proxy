@@ -38,18 +38,18 @@ describe("templateBuildsConfig resolution", () => {
   });
 
   it("a low lease ceiling shortens the max build time instead of disabling builds", () => {
-    // 100 min ceiling - 60 window - 15 slack = 25 min.
-    expect(resolve({}, 100 * 60_000)).toMatchObject({
+    // 160 min ceiling - 60 capture window - 60 storage window - 15 slack = 25 min.
+    expect(resolve({}, 160 * 60_000)).toMatchObject({
       enabled: true,
       maxMinutes: 25,
       maxMinutesClamped: true,
     });
     // Exactly one minute of room still builds.
-    expect(resolve({}, 76 * 60_000)).toMatchObject({ enabled: true, maxMinutes: 1 });
+    expect(resolve({}, 136 * 60_000)).toMatchObject({ enabled: true, maxMinutes: 1 });
   });
 
   it("disables with lease_ceiling only below one minute of room", () => {
-    expect(resolve({}, 75 * 60_000 + 59_999)).toMatchObject({
+    expect(resolve({}, 135 * 60_000 + 59_999)).toMatchObject({
       enabled: false,
       reason: "lease_ceiling",
       maxMinutes: 0,

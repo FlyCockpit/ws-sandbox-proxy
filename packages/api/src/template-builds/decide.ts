@@ -1,6 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import type { OperationState, TemplateBuildState, TemplateCaptureState } from "@wssp/db";
-import { isBuildAuthorityLost } from "./build-authority";
+import { CAPTURE_STORING, isBuildAuthorityLost } from "./build-authority";
 import { BuildContextPortError } from "./context-port";
 
 /**
@@ -84,12 +84,22 @@ function errorDetailOf(code: unknown): string | null {
 }
 
 /** Capture rows whose host result is recorded: the result wins over cancel
- * (§3.3, r3 N22) and the build VM is no longer needed (§3.10). */
-export const CAPTURE_RESULT_RECORDED: readonly TemplateCaptureState[] = [
+ * (§3.3, r3 N22). */
+const CAPTURE_RESULT_RECORDED: readonly TemplateCaptureState[] = [
   "CAPTURED",
   "STORING",
   "FINALIZED",
 ];
+/**
+ * Capture rows after which the build VM is no longer needed (§3.10): only a
+ * FINALIZED one. While CAPTURED/STORING the host still uploads the image to
+ * the S3 store, and every upload grant re-checks the capture's dispatch
+ * authority, which requires the build VM to be usable: killing it at
+ * CAPTURED left S3-mode builds stuck in `storing` (each part report answered
+ * `stale_transfer`). Peer mode finalizes at CAPTURED at once, so the VM
+ * outlives the capture by moments there.
+ */
+export const CAPTURE_VM_RELEASED: readonly TemplateCaptureState[] = ["FINALIZED"];
 const TERMINAL_OPERATION: ReadonlySet<OperationState> = new Set([
   "SUCCEEDED",
   "FAILED",
@@ -359,7 +369,10 @@ export function decide(build: BuildView, obs: Observed, limits: DecideLimits): D
     // the finalizer; otherwise the cleanup kill supersedes it, the finalizer
     // fails it once the kill settles, and the relay releases the image its
     // dropped result names (E2-A-01, droppedCaptureImageToRelease).
-    if (obs.capture && ["PENDING", "CAPTURED", "STORING"].includes(obs.capture.state))
+    if (
+      obs.capture &&
+      (obs.capture.state === "PENDING" || CAPTURE_STORING.includes(obs.capture.state))
+    )
       return { kind: "wait" };
     // A community build's cancel always wins over its verify (U4): the
     // cleanup kills the verify VM (`vkill`), then the pending revision is

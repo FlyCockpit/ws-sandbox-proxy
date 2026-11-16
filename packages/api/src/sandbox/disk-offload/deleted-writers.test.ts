@@ -74,7 +74,8 @@ const READS: Record<string, number> = {
   "packages/api/src/sandbox/disk-offload/maintenance.ts": 2,
   "packages/api/src/sandbox/disk-offload/pin.ts": 1,
   "packages/api/src/sandbox/host-admission.ts": 2,
-  "packages/api/src/sandbox/image-store/captures.ts": 1,
+  // + captureStoreDeadline: a deleted build VM ends its capture's storage.
+  "packages/api/src/sandbox/image-store/captures.ts": 2,
   "packages/api/src/sandbox/image-store/jobs.ts": 3,
   "packages/api/src/sandbox/image-store/references.ts": 1,
   "packages/api/src/sandbox/image-store/settings.ts": 1,

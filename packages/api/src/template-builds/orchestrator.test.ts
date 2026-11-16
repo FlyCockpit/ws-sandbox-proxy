@@ -22,13 +22,13 @@ const {
   TemplateBuildScheduler,
   BuildCallTimeout,
   BUILD_COPY_ARGV,
-  buildLeaseMs,
   callWithDeadline,
   freezeInput,
   stepTimeoutMs,
   TEMPLATE_BUILD_CLAIM_TTL_MS,
   TEMPLATE_BUILD_SERVICE_CALL_TIMEOUT_MS,
 } = await import("./orchestrator");
+const { templateBuildLeaseMs } = await import("./config");
 const { classifyServiceError } = await import("./decide");
 const { buildExecPlan } = await import("./exec-plan");
 const { createPrismaClient } = await import("@wssp/db/client");
@@ -112,7 +112,7 @@ describe("builtWithRoot provenance (§3.3, security)", () => {
 });
 
 describe("frozen service inputs (§3.3)", () => {
-  it("create: the base revision, the build lease (timeout + window + 15 min, kill), the frozen wait and egress", () => {
+  it("create: the base revision, the build lease (timeout + capture window + 60 min storage + 15 min, kill), the frozen wait and egress", () => {
     const { key, input } = freezeInput(build, exec, "create", 0, 0, NOW, 60);
     expect(key).toBe("tb:b1:create:0:0");
     expect(input).toEqual({
@@ -122,13 +122,13 @@ describe("frozen service inputs (§3.3)", () => {
       memoryMiB: 2048,
       diskGiB: 16,
       idempotencyKey: key,
-      timeoutMs: buildLeaseMs(30, 60),
+      timeoutMs: templateBuildLeaseMs(30, 60),
       lifecycle: { onTimeout: "kill" },
       guestSudo: false,
       waitForCapacityMs: 60_000,
       egress: { mode: "allowlist", domains: ["pypi.org"], cidrs: [] },
     });
-    expect(buildLeaseMs(30, 60)).toBe((30 + 60 + 15) * 60_000);
+    expect(templateBuildLeaseMs(30, 60)).toBe((30 + 60 + 60 + 15) * 60_000);
   });
 
   it("create: an open build request stays open (fallback grants) and an absent one adds no egress (§6.3)", () => {
@@ -199,7 +199,8 @@ describe("frozen service inputs (§3.3)", () => {
     expect(freezeInput(build, exec, "timeout", 0, 0, NOW, 60).input).toEqual({
       id: "sbx1",
       idempotencyKey: "tb:b1:timeout:0:0",
-      timeoutMs: 75 * 60_000,
+      // capture window + storage window + slack
+      timeoutMs: (60 + 60 + 15) * 60_000,
     });
     expect(freezeInput(build, exec, "stop", 0, 0, NOW, 60).key).toBe("tb:b1:stop:0:0");
     expect(freezeInput(build, exec, "capture", 0, 1, NOW, 60).input).toEqual({

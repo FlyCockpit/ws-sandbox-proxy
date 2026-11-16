@@ -10,7 +10,7 @@ import { lockOwnerPlacement } from "../sandbox/direct-placement";
 import { buildIdOf } from "../sandbox/principal-kinds";
 import { resolveTemplateRevision } from "../sandbox/template-resolution";
 import { communityFirstCreateBuildLocked, communityRefreshOnMissLocked } from "./community/service";
-import { TEMPLATE_BUILD_LEASE_SLACK_MINUTES, templateBuildsConfig } from "./config";
+import { templateBuildLeaseMs, templateBuildsConfig } from "./config";
 import { ACTIVE_BUILD_STATES } from "./decide";
 import { initialStepRecords, loadBuildExecPlan } from "./exec-plan";
 import { buildQuotaRefusal, chargeMonthOf } from "./service";
@@ -208,8 +208,7 @@ export async function rebuildOnMissLocked(
   const timeoutMinutes = Math.min(source.timeoutMinutes, config.maxMinutes);
   if (
     timeoutMinutes < 1 ||
-    (timeoutMinutes + config.captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000 >
-      config.leaseCeilingMs
+    templateBuildLeaseMs(timeoutMinutes, config.captureWindowMinutes) > config.leaseCeilingMs
   )
     return { kind: "none" };
   // An identical active system build (the dedupe index's key) is joined too.

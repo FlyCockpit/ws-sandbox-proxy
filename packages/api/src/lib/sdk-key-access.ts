@@ -40,6 +40,7 @@ import {
   buildActionClass,
   buildAuthorityLost,
   buildStepAllowed,
+  captureOutlivesCancel,
   TEMPLATE_BUILD_SCOPE,
   untargetedCreateRole,
 } from "../template-builds/build-authority";
@@ -1385,7 +1386,13 @@ export async function checkAcceptedDispatchAuthority(
         // accepting-key rules below.
         const build = await client.sandboxTemplateBuild.findFirst({
           where: { id: principal.buildId, userId: ownerId },
-          select: { state: true, cancelRequestedAt: true, authorizingKeyId: true },
+          select: {
+            state: true,
+            cancelRequestedAt: true,
+            authorizingKeyId: true,
+            captureAttempt: true,
+            verifyRequired: true,
+          },
         });
         // The build's own VMs: its build VM or its community verify VM
         // (community-base I4c). Dispatch re-checks liveness and the key, not
@@ -1403,8 +1410,26 @@ export async function checkAcceptedDispatchAuthority(
         if (!build || !vm || (build.authorizingKeyId || null) !== principal.keyId)
           return current() ? "inactive" : "indeterminate";
         if (input.cleanup) return current() ? "active" : "indeterminate";
-        if (build.cancelRequestedAt !== null || !BUILD_ACTIVE_STATES.has(build.state))
-          return current() ? "inactive" : "indeterminate";
+        if (build.cancelRequestedAt !== null || !BUILD_ACTIVE_STATES.has(build.state)) {
+          // A user build's capture recorded before the cancel wins over it
+          // (§3.3; a community build's never does, S9): only that capture's
+          // own operation (its image upload) keeps authority
+          // until the capture is stored; every other dispatch is refused.
+          const capture =
+            input.operationKind === "CAPTURE_TEMPLATE" && context.operationId && context.sandboxId
+              ? await client.sandboxTemplateCapture.findFirst({
+                  where: {
+                    operationId: context.operationId,
+                    buildId: principal.buildId,
+                    userId: ownerId,
+                    sandboxId: context.sandboxId,
+                  },
+                  select: { state: true, buildAttempt: true, buildCancelledAt: true },
+                })
+              : null;
+          if (!captureOutlivesCancel({ operationKind: input.operationKind, build, capture }))
+            return current() ? "inactive" : "indeterminate";
+        }
         break;
       }
       case "session":

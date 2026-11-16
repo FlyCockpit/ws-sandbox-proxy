@@ -95,6 +95,35 @@ const CAPTURE_MEMORY_MIB = 1024;
 const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const STORE_TIMEOUT_MS = 2 * 3_600_000;
 
+/**
+ * When a capture's storage gives up (`capture_store_failed`): two hours after
+ * the capture was accepted, and for a template build's capture never later
+ * than its build VM's lease (server or host-acknowledged deadline, whichever
+ * is earlier), and at once when that VM is gone. The upload re-checks the
+ * VM's dispatch authority, so storing cannot outlive the VM; the build lease
+ * reserves a storage window (`templateBuildReserveMinutes`) for it.
+ */
+export function captureStoreDeadline(
+  captureCreatedAt: Date,
+  /** null: not a build capture; "missing": its VM row is gone. */
+  buildVm:
+    | {
+        state: string;
+        leaseExpiresAt: Date | null;
+        leaseExpiresAtEffective: Date | null;
+      }
+    | null
+    | "missing",
+): number {
+  const bounds = [captureCreatedAt.getTime() + STORE_TIMEOUT_MS];
+  if (buildVm) {
+    if (buildVm === "missing" || buildVm.state === "DELETED") return Number.NEGATIVE_INFINITY;
+    for (const at of [buildVm.leaseExpiresAt, buildVm.leaseExpiresAtEffective])
+      if (at) bounds.push(at.getTime());
+  }
+  return Math.min(...bounds);
+}
+
 /** Dashboard input (the /v1 body is `captureBodySchema`). */
 export const captureSessionInput = z
   .object({
@@ -554,6 +583,33 @@ export async function finalizeCapture(
         ownerId: capture.userId,
       } as const;
     }
+    // A build that already ended never gets a revision. CANCELLING does
+    // only when the host result was recorded before the cancel committed
+    // (§3.3, r3 N22); a cancel that committed first marked this capture
+    // (`buildCancelledAt`, serialized with result recording on this row) and
+    // wins: no revision, no tag move, and the failed outcome releases the
+    // image (E2-A-01 ruling). Likewise a superseded attempt: only the build's
+    // current capture attempt may publish its revision.
+    // A community build verifies before it publishes (community-base S9):
+    // a cancel always wins over a verify that has not passed, so a CANCELLING
+    // community build never gets a revision. Checked before the storage
+    // wait: a capture that can never publish fails at once, so its image,
+    // hold and build VM are released instead of waiting for an upload.
+    if (
+      build &&
+      (!["CAPTURING", "CANCELLING"].includes(build.state) ||
+        (build.verifyRequired && build.state !== "CAPTURING") ||
+        capture.buildCancelledAt !== null ||
+        capture.buildAttempt !== build.captureAttempt)
+    ) {
+      await failCapture(tx, operationId, "capture_failed");
+      return {
+        kind: "failed",
+        fingerprint,
+        hostId: capture.hostId,
+        ownerId: capture.userId,
+      } as const;
+    }
     const mode = imageDistributionMode();
     const foreign = capture.hostOwnerId !== capture.userId;
     if (mode === "s3" || foreign) {
@@ -563,7 +619,14 @@ export async function finalizeCapture(
       });
       if (artifact?.state !== "STORED") {
         const failedStore = artifact && ["CORRUPT", "FAILED", "DELETED"].includes(artifact.state);
-        if (failedStore || now.getTime() - op.createdAt.getTime() > STORE_TIMEOUT_MS) {
+        // A build capture's VM (locked above); a missing row counts as gone.
+        const buildVm = capture.buildId
+          ? ((await tx.sandbox.findFirst({
+              where: { id: capture.sandboxId, userId: capture.userId },
+              select: { state: true, leaseExpiresAt: true, leaseExpiresAtEffective: true },
+            })) ?? "missing")
+          : null;
+        if (failedStore || now.getTime() > captureStoreDeadline(op.createdAt, buildVm)) {
           await failCapture(tx, operationId, "capture_store_failed");
           return {
             kind: "failed",
@@ -586,31 +649,6 @@ export async function finalizeCapture(
           return { kind: "waiting" } as const;
         }
       }
-    }
-    // A build that already ended never gets a revision. CANCELLING does
-    // only when the host result was recorded before the cancel committed
-    // (§3.3, r3 N22); a cancel that committed first marked this capture
-    // (`buildCancelledAt`, serialized with result recording on this row) and
-    // wins: no revision, no tag move, and the failed outcome releases the
-    // image (E2-A-01 ruling). Likewise a superseded attempt: only the build's
-    // current capture attempt may publish its revision.
-    // A community build verifies before it publishes (community-base S9):
-    // a cancel always wins over a verify that has not passed, so a CANCELLING
-    // community build never gets a revision.
-    if (
-      build &&
-      (!["CAPTURING", "CANCELLING"].includes(build.state) ||
-        (build.verifyRequired && build.state !== "CAPTURING") ||
-        capture.buildCancelledAt !== null ||
-        capture.buildAttempt !== build.captureAttempt)
-    ) {
-      await failCapture(tx, operationId, "capture_failed");
-      return {
-        kind: "failed",
-        fingerprint,
-        hostId: capture.hostId,
-        ownerId: capture.userId,
-      } as const;
     }
     const sandbox = await tx.sandbox.findFirstOrThrow({
       where: { id: capture.sandboxId, userId: capture.userId },

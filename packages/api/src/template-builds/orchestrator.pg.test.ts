@@ -28,9 +28,11 @@ vi.mock("../sandbox/image-store/captures", async (original) => {
     },
   };
 });
+/** The image distribution mode (peer unless a test stores to S3). */
+const imageMode = vi.hoisted(() => ({ value: "peer" as "peer" | "s3" }));
 vi.mock("../sandbox/image-store/config", async (original) => ({
   ...(await original<typeof import("../sandbox/image-store/config")>()),
-  imageDistributionMode: () => "peer",
+  imageDistributionMode: () => imageMode.value,
 }));
 
 /**
@@ -39,7 +41,8 @@ vi.mock("../sandbox/image-store/config", async (original) => ({
  * finalizer, both orders), and minutes settled once and clamped.
  */
 import { pgTestDatabase } from "@wssp/db/testing/pg";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { checkAcceptedDispatchAuthority } from "../lib/sdk-key-access";
 import { assertHostDeletable } from "../sandbox/host-admission";
 import { recordCaptureResult } from "../sandbox/image-store/capture-result";
 import { finalizeCapture } from "../sandbox/image-store/captures";
@@ -57,6 +60,9 @@ import { buildOwnerFixture, currentOperation, fakeDaemon } from "./testing/build
 
 const db = await pgTestDatabase();
 afterAll(() => db.close());
+afterEach(() => {
+  imageMode.value = "peer";
+});
 const daemon = fakeDaemon(db);
 
 const RECIPE = {
@@ -351,6 +357,148 @@ describe("capture capacity blocker (E1-A-07)", () => {
   });
 });
 
+/** The S3 store's verified copy of the fake daemon's captured image. */
+async function storeCapturedImage(userId: string) {
+  await db.inspect.sandboxImageArtifact.upsert({
+    where: { userId_fingerprint: { userId, fingerprint: `sha256:${"f".repeat(64)}` } },
+    create: {
+      userId,
+      fingerprint: `sha256:${"f".repeat(64)}`,
+      architecture: "x86_64",
+      sizeBytes: 1024n,
+      storeKind: "S3",
+      state: "STORED",
+      objectKey: "images/fixture",
+      storedAt: new Date(),
+      verifiedAt: new Date(),
+    },
+    update: {
+      storeKind: "S3",
+      state: "STORED",
+      objectKey: "images/fixture",
+      storedAt: new Date(),
+      verifiedAt: new Date(),
+    },
+  });
+}
+
+/** The upload's dispatch authority for a build VM's operation of `kind`. */
+async function uploadAuthority(
+  f: Awaited<ReturnType<typeof buildOwnerFixture>>,
+  buildId: string,
+  sandboxId: string,
+  operationId: string,
+  operationKind = "CAPTURE_TEMPLATE",
+) {
+  const vm = await db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandboxId } });
+  return checkAcceptedDispatchAuthority(
+    {
+      ownerId: f.id,
+      principal: { kind: "build", buildId, keyId: null },
+      operationKind,
+      context: {
+        operationId,
+        sandboxId,
+        sandboxHostId: f.host.id,
+        templateRevisionId: vm.templateRevisionId,
+        originPoolId: vm.originPoolId,
+      },
+    },
+    db.prisma,
+  );
+}
+
+const killsOf = (sandboxId: string) =>
+  db.inspect.sandboxOperation.count({ where: { sandboxId, kind: "KILL_SANDBOX" } });
+
+describe("S3 storage after a recorded capture (VM lifetime and authority)", () => {
+  it("a capture recorded before the cancel keeps its VM and upload authority until stored, then publishes", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    // Not stored yet: the capture waits in STORING with its VM alive.
+    expect(await finalizeCapture(operationId)).toMatchObject({ kind: "waiting" });
+    await runTemplateBuildCleanup();
+    expect(await killsOf(sandbox.id)).toBe(0);
+    expect(await uploadAuthority(f, buildId, sandbox.id, operationId)).toBe("active");
+
+    await requestTemplateBuildCancel(f.session, buildId);
+    await advance(f, buildId);
+    expect(await row(buildId)).toMatchObject({ state: "CANCELLING" });
+    // The recorded result wins: the VM is kept and only this capture's own
+    // operation keeps dispatch authority; any other build dispatch is refused.
+    await runTemplateBuildCleanup();
+    expect(await killsOf(sandbox.id)).toBe(0);
+    expect(await uploadAuthority(f, buildId, sandbox.id, operationId)).toBe("active");
+    expect(await uploadAuthority(f, buildId, sandbox.id, operationId, "RUN_COMMAND")).toBe(
+      "inactive",
+    );
+    const other = await currentOperation(db, buildId);
+    if (other && other.id !== operationId)
+      expect(await uploadAuthority(f, buildId, sandbox.id, other.id)).toBe("inactive");
+
+    // Stored: it publishes, the build ends SUCCEEDED and the VM is killed.
+    await storeCapturedImage(f.id);
+    expect(await finalizeCapture(operationId)).toMatchObject({ kind: "finalized" });
+    expect(await row(buildId)).toMatchObject({ state: "SUCCEEDED" });
+    expect(await uploadAuthority(f, buildId, sandbox.id, operationId)).toBe("inactive");
+    await runTemplateBuildCleanup();
+    expect(await killsOf(sandbox.id)).toBe(1);
+  });
+
+  it("a capture recorded after the cancel loses: the VM dies at once and the upload has no authority", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    await requestTemplateBuildCancel(f.session, buildId);
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    const capture = await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+      where: { operationId },
+    });
+    expect(capture).toMatchObject({ state: "CAPTURED" });
+    expect(capture.buildCancelledAt).not.toBeNull();
+    expect(await uploadAuthority(f, buildId, sandbox.id, operationId)).toBe("inactive");
+    await advance(f, buildId);
+    await runTemplateBuildCleanup();
+    expect(await killsOf(sandbox.id)).toBe(1);
+  });
+
+  it("storage never outlives the build VM: the finalizer fails it at the VM's lease", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    // The re-anchored lease reserves the capture window + storage window + slack.
+    const vm = await db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandbox.id } });
+    const lease = vm.leaseExpiresAt!;
+    expect(lease.getTime()).toBeGreaterThan(Date.now() + 130 * 60_000);
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    // Before the lease (and within the 2 h store bound): it keeps waiting.
+    const created = (
+      await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: operationId } })
+    ).createdAt;
+    expect(
+      await finalizeCapture(operationId, new Date(created.getTime() + 60 * 60_000)),
+    ).toMatchObject({ kind: "waiting" });
+    // A host lease shortened to 30 min after the capture bounds storage there.
+    await db.inspect.sandbox.update({
+      where: { id: sandbox.id },
+      data: { leaseExpiresAtEffective: new Date(created.getTime() + 30 * 60_000) },
+    });
+    expect(
+      await finalizeCapture(operationId, new Date(created.getTime() + 31 * 60_000)),
+    ).toMatchObject({ kind: "failed" });
+    expect(
+      await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } }),
+    ).toMatchObject({ state: "FAILED", errorCode: "capture_store_failed" });
+    await advance(f, buildId);
+    expect(await row(buildId)).toMatchObject({ state: "FAILED", errorCode: "build_store_failed" });
+  });
+});
+
 describe("cancel vs finalizer (pg 4, r3 N22)", () => {
   it("host CAPTURED recorded before the cancel: published, tag moved, SUCCEEDED with cancelRequestedAt kept", async () => {
     const f = await buildOwnerFixture(db);
@@ -361,11 +509,22 @@ describe("cancel vs finalizer (pg 4, r3 N22)", () => {
     // The orchestrator waits for the finalizer (the result wins) ...
     await advance(f, buildId);
     expect((await row(buildId)).state).toBe("CANCELLING");
-    // ... while the cleanup invariant may already kill the stopped VM.
+    // ... and the cleanup invariant keeps the stopped VM until it is stored.
     await runTemplateBuildCleanup();
+    expect(
+      await db.inspect.sandboxOperation.count({
+        where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX" },
+      }),
+    ).toBe(0);
     expect(await finalizeCapture(build.captureOperationId!)).toMatchObject({ kind: "finalized" });
     const done = await row(buildId);
     expect(done).toMatchObject({ state: "SUCCEEDED" });
+    await runTemplateBuildCleanup();
+    expect(
+      await db.inspect.sandboxOperation.count({
+        where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX" },
+      }),
+    ).toBe(1);
     expect(done.cancelRequestedAt).not.toBeNull();
     const revision = await db.inspect.sandboxTemplateRevision.findUniqueOrThrow({
       where: { id: done.revisionId! },

@@ -13,9 +13,11 @@ vi.mock("@wssp/queue", () => ({ redisConnection: {} }));
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
 }));
+/** The image distribution mode (peer unless a test stores to S3). */
+const imageMode = vi.hoisted(() => ({ value: "peer" as "peer" | "s3" }));
 vi.mock("../../sandbox/image-store/config", async (original) => ({
   ...(await original<typeof import("../../sandbox/image-store/config")>()),
-  imageDistributionMode: () => "peer",
+  imageDistributionMode: () => imageMode.value,
 }));
 
 /**
@@ -28,7 +30,8 @@ vi.mock("../../sandbox/image-store/config", async (original) => ({
 import { readFileSync } from "node:fs";
 import { Prisma } from "@wssp/db/client";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { checkAcceptedDispatchAuthority } from "../../lib/sdk-key-access";
 import { recordCaptureResult } from "../../sandbox/image-store/capture-result";
 import { finalizeCapture } from "../../sandbox/image-store/captures";
 import { createSandbox } from "../../sandbox/services/sandboxes";
@@ -43,6 +46,9 @@ import { createCommunityTemplate, retryCommunityTemplate } from "./service";
 
 const db = await pgTestDatabase();
 afterAll(() => db.close());
+afterEach(() => {
+  imageMode.value = "peer";
+});
 const daemon = fakeDaemon(db);
 const fixture = readFileSync(new URL("./fixtures/images.json", import.meta.url), "utf8");
 const index = () => new CommunityIndexClient(async () => new Response(fixture));
@@ -59,8 +65,9 @@ async function owner() {
   return f;
 }
 
-/** Create the community template and drive its build to the verify phase. */
-async function toVerify(f: Awaited<ReturnType<typeof owner>>) {
+/** Create the community template and drive its build until the host's
+ * capture result is recorded (CAPTURING, capture CAPTURED). */
+async function toCaptured(f: Awaited<ReturnType<typeof owner>>) {
   const created = await createCommunityTemplate(
     f.session,
     {
@@ -95,6 +102,12 @@ async function toVerify(f: Awaited<ReturnType<typeof owner>>) {
       result: { fingerprint: BUILT_FP, sizeBytes: 4096, architecture: "x86_64" },
     }),
   );
+  return { created, buildId, vm, capture, advance };
+}
+
+/** Create the community template and drive its build to the verify phase. */
+async function toVerify(f: Awaited<ReturnType<typeof owner>>) {
+  const { created, buildId, vm, capture, advance } = await toCaptured(f);
   const finalized = await finalizeCapture(capture);
   expect(finalized.kind).toBe("finalized");
   const revisionId = (finalized as { revisionId: string }).revisionId;
@@ -388,6 +401,61 @@ describe("verify in CAPTURING (S9, criteria 3, 4)", () => {
       (await db.inspect.sandboxTemplateRevision.findUniqueOrThrow({ where: { id: revisionId } }))
         .retiredAt,
     ).not.toBeNull();
+  });
+
+  it("cancel while the S3 upload stores: no exception for a community build, so the VM dies, the upload loses authority and the capture fails without waiting for storage", async () => {
+    imageMode.value = "s3";
+    const f = await owner();
+    const { buildId, vm, capture, advance } = await toCaptured(f);
+    const killsOfVm = () =>
+      db.inspect.sandboxOperation.count({ where: { sandboxId: vm.id, kind: "KILL_SANDBOX" } });
+    const authority = () =>
+      checkAcceptedDispatchAuthority(
+        {
+          ownerId: f.id,
+          principal: { kind: "build", buildId, keyId: null },
+          operationKind: "CAPTURE_TEMPLATE",
+          context: {
+            operationId: capture,
+            sandboxId: vm.id,
+            sandboxHostId: f.host.id,
+            templateRevisionId: vm.templateRevisionId,
+            originPoolId: vm.originPoolId,
+          },
+        },
+        db.prisma,
+      );
+    // Before the cancel the upload stores on the build VM's authority.
+    expect(await finalizeCapture(capture)).toMatchObject({ kind: "waiting" });
+    await runTemplateBuildCleanup();
+    expect(await killsOfVm()).toBe(0);
+    expect(await authority()).toBe("active");
+
+    // The result was recorded before the cancel, but a community build has
+    // not verified, so the cancel wins (S9): nothing is kept for its upload.
+    await requestTemplateBuildCancel(f.session, buildId);
+    await advance();
+    expect((await row(buildId)).state).toBe("CANCELLING");
+    expect(
+      (
+        await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+          where: { operationId: capture },
+        })
+      ).buildCancelledAt,
+    ).toBeNull();
+    await runTemplateBuildCleanup();
+    expect(await killsOfVm()).toBe(1);
+    expect(await authority()).toBe("inactive");
+    // Never stored, yet the finalizer fails it at once instead of waiting.
+    expect(await finalizeCapture(capture)).toMatchObject({ kind: "failed" });
+    expect(
+      await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+        where: { operationId: capture },
+      }),
+    ).toMatchObject({ state: "FAILED", errorCode: "capture_failed" });
+    await daemon.killed(vm.id);
+    await advance();
+    expect((await row(buildId)).state).toBe("CANCELLED");
   });
 
   it("a verify that stalls past its deadline fails and retires its pending revision", async () => {

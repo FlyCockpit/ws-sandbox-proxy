@@ -36,7 +36,7 @@ import { refuseCommunityWrite } from "./community/managed";
 import {
   accountTemplateBuildQuotas,
   TEMPLATE_BUILD_CONTEXT_SEALED_MAX_MS,
-  TEMPLATE_BUILD_LEASE_SLACK_MINUTES,
+  templateBuildLeaseMs,
   templateBuildsConfig,
 } from "./config";
 import { ACTIVE_BUILD_STATES } from "./decide";
@@ -365,10 +365,7 @@ export async function acceptTemplateBuild(
   const timeoutMinutes = input.timeoutMinutes ?? Math.min(30, config.maxMinutes);
   if (!Number.isInteger(timeoutMinutes) || timeoutMinutes < 1)
     throw recipeInvalid("timeout_invalid");
-  if (
-    (timeoutMinutes + config.captureWindowMinutes + TEMPLATE_BUILD_LEASE_SLACK_MINUTES) * 60_000 >
-    config.leaseCeilingMs
-  )
+  if (templateBuildLeaseMs(timeoutMinutes, config.captureWindowMinutes) > config.leaseCeilingMs)
     throw recipeInvalid("timeout_exceeds_lease_ceiling");
   if (timeoutMinutes > config.maxMinutes) throw recipeInvalid("timeout_exceeds_max");
   if ((input.poolId === undefined) === (input.sandboxHostId === undefined))

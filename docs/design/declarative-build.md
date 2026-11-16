@@ -52,9 +52,25 @@ accept recipe ─▶ (stage COPY context) ─▶ create build VM (placement on a
    manual capture (scrub, publish, upload, availability, tag move,
    retention). The revision records `sourceKind = BUILD`, the base as parent,
    the recipe digest, final ENV as default envs and the final WORKDIR as the
-   default cwd.
+   default cwd. The upload to an S3 image store (or from a foreign builder)
+   runs on the build VM's dispatch authority, so the VM lives until the
+   capture is finalized. Its lease is the build timeout plus a reserve of the
+   capture window (`TEMPLATE_BUILD_CAPTURE_WINDOW_MINUTES`, 60 min default), a
+   60-minute storage window and 15 minutes of slack, re-anchored to that
+   reserve after the last step (135 min by default; the deployment lease
+   ceiling must fit timeout + reserve). Storage gives up
+   (`build_store_failed`) two hours after the capture was accepted or at the
+   VM's lease (server or host-acknowledged, whichever is earlier), whichever
+   comes first, and at once if the VM is gone.
 6. **Cleanup** is a state invariant: any live sandbox whose build is missing,
-   cancelled, finished or past its capture result is killed.
+   finished, or cancelled, or whose capture is finalized (its image stored),
+   is killed. One exception: a capture whose host result was recorded before
+   the cancel still publishes, so a cancelling build keeps its VM, and only
+   that capture's upload keeps dispatch authority, until the capture is
+   stored or fails. A community (`verifyRequired`) build never publishes
+   after a cancel (it has not verified), so it gets no exception: its VM is
+   killed, its upload loses authority, and the finalizer fails its capture
+   before waiting for storage.
 
 ## Recipe
 

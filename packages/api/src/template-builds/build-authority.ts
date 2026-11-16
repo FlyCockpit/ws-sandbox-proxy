@@ -14,7 +14,7 @@
  * Anything else is refused.
  */
 import { ORPCError } from "@orpc/server";
-import type { TemplateBuildState } from "@wssp/db";
+import type { TemplateBuildState, TemplateCaptureState } from "@wssp/db";
 import type { ServiceAction, ServiceScope } from "../lib/service-scopes";
 
 /** The single SDK scope that authorizes every build step (checked at
@@ -119,6 +119,43 @@ export function buildStepAllowed(
     build.verifyRequired === true &&
     build.captureFinalized === true &&
     (VERIFY_STEP_STATES[action] ?? []).includes(build.state)
+  );
+}
+
+/**
+ * Capture rows still storing their recorded result. One recorded before a
+ * cancel (unmarked: `buildCancelledAt` null) of a user build wins over the
+ * cancel (§3.3), so its build VM outlives the cancel (cleanup) and its own
+ * upload keeps dispatch authority (`captureOutlivesCancel`) until it leaves
+ * these states. A community build's cancel always wins (S9).
+ */
+export const CAPTURE_STORING: readonly TemplateCaptureState[] = ["CAPTURED", "STORING"];
+
+/** The one dispatch a cancelled build principal may still make: the upload
+ * of its current capture attempt (the CAPTURE_TEMPLATE operation itself),
+ * recorded before the cancel and still storing. Everything else a cancel
+ * refuses, and so does a community (`verifyRequired`) build entirely: its
+ * cancel always wins over the unverified capture (community-base S9), which
+ * can never publish, so its upload has nothing to finish. The caller supplies
+ * the capture row it read for that operation; owner, credential and key
+ * checks still apply on top. */
+export function captureOutlivesCancel(input: {
+  operationKind: string | undefined;
+  build: { state: TemplateBuildState; captureAttempt: number; verifyRequired: boolean };
+  capture: {
+    state: TemplateCaptureState;
+    buildAttempt: number;
+    buildCancelledAt: Date | null;
+  } | null;
+}): boolean {
+  return (
+    input.operationKind === "CAPTURE_TEMPLATE" &&
+    !input.build.verifyRequired &&
+    (input.build.state === "CAPTURING" || input.build.state === "CANCELLING") &&
+    input.capture !== null &&
+    CAPTURE_STORING.includes(input.capture.state) &&
+    input.capture.buildCancelledAt === null &&
+    input.capture.buildAttempt === input.build.captureAttempt
   );
 }
 

@@ -1460,7 +1460,7 @@ export const ENV_VARS: EnvVar[] = [
     group: "template-builds",
     source: "default",
     default: "60",
-    hint: "Longest build (1-1440 min). Clamped so build + capture window + 15 min fits SANDBOX_MAX_TIMEOUT_MS.",
+    hint: "Longest build (1-1440 min). Clamped so build + capture window + 60 min storage + 15 min fits SANDBOX_MAX_TIMEOUT_MS.",
   },
   {
     key: "TEMPLATE_BUILD_MAX_CONCURRENT_PER_ACCOUNT",
@@ -1484,7 +1484,7 @@ export const ENV_VARS: EnvVar[] = [
     group: "template-builds",
     source: "default",
     default: "60",
-    hint: "Time allowed to capture a finished build VM (5-720 min); not charged.",
+    hint: "Time allowed to capture a finished build VM (5-720 min); not charged. The build lease adds it, a 60 min storage window and 15 min to the build timeout.",
   },
   {
     key: "TEMPLATE_BUILD_CONTEXT_MAX_BYTES",
