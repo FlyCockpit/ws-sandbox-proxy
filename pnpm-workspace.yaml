@@ -24,6 +24,12 @@ minimumReleaseAgeIgnoreMissingTime: false
 #     # version that clears the advisory and is <7 days old.
 #     # drop-after: YYYY-MM-DD
 #     - <pkg>
+minimumReleaseAgeExclude:
+  # ws 8.23.0 (released 2026-11-12) fixes a remote memory-exhaustion DoS: a peer
+  # floods Ping frames while not reading, so automatic Pongs pile up in memory.
+  # It is <7 days old; owner-approved security carve-out (2026-11-16).
+  # drop-after: 2026-11-20
+  - ws@8.23.0
 # Each selector lifts a transitive out of its vulnerable range. All target
 # versions pass the 7-day minimumReleaseAge gate; selectors are scoped tight so
 # unrelated majors are untouched.
@@ -112,8 +118,8 @@ catalog:
   "@types/react-dom": ^19.3.0
   tailwindcss: ^4.3.5
   typescript: ^7.0.2
-  vite: 8.3.6
-  "@vitejs/plugin-react": ^6.2.1
+  vite: 8.3.7
+  "@vitejs/plugin-react": ^6.3.0
   postcss: ^8.5.32
   "@tanstack/react-form": ^1.33.5
   "@tanstack/react-query": ^5.107.1
@@ -124,8 +130,8 @@ catalog:
   "@tanstack/react-start": 1.169.5
   tsx: ^4.23.15
   vitest: ^5.1.0
-  ws: ^8.22.2
-  vitest-mock-extended: ^5.1.1
+  ws: ^8.23.0
+  vitest-mock-extended: ^6.0.0
   "@testing-library/react": 16.3.3
   "@testing-library/user-event": 14.6.8
   jsdom: 31.0.0
