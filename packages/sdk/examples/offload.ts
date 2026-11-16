@@ -18,6 +18,19 @@ if (stopped.disk?.offloadState === "failed") {
   console.log("not offloaded:", stopped.disk.offloadFailure);
 }
 
+// Offload policy: when a stopped disk is exported. `on_stop` (the default)
+// exports at once; `after` waits `afterMs` of being stopped; `on_pressure`
+// keeps it on its host until the host needs the space. Host pressure and
+// `wssp drain --offload` export early whatever the policy. Set it at create
+// (`offload`), with a stop (`stop(id, { offload })`), or later with `update`.
+const parked = await wssp.sandboxes.update(sandboxId, { offload: { mode: "on_pressure" } });
+console.log(parked.disk?.offloadPolicy, parked.disk?.offloadDueAt); // null: not due
+// Export it once it has been stopped for two hours, unless resumed first.
+const later = await wssp.sandboxes.update(sandboxId, {
+  offload: { mode: "after", afterMs: 2 * 60 * 60_000 },
+});
+console.log(later.disk?.offloadDueAt);
+
 // Starting an OFFLOADED sandbox restores its disk onto an eligible host
 // (progress phases fetching_disk, importing_disk). `disk.eligibility`
 // says whether other users' hosts may take it (`any_host`) or only yours.

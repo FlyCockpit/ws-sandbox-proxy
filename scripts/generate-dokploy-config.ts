@@ -24,10 +24,62 @@ type Options = {
    * checkout; the CLI's `--git-url local`).
    */
   gitUrl?: string;
+  /**
+   * `--env KEY[,KEY…]`: optional runtime variables the generator does not
+   * forward by itself (request budgets, the image store, offload tuning …),
+   * each forwarded as `${KEY:-}` to every runtime role its declaration
+   * allows (`assertPassthroughKeys`). Empty or unset keeps the app default.
+   */
+  env?: readonly string[];
 };
 const keys = new Set(ENV_VARS.map((variable) => variable.key));
 const sharedKeys = new Set(Object.keys(sharedVars));
 const serverKeys = new Set([...sharedKeys, ...Object.keys(serverVars)]);
+// Keys the generator owns (lifecycle, backup, instance identity): never
+// optional inventory, never `--env`.
+// The proxy targets port 3000 (`loadbalancer.server.port`), so the listen
+// port is the generator's too.
+const GENERATOR_OWNED =
+  /^(RESTORE_|WORKER_MODE$|MIGRATE_ON_START$|WSSP_INSTANCE_ID$|BACKUP_|PORT$|SERVER_PORT$)/;
+
+/**
+ * `--env` validation: every key is a declared server or shared runtime
+ * variable (packages/env/src/vars/{server,shared}.ts, listed in the
+ * manifest), not one the generator owns or already forwards, and named once.
+ * Values never pass through the generator: the Compose only references the
+ * key, and the operator sets it in Dokploy's environment.
+ */
+export function assertPassthroughKeys(env: readonly string[], mapped: ReadonlySet<string>) {
+  const seen = new Set<string>();
+  for (const key of env) {
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`--env ${key} is not a variable name.`);
+    if (seen.has(key)) throw new Error(`--env names ${key} twice.`);
+    seen.add(key);
+    if (GENERATOR_OWNED.test(key))
+      throw new Error(`--env ${key} is set by the generator itself; it cannot be passed through.`);
+    if (!keys.has(key) || !serverKeys.has(key))
+      throw new Error(
+        `--env ${key} is not a server or worker variable of this repository (packages/env/src/vars).`,
+      );
+    if (mapped.has(key)) throw new Error(`--env ${key} is already forwarded; drop it from --env.`);
+  }
+}
+
+/** The note the checklists show for one `--env` key. */
+const PASSTHROUGH_NOTE =
+  "Forwarded by --env. Define it (an empty value keeps the app default; Dokploy rejects a reference to an undefined variable). See docs/operations/environment-variables.md.";
+
+/** Optional keys of one configuration: the fixed ones plus its `--env` keys. */
+function optionalForwarded(options: Options): Record<string, string> {
+  return {
+    ...OPTIONAL_FORWARDED,
+    ...Object.fromEntries((options.env ?? []).map((key) => [key, PASSTHROUGH_NOTE])),
+  };
+}
+
+/** `--env` keys a role receives: every key for the server, shared keys for the worker. */
+const passthroughFor = (options: Options, role: "server" | "worker") =>
+  (options.env ?? []).filter((key) => role === "server" || sharedKeys.has(key));
 
 /**
  * A repository URL Docker can use as a Git build context: https://, ssh:// or
@@ -111,8 +163,16 @@ export function generateDokployConfig(options: Options) {
     );
   validateNames(options);
   if (options.gitUrl !== undefined) assertGitUrl(options.gitUrl);
+  if (options.env?.length) {
+    const base = composeEnvironments({ ...options, env: [] });
+    assertPassthroughKeys(
+      options.env,
+      new Set([...Object.keys(base.server ?? {}), ...Object.keys(base.worker ?? {})]),
+    );
+  }
   const worker = options.topology === "app-worker";
   const prefix = backupPrefix(options);
+  const optional = optionalForwarded(options);
   const reference = (key: string) => {
     if (!keys.has(key)) throw new Error(`Environment manifest is missing ${key}.`);
     return `\${{environment.${key}}}`;
@@ -148,6 +208,7 @@ export function generateDokployConfig(options: Options) {
     // key ID alone (never the secret), so its entrypoint can refuse a reused
     // key, then drops it before the server starts.
     ...(!worker ? refs(monitorKeys) : refs([MONITOR_KEY_ID])),
+    ...refs(passthroughFor(options, "server")),
   };
   const workerEnvironment = {
     ...runtime,
@@ -157,6 +218,7 @@ export function generateDokployConfig(options: Options) {
     MIGRATE_ON_START: "false",
     BACKUP_S3_PREFIX: prefix,
     ...refs(monitorKeys),
+    ...refs(passthroughFor(options, "worker")),
   };
   const application = (role: string, dockerfile: string, environment: Record<string, string>) => ({
     name: `${projectName(options)}-${role}`,
@@ -227,7 +289,7 @@ export function generateDokployConfig(options: Options) {
   ];
   // Derive optional runtime inventory from the declarations + manifest. An
   // optional credential is never granted to every role just because it exists.
-  const excluded = /^(RESTORE_|WORKER_MODE|MIGRATE_ON_START|WSSP_INSTANCE_ID|BACKUP_)/;
+  const excluded = GENERATOR_OWNED;
   const optionalFor = (allowed: Set<string>, mapped: Record<string, string>) =>
     ENV_VARS.filter(
       (variable) =>
@@ -252,7 +314,7 @@ export function generateDokployConfig(options: Options) {
     },
     environmentVariablesToSetOnce: Object.fromEntries(
       required
-        .filter((key) => !Object.hasOwn(OPTIONAL_FORWARDED, key))
+        .filter((key) => !Object.hasOwn(optional, key))
         .map((key) => [
           key,
           key === "BETTER_AUTH_URL"
@@ -263,9 +325,7 @@ export function generateDokployConfig(options: Options) {
         ]),
     ),
     environmentVariablesOptional: Object.fromEntries(
-      required
-        .filter((key) => Object.hasOwn(OPTIONAL_FORWARDED, key))
-        .map((key) => [key, OPTIONAL_FORWARDED[key]!]),
+      required.filter((key) => Object.hasOwn(optional, key)).map((key) => [key, optional[key]!]),
     ),
     applications,
     optionalEnvironmentKeys: {
@@ -410,6 +470,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
       ...(!worker ? refsForCompose(monitorKeys) : refsForCompose([MONITOR_KEY_ID])),
       BACKUP_S3_PREFIX: prefix,
       BACKUP_ENABLED: composeVar("BACKUP_ENABLED", options.backups ? "true" : "false"),
+      ...refsForCompose(passthroughFor(options, "server")),
     },
     ...(worker
       ? {
@@ -422,6 +483,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
             ...refsForCompose(monitorKeys),
             BACKUP_S3_PREFIX: prefix,
             BACKUP_ENABLED: composeVar("BACKUP_ENABLED", options.backups ? "true" : "false"),
+            ...refsForCompose(passthroughFor(options, "worker")),
           },
         }
       : {}),
@@ -443,6 +505,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
 }
 
 function composeChecklist(options: Options) {
+  const optional = optionalForwarded(options);
   return {
     file: "docker-compose.dokploy.yml",
     topology: options.topology,
@@ -462,7 +525,7 @@ function composeChecklist(options: Options) {
             ),
           ),
         ]
-          .filter((key) => !Object.hasOwn(OPTIONAL_FORWARDED, key))
+          .filter((key) => !Object.hasOwn(optional, key))
           .sort(),
       ]),
     ),
@@ -470,9 +533,9 @@ function composeChecklist(options: Options) {
       Object.entries(composeEnvironments(options)).map(([role, entries]) => [
         role,
         Object.fromEntries(
-          Object.keys(OPTIONAL_FORWARDED)
+          Object.keys(optional)
             .filter((key) => Object.hasOwn(entries, key))
-            .map((key) => [key, OPTIONAL_FORWARDED[key]!]),
+            .map((key) => [key, optional[key]!]),
         ),
       ]),
     ),
@@ -483,6 +546,18 @@ function composeChecklist(options: Options) {
         : "Backups default off. Regenerate with --backups true to add the backup profile and shared /backups volume with backups enabled; enable the profile for daily backups. ") +
       "Exactly one schedule per database.",
   };
+}
+
+/** Above the main router's default priority (its rule length). */
+const CONTENT_ROUTER_PRIORITY = 1000;
+
+/**
+ * The Traefik v3 rule of the uncompressed download router: `GET`/`HEAD`
+ * `/v1/operations/{id}/content` and `/api/dashboard/operations/{id}/content`
+ * on the deployment's host. `$$` is Compose's escape for a literal `$`.
+ */
+export function contentDownloadRule(hostname: string): string {
+  return `Host(\`${hostname}\`) && PathRegexp(\`^/(v1|api/dashboard)/operations/[^/]+/content$$\`)`;
 }
 
 /** Generate a project-isolated server-led deployment with an optional backup profile. */
@@ -530,6 +605,14 @@ ${[
   `traefik.http.middlewares.${router}-compress.compress=true`,
   `traefik.http.middlewares.${router}-compress.compress.encodings=zstd,br,gzip`,
   `traefik.http.routers.${router}.middlewares=${router}-compress`,
+  // Operation content downloads are never compressed (docs/operations/
+  // deployment.md "Reverse proxy transfer bodies"): their own router, same
+  // service, no middleware, above the main router.
+  `traefik.http.routers.${router}-content.service=${router}`,
+  `traefik.http.routers.${router}-content.rule=${contentDownloadRule(new URL(options.url).hostname)}`,
+  `traefik.http.routers.${router}-content.priority=${CONTENT_ROUTER_PRIORITY}`,
+  `traefik.http.routers.${router}-content.entrypoints=websecure`,
+  `traefik.http.routers.${router}-content.tls.certresolver=letsencrypt`,
 ]
   .map((value) => `      - ${JSON.stringify(value)}`)
   .join("\n")}
@@ -648,13 +731,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           "--proxy-network",
           "--backups",
           "--git-url",
+          "--env",
         ].includes(key) ||
         fields[key] ||
         !value ||
         value.startsWith("--")
       )
         throw new Error(
-          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--git-url <repository URL, default the origin remote>|local] [--project <stem>] [--proxy-network <name>] [--backups true|false].",
+          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--git-url <repository URL, default the origin remote>|local] [--project <stem>] [--proxy-network <name>] [--backups true|false] [--env KEY,KEY…].",
         );
       fields[key] = value;
     }
@@ -668,6 +752,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       project: fields["--project"],
       proxyNetwork: fields["--proxy-network"],
       backups: fields["--backups"] === "true",
+      env: fields["--env"]?.split(",").map((key) => key.trim()),
       gitUrl: resolveGitUrl(fields["--git-url"], () => {
         const remote = spawnSync("git", ["remote", "get-url", "origin"], {
           cwd: fileURLToPath(new URL("..", import.meta.url)),

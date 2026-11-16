@@ -97,7 +97,6 @@ import {
   type ReadFileInput,
   type ReconnectSandboxInput,
   type RemovePathInput,
-  type RenameSandboxInput,
   type RestoreSnapshotInput,
   type RunCommandInput,
   runCommandInput,
@@ -105,6 +104,7 @@ import {
   type SetSandboxTimeoutInput,
   type StatPathInput,
   type StopSandboxInput,
+  type UpdateSandboxInput,
   type WriteStdinInput,
 } from "../contracts";
 import { operationDigestContext } from "../digest-context";
@@ -113,6 +113,7 @@ import { canRestore } from "../disk-offload/availability";
 import { endOffloadForDestroy } from "../disk-offload/destroy";
 import { sandboxDiskSelect } from "../disk-offload/disk-view";
 import { grantServerEviction } from "../disk-offload/evict";
+import { type OffloadPolicyColumns, offloadPolicyColumns } from "../disk-offload/policy";
 import {
   acceptRestore,
   CachedCopyIneligible,
@@ -420,6 +421,8 @@ async function enqueueOwnedOperation(
     fsProcess?: { commandEnvironment?: boolean };
     /** Reconnect only: the restore an OFFLOADED sandbox resumes through. */
     restore?: { request: RestoreRequest; clock: LeaseClock };
+    /** Stop only: the offload policy written with the accepted stop (never on replay). */
+    offloadPolicy?: OffloadPolicyColumns;
   },
 ) {
   const action = serviceActionForOperationKind(spec.kind);
@@ -706,6 +709,18 @@ async function enqueueOwnedOperation(
           }
         }
 
+        // S is held by the CAS above: the stop's policy lands with the stop.
+        // Managed sandboxes are never offloaded and refuse a policy.
+        if (
+          spec.offloadPolicy &&
+          (
+            await tx.sandbox.updateMany({
+              where: { id: sandbox.id, userId: owner.ownerId, purpose: "WORKLOAD" },
+              data: spec.offloadPolicy,
+            })
+          ).count !== 1
+        )
+          throw sandboxStateConflict("Managed sandboxes are never offloaded.");
         let acceptedLease: Partial<ReturnType<typeof acceptedLeaseFields>> = {};
         let rearmedAt: Date | null = null;
         if (spec.rearmLease) {
@@ -1193,6 +1208,10 @@ export const createSandbox = serviceProcedure(
       throw new ORPCError("BAD_REQUEST", { message: "Invalid managed create." });
     const guestSudoRequested =
       buildId === null && managed === undefined && (input.guestSudo ?? true);
+    // Offload policy: WORKLOAD only (managed sandboxes are never offloaded).
+    if ((buildId !== null || managed !== undefined) && input.offload !== undefined)
+      throw new ORPCError("BAD_REQUEST", { message: "Invalid managed create." });
+    const offloadPolicy = input.offload ? offloadPolicyColumns(input.offload) : undefined;
     const intent: CreateIntent = {
       originalSelector: input.template,
       overrides: Object.fromEntries(overrides),
@@ -1297,6 +1316,7 @@ export const createSandbox = serviceProcedure(
               name: input.name,
               expectedDisconnectGraceSeconds: input.expectedDisconnectGraceSeconds,
               credentials: credentialRequests,
+              ...(offloadPolicy ? { offloadPolicy } : {}),
               ...(buildRole ? { buildRole } : {}),
             });
             const sandbox = await tx.sandbox.findFirstOrThrow({
@@ -1318,6 +1338,7 @@ export const createSandbox = serviceProcedure(
                 bodyHash,
                 name: input.name,
                 credentials: credentialRequests,
+                ...(offloadPolicy ? { offloadPolicy } : {}),
                 ...(buildRole ? { buildRole } : {}),
                 ...(managed
                   ? { managed: { purpose: managed.purpose, afterSandbox: managed.afterSandbox } }
@@ -1783,8 +1804,10 @@ export const stopSandbox = serviceProcedure(
         sandboxId: input.id,
         action: "stop",
         ...(input.credentialCapture === "skip" ? { credentialCapture: "skip" } : {}),
+        ...(input.offload ? { offload: input.offload } : {}),
       },
       payload: input.credentialCapture === "skip" ? { credentialCapture: "skip" } : {},
+      ...(input.offload ? { offloadPolicy: offloadPolicyColumns(input.offload) } : {}),
       nextState: "STOPPING",
       allowedStates: STOPPABLE_SANDBOX_STATES,
       conflictMessage: "Sandbox cannot be stopped from this state.",
@@ -2032,40 +2055,50 @@ export const setSandboxTimeout = serviceProcedure(
 );
 
 /**
- * Rename (`PUT /v1/sandboxes/{id}`, oRPC `updateSandbox`). Not an operation:
+ * Update: rename and/or set the offload policy (`PUT /v1/sandboxes/{id}`,
+ * oRPC `updateSandbox`). A policy change only steers later export decisions
+ * (`offloadCandidates` and the `enqueueOffload` recheck under this row's
+ * lock): an export already running finishes and a stored copy is kept. It
+ * may be set in any live state, OFFLOADED included (it applies to the next
+ * stop). Not an operation:
  * no idempotency key, outbox row or webhook (the webhook trigger fires on
- * state only). The shared gate (`sandboxes.rename`) has already applied the
+ * state only). The shared gate (`sandboxes.update`) has already applied the
  * scope, the key's resource grants, the managed-purpose policy and the build
  * refusal, and runs again inside the transaction. Lock order: owner (FOR
  * SHARE) → SDK key (FOR SHARE, revalidated) → placement(31) → sandbox, the
  * same lock every create picks or checks its name under.
  */
-export const renameSandbox = serviceProcedure(
+export const updateSandbox = serviceProcedure(
   {
-    action: "sandboxes.rename",
-    target: (input: RenameSandboxInput) => ({ sandboxId: input.id }),
+    action: "sandboxes.update",
+    target: (input: UpdateSandboxInput) => ({ sandboxId: input.id }),
   },
-  async (owner: Principal, input: RenameSandboxInput) => {
+  async (owner: Principal, input: UpdateSandboxInput) => {
     const budgetOwner = budgetSubjectOf(owner)?.ownerId;
     if (budgetOwner) await consumeSandboxWriteBudget(budgetOwner, "ordinary");
-    if (!sandboxNameSchema.safeParse(input.name).success) throw sandboxNameInvalid();
+    if (input.name !== undefined && !sandboxNameSchema.safeParse(input.name).success)
+      throw sandboxNameInvalid();
     try {
       return await prisma.$transaction(async (tx) => {
         await lockOwnerForAdmission(tx, owner.ownerId);
         // Reauthorize in the transaction (as operationTransaction's work
         // does): an SDK key is locked FOR SHARE and revalidated here, before
         // lock 31, so a revocation either waits for this rename or refuses it.
-        await authorizeServiceAction(owner, "sandboxes.rename", { sandboxId: input.id }, tx);
+        await authorizeServiceAction(owner, "sandboxes.update", { sandboxId: input.id }, tx);
         await lockOwnerPlacement(tx, owner.ownerId);
         const [row] = await tx.$queryRaw<{ id: string }[]>`
           SELECT id FROM sandbox_instance
           WHERE id = ${input.id} AND "userId" = ${owner.ownerId} AND state <> 'DELETED'::"SandboxState"
           FOR NO KEY UPDATE`;
         if (!row) throw new ORPCError("NOT_FOUND", { message: NOT_FOUND });
-        await assertSandboxNameFree(tx, owner.ownerId, input.name, row.id);
+        if (input.name !== undefined)
+          await assertSandboxNameFree(tx, owner.ownerId, input.name, row.id);
         const sandbox = await tx.sandbox.update({
           where: { id: row.id, userId: owner.ownerId },
-          data: { name: input.name },
+          data: {
+            ...(input.name !== undefined ? { name: input.name } : {}),
+            ...(input.offload !== undefined ? offloadPolicyColumns(input.offload) : {}),
+          },
           select: sandboxReadSelect,
         });
         return redactSandbox(sandbox, owner.ownerId);

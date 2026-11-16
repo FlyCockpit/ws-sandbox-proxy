@@ -1,4 +1,5 @@
-import prisma, { type Prisma } from "@wssp/db";
+import prisma, { type Prisma as PrismaTypes } from "@wssp/db";
+import { Prisma } from "@wssp/db/client";
 import { lockImageQuota } from "../image-store/config";
 import { OFFLOADABLE_SANDBOX_PURPOSES } from "../managed-sandbox";
 import { lockHostByEpoch, relayTransaction, requireRelayFence } from "../relay-fence";
@@ -13,7 +14,8 @@ import { failLiveOffload, lockSandboxRow, PRE_STORED_STATES, UPLOADABLE_STATES }
  *
  * A candidate is a STOPPED sandbox of an offloadable purpose (R15.1) with no
  * current stored disk and no live offload, on a connected host whose hello
- * reported `diskOffload`, with `canOffload` true. A failed attempt of the
+ * reported `diskOffload`, with `canOffload` true, whose offload policy is due
+ * or whose host needs the space (`offloadPolicyDueSql`). A failed attempt of the
  * same generation backs off, and a generation stops retrying after a few
  * attempts (a retry always uses a new offload id, R13).
  */
@@ -46,7 +48,10 @@ const HOST_BUSY_STATES = PRE_STORED_STATES;
 export const OFFLOAD_RELEASE_WAIT_MS = 10 * 60_000;
 
 /** Prisma filter: this host's offloads that still hold its export slot. */
-export function hostExportBusy(hostId: string, now: Date): Prisma.SandboxDiskOffloadWhereInput {
+export function hostExportBusy(
+  hostId: string,
+  now: Date,
+): PrismaTypes.SandboxDiskOffloadWhereInput {
   return {
     sourceHostId: hostId,
     OR: [
@@ -58,6 +63,48 @@ export function hostExportBusy(hostId: string, now: Date): Prisma.SandboxDiskOff
       },
     ],
   };
+}
+
+/**
+ * Pressure threshold: a storage pool at least this full (percent of its
+ * reported total) needs space. The daemon's own eviction threshold
+ * (`PRESSURE_PERCENT`, apps/cli/src/sandbox_relay/offload_evict.rs).
+ */
+export const OFFLOAD_PRESSURE_PERCENT = 90;
+
+/**
+ * "The host needs the space" for a stopped sandbox `s` on host `h` (SQL over
+ * those aliases): the host is draining with `--offload`; a capacity wait
+ * still WAITING in a pool the host is an enabled member of is blocked on disk, storage or the
+ * root ceiling (stopped disks keep their reservation, so a blocked create is
+ * the real signal on a committed pool); or the sandbox's storage pool, as
+ * last reported on the host's current connection, is at least
+ * `OFFLOAD_PRESSURE_PERCENT` used. It overrides every offload policy, for
+ * every owner. The same signals (`evictSuggestions`) then evict stored copies.
+ */
+export function hostNeedsSpaceSql(): Prisma.Sql {
+  return Prisma.sql`((h.draining AND h."drainOffload")
+  OR EXISTS (SELECT 1 FROM sandbox_pool_member m
+    JOIN sandbox_capacity_wait w ON w."poolId" = m."poolId"
+    WHERE m."sandboxHostId" = h.id AND m.enabled AND m."removedAt" IS NULL
+      AND w.state::text = 'WAITING' AND w."lastBlocker" IN ('disk', 'storage', 'ceiling'))
+  OR EXISTS (SELECT 1 FROM sandbox_host_storage_pool p
+    WHERE p.id = s."storagePoolId" AND p."sandboxHostId" = h.id
+      AND p."connectionEpoch" = h."connectionEpoch" AND p."totalBytes" > 0
+      AND p."usedBytes" * 100 >= p."totalBytes" * ${OFFLOAD_PRESSURE_PERCENT}))`;
+}
+
+/**
+ * The offload policy admits an export of stopped sandbox `s` on host `h` at
+ * `now` (SQL over those aliases): ON_STOP always; AFTER once stopped for
+ * `offloadAfterMs` (an unknown stop time counts as due); ON_PRESSURE never
+ * by itself; any policy while `hostNeedsSpaceSql` holds.
+ */
+export function offloadPolicyDueSql(now: Date): Prisma.Sql {
+  return Prisma.sql`(s."offloadMode"::text = 'ON_STOP'
+    OR (s."offloadMode"::text = 'AFTER' AND (s."lastStoppedAt" IS NULL
+      OR s."lastStoppedAt" + s."offloadAfterMs" * interval '1 millisecond' <= ${now}))
+    OR ${hostNeedsSpaceSql()})`;
 }
 
 export type OffloadCandidate = {
@@ -97,6 +144,8 @@ export async function offloadCandidates(now = new Date()): Promise<OffloadCandid
           OR o."createdAt" > ${new Date(now.getTime() - OFFLOAD_STAGING_RETRY_MS)}))
       AND (SELECT count(*) FROM sandbox_disk_offload o WHERE o."sandboxId" = s.id
         AND o."sourceGeneration" = s.generation) < ${OFFLOAD_ATTEMPTS_PER_GENERATION}
+      -- The sandbox's offload policy (or its host's need for space).
+      AND ${offloadPolicyDueSql(now)}
     -- A host draining with --offload goes first.
     ORDER BY (h.draining AND h."drainOffload") DESC, s."lastStoppedAt" ASC NULLS FIRST, s.id
     LIMIT ${CANDIDATES_PER_TICK}`;
@@ -146,6 +195,13 @@ export async function enqueueOffload(
       select: { id: true },
     });
     if (!sandbox) return null;
+    // The policy, re-read under the sandbox lock: a change since the
+    // candidate read (or a restart of the stop clock) wins.
+    const [due] = await tx.$queryRaw<{ due: boolean }[]>`
+      SELECT ${offloadPolicyDueSql(now)} AS due
+      FROM sandbox_instance s JOIN sandbox_host h ON h.id = s."sandboxHostId"
+      WHERE s.id = ${candidate.sandboxId}`;
+    if (due?.due !== true) return null;
     const busy = await tx.sandboxDiskOffload.count({
       where: {
         OR: [{ liveSandboxId: candidate.sandboxId }, hostExportBusy(candidate.hostId, now)],

@@ -111,6 +111,8 @@ const responses = [
       sizeBytes: null,
       eligibility: "any_host",
       offloadPin: "ANY",
+      offloadPolicy: { mode: "on_stop" },
+      offloadDueAt: null,
     },
     metadata: {},
     createdAt: NOW,

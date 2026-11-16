@@ -256,6 +256,37 @@
       "saved": "Opción de restauración guardada.",
       "failed": "No se pudo guardar la opción de restauración. Inténtalo de nuevo.",
       "narrowed": "Este sandbox se restaura solo en tus propios hosts, diga lo que diga esta opción: ha tenido un inicio de sesión adjunto, o su plantilla mantiene las imágenes en tus propios hosts."
+    },
+    "policy": {
+      "label": "Copia al almacén",
+      "change": "Cambiar",
+      "changeLabel": "Cambiar cuándo va el disco al almacén",
+      "on_stop": "En cuanto se detiene",
+      "after": "Tras {{delay}} detenido",
+      "on_pressure": "Solo cuando su host necesita el espacio",
+      "delay": {
+        "minutes_one": "{{count}} minuto",
+        "minutes_other": "{{count}} minutos",
+        "hours_one": "{{count}} hora",
+        "hours_other": "{{count}} horas"
+      },
+      "dueAt": "Programada para {{time}}, si el almacén está configurado y la copia está permitida.",
+      "title": "¿Cuándo debe ir un disco detenido al almacén?",
+      "description": "Copiar un disco detenido al almacén de imágenes permite que su host libere el espacio y que el sandbox inicie en otro host. Un disco aún sin copiar solo está en su host: si ese host se pierde, el disco se pierde.",
+      "option": {
+        "on_stop": "En cuanto se detiene",
+        "on_stopHint": "La opción predeterminada. El disco se copia en segundo plano después de cada detención.",
+        "after": "Después de un tiempo",
+        "afterHint": "El disco se copia solo cuando el sandbox lleva ese tiempo detenido. Si se inicia antes, no se copia nada.",
+        "on_pressure": "Solo cuando su host necesita el espacio",
+        "on_pressureHint": "Mantén el disco en su host. Úsalo para estacionar un sandbox que esperas volver a iniciar."
+      },
+      "minutes": "Tiempo en minutos",
+      "minutesHint": "Se cuenta desde la detención. De 1 minuto a 24 días.",
+      "minutesInvalid": "Escribe un número entero de minutos entre {{min}} y {{max}}.",
+      "pressure": "Elijas lo que elijas, un host que necesita el espacio (en vaciado con descarga, casi lleno o bloqueando sandboxes nuevos por falta de disco) copia antes los discos detenidos al almacén.",
+      "saved": "Configuración de copia guardada.",
+      "failed": "No se pudo guardar la configuración de copia. Inténtalo de nuevo."
     }
   },
   "draft": {
@@ -708,7 +739,8 @@
     "bootDescription": "Detener interrumpe el arranque. Si el disco se conserva, el sandbox termina como Detenido para que puedas iniciarlo de nuevo. Si no se creó una instancia, el sandbox termina como Eliminado.",
     "confirm": "Detener",
     "pending": "Deteniendo…",
-    "done": "Detención solicitada."
+    "done": "Detención solicitada.",
+    "offloadPolicy": "Copia del disco al almacén:"
   },
   "storageUnknown": "Sin vinculación de almacenamiento retenido.",
   "templateArchived": "{{label}} (archivada)",

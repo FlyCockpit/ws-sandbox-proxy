@@ -1647,7 +1647,7 @@ export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" |
   "sandboxes.stop": "retained",
   "sandboxes.reconnect": "custody",
   "sandboxes.setTimeout": "custody",
-  "sandboxes.rename": "custody",
+  "sandboxes.update": "custody",
   "sandboxes.capture": "custody",
   "operations.get": "retained",
   "operations.getFileResult": "retained",

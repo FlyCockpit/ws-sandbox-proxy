@@ -21075,6 +21075,57 @@
                   },
                   "guestSudo": {
                     "type": "boolean"
+                  },
+                  "offload": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_stop"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "after"
+                          },
+                          "afterMs": {
+                            "type": "integer",
+                            "minimum": 60000,
+                            "maximum": 2073600000,
+                            "description": "Milliseconds the sandbox must stay stopped before its disk is exported (60000 to 2073600000)."
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "afterMs"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_pressure"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy."
                   }
                 },
                 "required": [
@@ -21639,18 +21690,78 @@
                     "maxLength": 63,
                     "description": "Sandbox name: a lowercase DNS label (1-63 characters of a-z, 0-9 and inner hyphens), unique among the owner's live sandboxes. Not UUID-shaped and not starting with `wssp-`.",
                     "example": "quiet-otter"
+                  },
+                  "offload": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_stop"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "after"
+                          },
+                          "afterMs": {
+                            "type": "integer",
+                            "minimum": 60000,
+                            "maximum": 2073600000,
+                            "description": "Milliseconds the sandbox must stay stopped before its disk is exported (60000 to 2073600000)."
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "afterMs"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_pressure"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy."
                   }
                 },
-                "required": [
-                  "name"
-                ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "anyOf": [
+                  {
+                    "required": [
+                      "name"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "offload"
+                    ]
+                  }
+                ]
               }
             }
           }
         },
         "operationId": "updateSandbox",
-        "summary": "Rename a sandbox. The name must be free among the owner's live sandboxes; the sandbox itself is unchanged.",
+        "summary": "Rename a sandbox and/or change its offload policy. A name must be free among the owner's live sandboxes; neither change touches the VM. A policy change applies to the next export decision; an export already running finishes.",
         "x-wssp-scopes": [
           "sandboxes:manage"
         ],
@@ -21668,7 +21779,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Rename a sandbox. The name must be free among the owner's live sandboxes; the sandbox itself is unchanged.",
+            "description": "Rename a sandbox and/or change its offload policy. A name must be free among the owner's live sandboxes; neither change touches the VM. A policy change applies to the next export decision; an export already running finishes.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -22773,6 +22884,57 @@
                   "credentialCapture": {
                     "type": "string",
                     "const": "skip"
+                  },
+                  "offload": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_stop"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "after"
+                          },
+                          "afterMs": {
+                            "type": "integer",
+                            "minimum": 60000,
+                            "maximum": 2073600000,
+                            "description": "Milliseconds the sandbox must stay stopped before its disk is exported (60000 to 2073600000)."
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "afterMs"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_pressure"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy."
                   }
                 },
                 "additionalProperties": false
@@ -34048,6 +34210,69 @@
                       "ANY",
                       "OWN_HOSTS"
                     ]
+                  },
+                  "offloadPolicy": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_stop"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "after"
+                          },
+                          "afterMs": {
+                            "type": "integer",
+                            "minimum": 60000,
+                            "maximum": 2073600000,
+                            "description": "Milliseconds the sandbox must stay stopped before its disk is exported (60000 to 2073600000)."
+                          }
+                        },
+                        "required": [
+                          "mode",
+                          "afterMs"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "mode": {
+                            "type": "string",
+                            "const": "on_pressure"
+                          }
+                        },
+                        "required": [
+                          "mode"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ],
+                    "description": "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy."
+                  },
+                  "offloadDueAt": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -34057,7 +34282,9 @@
                   "offloadedAt",
                   "sizeBytes",
                   "eligibility",
-                  "offloadPin"
+                  "offloadPin",
+                  "offloadPolicy",
+                  "offloadDueAt"
                 ],
                 "additionalProperties": false
               },
@@ -35240,7 +35467,8 @@
                 "credentials.read",
                 "credentials.write",
                 "credentials.use",
-                "sandboxes.guestSudo"
+                "sandboxes.guestSudo",
+                "sandboxes.offloadPolicy"
               ]
             }
           },
@@ -35865,7 +36093,8 @@
                 "credentials.read",
                 "credentials.write",
                 "credentials.use",
-                "sandboxes.guestSudo"
+                "sandboxes.guestSudo",
+                "sandboxes.offloadPolicy"
               ]
             }
           },

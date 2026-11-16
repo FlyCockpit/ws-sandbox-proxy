@@ -782,16 +782,20 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       ),
       // Rename: not an operation (no idempotency key); names are unique among live rows.
       updateSandbox: mutation(
-        call("updateSandbox", (input: { id: string; name: string }) => {
+        call("updateSandbox", (input: { id: string; name?: string; offload?: Row }) => {
           const row = sandbox(input.id);
           if (
+            input.name !== undefined &&
             server.sandboxes.some(
               (other) =>
                 other.id !== row.id && other.state !== "DELETED" && other.name === input.name,
             )
           )
             throw coded("sandbox.name_taken");
-          row.name = input.name;
+          if (input.name !== undefined) row.name = input.name;
+          const disk = row.disk as Row | null;
+          if (input.offload !== undefined && disk)
+            row.disk = { ...disk, offloadPolicy: input.offload };
           return row;
         }),
       ),
@@ -1032,6 +1036,8 @@ export function sandboxRow(overrides: Row = {}): Row {
       sizeBytes: null,
       eligibility: "any_host",
       offloadPin: "ANY",
+      offloadPolicy: { mode: "on_stop" },
+      offloadDueAt: null,
     },
     lastErrorCode: null,
     expiryFailureReason: null,

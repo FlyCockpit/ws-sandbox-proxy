@@ -637,8 +637,12 @@ copied, encrypted, to the store and later freed from its host. Every sandbox
 read carries `disk` (null while it has no disk): `location`
 (`host | host_and_store | store`), `offloadState`, `offloadFailure`,
 `offloadedAt`, `sizeBytes`, the restore `eligibility`
-(`any_host | own_hosts | never`) and `offloadPin` (`ANY` or `OWN_HOSTS`, set
-by the owner in the dashboard). An evicted sandbox reads `OFFLOADED`;
+(`any_host | own_hosts | never`), `offloadPin` (`ANY` or `OWN_HOSTS`, set
+by the owner in the dashboard), the offload policy `offloadPolicy`
+(`on_stop`, `after` with `afterMs`, or `on_pressure`) and `offloadDueAt`
+(when the policy makes the stopped disk due for export). Set the policy at
+create (`offload`), with a stop (`stop(id, { offload })`, part of the
+stop's request) or with `update(id, { offload })`. An evicted sandbox reads `OFFLOADED`;
 `connect` restores it onto an eligible host, and `stop` resolves on
 `STOPPED`, `OFFLOADED` or `DELETED`. A start refused 409
 `sandbox.disk_evicting` (its cached disk is being evicted) is retried for you
@@ -669,6 +673,19 @@ if (stopped.disk?.offloadState === "failed") {
   // The disk stays on its host; `quota_exceeded` means the stored quota is used.
   console.log("not offloaded:", stopped.disk.offloadFailure);
 }
+
+// Offload policy: when a stopped disk is exported. `on_stop` (the default)
+// exports at once; `after` waits `afterMs` of being stopped; `on_pressure`
+// keeps it on its host until the host needs the space. Host pressure and
+// `wssp drain --offload` export early whatever the policy. Set it at create
+// (`offload`), with a stop (`stop(id, { offload })`), or later with `update`.
+const parked = await wssp.sandboxes.update(sandboxId, { offload: { mode: "on_pressure" } });
+console.log(parked.disk?.offloadPolicy, parked.disk?.offloadDueAt); // null: not due
+// Export it once it has been stopped for two hours, unless resumed first.
+const later = await wssp.sandboxes.update(sandboxId, {
+  offload: { mode: "after", afterMs: 2 * 60 * 60_000 },
+});
+console.log(later.disk?.offloadDueAt);
 
 // Starting an OFFLOADED sandbox restores its disk onto an eligible host
 // (progress phases fetching_disk, importing_disk). `disk.eligibility`

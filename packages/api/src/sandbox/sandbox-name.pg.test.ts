@@ -30,7 +30,7 @@ import { consumeSandboxWriteBudget } from "./budgets";
 import { runCapacityQueuePass } from "./capacity-queue";
 import { leaseNow } from "./lease";
 import { isSandboxNameViolation, sandboxNameRandom } from "./sandbox-names";
-import { createSandbox, renameSandbox } from "./services/sandboxes";
+import { createSandbox, updateSandbox } from "./services/sandboxes";
 import { createSdkKey, revokeSdkKey } from "./services/sdk-keys";
 import { allOwnedPoolKey, mintPoolKey, poolFixture } from "./testing/pool-fixtures";
 import { seedSandboxInstance } from "./testing/resource-fixtures";
@@ -141,7 +141,7 @@ describe("concurrent name writes serialize on lock 31", () => {
     const existing = await seed(f);
     const gate = db.pauseAt("rename", { after: LOCK_31 });
     const rename = settle(
-      db.run("rename", () => renameSandbox(f.owner, { id: existing.id, name: "brisk-heron" })),
+      db.run("rename", () => updateSandbox(f.owner, { id: existing.id, name: "brisk-heron" })),
     );
     await gate.waitReached();
     const create = settle(
@@ -213,12 +213,12 @@ describe("index and backstop", () => {
     await seed(a, { name: "shared-name" });
     const other = await seed(b);
     await expect(
-      renameSandbox(b.owner, { id: other.id, name: "shared-name" }),
+      updateSandbox(b.owner, { id: other.id, name: "shared-name" }),
     ).resolves.toMatchObject({ name: "shared-name" });
     const gone = await seed(a, { name: "freed-name", state: "DELETED" });
     const reuse = await seed(a);
     await expect(
-      renameSandbox(a.owner, { id: reuse.id, name: "freed-name" }),
+      updateSandbox(a.owner, { id: reuse.id, name: "freed-name" }),
     ).resolves.toMatchObject({ name: "freed-name" });
     expect(await storedName(gone.id)).toBe("freed-name");
     await seed(a, { name: "login-vm", purpose: "CREDENTIAL_LOGIN" });
@@ -303,7 +303,7 @@ describe("8: only the owner renames, through the shared gate", () => {
   it("the owner renames and the ordinary budget is charged once", async () => {
     const { owner, victim } = await setup();
     vi.mocked(consumeSandboxWriteBudget).mockClear();
-    const renamed = await renameSandbox(owner.owner, { id: victim.id, name: "renamed" });
+    const renamed = await updateSandbox(owner.owner, { id: victim.id, name: "renamed" });
     expect(renamed).toMatchObject({ id: victim.id, name: "renamed" });
     expect(await storedName(victim.id)).toBe("renamed");
     expect(vi.mocked(consumeSandboxWriteBudget).mock.calls).toEqual([[owner.id, "ordinary"]]);
@@ -314,10 +314,10 @@ describe("8: only the owner renames, through the shared gate", () => {
     for (const actor of [hostOwner, poolOwner, admin]) {
       const own = await seed(actor);
       await expect(
-        renameSandbox(actor.owner, { id: own.id, name: `own-${actor.id.slice(0, 8)}` }),
+        updateSandbox(actor.owner, { id: own.id, name: `own-${actor.id.slice(0, 8)}` }),
       ).resolves.toMatchObject({ id: own.id });
       await expect(
-        renameSandbox(actor.owner, { id: victim.id, name: "stolen" }),
+        updateSandbox(actor.owner, { id: victim.id, name: "stolen" }),
       ).rejects.toMatchObject({ code: "NOT_FOUND" });
       expect(await storedName(victim.id)).toBe("victim-name");
     }
@@ -328,11 +328,11 @@ describe("8: only the owner renames, through the shared gate", () => {
     const restricted = await key(mintPoolKey(owner, [owner.pool.id], [owner.host.id]));
     // The key creates its own sandbox (its CREATE operation records the key).
     const own = await createSandbox(restricted, { ...owner.input, idempotencyKey: randomUUID() });
-    await expect(renameSandbox(restricted, { id: own.id, name: "key-own" })).resolves.toMatchObject(
+    await expect(updateSandbox(restricted, { id: own.id, name: "key-own" })).resolves.toMatchObject(
       { name: "key-own" },
     );
     await expect(
-      renameSandbox(restricted, { id: victim.id, name: "stolen" }),
+      updateSandbox(restricted, { id: victim.id, name: "stolen" }),
     ).rejects.toMatchObject({
       code: "FORBIDDEN",
       message: "Sandbox resource grants are required.",
@@ -352,7 +352,7 @@ describe("8: only the owner renames, through the shared gate", () => {
         scopes: ["sandboxes:read"],
       }),
     );
-    await expect(renameSandbox(readOnly, { id: victim.id, name: "stolen" })).rejects.toMatchObject({
+    await expect(updateSandbox(readOnly, { id: victim.id, name: "stolen" })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
     const build = {
@@ -361,20 +361,20 @@ describe("8: only the owner renames, through the shared gate", () => {
       buildId: randomUUID(),
       keyId: null,
     } as unknown as ServicePrincipal;
-    await expect(renameSandbox(build, { id: victim.id, name: "stolen" })).rejects.toMatchObject({
+    await expect(updateSandbox(build, { id: victim.id, name: "stolen" })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
     expect(await storedName(victim.id)).toBe("victim-name");
 
     const deleted = await seed(owner, { state: "DELETED", name: "deleted-one" });
     await expect(
-      renameSandbox(owner.owner, { id: deleted.id, name: "revived" }),
+      updateSandbox(owner.owner, { id: deleted.id, name: "revived" }),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(await storedName(deleted.id)).toBe("deleted-one");
 
     const managed = await seed(owner, { purpose: "CREDENTIAL_LOGIN", name: "login-one" });
     await expect(
-      renameSandbox(owner.owner, { id: managed.id, name: "renamed" }),
+      updateSandbox(owner.owner, { id: managed.id, name: "renamed" }),
     ).rejects.toMatchObject({ data: { code: "sandbox.managed" } });
     expect(await storedName(managed.id)).toBe("login-one");
   });
@@ -383,14 +383,14 @@ describe("8: only the owner renames, through the shared gate", () => {
     const { owner, victim } = await setup();
     await seed(owner, { name: "taken-name" });
     await expect(
-      renameSandbox(owner.owner, { id: victim.id, name: "Bad_Name" }),
+      updateSandbox(owner.owner, { id: victim.id, name: "Bad_Name" }),
     ).rejects.toMatchObject({ data: { code: "sandbox.name_invalid" } });
     await expect(
-      renameSandbox(owner.owner, { id: victim.id, name: "taken-name" }),
+      updateSandbox(owner.owner, { id: victim.id, name: "taken-name" }),
     ).rejects.toMatchObject({ data: { code: "sandbox.name_taken" } });
     // Renaming to its own current name is allowed (the sandbox itself is excluded).
     await expect(
-      renameSandbox(owner.owner, { id: victim.id, name: "victim-name" }),
+      updateSandbox(owner.owner, { id: victim.id, name: "victim-name" }),
     ).resolves.toMatchObject({ name: "victim-name" });
   });
 });
@@ -410,7 +410,7 @@ describe("9: a rename re-checks the SDK key inside its transaction", () => {
     const gate = db.pauseAt("rename", { after: OWNER_LOCK });
     const rename = settle(
       db.run("rename", () =>
-        renameSandbox(minted.principal, { id: victim.id, name: "after-revoke" }),
+        updateSandbox(minted.principal, { id: victim.id, name: "after-revoke" }),
       ),
     );
     await gate.waitReached();
@@ -424,7 +424,7 @@ describe("9: a rename re-checks the SDK key inside its transaction", () => {
     const { f, minted, victim } = await keyed();
     const gate = db.pauseAt("rename", { after: LOCK_31 });
     const rename = settle(
-      db.run("rename", () => renameSandbox(minted.principal, { id: victim.id, name: "renamed" })),
+      db.run("rename", () => updateSandbox(minted.principal, { id: victim.id, name: "renamed" })),
     );
     await gate.waitReached();
     const revoke = settle(

@@ -66,6 +66,8 @@ const sandbox = {
     sizeBytes: null,
     eligibility: "any_host",
     offloadPin: "ANY",
+    offloadPolicy: { mode: "on_stop" },
+    offloadDueAt: null,
   },
   createdAt: NOW,
   updatedAt: NOW,

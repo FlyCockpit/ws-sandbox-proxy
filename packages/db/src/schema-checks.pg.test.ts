@@ -59,7 +59,7 @@ describe("committed CHECK declarations (real PostgreSQL)", () => {
       new URL("../prisma/migrations/0_init/migration.sql", import.meta.url),
       "utf8",
     );
-    expect(repoChecks).toHaveLength(146);
+    expect(repoChecks).toHaveLength(147);
     const live = (
       await client.query<{ table: string; name: string; valid: boolean }>(
         `SELECT t.relname AS "table", c.conname AS name, c.convalidated AS valid
@@ -276,6 +276,7 @@ it("installs every sharing and webhook function and trigger from committed migra
     "wssp_invite_guard",
     "wssp_member_guard",
     "wssp_pool_guard",
+    "wssp_sandbox_stopped_at",
     "wssp_share_guard",
     "wssp_webhook_credential_event",
     "wssp_webhook_operation_event",
@@ -294,6 +295,7 @@ it("installs every sharing and webhook function and trigger from committed migra
       "wssp_invite_guard",
       "wssp_member_guard",
       "wssp_pool_guard",
+      "wssp_sandbox_stopped_at",
       "wssp_share_guard",
       "wssp_webhook_credential_event",
       "wssp_webhook_operation_event",

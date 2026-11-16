@@ -439,7 +439,7 @@ wssp drain [OPTIONS]
 | `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
 | `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
 | `--json` | Print the committed drain state and live sandbox count as JSON |  |
-| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store and free their host copies once another eligible host could restore them. Undrain clears it |  |
+| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
 
 ### `wssp undrain`
 
@@ -456,7 +456,7 @@ wssp undrain [OPTIONS]
 | `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
 | `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
 | `--json` | Print the committed drain state and live sandbox count as JSON |  |
-| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store and free their host copies once another eligible host could restore them. Undrain clears it |  |
+| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
 
 ### `wssp images`
 

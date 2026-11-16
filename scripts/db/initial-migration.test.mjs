@@ -11,9 +11,9 @@ import { SCHEMA_DIR } from "./lib/prisma.mjs";
 import { schemaCheckConstraints } from "./lib/schema-checks.mjs";
 import { checkWrapper, splitStatements } from "./lib/sql.mjs";
 
-test("all 146 documentary CHECKs match 0_init names, mapped tables and exact expressions", () => {
+test("all 147 documentary CHECKs match 0_init names, mapped tables and exact expressions", () => {
   const checks = schemaCheckConstraints(SCHEMA_DIR);
-  assert.equal(checks.length, 146);
+  assert.equal(checks.length, 147);
   const sql = readFileSync(INITIAL_PATH, "utf8");
   assert.equal(frozenSection(sql, "checks"), checkStatements(checks));
   const materialized = splitStatements(sql).filter(({ text }) =>
@@ -23,11 +23,11 @@ test("all 146 documentary CHECKs match 0_init names, mapped tables and exact exp
   assert.equal(new Set(checks.map(({ constraint }) => constraint)).size, checks.length);
   assert.equal(checkWrapper(sql).ok, true);
 });
-test("frozen baseline retains eight domain functions, seven triggers and the required transfer host", () => {
+test("frozen baseline retains nine domain functions, eight triggers and the required transfer host", () => {
   const sql = readFileSync(INITIAL_PATH, "utf8");
   const hardening = frozenSection(sql, "hardening");
-  assert.equal((hardening.match(/^CREATE OR REPLACE FUNCTION public\.wssp_/gm) ?? []).length, 8);
-  assert.equal((hardening.match(/^CREATE TRIGGER wssp_/gm) ?? []).length, 7);
+  assert.equal((hardening.match(/^CREATE OR REPLACE FUNCTION public\.wssp_/gm) ?? []).length, 9);
+  assert.equal((hardening.match(/^CREATE TRIGGER wssp_/gm) ?? []).length, 8);
   assert.match(sql, /"acceptedHostId" TEXT NOT NULL/);
   assert.ok(sql.indexOf("initial-backfill-begin") < sql.indexOf("initial-checks-begin"));
   assert.ok(sql.indexOf("initial-checks-end") < sql.indexOf("initial-hardening-begin"));

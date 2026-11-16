@@ -9,6 +9,7 @@ import {
 } from "./disk-view";
 
 const STORED_AT = new Date("2026-11-06T12:00:00.000Z");
+const STOPPED_AT = new Date("2026-11-06T11:00:00.000Z");
 
 function facts(overrides: Partial<SandboxDiskFacts> = {}): SandboxDiskFacts {
   return {
@@ -18,6 +19,9 @@ function facts(overrides: Partial<SandboxDiskFacts> = {}): SandboxDiskFacts {
     diskOffloadId: null,
     cachedOffloadSeq: null,
     offloadPin: "ANY",
+    offloadMode: "ON_STOP",
+    offloadAfterMs: null,
+    lastStoppedAt: STOPPED_AT,
     credentialFilesEver: false,
     DiskOffloads: [],
     SandboxTemplateRevision: { Template: { imagePlacement: "INHERIT" } },
@@ -54,7 +58,33 @@ describe("sandboxDiskDto (offload plan §1, C8)", () => {
       sizeBytes: null,
       eligibility: "any_host",
       offloadPin: "ANY",
+      offloadPolicy: { mode: "on_stop" },
+      offloadDueAt: STOPPED_AT.toISOString(),
     });
+  });
+
+  it("projects the offload policy and when it makes a host-only stopped disk due", () => {
+    const after = sandboxDiskDto(facts({ offloadMode: "AFTER", offloadAfterMs: 3_600_000 }));
+    expect(sandboxDiskSchema.parse(after)).toEqual(after);
+    expect(after).toMatchObject({
+      offloadPolicy: { mode: "after", afterMs: 3_600_000 },
+      offloadDueAt: "2026-11-06T12:00:00.000Z",
+    });
+    expect(sandboxDiskDto(facts({ offloadMode: "ON_PRESSURE" }))).toMatchObject({
+      offloadPolicy: { mode: "on_pressure" },
+      offloadDueAt: null,
+    });
+    // Not due once a copy, an attempt or a failure exists, nor while running.
+    for (const row of [
+      facts({ diskOffloadId: "off-2", cachedOffloadSeq: 2, DiskOffloads: [stored()] }),
+      facts({ DiskOffloads: [{ ...stored("EXPORTING"), storedAt: null, sizeBytes: null }] }),
+      facts({
+        DiskOffloads: [{ ...stored("FAILED"), storedAt: null, sizeBytes: null, failureCode: "x" }],
+      }),
+      facts({ state: "READY" }),
+      facts({ purpose: "TEMPLATE_BUILD" }),
+    ])
+      expect(sandboxDiskDto(row)?.offloadDueAt).toBeNull();
   });
 
   it("an in-flight upload is still host-only, with its phase", () => {

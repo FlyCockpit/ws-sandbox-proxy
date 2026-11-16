@@ -24,11 +24,11 @@ import { decodeCursor } from "../lib/pagination";
 import type { ServiceScope } from "../lib/service-scopes";
 import { getActionReceipt } from "./action-receipts";
 import { poolCapacityLimits } from "./capacity-limits";
-import type { Principal } from "./contracts";
+import type { Principal, UpdateSandboxInput } from "./contracts";
 import { toOperationDto, toSandboxDto } from "./public-dto";
 import { getKeyGrant, type KeyGrant } from "./services/capabilities";
 import { listHosts } from "./services/hosts";
-import { getOperation, getSandbox, listSandboxes, renameSandbox } from "./services/sandboxes";
+import { getOperation, getSandbox, listSandboxes, updateSandbox } from "./services/sandboxes";
 import {
   getUsablePool as getPool,
   listUsablePoolMembers as listPoolMembers,
@@ -223,12 +223,18 @@ export async function sdkGetSandbox(principal: Principal, id: string): Promise<S
   return toSandboxDto(await getSandbox(principal, { id }));
 }
 
-export async function sdkRenameSandbox(
+export async function sdkUpdateSandbox(
   principal: Principal,
   id: string,
-  name: string,
+  body: Pick<UpdateSandboxInput, "name" | "offload">,
 ): Promise<SandboxDto> {
-  return toSandboxDto(await renameSandbox(principal, { id, name }));
+  return toSandboxDto(
+    await updateSandbox(principal, {
+      id,
+      ...(body.name !== undefined ? { name: body.name } : {}),
+      ...(body.offload !== undefined ? { offload: body.offload } : {}),
+    }),
+  );
 }
 
 export async function sdkGetOperation(principal: Principal, id: string) {

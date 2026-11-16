@@ -176,7 +176,8 @@
     "bootDescription": "Stop interrupts boot. A retained disk ends as Stopped so you can start it again. If no instance was created, the sandbox ends as Deleted.",
     "confirm": "Stop",
     "pending": "Stopping…",
-    "done": "Stop requested."
+    "done": "Stop requested.",
+    "offloadPolicy": "Disk copy to the store:"
   },
   "start": {
     "action": "Start",
@@ -707,6 +708,37 @@
       "saved": "Restore setting saved.",
       "failed": "Couldn't save the restore setting. Try again.",
       "narrowed": "This sandbox restores on your own hosts only, whatever this setting says: it has had a login attached, or its template keeps images on your own hosts."
+    },
+    "policy": {
+      "label": "Exports to the store",
+      "change": "Change",
+      "changeLabel": "Change when the disk goes to the store",
+      "on_stop": "As soon as it stops",
+      "after": "After {{delay}} stopped",
+      "on_pressure": "Only when its host needs the space",
+      "delay": {
+        "minutes_one": "{{count}} minute",
+        "minutes_other": "{{count}} minutes",
+        "hours_one": "{{count}} hour",
+        "hours_other": "{{count}} hours"
+      },
+      "dueAt": "Due {{time}}, if the store is configured and the copy is allowed.",
+      "title": "When should a stopped disk go to the store?",
+      "description": "Copying a stopped disk to the image store lets its host free the space and lets the sandbox start on another host. A disk not yet copied is only on its host: if that host is lost, the disk is lost.",
+      "option": {
+        "on_stop": "As soon as it stops",
+        "on_stopHint": "The default. The disk is copied in the background after every stop.",
+        "after": "After a delay",
+        "afterHint": "The disk is copied only once the sandbox has been stopped this long. A start before then copies nothing.",
+        "on_pressure": "Only when its host needs the space",
+        "on_pressureHint": "Keep the disk on its host. Use this to park a sandbox you expect to start again."
+      },
+      "minutes": "Delay in minutes",
+      "minutesHint": "Counted from the stop. 1 minute to 24 days.",
+      "minutesInvalid": "Enter a whole number of minutes from {{min}} to {{max}}.",
+      "pressure": "Whatever you choose, a host that needs the space (draining with offload, nearly full, or blocking new sandboxes for lack of disk) copies stopped disks to the store early.",
+      "saved": "Offload setting saved.",
+      "failed": "Couldn't save the offload setting. Try again."
     }
   },
   "retryCleanup": {

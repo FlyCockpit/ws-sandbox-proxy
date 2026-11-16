@@ -7,7 +7,7 @@ import {
 } from "@wssp/api/sandbox/contracts";
 import { captureSandbox } from "@wssp/api/sandbox/image-store/captures";
 import { mutationOperationReceipt, probeSandboxReceipt } from "@wssp/api/sandbox/sdk-mutations";
-import { sdkRenameSandbox } from "@wssp/api/sandbox/sdk-reads";
+import { sdkUpdateSandbox } from "@wssp/api/sandbox/sdk-reads";
 import {
   createSandbox,
   killSandbox,
@@ -23,7 +23,7 @@ export const sandboxMutationHandlers = {
     return mutationOperationReceipt(owner, idempotencyKey, "sandboxes.create");
   },
   /** Rename: returns the fresh Sandbox (not an operation, no idempotency key). */
-  updateSandbox: (owner, { params, body }) => sdkRenameSandbox(owner, params.id, body.name),
+  updateSandbox: (owner, { params, body }) => sdkUpdateSandbox(owner, params.id, body),
   destroySandbox: async (owner, { params, body, idempotencyKey }) => {
     await killSandbox(
       owner,

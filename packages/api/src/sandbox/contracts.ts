@@ -23,6 +23,7 @@ import {
   sandboxCursorSchema,
   sandboxListFiltersSchema,
   sandboxNameSchema,
+  sandboxOffloadPolicySchema,
   sandboxTimeoutSchema,
   stdinBase64Schema,
   templateSelectorSchema,
@@ -196,6 +197,8 @@ export const createSandboxInput = z
      * the input as sent, and the service resolves omitted to on for WORKLOAD.
      */
     guestSudo: z.boolean().optional(),
+    /** When the stopped disk is exported (WORKLOAD only); omitted: `on_stop`. */
+    offload: sandboxOffloadPolicySchema.optional(),
   })
   .strict()
   .refine(
@@ -389,6 +392,8 @@ export type ReconnectSandboxInput = z.infer<typeof reconnectSandboxInput>;
 export const stopSandboxInput = sandboxIdInput.extend({
   idempotencyKey,
   credentialCapture: credentialCaptureMode,
+  /** Set the offload policy with the accepted stop (part of the intent). */
+  offload: sandboxOffloadPolicySchema.optional(),
 });
 export type StopSandboxInput = z.infer<typeof stopSandboxInput>;
 
@@ -481,10 +486,22 @@ export const setSandboxTimeoutInput = sandboxIdInput
   .strict();
 export type SetSandboxTimeoutInput = z.infer<typeof setSandboxTimeoutInput>;
 
-/** Rename: not an operation, so no idempotency key. */
-/** `name` is checked by the service (`sandbox.name_invalid`), not the input schema. */
-export const renameSandboxInput = sandboxIdInput.extend({ name: z.string().max(256) }).strict();
-export type RenameSandboxInput = z.infer<typeof renameSandboxInput>;
+/**
+ * Update (rename and/or offload policy): not an operation, so no idempotency
+ * key. `name` is checked by the service (`sandbox.name_invalid`), not the
+ * input schema. At least one field.
+ */
+export const updateSandboxInput = sandboxIdInput
+  .extend({
+    name: z.string().max(256).optional(),
+    offload: sandboxOffloadPolicySchema.optional(),
+  })
+  .strict()
+  .refine(
+    (input) => input.name !== undefined || input.offload !== undefined,
+    "Set name, offload or both.",
+  );
+export type UpdateSandboxInput = z.infer<typeof updateSandboxInput>;
 
 /** Dashboard only: keep a stored disk off other users' hosts. */
 export const setSandboxOffloadPinInput = sandboxIdInput

@@ -275,6 +275,8 @@ describe("sandboxes list", () => {
       sizeBytes: 1024,
       eligibility: "any_host",
       offloadPin: "ANY",
+      offloadPolicy: { mode: "on_stop" },
+      offloadDueAt: null,
     };
     server.current.sandboxes = [
       sandboxRow({ id: "sbx-1", state: "STOPPED", disk: stored }),

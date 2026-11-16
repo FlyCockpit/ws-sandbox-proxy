@@ -83,7 +83,8 @@ members remain usable; if every compatible member is draining/offline, create
 returns `sandbox.pool_unavailable`. Undrain restores eligibility without a
 daemon restart when its launch evidence remains current. Drain does not stop
 existing sandboxes or change accepted execution. `wssp drain --offload` also
-moves the host's stopped disks to the image store
+moves the host's stopped disks to the image store, whatever their offload
+policy
 ([offloaded sandboxes](#offloaded-sandboxes)), and a draining member is never
 a restore target.
 

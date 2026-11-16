@@ -7,6 +7,7 @@ import type {
   renewBodySchema,
   SandboxCapabilities,
   SandboxDto,
+  SandboxOffloadPolicy,
   SandboxPage,
   SandboxStateDto,
   updateSandboxBodySchema,
@@ -54,7 +55,7 @@ export type CreateSandboxRequest = CreateSandboxBody & { allowInternetAccess?: b
 export type MutationReceipt = z.output<typeof mutationReceiptSchema>;
 
 export type ReconnectInput = z.input<typeof reconnectBodySchema>;
-/** Rename input (`PUT /v1/sandboxes/{id}`). */
+/** Update input (`PUT /v1/sandboxes/{id}`): `name` and/or the offload policy `offload`. */
 export type UpdateSandboxInput = z.input<typeof updateSandboxBodySchema>;
 export type RenewLeaseInput = z.input<typeof renewBodySchema>;
 export type ListSandboxesQuery = z.input<typeof sandboxListFiltersSchema> & {
@@ -95,6 +96,14 @@ export type ConnectOptions = MutationOptions & {
 
 /** Stop and destroy: `credentialCapture: "skip"` skips copying login files back. */
 export type TeardownOptions = MutationOptions & { credentialCapture?: "skip" };
+
+/**
+ * Stop: the teardown options plus `offload`, the sandbox's offload policy set
+ * with the accepted stop (sent in the body, so it is part of the request
+ * hash). `{ mode: "on_pressure" }` parks the disk on its host until the host
+ * needs the space; `{ mode: "after", afterMs }` exports it after a delay.
+ */
+export type StopOptions = TeardownOptions & { offload?: SandboxOffloadPolicy };
 
 /** One login to attach; a named account or instance applies to this attach only. */
 export type AttachCredentialInput = z.input<typeof attachCredentialBodySchema>;
@@ -148,11 +157,11 @@ export type Sandbox = SandboxDto & {
   readonly files: SandboxFiles;
   capabilities(options?: WaitOptions): Promise<SandboxCapabilities>;
   get(options?: WaitOptions): Promise<SandboxDto>;
-  /** Rename; returns a fresh read. This handle's own fields stay the snapshot. */
+  /** Rename and/or set the offload policy; returns a fresh read. This handle's own fields stay the snapshot. */
   update(input: UpdateSandboxInput, options?: WaitOptions): Promise<SandboxDto>;
   connect(options?: ConnectOptions): Promise<Sandbox>;
   setTimeout(input: RenewLeaseInput, options?: MutationOptions): Promise<RenewResult>;
-  stop(options?: TeardownOptions): Promise<SandboxDto>;
+  stop(options?: StopOptions): Promise<SandboxDto>;
   /** Save this sandbox as a new template revision (moves `latest`). */
   captureTemplate(input?: CaptureTemplateInput, options?: MutationOptions): Promise<CaptureResult>;
   destroy(options?: TeardownOptions): Promise<void>;
@@ -176,6 +185,17 @@ export type RenewResult = {
 /** Only a defined `skip` is sent, so existing keys keep their request hash. */
 function teardownBody(options: TeardownOptions): { credentialCapture?: "skip" } {
   return options.credentialCapture === "skip" ? { credentialCapture: "skip" } : {};
+}
+
+/** The stop body: the teardown body plus a defined `offload` only. */
+function stopBody(options: StopOptions): {
+  credentialCapture?: "skip";
+  offload?: SandboxOffloadPolicy;
+} {
+  return {
+    ...teardownBody(options),
+    ...(options.offload !== undefined ? { offload: options.offload } : {}),
+  };
 }
 
 /** The `/v1` create body for an SDK create input (`allowInternetAccess` mapped onto `egress.mode`). */
@@ -251,7 +271,8 @@ export type SandboxesApi = {
   list(query?: ListSandboxesQuery, options?: WaitOptions): Promise<SandboxPage>;
   /**
    * Rename a sandbox (`name` unique among the owner's live sandboxes:
-   * `sandbox.name_taken`, kind `conflict`). Returns the fresh sandbox.
+   * `sandbox.name_taken`, kind `conflict`) and/or set its offload policy
+   * (`offload`, see `StopOptions`). Returns the fresh sandbox.
    */
   update(id: string, input: UpdateSandboxInput, options?: WaitOptions): Promise<SandboxDto>;
   /**
@@ -265,8 +286,9 @@ export type SandboxesApi = {
   /**
    * Stop, including during boot. A retained disk ends STOPPED; if boot never
    * created an instance, Stop succeeds and the sandbox reads DELETED.
+   * `offload` sets the sandbox's offload policy with the stop.
    */
-  stop(id: string, options?: TeardownOptions): Promise<SandboxDto>;
+  stop(id: string, options?: StopOptions): Promise<SandboxDto>;
   /**
    * Snapshot-to-template: capture a READY (copy-on-write storage) or STOPPED
    * sandbox, scrub it and publish a new revision; resolves once finalized.
@@ -680,7 +702,7 @@ export function createSandboxesApi(
     return { operationId: operation.id, revisionId };
   }
 
-  async function stop(id: string, options: TeardownOptions = {}) {
+  async function stop(id: string, options: StopOptions = {}) {
     const key = options.idempotencyKey ?? generateKey();
     const { receipt, deadline, context } = await runMutation(
       `stopSandbox ${id}`,
@@ -689,7 +711,7 @@ export function createSandboxesApi(
       (k, s) =>
         transport.request("stopSandbox", {
           params: { id },
-          body: teardownBody(options),
+          body: stopBody(options),
           idempotencyKey: k,
           signal: s,
         }),
@@ -908,7 +930,7 @@ export function createSandboxesApi(
       connect: (options?: ConnectOptions) => connect(id, options),
       setTimeout: (input: RenewLeaseInput, options?: MutationOptions) =>
         setTimeout(id, input, options),
-      stop: (options?: TeardownOptions) => stop(id, options),
+      stop: (options?: StopOptions) => stop(id, options),
       captureTemplate: (input?: CaptureTemplateInput, options?: MutationOptions) =>
         captureTemplate(id, input, options),
       destroy: (options?: TeardownOptions) => destroy(id, options),

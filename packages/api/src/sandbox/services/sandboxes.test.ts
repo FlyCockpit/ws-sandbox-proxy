@@ -860,7 +860,7 @@ it("lease rearm refuses a zero-row write before creating an accepted intent or o
   expect(db.outboxEvent.create).not.toHaveBeenCalled();
 });
 
-describe("renameSandbox", () => {
+describe("updateSandbox", () => {
   const owner = { kind: "session" as const, ownerId: "user-a" };
   const live = { ...sandbox, state: "READY", name: "quiet-otter" };
   beforeEach(() => {
@@ -872,7 +872,7 @@ describe("renameSandbox", () => {
 
   it("charges the ordinary budget exactly once and returns the renamed sandbox", async () => {
     const { consumeSandboxWriteBudget } = await import("@wssp/api/sandbox/budgets");
-    const renamed = await services.renameSandbox(owner, { id: live.id, name: "brisk-heron" });
+    const renamed = await services.updateSandbox(owner, { id: live.id, name: "brisk-heron" });
     expect(renamed.name).toBe("brisk-heron");
     expect(consumeSandboxWriteBudget).toHaveBeenCalledTimes(1);
     expect(consumeSandboxWriteBudget).toHaveBeenCalledWith("user-a", "ordinary");
@@ -883,7 +883,7 @@ describe("renameSandbox", () => {
 
   it("refuses an invalid name with sandbox.name_invalid before any write", async () => {
     await expect(
-      services.renameSandbox(owner, { id: live.id, name: "Bad_Name" }),
+      services.updateSandbox(owner, { id: live.id, name: "Bad_Name" }),
     ).rejects.toMatchObject({ data: { code: "sandbox.name_invalid" } });
     expect(db.sandbox.update).not.toHaveBeenCalled();
   });
@@ -896,7 +896,7 @@ describe("renameSandbox", () => {
       }),
     );
     await expect(
-      services.renameSandbox(owner, { id: live.id, name: "brisk-heron" }),
+      services.updateSandbox(owner, { id: live.id, name: "brisk-heron" }),
     ).rejects.toMatchObject({ data: { code: "sandbox.name_taken" } });
   });
 
@@ -904,7 +904,7 @@ describe("renameSandbox", () => {
     const { consumeSandboxWriteBudget } = await import("@wssp/api/sandbox/budgets");
     const build = { kind: "build", ownerId: "user-a", buildId: "b1", keyId: null } as never;
     await expect(
-      services.renameSandbox(build, { id: live.id, name: "brisk-heron" }),
+      services.updateSandbox(build, { id: live.id, name: "brisk-heron" }),
     ).rejects.toThrow();
     expect(consumeSandboxWriteBudget).not.toHaveBeenCalled();
     expect(db.sandbox.update).not.toHaveBeenCalled();

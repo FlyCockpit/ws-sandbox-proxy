@@ -834,6 +834,12 @@ grants never see them. The product behaviour is in
   connected hosts that have room, in host id order, before it tries the
   origin pool. An owner with more such hosts can miss an eligible one past
   that point; name it with `sandboxHostId` on the reconnect.
+- **Offload policy.** Each sandbox's policy (`on_stop` by default, `after`
+  a delay, or `on_pressure`) decides when its stopped disk is exported; a
+  host that needs the space (draining with `--offload`, a create blocked on
+  disk in one of its pools, or a storage pool at least 90% full) exports
+  every policy early. `SANDBOX_OFFLOAD=off` still wins over every policy.
+  See [offload policy](../guide/sandboxes.md#offload-policy).
 - **Managed sandboxes** (template builds) are never offloaded.
 - Like template images, offloaded disks are not in database backups; see
   [backup and restore](./backup-and-restore.md#disk-offload).

@@ -20,7 +20,9 @@ server picks a free adjective-noun name such as `quiet-otter` (with a
 `-xxxx` suffix if the plain names it tried are taken). Rename with
 `PUT /v1/sandboxes/{id}` (`{ "name": … }`), the SDK's `sandboxes.update`, or
 Rename on the dashboard's sandbox page. A rename changes only the name: it is
-not an operation, takes no idempotency key and emits no webhook.
+not an operation, takes no idempotency key and emits no webhook. The same
+call also sets the [offload policy](#offload-policy) (`{ "offload": … }`;
+either field or both).
 
 - A name is a lowercase DNS label: 1–63 characters of `a-z`, `0-9` and inner
   hyphens. It is never UUID-shaped and never starts with `wssp-` (instances
@@ -153,8 +155,9 @@ longer tied to the host that created it.
 **Lifecycle.**
 
 1. **Stop.** The sandbox is `STOPPED` with its disk on the host
-   (`disk.location: "host"`). In the background the host exports the stopped
-   disk, encrypts it and uploads it; the server verifies the copy.
+   (`disk.location: "host"`). When its [offload policy](#offload-policy)
+   says so (at once by default), the host exports the stopped disk in the
+   background, encrypts it and uploads it; the server verifies the copy.
 2. **Stored.** The sandbox is still `STOPPED`, and the disk is both on the
    host and in the store (`host_and_store`). A start now is an ordinary cold
    reconnect on that host and downloads nothing.
@@ -184,14 +187,16 @@ longer tied to the host that created it.
 The sandbox DTO's `disk` object (null while waiting for capacity or
 deleted) has:
 
-| Field                      | Values                                                                                                                                                                                                             |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `location`                 | `host`, `host_and_store`, or `store` (`OFFLOADED`, or a restore still fetching)                                                                                                                                    |
-| `offloadState`             | `none`, `pending`, `exporting`, `uploading`, `verifying`, `stored`, `evicting`, `failed`                                                                                                                           |
-| `offloadFailure`           | Set only when `offloadState` is `failed`: `quota_exceeded` (stored quota or daily upload budget), `size_exceeded`, `staging_full` or `other`. The disk stays on its host; this is a field value, not an HTTP error |
-| `offloadedAt`, `sizeBytes` | When the current stored copy was verified, and its size; null without one                                                                                                                                          |
-| `eligibility`              | `any_host`, `own_hosts` (pinned, login history, or an owned-nodes-only template) or `never` (managed sandboxes)                                                                                                    |
-| `offloadPin`               | `ANY` or `OWN_HOSTS`                                                                                                                                                                                               |
+| Field                      | Values                                                                                                                                                                                                                |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `location`                 | `host`, `host_and_store`, or `store` (`OFFLOADED`, or a restore still fetching)                                                                                                                                       |
+| `offloadState`             | `none`, `pending`, `exporting`, `uploading`, `verifying`, `stored`, `evicting`, `failed`                                                                                                                              |
+| `offloadFailure`           | Set only when `offloadState` is `failed`: `quota_exceeded` (stored quota or daily upload budget), `size_exceeded`, `staging_full` or `other`. The disk stays on its host; this is a field value, not an HTTP error    |
+| `offloadedAt`, `sizeBytes` | When the current stored copy was verified, and its size; null without one                                                                                                                                             |
+| `eligibility`              | `any_host`, `own_hosts` (pinned, login history, or an owned-nodes-only template) or `never` (managed sandboxes)                                                                                                       |
+| `offloadPin`               | `ANY` or `OWN_HOSTS`                                                                                                                                                                                                  |
+| `offloadPolicy`            | `{mode: "on_stop"}`, `{mode: "after", afterMs}` or `{mode: "on_pressure"}` ([offload policy](#offload-policy))                                                                                                        |
+| `offloadDueAt`             | When the policy makes this stopped disk due for export; null when it is not stopped on a host, already has a copy or an attempt, or the policy is `on_pressure`. Deployment gates and host pressure are not reflected |
 
 **Where a restore runs.** A start of a `STOPPED` sandbox whose disk is still
 cached boots it on that host. If that host cannot take it back, the start
@@ -224,6 +229,53 @@ hold:
   restricted SDK key created the sandbox, the creating key's live host and
   pool allowlists both allow it too. A revoked, expired or deleted creating
   key imposes no limit.
+
+### Offload policy
+
+Each sandbox has an offload policy that decides when its stopped disk is
+exported to the image store. It is set at create (`offload` on
+`POST /v1/sandboxes`), with a stop (`offload` on
+`POST /v1/sandboxes/{id}/stop`, written in the same transaction as the
+accepted stop and part of its idempotent request), or at any time with
+`PUT /v1/sandboxes/{id}` (`{ "offload": … }`), the SDK's `update`, or
+**Disk → Exports to the store → Change** on the sandbox page. Setting it at
+create needs only the create's own scope (`sandboxes:create`); a stop or an
+update needs `sandboxes:manage`. Managed sandboxes refuse it.
+
+| Policy                        | The stopped disk is exported                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------- |
+| `{mode: "on_stop"}` (default) | As soon as the sandbox stops, as described above                                                    |
+| `{mode: "after", afterMs}`    | Once it has been stopped for `afterMs` (60000 to 2073600000, one minute to 24 days) without a start |
+| `{mode: "on_pressure"}`       | Only when its host needs the space                                                                  |
+
+- **Host pressure overrides every policy, for every owner.** A host needs
+  the space when it is draining with `wssp drain --offload`, when a create
+  waiting for capacity in one of its pools is blocked on disk, storage or
+  the root ceiling (a stopped disk keeps its disk reservation), or when the
+  storage pool holding the disk was last reported at least 90% full (the
+  same threshold the daemon uses to evict stored copies). Then `after` and
+  `on_pressure` disks are exported like `on_stop` ones, oldest stop first,
+  and the usual eviction can free the host. There is no "never": a disk on
+  another user's host must not be able to keep that host full, and a drain
+  must be able to empty a host.
+- **The clock** is the time the sandbox last entered `STOPPED`. A start
+  resets it; changing the policy does not, so changing to `after` on a
+  sandbox stopped longer than the delay makes it due at once.
+- **A change applies to the next export decision.** An export already
+  running finishes, and a stored copy is kept (it stays valid until the next
+  start). Setting `on_stop` on a stopped disk is how to export it now.
+  `OFFLOADED` sandboxes accept a change for their next stop.
+- **Durability.** Until a copy is stored, the disk lives only on its host: a
+  lost host loses a parked disk. A start can then only boot it on that host,
+  so a disk without a copy waits for its host (a drained or offline host
+  cannot hand it to another). Choose `on_stop` when the disk must survive
+  its host.
+- **Deployment gates still apply** to every policy: `SANDBOX_OFFLOAD=off`,
+  quotas, staging room, settled logins and receipts. The policy never
+  starts an export those would refuse.
+- To park a sandbox you expect to start again soon, stop it with
+  `{ "offload": { "mode": "on_pressure" } }`, or with `after` set to how long
+  it may stay parked before its disk should move to the store.
 
 **Pinning.** `offloadPin` defaults to `ANY`. Set it to `OWN_HOSTS` from the
 **Disk** card on the sandbox page (owner session only) to keep its disk off
@@ -289,7 +341,9 @@ shim, Secure Boot keys), may not boot. That surfaces as
 `restore_boot_failed`, with the copy kept. Keep the boot
 chain in the template image.
 
-**What is never offloaded.** Template-build VMs and other managed sandboxes;
+**What is never offloaded.** A disk whose offload policy is not due while
+its host does not need the space ([offload policy](#offload-policy));
+template-build VMs and other managed sandboxes;
 a disk whose login leases have not settled (offload waits); and a disk when
 the account is over its stored quota or daily upload budget, the host's
 staging is full, or the upload fails. In those cases the disk stays on the

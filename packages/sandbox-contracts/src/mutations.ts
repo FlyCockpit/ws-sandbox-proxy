@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { capacityWaitRequestSchema } from "./capacity-wait";
 import { commandTimeoutZeroEnabled } from "./command-timeout-policy";
-import { isoDateTimeSchema, OPERATION_OUTCOMES, OPERATION_STATES, resourceIdSchema } from "./dto";
+import {
+  isoDateTimeSchema,
+  OPERATION_OUTCOMES,
+  OPERATION_STATES,
+  resourceIdSchema,
+  sandboxOffloadPolicySchema,
+} from "./dto";
 import { egressPolicyInputSchema } from "./egress";
 import { commandPayloadBytes, defaultEnvSchema, envSchema } from "./env";
 import { SDK_ERROR_CODES } from "./errors";
@@ -107,6 +113,12 @@ export const createSandboxBodySchema = z
      * guestSudo off (`guestSudoReason`). Immutable after create.
      */
     guestSudo: z.boolean().optional(),
+    /**
+     * When this sandbox's disk is exported to the image store after a stop.
+     * Omitted: `{mode: "on_stop"}`. Changeable later (`PUT /v1/sandboxes/{id}`
+     * or the stop body).
+     */
+    offload: sandboxOffloadPolicySchema.optional(),
   })
   .strict()
   .refine(
@@ -119,8 +131,21 @@ export const createSandboxBodySchema = z
       { required: ["sandboxHostId"], not: { required: ["poolId"] } },
     ],
   });
-/** Rename (`PUT /v1/sandboxes/{id}`). */
-export const updateSandboxBodySchema = z.object({ name: sandboxNameSchema }).strict();
+/**
+ * Update (`PUT /v1/sandboxes/{id}`): rename and/or change the offload policy.
+ * At least one field. Neither touches the VM.
+ */
+export const updateSandboxBodySchema = z
+  .object({
+    name: sandboxNameSchema.optional(),
+    offload: sandboxOffloadPolicySchema.optional(),
+  })
+  .strict()
+  .refine(
+    (input) => input.name !== undefined || input.offload !== undefined,
+    "Set name, offload or both.",
+  )
+  .meta({ anyOf: [{ required: ["name"] }, { required: ["offload"] }] });
 export const reconnectBodySchema = z
   .object({
     mode: z.enum(["warm", "cold"]).optional(),
@@ -157,6 +182,18 @@ export const reconnectBodySchema = z
  */
 export const teardownBodySchema = z
   .object({ credentialCapture: z.literal("skip").optional() })
+  .strict();
+/**
+ * Stop: the teardown body plus `offload`, which sets the sandbox's offload
+ * policy in the same transaction as the accepted stop (a replay of the same
+ * key does not set it again). Use it to park a sandbox without exporting its
+ * disk, for example `{offload: {mode: "on_pressure"}}`.
+ */
+export const stopBodySchema = z
+  .object({
+    credentialCapture: z.literal("skip").optional(),
+    offload: sandboxOffloadPolicySchema.optional(),
+  })
   .strict();
 /** Live attach (READY) or record-only attach (STOPPED) of one login. */
 export const attachCredentialBodySchema = z

@@ -211,6 +211,9 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
   // Display only: a failed offload is shown for a STOPPED disk (the DTO projection).
   "packages/api/src/sandbox/disk-offload/disk-view.ts": {
     'row.state === "STOPPED";': "kind-agnostic",
+    // The offload policy's due time: a read projection of a stopped disk.
+    'eligibility !== "never" && row.state === "STOPPED" && !current && !live && !failed':
+      "kind-agnostic",
   },
   "packages/api/src/sandbox/disk-offload/restore-admit.ts": {
     // The restore acceptance that stamps launchMode NEW_ROOT (§8.4).

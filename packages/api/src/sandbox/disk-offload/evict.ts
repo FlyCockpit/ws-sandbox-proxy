@@ -357,7 +357,7 @@ export async function evictSuggestions(): Promise<
       AND ((h.draining AND h."drainOffload") OR s."sandboxHostId" IN (
         SELECT m."sandboxHostId" FROM sandbox_pool_member m
         JOIN sandbox_capacity_wait w ON w."poolId" = m."poolId"
-        WHERE m.enabled AND m."removedAt" IS NULL
+        WHERE m.enabled AND m."removedAt" IS NULL AND w.state::text = 'WAITING'
           AND w."lastBlocker" IN ('disk', 'storage', 'ceiling')))
     ORDER BY s."sandboxHostId", s."lastStoppedAt" ASC NULLS FIRST, s.id
     LIMIT 20`;

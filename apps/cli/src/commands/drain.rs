@@ -24,8 +24,8 @@ pub struct Args {
     #[arg(long)]
     pub json: bool,
     /// Drain only: also offload this host's stopped sandboxes to the image
-    /// store and free their host copies once another eligible host could
-    /// restore them. Undrain clears it.
+    /// store, whatever their offload policy, and free their host copies once
+    /// another eligible host could restore them. Undrain clears it.
     #[arg(long)]
     pub offload: bool,
 }

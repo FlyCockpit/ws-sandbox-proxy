@@ -44,7 +44,9 @@ export type {
   SandboxDiskOffloadFailure,
   SandboxDiskOffloadStateDto,
   SandboxDto,
+  SandboxOffloadMode,
   SandboxOffloadPinDto,
+  SandboxOffloadPolicy,
   SandboxPage,
   SandboxStateDto,
   SdkErrorCode,
@@ -182,6 +184,7 @@ export {
   type SandboxCredentials,
   type SandboxesApi,
   type SandboxFiles,
+  type StopOptions,
   type TeardownOptions,
   type UpdateSandboxInput,
 } from "./sandboxes";

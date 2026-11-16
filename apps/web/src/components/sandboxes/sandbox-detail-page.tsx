@@ -30,7 +30,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { PageHeader } from "@/components/page-shell";
 import { SandboxCredentials } from "@/components/sandboxes/sandbox-credentials";
-import { DiskCard } from "@/components/sandboxes/sandbox-disk";
+import { DiskCard, OffloadPolicyText } from "@/components/sandboxes/sandbox-disk";
 import { SandboxFiles } from "@/components/sandboxes/sandbox-files";
 import {
   CapacityWaitLine,
@@ -725,6 +725,12 @@ function SandboxDetail({
                   : "sandboxes:stop.description",
               )}
             </AlertDialogDescription>
+            {sandbox.disk && sandbox.disk.eligibility !== "never" ? (
+              <p data-stop-offload-policy="" className="text-sm text-muted-foreground">
+                {t("sandboxes:stop.offloadPolicy")}{" "}
+                <OffloadPolicyText policy={sandbox.disk.offloadPolicy} />
+              </p>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter className="sm:flex-wrap">
             <AlertDialogCancel className="min-h-[44px] w-full sm:w-auto">

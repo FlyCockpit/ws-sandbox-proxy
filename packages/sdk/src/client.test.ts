@@ -87,6 +87,8 @@ function sandbox(
       sizeBytes: null,
       eligibility: "any_host",
       offloadPin: "ANY",
+      offloadPolicy: { mode: "on_stop" },
+      offloadDueAt: null,
     },
     metadata: {},
     createdAt: NOW,
@@ -889,6 +891,23 @@ describe("stop and destroy", () => {
     );
     const result = await ok(client.sandboxes.stop("sbx_1"));
     expect(result.state).toBe("STOPPED");
+  });
+
+  it("stop sends the offload policy in its body only when given", async () => {
+    const { client, calls } = harness(
+      json(202, receipt()),
+      json(200, operation("SUCCEEDED", { kind: "STOP_SANDBOX" })),
+      json(200, sandbox("STOPPED")),
+      json(202, receipt()),
+      json(200, operation("SUCCEEDED", { kind: "STOP_SANDBOX" })),
+      json(200, sandbox("STOPPED")),
+    );
+    await ok(client.sandboxes.stop("sbx_1", { offload: { mode: "on_pressure" } }));
+    expect(JSON.parse(String(callAt(calls, 0).init.body))).toEqual({
+      offload: { mode: "on_pressure" },
+    });
+    await ok(client.sandboxes.stop("sbx_1"));
+    expect(JSON.parse(String(callAt(calls, 3).init.body))).toEqual({});
   });
 
   it("stop during boot with no instance succeeds with DELETED", async () => {
@@ -1888,6 +1907,15 @@ describe("sandboxes.update (rename)", () => {
     expect(call.url).toBe(`${BASE}/v1/sandboxes/sbx_1`);
     expect(JSON.parse(String(call.init.body))).toEqual({ name: "nightly-build" });
     expect(new Headers(call.init.headers).has("idempotency-key")).toBe(false);
+  });
+
+  it("update sets the offload policy alone", async () => {
+    const { client, calls } = harness(json(200, sandbox("STOPPED")));
+    await ok(client.sandboxes.update("sbx_1", { offload: { mode: "after", afterMs: 7_200_000 } }));
+    expect(callAt(calls, 0).init.method).toBe("PUT");
+    expect(JSON.parse(String(callAt(calls, 0).init.body))).toEqual({
+      offload: { mode: "after", afterMs: 7_200_000 },
+    });
   });
 
   it("a bound handle renames itself and keeps its own snapshot", async () => {

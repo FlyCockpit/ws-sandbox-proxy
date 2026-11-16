@@ -630,6 +630,8 @@ describe("disk offload (C8)", () => {
     sizeBytes: null,
     eligibility: "any_host",
     offloadPin: "ANY",
+    offloadPolicy: { mode: "on_stop" },
+    offloadDueAt: null,
   });
 
   it("a destroy deletes a stored copy whenever the store holds one", () => {

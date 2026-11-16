@@ -4,6 +4,7 @@ import type {
   SandboxDiskOffloadFailure,
   SandboxDiskOffloadStateDto,
 } from "@wssp/sandbox-contracts";
+import { type OffloadPolicyColumns, offloadDueAt, offloadPolicyOf } from "./policy";
 
 /**
  * The owner-facing disk projection: where the root disk
@@ -23,6 +24,9 @@ export const sandboxDiskSelect = {
   diskOffloadId: true,
   cachedOffloadSeq: true,
   offloadPin: true,
+  offloadMode: true,
+  offloadAfterMs: true,
+  lastStoppedAt: true,
   credentialFilesEver: true,
   // The newest attempt. A live offload (at most one per sandbox, its seq the
   // highest) is always the newest, so this is the live one when any exists.
@@ -52,6 +56,9 @@ export type SandboxDiskFacts = {
   diskOffloadId: string | null;
   cachedOffloadSeq: number | null;
   offloadPin: "ANY" | "OWN_HOSTS";
+  offloadMode: OffloadPolicyColumns["offloadMode"];
+  offloadAfterMs: number | null;
+  lastStoppedAt: Date | null;
   credentialFilesEver: boolean;
   DiskOffloads: {
     id: string;
@@ -89,7 +96,7 @@ function failureOf(code: string | null): SandboxDiskOffloadFailure {
 }
 
 /** Null while the sandbox has no disk (a create waiting for capacity, or deleted). */
-export function sandboxDiskDto(row: SandboxDiskFacts): SandboxDiskDto | null {
+export function sandboxDiskDto(row: SandboxDiskFacts, now = new Date()): SandboxDiskDto | null {
   if (row.state === "WAITING_FOR_CAPACITY" || row.state === "DELETED") return null;
   const latest = row.DiskOffloads[0] ?? null;
   const current = latest && row.diskOffloadId === latest.id ? latest : null;
@@ -126,5 +133,12 @@ export function sandboxDiskDto(row: SandboxDiskFacts): SandboxDiskDto | null {
     sizeBytes: current?.sizeBytes != null ? Number(current.sizeBytes) : null,
     eligibility,
     offloadPin: row.offloadPin,
+    offloadPolicy: offloadPolicyOf(row),
+    // Due only for a stopped disk on its host with no copy, attempt or
+    // failure of this generation; the deployment's gates are not reflected.
+    offloadDueAt:
+      eligibility !== "never" && row.state === "STOPPED" && !current && !live && !failed
+        ? (offloadDueAt(row, now)?.toISOString() ?? null)
+        : null,
   };
 }

@@ -436,3 +436,84 @@ test("MCP_ENABLED is an optional server-only key: empty keeps the app default (o
     if (topology === "app-worker") assert.doesNotMatch(block(compose, "worker"), /MCP_ENABLED/);
   }
 });
+
+test("--env forwards optional runtime keys with an empty default: every key to the server, shared keys to the worker", () => {
+  const env = ["RATE_LIMIT_RPC_POINTS", "IMAGE_S3_BUCKET", "SANDBOX_OFFLOAD"];
+  for (const topology of ["app", "app-worker"] as const) {
+    const options = { ...defaults, topology, env };
+    const compose = generateDokployCompose(options);
+    for (const key of env)
+      assert.match(block(compose, "server"), new RegExp(`\\n\\s+${key}: "\\$\\{${key}:-\\}"\\n`));
+    if (topology === "app-worker") {
+      // RATE_LIMIT_* is server-only; the image store and offload are shared.
+      assert.doesNotMatch(block(compose, "worker"), /RATE_LIMIT_RPC_POINTS/);
+      assert.match(block(compose, "worker"), /IMAGE_S3_BUCKET: "\$\{IMAGE_S3_BUCKET:-\}"/);
+      assert.match(block(compose, "worker"), /SANDBOX_OFFLOAD: "\$\{SANDBOX_OFFLOAD:-\}"/);
+    }
+    for (const role of ["postgres", "redis", "backup"])
+      assert.doesNotMatch(block(compose, role), /RATE_LIMIT|IMAGE_S3|SANDBOX_OFFLOAD/);
+    const config = generateDokployConfig(options);
+    assert.equal(
+      config.applications[0]!.environment.RATE_LIMIT_RPC_POINTS,
+      `\${{environment.RATE_LIMIT_RPC_POINTS}}`,
+    );
+    for (const key of env) {
+      // Optional everywhere: never "set once", always explained as optional.
+      assert.equal(config.environmentVariablesToSetOnce[key], undefined, key);
+      assert.match(config.environmentVariablesOptional[key] ?? "", /Forwarded by --env/);
+      assert.match(config.compose.optionalEnvironmentVariables.server?.[key] ?? "", /--env/);
+      assert.ok(!config.compose.environmentVariables.server?.includes(key), key);
+      assert.ok(!config.optionalEnvironmentKeys.server.includes(key), key);
+    }
+  }
+  // Without --env nothing extra is forwarded.
+  assert.doesNotMatch(generateDokployCompose(defaults), /RATE_LIMIT_RPC_POINTS|IMAGE_S3_BUCKET/);
+});
+
+test("--env refuses unknown, web-only, generator-owned, already forwarded, repeated and malformed keys", () => {
+  const refuse = (env: string[], pattern: RegExp) => {
+    assert.throws(() => generateDokployConfig({ ...defaults, env }), pattern);
+    assert.throws(() => generateDokployCompose({ ...defaults, env }), pattern);
+  };
+  refuse(["NOT_A_REAL_VARIABLE"], /not a server or worker variable/);
+  refuse(["VITE_SERVER_URL"], /not a server or worker variable/);
+  refuse(["WSSP_INSTANCE_ID"], /set by the generator itself/);
+  refuse(["BACKUP_ENABLED"], /set by the generator itself/);
+  refuse(["MIGRATE_ON_START"], /set by the generator itself/);
+  refuse(["SERVER_PORT"], /set by the generator itself/);
+  refuse(["PORT"], /set by the generator itself/);
+  refuse(["DATA_ENCRYPTION_KEY"], /already forwarded/);
+  refuse(["BETTER_AUTH_URL"], /already forwarded/);
+  refuse(["RATE_LIMIT_RPC_POINTS", "RATE_LIMIT_RPC_POINTS"], /twice/);
+  refuse(["rate_limit_rpc_points"], /not a variable name/);
+});
+
+test("operation content downloads have their own uncompressed router above the compressed one", () => {
+  const compose = generateDokployCompose(defaults);
+  const server = block(compose, "server");
+  const router = /traefik\.http\.routers\.([a-z0-9-]+-server)\.rule=/.exec(server)?.[1];
+  assert.ok(router);
+  assert.match(server, new RegExp(`routers\\.${router}\\.middlewares=${router}-compress`));
+  assert.match(server, new RegExp(`routers\\.${router}-content\\.service=${router}"`));
+  assert.match(server, new RegExp(`routers\\.${router}-content\\.priority=1000"`));
+  assert.match(server, new RegExp(`routers\\.${router}-content\\.entrypoints=websecure"`));
+  assert.match(server, new RegExp(`routers\\.${router}-content\\.tls\\.certresolver=letsencrypt"`));
+  // No middleware at all on the download router: nothing compresses it.
+  assert.doesNotMatch(server, new RegExp(`routers\\.${router}-content\\.middlewares`));
+  // Compose turns `$$` into `$`: the regexp is anchored at both ends.
+  const rule = new RegExp(`routers\\.${router}-content\\.rule=(.*)"`).exec(server)?.[1] ?? "";
+  assert.equal(
+    rule,
+    "Host(`dev.example.com`) && PathRegexp(`^/(v1|api/dashboard)/operations/[^/]+/content$$`)",
+  );
+  const path = /^\/(v1|api\/dashboard)\/operations\/[^/]+\/content$/;
+  for (const ok of ["/v1/operations/op_1/content", "/api/dashboard/operations/op_1/content"])
+    assert.match(ok, path);
+  for (const no of [
+    "/v1/operations/op_1/output",
+    "/v1/operations/op_1/content/x",
+    "/v1/operations/a/b/content",
+    "/en-US/v1/operations/op_1/content",
+  ])
+    assert.doesNotMatch(no, path);
+});

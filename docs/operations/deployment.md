@@ -29,6 +29,28 @@ the deployed `main` SHA in Dokploy's environment, or `/ready` reports no commit.
 the default (MCP on) or set `false` in Dokploy's environment to turn the MCP
 endpoint and its OAuth provider off ([environment variables](./environment-variables.md)).
 
+**Other optional variables (`--env`).** The Compose forwards only the
+variables the generator knows a deployment needs. To tune anything else the
+server or worker reads (request budgets such as `RATE_LIMIT_SDK_KEY_POINTS`,
+the S3 image store `IMAGE_S3_*`, disk offload `SANDBOX_OFFLOAD*`, …), name
+the keys once at generation:
+
+```sh
+pnpm dokploy:config … --env RATE_LIMIT_RPC_POINTS,RATE_LIMIT_SDK_KEY_POINTS,IMAGE_S3_ENDPOINT,IMAGE_S3_BUCKET,IMAGE_S3_ACCESS_KEY_ID,IMAGE_S3_SECRET_ACCESS_KEY,IMAGE_S3_FORCE_PATH_STYLE
+```
+
+Each key becomes `KEY: "${KEY:-}"` on the server, and also on the external
+worker when the worker reads it (a shared variable); set its value in
+Dokploy's environment. Empty or unset means the app's default (the env
+parser treats an empty value as unset), so regenerating never changes a
+setting by itself. The checklist lists them under the optional variables.
+Values never pass through the generator. It refuses a key that is not a
+server or worker variable of `packages/env/src/vars`, one it sets itself
+(`BACKUP_*`, `RESTORE_*`, `WORKER_MODE`, `MIGRATE_ON_START`,
+`WSSP_INSTANCE_ID`, and `PORT`/`SERVER_PORT`, since the proxy targets port 3000), one it already forwards, and a repeated key. Keep the
+list with your deployment notes and pass it at every regeneration; no hand
+edit of the Compose is needed.
+
 `app` (default) runs one server
 with embedded jobs plus Postgres 18 and Valkey 9 (`noeviction`). `--topology
 app-worker` adds a dedicated worker and sets `WORKER_MODE=external`. Backups default off; no backup settings, volume or sidecar are required.
@@ -72,8 +94,14 @@ uncompressed until you attach it to the server router:
 - `traefik.http.middlewares.<name>.compress=true`
 - `traefik.http.routers.<name>.middlewares=<name>`
 
-The generated Compose file pre-wires those labels. Confirm a full page
-response has `content-encoding: br` (or gzip). Proxies skip compressing
+The generated Compose file pre-wires those labels. It also adds a second
+router, `<project>-server-content`, for operation content downloads
+(`/v1/operations/{id}/content` and `/api/dashboard/operations/{id}/content`,
+a Traefik v3 `PathRegexp` rule at priority 1000) with no middleware, so those
+responses keep their `Content-Length` and byte ranges (see
+[reverse proxy transfer bodies](#reverse-proxy-transfer-bodies)). Confirm a full page
+response has `content-encoding: br` (or gzip), and a download has a
+`Content-Length` and no `content-encoding`. Proxies skip compressing
 bodies under ~1 KB, so check a real page, not `/health`.
 
 ## Schema deploy lifecycle

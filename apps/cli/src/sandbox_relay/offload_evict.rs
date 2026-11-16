@@ -28,6 +28,9 @@ pub(super) const EVICTED_ACK: &str = "evicted";
 /// A grant this close to its expiry (server time) is refused (S11).
 const GRANT_MARGIN_MS: u64 = 60_000;
 /// Local pressure: a stored copy's pool this full asks for its eviction.
+/// The server uses the same threshold (`OFFLOAD_PRESSURE_PERCENT`,
+/// packages/api/src/sandbox/disk-offload/enqueue.ts) to export disks whose
+/// offload policy would otherwise keep them local.
 const PRESSURE_PERCENT: u64 = 90;
 /// Requests in flight from local pressure at once.
 const PRESSURE_MAX_PENDING: usize = 2;

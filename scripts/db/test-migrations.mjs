@@ -419,7 +419,7 @@ async function main() {
                 "SELECT count(*)::int AS n FROM pg_constraint WHERE contype='c' AND connamespace='public'::regnamespace",
               )
             ).rows[0].n,
-            146,
+            147,
           );
           assert.equal(
             (
@@ -427,7 +427,7 @@ async function main() {
                 "SELECT count(*)::int AS n FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'wssp_%'",
               )
             ).rows[0].n,
-            7,
+            8,
           );
           await client.query(
             'CREATE FUNCTION fixture_trigger() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; CREATE TRIGGER fixture_trigger BEFORE UPDATE ON "user" FOR EACH ROW EXECUTE FUNCTION fixture_trigger();',

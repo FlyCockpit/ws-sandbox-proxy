@@ -756,6 +756,10 @@ describe("lifecycle", () => {
     const confirm = screen.getByRole("alertdialog");
     expect(within(confirm).getByText(enSandboxes.stop.description)).toBeTruthy();
     expect(within(confirm).queryByText(enSandboxes.stop.bootDescription)).toBeNull();
+    // The dialog names the disk's offload policy (the fake's default, on_stop).
+    expect(confirm.querySelector("[data-stop-offload-policy]")?.textContent).toBe(
+      `${enSandboxes.stop.offloadPolicy} ${enSandboxes.disk.policy.on_stop}`,
+    );
     await user.click(within(confirm).getByRole("button", { name: enCommon.actions.cancel }));
     expect(calls("stopSandbox")).toEqual([]);
 
@@ -1227,6 +1231,8 @@ const STORED_DISK = {
   sizeBytes: 5 * 2 ** 30,
   eligibility: "any_host",
   offloadPin: "ANY",
+  offloadPolicy: { mode: "on_stop" },
+  offloadDueAt: null,
 };
 
 describe("disk offload (C8)", () => {

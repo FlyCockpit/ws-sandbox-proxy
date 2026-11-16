@@ -19,6 +19,7 @@ const pin = vi.hoisted(() => ({
   calls: [] as unknown[],
   fail: false,
 }));
+const update = vi.hoisted(() => ({ calls: [] as unknown[] }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirect: () => () => false }));
@@ -31,6 +32,14 @@ vi.mock("@/utils/orpc", () => ({
           mutationFn: async (input: unknown) => {
             pin.calls.push(input);
             if (pin.fail) throw new Error("network");
+            return input;
+          },
+        }),
+      },
+      updateSandbox: {
+        mutationOptions: () => ({
+          mutationFn: async (input: unknown) => {
+            update.calls.push(input);
             return input;
           },
         }),
@@ -56,6 +65,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  update.calls = [];
   pin.calls = [];
   pin.fail = false;
   toast.success.mockReset();
@@ -70,6 +80,8 @@ const DISK: DiskView = {
   sizeBytes: null,
   eligibility: "any_host",
   offloadPin: "ANY",
+  offloadPolicy: { mode: "on_stop" },
+  offloadDueAt: null,
 };
 
 function mount(disk: DiskView | null, editable = true) {
@@ -152,5 +164,81 @@ describe("DiskCard", () => {
       expect(within(sheet).getByRole("alert").textContent).toBe(enSandboxes.disk.pin.failed),
     );
     expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("shows the offload policy and when it makes the stopped disk due", () => {
+    mount({
+      ...DISK,
+      offloadPolicy: { mode: "after", afterMs: 2 * 3_600_000 },
+      offloadDueAt: "2026-11-06T12:00:00.000Z",
+    });
+    expect(document.querySelector("[data-disk-offload-policy]")?.textContent).toBe(
+      "After 2 hours stopped",
+    );
+    expect(document.querySelector("[data-disk-offload-due]")?.textContent).toMatch(/^Due /);
+    cleanup();
+    mount({ ...DISK, offloadPolicy: { mode: "after", afterMs: 90 * 60_000 } });
+    expect(document.querySelector("[data-disk-offload-policy]")?.textContent).toBe(
+      "After 90 minutes stopped",
+    );
+    cleanup();
+    mount({ ...DISK, offloadPolicy: { mode: "on_pressure" } });
+    expect(document.querySelector("[data-disk-offload-policy]")?.textContent).toBe(
+      enSandboxes.disk.policy.on_pressure,
+    );
+    expect(document.querySelector("[data-disk-offload-due]")).toBeNull();
+    cleanup();
+    // Managed sandboxes have no policy row; a read-only viewer gets no Change.
+    mount({ ...DISK, eligibility: "never" });
+    expect(document.querySelector("[data-disk-offload-policy]")).toBeNull();
+    cleanup();
+    mount(DISK, false);
+    expect(document.querySelector("[data-disk-policy-edit]")).toBeNull();
+  });
+
+  it("the policy Sheet saves an `after` delay in minutes, once, and refuses a bad delay", async () => {
+    const user = userEvent.setup();
+    mount(DISK);
+    await user.click(screen.getByRole("button", { name: enSandboxes.disk.policy.changeLabel }));
+    const sheet = screen.getByRole("dialog");
+    await user.click(
+      within(sheet).getByRole("radio", {
+        name: new RegExp(`^${enSandboxes.disk.policy.option.after}`),
+      }),
+    );
+    const minutes = within(sheet).getByLabelText(enSandboxes.disk.policy.minutes);
+    await user.clear(minutes);
+    await user.type(minutes, "0");
+    await user.click(within(sheet).getByRole("button", { name: enCommon.actions.saveChanges }));
+    await waitFor(() =>
+      expect(within(sheet).getByText(/Enter a whole number of minutes/)).toBeTruthy(),
+    );
+    expect(update.calls).toEqual([]);
+    await user.clear(minutes);
+    await user.type(minutes, "45");
+    await user.click(within(sheet).getByRole("button", { name: enCommon.actions.saveChanges }));
+    await waitFor(() =>
+      expect(update.calls).toEqual([
+        { id: "sbx-1", offload: { mode: "after", afterMs: 45 * 60_000 } },
+      ]),
+    );
+    expect(toast.success).toHaveBeenCalledWith(enSandboxes.disk.policy.saved);
+  });
+
+  it("the policy Sheet saves on_pressure without a delay", async () => {
+    const user = userEvent.setup();
+    mount(DISK);
+    await user.click(screen.getByRole("button", { name: enSandboxes.disk.policy.changeLabel }));
+    const sheet = screen.getByRole("dialog");
+    expect(within(sheet).queryByLabelText(enSandboxes.disk.policy.minutes)).toBeNull();
+    await user.click(
+      within(sheet).getByRole("radio", {
+        name: new RegExp(`^${enSandboxes.disk.policy.option.on_pressure}`),
+      }),
+    );
+    await user.click(within(sheet).getByRole("button", { name: enCommon.actions.saveChanges }));
+    await waitFor(() =>
+      expect(update.calls).toEqual([{ id: "sbx-1", offload: { mode: "on_pressure" } }]),
+    );
   });
 });

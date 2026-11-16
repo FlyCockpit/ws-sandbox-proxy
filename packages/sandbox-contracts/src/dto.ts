@@ -476,6 +476,41 @@ export type SandboxDiskOffloadFailure = (typeof SANDBOX_DISK_OFFLOAD_FAILURES)[n
  */
 export const SANDBOX_DISK_ELIGIBILITY = ["any_host", "own_hosts", "never"] as const;
 export type SandboxDiskEligibility = (typeof SANDBOX_DISK_ELIGIBILITY)[number];
+/**
+ * When a stopped sandbox's disk is exported to the image store
+ * (docs/guide/sandboxes.md#offload-policy): `on_stop` as soon as it stops (the
+ * default), `after` once it has been stopped for `afterMs`, `on_pressure` only
+ * when its host needs the space. Host pressure and `wssp drain --offload`
+ * export `after` and `on_pressure` disks early; the deployment's own gates
+ * (`SANDBOX_OFFLOAD`, quotas, login and receipt settlement) still apply.
+ */
+export const SANDBOX_OFFLOAD_MODES = ["on_stop", "after", "on_pressure"] as const;
+export type SandboxOffloadMode = (typeof SANDBOX_OFFLOAD_MODES)[number];
+/** Shortest `after` delay: one minute. */
+export const OFFLOAD_AFTER_MIN_MS = 60_000;
+/** Longest `after` delay: the finite lease ceiling (24 days). */
+export const OFFLOAD_AFTER_MAX_MS = LEASE_FINITE_MAX_MS;
+export const sandboxOffloadPolicySchema = z
+  .discriminatedUnion("mode", [
+    z.strictObject({ mode: z.literal("on_stop") }),
+    z.strictObject({
+      mode: z.literal("after"),
+      afterMs: z
+        .number()
+        .int()
+        .min(OFFLOAD_AFTER_MIN_MS)
+        .max(OFFLOAD_AFTER_MAX_MS)
+        .meta({
+          description: `Milliseconds the sandbox must stay stopped before its disk is exported (${OFFLOAD_AFTER_MIN_MS} to ${OFFLOAD_AFTER_MAX_MS}).`,
+        }),
+    }),
+    z.strictObject({ mode: z.literal("on_pressure") }),
+  ])
+  .meta({
+    description:
+      "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy.",
+  });
+export type SandboxOffloadPolicy = z.infer<typeof sandboxOffloadPolicySchema>;
 /** Owner restore pin: `OWN_HOSTS` keeps the disk off other users' hosts. */
 export const SANDBOX_OFFLOAD_PINS = ["ANY", "OWN_HOSTS"] as const;
 export type SandboxOffloadPinDto = (typeof SANDBOX_OFFLOAD_PINS)[number];
@@ -493,6 +528,14 @@ export const sandboxDiskSchema = z
     sizeBytes: z.number().int().nonnegative().nullable(),
     eligibility: z.enum(SANDBOX_DISK_ELIGIBILITY),
     offloadPin: z.enum(SANDBOX_OFFLOAD_PINS),
+    offloadPolicy: sandboxOffloadPolicySchema,
+    /**
+     * When the policy makes this stopped disk due for export (`on_stop`: the
+     * stop time; `after`: stop time + `afterMs`). Null when it is not stopped
+     * on a host, already has a stored copy or an attempt, or the policy is
+     * `on_pressure`. Deployment gates and host pressure are not reflected.
+     */
+    offloadDueAt: isoDateTimeSchema.nullable(),
   })
   .strict();
 export type SandboxDiskDto = z.infer<typeof sandboxDiskSchema>;
@@ -950,6 +993,7 @@ export const SDK_FEATURES = [
   "credentials.write",
   "credentials.use",
   "sandboxes.guestSudo",
+  "sandboxes.offloadPolicy",
 ] as const;
 export type SdkFeature = (typeof SDK_FEATURES)[number];
 

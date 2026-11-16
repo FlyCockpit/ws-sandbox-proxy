@@ -76,7 +76,7 @@ it("pins lifecycle split and physical host ownership requirements", () => {
     "sandboxes.stop": ["sandboxes:manage"],
     "sandboxes.reconnect": ["sandboxes:manage"],
     "sandboxes.setTimeout": ["sandboxes:manage"],
-    "sandboxes.rename": ["sandboxes:manage"],
+    "sandboxes.update": ["sandboxes:manage"],
     "sandboxes.capture": ["sandboxes:manage", "templates:write"],
     "sandboxCredentials.attach": ["sandboxes:manage", "credentials:use"],
     "sandboxCredentials.free": ["sandboxes:manage", "credentials:use"],

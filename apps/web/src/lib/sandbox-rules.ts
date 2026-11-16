@@ -153,7 +153,30 @@ export type DiskView = {
   sizeBytes: number | null;
   eligibility: "any_host" | "own_hosts" | "never";
   offloadPin: "ANY" | "OWN_HOSTS";
+  offloadPolicy: OffloadPolicyView;
+  offloadDueAt: string | null;
 };
+
+/** When a stopped disk is exported (`disk.offloadPolicy`). */
+export type OffloadPolicyView =
+  | { mode: "on_stop" }
+  | { mode: "after"; afterMs: number }
+  | { mode: "on_pressure" };
+
+/** Shortest and longest `after` delay, in minutes (1 minute to 24 days). */
+export const OFFLOAD_AFTER_MINUTES_MIN = 1;
+export const OFFLOAD_AFTER_MINUTES_MAX = 24 * 24 * 60;
+
+/**
+ * An `after` delay for display: whole hours when it is at least two hours
+ * and a whole number of hours, else whole minutes (rounded up).
+ */
+export function offloadDelayParts(afterMs: number): { unit: "hours" | "minutes"; count: number } {
+  const minutes = Math.ceil(afterMs / 60_000);
+  return minutes >= 120 && minutes % 60 === 0
+    ? { unit: "hours", count: minutes / 60 }
+    : { unit: "minutes", count: minutes };
+}
 
 /** The image store holds a copy of this disk that a destroy also deletes. */
 export function hasStoredCopy(disk: DiskView | null): boolean {

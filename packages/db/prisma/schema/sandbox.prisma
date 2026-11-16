@@ -45,6 +45,12 @@ enum SandboxOffloadPin {
   OWN_HOSTS
 }
 
+enum SandboxOffloadMode {
+  ON_STOP
+  AFTER
+  ON_PRESSURE
+}
+
 /// Who asked for a teardown (S2): server-set, never from a host.
 enum SandboxTeardownIntent {
   OWNER_DESTROY
@@ -821,6 +827,13 @@ model Sandbox {
   /// Pinned at restore (owner decision 1).
   cloudInitInstanceId        String?
   offloadPin                 SandboxOffloadPin         @default(ANY)
+  /// When a STOPPED disk is exported to the image store: at once (ON_STOP),
+  /// once stopped for `offloadAfterMs` (AFTER), or only when its host needs
+  /// the space (ON_PRESSURE). Pressure and `drain --offload` override AFTER
+  /// and ON_PRESSURE (disk-offload/enqueue.ts). Owner data; SDK-writable.
+  offloadMode                SandboxOffloadMode        @default(ON_STOP)
+  /// AFTER only: milliseconds since `lastStoppedAt` (1 min to 24 days).
+  offloadAfterMs             Int?
   /// Set at every login binding grant (any delivery); never cleared. Such a
   /// sandbox resumes only on its owner's own hosts.
   credentialFilesEver        Boolean                   @default(false)
@@ -867,6 +880,7 @@ model Sandbox {
   // @check sandbox_instance_deleted_offload: state::text <> 'DELETED' OR "diskOffloadId" IS NULL
   // @check sandbox_instance_offload_parked: "diskOffloadId" IS NULL OR state::text IN ('STOPPED', 'STOPPING', 'PROVISIONING', 'ERROR', 'OFFLOADED')
   // @check sandbox_instance_offload_seq: "offloadSeq" >= 0
+  // @check sandbox_instance_offload_policy: ("offloadMode"::text = 'AFTER') = ("offloadAfterMs" IS NOT NULL) AND ("offloadAfterMs" IS NULL OR "offloadAfterMs" BETWEEN 60000 AND 2073600000)
 
   @@unique([id, userId])
   @@unique([currentPlacementId, id, userId])

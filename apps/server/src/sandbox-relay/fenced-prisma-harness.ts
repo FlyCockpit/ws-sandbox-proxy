@@ -1060,7 +1060,11 @@ export function installFenceTransaction(
           const sql = parts.join("?");
           store.trace.push(`sql:${sql}`);
           if (sql.includes("FROM credential_lease l")) return [];
-          if (sql.includes("FROM sandbox_host") && sql.includes('"connectionEpoch" =')) {
+          // Only the host lock statements (relay-fence.ts): a query that merely
+          // reads `sandbox_host_storage_pool` or joins hosts by epoch (the
+          // offload candidate read) is not a lock and falls through.
+          const hostLock = sql.trimStart().startsWith("SELECT id FROM sandbox_host WHERE id = ?");
+          if (hostLock && sql.includes('"connectionEpoch" =')) {
             const where = {
               id: values[0],
               connectionEpoch: values[1],
@@ -1072,7 +1076,7 @@ export function installFenceTransaction(
             });
             return result.count === 1 ? [{ id: values[0] }] : [];
           }
-          if (sql.includes("FROM sandbox_host") && sql.includes("FOR UPDATE")) {
+          if (hostLock && sql.includes("FOR UPDATE")) {
             const result = await model("hosts").updateMany({
               where: { id: values[0], userId: values[1] },
               data: {},

@@ -100,7 +100,7 @@ export const SERVICE_ACTIONS = [
   "sandboxes.stop",
   "sandboxes.reconnect",
   "sandboxes.setTimeout",
-  "sandboxes.rename",
+  "sandboxes.update",
   "sandboxes.capture",
   "operations.get",
   "operations.getFileResult",
@@ -292,7 +292,7 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   "sandboxes.reconnect": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.setTimeout": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   // Not an operation and not host-bound (no HOST_USABILITY_ACTIONS entry).
-  "sandboxes.rename": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.update": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.capture": { scopes: ["sandboxes:manage", "templates:write"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },

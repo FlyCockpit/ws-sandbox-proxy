@@ -18,7 +18,6 @@ import {
   readFileInput,
   reconnectSandboxInput,
   removePathInput,
-  renameSandboxInput,
   restoreSnapshotInput,
   runCommandInput,
   sandboxIdInput,
@@ -28,6 +27,7 @@ import {
   signalProcessInput,
   statPathInput,
   stopSandboxInput,
+  updateSandboxInput,
   writeStdinInput,
 } from "../sandbox/contracts";
 import { setSandboxOffloadPin } from "../sandbox/disk-offload/pin";
@@ -54,7 +54,6 @@ import {
   readFile,
   reconnectSandbox,
   removePath,
-  renameSandbox,
   restoreSnapshot,
   retryRestoreCleanup,
   runCommand,
@@ -62,6 +61,7 @@ import {
   signalProcess,
   statPath,
   stopSandbox,
+  updateSandbox,
   writeStdin,
 } from "../sandbox/services/sandboxes";
 import { rethrowLaunchInputValidationError } from "../sandbox/vm-size-input";
@@ -247,9 +247,9 @@ export const sandboxesRouter = {
 
   /** Rename. The service charges the ordinary budget and checks the name. */
   updateSandbox: protectedProcedure
-    .input(renameSandboxInput)
+    .input(updateSandboxInput)
     .handler(async ({ input, context }) => {
-      return renameSandbox(sessionPrincipal(context.session.user.id), input);
+      return updateSandbox(sessionPrincipal(context.session.user.id), input);
     }),
 
   /** re-queue a pending restore cleanup. Session only. */

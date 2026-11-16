@@ -1224,7 +1224,8 @@ vCPU or the chosen storage pool's committed GiB, whichever is fullest); see
   never stops a VM. A draining host is never a restore target.
 - `wssp drain --offload` (or the **Offload stopped sandboxes** switch in the
   dashboard's drain dialog) also empties the host of stopped disks: its
-  stopped sandboxes are offloaded to the image store first, and each cached
+  stopped sandboxes are offloaded to the image store first, whatever their
+  [offload policy](./sandboxes.md#offload-policy), and each cached
   copy is then evicted once another host the sandbox may use could restore
   it. An eviction is still refused while no such host exists, so that copy
   stays here. `wssp undrain` clears the switch; `--offload` is refused with
@@ -1543,7 +1544,10 @@ offload_upload_mbps = 0   # cap offload uploads (0 = unlimited)
 offload_fetch_mbps = 0    # cap restore downloads (0 = unlimited)
 ```
 
-- **Export.** After a stop, the daemon publishes the stopped VM to a
+- **Export.** After a stop, once the sandbox's offload policy makes it due
+  (at once by default; see
+  [offload policy](./sandboxes.md#offload-policy)), or earlier when this
+  host needs the space, the daemon publishes the stopped VM to a
   temporary image (`wssp-off-<hostTag>-<offloadId>`, the tag derived from
   this host's id), encrypts it record by record with
   the upload's key and uploads it. One export runs per host and two per
@@ -1558,8 +1562,10 @@ offload_fetch_mbps = 0    # cap restore downloads (0 = unlimited)
   `disk-offload.json` does not name; another daemon's images in the shared
   Incus image store, and untagged ones, are kept and logged). The 24-hour staging sweep is the backstop. Keep the image store
   and staging on encrypted storage.
-- **Eviction.** Under cache pressure the daemon asks to evict the least
-  recently used stored disk; the server grants it only when the sandbox is
+- **Eviction.** Under cache pressure (its storage pool at least 90% full)
+  the daemon asks to evict the least recently used stored disk; at the same
+  threshold the server also exports stopped disks whose offload policy
+  would otherwise keep them here; the server grants it only when the sandbox is
   idle and another eligible restore host exists. The daemon deletes the VM,
   proves the root volume is gone, and the sandbox becomes `OFFLOADED`. A
   start during eviction is refused `sandbox.disk_evicting` (retryable).

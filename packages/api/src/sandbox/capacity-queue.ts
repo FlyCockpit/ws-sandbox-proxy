@@ -42,6 +42,7 @@ import { type CapacityHint, noteCapacityChanged } from "./capacity-queue-wake";
 import type { Principal } from "./contracts";
 import { operationDigestContext } from "./digest-context";
 import { lockOwnerPlacement } from "./direct-placement";
+import type { OffloadPolicyColumns } from "./disk-offload/policy";
 import { capacityQueueFull, sandboxStateConflict } from "./errors";
 import { STORAGE_HEALTH_STALE_MS } from "./host-admission";
 import { requestDigestMetadata } from "./idempotency";
@@ -197,6 +198,8 @@ export async function enqueueCapacityWait(
     /** The caller's name, or undefined to generate one (never in `CreateIntent`). */
     name?: string;
     expectedDisconnectGraceSeconds?: number;
+    /** The requested offload policy, written at entry (never in `CreateIntent`). */
+    offloadPolicy?: OffloadPolicyColumns;
     /** CLI logins named by the create: attachment rows written at entry. */
     credentials?: readonly CredentialClaimRequest[];
     /** A build principal's create role; a verify VM never waits (T4). */
@@ -230,6 +233,7 @@ export async function enqueueCapacityWait(
       // The effective policy is resolved only at placement; until then the
       // NULL policy reads as deny-all (fail-safe).
       egressRequest: intent.egress.request as Prisma.InputJsonValue,
+      ...(ids.offloadPolicy ?? {}),
       incusName: defaultIncusInstanceName(sandboxId),
       ...buildSandboxFields(owner, buildIdOf(owner) === null ? null : "build"),
     },

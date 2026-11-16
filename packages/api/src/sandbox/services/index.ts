@@ -52,7 +52,7 @@ export const SANDBOX_PROCEDURE_INVENTORY = {
   signalProcess: sandboxServices.signalProcess,
   writeStdin: sandboxServices.writeStdin,
   setSandboxTimeout: sandboxServices.setSandboxTimeout,
-  updateSandbox: sandboxServices.renameSandbox,
+  updateSandbox: sandboxServices.updateSandbox,
   retryCleanup: sandboxServices.retryRestoreCleanup,
   setOffloadPin,
   cancelOperation: sandboxServices.cancelOperation,

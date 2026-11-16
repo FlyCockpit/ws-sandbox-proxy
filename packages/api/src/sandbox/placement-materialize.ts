@@ -12,6 +12,7 @@ import { preflightCredentialSpec } from "../credentials/specs";
 import type { BuildRole } from "../template-builds/build-authority";
 import { OPERATION_DISPATCH_KIND, type Principal } from "./contracts";
 import { operationDigestContext } from "./digest-context";
+import type { OffloadPolicyColumns } from "./disk-offload/policy";
 import { resolveEffectiveEgress } from "./egress-policy";
 import { invalidSandboxTransition, sandboxStateConflict } from "./errors";
 import { executionEnvPairs } from "./execution-config";
@@ -123,6 +124,8 @@ type Ids = {
     bodyHash: () => string;
     /** The caller's name, or undefined to generate one (never in `CreateIntent`). */
     name?: string;
+    /** The requested offload policy (WORKLOAD only); omitted keeps the column default. */
+    offloadPolicy?: OffloadPolicyColumns;
     /** A build principal's create: which of its VMs this is (createSandbox
      * asserts it against the in-transaction authorization). */
     buildRole?: BuildRole;
@@ -280,6 +283,7 @@ export async function materializePlacement(
         metadata: intent.metadata as Prisma.InputJsonValue,
         ...egressFields,
         ...guestSudoFields,
+        ...(ids.fresh?.offloadPolicy ?? {}),
         incusName: defaultIncusInstanceName(sandboxId),
         ...buildSandboxFields(owner, role),
         ...(ids.fresh?.managed ? { purpose: ids.fresh.managed.purpose } : {}),

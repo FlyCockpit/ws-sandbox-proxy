@@ -84,6 +84,9 @@ CREATE TYPE "SandboxDiskCopyState" AS ENUM ('STALE', 'DISCARDING');
 CREATE TYPE "SandboxOffloadPin" AS ENUM ('ANY', 'OWN_HOSTS');
 
 -- CreateEnum
+CREATE TYPE "SandboxOffloadMode" AS ENUM ('ON_STOP', 'AFTER', 'ON_PRESSURE');
+
+-- CreateEnum
 CREATE TYPE "SandboxTeardownIntent" AS ENUM ('OWNER_DESTROY', 'SYSTEM_DETACH');
 
 -- CreateEnum
@@ -1380,6 +1383,8 @@ CREATE TABLE "sandbox_instance" (
     "diskBaseFingerprint" TEXT,
     "cloudInitInstanceId" TEXT,
     "offloadPin" "SandboxOffloadPin" NOT NULL DEFAULT 'ANY',
+    "offloadMode" "SandboxOffloadMode" NOT NULL DEFAULT 'ON_STOP',
+    "offloadAfterMs" INTEGER,
     "credentialFilesEver" BOOLEAN NOT NULL DEFAULT false,
     "lastStoppedAt" TIMESTAMP(3),
 
@@ -3675,6 +3680,7 @@ ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offloaded_ck2e0c
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_deleted_offload_ck63856e1a" CHECK (state::text <> 'DELETED' OR "diskOffloadId" IS NULL);
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_parked_cka27fab46" CHECK ("diskOffloadId" IS NULL OR state::text IN ('STOPPED', 'STOPPING', 'PROVISIONING', 'ERROR', 'OFFLOADED'));
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_seq_ck8f49bca7" CHECK ("offloadSeq" >= 0);
+ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_policy_ckcecbf3c8" CHECK (("offloadMode"::text = 'AFTER') = ("offloadAfterMs" IS NOT NULL) AND ("offloadAfterMs" IS NULL OR "offloadAfterMs" BETWEEN 60000 AND 2073600000));
 ALTER TABLE "sandbox_mutation_operation" ADD CONSTRAINT "sandbox_operation_progress_ckb9dcf07b" CHECK (("progressPhase" IS NULL OR "progressPhase" IN ('fetching_image', 'importing_image', 'freezing', 'snapshotting', 'copying', 'scrubbing', 'publishing', 'uploading', 'finalizing', 'exporting_disk', 'uploading_disk', 'fetching_disk', 'importing_disk')) AND ("progressBytesDone" IS NULL OR "progressBytesDone" >= 0) AND ("progressBytesTotal" IS NULL OR "progressBytesTotal" >= 0));
 ALTER TABLE "sandbox_mutation_operation" ADD CONSTRAINT "sandbox_operation_launch_mode_ck238adc20" CHECK ("restoreOffloadId" IS NULL OR ("kind"::text = 'RECONNECT_SANDBOX' AND "launchMode"::text = 'NEW_ROOT'));
 ALTER TABLE "sandbox_browser_terminal_ticket" ADD CONSTRAINT "sandbox_terminal_resume_target_ckd2f5f081" CHECK (("resumeTerminalId" IS NULL AND "resumeOutputSeq" IS NULL) OR ("resumeTerminalId" IS NOT NULL AND "resumeOutputSeq" IS NOT NULL AND "resumeOutputSeq" >= 0));
@@ -3913,6 +3919,17 @@ BEGIN
 END $wssp$;
 
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
+CREATE OR REPLACE FUNCTION public.wssp_sandbox_stopped_at() RETURNS trigger LANGUAGE plpgsql AS $wssp$
+BEGIN
+  -- Every entry into STOPPED stamps when the disk went cold: the offload
+  -- policy's AFTER clock and the LRU order of exports and evictions.
+  IF NEW.state::text = 'STOPPED' AND OLD.state::text IS DISTINCT FROM 'STOPPED' THEN
+    NEW."lastStoppedAt" := clock_timestamp() AT TIME ZONE 'UTC';
+  END IF;
+  RETURN NEW;
+END $wssp$;
+
+-- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_share_guard BEFORE INSERT OR UPDATE OR DELETE ON share FOR EACH ROW EXECUTE FUNCTION public.wssp_share_guard();
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_pool_guard BEFORE UPDATE OR DELETE ON sandbox_pool FOR EACH ROW EXECUTE FUNCTION public.wssp_pool_guard();
@@ -3926,6 +3943,8 @@ CREATE TRIGGER wssp_webhook_sandbox_event AFTER INSERT OR UPDATE OF state ON san
 CREATE TRIGGER wssp_webhook_operation_event AFTER INSERT OR UPDATE OF state ON sandbox_mutation_operation FOR EACH ROW EXECUTE FUNCTION public.wssp_webhook_operation_event();
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_webhook_credential_event AFTER INSERT ON credential_event FOR EACH ROW EXECUTE FUNCTION public.wssp_webhook_credential_event();
+-- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
+CREATE TRIGGER wssp_sandbox_stopped_at BEFORE UPDATE OF state ON sandbox_instance FOR EACH ROW EXECUTE FUNCTION public.wssp_sandbox_stopped_at();
 -- wssp:initial-hardening-end
 
 -- wssp:commit-marker (lets the runner prove this transaction committed; keep it last)

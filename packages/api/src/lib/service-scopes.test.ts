@@ -115,7 +115,7 @@ const expected = {
   "sandboxes.capture": { scopes: ["sandboxes:manage", "templates:write"], requiresSandbox: true },
   "sandboxes.reconnect": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.setTimeout": { scopes: ["sandboxes:manage"], requiresSandbox: true },
-  "sandboxes.rename": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.update": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {
@@ -361,7 +361,7 @@ const surface = [
       stopSandbox: "sandboxes.stop",
       reconnectSandbox: "sandboxes.reconnect",
       setSandboxTimeout: "sandboxes.setTimeout",
-      updateSandbox: "sandboxes.rename",
+      updateSandbox: "sandboxes.update",
       // Offload §8.7 (U10): an owner session action, never on /v1.
       retryCleanup: null,
       // Dashboard-only restore pin (disk-offload/pin.ts).
@@ -472,7 +472,7 @@ const aliases: Record<string, string> = {
   associateAvailability: "associateTemplateAvailability",
   setTag: "setTemplateTag",
   retireRevision: "retireTemplateRevision",
-  updateSandbox: "renameSandbox",
+  updateSandbox: "updateSandbox",
   retryCleanup: "retryRestoreCleanup",
 };
 const SESSION_VIEW_ONLY: ReadonlySet<string> = new Set([

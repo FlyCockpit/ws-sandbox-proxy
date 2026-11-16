@@ -94,6 +94,7 @@ import {
   sandboxCredentialParamsSchema,
   statBodySchema,
   stdinBodySchema,
+  stopBodySchema,
   teardownBodySchema,
   templateBodySchema,
   updateSandboxBodySchema,
@@ -1338,7 +1339,7 @@ export const JSON_ROUTES = {
     method: "put",
     path: "/v1/sandboxes/{id}",
     summary:
-      "Rename a sandbox. The name must be free among the owner's live sandboxes; the sandbox itself is unchanged.",
+      "Rename a sandbox and/or change its offload policy. A name must be free among the owner's live sandboxes; neither change touches the VM. A policy change applies to the next export decision; an export already running finishes.",
     feature: "sandboxes.manage",
     scopes: ["sandboxes:manage"],
     idempotency: false,
@@ -1363,7 +1364,7 @@ export const JSON_ROUTES = {
     "/v1/sandboxes/{id}/stop",
     "sandboxes.manage",
     ["sandboxes:manage"],
-    teardownBodySchema,
+    stopBodySchema,
   ),
   reconnectSandbox: mutation(
     "/v1/sandboxes/{id}/reconnect",
@@ -1586,6 +1587,7 @@ export const SDK_FEATURE_ROUTES = {
   "templates.capture": ["captureSandbox", "getOperation", "listTemplateRevisions"],
   "sandboxes.imageFetch": ["createSandbox", "getOperation"],
   "sandboxes.guestSudo": ["createSandbox", "getSandbox"],
+  "sandboxes.offloadPolicy": ["createSandbox", "stopSandbox", "updateSandbox", "getSandbox"],
   "templates.build": [
     "createTemplateBuild",
     "createCommunityTemplate",

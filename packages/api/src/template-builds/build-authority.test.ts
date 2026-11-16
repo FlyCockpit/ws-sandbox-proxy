@@ -152,7 +152,7 @@ describe("build action classes", () => {
     ["commands.writeStdin", null],
     ["processes.signal", null],
     ["files.read", null],
-    ["sandboxes.rename", null],
+    ["sandboxes.update", null],
     ["webhooks.create", null],
   ] as const)("%s is %s", (action, expected) => {
     expect(buildActionClass(action)).toBe(expected);
