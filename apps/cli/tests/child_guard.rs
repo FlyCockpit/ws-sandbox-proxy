@@ -71,6 +71,8 @@ fn asynchronous_cli_children_use_the_shared_guard() {
             "crates/sandbox-runtime/src/incus/shim_tests.rs" => 2,
             // The guest sudo helper run locally against a temp tree, never wssp.
             "crates/sandbox-runtime/src/incus/guest_sudo_tests.rs" => 1,
+            // The root-grow helper run locally against a temp tree, never wssp.
+            "crates/sandbox-runtime/src/incus/root_grow_tests.rs" => 1,
             // Unprivileged loopback dnsmasq in front of the DNS stub, never wssp.
             "crates/sandbox-runtime/src/incus/dns_stub.rs" => 1,
             // A /bin/sh fake tool for the guard's process-group kill tests, never wssp.
