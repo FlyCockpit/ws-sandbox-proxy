@@ -256,6 +256,9 @@ const reviewed = new Map([
   // Read-only TOML inspection comments on stdout, never relay frames.
   ["apps/cli/src/commands/config.rs|to_string_pretty ( & capacity )", 1],
   ["apps/cli/src/output.rs|to_string ( value )", 1],
+  // Preview tunnels: newline-JSON requests (`expose`/`status`) to the local
+  // tunnel client's private socket, never a relay frame.
+  ["apps/cli/src/sandbox_relay/tunnel.rs|to_vec ( request )", 1],
   ["apps/cli/src/sandbox_relay/journal.rs|to_value ( & canonical )", 1],
   // Unit fixture scalars inserted into an already decoded dispatch object.
   ["apps/cli/src/sandbox_relay/test_support.rs|json ! ( tagged . digest_scheme )", 1],

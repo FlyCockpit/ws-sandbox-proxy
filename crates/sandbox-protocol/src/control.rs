@@ -221,6 +221,8 @@ daemon_control! {
     HostQuiesce(crate::HostQuiesceV11),
     #[serde(rename = "host.egress-state")]
     HostEgressState(crate::HostEgressStateV11),
+    #[serde(rename = "tunnel.status")]
+    TunnelStatus(crate::TunnelStatusV11),
     #[serde(rename = "process.started")]
     ProcessStarted {
         operation_id: String,
@@ -841,6 +843,14 @@ pub struct OperationDispatch {
         deserialize_with = "crate::egress::present"
     )]
     pub disk_base_fingerprint: Option<String>,
+    /// The sandbox's declared tunnel ports (launches only): compiled into
+    /// the recorded ACL plan as the one host→guest ingress allow.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::tunnel::deserialize_tunnel_ports"
+    )]
+    pub tunnel_ports: Option<Vec<u16>>,
 }
 
 /// `Some(true)` only: an explicit `false` is a second spelling of absent.
@@ -881,6 +891,10 @@ pub struct AllocationProbe {
 pub enum ServerControlMessage {
     #[serde(rename = "host.policy.lower")]
     HostPolicyLower(crate::HostPolicyLowerV11),
+    #[serde(rename = "tunnel.apply")]
+    TunnelApply(crate::TunnelApplyV11),
+    #[serde(rename = "tunnel.clear")]
+    TunnelClear(crate::TunnelClearV11),
     #[serde(rename = "host.exec.start")]
     HostExecStart(crate::HostExecStartV11),
     #[serde(rename = "host.exec.poll")]
@@ -1319,6 +1333,16 @@ fn validate_server_admission(message: &ServerControlMessage) -> Result<(), Contr
     if !crate::credentials::valid_server_credential(message) {
         return Err(ControlError::InvalidCredential);
     }
+    // Declared tunnel ports ride only on launches (the plan is compiled there).
+    if let ServerControlMessage::OperationDispatch(dispatch) = message
+        && dispatch.tunnel_ports.is_some()
+        && !matches!(
+            dispatch.kind.as_str(),
+            "sandbox.create" | "sandbox.reconnect"
+        )
+    {
+        return Err(ControlError::InvalidAdmission);
+    }
     if let ServerControlMessage::EgressBlocklist(list) = message
         && !list.is_valid()
     {
@@ -1513,6 +1537,8 @@ fn terminal_request(request_id: &str, fence: &TerminalFence) -> bool {
 fn validate_server_terminal(message: &ServerControlMessage) -> Result<(), ControlError> {
     let valid = match message {
         ServerControlMessage::HostPolicyLower(frame) => frame.is_valid(),
+        ServerControlMessage::TunnelApply(frame) => frame.is_valid(),
+        ServerControlMessage::TunnelClear(frame) => frame.is_valid(),
         ServerControlMessage::HostExecStart(frame) => frame.is_valid(),
         ServerControlMessage::HostExecPoll(frame) => frame.is_valid(),
         ServerControlMessage::HostExecStdin(frame) => frame.is_valid(),
@@ -1581,16 +1607,23 @@ fn validate_daemon_terminal(message: &DaemonControlMessage) -> Result<(), Contro
         DaemonControlMessage::HostExecStdinResult(frame) => frame.is_valid(),
         DaemonControlMessage::HostFileResult(frame) => frame.is_valid(),
 
-        DaemonControlMessage::Hello { daemon, .. } => crate::valid_host_agent_policy(
-            daemon.capabilities.host_commands,
-            daemon.capabilities.host_files,
-            daemon.capabilities.host_command_max_ms,
-            daemon.capabilities.agent_policy_revision,
-        ),
+        DaemonControlMessage::Hello { daemon, .. } => {
+            crate::valid_host_agent_policy(
+                daemon.capabilities.host_commands,
+                daemon.capabilities.host_files,
+                daemon.capabilities.host_command_max_ms,
+                daemon.capabilities.agent_policy_revision,
+            ) && daemon
+                .capabilities
+                .tunnel
+                .as_ref()
+                .is_none_or(crate::TunnelCapabilityV11::is_valid)
+        }
         DaemonControlMessage::HostTerminalPolicy(policy) => policy.is_valid(),
         DaemonControlMessage::HostLeasePolicy(policy) => policy.is_valid(),
         DaemonControlMessage::HostQuiesce(quiesce) => quiesce.is_valid(),
         DaemonControlMessage::HostEgressState(state) => state.is_valid(),
+        DaemonControlMessage::TunnelStatus(status) => status.is_valid(),
         DaemonControlMessage::TerminalReady {
             request_id,
             fence,

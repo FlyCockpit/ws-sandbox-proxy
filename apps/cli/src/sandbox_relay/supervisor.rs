@@ -3286,6 +3286,7 @@ fn execute_dispatch(
                 egress_policy_hash: job.dispatch.egress_policy_hash.clone(),
                 egress_settings: sandbox_runtime::egress::EgressSettings {
                     credential_proxy_port: launch.credential_proxy_port,
+                    tunnel_ports: job.dispatch.tunnel_ports.clone().unwrap_or_default(),
                     ..create_egress_settings(launch.egress)?
                 },
                 egress_admission: early_egress_admission(runtime, job, launch.egress),
@@ -3363,6 +3364,7 @@ fn execute_dispatch(
                 egress_policy_hash: job.dispatch.egress_policy_hash.clone(),
                 egress_settings: sandbox_runtime::egress::EgressSettings {
                     credential_proxy_port: launch.credential_proxy_port,
+                    tunnel_ports: job.dispatch.tunnel_ports.clone().unwrap_or_default(),
                     ..create_egress_settings(launch.egress)?
                 },
                 egress_admission: early_egress_admission(runtime, job, launch.egress),

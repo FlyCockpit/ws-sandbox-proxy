@@ -20,3 +20,5 @@ pub mod images;
 pub mod login;
 pub mod logout;
 pub mod token;
+#[cfg(target_os = "linux")]
+pub mod tunnel;

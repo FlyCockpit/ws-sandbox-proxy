@@ -73,6 +73,8 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         Command::Daemon(args) => commands::daemon::run(args),
         #[cfg(target_os = "linux")]
+        Command::Tunnel(args) => commands::tunnel::run(args),
+        #[cfg(target_os = "linux")]
         Command::Guard(_) => unreachable!("handled above"),
     }
 }

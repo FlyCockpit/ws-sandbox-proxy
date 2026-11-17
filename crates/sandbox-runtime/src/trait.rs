@@ -1338,6 +1338,14 @@ pub trait SandboxRuntime: Send + Sync {
         None
     }
 
+    /// Preview tunnels: the pinned guest address and the declared ports of
+    /// the sandbox's RECORDED plan, only when that plan carries the exact
+    /// `wssp-tunnel-ingress` allow for them. The host's tunnel client dials
+    /// only this; `None` refuses an apply.
+    fn tunnel_target(&self, _sandbox_id: &str) -> Option<(std::net::Ipv4Addr, Vec<u16>)> {
+        None
+    }
+
     /// One bounded rotating policy-inspection pass. Call off the lease deadline
     /// path with lifecycle-owned active ids. Cleanup remains lifecycle-owned.
     fn reconcile_policies(&self, _sandbox_ids: &[String]) -> Result<(), RuntimeError> {

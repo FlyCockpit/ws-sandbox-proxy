@@ -2606,6 +2606,11 @@ export class SandboxRelaySessionManager {
             this.isCurrentRegistered(session, socket),
           );
           return;
+        case "tunnel.status":
+          // Preview tunnels: this control plane sends no `tunnel.apply`
+          // yet, so a configured daemon's status reports are accepted
+          // (well-formed) and ignored.
+          return;
         case "host.admission":
           await recordHostAdmission(sender, message, now, session.admissionState);
           return;

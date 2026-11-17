@@ -243,6 +243,472 @@
     }
   },
   {
+    "name": "hello with tunnel plan and client",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnelPorts": true,
+          "tunnel": {
+            "clientSha256": "abababababababababababababababababababababababababababababababab",
+            "maxTunnels": 16,
+            "allowForOthers": false
+          }
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": true,
+    "expected": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnelPorts": true,
+          "tunnel": {
+            "clientSha256": "abababababababababababababababababababababababababababababababab",
+            "maxTunnels": 16,
+            "allowForOthers": false
+          }
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "invalid hello tunnelPorts false",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnelPorts": false
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false,
+    "expected": null
+  },
+  {
+    "name": "invalid hello tunnel client hash",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnel": {
+            "clientSha256": "ABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB",
+            "maxTunnels": 16,
+            "allowForOthers": false
+          }
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false,
+    "expected": null
+  },
+  {
+    "name": "invalid hello tunnel limit 0",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnel": {
+            "clientSha256": "abababababababababababababababababababababababababababababababab",
+            "maxTunnels": 0,
+            "allowForOthers": false
+          }
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false,
+    "expected": null
+  },
+  {
+    "name": "invalid hello tunnel unknown field",
+    "kind": "hello",
+    "input": {
+      "type": "hello",
+      "id": "hello-fixture-1",
+      "protocolVersion": "1.0",
+      "supportedProtocolVersions": ["1.0"],
+      "daemon": {
+        "hostId": "host-fixture",
+        "label": "Fixture host",
+        "capabilities": {
+          "protocolVersion": "1.0",
+          "binaryFrames": true,
+          "cancellation": true,
+          "operationWal": true,
+          "hostInventory": true,
+          "maxBinaryChunkBytes": 1048576,
+          "streamWindowChunks": 4,
+          "runtimeKind": "fake",
+          "egressPolicy": true,
+          "terminal": true,
+          "hostManagedSandboxCeiling": 250,
+          "hostTerminal": false,
+          "requireHostTerminalTotp": true,
+          "policyRevision": 0,
+          "maxLeaseMs": 86400000,
+          "egress": {
+            "open": false,
+            "guard": false
+          },
+          "maxOutputChunkBytes": 65536,
+          "censusEntryResults": true,
+          "pendingReceipts": true,
+          "expiryStatusResults": true,
+          "observationFence": true,
+          "commandRetire": true,
+          "tunnel": {
+            "clientSha256": "abababababababababababababababababababababababababababababababab",
+            "maxTunnels": 16,
+            "allowForOthers": false,
+            "extra": 1
+          }
+        }
+      },
+      "inventory": {
+        "hostId": "host-fixture",
+        "schedulable": true,
+        "sandboxCount": 0
+      },
+      "vmCapacity": {
+        "memoryBudgetMiB": 4096,
+        "maxCpuCount": 4,
+        "vcpuBudget": 8
+      },
+      "storagePools": [
+        {
+          "name": "default",
+          "marker": "storage_1",
+          "health": "healthy",
+          "reason": null,
+          "totalBytes": 214748364800,
+          "usedBytes": 21474836480,
+          "freeBytes": 193273528320,
+          "capacityGiB": 160,
+          "totalBasedCapacityGiB": 160,
+          "capacitySource": "implicit",
+          "derivationTotalBytes": 214748364800,
+          "derivationFreeBytes": 193273528320,
+          "derivationCommittedBytes": 0,
+          "derivationActualBytes": 0,
+          "derivationHeadroomBytes": 10737418240,
+          "implicitCeilingGiB": 160,
+          "draining": false
+        }
+      ]
+    },
+    "valid": false,
+    "expected": null
+  },
+  {
     "name": "pinned allocation",
     "kind": "allocation",
     "input": {

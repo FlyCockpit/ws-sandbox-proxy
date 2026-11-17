@@ -771,9 +771,28 @@ impl SandboxNetworkPlan {
                 "wssp-dhcp-reply" | "wssp-dns-udp-reply" | "wssp-dns-tcp-reply" => {
                     rule.source = Some(format!("{gateway}/32"));
                 }
+                TUNNEL_INGRESS_RULE_TAG => {
+                    rule.source = Some(format!("{gateway}/32"));
+                    rule.destination = Some(format!("{}/32", tunnel_guest_address(gateway)));
+                }
                 _ => {}
             }
         }
+    }
+
+    /// The sandbox's declared tunnel ports (empty: none) as recorded.
+    pub(crate) fn tunnel_ports(&self) -> &[u16] {
+        self.settings
+            .as_ref()
+            .map(|settings| settings.tunnel_ports.as_slice())
+            .unwrap_or_default()
+    }
+
+    /// The pinned guest address: present only on a plan with tunnel ports
+    /// and a real gateway (never on the identity-only plan).
+    pub(crate) fn pinned_guest_address(&self) -> Option<Ipv4Addr> {
+        (!self.tunnel_ports().is_empty() && !self.gateway.is_unspecified())
+            .then(|| tunnel_guest_address(self.gateway))
     }
 
     /// Ordered `key=value` config for `incus network create`. Dedicated bridge,
@@ -813,6 +832,12 @@ impl SandboxNetworkPlan {
             "security.port_isolation=true".to_string(),
         ]
         .into_iter()
+        // Preview tunnels: the host's client dials the pinned address the
+        // recorded plan names, never a guest-reported one.
+        .chain(
+            self.pinned_guest_address()
+                .map(|address| format!("ipv4.address={address}")),
+        )
         .collect()
     }
 }
@@ -932,6 +957,16 @@ pub(crate) const EXTERNAL_DNS_REJECT_TAG: &str = "wssp-extdns-reject";
 /// infrastructure allow. Like DNS it targets the gateway, so no `reject`
 /// ever covers it (every reject is confined to `PUBLIC_V4`).
 pub(crate) const CREDENTIAL_PROXY_RULE_TAG: &str = "wssp-credential-proxy";
+/// Preview tunnels: gateway → pinned guest address, tcp, exactly the
+/// declared ports. The host's tunnel client is the only intended caller; the
+/// guest's own replies ride the stateful ACL.
+pub(crate) const TUNNEL_INGRESS_RULE_TAG: &str = "wssp-tunnel-ingress";
+
+/// The guest address a tunnel-carrying sandbox is pinned to: the first host
+/// after the bridge gateway (`x.y.z.2` in the sandbox's own /24).
+pub(crate) fn tunnel_guest_address(gateway: Ipv4Addr) -> Ipv4Addr {
+    Ipv4Addr::from(u32::from(gateway).wrapping_add(1))
+}
 
 /// G0 qualification switch (§2.1 "Shim check", risk 1): `true` emits each
 /// `PUBLIC_V4` family as ONE rule with a comma-separated `destination` (and
@@ -1341,6 +1376,27 @@ pub(crate) fn compile_network_plan_allocating(
             description: CREDENTIAL_PROXY_RULE_TAG.to_string(),
         });
     }
+    // Preview tunnels: the one host→guest allow, recorded with the plan so
+    // the drift checker covers it like every other rule.
+    if !settings.tunnel_ports.is_empty() {
+        rules.push(AclRule {
+            action: AclAction::Allow,
+            direction: AclDirection::Ingress,
+            protocol: Some("tcp".to_string()),
+            source: Some(gateway_cidr.clone()),
+            destination: Some(format!("{}/32", tunnel_guest_address(gateway))),
+            source_port: None,
+            destination_port: Some(
+                settings
+                    .tunnel_ports
+                    .iter()
+                    .map(u16::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            description: TUNNEL_INGRESS_RULE_TAG.to_string(),
+        });
+    }
     // Static CIDR grants keep the `wssp-grant` description; domain-resolved
     // grants are tagged per name and generation (`wssp-dns-g<N>-<digest>`) so the C36 refresh
     // loop can diff its managed rules without ever touching static ones.
@@ -1548,6 +1604,21 @@ pub(crate) fn devices_match_plan(
             return Err(mismatch());
         }
     }
+    // Preview tunnels: a tunnel plan requires exactly its pinned address;
+    // every other plan (the identity-only one too) allows none.
+    let address = eth0.get("ipv4.address");
+    match plan.pinned_guest_address() {
+        Some(pinned) => {
+            if address.and_then(|v| v.as_str()) != Some(pinned.to_string().as_str()) {
+                return Err(mismatch());
+            }
+        }
+        None => {
+            if address.is_some() {
+                return Err(mismatch());
+            }
+        }
+    }
     // Reject every OTHER security-relevant NIC property: a device-level
     // `security.acls` list, permissive default actions, routes or VLAN
     // membership would widen (or reroute around) the deny-default policy
@@ -1567,7 +1638,10 @@ pub(crate) fn devices_match_plan(
     if let Some(properties) = eth0.as_object() {
         for key in properties.keys() {
             let key = key.as_str();
-            if expected_keys.contains(key) || benign_prefixes.iter().any(|p| key.starts_with(p)) {
+            if expected_keys.contains(key)
+                || key == "ipv4.address"
+                || benign_prefixes.iter().any(|p| key.starts_with(p))
+            {
                 continue;
             }
             return Err(mismatch());
@@ -2986,5 +3060,176 @@ br0\t0000FEA9\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
         });
         let err = devices_match_plan(&absent, &plan).expect_err("missing root disk");
         assert_eq!(err.code, SandboxErrorCode::IdempotencyConflict);
+    }
+
+    fn tunnel_plan(ports: Vec<u16>) -> SandboxNetworkPlan {
+        compile_network_plan_with(
+            "sbx-1",
+            None,
+            None,
+            &EgressSettings {
+                tunnel_ports: ports,
+                ..EgressSettings::default()
+            },
+            &|_, _| panic!("no domains"),
+            test_gateway(),
+            &test_limits(),
+        )
+        .expect("tunnel plan")
+    }
+
+    #[test]
+    fn tunnel_ports_compile_one_recorded_gateway_to_guest_allow() {
+        let plan = tunnel_plan(vec![3000, 5173]);
+        let rules: Vec<&AclRule> = plan
+            .rules
+            .iter()
+            .filter(|rule| rule.description == TUNNEL_INGRESS_RULE_TAG)
+            .collect();
+        assert_eq!(rules.len(), 1);
+        let rule = rules[0];
+        assert_eq!(rule.direction, AclDirection::Ingress);
+        assert_eq!(rule.action, AclAction::Allow);
+        assert_eq!(rule.protocol.as_deref(), Some("tcp"));
+        assert_eq!(rule.source.as_deref(), Some("10.9.9.1/32"));
+        assert_eq!(rule.destination.as_deref(), Some("10.9.9.2/32"));
+        assert_eq!(rule.destination_port.as_deref(), Some("3000,5173"));
+        assert_eq!(
+            plan.pinned_guest_address(),
+            Some(Ipv4Addr::new(10, 9, 9, 2))
+        );
+        assert!(
+            plan.nic_device_args()
+                .contains(&"ipv4.address=10.9.9.2".to_string())
+        );
+        // Without tunnel ports nothing changes.
+        let plain = deny_all();
+        assert!(
+            plain
+                .rules
+                .iter()
+                .all(|rule| rule.description != TUNNEL_INGRESS_RULE_TAG)
+        );
+        assert_eq!(plain.pinned_guest_address(), None);
+        assert!(
+            plain
+                .nic_device_args()
+                .iter()
+                .all(|arg| !arg.starts_with("ipv4.address"))
+        );
+        // Invalid port sets never compile.
+        let err = compile_network_plan_with(
+            "sbx-1",
+            None,
+            None,
+            &EgressSettings {
+                tunnel_ports: vec![5173, 3000],
+                ..EgressSettings::default()
+            },
+            &|_, _| panic!("no domains"),
+            test_gateway(),
+            &test_limits(),
+        )
+        .expect_err("unordered ports");
+        assert_eq!(err.code, SandboxErrorCode::ProtocolError);
+    }
+
+    #[test]
+    fn tunnel_rule_admits_only_declared_ports_from_the_gateway() {
+        let plan = tunnel_plan(vec![3000]);
+        let to_guest = |source: &str, port: u16| {
+            plan_allows(
+                &plan,
+                &packet(
+                    false,
+                    false,
+                    Some("tcp"),
+                    source,
+                    "10.9.9.2",
+                    Some(40000),
+                    Some(port),
+                ),
+            )
+        };
+        assert!(to_guest("10.9.9.1", 3000));
+        assert!(!to_guest("10.9.9.1", 4000), "undeclared port");
+        assert!(!to_guest("10.9.8.2", 3000), "another source");
+        assert!(!plan_allows(
+            &plan,
+            &packet(
+                false,
+                false,
+                Some("udp"),
+                "10.9.9.1",
+                "10.9.9.2",
+                Some(40000),
+                Some(3000)
+            ),
+        ));
+        // The plain plan admits nothing host → guest.
+        assert!(!plan_allows(
+            &deny_all(),
+            &packet(
+                false,
+                false,
+                Some("tcp"),
+                "10.9.9.1",
+                "10.9.9.2",
+                Some(40000),
+                Some(3000)
+            ),
+        ));
+    }
+
+    #[test]
+    fn gateway_rebinding_moves_the_tunnel_rule_and_pin() {
+        let mut plan = tunnel_plan(vec![3000]);
+        plan.set_gateway(Ipv4Addr::new(10, 250, 1, 1));
+        let rule = plan
+            .rules
+            .iter()
+            .find(|rule| rule.description == TUNNEL_INGRESS_RULE_TAG)
+            .expect("tunnel rule");
+        assert_eq!(rule.source.as_deref(), Some("10.250.1.1/32"));
+        assert_eq!(rule.destination.as_deref(), Some("10.250.1.2/32"));
+        assert_eq!(
+            plan.pinned_guest_address(),
+            Some(Ipv4Addr::new(10, 250, 1, 2))
+        );
+    }
+
+    #[test]
+    fn devices_match_plan_checks_the_pinned_guest_address() {
+        let nic = |plan: &SandboxNetworkPlan, address: Option<&str>| {
+            let mut eth0 = serde_json::json!({
+                "type": "nic",
+                "network": plan.network_name,
+                "security.mac_filtering": "true",
+                "security.ipv4_filtering": "true",
+                "security.ipv6_filtering": "true",
+                "security.port_isolation": "true",
+            });
+            if let Some(address) = address {
+                eth0["ipv4.address"] = serde_json::json!(address);
+            }
+            serde_json::json!({
+                "root": {"type": "disk", "path": "/", "pool": "default"},
+                "eth0": eth0,
+            })
+        };
+        let tunnel = tunnel_plan(vec![3000]);
+        devices_match_plan(&nic(&tunnel, Some("10.9.9.2")), &tunnel).expect("pinned");
+        for bad in [None, Some("10.9.9.3"), Some("10.9.9.1")] {
+            devices_match_plan(&nic(&tunnel, bad), &tunnel).expect_err("wrong pin");
+        }
+        let plain = deny_all();
+        devices_match_plan(&nic(&plain, None), &plain).expect("plain");
+        devices_match_plan(&nic(&plain, Some("10.9.9.2")), &plain).expect_err("unexpected pin");
+        // The identity-only plan allows no pin (a tunnel sandbox's drain
+        // uses its recorded plan instead).
+        let identity = enforcement_identity_plan("sbx-1");
+        devices_match_plan(&nic(&identity, None), &identity).expect("identity, no pin");
+        devices_match_plan(&nic(&identity, Some("10.9.9.2")), &identity)
+            .expect_err("identity, pinned");
     }
 }

@@ -129,6 +129,54 @@ pub struct Config {
     /// second; 0 or unset is unlimited. A restart applies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offload_fetch_mbps: Option<u32>,
+    /// Preview tunnels: the pinned `tunnel` client this node runs outside
+    /// the guests (set by `wssp tunnel install`). Absent: no tunnels here.
+    /// A restart applies it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel: Option<TunnelConfig>,
+}
+
+/// `[tunnel]`: the hash-pinned client and the node owner's limits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TunnelConfig {
+    /// Absolute path of the client binary.
+    pub client: PathBuf,
+    /// Its SHA-256 (lowercase hex); checked before every client start.
+    pub client_sha256: String,
+    /// Most tunnel clients at once (1..=256, default 16).
+    #[serde(default = "default_max_tunnels")]
+    pub max_tunnels: u32,
+    /// Let sandboxes from other users' pools use tunnels on this machine
+    /// (bandwidth and outbound connections). Default off.
+    #[serde(default)]
+    pub allow_for_others: bool,
+}
+
+fn default_max_tunnels() -> u32 {
+    16
+}
+
+impl TunnelConfig {
+    pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.client.is_absolute(),
+            "`[tunnel] client` must be an absolute path"
+        );
+        anyhow::ensure!(
+            self.client_sha256.len() == 64
+                && self
+                    .client_sha256
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "`[tunnel] client_sha256` must be 64 lowercase hex characters"
+        );
+        anyhow::ensure!(
+            (1..=256).contains(&self.max_tunnels),
+            "`[tunnel] max_tunnels` must be 1..=256"
+        );
+        Ok(())
+    }
 }
 
 fn default_true() -> bool {
@@ -202,7 +250,23 @@ impl Config {
             domain_blocklist: Default::default(),
             credential_proxy_port: None,
             refused_dns_stub_port: None,
+            tunnel_ports: Vec::new(),
         }
+    }
+
+    /// The validated `[tunnel]` section; an invalid one is logged and off.
+    pub(crate) fn tunnel_settings(&self) -> Option<crate::sandbox_relay::tunnel::TunnelSettings> {
+        let tunnel = self.tunnel.as_ref()?;
+        if let Err(error) = tunnel.validate() {
+            tracing::warn!(%error, "invalid [tunnel] section; preview tunnels are off");
+            return None;
+        }
+        Some(crate::sandbox_relay::tunnel::TunnelSettings {
+            client: tunnel.client.clone(),
+            client_sha256: tunnel.client_sha256.clone(),
+            max_tunnels: tunnel.max_tunnels,
+            allow_for_others: tunnel.allow_for_others,
+        })
     }
 }
 
@@ -547,6 +611,7 @@ impl Default for Config {
             terminal_resume_grace: None,
             offload_upload_mbps: None,
             offload_fetch_mbps: None,
+            tunnel: None,
         }
     }
 }

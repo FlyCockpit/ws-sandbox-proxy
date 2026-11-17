@@ -143,6 +143,8 @@ impl DeferredPushes {
         matches!(
             message,
             M::HostPolicyLower(_)
+                | M::TunnelApply(_)
+                | M::TunnelClear(_)
                 | M::HostTerminalPolicyRaise { .. }
                 | M::TerminalOpen { .. }
                 | M::TerminalResize { .. }

@@ -598,4 +598,51 @@ wssp guard run [OPTIONS]
 
 No command-specific options.
 
+### `wssp tunnel`
+
+Preview tunnels: install, inspect or remove the pinned `tunnel` client.
+
+```text
+wssp tunnel [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp tunnel install`
+
+Copy a `tunnel` client binary into wssp's data directory after checking its SHA-256, and enable preview tunnels (restart applies).
+
+```text
+wssp tunnel install [OPTIONS] --file <FILE> --sha256 <SHA256>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--file <FILE>` | The client binary to install (a static `tunnel` build) | required |
+| `--sha256 <SHA256>` | Its expected SHA-256 (64 lowercase hex characters) | required |
+| `--max-tunnels <MAX_TUNNELS>` | Most tunnel clients at once (1..=256) | default `16` |
+| `--allow-for-others` | Let sandboxes from other users' pools use tunnels here |  |
+
+### `wssp tunnel status`
+
+Show the configured client and whether it still verifies.
+
+```text
+wssp tunnel status [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Print JSON |  |
+
+### `wssp tunnel remove`
+
+Disable preview tunnels on this node (restart applies).
+
+```text
+wssp tunnel remove [OPTIONS]
+```
+
+No command-specific options.
+
 <!-- END GENERATED -->

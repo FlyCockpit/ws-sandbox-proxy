@@ -397,6 +397,12 @@ pub struct DaemonCapabilitiesV11 {
     /// Optional stopped-disk transfer support; requires image fetching.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disk_offload: bool,
+    /// Optional preview tunnels: a hash-verified client is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel: Option<crate::TunnelCapabilityV11>,
+    /// Optional: the daemon accepts a launch dispatch's `tunnelPorts`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tunnel_ports: bool,
 }
 impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
     type Error = VmSizeError;
@@ -482,7 +488,7 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
         };
         // Core protocol features require an explicit `true`.
         let mut offer = |name: &str| match object.remove(name) {
-            None if matches!(name, "guestSudo" | "diskOffload") => Ok(false),
+            None if matches!(name, "guestSudo" | "diskOffload" | "tunnelPorts") => Ok(false),
             None => Err(VmSizeError),
             Some(serde_json::Value::Bool(true)) => Ok(true),
             Some(_) => Err(VmSizeError),
@@ -493,6 +499,7 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
         let command_retire = offer("commandRetire")?;
         let guest_sudo = offer("guestSudo")?;
         let disk_offload = offer("diskOffload")?;
+        let tunnel_ports = offer("tunnelPorts")?;
         // Offload staging and restore fetch ride on the image cache.
         if disk_offload && !image.as_ref().is_some_and(|image| image.fetch) {
             return Err(VmSizeError);
@@ -520,6 +527,19 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
         ) {
             return Err(VmSizeError);
         }
+        let tunnel = match object.remove("tunnel") {
+            None => None,
+            Some(raw) => {
+                let mut raw = raw;
+                normalize_numbers(&mut raw);
+                let tunnel: crate::TunnelCapabilityV11 =
+                    serde_json::from_value(raw).map_err(|_| VmSizeError)?;
+                if !tunnel.is_valid() {
+                    return Err(VmSizeError);
+                }
+                Some(tunnel)
+            }
+        };
         let terminal_resume = match object.remove("terminalResume") {
             None => None,
             Some(raw) => {
@@ -555,6 +575,8 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
             command_retire,
             guest_sudo,
             disk_offload,
+            tunnel,
+            tunnel_ports,
         })
     }
 }

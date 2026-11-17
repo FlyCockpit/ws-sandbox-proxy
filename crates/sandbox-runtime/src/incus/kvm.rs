@@ -575,6 +575,31 @@ impl SandboxRuntime for IncusKvmRuntime {
             .then_some(std::net::SocketAddrV4::new(plan.gateway, port))
     }
 
+    fn tunnel_target(&self, sandbox_id: &str) -> Option<(std::net::Ipv4Addr, Vec<u16>)> {
+        let plan = self.client.persisted_enforcement_plan(sandbox_id)?;
+        let guest = plan.pinned_guest_address()?;
+        let ports = plan.tunnel_ports().to_vec();
+        let source = format!("{}/32", plan.gateway);
+        let destination = format!("{guest}/32");
+        let port_list = ports
+            .iter()
+            .map(u16::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let ruled = plan.rules.iter().any(|rule| {
+            rule.description == super::network::TUNNEL_INGRESS_RULE_TAG
+                && rule.direction == super::network::AclDirection::Ingress
+                && rule.action == super::network::AclAction::Allow
+                && rule.protocol.as_deref() == Some("tcp")
+                && rule.source.as_deref() == Some(source.as_str())
+                && rule.destination.as_deref() == Some(destination.as_str())
+                && rule.source_port.is_none()
+                && rule.destination_port.as_deref() == Some(port_list.as_str())
+        });
+        // The plan alone is not enough: its bridge must still exist.
+        (ruled && self.client.live_network_matches(&plan)).then_some((guest, ports))
+    }
+
     fn egress_guard_check(&self) -> Result<(), RuntimeError> {
         crate::guard_probe::check_guard(self.client.guard_probe.as_ref())
     }

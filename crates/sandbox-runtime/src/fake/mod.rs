@@ -167,6 +167,8 @@ struct FakeState {
     sandbox_sizes: HashMap<String, sandbox_protocol::VmSize>,
     /// B12: sandboxes whose create asked for blocked-name hints.
     refused_dns_hint_creates: HashSet<String>,
+    /// Preview tunnels: the recorded (pinned address, declared ports).
+    tunnel_targets: HashMap<String, (std::net::Ipv4Addr, Vec<u16>)>,
     storage_pools: HashMap<String, crate::StoragePoolIdentity>,
     unavailable_pools: HashSet<String>,
     root_disks: HashMap<String, crate::RootDisk>,
@@ -1692,6 +1694,16 @@ impl FakeRuntime {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Preview tunnels: record `sandbox_id`'s plan target (tests; a create
+    /// with tunnel ports records `10.0.0.2` itself).
+    pub fn set_tunnel_target(&self, sandbox_id: &str, target: std::net::Ipv4Addr, ports: Vec<u16>) {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tunnel_targets
+            .insert(sandbox_id.to_string(), (target, ports));
+    }
     pub fn set_guest_group_signal_support(&self, supported: bool) {
         self.state
             .lock()
@@ -1961,6 +1973,15 @@ fn simulated<T>(value: T) -> crate::Completed<T> {
 }
 
 impl SandboxRuntime for FakeRuntime {
+    fn tunnel_target(&self, sandbox_id: &str) -> Option<(std::net::Ipv4Addr, Vec<u16>)> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tunnel_targets
+            .get(sandbox_id)
+            .cloned()
+    }
+
     fn bind_restore_base(&self, sandbox_id: &str, restore_base: &str) {
         self.state
             .lock()

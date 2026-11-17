@@ -36,6 +36,11 @@ mod resolutions;
 mod revocation;
 mod terminal;
 mod test_timing;
+#[cfg(target_os = "linux")]
+pub(crate) mod tunnel;
+#[cfg(not(target_os = "linux"))]
+#[path = "tunnel_stub.rs"]
+pub(crate) mod tunnel;
 
 /// Encode a daemon frame using the sole supported 1.0 vocabulary.
 pub(crate) fn spell(

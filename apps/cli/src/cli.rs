@@ -81,4 +81,8 @@ pub enum Command {
     /// Root-owned egress guard: install, status and the service entry point.
     #[cfg(target_os = "linux")]
     Guard(crate::commands::guard::Args),
+
+    /// Preview tunnels: install, inspect or remove the pinned `tunnel` client.
+    #[cfg(target_os = "linux")]
+    Tunnel(crate::commands::tunnel::Args),
 }

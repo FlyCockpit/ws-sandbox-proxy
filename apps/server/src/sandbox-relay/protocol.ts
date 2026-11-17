@@ -60,6 +60,7 @@ import {
   serverCredentialMessageSchema,
   serverDiskMessageSchema,
   serverImageMessageSchema,
+  tunnelStatusV11Schema,
   type VmSize,
   validDispatchBuildFields,
   validDispatchDiskFields,
@@ -669,6 +670,7 @@ const coreDaemonControlMessageSchema = z.discriminatedUnion("type", [
   hostLeasePolicyControlV11Schema,
   hostQuiesceV11Schema,
   hostEgressStateV11Schema,
+  tunnelStatusV11Schema,
   processStartedSchema,
   z
     .object({

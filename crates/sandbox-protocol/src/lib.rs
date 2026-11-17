@@ -38,6 +38,11 @@ pub use egress::{
     valid_egress_guard_instance_id, valid_egress_guard_reason,
 };
 mod capabilities;
+mod tunnel;
+pub use tunnel::{
+    TUNNEL_MAX_PORTS, TunnelApplyV11, TunnelCapabilityV11, TunnelClearV11, TunnelErrorV11,
+    TunnelStateV11, TunnelStatusV11, valid_tunnel_ports, valid_tunnel_server, valid_tunnel_token,
+};
 mod egress_hints;
 pub use egress_hints::{
     EGRESS_REFUSED_MIN_INTERVAL_MS, EGRESS_REFUSED_NAMES_MAX, EgressRefusedV11,

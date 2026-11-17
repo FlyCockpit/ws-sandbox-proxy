@@ -3,6 +3,11 @@
 //! adapter; production does not select it on any platform.
 
 mod before_issue;
+mod teardown_hook;
+pub use teardown_hook::{
+    NetworkCreatedHook, NetworkRemovedHook, NetworkTeardownHook, set_network_created_hook,
+    set_network_removed_hook, set_network_teardown_hook,
+};
 mod capture;
 /// Shared test-only child ownership (one module for the whole crate).
 #[cfg(test)]

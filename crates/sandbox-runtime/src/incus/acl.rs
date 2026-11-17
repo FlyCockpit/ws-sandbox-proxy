@@ -1111,6 +1111,22 @@ impl IncusClient {
         Ok(())
     }
 
+    /// Preview tunnels: the sandbox's live bridge exists, is this sandbox's
+    /// and matches its recorded plan. A plan left behind by a teardown
+    /// (e.g. one whose unlink failed before a daemon restart) never names
+    /// a target once its bridge, and so its subnet, is gone.
+    pub(crate) fn live_network_matches(&self, plan: &SandboxNetworkPlan) -> bool {
+        let Ok(Some(config)) = self.read_network_config(&plan.network_name) else {
+            return false;
+        };
+        config
+            .get(NETWORK_SANDBOX_TAG)
+            .and_then(serde_json::Value::as_str)
+            == Some(plan.sandbox_id.as_str())
+            && self.manages(&config)
+            && self.verify_network_config(&config, plan, None).is_ok()
+    }
+
     fn ensure_sandbox_network(
         &self,
         plan: &SandboxNetworkPlan,
@@ -1126,6 +1142,9 @@ impl IncusClient {
             self.verify_network_config(&config, plan, None)?;
             // Restamp the incarnation; see ensure_sandbox_acl.
             self.stamp_attempt_network(&plan.network_name, attempt)?;
+            // Preview tunnels: a launch on a surviving bridge re-admits
+            // applies a failed teardown may have fenced.
+            crate::teardown_hook::network_created(&plan.sandbox_id);
             return Ok(());
         }
         let mut args = vec![
@@ -1144,6 +1163,9 @@ impl IncusClient {
         if out.exit_code != 0 {
             return Err(host_cli_error("network create", &out));
         }
+        // Preview tunnels: a brand-new bridge is a new incarnation the
+        // sandbox's client may be applied to again.
+        crate::teardown_hook::network_created(&plan.sandbox_id);
         Ok(())
     }
 
@@ -2815,7 +2837,13 @@ impl IncusClient {
                         .is_ok()
                 });
                 if bound {
-                    let plan = super::network::enforcement_identity_plan(&sandbox_id);
+                    // Preview tunnels: a tunnel sandbox's NIC carries its
+                    // pinned address, which only its recorded plan names;
+                    // every other sandbox keeps the identity-only plan.
+                    let plan = cleanup
+                        .persisted_enforcement_plan(&sandbox_id)
+                        .filter(|plan| plan.pinned_guest_address().is_some())
+                        .unwrap_or_else(|| super::network::enforcement_identity_plan(&sandbox_id));
                     let _ = cleanup.ensure_instance_egress_device(&name, &plan);
                     if cleanup.verify_provisioned_enforcement(&sandbox_id).is_ok() {
                         let _ = std::fs::remove_file(&record);
@@ -3805,14 +3833,21 @@ impl IncusClient {
             }
             Ok(())
         };
-        if let Some(config) = self.read_network_config(&network_name)? {
+        let network = self.read_network_config(&network_name)?;
+        if let Some(config) = &network {
             let tag = config
                 .get(NETWORK_SANDBOX_TAG)
                 .and_then(serde_json::Value::as_str);
-            if tag != Some(sandbox_id) || !self.manages(&config) {
+            if tag != Some(sandbox_id) || !self.manages(config) {
                 return Err(foreign_object("network", &network_name));
             }
-            fence(&config, "network")?;
+            fence(config, "network")?;
+        }
+        // Preview tunnels: only a teardown that passed the bridge's ownership
+        // and incarnation fence stops (and reaps) the sandbox's client,
+        // before its subnet can be released and reused.
+        crate::teardown_hook::before_network_teardown(sandbox_id)?;
+        if network.is_some() {
             #[cfg(test)]
             if let Some(barrier) = &self.fence_barrier {
                 // Test hook: widen the fence-to-delete window so tests can
@@ -3858,8 +3893,20 @@ impl IncusClient {
         // sandbox-scoped state; they die with the network they were applied
         // for.
         let plan = self.plans_dir().join(format!("{sandbox_id}.json"));
-        if std::fs::remove_file(&plan).is_ok() {
-            Self::fsync_dir(&self.plans_dir());
+        let plan_gone = match std::fs::remove_file(&plan) {
+            Ok(()) => {
+                Self::fsync_dir(&self.plans_dir());
+                true
+            }
+            Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+        };
+        // Preview tunnels: only once the recorded plan is confirmed gone can
+        // no apply name a target, so only then may the sandbox's teardown
+        // fence drop. A plan that failed to unlink keeps the fence (until a
+        // new bridge is created for the sandbox); teardown itself proceeds
+        // as before.
+        if plan_gone {
+            crate::teardown_hook::network_removed(sandbox_id);
         }
         let dns_state = self.dns_state_dir().join(format!("{sandbox_id}.json"));
         if std::fs::remove_file(&dns_state).is_ok() {

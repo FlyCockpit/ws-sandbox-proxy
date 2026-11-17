@@ -240,6 +240,11 @@ pub struct EgressSettings {
     /// only for build VMs in allowlist mode; no resolver ever logs queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_dns_stub_port: Option<u16>,
+    /// Preview tunnels: the sandbox's declared ports (empty: none). Compiles
+    /// to the one `wssp-tunnel-ingress` allow (gateway → pinned guest
+    /// address, tcp, exactly these ports) and pins the guest address.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tunnel_ports: Vec<u16>,
 }
 
 impl Default for EgressSettings {
@@ -251,6 +256,7 @@ impl Default for EgressSettings {
             domain_blocklist: DomainBlocklist::default(),
             credential_proxy_port: None,
             refused_dns_stub_port: None,
+            tunnel_ports: Vec::new(),
         }
     }
 }
@@ -279,6 +285,13 @@ impl EgressSettings {
         if matches!(self.credential_proxy_port, Some(0 | 53 | 67)) {
             return Err(settings_error(
                 "the credential proxy port must be a non-zero port other than 53 and 67",
+            ));
+        }
+        if !self.tunnel_ports.is_empty()
+            && !sandbox_protocol::valid_tunnel_ports(&self.tunnel_ports)
+        {
+            return Err(settings_error(
+                "tunnel ports must be 1-8 distinct ascending non-zero ports",
             ));
         }
         if self.refused_dns_stub_port == Some(0) {

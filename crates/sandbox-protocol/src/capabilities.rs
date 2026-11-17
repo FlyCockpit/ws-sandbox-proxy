@@ -103,6 +103,14 @@ pub struct DaemonCapabilities {
     /// Optional stopped-disk transfer support; requires image fetching.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disk_offload: bool,
+    /// Optional preview tunnels: a hash-verified client is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel: Option<crate::TunnelCapabilityV11>,
+    /// The daemon accepts a launch dispatch's `tunnelPorts` and compiles it
+    /// into the sandbox's recorded plan (independent of an installed
+    /// client). The control plane sends `tunnelPorts` only to such daemons.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tunnel_ports: bool,
 }
 
 /// The default finite host lease ceiling.
@@ -156,6 +164,8 @@ impl Default for DaemonCapabilities {
             command_retire: true,
             guest_sudo: false,
             disk_offload: false,
+            tunnel: None,
+            tunnel_ports: false,
         }
     }
 }

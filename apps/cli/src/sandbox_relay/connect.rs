@@ -373,6 +373,10 @@ fn daemon_capabilities(
         command_retire: true,
         // Set in the hello literal (needs the image cache's `fetch`).
         disk_offload: false,
+        // Set in the hello literal from the tunnel manager.
+        tunnel: None,
+        // Set in the hello literal from the runtime kind.
+        tunnel_ports: false,
     }
 }
 
@@ -517,8 +521,34 @@ fn run_connect_service_with_tls(
     let mut journal = HostJournal::open(&state_dir, &binding)?;
     journal.clock = clock;
     let journal = Arc::new(journal);
+    // Preview tunnels: an earlier daemon's clients go before any runtime
+    // cleanup can release their sandboxes' networks.
+    super::tunnel::sweep_leftovers(&state_dir)?;
     let (runtime, exec_supervisor) = init(&state_dir)?;
     let runtime: Arc<dyn SandboxRuntime> = Arc::from(runtime);
+    // Preview tunnels: off unless `[tunnel]` names a client that verifies.
+    // A client runs only for a sandbox this host holds a live lease for
+    // (another user's only with the node owner's consent).
+    let holder_journal = journal.clone();
+    super::tunnel::install(
+        config.tunnel_settings(),
+        runtime.clone(),
+        &state_dir,
+        Arc::new(move |sandbox_id: &str| {
+            let Some(row) = holder_journal.lease(sandbox_id) else {
+                return super::tunnel::LeaseHere::Unknown;
+            };
+            // Live: the lease's own generation is allowed ordinary work now
+            // (not expired, deadline not passed, clock and journal sound).
+            if !holder_journal.work_allowed(sandbox_id, row.generation, "tunnel") {
+                return super::tunnel::LeaseHere::Lapsed;
+            }
+            super::tunnel::LeaseHere::Live {
+                own: !row.binding.host_owner_id.is_empty()
+                    && row.binding.host_owner_id == row.sandbox_owner_id,
+            }
+        }),
+    );
     let authority = HostAuthority::with_journal(journal.clone());
     // CLI-login credentials: None when its state directory is
     // unusable, in which case the capability is not advertised. Started
@@ -891,6 +921,10 @@ fn run_connect_service_with_tls(
     // This runs on EVERY relay exit, including upgrade 401/403 and close 4003:
     // every PTY is closed (on its own threads) before the process ends.
     super::terminal::shutdown_terminals(&runtime, &terminal_slots, Duration::from_secs(20));
+    // Preview tunnels never outlive the daemon that supervises them.
+    if let Some(tunnels) = super::tunnel::installed() {
+        tunnels.stop_all();
+    }
     // A requested shutdown is the operator's: bounded, so it never waits for
     // accepted leases to settle (they stay durable for the next start). Every
     // other exit keeps the journal lock until they settle.
@@ -2299,6 +2333,13 @@ fn relay_session_loop(
                     && relay
                         .images()
                         .is_some_and(|images| images.capabilities().fetch),
+                tunnel: super::tunnel::installed().map(|tunnels| tunnels.capability()),
+                // Every real runtime compiles a launch's `tunnelPorts` into
+                // its recorded plan, whether or not a client is installed.
+                tunnel_ports: !matches!(
+                    protocol_runtime,
+                    sandbox_protocol::RuntimeKind::Unsupported
+                ),
                 ..daemon_capabilities(protocol_runtime.clone(), egress_policy)
             },
         },
@@ -2473,6 +2514,13 @@ fn relay_session_loop(
         if registered {
             for frame in host_access.replies() {
                 socket.send(Message::Text(super::plain_frame(&frame)?.into()))?;
+            }
+            if let Some(tunnels) = super::tunnel::installed() {
+                for status in tunnels.drain_events() {
+                    socket.send(Message::Text(
+                        super::plain_frame(&DaemonControlMessage::TunnelStatus(status))?.into(),
+                    ))?;
+                }
             }
         }
         // The host lease ceiling is reported separately from the terminal
@@ -2904,6 +2952,16 @@ fn relay_session_loop(
                     continue;
                 };
                 match control {
+                    ServerControlMessage::TunnelApply(req) => {
+                        if registered && let Some(tunnels) = super::tunnel::installed() {
+                            tunnels.apply(req);
+                        }
+                    }
+                    ServerControlMessage::TunnelClear(req) => {
+                        if registered && let Some(tunnels) = super::tunnel::installed() {
+                            tunnels.clear(&req);
+                        }
+                    }
                     ServerControlMessage::HostPolicyLower(req) => {
                         if registered && admission_epoch == Some(u64::from(req.connection_epoch)) {
                             if req.target == sandbox_protocol::HostPolicyLowerTarget::HostTerminal {
@@ -3189,6 +3247,11 @@ fn relay_session_loop(
                         }
                         relay.resume_teardowns(&journal, binding)?;
                         registered = true;
+                        // Preview tunnels: the server learns which clients
+                        // still run (it re-applies the ones that do not).
+                        if let Some(tunnels) = super::tunnel::installed() {
+                            tunnels.report_all();
+                        }
                         quiesce.registered(&options.shutdown, quiesce_negotiated);
                         // WP3: only now is the outage over (max_carry anchor).
                         authority.end_outage();

@@ -3,6 +3,7 @@ import { credentialCapabilitiesV11Schema } from "./credential-wire";
 import { egressCapabilitiesV11Schema } from "./egress-wire";
 import { imageAdmissionV11Schema, imageCapabilitiesV11Schema } from "./image-wire";
 import { LEASE_FINITE_MAX_MS, LEASE_LIMIT_MIN_MS } from "./lease-limits";
+import { tunnelCapabilityV11Schema } from "./tunnel-wire";
 import limits from "./vm-size-limits.json";
 
 /** Configured guest RAM, not resident memory or dedicated CPU capacity. */
@@ -351,6 +352,11 @@ export const daemonCapabilitiesV11Schema = z.strictObject({
   diskOffload: z.literal(true).optional(),
   /** WP8 terminal reattach grace; omitted by daemons that never detach a PTY. */
   terminalResume: terminalResumeCapabilitySchema.optional(),
+  /** Preview tunnels: a hash-verified client is installed on this node. */
+  tunnel: tunnelCapabilityV11Schema.optional(),
+  /** The daemon accepts a launch dispatch's `tunnelPorts` (its runtime
+   * compiles them into the recorded plan), with or without a client. */
+  tunnelPorts: z.literal(true).optional(),
 });
 export const hostHelloV11Schema = z
   .strictObject({
