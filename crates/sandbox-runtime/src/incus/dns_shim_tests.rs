@@ -234,14 +234,19 @@ fn refresh_publishes_only_allowlisted_answers_after_replacing_rules() {
     assert!(last_acl < publish, "{}", lines.join("\n"));
 
     // The published policy serves exactly the allowlisted name, with no
-    // upstream resolvers and no wildcard directive.
+    // upstream resolvers and no wildcard directive: its only `server=` line
+    // sends the name's subdomains to the (absent) default servers.
     let raw = raw_dnsmasq(&log, &network);
     assert!(raw.contains("no-resolv\n"), "{raw}");
     assert!(
         raw.contains("host-record=grants.example.com,128.66.0.7\n"),
         "{raw}"
     );
-    assert!(!raw.contains("server="), "{raw}");
+    assert!(
+        raw.contains("local=/grants.example.com/\nserver=/*.grants.example.com/#\n"),
+        "{raw}"
+    );
+    assert_eq!(raw.matches("server=").count(), 1, "{raw}");
     assert!(!raw.contains("address="), "{raw}");
 
     // The ACL gained the per-name tagged rule; static grant and

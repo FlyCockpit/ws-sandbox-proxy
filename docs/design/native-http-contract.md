@@ -949,7 +949,15 @@ command line). Every sandbox bridge is therefore created with `raw.dnsmasq`
 containing `no-resolv`, so from first boot the bridge resolver REFUSES every
 name except the ones the host publishes. The host publishes only validated
 answers for allowlisted names as exact-name `host-record=` lines (never
-`address=` wildcards, never `server=` upstreams); guests cannot trigger
+`address=` wildcards, never `server=` upstreams). Each published name is
+also made local for itself only (`local=/<name>/` plus `server=/*.<name>/#`,
+`#` meaning the default servers, of which there are none), so its other
+record types (AAAA, HTTPS, TXT, ...) answer NODATA instead of REFUSED, which
+musl's `getaddrinfo` treats as a failed lookup, while its unlisted
+subdomains are still REFUSED. Names inside Incus's own `--local=/incus/`
+domain already behave that way and get no pair. DS is routed by the parent
+name, so a published name's DS stays REFUSED and its direct child's DS is a
+local NXDOMAIN; nothing is forwarded either way. Guests cannot trigger
 wildcard or unlisted resolution, and direct external DNS/DoT from the guest
 stays denied by the deny-default ACL (only the bridge gateway's port 53 is
 reachable) unless the policy separately grants that destination as a CIDR.

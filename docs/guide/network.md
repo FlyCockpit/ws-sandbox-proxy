@@ -181,7 +181,12 @@ gateway port stays dropped. It is part of the recorded network plan, so a
 later change of `credential_proxy_port` never applies to a running sandbox.
 
 The bridge resolver answers **only** the allowlisted names, with the answers
-the host published. DHCP advertises this bridge resolver explicitly. Published
+the host published: their IPv4 (A) records, and an empty NOERROR answer
+(NODATA) for every other record type of such a name (AAAA, HTTPS, TXT, ...),
+so strict resolvers such as musl's fall back to the A answer. Any other name,
+including an unlisted subdomain of an allowlisted one, gets no answer
+(REFUSED, or NXDOMAIN for a blocked name).
+DHCP advertises this bridge resolver explicitly. Published
 records have TTL zero so guest caches cannot keep an old CDN address after the
 host rotates its ACL grants. It never forwards other queries upstream, and direct DNS
 or DNS-over-TLS to outside resolvers is blocked unless a CIDR grant covers

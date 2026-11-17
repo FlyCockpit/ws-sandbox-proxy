@@ -56,6 +56,20 @@ pub(crate) fn base_dnsmasq_config() -> String {
 /// no config-directive injection is possible. `host-record` is exact-name
 /// (unlike `address=`, it does NOT wildcard subdomains). Bounded by the
 /// policy/destination bounds of the caller; refuse absurd sizes anyway.
+///
+/// A published name is also local to dnsmasq for that exact name only
+/// (`local=/<name>/` plus `server=/*.<name>/#`), so its other record types
+/// (AAAA on this IPv4-only bridge, HTTPS/SVCB, TXT, MX, ...) get NODATA
+/// instead of REFUSED: with `no-resolv` dnsmasq refuses any query it cannot
+/// answer locally, and musl `getaddrinfo` fails the whole lookup on a
+/// refused AAAA. `#` sends subdomains to the default servers exactly like an
+/// unlisted name (none: REFUSED; a build VM: the DNS stub), and a more
+/// specific blocked `local=` still wins (NXDOMAIN). Only host-published
+/// A records are ever served. Names inside Incus's own local bridge domain
+/// (`--local=/incus/`) already answer NODATA and NXDOMAIN, so they get no
+/// pair. DS is the one type outside this: dnsmasq routes a DS query by its
+/// parent name, so a published name's DS stays REFUSED and the DS of its
+/// direct child is a local NXDOMAIN; either way nothing is forwarded.
 pub(crate) fn render_dnsmasq_config(
     answers: &[(String, Vec<Ipv4Addr>)],
     _lease_ttl: u32,
@@ -79,8 +93,24 @@ pub(crate) fn render_dnsmasq_config(
             out.push_str(&addr.to_string());
             out.push('\n');
         }
+        if !addresses.is_empty() && !in_incus_bridge_domain(name) {
+            out.push_str("local=/");
+            out.push_str(name);
+            out.push_str("/\nserver=/*.");
+            out.push_str(name);
+            out.push_str("/#\n");
+        }
     }
     out
+}
+
+/// Incus's default `dns.domain`, which sandbox bridges keep: Incus starts
+/// their dnsmasq with `--local=/incus/`.
+const INCUS_BRIDGE_DNS_DOMAIN: &str = "incus";
+
+fn in_incus_bridge_domain(name: &str) -> bool {
+    name.strip_suffix(INCUS_BRIDGE_DNS_DOMAIN)
+        .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
 }
 
 pub(crate) use crate::protected::is_protected_guest_address;
@@ -11135,7 +11165,38 @@ mod tests {
         assert!(rendered.contains("host-record=grants.example.com,128.66.0.7\n"));
         assert!(rendered.contains("host-record=grants.example.com,128.66.0.8\n"));
         assert!(!rendered.contains("address="), "no wildcard directive");
-        assert!(!rendered.contains("server="), "no upstream resolver");
+        // The published name is local for itself only (other types NODATA,
+        // not REFUSED); its subdomains fall through like any unlisted name.
+        assert!(
+            rendered.ends_with("local=/grants.example.com/\nserver=/*.grants.example.com/#\n"),
+            "{rendered}"
+        );
+        assert_eq!(rendered.matches("local=").count(), 1, "{rendered}");
+        assert!(
+            rendered
+                .lines()
+                .filter(|line| line.starts_with("server="))
+                .all(|line| line == "server=/*.grants.example.com/#"),
+            "no upstream resolver: {rendered}"
+        );
+        // Incus's own local domain already answers NODATA/NXDOMAIN.
+        let incus = render_dnsmasq_config(
+            &[("api.incus".to_string(), vec![Ipv4Addr::new(128, 66, 0, 7)])],
+            120,
+        );
+        assert!(!incus.contains("local="), "{incus}");
+        assert!(!incus.contains("server="), "{incus}");
+        let lookalike = render_dnsmasq_config(
+            &[(
+                "api.notincus".to_string(),
+                vec![Ipv4Addr::new(128, 66, 0, 7)],
+            )],
+            120,
+        );
+        assert!(lookalike.contains("local=/api.notincus/\n"), "{lookalike}");
+        // A name without published addresses stays unlisted.
+        let empty = render_dnsmasq_config(&[("gone.example.com".to_string(), Vec::new())], 120);
+        assert_eq!(empty, base_dnsmasq_config());
         // The base (deny-all) config is the empty render.
         assert_eq!(
             base_dnsmasq_config(),

@@ -832,13 +832,94 @@ mod tests {
         (answer, started.elapsed())
     }
 
+    const RCODE_REFUSED: u8 = 5;
+
+    /// The real dnsmasq, unprivileged on a free loopback port, with Incus's
+    /// bridge flags and `conf` (a rendered `raw.dnsmasq` body) as its only
+    /// config file. `spawned` sees each started pid. Ready once
+    /// `ready_name`'s A answer comes back.
+    fn start_dnsmasq(
+        binary: &std::path::Path,
+        conf: &std::path::Path,
+        bridge: &str,
+        ready_name: &str,
+        spawned: &dyn Fn(u32),
+    ) -> (Dnsmasq, u16) {
+        (0..20)
+            .find_map(|_| {
+                let port = free_udp_port();
+                let child = std::process::Command::new(binary)
+                    .args([
+                        "--keep-in-foreground",
+                        "--pid-file=",
+                        "--no-hosts",
+                        "--strict-order",
+                        "--no-negcache",
+                        // Incus binds the (here absent) bridge with
+                        // `--bind-interfaces`; `--bind-dynamic` tolerates
+                        // its absence and still listens on loopback.
+                        "--bind-dynamic",
+                        "--listen-address=127.0.0.1",
+                        // Incus's default bridge DNS domain.
+                        "--domain=incus",
+                        "--local=/incus/",
+                    ])
+                    .arg(format!("--conf-file={}", conf.display()))
+                    .arg(format!("--interface={bridge}"))
+                    .arg(format!("--port={port}"))
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                spawned(child.id());
+                let dnsmasq = Dnsmasq(child);
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while Instant::now() < deadline {
+                    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+                    client
+                        .set_read_timeout(Some(Duration::from_millis(100)))
+                        .unwrap();
+                    let _ = client.send_to(&query(1, ready_name, 1), (Ipv4Addr::LOCALHOST, port));
+                    let mut buf = [0u8; 512];
+                    if client.recv_from(&mut buf).is_ok() {
+                        return Some((dnsmasq, port));
+                    }
+                }
+                None
+            })
+            .expect("dnsmasq starts on a free loopback port")
+    }
+
+    /// Each `(name, qtype, rcode, answers, what)` answered at once by the
+    /// resolver on `port`.
+    fn assert_answers(port: u16, cases: &[(&str, u16, u8, u16, &str)]) {
+        for (index, &(name, qtype, rcode, answers, what)) in cases.iter().enumerate() {
+            let id = 0x0b00 + index as u16;
+            let (answer, took) = timed_ask(port, id, name, qtype);
+            let answer = answer.unwrap_or_else(|| panic!("{what}: dnsmasq answers ({took:?})"));
+            assert!(took < Duration::from_millis(100), "{what}: took {took:?}");
+            assert_eq!(&answer[..2], &id.to_be_bytes(), "{what}");
+            assert_eq!(answer[3] & 0x0f, rcode, "{what}: rcode");
+            assert_eq!(&answer[6..8], &answers.to_be_bytes(), "{what}: answers");
+        }
+    }
+
+    const A: u16 = 1;
+    const MX: u16 = 15;
+    const TXT: u16 = 16;
+    const AAAA: u16 = 28;
+    const DS: u16 = 43;
+    const SVCB: u16 = 64;
+    const HTTPS: u16 = 65;
+
     /// E3-A-02: what the guest sees goes through the bridge's dnsmasq, not
-    /// the stub directly. Runs the real binary unprivileged on a high
-    /// loopback port with the build resolver's shape (`no-resolv`,
-    /// `host-record`, `server=` to the stub, Incus's `strict-order` and
-    /// `no-negcache`): a non-granted name fails at once with NXDOMAIN and a
-    /// granted name's AAAA (no host-record of that type) gets NODATA at
-    /// once, never a timeout.
+    /// the stub directly. Runs the real binary with the build resolver's
+    /// rendered config (`no-resolv`, `host-record`, the exact-name `local=`,
+    /// `server=` to the stub) and Incus's `strict-order` and `no-negcache`:
+    /// a non-granted name (also a granted name's subdomain) fails at once
+    /// with NXDOMAIN from the stub, and a granted name's AAAA (no
+    /// host-record of that type) gets NODATA at once, never a timeout.
     #[test]
     fn through_real_dnsmasq_refused_names_and_granted_aaaa_answer_at_once() {
         let Some(binary) = dnsmasq_binary() else {
@@ -861,96 +942,275 @@ mod tests {
         let stub_port = stubs
             .prepare("sbx-dnsmasq", granted(&["granted.example"]), None)
             .unwrap();
+        let settings = crate::egress::EgressSettings {
+            refused_dns_stub_port: Some(stub_port),
+            ..Default::default()
+        };
+        let body = super::super::dns::render_published_dnsmasq_config(
+            &[("granted.example".into(), vec![Ipv4Addr::new(192, 0, 2, 7)])],
+            300,
+            Some(&settings),
+        )
+        .unwrap();
+        let conf = incus.0.join("raw.dnsmasq");
+        std::fs::write(&conf, body).unwrap();
         let bridge = crate::incus::network::sandbox_network_names("sbx-dnsmasq").0;
-        let (_dnsmasq, port) = (0..20)
-            .find_map(|_| {
-                let port = free_udp_port();
-                let child = std::process::Command::new(&binary)
-                    .args([
-                        "--keep-in-foreground",
-                        "--conf-file=/dev/null",
-                        "--pid-file=",
-                        "--no-hosts",
-                        "--no-resolv",
-                        "--strict-order",
-                        "--no-negcache",
-                        "--local-ttl=0",
-                        // Incus binds the (here absent) bridge with
-                        // `--bind-interfaces`; `--bind-dynamic` tolerates
-                        // its absence and still listens on loopback.
-                        "--bind-dynamic",
-                        "--listen-address=127.0.0.1",
-                        "--host-record=granted.example,192.0.2.7",
-                    ])
-                    .arg(format!("--interface={bridge}"))
-                    .arg(format!("--port={port}"))
-                    .arg(format!("--server=127.0.0.1#{stub_port}"))
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .unwrap();
-                let pid = child.id();
-                let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
-                let start_time: u64 = stat
-                    .rsplit_once(')')
-                    .unwrap()
-                    .1
-                    .split_whitespace()
-                    .nth(19)
-                    .unwrap()
-                    .parse()
-                    .unwrap();
-                incus.pid_file("sbx-dnsmasq", pid, start_time);
-                let dnsmasq = Dnsmasq(child);
-                // Ready once the local A answer comes back.
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while Instant::now() < deadline {
-                    let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-                    client
-                        .set_read_timeout(Some(Duration::from_millis(100)))
-                        .unwrap();
-                    let _ = client
-                        .send_to(&query(1, "granted.example", 1), (Ipv4Addr::LOCALHOST, port));
-                    let mut buf = [0u8; 512];
-                    if client.recv_from(&mut buf).is_ok() {
-                        return Some((dnsmasq, port));
-                    }
-                }
-                None
-            })
-            .expect("dnsmasq starts on a free loopback port");
-        let (answer, took) = timed_ask(port, 0x0a0a, "granted.example", 1);
-        let answer = answer.expect("the granted A answers");
-        assert_eq!(answer[3] & 0x0f, 0, "NOERROR");
-        assert_eq!(&answer[6..8], &[0, 1], "the host-record answer");
-        let cases = [
+        let (_dnsmasq, port) = start_dnsmasq(&binary, &conf, &bridge, "granted.example", &|pid| {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+            let start_time: u64 = stat
+                .rsplit_once(')')
+                .unwrap()
+                .1
+                .split_whitespace()
+                .nth(19)
+                .unwrap()
+                .parse()
+                .unwrap();
+            incus.pid_file("sbx-dnsmasq", pid, start_time);
+        });
+        assert_answers(
+            port,
+            &[
+                ("granted.example", A, RCODE_NOERROR, 1, "the granted A"),
+                (
+                    "blocked.example",
+                    A,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "an A of a non-granted name",
+                ),
+                (
+                    "sub.granted.example",
+                    A,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "a granted name's subdomain",
+                ),
+                (
+                    "granted.example",
+                    AAAA,
+                    RCODE_NOERROR,
+                    0,
+                    "an AAAA of a granted name",
+                ),
+                (
+                    "granted.example",
+                    HTTPS,
+                    RCODE_NOERROR,
+                    0,
+                    "an HTTPS of a granted name",
+                ),
+            ],
+        );
+        let mut hints = stubs.drain();
+        hints.sort();
+        assert_eq!(
+            hints,
+            vec![
+                ("sbx-dnsmasq".to_string(), "blocked.example".to_string()),
+                ("sbx-dnsmasq".to_string(), "sub.granted.example".to_string()),
+            ],
+            "only the non-granted names are hints"
+        );
+    }
+
+    /// A workload sandbox's allowlist resolver (no stub) through the real
+    /// dnsmasq: a published name answers its A records and NODATA for every
+    /// other type (musl `getaddrinfo` fails the whole lookup on a REFUSED
+    /// AAAA), while unlisted names, subdomains of published names and names
+    /// merely sharing a suffix stay REFUSED and blocked names NXDOMAIN.
+    #[test]
+    fn through_real_dnsmasq_a_published_name_answers_nodata_for_other_types() {
+        let Some(binary) = dnsmasq_binary() else {
+            eprintln!(
+                "SKIPPED through_real_dnsmasq_a_published_name_answers_nodata_for_other_types: \
+                 no dnsmasq binary on this host (install dnsmasq to run it)"
+            );
+            return;
+        };
+        let dir = FakeProc::new("dnsmasq-workload");
+        let settings = crate::egress::EgressSettings {
+            domain_blocklist: crate::egress::DomainBlocklist {
+                root_digest: Some("sha256:root".into()),
+                deployment_digest: None,
+                names: vec!["x.granted.example".into()],
+            },
+            ..Default::default()
+        };
+        let answers = vec![
             (
-                "blocked.example",
-                1,
-                RCODE_NXDOMAIN,
-                "an A of a non-granted name",
+                "b.granted.example".to_string(),
+                vec![Ipv4Addr::new(192, 0, 2, 9)],
             ),
+            ("api.incus".to_string(), vec![Ipv4Addr::new(192, 0, 2, 10)]),
             (
-                "granted.example",
-                28,
-                RCODE_NOERROR,
-                "an AAAA of a granted name",
+                "granted.example".to_string(),
+                vec![Ipv4Addr::new(192, 0, 2, 7), Ipv4Addr::new(192, 0, 2, 8)],
             ),
         ];
-        for (name, qtype, rcode, what) in cases {
-            let (answer, took) = timed_ask(port, 0x0b0b, name, qtype);
-            let answer = answer.unwrap_or_else(|| panic!("{what}: dnsmasq answers ({took:?})"));
-            assert!(took < Duration::from_millis(100), "{what}: took {took:?}");
-            assert_eq!(&answer[..2], &[0x0b, 0x0b], "{what}");
-            assert_eq!(answer[3] & 0x0f, rcode, "{what}: rcode");
-            assert_eq!(&answer[6..8], &[0, 0], "{what}: no answers");
-        }
-        assert!(took < Duration::from_secs(1));
-        assert_eq!(
-            stubs.drain(),
-            vec![("sbx-dnsmasq".to_string(), "blocked.example".to_string())],
-            "only the non-granted name is a hint"
+        let bridge = crate::incus::network::sandbox_network_names("sbx-workload").0;
+        let body =
+            super::super::dns::render_published_dnsmasq_config(&answers, 300, Some(&settings))
+                .unwrap();
+        let conf = dir.0.join("raw.dnsmasq");
+        std::fs::write(&conf, body).unwrap();
+        let (dnsmasq, port) = start_dnsmasq(&binary, &conf, &bridge, "granted.example", &|_| {});
+        assert_answers(
+            port,
+            &[
+                (
+                    "granted.example",
+                    A,
+                    RCODE_NOERROR,
+                    2,
+                    "both published A records",
+                ),
+                (
+                    "granted.example",
+                    AAAA,
+                    RCODE_NOERROR,
+                    0,
+                    "AAAA of a published name",
+                ),
+                (
+                    "GRANTED.example",
+                    AAAA,
+                    RCODE_NOERROR,
+                    0,
+                    "case-insensitive",
+                ),
+                (
+                    "granted.example",
+                    HTTPS,
+                    RCODE_NOERROR,
+                    0,
+                    "HTTPS of a published name",
+                ),
+                (
+                    "granted.example",
+                    SVCB,
+                    RCODE_NOERROR,
+                    0,
+                    "SVCB of a published name",
+                ),
+                (
+                    "granted.example",
+                    TXT,
+                    RCODE_NOERROR,
+                    0,
+                    "TXT of a published name",
+                ),
+                (
+                    "granted.example",
+                    MX,
+                    RCODE_NOERROR,
+                    0,
+                    "MX of a published name",
+                ),
+                (
+                    "b.granted.example",
+                    A,
+                    RCODE_NOERROR,
+                    1,
+                    "a published subdomain",
+                ),
+                ("b.granted.example", AAAA, RCODE_NOERROR, 0, "its AAAA"),
+                (
+                    "sub.granted.example",
+                    A,
+                    RCODE_REFUSED,
+                    0,
+                    "an unlisted subdomain",
+                ),
+                ("sub.granted.example", AAAA, RCODE_REFUSED, 0, "its AAAA"),
+                (
+                    "c.b.granted.example",
+                    A,
+                    RCODE_REFUSED,
+                    0,
+                    "a nested unlisted subdomain",
+                ),
+                (
+                    "x.granted.example",
+                    A,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "a blocked subdomain",
+                ),
+                (
+                    "y.x.granted.example",
+                    AAAA,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "below a blocked name",
+                ),
+                (
+                    "agranted.example",
+                    A,
+                    RCODE_REFUSED,
+                    0,
+                    "a shared suffix only",
+                ),
+                ("other.example", A, RCODE_REFUSED, 0, "an unlisted name"),
+                ("other.example", AAAA, RCODE_REFUSED, 0, "an unlisted AAAA"),
+                // Incus's own local domain keeps its answers.
+                (
+                    "api.incus",
+                    A,
+                    RCODE_NOERROR,
+                    1,
+                    "a published name under Incus's domain",
+                ),
+                ("api.incus", AAAA, RCODE_NOERROR, 0, "its AAAA"),
+                (
+                    "sub.api.incus",
+                    A,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "below it, Incus's NXDOMAIN",
+                ),
+                // DS routes by the parent name: never forwarded, never data.
+                (
+                    "granted.example",
+                    DS,
+                    RCODE_REFUSED,
+                    0,
+                    "DS of a published name",
+                ),
+                (
+                    "sub.granted.example",
+                    DS,
+                    RCODE_NXDOMAIN,
+                    0,
+                    "DS of its direct child",
+                ),
+                (
+                    "a.sub.granted.example",
+                    DS,
+                    RCODE_REFUSED,
+                    0,
+                    "DS further below",
+                ),
+            ],
+        );
+        drop(dnsmasq);
+        // The witness: host-records alone (the earlier render) REFUSE the
+        // AAAA of the very name whose A they answer.
+        let host_records_only = "no-resolv\nlocal-ttl=0\nhost-record=granted.example,192.0.2.7\n";
+        std::fs::write(&conf, host_records_only).unwrap();
+        let (_dnsmasq, port) = start_dnsmasq(&binary, &conf, &bridge, "granted.example", &|_| {});
+        assert_answers(
+            port,
+            &[
+                ("granted.example", A, RCODE_NOERROR, 1, "the A"),
+                (
+                    "granted.example",
+                    AAAA,
+                    RCODE_REFUSED,
+                    0,
+                    "the refused AAAA",
+                ),
+            ],
         );
     }
 
