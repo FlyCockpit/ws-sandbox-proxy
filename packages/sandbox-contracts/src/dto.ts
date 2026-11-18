@@ -818,9 +818,9 @@ export const sandboxSchema = z
      * daemon cannot grant it). Null otherwise.
      */
     guestSudoReason: z.enum(SANDBOX_GUEST_SUDO_REASONS).nullable(),
-    /** Ports declared at create for preview tunnels (immutable, ascending);
-     * omitted when none were declared. */
-    tunnelPorts: z.array(z.number().int().min(1).max(65535)).min(1).max(8).optional(),
+    /** Preview tunnels: the declared ports of a tunnel sandbox (ascending,
+     * possibly none); absent on other sandboxes. */
+    tunnelPorts: z.array(z.number().int().min(1).max(65535)).max(8).optional(),
     /**
      * The guest may reach root (guest sudo, or a revision built with root or
      * captured with guest root). Every command result is then guest-attested,

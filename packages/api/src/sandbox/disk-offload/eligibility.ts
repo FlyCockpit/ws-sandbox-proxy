@@ -88,8 +88,9 @@ export type RestoreSandboxFacts = {
   egressPolicy: unknown;
   offloadPin: "ANY" | "OWN_HOSTS";
   credentialFilesEver: boolean;
-  /** Preview tunnels: the declared ports (they ride the restore dispatch). */
-  tunnelPorts?: number[];
+  /** Preview tunnels: a tunnel sandbox (its declared ports ride the
+   * restore dispatch). */
+  tunnelEnabled?: boolean;
 };
 
 /**
@@ -234,8 +235,7 @@ export async function restoreHostEligibility(
     return no("guest_sudo_unsupported");
   // Declared tunnel ports go only to a daemon that compiles them into its
   // network plan (an older one would refuse the whole dispatch).
-  if ((sandbox.tunnelPorts?.length ?? 0) > 0 && !row.daemonTunnelPorts)
-    return no("tunnel_plan_unsupported");
+  if (sandbox.tunnelEnabled && !row.daemonTunnelPorts) return no("tunnel_plan_unsupported");
   // A non-canonical stored policy is never treated as open here; launch
   // validation refuses it later.
   if (egressPolicyFromWire(sandbox.egressPolicy)?.mode === "open") {
@@ -280,5 +280,5 @@ export const RESTORE_SANDBOX_FACTS_SELECT = {
   egressPolicy: true,
   offloadPin: true,
   credentialFilesEver: true,
-  tunnelPorts: true,
+  tunnelEnabled: true,
 } satisfies Prisma.SandboxSelect;

@@ -806,9 +806,22 @@ model Sandbox {
   /// Effective guest sudo, resolved once at materialization
   /// (resolveEffectiveGuestSudo). Immutable.
   guestSudo                  Boolean                   @default(false)
-  /// Preview tunnels: the ports declared at create (immutable; ascending,
-  /// at most 8). Only these can ever be exposed.
+  /// Preview tunnels: a tunnel sandbox (created with `network.tunnelPorts`,
+  /// possibly empty): its guest address is pinned on the host, it is placed
+  /// on tunnel hosts, and only it may change its declared ports. Immutable.
+  tunnelEnabled              Boolean                   @default(false)
+  /// Preview tunnels: the declared ports (ascending, at most 8), set at
+  /// create and changed at runtime only through the audited update call
+  /// (docs/guide/tunnels.md). Only these can be exposed.
   tunnelPorts                Int[]                     @default([])
+  /// Bumped by every runtime change of `tunnelPorts` (never reset): rides
+  /// every launch with the ports, and hosts ignore an older `tunnel.ports`.
+  tunnelPortsRevision        Int                       @default(0)
+  /// The host (and revision) whose recorded plan last acknowledged the
+  /// declared ports (`tunnel.portsStatus`). A tunnel is applied only once the
+  /// sandbox's current host acknowledged its current revision.
+  tunnelPortsAckHostId       String?
+  tunnelPortsAckRevision     Int                       @default(0)
   /// Why the effective value is false although sudo was requested.
   guestSudoReason            SandboxGuestSudoReason?
   /// The guest may reach root: guestSudo || revisionRootTaint(revision),
@@ -891,6 +904,7 @@ model Sandbox {
   // @check sandbox_instance_deleted_offload: state::text <> 'DELETED' OR "diskOffloadId" IS NULL
   // @check sandbox_instance_offload_parked: "diskOffloadId" IS NULL OR state::text IN ('STOPPED', 'STOPPING', 'PROVISIONING', 'ERROR', 'OFFLOADED')
   // @check sandbox_instance_offload_seq: "offloadSeq" >= 0
+  // @check sandbox_instance_tunnel_ports: cardinality("tunnelPorts") <= 8 AND ("tunnelEnabled" OR cardinality("tunnelPorts") = 0) AND "tunnelPortsRevision" >= 0 AND "tunnelPortsAckRevision" >= 0
   // @check sandbox_instance_offload_policy: ("offloadMode"::text = 'AFTER') = ("offloadAfterMs" IS NOT NULL) AND ("offloadAfterMs" IS NULL OR "offloadAfterMs" BETWEEN 60000 AND 2073600000)
 
   @@unique([id, userId])
@@ -906,6 +920,8 @@ model Sandbox {
   @@index([usagePoolId])
   @@index([accessGraceUntil])
   @@index([leaseExpiresAt])
+  /// Preview tunnels: the controller's scan for unacknowledged port changes.
+  @@index([sandboxHostId], map: "sandbox_instance_tunnel_idx", where: raw("\"tunnelEnabled\""))
   /// Cleanup invariant scan (template builds §3.10): live build VMs only.
   @@index([state], map: "sandbox_instance_build_cleanup_idx", where: raw("(\"buildId\" IS NOT NULL)"))
   /// The same scan for verify VMs (community-base T2).

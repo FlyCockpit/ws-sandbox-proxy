@@ -35,7 +35,7 @@ describe("MCP service boundary", () => {
     expect(readFileSync(coveragePath, "utf8")).toBe(expected);
   });
   it("maps every tool only to registered credential service actions", () => {
-    expect(new Set(MCP_TOOLS.map((tool) => tool.name)).size).toBe(24);
+    expect(new Set(MCP_TOOLS.map((tool) => tool.name)).size).toBe(25);
     for (const tool of MCP_TOOLS)
       for (const action of tool.actions) expect(SERVICE_ACTIONS).toContain(action);
   });

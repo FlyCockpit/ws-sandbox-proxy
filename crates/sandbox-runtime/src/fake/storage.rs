@@ -211,13 +211,14 @@ impl FakeRuntime {
                     .refused_dns_hint_creates
                     .insert(request.sandbox_id.clone());
             }
-            if !request.egress_settings.tunnel_ports.is_empty() {
+            if let Some(ports) = &request.egress_settings.tunnel_ports {
                 state.tunnel_targets.insert(
                     request.sandbox_id.clone(),
-                    (
-                        std::net::Ipv4Addr::new(10, 0, 0, 2),
-                        request.egress_settings.tunnel_ports.clone(),
-                    ),
+                    (std::net::Ipv4Addr::new(10, 0, 0, 2), ports.clone()),
+                );
+                state.tunnel_revisions.insert(
+                    request.sandbox_id.clone(),
+                    request.egress_settings.tunnel_revision,
                 );
             }
             Ok(simulated(created))

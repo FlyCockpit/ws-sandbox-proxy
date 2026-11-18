@@ -409,8 +409,10 @@ export type DispatchOperationInput = {
   /** Guest privilege from the sandbox row (launches on `guestSudo` daemons). */
   guestSudo?: true;
   guestRoot?: true;
-  /** Preview tunnels: declared ports (launches only). */
+  /** Preview tunnels: a tunnel sandbox's declared ports and their revision
+   * (launches only). */
   tunnelPorts?: number[];
+  tunnelPortsRevision?: number;
   /** §8.6 disk fields (launches on `diskOffload` daemons). */
   restore?: import("@wssp/sandbox-contracts").DispatchRestoreV11;
   launchMode?: import("@wssp/sandbox-contracts").LaunchMode;
@@ -1720,7 +1722,12 @@ export class SandboxRelaySessionManager {
               ...(input.startup ? { startup: input.startup } : {}),
               ...(input.guestSudo ? { guestSudo: true as const } : {}),
               ...(input.guestRoot ? { guestRoot: true as const } : {}),
-              ...(input.tunnelPorts ? { tunnelPorts: input.tunnelPorts } : {}),
+              ...(input.tunnelPorts
+                ? {
+                    tunnelPorts: input.tunnelPorts,
+                    tunnelPortsRevision: input.tunnelPortsRevision ?? 0,
+                  }
+                : {}),
               // Omitted (never null) when absent: a dispatch without them is
               // byte-identical to one from before disk offload.
               ...(input.restore ? { restore: input.restore } : {}),
@@ -2618,6 +2625,14 @@ export class SandboxRelaySessionManager {
           this.recordQuiesceHold(session, true);
           return;
         }
+        case "tunnel.portsStatus":
+          if (session.tunnelPorts && session.registered)
+            await tunnelController().onPortsStatus(
+              session.identity.hostId,
+              session.connectionEpoch,
+              message,
+            );
+          return;
         case "tunnel.status":
           // Accepted from registration on: a reconnecting daemon reports its
           // running clients before reconciliation, so they are not re-applied.
@@ -3263,6 +3278,7 @@ export class SandboxRelaySessionManager {
       epoch: session.connectionEpoch,
       reconciledAt: session.reconciledAt,
       capable: session.tunnelCapable === true,
+      plan: session.tunnelPorts === true,
       send: (frame) => {
         if (
           socket.readyState !== WS_READY_STATE_OPEN ||

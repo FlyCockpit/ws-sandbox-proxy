@@ -16,6 +16,12 @@ export const tunnelWirePortsSchema = z
   .max(TUNNEL_MAX_PORTS)
   .refine((ports) => ports.every((port, i) => i === 0 || (ports[i - 1] ?? 0) < port));
 
+/** A tunnel sandbox's declared ports: like the exposed set, but may be empty. */
+export const tunnelWireDeclaredPortsSchema = z
+  .array(z.number().int().min(1).max(65535))
+  .max(TUNNEL_MAX_PORTS)
+  .refine((ports) => ports.every((port, i) => i === 0 || (ports[i - 1] ?? 0) < port));
+
 export const tunnelCapabilityV11Schema = z.strictObject({
   clientSha256: z.string().regex(/^[0-9a-f]{64}$/),
   maxTunnels: z.number().int().min(1).max(256),
@@ -60,3 +66,26 @@ export const tunnelStatusV11Schema = z
   })
   .refine((status) => (status.state === "error") === (status.error !== undefined));
 export type TunnelStatusV11 = z.infer<typeof tunnelStatusV11Schema>;
+
+/**
+ * Server → host: a tunnel sandbox's declared ports changed at runtime (the
+ * full set, with its revision). The host replaces its recorded plan's tunnel
+ * rule only above the revision it recorded.
+ */
+export const tunnelPortsV11Schema = z.strictObject({
+  type: z.literal("tunnel.ports"),
+  sandboxId: sandboxIdSchema,
+  revision: generationSchema,
+  ports: tunnelWireDeclaredPortsSchema,
+});
+export type TunnelPortsV11 = z.infer<typeof tunnelPortsV11Schema>;
+
+/** Host → server: the outcome of a `tunnel.ports` (for `applied`, the
+ * revision the host's recorded plan now carries). */
+export const tunnelPortsStatusV11Schema = z.strictObject({
+  type: z.literal("tunnel.portsStatus"),
+  sandboxId: sandboxIdSchema,
+  revision: generationSchema,
+  outcome: z.enum(["applied", "absent", "refused", "failed"]),
+});
+export type TunnelPortsStatusV11 = z.infer<typeof tunnelPortsStatusV11Schema>;

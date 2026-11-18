@@ -107,6 +107,7 @@ export const SERVICE_ACTIONS = [
   "sandboxes.tunnelExpose",
   "sandboxes.tunnelClose",
   "sandboxes.tunnelLink",
+  "sandboxes.tunnelPorts",
   "operations.get",
   "operations.getFileResult",
   "operations.getFileMutationResult",
@@ -304,6 +305,7 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   "sandboxes.tunnelExpose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelClose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelPorts": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {

@@ -250,7 +250,9 @@ impl Config {
             domain_blocklist: Default::default(),
             credential_proxy_port: None,
             refused_dns_stub_port: None,
-            tunnel_ports: Vec::new(),
+            tunnel_ports: None,
+            tunnel_revision: 0,
+            tunnel_pending: None,
         }
     }
 

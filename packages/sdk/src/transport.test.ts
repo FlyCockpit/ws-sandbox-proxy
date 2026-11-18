@@ -464,6 +464,7 @@ const READ_KIND: Record<SdkErrorCode, WsspErrorKind> = {
   UNSUPPORTED_CAPABILITY: "unsupported",
   "sandbox.tunnel_not_found": "not_found",
   "sandbox.tunnel_port_undeclared": "invalid_request",
+  "sandbox.tunnel_ports_limit": "invalid_request",
   "sandbox.tunnel_not_ready": "conflict",
   "sandbox.tunnel_quota": "capacity",
   "sandbox.tunnel_unavailable": "unavailable",

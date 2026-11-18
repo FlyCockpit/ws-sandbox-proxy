@@ -74,6 +74,8 @@ export type WsspErrorReason =
   | "tunnel_host_unsupported"
   /** `UNSUPPORTED_CAPABILITY` (tunnel): the host owner does not allow tunnels for others. */
   | "tunnel_not_shared"
+  /** `UNSUPPORTED_CAPABILITY` (tunnel): the sandbox was created without `network.tunnelPorts`. */
+  | "tunnel_not_enabled"
   /** `packContext` (local): no descriptor-anchored traversal on this platform. */
   | "unanchored_context"
   | "network"
@@ -183,6 +185,7 @@ const KIND_BY_CODE = {
   UNSUPPORTED_CAPABILITY: "unsupported",
   "sandbox.tunnel_not_found": "not_found",
   "sandbox.tunnel_port_undeclared": "invalid_request",
+  "sandbox.tunnel_ports_limit": "invalid_request",
   "sandbox.tunnel_not_ready": "conflict",
   "sandbox.tunnel_quota": "capacity",
   "sandbox.tunnel_unavailable": "unavailable",

@@ -780,18 +780,40 @@ impl SandboxNetworkPlan {
         }
     }
 
-    /// The sandbox's declared tunnel ports (empty: none) as recorded.
+    /// The sandbox's committed declared tunnel ports (empty: none) as recorded.
     pub(crate) fn tunnel_ports(&self) -> &[u16] {
         self.settings
             .as_ref()
-            .map(|settings| settings.tunnel_ports.as_slice())
+            .and_then(|settings| settings.tunnel_ports.as_deref())
             .unwrap_or_default()
     }
 
-    /// The pinned guest address: present only on a plan with tunnel ports
-    /// and a real gateway (never on the identity-only plan).
+    /// A tunnel sandbox (created with `tunnelPorts`, possibly none).
+    pub(crate) fn tunnel_enabled(&self) -> bool {
+        self.settings
+            .as_ref()
+            .is_some_and(|settings| settings.tunnel_ports.is_some())
+    }
+
+    /// The ports the host's client may forward: the committed declared
+    /// ports, and while a runtime change is unconfirmed only those it keeps
+    /// too (neither an unconfirmed add nor a removal in progress).
+    pub(crate) fn tunnel_target_ports(&self) -> Vec<u16> {
+        let pending = self
+            .settings
+            .as_ref()
+            .and_then(|settings| settings.tunnel_pending.as_ref());
+        self.tunnel_ports()
+            .iter()
+            .copied()
+            .filter(|port| pending.is_none_or(|pending| pending.ports.contains(port)))
+            .collect()
+    }
+
+    /// The pinned guest address: present only on a tunnel sandbox's plan
+    /// with a real gateway (never on the identity-only plan).
     pub(crate) fn pinned_guest_address(&self) -> Option<Ipv4Addr> {
-        (!self.tunnel_ports().is_empty() && !self.gateway.is_unspecified())
+        (self.tunnel_enabled() && !self.gateway.is_unspecified())
             .then(|| tunnel_guest_address(self.gateway))
     }
 
@@ -966,6 +988,51 @@ pub(crate) const TUNNEL_INGRESS_RULE_TAG: &str = "wssp-tunnel-ingress";
 /// after the bridge gateway (`x.y.z.2` in the sandbox's own /24).
 pub(crate) fn tunnel_guest_address(gateway: Ipv4Addr) -> Ipv4Addr {
     Ipv4Addr::from(u32::from(gateway).wrapping_add(1))
+}
+
+/// The one `wssp-tunnel-ingress` allow for these declared ports (none for
+/// an empty set): gateway → pinned guest address, tcp, exactly the ports.
+pub(crate) fn tunnel_ingress_rule(gateway: Ipv4Addr, ports: &[u16]) -> Option<AclRule> {
+    (!ports.is_empty()).then(|| AclRule {
+        action: AclAction::Allow,
+        direction: AclDirection::Ingress,
+        protocol: Some("tcp".to_string()),
+        source: Some(format!("{gateway}/32")),
+        destination: Some(format!("{}/32", tunnel_guest_address(gateway))),
+        source_port: None,
+        destination_port: Some(
+            ports
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
+        description: TUNNEL_INGRESS_RULE_TAG.to_string(),
+    })
+}
+
+/// `rules` with its tunnel rule replaced by the variant for `ports`: every
+/// tagged rule removed, the new one (if any) placed where compilation puts
+/// it, first among the ingress rules (the comparisons are positional per
+/// direction). Every other rule keeps its place.
+pub(crate) fn with_tunnel_variant(
+    rules: &[AclRule],
+    gateway: Ipv4Addr,
+    ports: &[u16],
+) -> Vec<AclRule> {
+    let mut out: Vec<AclRule> = rules
+        .iter()
+        .filter(|rule| rule.description != TUNNEL_INGRESS_RULE_TAG)
+        .cloned()
+        .collect();
+    if let Some(rule) = tunnel_ingress_rule(gateway, ports) {
+        let at = out
+            .iter()
+            .position(|rule| rule.direction == AclDirection::Ingress)
+            .unwrap_or(out.len());
+        out.insert(at, rule);
+    }
+    out
 }
 
 /// G0 qualification switch (§2.1 "Shim check", risk 1): `true` emits each
@@ -1378,24 +1445,11 @@ pub(crate) fn compile_network_plan_allocating(
     }
     // Preview tunnels: the one host→guest allow, recorded with the plan so
     // the drift checker covers it like every other rule.
-    if !settings.tunnel_ports.is_empty() {
-        rules.push(AclRule {
-            action: AclAction::Allow,
-            direction: AclDirection::Ingress,
-            protocol: Some("tcp".to_string()),
-            source: Some(gateway_cidr.clone()),
-            destination: Some(format!("{}/32", tunnel_guest_address(gateway))),
-            source_port: None,
-            destination_port: Some(
-                settings
-                    .tunnel_ports
-                    .iter()
-                    .map(u16::to_string)
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
-            description: TUNNEL_INGRESS_RULE_TAG.to_string(),
-        });
+    if let Some(rule) = tunnel_ingress_rule(
+        gateway,
+        settings.tunnel_ports.as_deref().unwrap_or_default(),
+    ) {
+        rules.push(rule);
     }
     // Static CIDR grants keep the `wssp-grant` description; domain-resolved
     // grants are tagged per name and generation (`wssp-dns-g<N>-<digest>`) so the C36 refresh
@@ -3068,7 +3122,7 @@ br0\t0000FEA9\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
             None,
             None,
             &EgressSettings {
-                tunnel_ports: ports,
+                tunnel_ports: Some(ports),
                 ..EgressSettings::default()
             },
             &|_, _| panic!("no domains"),
@@ -3123,7 +3177,7 @@ br0\t0000FEA9\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
             None,
             None,
             &EgressSettings {
-                tunnel_ports: vec![5173, 3000],
+                tunnel_ports: Some(vec![5173, 3000]),
                 ..EgressSettings::default()
             },
             &|_, _| panic!("no domains"),

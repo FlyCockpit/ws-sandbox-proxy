@@ -48,7 +48,8 @@ import {
   runCommand,
   stopSandbox,
 } from "@wssp/api/sandbox/services/sandboxes";
-import { operationOutcome } from "@wssp/sandbox-contracts";
+import { updateSandboxTunnelPorts } from "@wssp/api/sandbox/tunnels/service";
+import { operationOutcome, updateTunnelPortsBodySchema } from "@wssp/sandbox-contracts";
 import type { z } from "zod";
 import { admitted } from "../sandbox-transfers/http-admission.js";
 import { transferStore } from "../sandbox-transfers/runtime.js";
@@ -141,6 +142,15 @@ export async function dispatchMcpTool(
       const i = parse(name, raw);
       await killSandbox(p, killSandboxInput.parse(i));
       return mutationOperationReceipt(p, i.idempotencyKey!, "sandboxes.kill", { sandboxId: i.id });
+    }
+    case "sandbox_tunnel_ports": {
+      const i = parse(name, raw);
+      const body = updateTunnelPortsBodySchema.parse({ add: i.add, remove: i.remove });
+      return updateSandboxTunnelPorts(p, {
+        id: i.id,
+        ...(body.add ? { add: body.add } : {}),
+        ...(body.remove ? { remove: body.remove } : {}),
+      });
     }
     case "command_start":
       return runCommand(p, runCommandInput.parse(parse(name, raw)));

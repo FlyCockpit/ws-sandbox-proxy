@@ -126,8 +126,10 @@ import { DOWNLOAD_ROUTES, UPLOAD_ROUTES } from "./transfers";
 import {
   createTunnelLinkBodySchema,
   exposeTunnelBodySchema,
+  sandboxTunnelPortsSchema,
   sandboxTunnelSchema,
   tunnelLinkSchema,
+  updateTunnelPortsBodySchema,
 } from "./tunnels";
 import {
   createWebhookEndpointBodySchema,
@@ -1406,6 +1408,28 @@ export const JSON_ROUTES = {
     notFound: "sandbox.not_found",
     paginated: false,
     errors: ["sandbox.tunnel_not_found", "UNSUPPORTED_CAPABILITY"],
+  },
+  updateSandboxTunnelPorts: {
+    method: "post",
+    path: "/v1/sandboxes/{id}/tunnel/ports",
+    summary:
+      "Add or remove a tunnel sandbox's declared ports at runtime. The host changes its network plan and stops forwarding a removed port; removing an exposed port replaces the tunnel, so every link to it stops working. Audited.",
+    feature: "sandboxes.tunnel",
+    scopes: ["sandboxes:tunnel"],
+    idempotency: false,
+    successStatus: 200,
+    body: updateTunnelPortsBodySchema,
+    params: resourceIdParamsSchema,
+    query: emptyQuerySchema,
+    response: { name: "SandboxTunnelPorts", schema: sandboxTunnelPortsSchema },
+    notFound: "sandbox.not_found",
+    paginated: false,
+    errors: [
+      "UNSUPPORTED_CAPABILITY",
+      "sandbox.tunnel_ports_limit",
+      "sandbox.tunnel_not_ready",
+      "sandbox.tunnel_unavailable",
+    ],
   },
   createSandboxTunnelLink: {
     method: "post",

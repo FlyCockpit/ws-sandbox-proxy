@@ -353,8 +353,9 @@ async function selectRestoreTargetOrNull(
   const hint = request.target;
   // Declared tunnel ports ride the restore's dispatch: only daemons that
   // compile them into the network plan can take it.
-  const tunnelGate =
-    sandbox.tunnelPorts.length > 0 ? PrismaValue.sql`AND h."daemonTunnelPorts"` : PrismaValue.empty;
+  const tunnelGate = sandbox.tunnelEnabled
+    ? PrismaValue.sql`AND h."daemonTunnelPorts"`
+    : PrismaValue.empty;
   const poolId = hint && "poolId" in hint ? hint.poolId : hint ? null : sandbox.originPoolId;
   // G before any H: the pool path the lease policy reads (own host: the
   // origin pool) and the pool a pool target is placed through.

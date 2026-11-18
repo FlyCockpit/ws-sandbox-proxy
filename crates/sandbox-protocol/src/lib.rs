@@ -41,7 +41,8 @@ mod capabilities;
 mod tunnel;
 pub use tunnel::{
     TUNNEL_MAX_PORTS, TunnelApplyV11, TunnelCapabilityV11, TunnelClearV11, TunnelErrorV11,
-    TunnelStateV11, TunnelStatusV11, valid_tunnel_ports, valid_tunnel_server, valid_tunnel_token,
+    TunnelPortsOutcomeV11, TunnelPortsStatusV11, TunnelPortsV11, TunnelStateV11, TunnelStatusV11,
+    valid_declared_tunnel_ports, valid_tunnel_ports, valid_tunnel_server, valid_tunnel_token,
 };
 mod egress_hints;
 pub use egress_hints::{

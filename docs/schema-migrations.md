@@ -7,7 +7,7 @@
 This repo uses **Prisma Migrate** with committed SQL files.
 
 - `packages/db/prisma/schema/*.prisma` describes what the database should look like.
-- `packages/db/prisma/migrations/<YYYYMMDDHHMMSS>_<name>/migration.sql` is the exact SQL that gets it there, one folder per change. When the change deletes something, the same folder also holds a `contract.sql` that the deploy runner applies about 7 days later ([§ Expand and contract](#expand-and-contract)). Fresh WS Sandbox Proxy databases start from `0_init`, generated from the current WSSP schema, with `pg_trgm` before trigram indexes and all 151 declared CHECKs, nine functions and eight domain triggers preserved.
+- `packages/db/prisma/migrations/<YYYYMMDDHHMMSS>_<name>/migration.sql` is the exact SQL that gets it there, one folder per change. When the change deletes something, the same folder also holds a `contract.sql` that the deploy runner applies about 7 days later ([§ Expand and contract](#expand-and-contract)). Fresh WS Sandbox Proxy databases start from `0_init`, generated from the current WSSP schema, with `pg_trgm` before trigram indexes and all 153 declared CHECKs, nine functions and eight domain triggers preserved.
 - Each database records the migrations it has applied in its `_prisma_migrations` table. `prisma migrate deploy` applies only the ones not recorded yet, in folder order, so it is safe to run on every start: with nothing pending it does nothing.
 
 The SQL is committed and reviewed like code. That is what lets one PR backfill data: you edit the generated SQL before it is applied anywhere.

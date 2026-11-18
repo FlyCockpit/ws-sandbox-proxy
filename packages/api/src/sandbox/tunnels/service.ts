@@ -2,6 +2,8 @@ import prisma from "@wssp/db";
 import {
   normalizeTunnelPorts,
   type SandboxTunnelDto,
+  type SandboxTunnelPortsDto,
+  TUNNEL_MAX_PORTS,
   type TunnelLinkDto,
 } from "@wssp/sandbox-contracts";
 import { authorizeServiceAction, serviceProcedure } from "../../lib/sdk-key-access";
@@ -11,6 +13,7 @@ import {
   sandboxNotFound,
   tunnelNotFound,
   tunnelNotReady,
+  tunnelPortsLimit,
   tunnelPortUndeclared,
   tunnelQuota,
   tunnelRefused,
@@ -60,6 +63,7 @@ async function ownedSandbox(owner: Principal, id: string) {
     select: {
       id: true,
       purpose: true,
+      tunnelEnabled: true,
       tunnelPorts: true,
       sandboxHostId: true,
       hostOwnerId: true,
@@ -131,6 +135,16 @@ export const exposeSandboxTunnel = serviceProcedure(
       >`SELECT "maxTunnelsPerOwner", "disabledAt" FROM tunnel_server_config
         WHERE id = ${TUNNEL_CONFIG_ID} FOR SHARE`;
       if (!config || config.disabledAt) throw tunnelRefused("tunnel_off");
+      // The sandbox row before the tunnel row (as the port update takes
+      // them): the ports are validated against the declaration this write
+      // is serialized with, so a concurrent removal is never undone.
+      const [locked] = await tx.$queryRaw<{ tunnelPorts: number[] }[]>`
+        SELECT "tunnelPorts" FROM sandbox_instance
+        WHERE id = ${sandbox.id} AND "userId" = ${owner.ownerId} AND state <> 'DELETED'
+        FOR SHARE`;
+      if (!locked) throw sandboxNotFound();
+      const lockedDeclared = new Set(locked.tunnelPorts);
+      if (!ports.every((port) => lockedDeclared.has(port))) throw tunnelPortUndeclared();
       // The row's lock (as close takes it): the state read below is the one
       // this write replaces, so a concurrent close is never undone.
       await tx.$queryRaw`SELECT 1 AS locked FROM sandbox_tunnel
@@ -267,67 +281,259 @@ export async function closeTunnelRow(
   });
   if (!closed) return null;
   const { before, after, hold } = closed;
+  await cleanUpHeld({ sandboxId, userId, before, after, hold, tunnelId: after.tunTunnelId });
+  wakeTunnelController();
+  return after;
+}
+
+/**
+ * The remote half of a close (or of a port removal that replaces the
+ * tunnel): stop the host's client of the old generation, then, under the
+ * row's clean-up hold its transaction took, delete `tunnelId` and every other
+ * tunnel labelled for the sandbox with the configuration the remote state was
+ * made with. Settled by the hold and the new generation; anything that fails
+ * is left to the controller (the row keeps its key and owes the sweep).
+ */
+async function cleanUpHeld(input: {
+  sandboxId: string;
+  userId: string;
+  before: SandboxTunnelRow;
+  after: SandboxTunnelRow;
+  hold: Date | null;
+  tunnelId: string | null;
+}) {
+  const { sandboxId, userId, before, after, hold, tunnelId } = input;
   if (before.hostId && before.generation > 0)
     tunnelBridge()
       ?.link(before.hostId)
       ?.send({ type: "tunnel.clear", sandboxId, generation: after.generation });
-  if (hold) {
-    // Each call starts early enough to end before the hold can expire.
-    const inTime = () => {
-      if (Date.now() > hold.getTime() - TUNNEL_HOLD_MARGIN_MS)
-        throw new Error("tunnel clean-up hold ran out");
-    };
-    let settled = false;
-    try {
-      const server = await readTunnelServer();
-      // Only with the configuration the remote state belongs to.
-      if (server && server.serverKey === after.serverKey) {
+  if (!hold) return;
+  // Each call starts early enough to end before the hold can expire.
+  const inTime = () => {
+    if (Date.now() > hold.getTime() - TUNNEL_HOLD_MARGIN_MS)
+      throw new Error("tunnel clean-up hold ran out");
+  };
+  let settled = false;
+  try {
+    const server = await readTunnelServer();
+    // Only with the configuration the remote state belongs to.
+    if (server && server.serverKey === after.serverKey) {
+      inTime();
+      if (tunnelId) await deleteTunnel(server, tunnelId);
+      for (const id of await tunnelsByLabel(
+        server,
+        tunnelLabel(server.serverKey, sandboxId),
+        undefined,
+        inTime,
+      )) {
         inTime();
-        if (after.tunTunnelId) await deleteTunnel(server, after.tunTunnelId);
-        for (const id of await tunnelsByLabel(
-          server,
-          tunnelLabel(server.serverKey, sandboxId),
-          undefined,
-          inTime,
-        )) {
-          inTime();
-          await deleteTunnel(server, id);
-        }
-        // Settled by the hold and the close's generation (a late obligation
-        // meanwhile bumps it: then the hold is given back and the controller
-        // finishes). Until then the row refuses a re-expose.
-        const done = await prisma.sandboxTunnel.updateMany({
-          where: {
-            sandboxId,
-            userId,
-            generation: after.generation,
-            creatingUntil: hold,
-            serverKey: after.serverKey,
-          },
-          data: {
-            tunTunnelId: null,
-            hostTemplate: null,
-            hostId: null,
-            sweepLabel: false,
-            creatingUntil: null,
-            serverKey: null,
-          },
-        });
-        settled = done.count === 1;
+        await deleteTunnel(server, id);
       }
-    } catch {
-      // The controller retries the deletion of a closed row's tunnels.
+      // Settled by the hold and the change's generation (a late obligation
+      // meanwhile bumps it: then the hold is given back and the controller
+      // finishes). Until then a closed row refuses a re-expose.
+      const done = await prisma.sandboxTunnel.updateMany({
+        where: {
+          sandboxId,
+          userId,
+          generation: after.generation,
+          creatingUntil: hold,
+          serverKey: after.serverKey,
+        },
+        data: {
+          tunTunnelId: null,
+          hostTemplate: null,
+          hostId: null,
+          sweepLabel: false,
+          creatingUntil: null,
+          serverKey: null,
+        },
+      });
+      settled = done.count === 1;
     }
-    if (!settled)
-      await prisma.sandboxTunnel
-        .updateMany({ where: { sandboxId, creatingUntil: hold }, data: { creatingUntil: null } })
-        .catch(() => {
-          // The hold expires into a label sweep.
-        });
+  } catch {
+    // The controller retries the deletion.
   }
-  wakeTunnelController();
-  return after;
+  if (!settled)
+    await prisma.sandboxTunnel
+      .updateMany({ where: { sandboxId, creatingUntil: hold }, data: { creatingUntil: null } })
+      .catch(() => {
+        // The hold expires into a label sweep.
+      });
 }
+
+/**
+ * Add or remove a tunnel sandbox's declared ports at runtime (audited). One
+ * transaction re-authorizes the caller, locks the sandbox and its tunnel row,
+ * bumps `tunnelPortsRevision` (the controller sends the host `tunnel.ports`
+ * until the sandbox's current host acknowledges it), and narrows the exposed
+ * set. Removing an EXPOSED port replaces the tunnel: tunnel-server access is
+ * per tunnel, not per port, so the old tunnel (with every link and browser
+ * session it granted) is deleted here, under the row's hold, before the host
+ * hears of the change; the controller creates a new one for the kept ports.
+ * Removing every exposed port closes the tunnel.
+ */
+export const updateSandboxTunnelPorts = serviceProcedure(
+  {
+    action: "sandboxes.tunnelPorts",
+    target: (input: { id: string }) => ({ sandboxId: input.id }),
+  },
+  async (
+    owner: Principal,
+    input: { id: string; add?: number[]; remove?: number[] },
+  ): Promise<SandboxTunnelPortsDto> => {
+    await spend(owner);
+    await requireConfigured();
+    const sandbox = await ownedSandbox(owner, input.id);
+    if (sandbox.purpose !== "WORKLOAD" || !sandbox.tunnelEnabled)
+      throw tunnelRefused("tunnel_not_enabled");
+    const add = input.add ?? [];
+    const remove = new Set(input.remove ?? []);
+    const userId = owner.ownerId;
+    const actor = { actorId: owner.ownerId, actorKeyId: recordedKeyIdOf(owner) };
+    const changed = await prisma.$transaction(async (tx) => {
+      // The caller's authority is re-checked (and its owner/key locked) by
+      // the write itself: a key revoked meanwhile changes nothing.
+      await authorizeServiceAction(owner, "sandboxes.tunnelPorts", { sandboxId: sandbox.id }, tx);
+      const [config] = await tx.$queryRaw<{ disabledAt: Date | null }[]>`
+        SELECT "disabledAt" FROM tunnel_server_config WHERE id = ${TUNNEL_CONFIG_ID} FOR SHARE`;
+      if (!config || config.disabledAt) throw tunnelRefused("tunnel_off");
+      // The sandbox row first (as every lifecycle writer), then the tunnel row.
+      const [current] = await tx.$queryRaw<
+        {
+          tunnelPorts: number[];
+          tunnelPortsRevision: number;
+          tunnelPortsAckHostId: string | null;
+          tunnelPortsAckRevision: number;
+          sandboxHostId: string | null;
+        }[]
+      >`SELECT "tunnelPorts", "tunnelPortsRevision", "tunnelPortsAckHostId",
+               "tunnelPortsAckRevision", "sandboxHostId"
+        FROM sandbox_instance
+        WHERE id = ${sandbox.id} AND "userId" = ${userId} AND "tunnelEnabled"
+          AND state <> 'DELETED' FOR UPDATE`;
+      if (!current) throw sandboxNotFound();
+      const next = normalizeTunnelPorts([
+        ...new Set([...current.tunnelPorts, ...add].filter((port) => !remove.has(port))),
+      ]);
+      if (next.length > TUNNEL_MAX_PORTS) throw tunnelPortsLimit();
+      const declared = normalizeTunnelPorts(current.tunnelPorts);
+      if (next.length === declared.length && next.every((port, i) => port === declared[i]))
+        return { ports: next, ...current, cleanup: null };
+      const revision = current.tunnelPortsRevision + 1;
+      await tx.sandbox.updateMany({
+        where: { id: sandbox.id, userId },
+        data: { tunnelPorts: next, tunnelPortsRevision: revision },
+      });
+      await tx.$queryRaw`SELECT 1 AS locked FROM sandbox_tunnel
+        WHERE "sandboxId" = ${sandbox.id} AND "userId" = ${userId} FOR UPDATE`;
+      const row = await tx.sandboxTunnel.findFirst({
+        where: { sandboxId: sandbox.id, userId, closedAt: null },
+        select: { ...sandboxTunnelSelect, creatingUntil: true },
+      });
+      const kept = row ? row.ports.filter((port) => next.includes(port)) : [];
+      let cleanup: {
+        before: SandboxTunnelRow;
+        after: SandboxTunnelRow;
+        hold: Date | null;
+        tunnelId: string | null;
+      } | null = null;
+      if (row && kept.length < row.ports.length) {
+        // An exposed port leaves: this transaction replaces (or closes) the
+        // tunnel. Remote state and no create in flight: it cleans up under
+        // the row's hold (a create in flight fails its compare-and-set on the
+        // bumped generation and deletes what it made).
+        const hold =
+          row.serverKey !== null && row.creatingUntil === null
+            ? new Date(Date.now() + TUNNEL_HOLD_MS)
+            : null;
+        const after = await tx.sandboxTunnel.update({
+          where: { sandboxId: sandbox.id, userId },
+          data: {
+            ...(kept.length === 0
+              ? { closedAt: new Date(), state: "SUSPENDED" as const }
+              : {
+                  ports: kept,
+                  state: "PENDING" as const,
+                  connectedAt: null,
+                  // The old tunnel is forgotten: the label sweep (here under
+                  // the hold, else by the controller) deletes it before any
+                  // new one is created.
+                  tunTunnelId: null,
+                  hostTemplate: null,
+                  ...(row.serverKey !== null ? { sweepLabel: true } : {}),
+                }),
+            hostId: null,
+            lastError: null,
+            // credential-settlement: exempt (preview-tunnel row generation)
+            generation: { increment: 1 },
+            ...(hold ? { creatingUntil: hold } : {}),
+          },
+          select: sandboxTunnelSelect,
+        });
+        if (kept.length === 0)
+          await recordTunnelEvent(tx, {
+            kind: "tunnel.disabled",
+            userId,
+            sandboxId: sandbox.id,
+            ...actor,
+            detail: row.tunTunnelId,
+          });
+        cleanup = { before: row, after, hold, tunnelId: row.tunTunnelId };
+      }
+      await recordTunnelEvent(tx, {
+        kind: "ports.changed",
+        userId,
+        sandboxId: sandbox.id,
+        ...actor,
+        detail: `${next.join(",")}@${revision}`,
+      });
+      return { ...current, ports: next, tunnelPortsRevision: revision, cleanup };
+    });
+    if (changed.cleanup) await cleanUpHeld({ sandboxId: sandbox.id, userId, ...changed.cleanup });
+    wakeTunnelController();
+    const acked =
+      changed.tunnelPortsRevision === 0 ||
+      (changed.sandboxHostId !== null &&
+        changed.tunnelPortsAckHostId === changed.sandboxHostId &&
+        changed.tunnelPortsAckRevision >= changed.tunnelPortsRevision);
+    return {
+      sandboxId: sandbox.id,
+      ports: changed.ports,
+      revision: changed.tunnelPortsRevision,
+      state: acked ? "applied" : "pending",
+    };
+  },
+);
+
+/** The declared ports of a tunnel sandbox and whether its host has them. */
+export const getSandboxTunnelPorts = async (
+  owner: Principal,
+  id: string,
+): Promise<SandboxTunnelPortsDto> => {
+  const sandbox = await prisma.sandbox.findFirst({
+    where: { id, userId: owner.ownerId, state: { not: "DELETED" }, tunnelEnabled: true },
+    select: {
+      tunnelPorts: true,
+      tunnelPortsRevision: true,
+      tunnelPortsAckHostId: true,
+      tunnelPortsAckRevision: true,
+      sandboxHostId: true,
+    },
+  });
+  if (!sandbox) throw tunnelRefused("tunnel_not_enabled");
+  const acked =
+    sandbox.tunnelPortsRevision === 0 ||
+    (sandbox.sandboxHostId !== null &&
+      sandbox.tunnelPortsAckHostId === sandbox.sandboxHostId &&
+      sandbox.tunnelPortsAckRevision >= sandbox.tunnelPortsRevision);
+  return {
+    sandboxId: id,
+    ports: normalizeTunnelPorts(sandbox.tunnelPorts),
+    revision: sandbox.tunnelPortsRevision,
+    state: acked ? "applied" : "pending",
+  };
+};
 
 export const createSandboxTunnelLink = serviceProcedure(
   {

@@ -683,3 +683,36 @@ fn an_expose_error_reply_is_retried_not_trusted() {
     );
     f.manager.stop_all();
 }
+
+#[test]
+fn a_port_change_stops_only_a_client_forwarding_an_undeclared_port() {
+    let f = fixture(false);
+    f.runtime
+        .set_tunnel_target("sbx-1", "10.9.8.2".parse().unwrap(), vec![3000, 4000]);
+    f.manager
+        .apply(apply("sbx-1", 1, "secretsecretsecret16", vec![3000, 4000]));
+    f.manager.poll();
+    let pid = client_pid(&f, "sbx-1");
+    // An add (every forwarded port is still allowed): the client keeps running.
+    f.manager.restrict("sbx-1", &[3000, 4000]);
+    assert!(f.base.join("sbx-1").exists());
+    // A removal of a forwarded port: stopped and reaped before the ACL changes.
+    f.manager.restrict("sbx-1", &[4000]);
+    assert!(!f.base.join("sbx-1").exists());
+    let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+    assert!(state.is_empty(), "client reaped: {state}");
+    let events = f.manager.drain_events();
+    assert!(
+        events
+            .iter()
+            .any(|status| status.generation == 1 && status.state == TunnelStateV11::Stopped)
+    );
+    // A restart never forwards a port the plan no longer declares.
+    f.runtime
+        .set_tunnel_target("sbx-1", "10.9.8.2".parse().unwrap(), vec![4000]);
+    f.manager
+        .apply(apply("sbx-1", 2, "secretsecretsecret17", vec![3000]));
+    f.manager.poll();
+    assert!(!f.base.join("sbx-1").exists(), "undeclared port refused");
+    f.manager.stop_all();
+}

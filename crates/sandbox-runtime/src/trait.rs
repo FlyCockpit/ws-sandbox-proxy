@@ -1346,6 +1346,25 @@ pub trait SandboxRuntime: Send + Sync {
         None
     }
 
+    /// Preview tunnels: replace a tunnel sandbox's declared ports with this
+    /// server-issued revision (`tunnel.ports`), atomically under the
+    /// sandbox's lifecycle lock and the recorded plan's fences. `before_acl`
+    /// is called with the ports the host's client may still forward, after
+    /// the change is durably pending and before the ACL changes (the node
+    /// daemon stops a client forwarding anything else there).
+    fn update_tunnel_ports(
+        &self,
+        _sandbox_id: &str,
+        revision: u64,
+        _ports: &[u16],
+        _before_acl: &dyn Fn(&[u16]),
+    ) -> Result<crate::TunnelPortsUpdate, RuntimeError> {
+        Ok(crate::TunnelPortsUpdate {
+            outcome: sandbox_protocol::TunnelPortsOutcomeV11::Refused,
+            revision,
+        })
+    }
+
     /// One bounded rotating policy-inspection pass. Call off the lease deadline
     /// path with lifecycle-owned active ids. Cleanup remains lifecycle-owned.
     fn reconcile_policies(&self, _sandbox_ids: &[String]) -> Result<(), RuntimeError> {

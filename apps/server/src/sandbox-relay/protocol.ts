@@ -62,10 +62,13 @@ import {
   serverImageMessageSchema,
   type TunnelApplyV11,
   type TunnelClearV11,
+  type TunnelPortsV11,
   tunnelApplyV11Schema,
   tunnelClearV11Schema,
+  tunnelPortsStatusV11Schema,
+  tunnelPortsV11Schema,
   tunnelStatusV11Schema,
-  tunnelWirePortsSchema,
+  tunnelWireDeclaredPortsSchema,
   type VmSize,
   validDispatchBuildFields,
   validDispatchDiskFields,
@@ -676,6 +679,7 @@ const coreDaemonControlMessageSchema = z.discriminatedUnion("type", [
   hostQuiesceV11Schema,
   hostEgressStateV11Schema,
   tunnelStatusV11Schema,
+  tunnelPortsStatusV11Schema,
   processStartedSchema,
   z
     .object({
@@ -1006,6 +1010,7 @@ export type ServerControlMessage =
   | EgressBlocklistV11
   | TunnelApplyV11
   | TunnelClearV11
+  | TunnelPortsV11
   | z.infer<typeof allocationRequestSchema>
   | z.infer<typeof journalKeyInstallSchema>
   | z.infer<typeof hostQuiesceAckV11Schema>
@@ -1168,8 +1173,10 @@ export type ServerControlMessage =
       guestSudo?: true;
       /** The guest may reach root: host-proof-only retirement. Launches only. */
       guestRoot?: true;
-      /** Preview tunnels: the sandbox's declared ports (ascending); launches only. */
+      /** Preview tunnels: a tunnel sandbox's declared ports (ascending,
+       * possibly none); launches only, always with their revision. */
       tunnelPorts?: number[];
+      tunnelPortsRevision?: number;
       /** §8.6 (only to `diskOffload` daemons): a reconnect
        * that boots a new root from the stored disk, with `launchMode:
        * "new_root"` and a `fetch` image of the same fingerprint. */
@@ -1443,9 +1450,12 @@ export function encodeServerControlMessage(
     )
       throw new SandboxRelayDispatchValidationError("Invalid guest privilege fields.");
     if (
-      message.tunnelPorts !== undefined &&
-      ((message.kind !== "sandbox.create" && message.kind !== "sandbox.reconnect") ||
-        !tunnelWirePortsSchema.safeParse(message.tunnelPorts).success)
+      (message.tunnelPorts === undefined) !== (message.tunnelPortsRevision === undefined) ||
+      (message.tunnelPorts !== undefined &&
+        ((message.kind !== "sandbox.create" && message.kind !== "sandbox.reconnect") ||
+          !tunnelWireDeclaredPortsSchema.safeParse(message.tunnelPorts).success ||
+          !Number.isSafeInteger(message.tunnelPortsRevision) ||
+          (message.tunnelPortsRevision ?? -1) < 0))
     )
       throw new SandboxRelayDispatchValidationError("Invalid tunnel ports.");
     // E4-01: the daemon refuses a signal whose wire pid is not its qualified
@@ -1466,6 +1476,8 @@ export function encodeServerControlMessage(
     throw new SandboxRelayDispatchValidationError("Invalid tunnel apply frame.");
   if (message.type === "tunnel.clear" && !tunnelClearV11Schema.safeParse(message).success)
     throw new SandboxRelayDispatchValidationError("Invalid tunnel clear frame.");
+  if (message.type === "tunnel.ports" && !tunnelPortsV11Schema.safeParse(message).success)
+    throw new SandboxRelayDispatchValidationError("Invalid tunnel ports frame.");
   if (message.type === "egress.blocklist" && !egressBlocklistV11Schema.safeParse(message).success)
     throw new SandboxRelayDispatchValidationError("Invalid egress blocklist frame.");
   if (message.type === "journal.key.install" && !journalKeyInstallSchema.safeParse(message).success)

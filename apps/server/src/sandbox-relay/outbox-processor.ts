@@ -1285,12 +1285,17 @@ async function dispatchClaimedEvent(
         (sandbox.guestRoot || sandbox.guestSudo)
           ? (true as const)
           : undefined,
-      // Preview tunnels: the declared ports compile into the launch's network
-      // plan (create, and a restore's new root; a cold reconnect keeps its plan).
+      // Preview tunnels: a tunnel sandbox's declared ports (possibly none)
+      // and their revision compile into the launch's network plan (create,
+      // and a restore's new root; a host that still has the sandbox's bridge
+      // keeps its recorded plan, which `tunnel.ports` converges).
       tunnelPorts:
-        (kind === "sandbox.create" || kind === "sandbox.reconnect") &&
-        (sandbox.tunnelPorts ?? []).length > 0
+        (kind === "sandbox.create" || kind === "sandbox.reconnect") && sandbox.tunnelEnabled
           ? [...sandbox.tunnelPorts].sort((a, b) => a - b)
+          : undefined,
+      tunnelPortsRevision:
+        (kind === "sandbox.create" || kind === "sandbox.reconnect") && sandbox.tunnelEnabled
+          ? sandbox.tunnelPortsRevision
           : undefined,
       // §8.6 (rows only; `diskUnavailable` refused above).
       disk: typeof diskFields === "string" ? {} : diskFields,
@@ -1495,7 +1500,11 @@ async function dispatchClaimedEvent(
         ...("guestSudo" in prepared && prepared.guestSudo ? { guestSudo: true as const } : {}),
         ...("guestRoot" in prepared && prepared.guestRoot ? { guestRoot: true as const } : {}),
         ...("tunnelPorts" in prepared && prepared.tunnelPorts
-          ? { tunnelPorts: prepared.tunnelPorts }
+          ? {
+              tunnelPorts: prepared.tunnelPorts,
+              tunnelPortsRevision:
+                "tunnelPortsRevision" in prepared ? (prepared.tunnelPortsRevision ?? 0) : 0,
+            }
           : {}),
         signal:
           payload.signal === "SIGTERM" ||

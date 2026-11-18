@@ -28,6 +28,7 @@ impl TunnelManager {
     pub(crate) fn apply(&self, _apply: TunnelApplyV11) {}
     pub(crate) fn clear(&self, _clear: &TunnelClearV11) {}
     pub(crate) fn stop_all(&self) {}
+    pub(crate) fn restrict(&self, _sandbox_id: &str, _allowed: &[u16]) {}
 }
 
 fn unreachable_manager() -> TunnelCapabilityV11 {

@@ -169,6 +169,8 @@ struct FakeState {
     refused_dns_hint_creates: HashSet<String>,
     /// Preview tunnels: the recorded (pinned address, declared ports).
     tunnel_targets: HashMap<String, (std::net::Ipv4Addr, Vec<u16>)>,
+    /// Preview tunnels: the recorded declared-ports revision.
+    tunnel_revisions: HashMap<String, u64>,
     storage_pools: HashMap<String, crate::StoragePoolIdentity>,
     unavailable_pools: HashSet<String>,
     root_disks: HashMap<String, crate::RootDisk>,
@@ -1979,7 +1981,51 @@ impl SandboxRuntime for FakeRuntime {
             .unwrap_or_else(|e| e.into_inner())
             .tunnel_targets
             .get(sandbox_id)
+            .filter(|(_, ports)| !ports.is_empty())
             .cloned()
+    }
+
+    fn update_tunnel_ports(
+        &self,
+        sandbox_id: &str,
+        revision: u64,
+        ports: &[u16],
+        before_acl: &dyn Fn(&[u16]),
+    ) -> Result<crate::TunnelPortsUpdate, RuntimeError> {
+        use sandbox_protocol::TunnelPortsOutcomeV11 as Outcome;
+        let kept = {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let Some((_, current)) = state.tunnel_targets.get(sandbox_id) else {
+                return Ok(crate::TunnelPortsUpdate {
+                    outcome: Outcome::Absent,
+                    revision,
+                });
+            };
+            let recorded = state.tunnel_revisions.get(sandbox_id).copied().unwrap_or(0);
+            if revision <= recorded {
+                return Ok(crate::TunnelPortsUpdate {
+                    outcome: Outcome::Applied,
+                    revision: recorded,
+                });
+            }
+            current
+                .iter()
+                .copied()
+                .filter(|port| ports.contains(port))
+                .collect::<Vec<_>>()
+        };
+        before_acl(&kept);
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, current)) = state.tunnel_targets.get_mut(sandbox_id) {
+            *current = ports.to_vec();
+        }
+        state
+            .tunnel_revisions
+            .insert(sandbox_id.to_string(), revision);
+        Ok(crate::TunnelPortsUpdate {
+            outcome: Outcome::Applied,
+            revision,
+        })
     }
 
     fn bind_restore_base(&self, sandbox_id: &str, restore_base: &str) {

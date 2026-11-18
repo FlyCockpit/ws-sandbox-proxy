@@ -106,7 +106,9 @@ export type SandboxRow = SandboxDiskFacts & {
   guestSudoRequested: boolean;
   guestSudoReason: SandboxGuestSudoReason | null;
   guestRoot: boolean;
-  /** Preview tunnels: ports declared at create (absent on old projections). */
+  /** Preview tunnels: a tunnel sandbox and its declared ports (absent on
+   * old projections). */
+  tunnelEnabled?: boolean;
   tunnelPorts?: number[];
   capacityWait?: CapacityWaitView;
   createdAt: Date;
@@ -174,8 +176,9 @@ export function toSandboxDto(row: SandboxRow): SandboxDto {
     guestSudoRequested: row.guestSudoRequested,
     guestSudoReason: guestSudoReasonDto(row.guestSudoReason),
     guestRoot: row.guestRoot,
-    // Omitted when none were declared: a sandbox without tunnels reads as before.
-    ...(row.tunnelPorts?.length ? { tunnelPorts: [...row.tunnelPorts] } : {}),
+    // Present on tunnel sandboxes only (possibly empty): a sandbox without
+    // tunnels reads as before.
+    ...(row.tunnelEnabled ? { tunnelPorts: [...(row.tunnelPorts ?? [])] } : {}),
     disk: sandboxDiskDto(row),
     ...(row.state === "WAITING_FOR_CAPACITY" && row.capacityWait
       ? { capacityWait: row.capacityWait }

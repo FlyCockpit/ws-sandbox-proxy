@@ -260,6 +260,7 @@ const sandboxSelect = {
   guestSudo: true,
   guestSudoRequested: true,
   guestSudoReason: true,
+  tunnelEnabled: true,
   tunnelPorts: true,
   guestRoot: true,
   createdAt: true,
@@ -1189,10 +1190,13 @@ export const createSandbox = serviceProcedure(
     if (input.network?.ingress !== undefined) throw unsupportedCapability("ingress");
     // Preview tunnels: declared ports are a WORKLOAD feature of a deployment
     // whose admin configured a tunnel server (refused before any write).
+    // `tunnelPorts` (even `[]`) makes a tunnel sandbox: pinned on its host,
+    // placed on tunnel hosts, and allowed to change its ports later.
+    const tunnel = input.network?.tunnelPorts !== undefined;
     const tunnelPorts = input.network?.tunnelPorts
       ? normalizeTunnelPorts(input.network.tunnelPorts)
       : [];
-    if (tunnelPorts.length > 0) {
+    if (tunnel) {
       if (buildId !== null || managed !== undefined)
         throw new ORPCError("BAD_REQUEST", { message: "Invalid managed create." });
       if (!(await tunnelConfigured())) throw tunnelRefused("tunnel_off");
@@ -1234,7 +1238,7 @@ export const createSandbox = serviceProcedure(
       timeoutMs: input.timeoutMs ?? LEASE_DEFAULT_MS,
       onExpire: input.lifecycle?.onTimeout === "stop" ? "stop" : "destroy",
       guestSudo: guestSudoRequested,
-      ...(tunnelPorts.length > 0 ? { tunnelPorts } : {}),
+      ...(tunnel ? { tunnelPorts } : {}),
     };
     const created = retryPlacement(() =>
       operationTransaction(
@@ -1266,7 +1270,7 @@ export const createSandbox = serviceProcedure(
             const placementInput = {
               ...input,
               egressMode: egress.mode,
-              tunnel: tunnelPorts.length > 0,
+              tunnel,
               credential:
                 managed?.credential ??
                 (await credentialPlacementContextFor(

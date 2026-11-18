@@ -13,7 +13,9 @@ import type {
   SandboxPage,
   SandboxStateDto,
   SandboxTunnelDto,
+  SandboxTunnelPortsDto,
   TunnelLinkDto,
+  UpdateTunnelPortsBody,
   updateSandboxBodySchema,
 } from "@wssp/sandbox-contracts";
 import { sandboxListFiltersSchema } from "@wssp/sandbox-contracts";
@@ -182,7 +184,8 @@ export type Sandbox = SandboxDto & {
 export type ConnectResult = Sandbox;
 
 /**
- * Preview tunnels for ports declared at create (`network.tunnelPorts`). The
+ * Preview tunnels for a tunnel sandbox's declared ports (created with
+ * `network.tunnelPorts`, possibly `[]`; change them with `updatePorts`). The
  * node runs the tunnel client outside the VM; you never hold a tunnel
  * credential. Refused with kind `unsupported` (`reason: "tunnel_off"`) on a
  * deployment without a tunnel server.
@@ -195,6 +198,13 @@ export type SandboxTunnelApi = {
   close(options?: WaitOptions): Promise<SandboxTunnelDto>;
   /** A short-lived (single-use by default) access URL for one exposed port. Treat it as a secret. */
   link(input: CreateTunnelLinkBody, options?: WaitOptions): Promise<TunnelLinkDto>;
+  /**
+   * Add or remove declared ports at runtime. `state` is `pending` until the
+   * sandbox's host recorded the change (expose an added port after that, or
+   * at once: the tunnel connects once it is applied). Removing an exposed
+   * port replaces the tunnel: every link to it stops working.
+   */
+  updatePorts(input: UpdateTunnelPortsBody, options?: WaitOptions): Promise<SandboxTunnelPortsDto>;
 };
 
 /** The exact host-acknowledged renewal intent and the latest sandbox snapshot.
@@ -984,6 +994,13 @@ export function createSandboxesApi(
           }),
         link: (input: CreateTunnelLinkBody, options: WaitOptions = {}) =>
           transport.request("createSandboxTunnelLink", {
+            params: { id },
+            body: input,
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
+        updatePorts: (input: UpdateTunnelPortsBody, options: WaitOptions = {}) =>
+          transport.request("updateSandboxTunnelPorts", {
             params: { id },
             body: input,
             signal: options.signal,

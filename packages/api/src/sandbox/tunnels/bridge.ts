@@ -1,4 +1,4 @@
-import type { TunnelApplyV11, TunnelClearV11 } from "@wssp/sandbox-contracts";
+import type { TunnelApplyV11, TunnelClearV11, TunnelPortsV11 } from "@wssp/sandbox-contracts";
 
 /**
  * The relay side of preview tunnels, bound by the server process that holds
@@ -13,7 +13,10 @@ export type TunnelHostLink = {
   reconciledAt: number;
   /** The session's hello advertised a verified tunnel client. */
   capable: boolean;
-  send(frame: TunnelApplyV11 | TunnelClearV11): boolean;
+  /** The daemon records tunnel plans (hello `tunnelPorts`): it takes a
+   * launch's declared ports and `tunnel.ports`. */
+  plan: boolean;
+  send(frame: TunnelApplyV11 | TunnelClearV11 | TunnelPortsV11): boolean;
 };
 
 export type TunnelBridge = {

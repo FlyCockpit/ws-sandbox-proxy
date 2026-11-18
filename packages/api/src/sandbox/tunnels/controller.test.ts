@@ -25,13 +25,28 @@ const db = vi.hoisted(() => ({
     state: "READY",
     sandboxHostId: "host-1",
     tunnelPorts: [3000, 5173],
+    tunnelPortsRevision: 0,
+    tunnelPortsAckHostId: null,
+    tunnelPortsAckRevision: 0,
     lastStoppedAt: null,
   } as {
     state: string;
     sandboxHostId: string | null;
     tunnelPorts: number[];
+    tunnelPortsRevision: number;
+    tunnelPortsAckHostId: string | null;
+    tunnelPortsAckRevision: number;
     lastStoppedAt: Date | null;
   } | null,
+  /** Rows an acknowledgement updates. */
+  ackCount: 1,
+  /** The port-sync scan's answer (sandboxes whose host owes an ack). */
+  portsDue: [] as {
+    id: string;
+    sandboxHostId: string;
+    tunnelPorts: number[];
+    tunnelPortsRevision: number;
+  }[],
   config: { disabledAt: null as Date | null, serverKey: "key-1" },
   clock: 1_000_000,
   host: {
@@ -161,18 +176,21 @@ vi.mock("@wssp/db", () => {
       findUnique: vi.fn(async () => ({ ...db.config })),
     },
     $queryRaw: vi.fn(async (query: TemplateStringsArray) =>
-      query.join("?").includes("sandbox_instance")
-        ? db.sandbox
-          ? [
-              {
-                state: db.sandbox.state,
-                lastStoppedAt: db.sandbox.lastStoppedAt,
-                now: new Date(db.clock),
-              },
-            ]
-          : []
-        : [{ ...db.config, apiUrl: "https://tunnel.example.com" }],
+      query.join("?").includes("tunnelPortsAckHostId")
+        ? db.portsDue
+        : query.join("?").includes("sandbox_instance")
+          ? db.sandbox
+            ? [
+                {
+                  state: db.sandbox.state,
+                  lastStoppedAt: db.sandbox.lastStoppedAt,
+                  now: new Date(db.clock),
+                },
+              ]
+            : []
+          : [{ ...db.config, apiUrl: "https://tunnel.example.com" }],
     ),
+    $executeRaw: vi.fn(async () => db.ackCount),
     sandboxTunnelEvent: {
       create: vi.fn(async ({ data }: { data: { kind: string } }) => {
         db.events.push(data.kind);
@@ -234,6 +252,7 @@ function setup() {
               epoch,
               reconciledAt: now - 60_000,
               capable: true,
+              plan: true,
               send: (frame) => {
                 sent.push(frame as (typeof sent)[number]);
                 return true;
@@ -265,8 +284,13 @@ beforeEach(() => {
     state: "READY",
     sandboxHostId: "host-1",
     tunnelPorts: [3000, 5173],
+    tunnelPortsRevision: 0,
+    tunnelPortsAckHostId: null,
+    tunnelPortsAckRevision: 0,
     lastStoppedAt: null,
   };
+  db.portsDue = [];
+  db.ackCount = 1;
   db.host.status = "CONNECTED";
   db.host.lastHeartbeatAt = new Date(1_000_000);
   db.rows.set("sbx", {
@@ -303,7 +327,7 @@ describe("tunnel controller", () => {
     await t.controller.tick();
     expect(t.tun.createTunnel).toHaveBeenCalledWith(server, {
       label: "wssp:key-1:sbx",
-      maxPorts: 2,
+      maxPorts: 8,
     });
     expect(t.sent).toEqual([
       expect.objectContaining({ type: "tunnel.apply", generation: 2, ports: [3000] }),
@@ -357,6 +381,9 @@ describe("tunnel controller", () => {
       state: "STOPPED",
       sandboxHostId: "host-1",
       tunnelPorts: [3000, 5173],
+      tunnelPortsRevision: 0,
+      tunnelPortsAckHostId: null,
+      tunnelPortsAckRevision: 0,
       lastStoppedAt: new Date(2_000_000),
     };
     await t.controller.tick();
@@ -371,6 +398,9 @@ describe("tunnel controller", () => {
       state: "READY",
       sandboxHostId: "host-1",
       tunnelPorts: [3000, 5173],
+      tunnelPortsRevision: 0,
+      tunnelPortsAckHostId: null,
+      tunnelPortsAckRevision: 0,
       lastStoppedAt: null,
     };
     await t.controller.tick();
@@ -400,6 +430,9 @@ describe("tunnel controller", () => {
       state: "DELETED",
       sandboxHostId: "host-1",
       tunnelPorts: [3000, 5173],
+      tunnelPortsRevision: 0,
+      tunnelPortsAckHostId: null,
+      tunnelPortsAckRevision: 0,
       lastStoppedAt: null,
     };
     await t.controller.tick();
@@ -530,6 +563,9 @@ describe("tunnel controller invalidation", () => {
       state: "READY",
       sandboxHostId: "host-1",
       tunnelPorts: [3000, 5173],
+      tunnelPortsRevision: 0,
+      tunnelPortsAckHostId: null,
+      tunnelPortsAckRevision: 0,
       lastStoppedAt: new Date(1_000_500),
     };
     await t.controller.tick();
@@ -1151,5 +1187,170 @@ describe("tunnel controller clean-up holds", () => {
       serverKey: "key-1",
       creatingUntil: null,
     });
+  });
+});
+
+describe("tunnel controller: runtime port changes", () => {
+  it("sends tunnel.ports to the sandbox's host until it acknowledges, throttled", async () => {
+    const t = setup();
+    db.rows.clear();
+    db.portsDue = [
+      { id: "sbx", sandboxHostId: "host-1", tunnelPorts: [5173, 3000], tunnelPortsRevision: 2 },
+    ];
+    await t.controller.tick();
+    expect(t.sent).toContainEqual({
+      type: "tunnel.ports",
+      sandboxId: "sbx",
+      revision: 2,
+      ports: [3000, 5173],
+    });
+    const count = () => t.sent.filter((frame) => frame.type === "tunnel.ports").length;
+    expect(count()).toBe(1);
+    // Not again within the resend interval; again after it.
+    t.advance(5_000);
+    await t.controller.tick();
+    expect(count()).toBe(1);
+    t.advance(6_000);
+    await t.controller.tick();
+    expect(count()).toBe(2);
+    // A host without a plan backs the resend off.
+    await t.controller.onPortsStatus("host-1", 7, {
+      type: "tunnel.portsStatus",
+      sandboxId: "sbx",
+      revision: 2,
+      outcome: "absent",
+    });
+    t.advance(11_000);
+    await t.controller.tick();
+    expect(count()).toBe(2);
+    // A new revision goes at once.
+    db.portsDue[0]!.tunnelPortsRevision = 3;
+    await t.controller.tick();
+    expect(count()).toBe(3);
+  });
+
+  it("rotates through more due sandboxes than one page and reaches every one", async () => {
+    const t = setup();
+    db.rows.clear();
+    const prisma = (await import("@wssp/db")).default as unknown as {
+      $queryRaw: ReturnType<typeof vi.fn>;
+    };
+    const all = Array.from({ length: 501 }, (_, i) => ({
+      id: `sbx-${String(i).padStart(4, "0")}`,
+      sandboxHostId: "host-1",
+      tunnelPorts: [3000],
+      tunnelPortsRevision: 1,
+    }));
+    // The scan honours its keyset cursor and page size, as the SQL does.
+    const original = prisma.$queryRaw.getMockImplementation();
+    prisma.$queryRaw.mockImplementation(
+      async (query: TemplateStringsArray, ...values: unknown[]) => {
+        if (!query.join("?").includes("tunnelPortsAckHostId")) return original?.(query, ...values);
+        const from = values[0] as string;
+        return all.filter((sandbox) => sandbox.id > from).slice(0, 500);
+      },
+    );
+    try {
+      const sentTo = () =>
+        t.sent
+          .filter((frame) => frame.type === "tunnel.ports")
+          .map((frame) => (frame as unknown as { sandboxId: string }).sandboxId);
+      await t.controller.tick();
+      expect(sentTo()).toHaveLength(500);
+      expect(sentTo()).not.toContain("sbx-0500");
+      // The next pass continues after the first page: the 501st is reached.
+      await t.controller.tick();
+      expect(sentTo()).toContain("sbx-0500");
+      expect(sentTo()).toHaveLength(501);
+      // Wrapping around within the resend interval sends nothing again ...
+      await t.controller.tick();
+      expect(sentTo()).toHaveLength(501);
+      // ... and after it, both pages again.
+      t.advance(11_000);
+      await t.controller.tick();
+      await t.controller.tick();
+      expect(sentTo()).toHaveLength(1002);
+    } finally {
+      prisma.$queryRaw.mockImplementation(original as never);
+    }
+  });
+
+  it("waits while the tunnel row is held (the replaced tunnel goes first)", async () => {
+    const t = setup();
+    const row = db.rows.get("sbx")!;
+    row.serverKey = "key-1";
+    row.creatingUntil = new Date(1_000_000 + 60_000);
+    db.portsDue = [
+      { id: "sbx", sandboxHostId: "host-1", tunnelPorts: [3000], tunnelPortsRevision: 1 },
+    ];
+    const prisma = (await import("@wssp/db")).default as unknown as {
+      sandboxTunnel: { findMany: ReturnType<typeof vi.fn> };
+    };
+    prisma.sandboxTunnel.findMany.mockImplementationOnce(async () => [{ sandboxId: "sbx" }]);
+    await t.controller.tick();
+    expect(t.sent.some((frame) => frame.type === "tunnel.ports")).toBe(false);
+  });
+
+  it("an owed sweep of a replaced tunnel never waits for the acknowledgement", async () => {
+    const t = setup();
+    // A removal forgot tun1 and owes the sweep; its own clean-up was lost.
+    const row = db.rows.get("sbx")!;
+    Object.assign(row, { serverKey: "key-1", sweepLabel: true, generation: 5 });
+    db.sandbox!.tunnelPortsRevision = 2;
+    t.tun.tunnelsByLabel.mockResolvedValueOnce(["tun1"]);
+    await t.controller.tick();
+    expect(t.tun.deleteTunnel).toHaveBeenCalledWith(server, "tun1");
+    expect(t.tun.createTunnel).not.toHaveBeenCalled();
+    expect(db.rows.get("sbx")).toMatchObject({ sweepLabel: false, serverKey: null });
+  });
+
+  it("applies a tunnel only once the current host acknowledged the current ports", async () => {
+    const t = setup();
+    db.sandbox!.tunnelPortsRevision = 2;
+    db.sandbox!.tunnelPortsAckHostId = "host-1";
+    db.sandbox!.tunnelPortsAckRevision = 1;
+    await t.controller.tick();
+    expect(t.tun.createTunnel).not.toHaveBeenCalled();
+    // An acknowledgement from another (earlier) host does not count either.
+    db.sandbox!.tunnelPortsAckHostId = "host-0";
+    db.sandbox!.tunnelPortsAckRevision = 2;
+    await t.controller.tick();
+    expect(t.tun.createTunnel).not.toHaveBeenCalled();
+    db.sandbox!.tunnelPortsAckHostId = "host-1";
+    await t.controller.tick();
+    expect(t.tun.createTunnel).toHaveBeenCalledTimes(1);
+  });
+
+  it("records an applied acknowledgement only for the sandbox's current host", async () => {
+    const t = setup();
+    const prisma = (await import("@wssp/db")).default as unknown as {
+      $executeRaw: ReturnType<typeof vi.fn>;
+    };
+    prisma.$executeRaw.mockClear();
+    await t.controller.onPortsStatus("host-1", 7, {
+      type: "tunnel.portsStatus",
+      sandboxId: "sbx",
+      revision: 4,
+      outcome: "applied",
+    });
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [query, ...values] = prisma.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[],
+    ];
+    const text = query.join("?");
+    expect(text).toContain('"sandboxHostId" = ?');
+    expect(text).toContain('<= "tunnelPortsRevision"');
+    expect(values).toContain("host-1");
+    expect(values).toContain(4);
+    // Refusals never acknowledge.
+    for (const outcome of ["absent", "refused", "failed"] as const)
+      await t.controller.onPortsStatus("host-1", 7, {
+        type: "tunnel.portsStatus",
+        sandboxId: "sbx",
+        revision: 5,
+        outcome,
+      });
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
   });
 });

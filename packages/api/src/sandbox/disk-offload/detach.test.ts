@@ -37,6 +37,7 @@ const READS: Record<string, number> = {
   "packages/api/src/lib/sdk-key-access.ts": 1, // restore-intent target `where`
   "packages/api/src/sandbox/services/sandboxes.ts": 2, // reconnect → restore routing; the OFFLOADED destroy constant
   "packages/api/src/sandbox/sharing-authority.ts": 1, // restore placement principals
+  "packages/api/src/sandbox/tunnels/controller.ts": 1, // port changes skip offloaded sandboxes (SQL)
 };
 
 function sources(dir: string): string[] {

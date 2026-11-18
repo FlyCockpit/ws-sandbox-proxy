@@ -7,6 +7,7 @@ import {
   hostFileReadBodySchema,
   hostFileWriteBodySchema,
   queueHostCommandBodySchema,
+  updateTunnelPortsBodySchema,
 } from "@wssp/sandbox-contracts";
 import { z } from "zod";
 import type { ServiceAction, ServiceScope } from "../lib/service-scopes";
@@ -85,6 +86,18 @@ export const MCP_TOOLS = [
     ["sandboxes.kill"],
     retryableInput(killSandboxInput),
     true,
+  ),
+  tool(
+    "sandbox_tunnel_ports",
+    ["sandboxes:tunnel"],
+    ["sandboxes.tunnelPorts"],
+    z.object({
+      id,
+      add: updateTunnelPortsBodySchema.shape.add,
+      remove: updateTunnelPortsBodySchema.shape.remove,
+    }),
+    true,
+    "Add or remove a tunnel sandbox's declared preview-tunnel ports (for a dev server started on a new port). Removing an exposed port replaces the tunnel and ends its links. Exposing and links stay with the API.",
   ),
   tool(
     "command_run",

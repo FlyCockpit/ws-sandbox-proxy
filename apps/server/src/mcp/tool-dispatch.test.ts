@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   runCommand: vi.fn(),
   getCommandOutput: vi.fn(),
   getResult: vi.fn(),
+  ports: vi.fn(),
 }));
 vi.mock("../sandbox-transfers/runtime.js", () => ({ transferStore: () => mocks }));
 vi.mock("../sandbox-transfers/http-admission.js", () => ({
@@ -38,6 +39,7 @@ vi.mock("@wssp/api/sandbox/services/sandboxes", () => ({
   listDir: vi.fn(),
 }));
 vi.mock("@wssp/api/sandbox/services/hosts", () => ({ getHost: vi.fn() }));
+vi.mock("@wssp/api/sandbox/tunnels/service", () => ({ updateSandboxTunnelPorts: mocks.ports }));
 vi.mock("@wssp/api/sandbox/services/host-commands", () => ({
   runHostCommand: vi.fn(),
   getHostCommand: vi.fn(),
@@ -154,4 +156,16 @@ it("returns host_get from the shared host DTO projection", async () => {
   vi.mocked(toHostDto).mockReturnValue(dto as never);
   expect(await dispatchMcpTool(p, "host_get", { hostId: "own" })).toEqual(dto);
   expect(toHostDto).toHaveBeenCalledWith(dto);
+});
+
+it("sandbox_tunnel_ports calls the native port update and validates its body", async () => {
+  const dto = { sandboxId: "sbx", ports: [3000, 5173], revision: 2, state: "pending" };
+  mocks.ports.mockResolvedValue(dto);
+  expect(await dispatchMcpTool(p, "sandbox_tunnel_ports", { id: "sbx", add: [5173] })).toEqual(dto);
+  expect(mocks.ports).toHaveBeenCalledWith(p, { id: "sbx", add: [5173] });
+  await expect(
+    dispatchMcpTool(p, "sandbox_tunnel_ports", { id: "sbx", add: [3000], remove: [3000] }),
+  ).rejects.toThrow();
+  await expect(dispatchMcpTool(p, "sandbox_tunnel_ports", { id: "sbx" })).rejects.toThrow();
+  expect(mocks.ports).toHaveBeenCalledTimes(1);
 });

@@ -233,6 +233,7 @@ export async function enqueueCapacityWait(
       // The effective policy is resolved only at placement; until then the
       // NULL policy reads as deny-all (fail-safe).
       egressRequest: intent.egress.request as Prisma.InputJsonValue,
+      tunnelEnabled: intent.tunnelPorts !== undefined,
       tunnelPorts: intent.tunnelPorts ?? [],
       ...(ids.offloadPolicy ?? {}),
       incusName: defaultIncusInstanceName(sandboxId),
@@ -316,7 +317,7 @@ const headSelect = {
   deadlineAt: true,
   bypassCount: true,
   // Immutable: a build create's placement query is rebuilt from it (§4).
-  Sandbox: { select: { buildId: true, verifyBuildId: true, tunnelPorts: true } },
+  Sandbox: { select: { buildId: true, verifyBuildId: true, tunnelEnabled: true } },
   sandboxId: true,
 } satisfies Prisma.SandboxCapacityWaitSelect;
 type Head = Prisma.SandboxCapacityWaitGetPayload<{ select: typeof headSelect }>;
@@ -442,7 +443,7 @@ async function headEligibleHosts(
     startup: await revisionNeedsStartup(tx, head.userId, revision.id, buildId),
     credential: await sandboxCredentialPlacementContext(tx, head.sandboxId),
     // Preview tunnels: a head with declared ports can use tunnel hosts only.
-    tunnel: head.Sandbox.tunnelPorts.length > 0,
+    tunnel: head.Sandbox.tunnelEnabled,
   };
   const sql = placementSql(query);
   const outlives = new Date((head.deadlineAt?.getTime() ?? LEASE_UNLIMITED_DEADLINE_MS) - 1);
@@ -839,7 +840,7 @@ async function placeLocked(
       // CLI logins (§8): rebuilt from the attachment rows and current opt-ins.
       credential: await sandboxCredentialPlacementContext(tx, wait.sandboxId),
       egressMode: intent.egress.request.mode,
-      tunnel: (intent.tunnelPorts?.length ?? 0) > 0,
+      tunnel: intent.tunnelPorts !== undefined,
     },
     { gate: capacityGate(wait.seq), allowWait: true, buildId: wait.Sandbox.buildId },
   );

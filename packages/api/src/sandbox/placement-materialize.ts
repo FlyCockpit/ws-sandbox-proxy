@@ -199,8 +199,14 @@ export async function materializePlacement(
       builtWithWsspRecipe: true,
     } satisfies Prisma.SandboxTemplateRevisionSelect,
   });
-  const guestSudoFields = {
+  // Preview tunnels: set from the intent only on a fresh row. A queued row
+  // already carries them (written at queue entry) and may have changed its
+  // declared ports while waiting (`updateSandboxTunnelPorts`): never undone.
+  const tunnelFields = {
+    tunnelEnabled: intent.tunnelPorts !== undefined,
     tunnelPorts: intent.tunnelPorts ?? [],
+  };
+  const guestSudoFields = {
     guestSudoRequested: intent.guestSudo,
     guestSudo: guestSudo.effective,
     guestSudoReason: guestSudo.reason,
@@ -286,6 +292,7 @@ export async function materializePlacement(
         metadata: intent.metadata as Prisma.InputJsonValue,
         ...egressFields,
         ...guestSudoFields,
+        ...tunnelFields,
         ...(ids.fresh?.offloadPolicy ?? {}),
         incusName: defaultIncusInstanceName(sandboxId),
         ...buildSandboxFields(owner, role),

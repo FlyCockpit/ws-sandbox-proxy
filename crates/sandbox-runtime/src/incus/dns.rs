@@ -5000,6 +5000,10 @@ impl IncusClient {
         verify_policy_presence_and_hash(Some(policy), Some(hash))?;
         crate::validate_managed_instance_name(&crate::default_incus_instance_name(sandbox_id))?;
         let (network_name, _acl_name) = sandbox_network_names(sandbox_id);
+        // Preview tunnels: the commit below copies the live ACL (ingress
+        // too) into the record, so an unconfirmed runtime port change is
+        // rolled back first (skipping the refresh if it cannot be).
+        self.resolve_tunnel_pending_locked(sandbox_id)?;
         // C37 R3: a refresh mutates live DNS rules before its plan commit —
         // a marked transition so a concurrent enforcement verification
         // retries for a coherent snapshot instead of convicting it.
@@ -6004,6 +6008,30 @@ impl IncusClient {
 }
 
 impl IncusClient {
+    /// Run `body` holding the sandbox's DNS lifecycle commit lock (the
+    /// refresh commit and the lease settlement's record rewrite take it):
+    /// preview tunnels' runtime port changes rewrite the same recorded rules.
+    /// Acquired like the refresh commit: a cancellable try-lock loop, never
+    /// the owner's `state` lock (deadline fencing must never wait for it).
+    pub(crate) fn hold_dns_commit<T>(
+        &self,
+        sandbox_id: &str,
+        body: impl FnOnce() -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let owner = self.dns_lease_owner(sandbox_id);
+        let _commit = loop {
+            self.check_dns_refresh_cancelled()?;
+            match owner.commit.try_lock() {
+                Ok(guard) => break guard,
+                Err(std::sync::TryLockError::Poisoned(err)) => break err.into_inner(),
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        body()
+    }
+
     /// The per-sandbox lease owner, created on first use.
     fn dns_lease_owner(&self, sandbox_id: &str) -> std::sync::Arc<DnsLeaseOwner> {
         let key = (
@@ -8150,6 +8178,30 @@ impl IncusClient {
             }
         }
         let mut expected_ids: Vec<(String, AclRuleId)> = expected.iter().map(planned_id).collect();
+        // Preview tunnels: while a runtime port change is unconfirmed, the
+        // live tunnel rule may be either variant (and nothing else); it is
+        // compared on its own, and the record keeps its committed rule.
+        if let Some(plan) = self.persisted_enforcement_plan(sandbox_id)
+            && let Some(pending) = plan
+                .settings
+                .as_ref()
+                .and_then(|settings| settings.tunnel_pending.as_ref())
+        {
+            if !super::tunnel_ports::tunnel_rule_is_known_variant(
+                &observed.ingress,
+                plan.gateway,
+                plan.tunnel_ports(),
+                &pending.ports,
+            ) {
+                return Err(internal_error(
+                    "the live tunnel rule is neither the recorded nor the pending variant; refusing to ratify the drift",
+                ));
+            }
+            let tunnel =
+                |(_, id): &(String, AclRuleId)| id.0 != super::network::TUNNEL_INGRESS_RULE_TAG;
+            expected_ids.retain(tunnel);
+            observed_ids.retain(tunnel);
+        }
         expected_ids.sort();
         observed_ids.sort();
         if expected_ids != observed_ids {

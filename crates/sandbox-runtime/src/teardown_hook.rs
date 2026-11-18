@@ -57,3 +57,12 @@ pub(crate) fn before_network_teardown(sandbox_id: &str) -> Result<(), RuntimeErr
         None => Ok(()),
     }
 }
+
+/// The outcome of [`crate::SandboxRuntime::update_tunnel_ports`]: for
+/// `Applied`, the revision the recorded plan now carries (at least the
+/// requested one); otherwise the requested one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TunnelPortsUpdate {
+    pub outcome: sandbox_protocol::TunnelPortsOutcomeV11,
+    pub revision: u64,
+}

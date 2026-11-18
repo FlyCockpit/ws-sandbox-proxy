@@ -139,6 +139,9 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
       "kind-agnostic",
   },
   "apps/server/src/sandbox-relay/outbox-processor.ts": {
+    // Preview tunnels: a tunnel sandbox's ports and revision ride on any launch.
+    '(kind === "sandbox.create" || kind === "sandbox.reconnect") && sandbox.tunnelEnabled':
+      "kind-agnostic",
     'if (kind !== "sandbox.create" && kind !== "sandbox.reconnect") return {};': "kind-agnostic",
     '"sandbox.create",': "kind-agnostic",
     '"sandbox.reconnect",': "kind-agnostic",

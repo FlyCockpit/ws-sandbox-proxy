@@ -512,6 +512,7 @@ const HOST_USABILITY_ACTIONS: ReadonlySet<ServiceAction> = new Set([
   // Preview tunnels reach the guest like commands do.
   "sandboxes.tunnelExpose",
   "sandboxes.tunnelLink",
+  "sandboxes.tunnelPorts",
 ]);
 async function requireGuestAccess(
   client: Prisma.TransactionClient,
@@ -1644,6 +1645,7 @@ export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" |
   "sandboxes.tunnelExpose": "custody",
   "sandboxes.tunnelClose": "custody",
   "sandboxes.tunnelLink": "custody",
+  "sandboxes.tunnelPorts": "custody",
   "hosts.list": "custody",
   "hosts.get": "custody",
   "hostCommands.run": "custody",

@@ -578,26 +578,30 @@ impl SandboxRuntime for IncusKvmRuntime {
     fn tunnel_target(&self, sandbox_id: &str) -> Option<(std::net::Ipv4Addr, Vec<u16>)> {
         let plan = self.client.persisted_enforcement_plan(sandbox_id)?;
         let guest = plan.pinned_guest_address()?;
-        let ports = plan.tunnel_ports().to_vec();
-        let source = format!("{}/32", plan.gateway);
-        let destination = format!("{guest}/32");
-        let port_list = ports
+        // The committed rule must be recorded exactly as compiled for the
+        // committed ports; the client may forward only what every possibly
+        // live variant admits (committed ∩ an unconfirmed change).
+        let expected = super::network::tunnel_ingress_rule(plan.gateway, plan.tunnel_ports())?;
+        let ruled = plan
+            .rules
             .iter()
-            .map(u16::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        let ruled = plan.rules.iter().any(|rule| {
-            rule.description == super::network::TUNNEL_INGRESS_RULE_TAG
-                && rule.direction == super::network::AclDirection::Ingress
-                && rule.action == super::network::AclAction::Allow
-                && rule.protocol.as_deref() == Some("tcp")
-                && rule.source.as_deref() == Some(source.as_str())
-                && rule.destination.as_deref() == Some(destination.as_str())
-                && rule.source_port.is_none()
-                && rule.destination_port.as_deref() == Some(port_list.as_str())
-        });
+            .filter(|rule| rule.description == super::network::TUNNEL_INGRESS_RULE_TAG)
+            .eq(std::iter::once(&expected));
+        let ports = plan.tunnel_target_ports();
         // The plan alone is not enough: its bridge must still exist.
-        (ruled && self.client.live_network_matches(&plan)).then_some((guest, ports))
+        (ruled && !ports.is_empty() && self.client.live_network_matches(&plan))
+            .then_some((guest, ports))
+    }
+
+    fn update_tunnel_ports(
+        &self,
+        sandbox_id: &str,
+        revision: u64,
+        ports: &[u16],
+        before_acl: &dyn Fn(&[u16]),
+    ) -> Result<crate::TunnelPortsUpdate, RuntimeError> {
+        self.client
+            .update_tunnel_ports(sandbox_id, revision, ports, before_acl)
     }
 
     fn egress_guard_check(&self) -> Result<(), RuntimeError> {

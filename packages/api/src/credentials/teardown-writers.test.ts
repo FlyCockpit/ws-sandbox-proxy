@@ -247,6 +247,11 @@ const WRITERS: readonly Entry[] = [
     text: "generation: { increment: 1 },",
     exempt: "preview-tunnel row close generation",
   },
+  {
+    file: "packages/api/src/sandbox/tunnels/service.ts",
+    text: "generation: { increment: 1 },",
+    exempt: "preview-tunnel row generation: a runtime port removal narrows or closes the row",
+  },
 
   // Offload §8.9: the server-completed destroy of an OFFLOADED sandbox.
   {

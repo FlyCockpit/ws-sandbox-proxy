@@ -23,6 +23,9 @@ mod server_lease;
 mod storage;
 #[cfg(test)]
 mod storage_shim_tests;
+mod tunnel_ports;
+#[cfg(test)]
+mod tunnel_ports_tests;
 
 #[cfg(test)]
 mod bootstrap_shim_tests;

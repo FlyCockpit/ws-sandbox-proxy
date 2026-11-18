@@ -240,11 +240,34 @@ pub struct EgressSettings {
     /// only for build VMs in allowlist mode; no resolver ever logs queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_dns_stub_port: Option<u16>,
-    /// Preview tunnels: the sandbox's declared ports (empty: none). Compiles
-    /// to the one `wssp-tunnel-ingress` allow (gateway → pinned guest
-    /// address, tcp, exactly these ports) and pins the guest address.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tunnel_ports: Vec<u16>,
+    /// Preview tunnels: `Some` for a tunnel sandbox (its guest address is
+    /// pinned), with its declared ports (possibly none). Non-empty ports
+    /// compile to the one `wssp-tunnel-ingress` allow (gateway → pinned
+    /// guest address, tcp, exactly these ports). Changed at runtime only by
+    /// a server-issued `tunnel.ports` (`update_tunnel_ports`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_ports: Option<Vec<u16>>,
+    /// The revision `tunnel_ports` carries (the launch's, then each applied
+    /// `tunnel.ports`): an update at or below it is stale.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tunnel_revision: u64,
+    /// A `tunnel.ports` whose ACL write is not confirmed yet (write-ahead):
+    /// the live tunnel rule may be this variant or the committed one, and
+    /// nothing else. Cleared by the commit or a confirmed roll-back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_pending: Option<TunnelPortsPending>,
+}
+
+/// An unconfirmed runtime tunnel-port change (see `EgressSettings`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TunnelPortsPending {
+    pub revision: u64,
+    pub ports: Vec<u16>,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl Default for EgressSettings {
@@ -256,7 +279,9 @@ impl Default for EgressSettings {
             domain_blocklist: DomainBlocklist::default(),
             credential_proxy_port: None,
             refused_dns_stub_port: None,
-            tunnel_ports: Vec::new(),
+            tunnel_ports: None,
+            tunnel_revision: 0,
+            tunnel_pending: None,
         }
     }
 }
@@ -287,11 +312,26 @@ impl EgressSettings {
                 "the credential proxy port must be a non-zero port other than 53 and 67",
             ));
         }
-        if !self.tunnel_ports.is_empty()
-            && !sandbox_protocol::valid_tunnel_ports(&self.tunnel_ports)
+        if self
+            .tunnel_ports
+            .as_deref()
+            .is_some_and(|ports| !sandbox_protocol::valid_declared_tunnel_ports(ports))
         {
             return Err(settings_error(
-                "tunnel ports must be 1-8 distinct ascending non-zero ports",
+                "tunnel ports must be 0-8 distinct ascending non-zero ports",
+            ));
+        }
+        if self.tunnel_ports.is_none()
+            && (self.tunnel_revision != 0 || self.tunnel_pending.is_some())
+        {
+            return Err(settings_error("a tunnel revision needs a tunnel sandbox"));
+        }
+        if let Some(pending) = &self.tunnel_pending
+            && (pending.revision <= self.tunnel_revision
+                || !sandbox_protocol::valid_declared_tunnel_ports(&pending.ports))
+        {
+            return Err(settings_error(
+                "a pending tunnel-port change must be newer and well-formed",
             ));
         }
         if self.refused_dns_stub_port == Some(0) {

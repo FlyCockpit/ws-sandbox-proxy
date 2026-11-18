@@ -526,6 +526,9 @@ fn run_connect_service_with_tls(
     super::tunnel::sweep_leftovers(&state_dir)?;
     let (runtime, exec_supervisor) = init(&state_dir)?;
     let runtime: Arc<dyn SandboxRuntime> = Arc::from(runtime);
+    // Preview tunnels: runtime port changes (any runtime that records
+    // tunnel plans; independent of an installed client).
+    super::tunnel_ports::install(runtime.clone());
     // Preview tunnels: off unless `[tunnel]` names a client that verifies.
     // A client runs only for a sandbox this host holds a live lease for
     // (another user's only with the node owner's consent).
@@ -2522,6 +2525,14 @@ fn relay_session_loop(
                     ))?;
                 }
             }
+            if let Some(ports) = super::tunnel_ports::installed() {
+                for status in ports.drain() {
+                    socket.send(Message::Text(
+                        super::plain_frame(&DaemonControlMessage::TunnelPortsStatus(status))?
+                            .into(),
+                    ))?;
+                }
+            }
         }
         // The host lease ceiling is reported separately from the terminal
         // policy: a change never bumps the terminal policy revision. The
@@ -2960,6 +2971,11 @@ fn relay_session_loop(
                     ServerControlMessage::TunnelClear(req) => {
                         if registered && let Some(tunnels) = super::tunnel::installed() {
                             tunnels.clear(&req);
+                        }
+                    }
+                    ServerControlMessage::TunnelPorts(req) => {
+                        if registered && let Some(ports) = super::tunnel_ports::installed() {
+                            ports.submit(req);
                         }
                     }
                     ServerControlMessage::HostPolicyLower(req) => {

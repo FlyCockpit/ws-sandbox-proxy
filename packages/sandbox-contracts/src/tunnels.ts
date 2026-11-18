@@ -6,14 +6,22 @@ import { TUNNEL_MAX_PORTS } from "./tunnel-wire";
  * configured tunnel server refuses every tunnel call with
  * `UNSUPPORTED_CAPABILITY` and `reason: "tunnel_off"`.
  *
- * Ports are DECLARED at create (`network.tunnelPorts`) and fixed for the
- * sandbox's life: the host's network plan admits only those ports, and only
- * from the host-side tunnel client. Exposing chooses a subset; links open one.
+ * Ports are DECLARED at create (`network.tunnelPorts`, possibly `[]`: a
+ * tunnel sandbox with no ports yet) and changed at runtime only through the
+ * audited `POST /v1/sandboxes/{id}/tunnel/ports`: the host's network plan
+ * admits only declared ports, and only from the host-side tunnel client.
+ * Exposing chooses a subset; links open one.
  */
 export const tunnelPortSchema = z.number().int().min(1).max(65535);
 export const tunnelPortsSchema = z
   .array(tunnelPortSchema)
   .min(1)
+  .max(TUNNEL_MAX_PORTS)
+  .refine((ports) => new Set(ports).size === ports.length, "Each port may be named once.");
+
+/** A tunnel sandbox's declared ports: like `tunnelPortsSchema`, but may be empty. */
+export const tunnelDeclaredPortsSchema = z
+  .array(tunnelPortSchema)
   .max(TUNNEL_MAX_PORTS)
   .refine((ports) => new Set(ports).size === ports.length, "Each port may be named once.");
 
@@ -27,13 +35,16 @@ export function normalizeTunnelPorts(ports: readonly number[]): number[] {
  * `tunnel_off` (no tunnel server configured on this deployment),
  * `tunnel_no_host` (no eligible host runs the tunnel client for this caller),
  * `tunnel_host_unsupported` (this sandbox's host does not), `tunnel_not_shared`
- * (another user's host whose owner does not allow tunnels for others).
+ * (another user's host whose owner does not allow tunnels for others),
+ * `tunnel_not_enabled` (the sandbox was created without `network.tunnelPorts`:
+ * only tunnel sandboxes change their ports).
  */
 export const TUNNEL_REFUSAL_REASONS = [
   "tunnel_off",
   "tunnel_no_host",
   "tunnel_host_unsupported",
   "tunnel_not_shared",
+  "tunnel_not_enabled",
 ] as const;
 export const tunnelRefusalReasonSchema = z.enum(TUNNEL_REFUSAL_REASONS);
 export type TunnelRefusalReason = z.infer<typeof tunnelRefusalReasonSchema>;
@@ -57,6 +68,43 @@ export const exposeTunnelBodySchema = z
   })
   .strict();
 export type ExposeTunnelBody = z.infer<typeof exposeTunnelBodySchema>;
+
+export const updateTunnelPortsBodySchema = z
+  .object({
+    /** Ports to declare (already declared ones are kept). */
+    add: tunnelPortsSchema.optional(),
+    /**
+     * Ports to stop declaring. An exposed one leaves the tunnel: the tunnel is
+     * replaced (every link and browser session of it stops working; the kept
+     * ports get a new preview origin) and the host stops forwarding the port.
+     */
+    remove: tunnelPortsSchema.optional(),
+  })
+  .strict()
+  .refine((body) => (body.add?.length ?? 0) + (body.remove?.length ?? 0) > 0, {
+    message: "Name at least one port to add or remove.",
+  })
+  .refine((body) => !(body.add ?? []).some((port) => (body.remove ?? []).includes(port)), {
+    message: "A port cannot be both added and removed.",
+  });
+export type UpdateTunnelPortsBody = z.infer<typeof updateTunnelPortsBodySchema>;
+
+export const sandboxTunnelPortsSchema = z
+  .object({
+    sandboxId: z.string(),
+    /** The declared ports, ascending. */
+    ports: z.array(tunnelPortSchema).max(TUNNEL_MAX_PORTS),
+    /** Bumped by every change. */
+    revision: z.number().int().min(0),
+    /**
+     * `applied` once the sandbox's host recorded this revision (an added port
+     * can then be exposed), `pending` until then (also while the sandbox is
+     * offloaded or between hosts: its next start carries the ports).
+     */
+    state: z.enum(["applied", "pending"]),
+  })
+  .strict();
+export type SandboxTunnelPortsDto = z.infer<typeof sandboxTunnelPortsSchema>;
 
 export const sandboxTunnelSchema = z
   .object({

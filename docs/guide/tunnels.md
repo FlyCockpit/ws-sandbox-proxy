@@ -15,12 +15,14 @@ exactly as before: `GET /v1/capabilities` reports `ports.tunnel: false` and no
 ## How it works
 
 1. **Declare ports at create.** `POST /v1/sandboxes` with
-   `network: { tunnelPorts: [3000, 5173] }` (at most 8). They are fixed for
-   the sandbox's life. The host compiles them into the sandbox's recorded
-   network plan as one rule: TCP from the bridge gateway to the sandbox's
-   pinned address (`x.y.z.2` in its own /24) on exactly those ports. The
-   drift checker watches that rule like every other one. Nothing else on the
-   host or the network can reach the guest's ports.
+   `network: { tunnelPorts: [3000, 5173] }` (at most 8; `[]` makes a tunnel
+   sandbox with no ports yet). The host pins the sandbox's address
+   (`x.y.z.2` in its own /24) and compiles the ports into its recorded
+   network plan as one rule: TCP from the bridge gateway to that address on
+   exactly those ports. The drift checker watches that rule like every other
+   one. Nothing else on the host or the network can reach the guest's ports.
+   Only a sandbox created with `tunnelPorts` (even `[]`) is a tunnel sandbox;
+   the others can never get ports later.
 2. **Expose.** `PUT /v1/sandboxes/{id}/tunnel` `{ports?}` (a subset of the
    declared ports; default all) with an API key that has the
    `sandboxes:tunnel` scope. The server creates a link-mode tunnel on the
@@ -42,8 +44,47 @@ exactly as before: `GET /v1/capabilities` reports `ports.tunnel: false` and no
    `connected`, `suspended`, `error` with `lastError`) and the preview
    origins; `DELETE` deletes the tunnel, and every link to it stops working.
 
-The SDK wraps these as `sandbox.tunnel.expose()`, `.get()`, `.close()` and
-`.link({ port })`.
+6. **Change ports at runtime.** `POST /v1/sandboxes/{id}/tunnel/ports`
+   `{add?, remove?}` (scope `sandboxes:tunnel`; also the MCP tool
+   `sandbox_tunnel_ports`) for a dev server started on a new port. It answers
+   the declared set, its `revision` and `state`: `pending` until the
+   sandbox's host recorded the change, then `applied`. See
+   [Changing ports at runtime](#changing-ports-at-runtime).
+
+The SDK wraps these as `sandbox.tunnel.expose()`, `.get()`, `.close()`,
+`.link({ port })` and `.updatePorts({ add, remove })`.
+
+## Changing ports at runtime
+
+- **Who:** the owner or an API key with `sandboxes:tunnel` (the same
+  per-account budget as expose, close and link mints), on a tunnel sandbox in
+  any state but deleted; at most 8 declared ports. Every change is one
+  transaction that re-checks the caller's authority, bumps the sandbox's
+  `tunnelPortsRevision` (never reset), and records a `ports.changed` audit
+  event (actor, key, new set and revision).
+- **The host:** the server sends `tunnel.ports {revision, ports}` to the
+  sandbox's host until that host acknowledges the revision (a stopped
+  sandbox's host too; an offloaded sandbox gets the ports with its restore).
+  The node changes the recorded plan and the ACL together under the
+  sandbox's lifecycle lock and the plan's existing fences: it first records
+  the change as pending (from then on the drift checker accepts exactly the
+  old or the new rule, nothing else), stops a tunnel client that forwards a
+  port the change removes (its open connections close with it), writes the
+  ACL's tunnel rule, then commits the plan. A change interrupted half way
+  (crash, uncertain write) is rolled back before the next one. A revision at
+  or below the recorded one is ignored, so a late or replayed frame never
+  reopens a port. Only the server's frame changes ports: the guest has no
+  channel to the host's plan.
+- **Adding** a port: expose it once the change is `applied` (an expose
+  before that waits: no tunnel is applied until the host has the ports).
+- **Removing** a port that is not exposed only changes the plan. Removing
+  an **exposed** port replaces the tunnel: tunnel-server access is per
+  tunnel, not per port, so the call deletes the old tunnel first (every link
+  and browser session of it stops working, `401`) and the controller
+  creates a new one for the remaining ports (a new preview origin: mint new
+  links). Removing the last exposed port closes the tunnel. The host hears
+  of the removal only after the old tunnel is deleted (or its clean-up
+  hold has ended).
 
 ## Lifecycle
 
@@ -132,7 +173,8 @@ server before the node daemons.
 
 ## Limits and audit
 
-- 8 declared ports per sandbox; the admin's per-account tunnel limit
+- 8 declared ports per sandbox (also after runtime changes; every tunnel is
+  created for 8 ports); the admin's per-account tunnel limit
   (`sandbox.tunnel_quota`); the node's `max_tunnels`; the tunnel server's
   service quota (`lastError: "quota"`).
 - Expose, close and link mints share a per-account budget of 60 per minute.
@@ -147,10 +189,11 @@ server before the node daemons.
   is held no other process creates, rotates or cleans up that sandbox's
   tunnels, so a clean-up from an old view can never delete a tunnel the
   owner exposed again since.
-- `sandbox_tunnel_event` records config changes, enable/disable, tunnel
-  create/delete and link mints (with tunnel-server ids only: never a token or
+- `sandbox_tunnel_event` records config changes, enable/disable, port
+  changes, tunnel create/delete and link mints (with tunnel-server ids only: never a token or
   link URL), kept 90 days.
-- Tunnels have no MCP tool: agents use them through the API with a key that
+- One MCP tool, `sandbox_tunnel_ports`, changes declared ports; exposing and
+  links stay with the API (links are person-facing secrets), with a key that
   has `sandboxes:tunnel`.
 
 ## Security notes

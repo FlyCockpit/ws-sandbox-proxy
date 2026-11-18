@@ -41,6 +41,7 @@ pub(crate) mod tunnel;
 #[cfg(not(target_os = "linux"))]
 #[path = "tunnel_stub.rs"]
 pub(crate) mod tunnel;
+pub(crate) mod tunnel_ports;
 
 /// Encode a daemon frame using the sole supported 1.0 vocabulary.
 pub(crate) fn spell(

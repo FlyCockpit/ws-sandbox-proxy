@@ -803,7 +803,27 @@ impl IncusClient {
     fn acl_matches_effective(&self, observed: &ObservedAcl, plan: &SandboxNetworkPlan) -> bool {
         self.effective_planned_rules(plan)
             .as_ref()
-            .is_some_and(|rules| self.acl_rules_match(observed, rules))
+            .is_some_and(|rules| {
+                self.acl_rules_match(observed, rules)
+                // Preview tunnels: an unconfirmed runtime port change's
+                // variant (and only it) is no drift either.
+                || self
+                    .tunnel_pending_variant(&plan.sandbox_id, rules)
+                    .is_some_and(|variant| self.acl_rules_match(observed, &variant))
+            })
+    }
+
+    /// Tests: the live ACL against the record (`acl_matches_effective`),
+    /// with no side effect.
+    #[cfg(test)]
+    pub(crate) fn live_acl_matches_record(&self, sandbox_id: &str) -> bool {
+        let Some(plan) = self.persisted_enforcement_plan(sandbox_id) else {
+            return false;
+        };
+        let Ok(Some(observed)) = self.read_sandbox_acl(&plan.acl_name) else {
+            return false;
+        };
+        self.acl_matches_effective(&observed, &plan)
     }
 
     /// The rule set `acl_matches_effective` compares against, materialized
@@ -1361,7 +1381,16 @@ impl IncusClient {
                 .collect();
             let explanation = match (owed.as_ref(), self.effective_planned_rules(plan)) {
                 (Some(owed), Some(planned)) => {
-                    acl_explained_by_owed_dns_work(&acl, &planned, &static_grants, owed)
+                    match acl_explained_by_owed_dns_work(&acl, &planned, &static_grants, owed) {
+                        OwedExplanation::Explained => OwedExplanation::Explained,
+                        // Preview tunnels: the same check against an
+                        // unconfirmed runtime port change's variant.
+                        unexplained => self
+                            .tunnel_pending_variant(&plan.sandbox_id, &planned)
+                            .map_or(unexplained, |variant| {
+                                acl_explained_by_owed_dns_work(&acl, &variant, &static_grants, owed)
+                            }),
+                    }
                 }
                 _ => OwedExplanation::Unexplained,
             };

@@ -1377,7 +1377,11 @@ CREATE TABLE "sandbox_instance" (
     "egressModeReason" "SandboxEgressModeReason",
     "guestSudoRequested" BOOLEAN NOT NULL DEFAULT false,
     "guestSudo" BOOLEAN NOT NULL DEFAULT false,
+    "tunnelEnabled" BOOLEAN NOT NULL DEFAULT false,
     "tunnelPorts" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
+    "tunnelPortsRevision" INTEGER NOT NULL DEFAULT 0,
+    "tunnelPortsAckHostId" TEXT,
+    "tunnelPortsAckRevision" INTEGER NOT NULL DEFAULT 0,
     "guestSudoReason" "SandboxGuestSudoReason",
     "guestRoot" BOOLEAN NOT NULL DEFAULT false,
     "egressDeniedGrants" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -2732,6 +2736,9 @@ CREATE INDEX "sandbox_instance_accessGraceUntil_idx" ON "sandbox_instance"("acce
 CREATE INDEX "sandbox_instance_leaseExpiresAt_idx" ON "sandbox_instance"("leaseExpiresAt");
 
 -- CreateIndex
+CREATE INDEX "sandbox_instance_tunnel_idx" ON "sandbox_instance"("sandboxHostId") WHERE ("tunnelEnabled");
+
+-- CreateIndex
 CREATE INDEX "sandbox_instance_build_cleanup_idx" ON "sandbox_instance"("state") WHERE ("buildId" IS NOT NULL);
 
 -- CreateIndex
@@ -3760,6 +3767,7 @@ ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offloaded_ck2e0c
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_deleted_offload_ck63856e1a" CHECK (state::text <> 'DELETED' OR "diskOffloadId" IS NULL);
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_parked_cka27fab46" CHECK ("diskOffloadId" IS NULL OR state::text IN ('STOPPED', 'STOPPING', 'PROVISIONING', 'ERROR', 'OFFLOADED'));
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_seq_ck8f49bca7" CHECK ("offloadSeq" >= 0);
+ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_tunnel_ports_ckb1e07399" CHECK (cardinality("tunnelPorts") <= 8 AND ("tunnelEnabled" OR cardinality("tunnelPorts") = 0) AND "tunnelPortsRevision" >= 0 AND "tunnelPortsAckRevision" >= 0);
 ALTER TABLE "sandbox_instance" ADD CONSTRAINT "sandbox_instance_offload_policy_ckcecbf3c8" CHECK (("offloadMode"::text = 'AFTER') = ("offloadAfterMs" IS NOT NULL) AND ("offloadAfterMs" IS NULL OR "offloadAfterMs" BETWEEN 60000 AND 2073600000));
 ALTER TABLE "sandbox_mutation_operation" ADD CONSTRAINT "sandbox_operation_progress_ckb9dcf07b" CHECK (("progressPhase" IS NULL OR "progressPhase" IN ('fetching_image', 'importing_image', 'freezing', 'snapshotting', 'copying', 'scrubbing', 'publishing', 'uploading', 'finalizing', 'exporting_disk', 'uploading_disk', 'fetching_disk', 'importing_disk')) AND ("progressBytesDone" IS NULL OR "progressBytesDone" >= 0) AND ("progressBytesTotal" IS NULL OR "progressBytesTotal" >= 0));
 ALTER TABLE "sandbox_mutation_operation" ADD CONSTRAINT "sandbox_operation_launch_mode_ck238adc20" CHECK ("restoreOffloadId" IS NULL OR ("kind"::text = 'RECONNECT_SANDBOX' AND "launchMode"::text = 'NEW_ROOT'));

@@ -52,7 +52,7 @@ import {
   templateBuildStepSchema,
 } from "./template-builds";
 import { TRANSFER_CHUNK_BYTES, transferReceiptSchema } from "./transfers";
-import { sandboxTunnelSchema, tunnelLinkSchema } from "./tunnels";
+import { sandboxTunnelPortsSchema, sandboxTunnelSchema, tunnelLinkSchema } from "./tunnels";
 import {
   WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
   type WebhookEventType,
@@ -115,6 +115,7 @@ const COMPONENTS: ReadonlyArray<readonly [string, z.ZodType]> = [
   ["Capabilities", capabilitiesSchema],
   ["SandboxCapabilities", sandboxCapabilitiesSchema],
   ["SandboxTunnel", sandboxTunnelSchema],
+  ["SandboxTunnelPorts", sandboxTunnelPortsSchema],
   ["TunnelLink", tunnelLinkSchema],
   ["ErrorEnvelope", sdkErrorEnvelopeSchema],
   ["WebhookEndpoint", webhookEndpointSchema],

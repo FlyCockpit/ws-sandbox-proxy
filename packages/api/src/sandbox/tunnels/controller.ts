@@ -1,5 +1,9 @@
 import prisma, { type Prisma, type SandboxState } from "@wssp/db";
-import type { TunnelStatusV11 } from "@wssp/sandbox-contracts";
+import {
+  TUNNEL_MAX_PORTS,
+  type TunnelPortsStatusV11,
+  type TunnelStatusV11,
+} from "@wssp/sandbox-contracts";
 import { fenceWriteKey, readDataKeyEpoch } from "../../crypto/data-key-epoch";
 import { currentHostUsability } from "../sharing-access";
 import { type TunnelBridge, type TunnelHostLink, tunnelBridge } from "./bridge";
@@ -65,6 +69,10 @@ const CREATE_START_MARGIN_MS = TUNNEL_HOLD_MARGIN_MS;
 const UNSENT_RETRY_MS = 10_000;
 const EVENT_RETENTION_MS = 90 * 24 * 3600 * 1000;
 const PAGE = 500;
+/** A `tunnel.ports` not acknowledged is sent again after this. */
+const PORTS_RESEND_MS = 10_000;
+/** ... and after this when the host had no plan for it (or failed). */
+const PORTS_BACKOFF_MS = 30_000;
 
 type Tun = Pick<
   typeof tun,
@@ -91,8 +99,27 @@ type SandboxFacts = {
   usagePoolId: string | null;
   accessGraceUntil: Date | null;
   tunnelPorts: number[];
+  tunnelPortsRevision: number;
+  tunnelPortsAckHostId: string | null;
+  tunnelPortsAckRevision: number;
   lastStoppedAt: Date | null;
 };
+
+/** The sandbox's current host recorded its current declared ports (a
+ * sandbox whose ports never changed carries them in its launch). */
+function tunnelPortsAcked(
+  sandbox: Pick<
+    SandboxFacts,
+    "tunnelPortsRevision" | "tunnelPortsAckHostId" | "tunnelPortsAckRevision"
+  >,
+  hostId: string,
+): boolean {
+  return (
+    sandbox.tunnelPortsRevision === 0 ||
+    (sandbox.tunnelPortsAckHostId === hostId &&
+      sandbox.tunnelPortsAckRevision >= sandbox.tunnelPortsRevision)
+  );
+}
 type Host = {
   id: string;
   userId: string;
@@ -122,6 +149,13 @@ export class TunnelController {
   private lastPrune = 0;
   /** Keyset cursor: each pass visits the next page, wrapping around. */
   private cursor: string | null = null;
+  /** `tunnel.ports` sent per sandbox: (host, epoch, revision, when, backoff). */
+  private portsSent = new Map<
+    string,
+    { hostId: string; epoch: number; revision: number; at: number; wait: number }
+  >();
+  /** Keyset cursor of the port-sync scan (each pass the next page, wrapping). */
+  private portsCursor = "";
   /** Where the turn-off's listing of a configuration's tunnels continues. */
   private drainFrom: { serverKey: string; cursor: string } | null = null;
 
@@ -184,6 +218,8 @@ export class TunnelController {
         .deleteMany({ where: { createdAt: { lt: new Date(this.now() - EVENT_RETENTION_MS) } } })
         .catch(() => undefined);
     }
+    // Declared-port changes reach hosts whether or not a tunnel exists.
+    await this.syncPorts().catch(() => console.error("[tunnels] port sync failed"));
     let server: TunnelServer | null;
     try {
       server = await (this.deps.server ?? readTunnelServer)();
@@ -217,6 +253,9 @@ export class TunnelController {
             usagePoolId: true,
             accessGraceUntil: true,
             tunnelPorts: true,
+            tunnelPortsRevision: true,
+            tunnelPortsAckHostId: true,
+            tunnelPortsAckRevision: true,
             lastStoppedAt: true,
           },
         })
@@ -271,6 +310,107 @@ export class TunnelController {
       }
     }
     if (server.draining) await this.finishDraining(server);
+  }
+
+  /**
+   * Send `tunnel.ports` to the host of every tunnel sandbox whose current
+   * host has not acknowledged its current declared ports (bounded page,
+   * throttled per sandbox, only to a host registered here whose daemon
+   * records tunnel plans). While the sandbox's tunnel row is held (a clean-up
+   * of a replaced tunnel in flight) the frame waits: the old tunnel, with
+   * every link to it, goes first.
+   */
+  private async syncPorts() {
+    const bridge = this.bridge();
+    if (!bridge) return;
+    // A rotating keyset page: sandboxes that stay unacknowledged (an
+    // offline host) never starve the rest.
+    const from = this.portsCursor;
+    const due = await prisma.$queryRaw<
+      { id: string; sandboxHostId: string; tunnelPorts: number[]; tunnelPortsRevision: number }[]
+    >`SELECT id, "sandboxHostId", "tunnelPorts", "tunnelPortsRevision" FROM sandbox_instance
+      WHERE "tunnelEnabled" AND "sandboxHostId" IS NOT NULL AND "tunnelPortsRevision" > 0
+        AND state::text NOT IN ('DELETED', 'OFFLOADED')
+        AND ("tunnelPortsAckHostId" IS DISTINCT FROM "sandboxHostId"
+             OR "tunnelPortsAckRevision" < "tunnelPortsRevision")
+        AND id > ${from}
+      ORDER BY id LIMIT ${PAGE}`;
+    this.portsCursor = due.length === PAGE ? (due[due.length - 1]?.id ?? "") : "";
+    // The resend memory is pruned only after a whole scan in one page.
+    const whole = from === "" && due.length < PAGE;
+    if (due.length === 0) {
+      if (whole) this.portsSent.clear();
+      return;
+    }
+    const held = new Set(
+      (
+        await prisma.sandboxTunnel.findMany({
+          // pagination:audited — bounded by the ≤PAGE due sandbox ids
+          where: {
+            sandboxId: { in: due.map((sandbox) => sandbox.id) },
+            creatingUntil: { gt: new Date(this.now()) },
+          },
+          select: { sandboxId: true },
+        })
+      ).map((row) => row.sandboxId),
+    );
+    const now = this.now();
+    const live = new Set<string>();
+    for (const sandbox of due) {
+      live.add(sandbox.id);
+      if (held.has(sandbox.id)) continue;
+      const link = bridge.link(sandbox.sandboxHostId);
+      if (!link?.plan) continue;
+      const last = this.portsSent.get(sandbox.id);
+      if (
+        last &&
+        last.hostId === sandbox.sandboxHostId &&
+        last.epoch === link.epoch &&
+        last.revision === sandbox.tunnelPortsRevision &&
+        now - last.at < last.wait
+      )
+        continue;
+      const sent = link.send({
+        type: "tunnel.ports",
+        sandboxId: sandbox.id,
+        revision: sandbox.tunnelPortsRevision,
+        ports: [...sandbox.tunnelPorts].sort((a, b) => a - b),
+      });
+      if (sent)
+        this.portsSent.set(sandbox.id, {
+          hostId: sandbox.sandboxHostId,
+          epoch: link.epoch,
+          revision: sandbox.tunnelPortsRevision,
+          at: now,
+          wait: PORTS_RESEND_MS,
+        });
+    }
+    if (whole) {
+      for (const id of this.portsSent.keys()) if (!live.has(id)) this.portsSent.delete(id);
+    } else if (this.portsSent.size > 8 * PAGE) this.portsSent.clear();
+  }
+
+  /** `tunnel.portsStatus` from a registered host session: an `applied`
+   * acknowledges the revision for that host only while it is the sandbox's
+   * current host (a late answer from an earlier host never counts). */
+  async onPortsStatus(hostId: string, _epoch: number, status: TunnelPortsStatusV11) {
+    if (status.outcome !== "applied") {
+      const last = this.portsSent.get(status.sandboxId);
+      if (last && last.hostId === hostId) last.wait = PORTS_BACKOFF_MS;
+      return;
+    }
+    const acked = await prisma.$executeRaw`
+      UPDATE sandbox_instance
+      SET "tunnelPortsAckHostId" = ${hostId}, "tunnelPortsAckRevision" = ${status.revision}
+      WHERE id = ${status.sandboxId} AND "sandboxHostId" = ${hostId} AND "tunnelEnabled"
+        AND ${status.revision} <= "tunnelPortsRevision"
+        AND ("tunnelPortsAckHostId" IS DISTINCT FROM ${hostId}
+             OR "tunnelPortsAckRevision" < ${status.revision})`;
+    if (acked > 0) {
+      this.portsSent.delete(status.sandboxId);
+      // A tunnel waiting for the new ports is applied now.
+      this.wake();
+    }
   }
 
   /** Turning off: once no row is left, the configuration goes too. */
@@ -632,6 +772,15 @@ export class TunnelController {
         if (owesSweep(row)) await this.clearSweep(server, row);
         return;
       }
+      // The host must have recorded the sandbox's current declared ports
+      // first (else it refuses a newly added port, or a removed one is still
+      // in its plan): `tunnel.ports` is acknowledged before any apply. Only
+      // creating and applying wait: a label sweep owed meanwhile (a replaced
+      // tunnel whose clean-up was interrupted) never does.
+      if (!tunnelPortsAcked(sandbox, host.id)) {
+        if (owesSweep(row)) await this.clearSweep(server, row);
+        return;
+      }
       await this.apply(server, row, host, link, sandbox);
       return;
     }
@@ -863,7 +1012,8 @@ export class TunnelController {
         creating = true;
         const fresh = await this.tun.createTunnel(server, {
           label: tunnelLabel(server.serverKey, row.sandboxId),
-          maxPorts: Math.max(1, sandbox.tunnelPorts.length),
+          // Every port the sandbox may ever declare: ports change at runtime.
+          maxPorts: TUNNEL_MAX_PORTS,
         });
         tunnelId = fresh.id;
         hostTemplate = fresh.hostTemplate;
@@ -1074,6 +1224,7 @@ export class TunnelController {
     this.failed.clear();
     this.replaced.clear();
     this.gone.clear();
+    this.portsSent.clear();
     this.drainFrom = null;
   }
 }

@@ -223,6 +223,8 @@ daemon_control! {
     HostEgressState(crate::HostEgressStateV11),
     #[serde(rename = "tunnel.status")]
     TunnelStatus(crate::TunnelStatusV11),
+    #[serde(rename = "tunnel.portsStatus")]
+    TunnelPortsStatus(crate::TunnelPortsStatusV11),
     #[serde(rename = "process.started")]
     ProcessStarted {
         operation_id: String,
@@ -843,14 +845,24 @@ pub struct OperationDispatch {
         deserialize_with = "crate::egress::present"
     )]
     pub disk_base_fingerprint: Option<String>,
-    /// The sandbox's declared tunnel ports (launches only): compiled into
-    /// the recorded ACL plan as the one host→guest ingress allow.
+    /// The sandbox's declared tunnel ports (launches of a tunnel sandbox
+    /// only, possibly empty): compiled into the recorded ACL plan as the one
+    /// host→guest ingress allow, with the guest address pinned.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::tunnel::deserialize_tunnel_ports"
     )]
     pub tunnel_ports: Option<Vec<u16>>,
+    /// The revision of `tunnel_ports` (with them only): a freshly
+    /// materialized plan records it, so a `tunnel.ports` of an older
+    /// revision never applies after the launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub tunnel_ports_revision: Option<u64>,
 }
 
 /// `Some(true)` only: an explicit `false` is a second spelling of absent.
@@ -895,6 +907,8 @@ pub enum ServerControlMessage {
     TunnelApply(crate::TunnelApplyV11),
     #[serde(rename = "tunnel.clear")]
     TunnelClear(crate::TunnelClearV11),
+    #[serde(rename = "tunnel.ports")]
+    TunnelPorts(crate::TunnelPortsV11),
     #[serde(rename = "host.exec.start")]
     HostExecStart(crate::HostExecStartV11),
     #[serde(rename = "host.exec.poll")]
@@ -1333,13 +1347,15 @@ fn validate_server_admission(message: &ServerControlMessage) -> Result<(), Contr
     if !crate::credentials::valid_server_credential(message) {
         return Err(ControlError::InvalidCredential);
     }
-    // Declared tunnel ports ride only on launches (the plan is compiled there).
+    // Declared tunnel ports ride only on launches (the plan is compiled
+    // there), always with their revision.
     if let ServerControlMessage::OperationDispatch(dispatch) = message
-        && dispatch.tunnel_ports.is_some()
-        && !matches!(
-            dispatch.kind.as_str(),
-            "sandbox.create" | "sandbox.reconnect"
-        )
+        && (dispatch.tunnel_ports.is_some() != dispatch.tunnel_ports_revision.is_some()
+            || (dispatch.tunnel_ports.is_some()
+                && !matches!(
+                    dispatch.kind.as_str(),
+                    "sandbox.create" | "sandbox.reconnect"
+                )))
     {
         return Err(ControlError::InvalidAdmission);
     }
@@ -1539,6 +1555,7 @@ fn validate_server_terminal(message: &ServerControlMessage) -> Result<(), Contro
         ServerControlMessage::HostPolicyLower(frame) => frame.is_valid(),
         ServerControlMessage::TunnelApply(frame) => frame.is_valid(),
         ServerControlMessage::TunnelClear(frame) => frame.is_valid(),
+        ServerControlMessage::TunnelPorts(frame) => frame.is_valid(),
         ServerControlMessage::HostExecStart(frame) => frame.is_valid(),
         ServerControlMessage::HostExecPoll(frame) => frame.is_valid(),
         ServerControlMessage::HostExecStdin(frame) => frame.is_valid(),
@@ -1624,6 +1641,7 @@ fn validate_daemon_terminal(message: &DaemonControlMessage) -> Result<(), Contro
         DaemonControlMessage::HostQuiesce(quiesce) => quiesce.is_valid(),
         DaemonControlMessage::HostEgressState(state) => state.is_valid(),
         DaemonControlMessage::TunnelStatus(status) => status.is_valid(),
+        DaemonControlMessage::TunnelPortsStatus(status) => status.is_valid(),
         DaemonControlMessage::TerminalReady {
             request_id,
             fence,

@@ -14,11 +14,17 @@ pub const TUNNEL_TOKEN_MAX_BYTES: usize = 128;
 /// Upper bound on a tunnel id a host reports.
 pub const TUNNEL_ID_MAX_BYTES: usize = 64;
 
-/// Declared tunnel ports: 1..=8 distinct non-zero ports in ascending order
+/// Exposed tunnel ports: 1..=8 distinct non-zero ports in ascending order
 /// (one encoding per set, so receipts and plans compare exactly).
 pub fn valid_tunnel_ports(ports: &[u16]) -> bool {
-    !ports.is_empty()
-        && ports.len() <= TUNNEL_MAX_PORTS
+    !ports.is_empty() && valid_declared_tunnel_ports(ports)
+}
+
+/// A tunnel sandbox's declared ports: like [`valid_tunnel_ports`], but may
+/// be empty (a tunnel sandbox that declared none yet: its guest address is
+/// pinned, no port is admitted).
+pub fn valid_declared_tunnel_ports(ports: &[u16]) -> bool {
+    ports.len() <= TUNNEL_MAX_PORTS
         && ports.iter().all(|port| *port != 0)
         && ports.windows(2).all(|pair| pair[0] < pair[1])
 }
@@ -178,16 +184,71 @@ impl TunnelStatusV11 {
     }
 }
 
-/// `tunnelPorts` on a launch dispatch: present only when non-empty.
+/// Server → host: the sandbox's declared tunnel ports changed at runtime.
+/// The host replaces its recorded plan's tunnel rule (and stops a client
+/// forwarding a port no longer declared) only for a revision above the one
+/// it recorded; the guest has no channel that reaches this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TunnelPortsV11 {
+    pub sandbox_id: String,
+    /// Strictly increases per sandbox (`Sandbox.tunnelPortsRevision`).
+    pub revision: u64,
+    /// The full declared set (0-8, ascending).
+    pub ports: Vec<u16>,
+}
+
+impl TunnelPortsV11 {
+    pub fn is_valid(&self) -> bool {
+        crate::valid_inventory_sandbox_id(&self.sandbox_id)
+            && valid_generation(self.revision)
+            && valid_declared_tunnel_ports(&self.ports)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelPortsOutcomeV11 {
+    /// The recorded plan carries `revision` (or a newer one).
+    Applied,
+    /// No recorded plan for the sandbox on this host (not materialized, or
+    /// torn down): the next launch's dispatch carries the ports.
+    Absent,
+    /// Not a tunnel sandbox here (no pinned guest address), or not a
+    /// runtime that records tunnel plans.
+    Refused,
+    /// Not applied now (busy, an uncertain ACL write, a host error): retry.
+    Failed,
+}
+
+/// Host → server: the outcome of a `tunnel.ports`. For `applied`,
+/// `revision` is the revision the recorded plan now carries (at least the
+/// requested one); otherwise the requested one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TunnelPortsStatusV11 {
+    pub sandbox_id: String,
+    pub revision: u64,
+    pub outcome: TunnelPortsOutcomeV11,
+}
+
+impl TunnelPortsStatusV11 {
+    pub fn is_valid(&self) -> bool {
+        crate::valid_inventory_sandbox_id(&self.sandbox_id) && valid_generation(self.revision)
+    }
+}
+
+/// `tunnelPorts` on a launch dispatch: present exactly for a tunnel sandbox
+/// (possibly empty: pinned, nothing admitted yet).
 pub(crate) fn deserialize_tunnel_ports<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<Vec<u16>>, D::Error> {
     let ports = Vec::<u16>::deserialize(deserializer)?;
-    if valid_tunnel_ports(&ports) {
+    if valid_declared_tunnel_ports(&ports) {
         Ok(Some(ports))
     } else {
         Err(serde::de::Error::custom(
-            "tunnel ports must be 1-8 distinct ascending non-zero ports",
+            "tunnel ports must be 0-8 distinct ascending non-zero ports",
         ))
     }
 }
@@ -205,6 +266,39 @@ mod tests {
         assert!(!valid_tunnel_ports(&[3000, 3000]));
         assert!(!valid_tunnel_ports(&[5173, 3000]));
         assert!(!valid_tunnel_ports(&[1, 2, 3, 4, 5, 6, 7, 8, 9]));
+        // Declared sets may be empty; nothing else differs.
+        assert!(valid_declared_tunnel_ports(&[]));
+        assert!(valid_declared_tunnel_ports(&[3000]));
+        assert!(!valid_declared_tunnel_ports(&[0]));
+        assert!(!valid_declared_tunnel_ports(&[5173, 3000]));
+        assert!(!valid_declared_tunnel_ports(&[1, 2, 3, 4, 5, 6, 7, 8, 9]));
+    }
+
+    #[test]
+    fn ports_frames_validate() {
+        let mut frame = TunnelPortsV11 {
+            sandbox_id: "sbx".into(),
+            revision: 1,
+            ports: vec![],
+        };
+        assert!(frame.is_valid());
+        frame.ports = vec![3000, 5173];
+        assert!(frame.is_valid());
+        frame.revision = 0;
+        assert!(!frame.is_valid());
+        frame.revision = 2;
+        frame.ports = vec![5173, 3000];
+        assert!(!frame.is_valid());
+        let status = TunnelPortsStatusV11 {
+            sandbox_id: "sbx".into(),
+            revision: 2,
+            outcome: TunnelPortsOutcomeV11::Applied,
+        };
+        assert!(status.is_valid());
+        assert_eq!(
+            serde_json::to_value(&status).unwrap(),
+            serde_json::json!({"sandboxId": "sbx", "revision": 2, "outcome": "applied"})
+        );
     }
 
     #[test]

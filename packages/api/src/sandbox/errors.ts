@@ -57,6 +57,7 @@ const SandboxErrorCode = {
   tunnelPortUndeclared: "sandbox.tunnel_port_undeclared",
   tunnelNotReady: "sandbox.tunnel_not_ready",
   tunnelQuota: "sandbox.tunnel_quota",
+  tunnelPortsLimit: "sandbox.tunnel_ports_limit",
   tunnelUnavailable: "sandbox.tunnel_unavailable",
 } as const;
 
@@ -348,6 +349,8 @@ export function tunnelRefused(reason: TunnelRefusalReason) {
     tunnel_no_host: "No eligible host runs preview tunnels for you.",
     tunnel_host_unsupported: "This sandbox's host does not run preview tunnels.",
     tunnel_not_shared: "The host owner does not allow preview tunnels for other users' sandboxes.",
+    tunnel_not_enabled:
+      "This sandbox was created without network.tunnelPorts; only tunnel sandboxes change their ports.",
   };
   return sandboxOrpcError(SandboxErrorCode.unsupportedCapability, messages[reason], "BAD_REQUEST", {
     capability: "tunnel",
@@ -365,7 +368,13 @@ export function tunnelNotFound() {
 export function tunnelPortUndeclared() {
   return sandboxOrpcError(
     SandboxErrorCode.tunnelPortUndeclared,
-    "The port was not declared for tunnels when the sandbox was created.",
+    "The port is not declared for tunnels on this sandbox.",
+  );
+}
+export function tunnelPortsLimit() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelPortsLimit,
+    "A sandbox declares at most 8 tunnel ports.",
   );
 }
 export function tunnelNotReady() {

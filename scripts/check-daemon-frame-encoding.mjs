@@ -259,6 +259,10 @@ const reviewed = new Map([
   // Preview tunnels: newline-JSON requests (`expose`/`status`) to the local
   // tunnel client's private socket, never a relay frame.
   ["apps/cli/src/sandbox_relay/tunnel.rs|to_vec ( request )", 1],
+  // Preview tunnels: a runtime port change rewrites the persisted network-plan
+  // record's rules and egress settings, never a relay frame.
+  ["crates/sandbox-runtime/src/incus/tunnel_ports.rs|to_value ( & rules )", 1],
+  ["crates/sandbox-runtime/src/incus/tunnel_ports.rs|to_value ( & settings )", 1],
   ["apps/cli/src/sandbox_relay/journal.rs|to_value ( & canonical )", 1],
   // Unit fixture scalars inserted into an already decoded dispatch object.
   ["apps/cli/src/sandbox_relay/test_support.rs|json ! ( tagged . digest_scheme )", 1],

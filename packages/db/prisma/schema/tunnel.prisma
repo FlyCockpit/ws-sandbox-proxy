@@ -101,11 +101,12 @@ model SandboxTunnel {
 }
 
 /// Tunnel audit (bounded by the 90-day prune in the tunnel controller):
-/// config changes, enable/disable and link mints. Never a token or link URL.
+/// config changes, enable/disable, port changes and link mints. Never a
+/// token or link URL.
 model SandboxTunnelEvent {
   id         String   @id @default(cuid(2))
   createdAt  DateTime @default(now())
-  /// `config.set` | `config.cleared` | `tunnel.enabled` | `tunnel.disabled` | `tunnel.created` | `tunnel.deleted` | `link.minted`.
+  /// `config.set` | `config.cleared` | `tunnel.enabled` | `tunnel.disabled` | `ports.changed` | `tunnel.created` | `tunnel.deleted` | `link.minted`.
   kind       String
   /// The sandbox owner (null for config events).
   userId     String?

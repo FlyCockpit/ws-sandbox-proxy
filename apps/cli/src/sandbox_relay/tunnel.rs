@@ -613,6 +613,32 @@ impl TunnelManager {
         let _ = std::fs::remove_dir_all(self.dir(sandbox_id));
     }
 
+    /// A runtime tunnel-port change (`tunnel.ports`) is durably pending and
+    /// its ACL write comes next: a client forwarding any port outside
+    /// `allowed` stops now (reaped under the lock; its visitor connections
+    /// close with it). The server re-applies with the new port set.
+    pub(crate) fn restrict(&self, sandbox_id: &str, allowed: &[u16]) {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let outside = entries
+            .get(sandbox_id)
+            .is_some_and(|entry| !entry.ports.iter().all(|port| allowed.contains(port)));
+        if !outside {
+            return;
+        }
+        if let Some(mut entry) = entries.remove(sandbox_id) {
+            stop_child(&mut entry.child);
+            tracing::info!(sandbox = %sandbox_id, generation = entry.generation, ports = ?entry.ports, "tunnel client stopped: its ports are no longer all declared");
+            self.push(TunnelStatusV11 {
+                sandbox_id: sandbox_id.to_string(),
+                generation: entry.generation,
+                state: TunnelStateV11::Stopped,
+                error: None,
+                tunnel_id: None,
+            });
+        }
+        let _ = std::fs::remove_dir_all(self.dir(sandbox_id));
+    }
+
     /// A bridge exists for the sandbox again: lift the teardown fence.
     pub(crate) fn network_created(&self, sandbox_id: &str) {
         let _entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
@@ -683,6 +709,15 @@ impl TunnelManager {
         anyhow::ensure!(
             verify_client(&self.settings.client, &self.settings.client_sha256),
             "the tunnel client no longer matches its pinned SHA-256"
+        );
+        // Re-checked before every start (restarts too): the recorded plan
+        // must still declare every port, at the same target.
+        anyhow::ensure!(
+            self.runtime
+                .tunnel_target(sandbox_id)
+                .is_some_and(|(target, declared)| target == entry.target
+                    && entry.ports.iter().all(|port| declared.contains(port))),
+            "the recorded tunnel plan no longer declares the client's ports"
         );
         let dir = self.dir(sandbox_id);
         std::fs::DirBuilder::new()
