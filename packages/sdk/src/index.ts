@@ -24,6 +24,9 @@ export type {
   HostPage,
   HostQueuedCommand,
   JsonRouteId,
+  KeyInfo,
+  KeyOrigin,
+  KeyRevoked,
   OperationDto,
   OperationErrorCode,
   OperationFailure,
@@ -122,6 +125,7 @@ export {
   type FileSystemErrorKind,
   isCapacityWaitTimeout,
   isWsspError,
+  type KeySandboxLimitDetail,
   type OutputAvailability,
   ProcessError,
   type ProcessErrorKind,
@@ -262,6 +266,7 @@ export {
   type HostsApi,
   type QueueHostCommandInput,
 } from "./hosts";
+export type { KeyApi } from "./key";
 export type { PoolCapacityQuery, PoolPageOptions, PoolsApi } from "./pools";
 export {
   type CopyOptions,

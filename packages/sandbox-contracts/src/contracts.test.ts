@@ -269,6 +269,9 @@ describe("DTO semantics", () => {
             ...(code === "host.agent_access_off" ? { retryable: false } : {}),
             ...(code === "host.node_offline" ? { retryable: true, retryAfterSeconds: 5 } : {}),
             ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
+            ...(code === "sandbox.key_limit_reached"
+              ? { data: { maxLiveSandboxes: 2, liveSandboxes: 2 } }
+              : {}),
             ...(code === "sandbox.host_capacity" || code === "sandbox.pool_full"
               ? { reason: "ram" }
               : {}),

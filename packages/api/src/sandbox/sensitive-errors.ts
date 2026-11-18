@@ -6,6 +6,7 @@ import {
   egressRefusalReasonSchema,
   isRetryableRefusalCode,
   isSdkErrorCode,
+  keyLimitReachedDataSchema,
   leaseMaxTimeoutMsSchema,
   type OperationErrorCode,
   poolFullReasonSchema,
@@ -125,6 +126,13 @@ export function rethrowSensitiveSandboxError(error: unknown): never {
       code === "sandbox.capacity_queue_full" && data && typeof data === "object" && "scope" in data
         ? CAPACITY_QUEUE_SCOPES.find((value) => value === data.scope)
         : undefined;
+    const keyLimit =
+      code === "sandbox.key_limit_reached" && data && typeof data === "object"
+        ? keyLimitReachedDataSchema.safeParse({
+            maxLiveSandboxes: "maxLiveSandboxes" in data ? data.maxLiveSandboxes : undefined,
+            liveSandboxes: "liveSandboxes" in data ? data.liveSandboxes : undefined,
+          })
+        : null;
     const retryable =
       isRetryableRefusalCode(code) &&
       data &&
@@ -161,6 +169,7 @@ export function rethrowSensitiveSandboxError(error: unknown): never {
               ...(skipped?.success ? { skipped: skipped.data } : {}),
               ...(maxWaitMs?.success ? { maxWaitMs: maxWaitMs.data } : {}),
               ...(scope ? { scope } : {}),
+              ...(keyLimit?.success ? keyLimit.data : {}),
               ...(retryable === undefined ? {} : { retryable }),
               ...image,
             },

@@ -13,6 +13,7 @@ export * from "./guest-path";
 export * from "./hosts";
 export * from "./image-wire";
 export * from "./ip";
+export * from "./keys";
 export * from "./lease-limits";
 export { isSafeMapText } from "./map-primitives";
 export * from "./metadata";

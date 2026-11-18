@@ -30,6 +30,7 @@ import {
 } from "@wssp/api/sandbox/sdk-reads";
 import { getSandboxCapabilities } from "@wssp/api/sandbox/services/capabilities";
 import { getCommandOutput } from "@wssp/api/sandbox/services/sandboxes";
+import { getSelfKey, revokeSelfKey } from "@wssp/api/sandbox/services/self-key";
 import { tunnelConfigured } from "@wssp/api/sandbox/tunnels/config";
 import { templateBuildCapabilities } from "@wssp/api/template-builds/config";
 import { webhooksConfigured } from "@wssp/api/webhooks/config";
@@ -170,6 +171,8 @@ export function sdkReadHandlers(registered: readonly SdkRouteId[]): RouteHandler
     ...webhookHandlers,
     ...templateBuildHandlers,
     ...credentialHandlers,
+    getKey: (principal) => getSelfKey(principal, undefined),
+    revokeKey: (principal) => revokeSelfKey(principal, undefined),
     getCapabilities: async (principal) => {
       // Preview tunnels are optional: listed only once an admin configured them.
       const tunnels = await tunnelConfigured();

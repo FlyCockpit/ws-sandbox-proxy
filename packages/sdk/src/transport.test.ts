@@ -103,6 +103,9 @@ function envelope(code: SdkErrorCode, extra: Record<string, unknown> = {}): Resp
       ...(code === "host.agent_access_off" ? { retryable: false } : {}),
       ...(code === "host.node_offline" ? { retryable: true, retryAfterSeconds: 5 } : {}),
       ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
+      ...(code === "sandbox.key_limit_reached"
+        ? { data: { maxLiveSandboxes: 2, liveSandboxes: 2 } }
+        : {}),
       ...(code === "sandbox.host_capacity" || code === "sandbox.pool_full"
         ? { reason: "ram" }
         : {}),
@@ -430,6 +433,8 @@ const READ_KIND: Record<SdkErrorCode, WsspErrorKind> = {
   "sandbox.template_unavailable": "conflict",
   capacity_wait_exceeds_policy: "invalid_request",
   "sandbox.capacity_queue_full": "capacity",
+  "sandbox.key_limit_reached": "capacity",
+  "key.self_revoke_forbidden": "authorization",
   "sandbox.template_image_rejected": "invalid_request",
   "sandbox.template_revision_exists": "conflict",
   "sandbox.template_image_unavailable": "unavailable",

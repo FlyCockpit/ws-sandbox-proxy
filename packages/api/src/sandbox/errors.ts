@@ -564,6 +564,14 @@ export function leaseExceedsPolicy(maxTimeoutMs: number) {
 
 /** Requested `waitForCapacityMs` is over the effective limit; never clamped.
  * `maxWaitMs` is the largest finite wait allowed (0: waits are disabled). */
+/** The creating key's live-sandbox limit (`SdkKey.maxLiveSandboxes`) is reached. */
+export function keySandboxLimitReached(maxLiveSandboxes: number, liveSandboxes: number) {
+  return new ORPCError("CONFLICT", {
+    message: SDK_ERRORS["sandbox.key_limit_reached"][1],
+    data: { code: "sandbox.key_limit_reached", maxLiveSandboxes, liveSandboxes },
+  });
+}
+
 export function capacityWaitExceedsPolicy(maxWaitMs: number) {
   return new ORPCError("BAD_REQUEST", {
     message: SDK_ERRORS.capacity_wait_exceeds_policy[1],

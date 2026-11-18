@@ -14,6 +14,8 @@ import {
   isRetryableRefusalCode,
   isSdkErrorCode,
   isTemplateBuildErrorExtrasCode,
+  type KeyLimitReachedData,
+  keyLimitReachedDataSchema,
   leaseMaxTimeoutMsSchema,
   type PoolFullReason,
   poolFullReasonSchema,
@@ -78,6 +80,8 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
   /** Capacity/quota/pool refusals (`RETRYABLE_REFUSAL_CODES`): required. */
   let retryable: boolean | undefined;
   let hostFileData: { reason: (typeof HOST_FILE_ERROR_REASONS)[number] } | undefined;
+  /** `sandbox.key_limit_reached`: the key's limit and its live creates. */
+  let keyLimitData: KeyLimitReachedData | undefined;
   if (error instanceof ORPCError) {
     const data = error.data;
     const domain = data && typeof data === "object" && "code" in data ? data.code : undefined;
@@ -193,6 +197,13 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
         ...(path?.success ? { path: path.data } : {}),
       };
     }
+    if (code === "sandbox.key_limit_reached" && data && typeof data === "object") {
+      const parsed = keyLimitReachedDataSchema.safeParse({
+        maxLiveSandboxes: "maxLiveSandboxes" in data ? data.maxLiveSandboxes : undefined,
+        liveSandboxes: "liveSandboxes" in data ? data.liveSandboxes : undefined,
+      });
+      if (parsed.success) keyLimitData = parsed.data;
+    }
     if (code === "host.agent_access_off") retryable = false;
     if (code === "host.node_offline") {
       retryable = true;
@@ -227,6 +238,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
   }
   const requested = code;
   if (code === "host.file_error" && !hostFileData) code = "INTERNAL_SERVER_ERROR";
+  if (code === "sandbox.key_limit_reached" && !keyLimitData) code = "INTERNAL_SERVER_ERROR";
   if ((code === "sandbox.host_capacity" || code === "sandbox.pool_full") && reason === undefined)
     code = "INTERNAL_SERVER_ERROR";
   if ((code === "sandbox.share_quota" || code === "sandbox.member_quota") && !resource)
@@ -249,6 +261,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
     // was (e.g. `skipped` of a share_quota without its resource).
     reason = resource = scope = maxTimeoutMs = maxWaitMs = undefined;
     skipped = image = valueInvalid = buildExtras = retryAfterSeconds = retryable = undefined;
+    keyLimitData = undefined;
   }
   // Backoff advice only for a refusal current usage or state can clear; a
   // permanent (`retryable: false`) refusal never carries Retry-After.
@@ -279,6 +292,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
         message,
         requestId,
         ...(code === "host.file_error" && hostFileData ? { data: hostFileData } : {}),
+        ...(code === "sandbox.key_limit_reached" && keyLimitData ? { data: keyLimitData } : {}),
         ...(buildExtras && isTemplateBuildErrorExtrasCode(code) ? buildExtras : {}),
         ...(image && code === "sandbox.template_image_unavailable" ? image : {}),
         ...(valueInvalid && code === "credential.value_invalid" ? valueInvalid : {}),

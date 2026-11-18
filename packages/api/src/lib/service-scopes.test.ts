@@ -62,6 +62,9 @@ const expected = {
     requiresSandbox: true,
   },
   "capabilities.get": { scopes: [] },
+  // The calling key itself (GET/DELETE /v1/key); never an MCP tool.
+  "key.get": { scopes: [] },
+  "key.revokeSelf": { scopes: [] },
   "hosts.list": { scopes: ["hosts:read"] },
   "hosts.get": { scopes: ["hosts:read"], requiresHost: true },
   "hostCommands.run": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },
@@ -619,6 +622,9 @@ describe("independent SDK scope and service inventory", () => {
         "sandboxes.tunnelClose",
         "sandboxes.tunnelLink",
         "sandboxes.tunnelPorts",
+        // The calling key itself: /v1 only (GET/DELETE /v1/key), never MCP.
+        "key.get",
+        "key.revokeSelf",
       ].sort(),
     ).toEqual(Object.keys(expected).sort());
     expect(production.SERVICE_ACTIONS.slice().sort()).toEqual(Object.keys(expected).sort());

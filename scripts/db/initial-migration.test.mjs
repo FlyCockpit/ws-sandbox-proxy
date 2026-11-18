@@ -11,9 +11,9 @@ import { SCHEMA_DIR } from "./lib/prisma.mjs";
 import { schemaCheckConstraints } from "./lib/schema-checks.mjs";
 import { checkWrapper, splitStatements } from "./lib/sql.mjs";
 
-test("all 153 documentary CHECKs match 0_init names, mapped tables and exact expressions", () => {
+test("all 154 documentary CHECKs match 0_init names, mapped tables and exact expressions", () => {
   const checks = schemaCheckConstraints(SCHEMA_DIR);
-  assert.equal(checks.length, 153);
+  assert.equal(checks.length, 154);
   const sql = readFileSync(INITIAL_PATH, "utf8");
   assert.equal(frozenSection(sql, "checks"), checkStatements(checks));
   const materialized = splitStatements(sql).filter(({ text }) =>

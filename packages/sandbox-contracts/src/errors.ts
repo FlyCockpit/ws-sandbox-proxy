@@ -52,6 +52,11 @@ export const SDK_ERRORS = {
   lease_exceeds_policy: [400, "Requested lease exceeds the allowed maximum."],
   capacity_wait_exceeds_policy: [400, "Requested capacity wait exceeds the allowed maximum."],
   "sandbox.capacity_queue_full": [409, "The capacity queue is full."],
+  "sandbox.key_limit_reached": [409, "This key's live sandbox limit is reached."],
+  "key.self_revoke_forbidden": [
+    403,
+    "Only a CLI login key can revoke itself; revoke this key on the dashboard.",
+  ],
   digest_key_changed: [409, "Digest key changed."],
   digest_key_unavailable: [409, "Digest key unavailable."],
   "sandbox.host_reconnecting": [503, "Host is reconnecting; retry shortly."],
@@ -462,6 +467,7 @@ const nonCapacityCodes = SDK_ERROR_CODES.filter(
     code !== "host.agent_access_off" &&
     code !== "host.node_offline" &&
     code !== "host.file_error" &&
+    code !== "sandbox.key_limit_reached" &&
     code !== "lease_exceeds_policy" &&
     code !== "sandbox.capture_unsupported" &&
     code !== "sandbox.image_quota_exceeded" &&
@@ -488,6 +494,15 @@ export const credentialValueInvalidTextSchema = z
   .min(1)
   .max(512)
   .refine((value) => [...value].every((ch) => ch >= " " && ch !== "\u007f"));
+/**
+ * `sandbox.key_limit_reached`: the calling key's live-sandbox limit and how many
+ * live WORKLOAD sandboxes it has created (a destroy frees one).
+ */
+export const keyLimitReachedDataSchema = z.strictObject({
+  maxLiveSandboxes: z.number().int().min(1).max(1000),
+  liveSandboxes: z.number().int().min(0),
+});
+export type KeyLimitReachedData = z.infer<typeof keyLimitReachedDataSchema>;
 /** Which limit a full capacity queue hit. */
 export const CAPACITY_QUEUE_SCOPES = ["key", "owner", "pool"] as const;
 /** `capacity_wait_exceeds_policy`: the largest finite wait allowed (0 = waits disabled). */
@@ -511,6 +526,11 @@ export const sdkErrorEnvelopeSchema = z.strictObject({
       data: z.strictObject({ reason: hostFileErrorReasonSchema }),
     }),
     z.strictObject({ code: z.enum(nonCapacityCodes), ...errorFields }),
+    z.strictObject({
+      code: z.literal("sandbox.key_limit_reached"),
+      ...errorFields,
+      data: keyLimitReachedDataSchema,
+    }),
     z.strictObject({
       code: z.literal("sandbox.share_quota"),
       ...refusalFields,

@@ -1,8 +1,12 @@
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { useTranslation } from "react-i18next";
 
-/** What approving a `wssp host enroll` request authorizes (`hostCredentials.deviceLoginRequest`). */
+/**
+ * What approving a `wssp host enroll` request authorizes (the
+ * `kind: "host"` variant of `hostCredentials.deviceLoginRequest`).
+ */
 export type DeviceLoginRequestSummary = {
+  kind: "host";
   requestId: string;
   slug: string;
   existingHost: { id: string; slug: string; label: string } | null;

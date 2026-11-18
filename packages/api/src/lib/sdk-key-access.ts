@@ -89,6 +89,8 @@ export const sdkKeyListSelect = {
   name: true,
   resourceMode: true,
   kind: true,
+  origin: true,
+  maxLiveSandboxes: true,
   ownSandboxesOnly: true,
   poolMode: true,
   scopes: true,
@@ -1641,6 +1643,8 @@ export async function checkAcceptedDispatchAuthority(
  */
 export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" | "custody">> = {
   "capabilities.get": "custody",
+  "key.get": "custody",
+  "key.revokeSelf": "custody",
   "sandboxes.tunnelGet": "custody",
   "sandboxes.tunnelExpose": "custody",
   "sandboxes.tunnelClose": "custody",

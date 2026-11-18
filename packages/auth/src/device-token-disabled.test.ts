@@ -4,7 +4,7 @@ import { deviceAuthorization } from "better-auth/plugins";
 import { describe, expect, it } from "vitest";
 import {
   DISABLED_DEVICE_AUTHORIZATION_PATHS,
-  requireHostDeviceLoginScope,
+  requireDeviceLoginScope,
 } from "./host-device-login-scope";
 
 const BASE_URL = "http://localhost:3000";
@@ -28,7 +28,7 @@ function buildAuth(disabledPaths: string[]) {
       deviceAuthorization({
         expiresIn: "30m",
         interval: "5s",
-        onDeviceAuthRequest: requireHostDeviceLoginScope,
+        onDeviceAuthRequest: requireDeviceLoginScope,
         schema: undefined,
       }),
     ],

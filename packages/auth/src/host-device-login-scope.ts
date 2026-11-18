@@ -1,25 +1,29 @@
 import { hostSlugFromDeviceLoginScope } from "@wssp/config/host-device-login";
+import { isUserDeviceLoginScope } from "@wssp/config/user-device-login";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { admin } from "better-auth/plugins";
 
 /**
- * `onDeviceAuthRequest` for the deviceAuthorization plugin. `wssp host enroll` is the
- * only device-flow client and every request must name exactly one host slug
- * (`scope = "host-slug:<slug>"`), so the approval page can show what approving
- * authorizes and the exchange can mint for that slug only.
+ * `onDeviceAuthRequest` for the deviceAuthorization plugin. `wssp` is the only
+ * device-flow client and every request names exactly one of two scopes, so the
+ * approval page can show what approving authorizes:
+ * - `host-slug:<slug>` (`wssp host enroll`): the host exchange mints a device
+ *   credential for that slug only;
+ * - `user-login` (`wssp login`): the approver chooses the `/v1` key's grant on
+ *   the approval page and the user-login exchange mints exactly that.
  */
-export function requireHostDeviceLoginScope(clientId: string, scope: string | undefined): void {
+export function requireDeviceLoginScope(clientId: string, scope: string | undefined): void {
   if (clientId.length > 64 || clientId !== "wssp") {
     throw new APIError("BAD_REQUEST", {
       error: "invalid_client",
       error_description: "Invalid client ID",
     });
   }
-  if (hostSlugFromDeviceLoginScope(scope) !== null) return;
+  if (hostSlugFromDeviceLoginScope(scope) !== null || isUserDeviceLoginScope(scope)) return;
   throw new APIError("BAD_REQUEST", {
     error: "invalid_scope",
     error_description:
-      "Device authorization must name one host slug as `host-slug:<slug>`; upgrade wssp.",
+      "Device authorization must name `user-login` or one host slug as `host-slug:<slug>`; upgrade wssp.",
   });
 }
 
@@ -27,9 +31,10 @@ export function requireHostDeviceLoginScope(clientId: string, scope: string | un
  * Better Auth paths turned off with `disabledPaths` (404 before any handler
  * runs). `/device/token` would redeem an approved `wssp host enroll` code for a full
  * browser session (Better Auth's RFC 8628 token endpoint), which is not what
- * the approval page describes. The only redemption is
- * `hostCredentials.exchangeDeviceCode`, which mints the one device credential
- * the approver saw.
+ * the approval page describes. The only redemptions are
+ * `hostCredentials.exchangeDeviceCode` (host rows) and
+ * `userLogins.exchangeDeviceCode` (`user-login` rows), each minting the one
+ * credential the approver saw.
  */
 export const DISABLED_DEVICE_AUTHORIZATION_PATHS: readonly string[] = [
   "/device/token",

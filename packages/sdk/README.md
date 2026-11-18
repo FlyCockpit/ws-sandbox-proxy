@@ -54,6 +54,15 @@ that credential. API keys default to false; agent tokens and OAuth grants defaul
 to true. Allowlist credentials always have this creator restriction. The effective
 setting is returned as `key.ownSandboxesOnly` by `GET /v1/capabilities`.
 
+`wssp.key.get()` (`GET /v1/key`, no scope needed) describes the calling key:
+its name, origin (`dashboard` or `cliLogin`), scopes, pools, expiry and, when it
+has one, its live sandbox limit with the current count. A key with a limit
+refuses a create over it with `sandbox.key_limit_reached`; the error's
+`keyLimit` holds `{ maxLiveSandboxes, liveSandboxes }`. A key minted by
+`wssp login` can revoke itself with `wssp.key.revokeSelf()` (`DELETE /v1/key`);
+any other key gets `key.self_revoke_forbidden`. See
+[CLI user logins](../../docs/guide/auth-planes.md#cli-user-logins-wssp-login).
+
 Host commands and host file tools run as the **node daemon user**: they can do
 whatever that user can do, including Incus administration when the daemon user
 has it. They can reach other users' sandboxes on the node, including shared

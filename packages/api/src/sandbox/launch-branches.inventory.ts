@@ -246,6 +246,12 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
     'stoppedCapture: sandbox.state === "STOPPED",': "kind-agnostic",
     'stopped: sandbox.state === "STOPPED",': "kind-agnostic",
   },
+  // A key's live-sandbox count attributes each sandbox to the key that
+  // authorized its CREATE; a restore never creates and never moves it.
+  "packages/api/src/sandbox/key-sandbox-limit.ts": {
+    'Operations: { some: { kind: "CREATE_SANDBOX", authorizingKeyId: keyId, userId: ownerId } },':
+      "create-only",
+  },
   "packages/api/src/sandbox/launch-mode.ts": {
     'export function acceptedLaunchMode(kind: "CREATE_SANDBOX"): "NEW_ROOT";': "launch-mode-routed",
     'kind: "RECONNECT_SANDBOX",': "launch-mode-routed",

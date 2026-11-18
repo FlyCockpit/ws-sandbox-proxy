@@ -166,6 +166,8 @@ const routeIds = SDK_ROUTE_IDS.filter(
     SDK_ROUTES[id].feature !== "templates.build" &&
     // Preview tunnels answer with the tunnel or link itself (no receipt).
     SDK_ROUTES[id].feature !== "sandboxes.tunnel" &&
+    // The key self-revoke answers directly (no receipt); key.pg.test.ts covers it.
+    SDK_ROUTES[id].feature !== "key.self" &&
     SDK_ROUTES[id].feature?.startsWith("credentials.") !== true,
 );
 function bodyFor(id: SdkRouteId, f: Fixture): Record<string, unknown> {

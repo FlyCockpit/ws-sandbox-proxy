@@ -79,7 +79,7 @@ it("dispatch imports only credential services and never person-only routers or o
   );
   expect(source).not.toMatch(/(?:from|import\()\s*["'][^"']*\/routers\//);
   expect(source).not.toMatch(
-    /createRouterClient|liveOwnerSessionProcedure|protectedProcedure|publicProcedure|runQueuedHostCommand|dismissQueuedHostCommand|lowerAgentHostCommands|lowerHostTerminal|createAgentToken|revokeMcpGrant/,
+    /createRouterClient|liveOwnerSessionProcedure|protectedProcedure|publicProcedure|runQueuedHostCommand|dismissQueuedHostCommand|lowerAgentHostCommands|lowerHostTerminal|createAgentToken|revokeMcpGrant|getSelfKey|revokeSelfKey|self-key/,
   );
   const cases = [...source.matchAll(/case "([a-z_]+)":/g)].map((match) => match[1]);
   expect(cases.sort()).toEqual(MCP_TOOLS.map((tool) => tool.name).sort());

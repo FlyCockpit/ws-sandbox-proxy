@@ -127,3 +127,65 @@ it.each(["P2034", "40P01", "40001"])(
     });
   },
 );
+
+const grant = {
+  access: "read",
+  poolMode: "ALL_USABLE",
+  poolIds: [],
+  ownSandboxesOnly: false,
+  maxLiveSandboxes: 3,
+  expiresInDays: 30,
+  name: "wssp login",
+} as const;
+
+it("user-login approval stores exactly the chosen grant and no enrollment intent", async () => {
+  store.state.deviceCode.set(
+    "code-1",
+    deviceRow({ status: "pending", scope: "user-login", enrollmentIntent: null }),
+  );
+  await transitionDeviceCode({ userCode: "ABCDEFGH", userId: "user-1", action: "approve", grant });
+  expect(store.state.deviceCode.get("code-1")).toMatchObject({
+    status: "approved",
+    enrollmentIntent: null,
+    loginGrant: grant,
+  });
+});
+
+it.each([
+  ["user-login row with an intent", "user-login", { intent: { kind: "create" } as const }],
+  ["user-login row without a grant", "user-login", {}],
+  ["host row with a grant", "host-slug:desk-01", { intent: { kind: "create" } as const, grant }],
+  ["host row with only a grant", "host-slug:desk-01", { grant }],
+  ["row of neither kind", "openid", { grant }],
+])("approval refuses a %s", async (_name, scope, decision) => {
+  store.state.deviceCode.set("code-1", deviceRow({ status: "pending", scope }));
+  await expect(
+    transitionDeviceCode({
+      userCode: "ABCDEFGH",
+      userId: "user-1",
+      action: "approve",
+      ...decision,
+    }),
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  expect(store.state.deviceCode.get("code-1")?.status).toBe("pending");
+});
+
+it.each([
+  { ...grant, poolMode: "SELECTED", poolIds: [] },
+  { ...grant, poolIds: ["pool-1"] },
+  { ...grant, expiresInDays: 0 },
+  { ...grant, maxLiveSandboxes: 1001 },
+  { ...grant, name: " " },
+  { ...grant, scopes: ["hosts:execute"] },
+])("user-login approval refuses an invalid grant %#", async (invalid) => {
+  store.state.deviceCode.set("code-1", deviceRow({ status: "pending", scope: "user-login" }));
+  await expect(
+    transitionDeviceCode({
+      userCode: "ABCDEFGH",
+      userId: "user-1",
+      action: "approve",
+      grant: invalid,
+    }),
+  ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  expect(store.state.deviceCode.get("code-1")?.status).toBe("pending");
+});

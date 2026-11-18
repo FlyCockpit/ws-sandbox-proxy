@@ -77,6 +77,30 @@ describe("Better Auth device code response shape", () => {
       expect(db.deviceCode).toHaveLength(1);
     }
   });
+
+  it("accepts exactly `user-login` or one host slug as the scope", async () => {
+    const before = db.deviceCode?.length ?? 0;
+    const request = (scope: string | undefined) =>
+      auth.handler(
+        new Request(`${BASE_URL}/api/auth/device/code`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ client_id: "wssp", ...(scope === undefined ? {} : { scope }) }),
+        }),
+      );
+    expect((await request("user-login")).status).toBe(200);
+    expect(db.deviceCode?.at(-1)?.scope).toBe("user-login");
+    for (const scope of [
+      undefined,
+      "",
+      "user-login host-slug:desk-01",
+      "user-login:extra",
+      "USER-LOGIN",
+      "host-slug:Bad_Slug",
+    ])
+      expect((await request(scope)).status, String(scope)).toBe(400);
+    expect(db.deviceCode).toHaveLength(before + 1);
+  });
 });
 
 describe("C21-ACCTDEL Better Auth user deletion chokepoint", () => {

@@ -79,6 +79,8 @@ const READS: Record<string, number> = {
   "packages/api/src/sandbox/image-store/jobs.ts": 3,
   "packages/api/src/sandbox/image-store/references.ts": 1,
   "packages/api/src/sandbox/image-store/settings.ts": 1,
+  // A key's live-sandbox count excludes destroyed sandboxes; read.
+  "packages/api/src/sandbox/key-sandbox-limit.ts": 1,
   "packages/api/src/sandbox/launch-branches.inventory.ts": 2,
   "packages/api/src/sandbox/outbox-retention.ts": 1,
   "packages/api/src/sandbox/relay-fence.ts": 2,

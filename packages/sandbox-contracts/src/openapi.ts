@@ -38,6 +38,7 @@ import {
   templateSchema,
 } from "./dto";
 import { SDK_ERRORS, sdkErrorCodesForStatus, sdkErrorEnvelopeSchema } from "./errors";
+import { keyInfoSchema, keyRevokedSchema } from "./keys";
 import { idempotencyKeySchema, mutationReceiptSchema } from "./mutations";
 import { processConnectionSchema, processInfoSchema, processRefSchema } from "./processes";
 import { entryInfoSchema, failureSchema, operationResultSchema } from "./results";
@@ -114,6 +115,8 @@ const COMPONENTS: ReadonlyArray<readonly [string, z.ZodType]> = [
   ["TransferReceipt", transferReceiptSchema],
   ["Capabilities", capabilitiesSchema],
   ["SandboxCapabilities", sandboxCapabilitiesSchema],
+  ["KeyInfo", keyInfoSchema],
+  ["KeyRevoked", keyRevokedSchema],
   ["SandboxTunnel", sandboxTunnelSchema],
   ["SandboxTunnelPorts", sandboxTunnelPortsSchema],
   ["TunnelLink", tunnelLinkSchema],

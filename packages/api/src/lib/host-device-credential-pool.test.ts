@@ -165,7 +165,12 @@ it.each([1, 2])(
 );
 
 it("the entire device transaction path never calls the global Prisma client inside a callback", () => {
-  for (const name of ["device-code-transitions.ts", "host-device-credential-access.ts"]) {
+  for (const name of [
+    "device-code-transitions.ts",
+    "device-code-exchange.ts",
+    "host-device-credential-access.ts",
+    "user-login-credential-access.ts",
+  ]) {
     const source = readFileSync(new URL(name, import.meta.url), "utf8");
     const file = parse(source, { sourceType: "module", plugins: ["typescript"] });
     let callbacks = 0;
@@ -186,6 +191,7 @@ it("the entire device transaction path never calls the global Prisma client insi
       }
     }
     visit(file);
-    expect(callbacks).toBe(name === "device-code-transitions.ts" ? 1 : 2);
+    // One transaction each: the poll moved to device-code-exchange.ts.
+    expect(callbacks, name).toBe(1);
   }
 });

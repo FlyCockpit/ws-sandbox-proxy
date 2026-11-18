@@ -63,6 +63,23 @@ If two exchanges race, exactly one mints; the loser gets **409** `CONFLICT` or *
 
 Device codes are created at `POST /api/auth/device/code` (Better Auth, snake_case: `device_code`, `user_code`, `verification_uri`, `expires_in`, `interval`). The `interval` field is **seconds** between polls (Better Auth also stores `pollingInterval` in milliseconds on the row). Owner approval uses `POST /api/auth/device` (claim), `/approve`, `/deny` with session cookies — not covered by this exchange contract.
 
+## User login exchange (`userLogins.exchangeDeviceCode`)
+
+`wssp login` asks for the device scope `user-login` and redeems it at
+`POST /rpc/userLogins/exchangeDeviceCode` with `{ "json": { "deviceCode": string } }`
+(same headers, same per-IP budget). Polling, `authorization_pending`,
+`slow_down`, `expired_token`, `access_denied`, 404 consume-on-success and the
+retry rules are exactly the table above. Each exchange refuses the other kind's
+code with 400 and no `deviceFlowError` before polling or consuming it.
+
+Success is `{ keyId, secret, name, userId, email, scopes, poolMode, poolIds,
+ownSandboxesOnly, expiresAt, maxLiveSandboxes }`, where `secret` is a
+`wssp_sdk_` key with the grant chosen on the approval page. Terminal refusals
+specific to it: 409 `data.code: "user_login.limit"` (20 active CLI logins),
+403 `data.code: "user_login.pool_unavailable"` (a selected pool is no longer
+usable) and 409 without a code when the approved row carries no valid grant.
+A refused mint leaves the approved code in place until it expires.
+
 ## Active relay revocation
 
 A device credential is long-lived and revocation-only. The relay rechecks it and

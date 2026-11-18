@@ -35,6 +35,7 @@ export type {
   SandboxTransfer,
   SandboxTransferState,
   SdkKey,
+  SdkKeyOrigin,
   SdkKeyResourceMode,
   TemplateAvailabilityStatus,
   TemplateBuildCleanupState,

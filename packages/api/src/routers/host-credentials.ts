@@ -3,9 +3,9 @@ import { hostSlugFromDeviceLoginScope, isValidHostSlug } from "@wssp/config/host
 import prisma from "@wssp/db";
 import { z } from "zod";
 import { ownerDeviceProcedure, publicProcedure } from "../index";
-import { userCodeCandidates } from "../lib/device-code-transitions";
+import { deviceRequestKind, userCodeCandidates } from "../lib/device-code-transitions";
+import { consumeDeviceExchangeBudget } from "../lib/device-exchange-budget";
 import { mintHostDeviceCredentialFromApprovedDeviceCode } from "../lib/host-device-credential-access";
-import { createProcedureBudget } from "../lib/procedure-budget";
 
 const hostSlugSchema = z
   .string()
@@ -14,38 +14,6 @@ const hostSlugSchema = z
   .refine((value) => isValidHostSlug(value), {
     message: "Host slug must use lowercase letters, numbers, and hyphens only.",
   });
-
-const consumeExchangeBudget = createProcedureBudget({
-  keyPrefix: "host-device-exchange",
-  points: 30,
-  durationSeconds: 60,
-  failClosed: true,
-  overBudgetMessage: (seconds) => `Too many device exchanges. Retry in ${seconds} seconds.`,
-  unavailableMessage: "Device exchange is temporarily unavailable.",
-  unavailableLog: "[device-exchange] budget unavailable",
-});
-
-async function consumeDeviceExchangeBudget(clientIp: string | undefined): Promise<void> {
-  try {
-    await consumeExchangeBudget(`ip:${clientIp ?? "unknown"}`);
-  } catch (error) {
-    if (
-      error instanceof ORPCError &&
-      error.code === "SERVICE_UNAVAILABLE" &&
-      (error.data === undefined ||
-        error.data === null ||
-        typeof error.data !== "object" ||
-        !("deviceFlowError" in error.data))
-    ) {
-      throw new ORPCError("SERVICE_UNAVAILABLE", {
-        message: error.message,
-        data: { deviceFlowError: "authorization_pending" },
-        cause: error,
-      });
-    }
-    throw error;
-  }
-}
 
 export const hostCredentialsRouter = {
   exchangeDeviceCode: publicProcedure
@@ -80,8 +48,12 @@ export const hostCredentialsRouter = {
       if (!row || row.expiresAt <= new Date()) {
         throw new ORPCError("NOT_FOUND", { message: "Device login request not found." });
       }
+      // The stored scope decides what the page shows. A user login carries
+      // nothing the CLI chose: the approver picks the whole grant on the page.
+      const kind = deviceRequestKind(row.scope);
+      if (kind === "user") return { kind, requestId: row.id, status: row.status } as const;
       const slug = hostSlugFromDeviceLoginScope(row.scope);
-      if (slug === null) {
+      if (kind !== "host" || slug === null) {
         throw new ORPCError("BAD_REQUEST", {
           message: "This device login request does not name a host slug; upgrade wssp.",
         });
@@ -91,6 +63,7 @@ export const hostCredentialsRouter = {
         select: { id: true, slug: true, label: true },
       });
       return {
+        kind,
         requestId: row.id,
         status: row.status,
         slug,

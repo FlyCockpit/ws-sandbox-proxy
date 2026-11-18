@@ -126,6 +126,9 @@ CREATE TYPE "SdkKeyResourceMode" AS ENUM ('ALL_OWNED', 'ALLOWLIST');
 CREATE TYPE "SdkKeyPoolMode" AS ENUM ('ALL_USABLE', 'SELECTED');
 
 -- CreateEnum
+CREATE TYPE "SdkKeyOrigin" AS ENUM ('DASHBOARD', 'CLI_LOGIN');
+
+-- CreateEnum
 CREATE TYPE "TemplateAvailabilityStatus" AS ENUM ('PENDING', 'AVAILABLE', 'MISSING', 'REJECTED');
 
 -- CreateEnum
@@ -357,6 +360,7 @@ CREATE TABLE "device_code" (
     "scope" TEXT,
     "enrollmentIntent" TEXT,
     "replaceHostId" TEXT,
+    "loginGrant" JSONB,
 
     CONSTRAINT "device_code_pkey" PRIMARY KEY ("id")
 );
@@ -1111,7 +1115,9 @@ CREATE TABLE "host_device_credential" (
 -- CreateTable
 CREATE TABLE "sdk_key" (
     "kind" "SdkKeyKind" NOT NULL DEFAULT 'API',
+    "origin" "SdkKeyOrigin" NOT NULL DEFAULT 'DASHBOARD',
     "ownSandboxesOnly" BOOLEAN NOT NULL DEFAULT false,
+    "maxLiveSandboxes" INTEGER,
     "id" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3726,6 +3732,7 @@ ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_max_lease_ck7dac77c4" CH
 ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_egress_guard_reason_ck65752f63" CHECK ("daemonEgressGuardReason" IS NULL OR length("daemonEgressGuardReason") <= 64);
 ALTER TABLE "sandbox_host" ADD CONSTRAINT "sandbox_host_image_cache_ckaf508d7d" CHECK (("imageCacheCapBytes" IS NULL OR "imageCacheCapBytes" >= 0) AND ("imageCacheUsedBytes" IS NULL OR "imageCacheUsedBytes" >= 0) AND ("imageCacheForeignBytes" IS NULL OR "imageCacheForeignBytes" >= 0));
 ALTER TABLE "sdk_key" ADD CONSTRAINT "sdk_key_kind_secret_ckd067d5ec" CHECK (("kind" = 'OAUTH_GRANT' AND "lookupPrefix" IS NULL AND "secretDigest" IS NULL) OR ("kind" <> 'OAUTH_GRANT' AND "lookupPrefix" IS NOT NULL AND "secretDigest" IS NOT NULL));
+ALTER TABLE "sdk_key" ADD CONSTRAINT "sdk_key_max_live_sandboxes_ckdc6462dd" CHECK ("maxLiveSandboxes" IS NULL OR "maxLiveSandboxes" BETWEEN 1 AND 1000);
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_community_ckec7c7d96" CHECK ("communitySource" IS NULL OR "communitySource" IN ('ubuntu-26.04'));
 ALTER TABLE "sandbox_logical_template" ADD CONSTRAINT "sandbox_template_capture_keep_ck827f58be" CHECK ("captureKeep" BETWEEN 1 AND 50 AND ("pruneAfterDays" IS NULL OR "pruneAfterDays" BETWEEN 1 AND 3650) AND cardinality("captureScrubPaths") <= 64);
 ALTER TABLE "sandbox_template_revision" ADD CONSTRAINT "sandbox_revision_vm_size_ckece5d0b1" CHECK ("cpuCount" >= 1 AND "cpuCount" <= 32 AND "memoryMiB" >= 512 AND "memoryMiB" <= 65536 AND "memoryMiB" % 256 = 0);

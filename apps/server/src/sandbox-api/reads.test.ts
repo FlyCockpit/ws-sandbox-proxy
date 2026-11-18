@@ -432,6 +432,7 @@ describe("route and schema coverage", () => {
         "listCredentialInstances",
         "listCredentialLeases",
         "getSandboxTunnel",
+        "getKey",
       ].sort(),
     );
     for (const id of SDK_ROUTE_IDS) {
@@ -440,6 +441,7 @@ describe("route and schema coverage", () => {
       if (["getHost", "getHostCommand", "getQueuedHostCommand"].includes(id)) continue; // Host adapters: host-access.test.ts and host-access.pg.test.ts.
       if (["getOperationResult", "getSandboxCapabilities", "connectProcess"].includes(id)) continue; // Real services covered in fs-process.pg.test.ts.
       if (id === "getSandboxTunnel") continue; // Preview tunnels: the off-refusal test below and the live e2e.
+      if (id === "getKey") continue; // Real service: key.pg.test.ts.
       if (SDK_ROUTES[id].feature === "webhooks.write") continue; // Real services: webhooks.pg.test.ts.
       if (SDK_ROUTES[id].feature === "credentials.read") continue; // Real services: credentials.pg.test.ts.
       if (id === "getPoolCapacity") continue; // Real service covered in capacity-view.pg.test.ts.
@@ -847,7 +849,8 @@ describe("status mappings", () => {
   it("403 when the key lacks the route scope, before any resource read", async () => {
     db.sdkKey.findUnique.mockResolvedValue(keyRow({ scopes: ["operations:cancel"] }) as never);
     for (const id of SDK_ROUTE_IDS) {
-      if (id === "getCapabilities" || SDK_ROUTES[id].method !== "get") continue;
+      // Scope-free self routes: any active key may read them.
+      if (id === "getCapabilities" || id === "getKey" || SDK_ROUTES[id].method !== "get") continue;
       await expectError(await get(concretePath(SDK_ROUTES[id].path)), 403, "FORBIDDEN");
     }
     expect(db.sandboxHost.findMany).not.toHaveBeenCalled();

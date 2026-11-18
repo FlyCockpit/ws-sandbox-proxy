@@ -151,6 +151,8 @@ const KIND_BY_CODE = {
   "sandbox.template_unavailable": "conflict",
   capacity_wait_exceeds_policy: "invalid_request",
   "sandbox.capacity_queue_full": "capacity",
+  "sandbox.key_limit_reached": "capacity",
+  "key.self_revoke_forbidden": "authorization",
   "sandbox.template_image_rejected": "invalid_request",
   "sandbox.template_revision_exists": "conflict",
   "sandbox.template_image_unavailable": "unavailable",
@@ -287,6 +289,11 @@ export type CredentialValueInvalidDetail = {
   readonly path: string | null;
 };
 
+/** `sandbox.key_limit_reached` detail. */
+export type KeySandboxLimitDetail = {
+  readonly maxLiveSandboxes: number;
+  readonly liveSandboxes: number;
+};
 export type WsspErrorPhase = "submit" | "start" | "follow" | "result" | "command" | "lease";
 export type WsspErrorInit = {
   phase?: WsspErrorPhase | null;
@@ -331,6 +338,8 @@ export type WsspErrorInit = {
   hint?: "rebuild_required" | null;
   /** `credential.value_invalid`: what failed and, for a file, its path (never a value). */
   valueInvalid?: CredentialValueInvalidDetail | null;
+  /** `sandbox.key_limit_reached`: the key's live-sandbox limit and its live creates. */
+  keyLimit?: KeySandboxLimitDetail | null;
   cause?: unknown;
 };
 
@@ -384,6 +393,8 @@ export class WsspError extends Error {
   readonly hint: "rebuild_required" | null;
   /** `credential.value_invalid`: the refused entry and path; null otherwise. */
   readonly valueInvalid: CredentialValueInvalidDetail | null;
+  /** `sandbox.key_limit_reached`: destroy one of this key's sandboxes to free a slot; null otherwise. */
+  readonly keyLimit: KeySandboxLimitDetail | null;
 
   constructor(init: WsspErrorInit) {
     super(init.message, init.cause === undefined ? undefined : { cause: init.cause });
@@ -411,6 +422,7 @@ export class WsspError extends Error {
     this.build = init.build ? Object.freeze({ ...init.build }) : null;
     this.hint = init.hint ?? null;
     this.valueInvalid = init.valueInvalid ? Object.freeze({ ...init.valueInvalid }) : null;
+    this.keyLimit = init.keyLimit ? Object.freeze({ ...init.keyLimit }) : null;
   }
 
   [inspect.custom]() {
@@ -445,6 +457,7 @@ export class WsspError extends Error {
       ...(this.build ? { build: this.build } : {}),
       ...(this.hint ? { hint: this.hint } : {}),
       ...(this.valueInvalid ? { valueInvalid: this.valueInvalid } : {}),
+      ...(this.keyLimit ? { keyLimit: this.keyLimit } : {}),
     };
   }
 }

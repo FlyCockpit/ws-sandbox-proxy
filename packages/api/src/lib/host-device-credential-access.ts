@@ -10,6 +10,7 @@ import {
 } from "@wssp/db/credential-security";
 import { prelockHostDeviceCredentials } from "../sandbox/host-admission";
 import { assertOwnerHostCapacity } from "../sandbox/owner-host-cap";
+import { deviceExpiredError, pollUnapprovedDeviceCode } from "./device-code-exchange";
 import { deviceDatabaseNow, rethrowDeviceTransactionError } from "./device-code-transitions";
 import {
   isOwnerCredentialPolicySatisfied,
@@ -17,22 +18,6 @@ import {
 } from "./owner-credential-policy";
 import { isPrismaForeignKeyViolation, isPrismaUniqueViolation } from "./prisma-errors";
 import { getForcedTwoFactorSettingsRecord } from "./two-factor-policy";
-
-type DeviceFlowError = "authorization_pending" | "slow_down" | "access_denied" | "expired_token";
-
-function deviceFlowErrorData(deviceFlowError: DeviceFlowError): {
-  deviceFlowError: DeviceFlowError;
-} {
-  return { deviceFlowError };
-}
-
-/**
- * `DeviceCode.pollingInterval` is in MILLISECONDS: Better Auth writes
- * `ms(opts.interval)` (5000 for the configured "5s") and compares it against
- * elapsed milliseconds in its own redeem path, while it tells the client the
- * interval in seconds.
- */
-const DEFAULT_DEVICE_POLLING_INTERVAL_MS = 5_000;
 
 function digestHostDeviceCredentialSecret(rawSecret: string): string {
   return hmacDigestForProductPurpose({ purpose: "deviceCredential", value: rawSecret });
@@ -81,6 +66,7 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
   });
 
   if (!row) throw new ORPCError("NOT_FOUND", { message: "Device code not found." });
+  // A `user-login` (or any non-host) row is refused before it is polled or consumed.
   const boundSlug = hostSlugFromDeviceLoginScope(row.scope);
   if (boundSlug === null) {
     throw new ORPCError("BAD_REQUEST", {
@@ -93,58 +79,7 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
       message: "Device authorization was requested for a different host slug.",
     });
   }
-  if (row.status !== "approved" || !row.userId) {
-    const outcome = await prisma
-      .$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT id FROM device_code WHERE id = ${row.id} FOR UPDATE`;
-        const pollNow = await deviceDatabaseNow(tx);
-        const intervalMs = row.pollingInterval ?? DEFAULT_DEVICE_POLLING_INTERVAL_MS;
-        const tooFast =
-          !!row.lastPolledAt && row.lastPolledAt.getTime() + intervalMs > pollNow.getTime();
-        if (!tooFast) {
-          const polled = await tx.deviceCode.updateMany({
-            where: {
-              id: row.id,
-              status: "pending",
-              userId: row.userId,
-              lastPolledAt: row.lastPolledAt,
-              expiresAt: { gt: pollNow },
-            },
-            data: { lastPolledAt: pollNow },
-          });
-          if (polled.count === 1) return pendingError();
-        }
-        // A CAS miss is a state transition, not disappearance. Read under the same lock.
-        const current = await tx.deviceCode.findUnique({
-          where: { id: row.id },
-          select: { expiresAt: true, status: true, lastPolledAt: true },
-        });
-        if (!current) return new ORPCError("NOT_FOUND", { message: "Device code not found." });
-        const currentNow = await deviceDatabaseNow(tx);
-        const lockedTooFast =
-          !!current.lastPolledAt &&
-          current.lastPolledAt.getTime() + intervalMs > currentNow.getTime();
-        if (current.expiresAt <= currentNow) {
-          await tx.deviceCode.deleteMany({ where: { id: row.id, expiresAt: { lte: currentNow } } });
-          return expiredError();
-        }
-        if (current.status === "denied") {
-          await tx.deviceCode.deleteMany({ where: { id: row.id, status: "denied" } });
-          return new ORPCError("FORBIDDEN", {
-            message: "Device authorization denied.",
-            data: deviceFlowErrorData("access_denied"),
-          });
-        }
-        // Approval raced this poll: next poll takes the host-before-code mint path.
-        if (!lockedTooFast || current.status === "approved") return pendingError();
-        return new ORPCError("BAD_REQUEST", {
-          message: "Device authorization polling too fast.",
-          data: deviceFlowErrorData("slow_down"),
-        });
-      })
-      .catch(rethrowDeviceTransactionError);
-    throw outcome;
-  }
+  if (row.status !== "approved" || !row.userId) throw await pollUnapprovedDeviceCode(row);
 
   const userId = row.userId;
   const secret = generateProductCredentialSecret("deviceCredential");
@@ -192,7 +127,7 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
         if (!host) throw new Error("Missing enrollment host");
         // Validate expiry after host/unique waits, then revalidate after the remaining writes.
         const commitNow = await deviceDatabaseNow(tx);
-        if (row.expiresAt <= commitNow) throw expiredError();
+        if (row.expiresAt <= commitNow) throw deviceExpiredError();
         const consumed = await tx.deviceCode.deleteMany({
           where: {
             id: row.id,
@@ -234,7 +169,7 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
           select: { ...ownerCredentialPolicyUserSelect, emailVerified: true },
         });
         const policyNow = await deviceDatabaseNow(tx);
-        if (row.expiresAt <= policyNow) throw expiredError();
+        if (row.expiresAt <= policyNow) throw deviceExpiredError();
         if (
           !owner?.emailVerified ||
           !(await isOwnerCredentialPolicySatisfied(owner, policyNow, settings))
@@ -267,19 +202,6 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
     }
     rethrowDeviceTransactionError(error);
   }
-}
-
-function pendingError() {
-  return new ORPCError("BAD_REQUEST", {
-    message: "Device authorization is pending.",
-    data: deviceFlowErrorData("authorization_pending"),
-  });
-}
-function expiredError() {
-  return new ORPCError("BAD_REQUEST", {
-    message: "Device code expired.",
-    data: deviceFlowErrorData("expired_token"),
-  });
 }
 
 function isHostSlugConflict(error: unknown): boolean {

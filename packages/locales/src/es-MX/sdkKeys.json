@@ -53,7 +53,10 @@
     "allowlistTemplates": "Versiones de plantilla: {{names}}",
     "allowlistPools": "Grupos: {{names}}",
     "allowlistLogins": "Inicios de sesión: {{names}}",
-    "otherSandboxes": "Puede acceder a tus otros sandboxes dentro de los recursos autorizados"
+    "otherSandboxes": "Puede acceder a tus otros sandboxes dentro de los recursos autorizados",
+    "cliLogin": "Inicio de sesión de la CLI",
+    "maxLiveSandboxes_one": "Hasta {{count}} sandbox activo",
+    "maxLiveSandboxes_other": "Hasta {{count}} sandboxes activos"
   },
   "mint": {
     "action": "Crear clave de SDK",

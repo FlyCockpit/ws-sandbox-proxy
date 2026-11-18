@@ -24,6 +24,7 @@ import { sandboxesRouter } from "./sandboxes";
 import { sdkKeysRouter } from "./sdk-keys";
 import { settingsRouter } from "./settings";
 import { templateBuildsRouter } from "./template-builds";
+import { userLoginsRouter } from "./user-logins";
 import { usersRouter } from "./users";
 import { webhooksRouter } from "./webhooks";
 
@@ -59,6 +60,7 @@ export const appRouter = {
   adminDataKeys: adminDataKeysRouter,
   adminTunnel: adminTunnelRouter,
   hostCredentials: hostCredentialsRouter,
+  userLogins: userLoginsRouter,
   sandboxHosts: sandboxHostsRouter,
   sandboxPools: sandboxPoolsRouter,
   sandboxTemplates: sandboxTemplatesRouter,

@@ -216,6 +216,8 @@ model DeviceCode {
   // Null until approval; target id is deliberately not a cascading relation.
   enrollmentIntent String?
   replaceHostId    String?
+  /// Approved `user-login` grant (strict schema in @wssp/config/user-device-login); null for host rows.
+  loginGrant       Json?
   user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])

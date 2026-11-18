@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import en from "@wssp/locales/src/en-US/auth.json";
+import enCommon from "@wssp/locales/src/en-US/common.json";
 import { createInstance } from "i18next";
 import { createRoot } from "react-dom/client";
 import { I18nextProvider } from "react-i18next";
@@ -20,7 +21,7 @@ async function run() {
   const i18n = createInstance();
   await i18n.init({
     lng: "en-US",
-    resources: { "en-US": { auth: en } },
+    resources: { "en-US": { auth: en, common: enCommon } },
     interpolation: { escapeValue: false },
   });
   const output: string[] = [];
@@ -31,6 +32,7 @@ async function run() {
     const root = createRoot(container);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const summary = {
+      kind: "host",
       requestId: "request-row-1",
       slug: "desk-01",
       existingHost:
@@ -142,6 +144,7 @@ async function run() {
             ),
           "submit displayed intent",
         );
+        assert(!("grant" in (requests[1]?.body ?? {})), "a host approval never sends a grant");
         await until(() => container.textContent?.includes(en.device.approved.title) ?? false);
         const hostsLink = Array.from(container.querySelectorAll("a")).find(
           (anchor) => anchor.textContent === en.device.approved.viewHosts,
@@ -185,6 +188,7 @@ async function run() {
     const root = createRoot(container);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     Reflect.set(globalThis, "deviceTestSummary", {
+      kind: "host",
       requestId: "request-row-a",
       slug: "desk-01",
       existingHost: null,
@@ -237,6 +241,7 @@ async function run() {
           ) ?? false,
       );
     Reflect.set(globalThis, "deviceTestSummary", {
+      kind: "host",
       requestId: "request-row-b",
       slug: "desk-01",
       existingHost: null,
@@ -294,6 +299,7 @@ async function run() {
     const root = createRoot(container);
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     Reflect.set(globalThis, "deviceTestSummary", {
+      kind: "host",
       requestId: "request-row-1",
       slug: "desk-21",
       existingHost: null,
@@ -339,6 +345,253 @@ async function run() {
     container.remove();
     output.push("host-limit");
   }
+  if (Reflect.get(globalThis, "deviceTestMode") === "user-refetch-error") {
+    // A transient refetch error keeps the form with an inline retry; a
+    // not-found refetch hides it.
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    Reflect.set(globalThis, "deviceTestSummary", {
+      kind: "user",
+      requestId: "request-row-u",
+      status: "pending",
+    });
+    Reflect.set(globalThis, "deviceTestPoolQueries", 0);
+    Reflect.set(globalThis, "deviceTestPools", [
+      { id: "pool-1", slug: "build", label: "Build farm" },
+    ]);
+    client.setQueryData(["sdk-keys"], []);
+    let claimStatus = 200;
+    globalThis.fetch = async () =>
+      claimStatus === 200
+        ? Response.json({ success: true, deviceRequestId: "request-row-u" })
+        : Response.json({ message: "busy" }, { status: claimStatus });
+    root.render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>
+          <DevicePage lang="en-US" ownerId="owner-1" userCode="USERCODE" />
+        </QueryClientProvider>
+      </I18nextProvider>,
+    );
+    const button = (text: string) =>
+      [...container.querySelectorAll("button")].find((element) => element.textContent === text);
+    const form = () => container.querySelector('input[name="name"]');
+    await until(() => button(en.device.approve)?.disabled === false);
+    // A failed pool refetch keeps the loaded pools selectable, with a retry.
+    const labelled = (text: string) =>
+      [...container.querySelectorAll("label")].find((label) => label.textContent?.includes(text));
+    labelled(en.device.user.poolMode.SELECTED)?.click();
+    await until(() => !!labelled("Build farm"));
+    Reflect.set(globalThis, "deviceTestPoolError", new Error("pools down"));
+    await client.refetchQueries({ queryKey: ["pools", "infinite"] }).catch(() => undefined);
+    await until(() => container.textContent?.includes(en.device.user.poolsLoadError) ?? false);
+    assert(labelled("Build farm"), "loaded pools stay visible after a failed refetch");
+    Reflect.set(globalThis, "deviceTestPoolError", undefined);
+    button("Try again")?.click();
+    await until(() => !(container.textContent?.includes(en.device.user.poolsLoadError) ?? true));
+    // A failed claim refetch keeps the form, disables approval and offers a retry.
+    claimStatus = 503;
+    await client.refetchQueries({ queryKey: ["device-login-claim"] }).catch(() => undefined);
+    await until(() => !!button("Try again"));
+    assert(form(), "a failed claim refetch keeps the approver's form");
+    assert(button(en.device.approve)?.disabled === true, "approval waits for a good claim");
+    claimStatus = 200;
+    button("Try again")?.click();
+    await until(() => button(en.device.approve)?.disabled === false);
+    Reflect.set(globalThis, "deviceTestSummaryError", {
+      code: "INTERNAL_SERVER_ERROR",
+      status: 500,
+      message: "boom",
+    });
+    await client.refetchQueries({ queryKey: ["device-login-request"] }).catch(() => undefined);
+    await until(() => !!button("Try again"));
+    assert(form(), "a transient error keeps the approver's form");
+    assert(button(en.device.approve)?.disabled === true, "approval waits for a good summary");
+    Reflect.set(globalThis, "deviceTestSummaryError", {
+      code: "NOT_FOUND",
+      status: 404,
+      message: "gone",
+    });
+    button("Try again")?.click();
+    await until(() => !form());
+    assert(!button("Try again"), "a gone request offers no retry of the form");
+    Reflect.set(globalThis, "deviceTestSummaryError", undefined);
+    root.unmount();
+    client.clear();
+    container.remove();
+    output.push("user-refetch-error");
+  }
+  for (const mode of ["user-default", "user-selected", "user-invalid", "user-deny"] as const) {
+    // `wssp login` user login: the approver's grant is sent, never an intent.
+    if (Reflect.get(globalThis, "deviceTestMode") !== mode) continue;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    Reflect.set(globalThis, "deviceTestSummary", {
+      kind: "user",
+      requestId: "request-row-u",
+      status: "pending",
+    });
+    Reflect.set(globalThis, "deviceTestPoolQueries", 0);
+    Reflect.set(globalThis, "deviceTestPools", [
+      { id: "pool-1", slug: "build", label: "Build farm" },
+      { id: "pool-2", slug: "shared", label: "Shared", owner: { id: "owner-2", name: "Ana" } },
+    ]);
+    client.setQueryData(["sdk-keys"], []);
+    const requests: { url: string; body: Record<string, unknown> }[] = [];
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url: String(url), body: JSON.parse(String(options?.body ?? "{}")) });
+      return Response.json({ success: true, deviceRequestId: "request-row-u" });
+    };
+    root.render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>
+          <DevicePage lang="en-US" ownerId="owner-1" userCode="USERCODE" />
+        </QueryClientProvider>
+      </I18nextProvider>,
+    );
+    const button = (text: string) =>
+      [...container.querySelectorAll("button")].find((element) => element.textContent === text);
+    const labelled = (text: string) =>
+      [...container.querySelectorAll("label")].find((label) => label.textContent?.includes(text));
+    const setInput = (input: HTMLInputElement, value: string) => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await until(() => button(en.device.approve)?.disabled === false);
+    assert(
+      container.textContent?.includes(en.device.user.approveTitle),
+      "user login has its own title",
+    );
+    assert(
+      container.textContent?.includes(en.device.user.warning),
+      "user login warns to approve only a login you started",
+    );
+    assert(
+      !container.textContent?.includes(en.device.request.slugLabel),
+      "user login shows no host details",
+    );
+    assert(
+      Reflect.get(globalThis, "deviceTestPoolQueries") === 0,
+      "pools load only once selected pools are chosen",
+    );
+    if (mode === "user-deny") {
+      button(en.device.deny)?.click();
+      await until(() => container.textContent?.includes(en.device.denied.title) ?? false);
+      assert(
+        container.textContent?.includes(en.device.user.denied.description),
+        "user deny explains no API key is issued",
+      );
+      assert(
+        requests.length === 2 && requests[1]?.url.endsWith("/deny"),
+        "deny posts only the deny",
+      );
+    } else {
+      if (mode === "user-selected" || mode === "user-invalid") {
+        labelled(en.device.user.poolMode.SELECTED)?.click();
+        await until(() => Reflect.get(globalThis, "deviceTestPoolQueries") === 1);
+      }
+      if (mode === "user-invalid") {
+        // No pool chosen and a half-typed limit (a number input would report
+        // `1e` as "", i.e. no limit): the form refuses and sends nothing.
+        const limit = container.querySelector<HTMLInputElement>('input[name="maxLiveSandboxes"]');
+        assert(limit, "live sandbox limit input");
+        setInput(limit, "1e");
+        await tick();
+        button(en.device.approve)?.click();
+        await until(
+          () =>
+            (container.textContent?.includes(en.device.user.poolsRequired) ?? false) &&
+            (container.textContent?.includes(
+              en.device.user.maxLiveInvalid.replace("{{max}}", "1000"),
+            ) ??
+              false),
+        );
+        assert(requests.length === 1, "an invalid grant is never submitted");
+      } else {
+        if (mode === "user-selected") {
+          await until(() => !!labelled("Shared"));
+          labelled("Build farm")?.click();
+          const clear = () =>
+            [...container.querySelectorAll("button")].find((element) =>
+              element.textContent?.startsWith("Clear selection"),
+            );
+          await until(() => clear()?.textContent === "Clear selection (1 pool)");
+          // Clearing works even for a pool whose checkbox disappeared.
+          clear()?.click();
+          await until(() => !clear());
+          labelled("Shared")?.click();
+          labelled(en.device.user.access.write)?.click();
+          labelled(en.device.user.ownSandboxesOnly)?.click();
+          const limit = container.querySelector<HTMLInputElement>('input[name="maxLiveSandboxes"]');
+          assert(limit, "live sandbox limit input");
+          setInput(limit, "3");
+          const name = container.querySelector<HTMLInputElement>('input[name="name"]');
+          assert(name, "name input");
+          setInput(name, "  laptop  ");
+          await tick();
+          // A background refetch of the same request keeps the choices and
+          // holds approval until it settles.
+          Reflect.set(globalThis, "deviceTestSummaryDelayMs", 100);
+          const refetch = client.refetchQueries({ queryKey: ["device-login-request"] });
+          await until(() => button(en.device.approve)?.disabled === true);
+          await refetch;
+          Reflect.set(globalThis, "deviceTestSummaryDelayMs", 0);
+          await until(() => button(en.device.approve)?.disabled === false);
+          await tick();
+        }
+        button(en.device.approve)?.click();
+        await until(() => requests.length === 2);
+        const body = requests[1]?.body ?? {};
+        assert(requests[1]?.url.endsWith("/approve"), "approve endpoint");
+        assert(!("intent" in body), "a user approval never sends an intent");
+        const expected =
+          mode === "user-selected"
+            ? {
+                access: "write",
+                poolMode: "SELECTED",
+                poolIds: ["pool-2"],
+                ownSandboxesOnly: true,
+                maxLiveSandboxes: 3,
+                expiresInDays: 30,
+                name: "laptop",
+              }
+            : {
+                access: "read",
+                poolMode: "ALL_USABLE",
+                poolIds: [],
+                ownSandboxesOnly: false,
+                maxLiveSandboxes: null,
+                expiresInDays: 30,
+                name: "wssp login",
+              };
+        assert(
+          JSON.stringify(body) === JSON.stringify({ userCode: "USERCODE", grant: expected }),
+          `submit the chosen grant: ${JSON.stringify(body)}`,
+        );
+        await until(() => container.textContent?.includes(en.device.user.approved.title) ?? false);
+        const keysLink = [...container.querySelectorAll("a")].find(
+          (anchor) => anchor.textContent === en.device.user.approved.viewKeys,
+        );
+        assert(
+          keysLink?.dataset.to === "/$lang/settings/sdk-keys" &&
+            keysLink.dataset.params === JSON.stringify({ lang: "en-US" }),
+          "approved user login links to SDK keys",
+        );
+        assert(
+          !container.textContent?.includes(en.device.approved.viewHosts),
+          "approved user login does not point at hosts",
+        );
+        assert(client.getQueryState(["sdk-keys"])?.isInvalidated, "approval invalidates SDK keys");
+      }
+    }
+    root.unmount();
+    client.clear();
+    container.remove();
+    output.push(mode);
+  }
   if (Reflect.get(globalThis, "deviceTestMode") === "recycled-user-code") {
     const container = document.createElement("div");
     document.body.append(container);
@@ -356,6 +609,7 @@ async function run() {
         if (claimGeneration === 2) await secondClaimBarrier;
         const requestId = claimGeneration === 1 ? "request-row-a" : "request-row-b";
         Reflect.set(globalThis, "deviceTestSummary", {
+          kind: "host",
           requestId,
           slug: claimGeneration === 1 ? "desk-old" : "desk-new",
           existingHost: null,

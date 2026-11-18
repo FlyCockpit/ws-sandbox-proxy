@@ -61,6 +61,8 @@ const actions = {
   writeHostFile: "hostFiles.write",
   editHostFile: "hostFiles.edit",
   getCapabilities: "capabilities.get",
+  getKey: "key.get",
+  revokeKey: "key.revokeSelf",
   listPools: "pools.list",
   getPool: "pools.get",
   getPoolCapacity: "pools.capacity",

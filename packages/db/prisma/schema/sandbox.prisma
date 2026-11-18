@@ -372,10 +372,20 @@ enum SdkKeyPoolMode {
   SELECTED
 }
 
+/// Where an API key came from: minted on the dashboard, or by a `wssp login`
+/// device approval (the only origin that may revoke itself over `/v1`).
+enum SdkKeyOrigin {
+  DASHBOARD
+  CLI_LOGIN
+}
+
 /// Owner-scoped SDK bearer credential for the `/v1` HTTP plane.
 model SdkKey {
   kind                SdkKeyKind                  @default(API)
+  origin              SdkKeyOrigin                @default(DASHBOARD)
   ownSandboxesOnly    Boolean                     @default(false)
+  /// Live WORKLOAD sandboxes this key may have created at once; null = no limit. Immutable after mint.
+  maxLiveSandboxes    Int?
   McpGrant            McpGrant?
   HostQueuedCommands  HostQueuedCommand[]
   HostFileReceipts    HostFileReceipt[]
@@ -400,6 +410,7 @@ model SdkKey {
   CredentialAllowlist SdkKeyCredentialAllowlist[]
 
   // @check sdk_key_kind_secret: ("kind" = 'OAUTH_GRANT' AND "lookupPrefix" IS NULL AND "secretDigest" IS NULL) OR ("kind" <> 'OAUTH_GRANT' AND "lookupPrefix" IS NOT NULL AND "secretDigest" IS NOT NULL)
+  // @check sdk_key_max_live_sandboxes: "maxLiveSandboxes" IS NULL OR "maxLiveSandboxes" BETWEEN 1 AND 1000
   @@unique([lookupPrefix])
   @@unique([secretDigest])
   @@unique([id, userId])

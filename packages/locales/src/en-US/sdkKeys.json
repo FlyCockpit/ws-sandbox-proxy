@@ -21,7 +21,10 @@
     "allowlistTemplates": "Template versions: {{names}}",
     "allowlistPools": "Pools: {{names}}",
     "allowlistLogins": "Logins: {{names}}",
-    "otherSandboxes": "May access your other sandboxes within its resource grants"
+    "otherSandboxes": "May access your other sandboxes within its resource grants",
+    "cliLogin": "CLI login",
+    "maxLiveSandboxes_one": "Up to {{count}} live sandbox",
+    "maxLiveSandboxes_other": "Up to {{count}} live sandboxes"
   },
   "revoke": {
     "title": "Revoke {{name}}?",

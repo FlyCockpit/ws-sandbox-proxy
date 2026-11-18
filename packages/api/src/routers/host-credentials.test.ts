@@ -171,6 +171,7 @@ describe("hostCredentialsRouter", () => {
     const client = createRouterClient(hostCredentialsRouter, { context: buildContext() });
 
     await expect(client.deviceLoginRequest({ userCode: "ABCD-EFGH" })).resolves.toEqual({
+      kind: "host",
       requestId: "device-code-row-1",
       status: "pending",
       slug: "desk-01",
@@ -181,6 +182,28 @@ describe("hostCredentialsRouter", () => {
         where: { userCode: { in: ["ABCD-EFGH", "ABCDEFGH"] }, userId: "user-1" },
       }),
     );
+  });
+
+  it("deviceLoginRequest describes a user login by kind only, with nothing the CLI chose", async () => {
+    db.deviceCode.findFirst.mockResolvedValue(
+      deviceCodeRow({ status: "pending", scope: "user-login" }),
+    );
+    const client = createRouterClient(hostCredentialsRouter, { context: buildContext() });
+    await expect(client.deviceLoginRequest({ userCode: "ABCDEFGH" })).resolves.toEqual({
+      kind: "user",
+      requestId: "device-code-row-1",
+      status: "pending",
+    });
+    expect(db.sandboxHost.findUnique).not.toHaveBeenCalled();
+  });
+
+  it("host exchange refuses a user-login code before polling or consuming it", async () => {
+    db.deviceCode.findUnique.mockResolvedValue(deviceCodeRow({ scope: "user-login" }));
+    const client = createRouterClient(hostCredentialsRouter, { context: buildContext(null) });
+    await expect(
+      client.exchangeDeviceCode({ deviceCode: "approved-device-code", hostSlug: "desk-01" }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
   it("deviceLoginRequest requires authentication", async () => {

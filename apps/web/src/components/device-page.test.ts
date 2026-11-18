@@ -38,7 +38,7 @@ function deviceBundleCode(): Promise<string> {
 async function buildDeviceBundle(): Promise<string> {
   const stubs: Record<string, string> = {
     "@wssp/env/web": 'export const env = { VITE_SERVER_URL: "https://api.example.test" };',
-    "@/utils/orpc": `export const orpc = { hostCredentials: { deviceLoginRequest: { queryOptions: ({input}) => ({ queryKey: ["device-login-request", "owner-1", globalThis.deviceTestSummary?.requestId ?? "pending", { userCode: input.userCode }], queryFn: async () => { globalThis.deviceTestQueries++; return globalThis.deviceTestSummary; } }) } }, sandboxHosts: { key: () => ["hosts"] } };`,
+    "@/utils/orpc": `export const orpc = { hostCredentials: { deviceLoginRequest: { queryOptions: ({input}) => ({ queryKey: ["device-login-request", "owner-1", globalThis.deviceTestSummary?.requestId ?? "pending", { userCode: input.userCode }], queryFn: async () => { globalThis.deviceTestQueries++; if (globalThis.deviceTestSummaryDelayMs) await new Promise((resolve) => setTimeout(resolve, globalThis.deviceTestSummaryDelayMs)); if (globalThis.deviceTestSummaryError) throw globalThis.deviceTestSummaryError; return globalThis.deviceTestSummary; } }) } }, sandboxHosts: { key: () => ["hosts"] }, sdkKeys: { list: { key: () => ["sdk-keys"] } }, sandboxPools: { listUsable: { key: () => ["pools"], infiniteOptions: ({ input, initialPageParam, getNextPageParam }) => ({ queryKey: ["pools", "infinite"], initialPageParam, getNextPageParam, queryFn: async ({ pageParam }) => { input(pageParam); globalThis.deviceTestPoolQueries++; if (globalThis.deviceTestPoolError) throw globalThis.deviceTestPoolError; return { items: globalThis.deviceTestPools ?? [], nextCursor: null }; } }) } } };`,
     "@/utils/friendly-error": "export const friendly = (_error, fallback) => fallback;",
     "@wssp/ui/components/sileo":
       "export const toast = { success() { globalThis.deviceTestToasts = (globalThis.deviceTestToasts ?? 0) + 1; }, error(message) { globalThis.deviceTestToasts = (globalThis.deviceTestToasts ?? 0) + 1; (globalThis.deviceTestToastErrors ??= []).push(message); } };",
@@ -99,6 +99,11 @@ it.concurrent.for([
   "late-error",
   "recycled-user-code",
   "host-limit",
+  "user-default",
+  "user-selected",
+  "user-invalid",
+  "user-deny",
+  "user-refetch-error",
 ])("DevicePage DOM: %s", { timeout: 30_000 }, async (mode, { expect }) => {
   const directory = mkdtempSync(join(tmpdir(), "wssp-device-dom-"));
   try {

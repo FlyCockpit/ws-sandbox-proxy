@@ -18,7 +18,7 @@ import {
   DISABLED_BETTER_AUTH_PATHS,
   deviceIssuanceGuard,
   deviceVerificationUri,
-  requireHostDeviceLoginScope,
+  requireDeviceLoginScope,
 } from "./host-device-login-scope.js";
 import { resolveMcpPlugins } from "./mcp-plugins";
 import {
@@ -326,7 +326,7 @@ export const auth = betterAuth({
       verificationUri: deviceVerificationUri(env.BETTER_AUTH_URL, env.CORS_ORIGIN),
       expiresIn: "30m",
       interval: "5s",
-      onDeviceAuthRequest: requireHostDeviceLoginScope,
+      onDeviceAuthRequest: requireDeviceLoginScope,
       schema: { deviceCode: { modelName: "deviceCode" } },
     }),
   ],

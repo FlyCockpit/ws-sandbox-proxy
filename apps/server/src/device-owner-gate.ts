@@ -3,6 +3,7 @@ import { ownerDeviceProcedure } from "@wssp/api";
 import { transitionDeviceCode } from "@wssp/api/lib/device-code-transitions";
 import { evaluateOwnerDeviceSession } from "@wssp/api/lib/owner-device-session-gate";
 import { auth, type Session } from "@wssp/auth";
+import { userLoginGrantSchema } from "@wssp/config/user-device-login";
 import type { Context, Next } from "hono";
 import { z } from "zod";
 import { validateSameSiteJsonRequest } from "./request-origin.js";
@@ -52,6 +53,8 @@ const deviceDecisionInput = z.object({
       z.object({ kind: z.literal("replace"), hostId: z.string().min(1).max(191) }),
     ])
     .optional(),
+  /** A `user-login` approval's chosen grant; the transition refuses it on a host row. */
+  grant: userLoginGrantSchema.optional(),
 });
 
 // Parse the body before entering the registered gate: a slow body cannot carry
@@ -96,7 +99,9 @@ export async function deviceDecisionHandler(c: Context) {
             ? 401
             : error.code === "FORBIDDEN"
               ? 403
-              : 400,
+              : error.code === "NOT_FOUND"
+                ? 404
+                : 400,
     );
   }
 }

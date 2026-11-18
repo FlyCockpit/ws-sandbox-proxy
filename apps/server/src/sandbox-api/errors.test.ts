@@ -56,6 +56,9 @@ it("returns only catalog fields for every supported error and redacts unknown an
           ...(code === "sandbox.capacity_queue_full" ? { scope: "key" } : {}),
           ...(BUILD_FIELDS[code] ?? {}),
           ...(code === "host.file_error" ? { reason: "path_denied" } : {}),
+          ...(code === "sandbox.key_limit_reached"
+            ? { maxLiveSandboxes: 2, liveSandboxes: 2 }
+            : {}),
           ...(code === "sandbox.template_image_unavailable"
             ? { reason: "rebuilding", hint: "rebuild_required" }
             : {}),
@@ -102,6 +105,9 @@ it("returns only catalog fields for every supported error and redacts unknown an
           ...(code === "host.agent_access_off" ? { retryable: false } : {}),
           ...(code === "host.node_offline" ? { retryable: true } : {}),
           ...(code === "host.file_error" ? { data: { reason: "path_denied" } } : {}),
+          ...(code === "sandbox.key_limit_reached"
+            ? { data: { maxLiveSandboxes: 2, liveSandboxes: 2 } }
+            : {}),
           ...(retryAfter === undefined ? {} : { retryAfterSeconds: retryAfter }),
         },
       });
@@ -247,6 +253,7 @@ const PROBES: Record<string, Record<string, unknown>> = {
   egress: { reason: "open_egress_not_permitted" },
   valueInvalid: { entry: "bundle.undeclared_path", path: ".fakecli" },
   retry: { retryAfterSeconds: 7 },
+  keyLimit: { maxLiveSandboxes: 2, liveSandboxes: 2 },
   ...Object.fromEntries(Object.entries(BUILD_FIELDS).map(([code, fields]) => [code, fields])),
 };
 it("E2-B-01 every emitted error envelope parses under the strict public contract", async () => {

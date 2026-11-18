@@ -58,6 +58,47 @@ sandbox, operation and transfer belongs to exactly one user account.
   it: revoking the key does not delete or disable its endpoints. See
   [webhooks](./webhooks.md).
 
+### CLI user logins (`wssp login`)
+
+`wssp login` gets an SDK key for the machine it runs on through a browser
+approval, so you never paste a key into a terminal. (This is unrelated to the
+CLI logins of the credential vault, which are tool sign-ins inside sandboxes.)
+
+- The CLI starts a device authorization with the scope `user-login`. You open
+  the approval page in a browser that is signed in to your account and choose
+  the key there; the CLI supplies nothing that is shown on the page. Approve
+  only a request you started yourself on the other device.
+- You choose a name (default `wssp login`), access **read** or **write**, all
+  usable pools or selected ones, whether the key sees only the sandboxes it
+  creates, an optional limit on its live sandboxes, and an expiry of 1, 7, 30
+  (default) or 90 days. There is no "never expires".
+- **read** holds `hosts:read`, `pools:read`, `templates:read`,
+  `sandboxes:read`, `commands:read`, `files:read` and `operations:read`. Read
+  access still lets that device read files and command output in your
+  sandboxes. **write** adds `sandboxes:create`, `sandboxes:manage`,
+  `sandboxes:destroy`, `commands:execute`, `files:write`, `operations:cancel`
+  and `sandboxes:tunnel`. Neither ever holds host access (`hosts:execute`,
+  `hosts:files`), template writes or builds, `webhooks:write` or any
+  `credentials:*` scope.
+- The exchange (`userLogins.exchangeDeviceCode`) mints an ordinary `wssp_sdk_`
+  key over all owned resources, marked as a CLI login. It re-checks the
+  selected pools and your account's credential policy at that moment, so a pool
+  you lost access to after approving refuses the login. One account holds at
+  most 20 active CLI-login keys; revoke an old one to log in again.
+- Revoke a CLI login like any key on the **SDK keys** page, where it carries a
+  "CLI login" badge, or from the device itself: `wssp logout` calls
+  `DELETE /v1/key`, which only a CLI-login key may call on itself (any other
+  key gets `key.self_revoke_forbidden`). `GET /v1/key` describes the calling
+  key (name, scopes, pools, expiry, limit), never the account email.
+- **Live sandbox limit.** A key with a limit can have at most that many live
+  sandboxes it created at once (1 to 1000). A sandbox counts from its create,
+  including while it waits for capacity, until its host confirms the destroy
+  (or the host is lost); stopped sandboxes count. A create over the limit fails with
+  `sandbox.key_limit_reached` (409) and the limit and count in `data`; retrying
+  the same create (same idempotency key) still returns the sandbox it made.
+  Sandboxes created by other keys or in the browser do not count. The limit is
+  fixed at approval. There is no spend limit: wssp has no notion of cost.
+
 ## MCP plane
 
 - Connect agents to `/mcp` using a person-minted agent token (`SdkKeyKind.AGENT_TOKEN`,

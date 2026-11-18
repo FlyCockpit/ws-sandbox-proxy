@@ -66,6 +66,8 @@ export function parseServiceScopeSet(scopes: readonly string[]): ServiceScope[] 
 /** Every SDK/HTTP service entry point. HTTP adapters must use this same set. */
 export const SERVICE_ACTIONS = [
   "capabilities.get",
+  "key.get",
+  "key.revokeSelf",
   "hosts.list",
   "hosts.get",
   "hostCommands.run",
@@ -241,6 +243,9 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   // Any active key may read its own grant and the server's enabled features;
   // the response discloses no owner resources (C23).
   "capabilities.get": { scopes: [] },
+  // The calling key itself (GET/DELETE /v1/key); never an MCP tool.
+  "key.get": { scopes: [] },
+  "key.revokeSelf": { scopes: [] },
   "hosts.list": { scopes: ["hosts:read"] },
   "hosts.get": { scopes: ["hosts:read"], requiresHost: true },
   "hostCommands.run": { scopes: ["hosts:execute"], requiresHost: true, requiresOwnedHost: true },

@@ -73,6 +73,7 @@ import {
   hostQueuedCommandSchema,
   queueHostCommandBodySchema,
 } from "./hosts";
+import { keyInfoSchema, keyRevokedSchema } from "./keys";
 import {
   actionReceiptSchema,
   appendTemplateRevisionBodySchema,
@@ -108,7 +109,6 @@ import {
   qualifiedProcessSignalSchema,
 } from "./processes";
 import { operationResultSchema, resultListOptionsSchema } from "./results";
-
 import {
   BUILD_CONTEXT_ROUTES,
   communityTemplateCreateBodySchema,
@@ -1088,7 +1088,43 @@ export const HOST_ROUTES = {
   },
 } as const satisfies Record<string, SdkRoute>;
 
+/**
+ * The calling key itself. Any active key may read it (no scope). Only a CLI
+ * login (`wssp login`) may revoke itself; dashboard keys are revoked on the
+ * dashboard.
+ */
+const KEY_ROUTES = {
+  getKey: {
+    method: "get",
+    path: "/v1/key",
+    summary:
+      "Describe the calling key: name, origin, scopes, pools, expiry and its live sandbox limit.",
+    feature: "key.self",
+    scopes: [],
+    params: null,
+    query: emptyQuerySchema,
+    response: { name: "KeyInfo", schema: keyInfoSchema },
+    notFound: null,
+    paginated: false,
+  },
+  revokeKey: {
+    method: "delete",
+    path: "/v1/key",
+    summary: "Revoke the calling CLI-login key (`wssp logout`). Other keys answer 403.",
+    feature: "key.self",
+    scopes: [],
+    successStatus: 200,
+    params: null,
+    query: emptyQuerySchema,
+    response: { name: "KeyRevoked", schema: keyRevokedSchema },
+    notFound: null,
+    paginated: false,
+    errors: ["key.self_revoke_forbidden"],
+  },
+} as const satisfies Record<string, SdkRoute>;
+
 export const JSON_ROUTES = {
+  ...KEY_ROUTES,
   ...HOST_ROUTES,
   ...WEBHOOK_ROUTES,
   ...TEMPLATE_BUILD_ROUTES,
@@ -1745,6 +1781,7 @@ export const SDK_FEATURE_ROUTES = {
     "forceReleaseCredentialLease",
   ],
   "credentials.use": ["attachSandboxCredential", "freeSandboxCredential", "getOperation"],
+  "key.self": ["getKey", "revokeKey"],
 } as const satisfies Record<SdkFeature, readonly SdkRouteId[]>;
 export function enabledSdkFeatures(routeIds: readonly SdkRouteId[] = SDK_ROUTE_IDS): SdkFeature[] {
   const mounted = new Set(routeIds);

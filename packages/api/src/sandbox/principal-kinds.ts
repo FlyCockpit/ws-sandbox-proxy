@@ -267,3 +267,18 @@ export function buildIdOf(p: Principal | AuthorizingPrincipal): string | null {
       return assertNever(p);
   }
 }
+
+/** The SDK key a principal calls as, or null. A session holds no key. A build
+ * records its accepting key but never acts as it: it creates managed VMs, which
+ * the key's live-sandbox limit does not count, and has no key self-routes. */
+export function callingKeyOf(p: Principal): { readonly keyId: string } | null {
+  switch (p.kind) {
+    case "sdkKey":
+      return { keyId: p.keyId };
+    case "session":
+    case "build":
+      return null;
+    default:
+      return assertNever(p);
+  }
+}

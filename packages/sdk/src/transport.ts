@@ -667,6 +667,7 @@ export function createWsspTransport(options: WsspTransportOptions): WsspTranspor
           scope: "scope" in error ? error.scope : null,
           retryable: "retryable" in error ? error.retryable : null,
           hint: "hint" in error ? (error.hint ?? null) : null,
+          keyLimit: error.code === "sandbox.key_limit_reached" ? error.data : null,
           valueInvalid:
             error.code === "credential.value_invalid"
               ? { entry: error.entry ?? null, path: error.path ?? null }

@@ -31,7 +31,7 @@ const reviewed: Record<string, string> = {
     "fdefe353a9bec8bbe260b57df4f043f53a8d4decb0eda5cde2c510da068a56f9",
   "packages/db/src/admin-governance.ts":
     "8dfdfe8c74e4776dff92c9a32c4bae6e4f233b389632c5c5afe3e7666f72071e",
-  "packages/auth/src/index.ts": "eba06783efc3ad681463c5e6aa37d056343b082aae886e7f8c979c37e8a03232",
+  "packages/auth/src/index.ts": "88408e82505911c393be4425cae5ed2d733f742d5a8055181c4c8ba3ea1263ed",
   "packages/api/src/routers/users.ts":
     "99d459a0be0cda733a10c0371afdf12a52effe253e41355034587297a503d800",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
@@ -43,7 +43,10 @@ const reviewed: Record<string, string> = {
   "packages/api/src/lib/owner-device-session-gate.ts":
     "a5a5b9f7bc8e50e59525635ae44b3bfd23c664f2884534a9a5437f9c5ded9976",
   "packages/api/src/lib/host-device-credential-access.ts":
-    "51da791eb6db6244959008fdb3252334d499cefab40ed11be2b20485ff05baed",
+    "7287f6e4b29bd4d638f783cd86b4a1aac08749cb662caf2224fa175b2221c871",
+  // `wssp login` mint: reads the owner's emailVerified for the credential policy (read only).
+  "packages/api/src/lib/user-login-credential-access.ts":
+    "c31f23df0cdfa739d5e27306c9b79ab7e26d664386ccf6e4c52f3084564aa086",
 };
 function unsafeProofWriters(source: string, reviewedDigest?: string) {
   if (/emailVerified|changeEmail|socialProviders/.test(source) && digest(source) !== reviewedDigest)

@@ -2,6 +2,7 @@ import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import type { AgentTokenExpiryPolicy } from "@wssp/config/agent-token-limits";
+import { Badge } from "@wssp/ui/components/badge";
 import { Button } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
 import {
@@ -223,7 +224,14 @@ function SdkKeyRow({
     >
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{sdkKey.name}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            <p className="truncate text-sm font-medium">{sdkKey.name}</p>
+            {sdkKey.origin === "CLI_LOGIN" ? (
+              <Badge data-origin={sdkKey.origin} className="shrink-0">
+                {t("sdkKeys:list.cliLogin")}
+              </Badge>
+            ) : null}
+          </div>
           <p className="truncate font-mono text-xs text-muted-foreground">
             {t("credentials:prefix", { prefix: sdkKey.lookupPrefix })}
           </p>
@@ -318,6 +326,11 @@ function SdkKeyRow({
           sdkKey.ownSandboxesOnly ? "sdkKeys:form.ownSandboxesOnly" : "sdkKeys:list.otherSandboxes",
         )}
       </p>
+      {sdkKey.maxLiveSandboxes != null ? (
+        <p className="text-sm" data-max-live-sandboxes={sdkKey.maxLiveSandboxes}>
+          {t("sdkKeys:list.maxLiveSandboxes", { count: sdkKey.maxLiveSandboxes })}
+        </p>
+      ) : null}
       <CredentialDates
         createdAt={sdkKey.createdAt}
         lastUsedAt={sdkKey.lastUsedAt}

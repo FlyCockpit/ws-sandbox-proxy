@@ -378,6 +378,50 @@ describe("sdk key list", () => {
     expect(key.getAttribute("data-expired")).toBe("true");
     expect(document.body.innerHTML).not.toContain("DIGEST-NOT-SHOWN");
   });
+
+  it("marks a CLI-login key and shows its live-sandbox limit; a dashboard key shows neither", async () => {
+    const now = Date.now();
+    const base = {
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      poolIds: [],
+      scopes: ["sandboxes:read"],
+      lastUsedAt: null,
+      revokedAt: null,
+      expiresAt: new Date(now + 86_400_000),
+      createdAt: new Date(now - 86_400_000),
+      hostAllowlist: [],
+      revisionAllowlist: [],
+    };
+    server.keys = [
+      {
+        ...base,
+        id: "key-cli",
+        name: "wssp login",
+        lookupPrefix: "wssp_sdk_cliloginkey1",
+        origin: "CLI_LOGIN",
+        maxLiveSandboxes: 3,
+      },
+      {
+        ...base,
+        id: "key-dash",
+        name: "dashboard key",
+        lookupPrefix: "wssp_sdk_dashboardk1",
+        origin: "DASHBOARD",
+        maxLiveSandboxes: null,
+      },
+    ];
+    mount();
+    await screen.findByRole("list", { name: enSdkKeys.title });
+    const cli = row("key-cli");
+    expect(within(cli).getByText(enSdkKeys.list.cliLogin)).toBeTruthy();
+    expect(cli.querySelector("[data-max-live-sandboxes]")?.textContent).toBe(
+      "Up to 3 live sandboxes",
+    );
+    const dashboard = row("key-dash");
+    expect(within(dashboard).queryByText(enSdkKeys.list.cliLogin)).toBeNull();
+    expect(dashboard.querySelector("[data-max-live-sandboxes]")).toBeNull();
+  });
 });
 
 describe("scope dependency validation", () => {

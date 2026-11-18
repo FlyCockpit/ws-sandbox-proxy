@@ -23,12 +23,18 @@
     "./host-device-login": {
       "default": "./src/host-device-login.ts"
     },
+    "./user-device-login": {
+      "default": "./src/user-device-login.ts"
+    },
     "./host-status": {
       "default": "./src/host-status.ts"
     },
     "./browser-terminal": {
       "default": "./src/browser-terminal.ts"
     }
+  },
+  "dependencies": {
+    "zod": "catalog:"
   },
   "files": [
     "tsconfig.base.json",

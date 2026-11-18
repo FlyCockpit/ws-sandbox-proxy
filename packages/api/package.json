@@ -266,6 +266,7 @@
     "./sandbox/process-signals": "./src/sandbox/process-signals.ts",
     "./sandbox/process-connect": "./src/sandbox/process-connect.ts",
     "./sandbox/services/capabilities": "./src/sandbox/services/capabilities.ts",
+    "./sandbox/services/self-key": "./src/sandbox/services/self-key.ts",
     "./sandbox/sharing-access": "./src/sandbox/sharing-access.ts",
     "./sandbox/sharing-access-scheduler": "./src/sandbox/sharing-access-scheduler.ts",
     "./sandbox/host-terminal-policy": {

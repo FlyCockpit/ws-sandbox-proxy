@@ -999,6 +999,7 @@ export const SDK_FEATURES = [
   "sandboxes.guestSudo",
   "sandboxes.offloadPolicy",
   "sandboxes.tunnel",
+  "key.self",
 ] as const;
 export type SdkFeature = (typeof SDK_FEATURES)[number];
 

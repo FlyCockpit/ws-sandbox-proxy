@@ -151,6 +151,7 @@ import {
 import { probeHostSandbox } from "../host-image-verifier";
 import { requireHostJournalKeyAck } from "../idempotency";
 import { isReservedInternalIdempotencyKey } from "../idempotency-key-reserved";
+import { requireKeySandboxAllowance } from "../key-sandbox-limit";
 import { acceptedLaunchMode, currentlyRestoring } from "../launch-mode";
 import {
   acceptedLeaseFields,
@@ -1300,6 +1301,8 @@ export const createSandbox = serviceProcedure(
                 buildId: buildRole === "build" ? buildId : null,
                 rebuildOnMiss: true,
               });
+              // Under the placement lock resolvePlacement took (pool path).
+              await requireKeySandboxAllowance(tx, owner);
               if ("kind" in outcome) {
                 queued = await admitCapacityWait(tx, owner, input.waitForCapacityMs, outcome);
                 return queuedPoolContext({
@@ -1313,11 +1316,14 @@ export const createSandbox = serviceProcedure(
             }
             // A verify VM uses ordinary placement: no BuildPlacement, no
             // builder requirement (community-base S9 "Placement").
-            else
+            else {
               resolved = await resolvePlacement(tx, owner, placementInput, {
                 gate,
                 buildId: buildRole === "build" ? buildId : null,
               });
+              // Under the placement lock resolvePlacement took (direct or pool path).
+              await requireKeySandboxAllowance(tx, owner);
+            }
             return {
               sandboxHostId: resolved.hostId,
               templateRevisionId: resolved.revision.id,
