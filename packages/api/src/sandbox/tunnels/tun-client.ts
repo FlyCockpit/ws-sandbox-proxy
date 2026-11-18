@@ -163,15 +163,18 @@ export async function deleteTunnel(
 
 /** Tunnel ids carrying exactly this label (the service sees only its own).
  * Strict: a malformed page, or a tunnel with another label, is an error —
- * never "nothing there". Follows `next_cursor` (bounded). */
+ * never "nothing there". Follows `next_cursor` (bounded). `beforePage` runs
+ * before every request (a caller's deadline check may throw). */
 export async function tunnelsByLabel(
   server: Pick<TunnelServer, "apiUrl" | "credential">,
   label: string,
   doFetch?: TunFetch,
+  beforePage?: () => void,
 ): Promise<string[]> {
   const ids: string[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < 20; page++) {
+    beforePage?.();
     const query: string = `label=${encodeURIComponent(label)}&limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
     const body: { tunnels?: unknown; next_cursor?: unknown } = await call(
       server,

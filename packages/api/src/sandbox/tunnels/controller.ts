@@ -15,6 +15,8 @@ import {
   recordTunnelEvent,
   type SandboxTunnelRow,
   sandboxTunnelSelect,
+  TUNNEL_HOLD_MARGIN_MS,
+  TUNNEL_HOLD_MS,
   TUNNEL_OWED,
   tunnelLabel,
 } from "./rows";
@@ -57,11 +59,8 @@ const HOST_AWAY_GRACE_MS = 60_000;
 const SETTLE_MS = 5_000;
 const RETRY_MS = 60_000;
 const REPLACED_RETRIES = 5;
-/** A tunnel-server create in flight holds its row this long at most (its
- * calls time out after 10 s each); an expired hold becomes a label sweep. */
-const CREATE_LEASE_MS = 120_000;
-/** A create starts only this long before its hold ends (≥ the request timeout). */
-const CREATE_START_MARGIN_MS = 30_000;
+const CREATE_LEASE_MS = TUNNEL_HOLD_MS;
+const CREATE_START_MARGIN_MS = TUNNEL_HOLD_MARGIN_MS;
 /** An apply the connection could not take is retried after this. */
 const UNSENT_RETRY_MS = 10_000;
 const EVENT_RETENTION_MS = 90 * 24 * 3600 * 1000;
@@ -80,7 +79,8 @@ type Row = SandboxTunnelRow & {
   appliedAt: Date | null;
   creatingUntil: Date | null;
 };
-/** A create hold: its exact deadline identifies it; it bumped the generation. */
+/** A create (or clean-up) hold: its exact deadline identifies it; a
+ * create's bumped the generation. */
 type Hold = { until: Date; generation: number };
 type SandboxFacts = {
   id: string;
@@ -361,22 +361,84 @@ export class TunnelController {
     return updated.count === 1;
   }
 
-  /** Delete every tunnel labelled for the sandbox except `keep`. */
-  private async sweepLabel(server: TunnelServer, sandboxId: string, keep: string | null) {
+  /** Delete every tunnel labelled for the sandbox except `keep`, each call
+   * only while `hold` (when given) has time left for it. */
+  private async sweepLabel(
+    server: TunnelServer,
+    sandboxId: string,
+    keep: string | null,
+    hold?: Hold,
+  ) {
     for (const id of await this.tun.tunnelsByLabel(
       server,
       tunnelLabel(server.serverKey, sandboxId),
+      undefined,
+      () => this.requireHoldTime(hold),
     ))
-      if (id !== keep) await this.tun.deleteTunnel(server, id);
+      if (id !== keep) {
+        this.requireHoldTime(hold);
+        await this.tun.deleteTunnel(server, id);
+      }
+  }
+
+  /** A remote call never starts late in its hold: it must end before the
+   * hold can expire into a sweep (and so before a newer create can start). */
+  private requireHoldTime(hold: Hold | undefined) {
+    if (hold && this.now() > hold.until.getTime() - CREATE_START_MARGIN_MS)
+      throw new Error("tunnel clean-up hold ran out");
+  }
+
+  /**
+   * Take the row's hold for a clean-up before any remote call: a
+   * compare-and-set on the generation and key this pass read. Every create
+   * (its own hold), expose and settlement of remote state changes one of
+   * them, so a pass whose read is stale (another process settled the
+   * clean-up, and the owner may have exposed again since) misses it and makes
+   * no call at all: its label sweep can never delete a newer tunnel. A create
+   * waits for the hold, so none starts during the sweep. No bump: an in-sync
+   * tunnel whose label is swept stays applied.
+   */
+  private async holdForCleanup(row: Row): Promise<Hold | null> {
+    if (row.serverKey === null || row.creatingUntil !== null) return null;
+    const until = new Date(this.now() + CREATE_LEASE_MS);
+    const held = await prisma.sandboxTunnel.updateMany({
+      where: {
+        sandboxId: row.sandboxId,
+        userId: row.userId,
+        generation: row.generation,
+        serverKey: row.serverKey,
+        tunTunnelId: row.tunTunnelId,
+        creatingUntil: null,
+      },
+      data: { creatingUntil: until },
+    });
+    return held.count === 1 ? { until, generation: row.generation } : null;
+  }
+
+  /** A clean-up that could not finish gives its hold back; the row keeps
+   * every obligation it had (if this fails, the hold expires into a sweep). */
+  private async releaseCleanup(row: Row, hold: Hold) {
+    await prisma.sandboxTunnel
+      .updateMany({
+        where: { sandboxId: row.sandboxId, creatingUntil: hold.until },
+        data: { creatingUntil: null },
+      })
+      .catch(() => {
+        console.error(`[tunnels] could not release a clean-up hold for ${row.sandboxId}`);
+      });
   }
 
   /**
    * Delete the live tunnel and every other one labelled for the sandbox
-   * (tunnel server first, with the row's own configuration), tell the host,
-   * then record it: the row has no remote state left, so its key goes. The
-   * compare-and-set on (generation, key) misses when anything raised a new
-   * obligation meanwhile (every such write bumps the generation). Throws
-   * while the tunnel server cannot confirm: the row keeps its obligation.
+   * (tunnel server first, with the row's own configuration, under the row's
+   * clean-up hold), tell the host, then record it: the row has no remote
+   * state left, so its key goes. The settle compare-and-sets (generation,
+   * key) and, with remote state, this pass's hold: an expose, close or late
+   * obligation meanwhile (each bumps the generation), an expired hold or a
+   * remove-now makes it miss, and the hold is given back with every
+   * obligation kept. Throws while the tunnel server cannot confirm: the row
+   * keeps its obligation. A pass that cannot take the hold (its read is
+   * stale) does nothing.
    */
   private async takeDown(
     server: TunnelServer,
@@ -384,22 +446,35 @@ export class TunnelController {
     next: Prisma.SandboxTunnelUpdateManyMutationInput | "delete",
     drain = false,
   ) {
+    let hold: Hold | null = null;
     if (row.serverKey !== null) {
-      if (row.tunTunnelId) await this.tun.deleteTunnel(server, row.tunTunnelId);
-      await this.sweepLabel(server, row.sandboxId, null);
+      hold = await this.holdForCleanup(row);
+      if (!hold) return;
+      try {
+        this.requireHoldTime(hold);
+        if (row.tunTunnelId) await this.tun.deleteTunnel(server, row.tunTunnelId);
+        await this.sweepLabel(server, row.sandboxId, null, hold);
+      } catch (error) {
+        await this.releaseCleanup(row, hold);
+        throw error;
+      }
     }
     if (row.hostId && row.generation > 0)
       this.bridge()
         ?.link(row.hostId)
         ?.send({ type: "tunnel.clear", sandboxId: row.sandboxId, generation: row.generation });
     this.applied.delete(row.sandboxId);
-    await prisma.$transaction(async (tx) => {
+    const settle = async (tx: Prisma.TransactionClient) => {
       if (drain) await this.requireDraining(tx, server);
+      // By this pass's hold (when it has remote state) AND the generation it
+      // read: an expose, close or late obligation meanwhile bumped it, and
+      // then the row is left to a pass that sees it (the hold is released).
       const where = {
         sandboxId: row.sandboxId,
         userId: row.userId,
         generation: row.generation,
         serverKey: row.serverKey,
+        ...(hold ? { creatingUntil: hold.until } : {}),
       };
       const changed =
         next === "delete"
@@ -412,9 +487,11 @@ export class TunnelController {
                 hostTemplate: null,
                 hostId: null,
                 sweepLabel: false,
+                creatingUntil: null,
                 serverKey: null,
               },
             });
+      if (changed.count !== 1 && hold) throw new Error("tunnel clean-up superseded");
       if (changed.count === 1 && row.tunTunnelId)
         await recordTunnelEvent(tx, {
           kind: "tunnel.deleted",
@@ -422,7 +499,13 @@ export class TunnelController {
           sandboxId: row.sandboxId,
           detail: row.tunTunnelId,
         });
-    });
+    };
+    try {
+      await prisma.$transaction(settle);
+    } catch (error) {
+      if (hold) await this.releaseCleanup(row, hold);
+      throw error;
+    }
   }
 
   private async converge(
@@ -671,6 +754,8 @@ export class TunnelController {
         }
         await tx.sandboxTunnel.upsert({
           where: { sandboxId: row.sandboxId },
+          // The bump makes a clean-up holding the row meanwhile miss its
+          // settle (it compares the generation too): the obligation stays.
           // credential-settlement: exempt (preview-tunnel row generation)
           update: { sweepLabel: true, serverKey: server.serverKey, generation: { increment: 1 } },
           create: {
@@ -691,18 +776,35 @@ export class TunnelController {
     }
   }
 
-  /** Delete every labelled tunnel but the live one; without one, the key goes. */
+  /** Delete every labelled tunnel but the live one (under the row's clean-up
+   * hold, settled by it); without one, the key goes. */
   private async clearSweep(server: TunnelServer, row: Row) {
-    await this.sweepLabel(server, row.sandboxId, row.tunTunnelId);
-    await prisma.sandboxTunnel.updateMany({
-      where: {
-        sandboxId: row.sandboxId,
-        userId: row.userId,
-        generation: row.generation,
-        serverKey: row.serverKey,
-      },
-      data: { sweepLabel: false, ...(row.tunTunnelId ? {} : { serverKey: null }) },
-    });
+    const hold = await this.holdForCleanup(row);
+    if (!hold) return;
+    try {
+      await this.sweepLabel(server, row.sandboxId, row.tunTunnelId, hold);
+      const settled = await prisma.sandboxTunnel.updateMany({
+        where: {
+          sandboxId: row.sandboxId,
+          userId: row.userId,
+          generation: row.generation,
+          creatingUntil: hold.until,
+          serverKey: row.serverKey,
+          tunTunnelId: row.tunTunnelId,
+        },
+        data: {
+          sweepLabel: false,
+          creatingUntil: null,
+          ...(row.tunTunnelId ? {} : { serverKey: null }),
+        },
+      });
+      // A missed settle (a late obligation bumped the generation) keeps the
+      // row's obligations and gives the hold back.
+      if (settled.count !== 1) await this.releaseCleanup(row, hold);
+    } catch (error) {
+      await this.releaseCleanup(row, hold);
+      throw error;
+    }
   }
 
   private async apply(
@@ -735,6 +837,7 @@ export class TunnelController {
                 userId: row.userId,
                 generation: row.generation,
                 serverKey: row.serverKey,
+                creatingUntil: null,
               },
               data: { tunTunnelId: null, hostTemplate: null, hostId: null },
             });
@@ -748,8 +851,9 @@ export class TunnelController {
         hold = await this.holdForCreate(server, row);
         if (!hold) return;
         // A create whose answer (or save) was lost left a labelled tunnel
-        // nothing records: delete such leftovers first.
-        await this.sweepLabel(server, row.sandboxId, null);
+        // nothing records: delete such leftovers first (each call only while
+        // the hold has time left: a stalled sweep must never outlive it).
+        await this.sweepLabel(server, row.sandboxId, null, hold);
         // A create never starts late in its hold (a stalled process): its
         // request must end before the hold can expire into a sweep.
         if (this.now() > hold.until.getTime() - CREATE_START_MARGIN_MS) {
@@ -816,7 +920,8 @@ export class TunnelController {
             userId: row.userId,
             generation: base,
             serverKey: server.serverKey,
-            ...(hold ? { creatingUntil: hold.until } : {}),
+            // A rotation never lands during another pass's clean-up hold.
+            creatingUntil: hold ? hold.until : null,
           },
           data: {
             tunTunnelId: tunnelId,

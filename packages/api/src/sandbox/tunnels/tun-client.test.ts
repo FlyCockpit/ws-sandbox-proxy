@@ -131,6 +131,26 @@ describe("tunnel server client", () => {
     ).rejects.toBeInstanceOf(TunServerError);
   });
 
+  it("checks the caller's deadline before every page request", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ tunnels: [{ id: "a1", label: "wssp:s" }], next_cursor: "c1" }),
+        ),
+      );
+    let pages = 0;
+    const late = new Error("late");
+    await expect(
+      tunnelsByLabel(server, "wssp:s", fetch, () => {
+        pages += 1;
+        if (pages === 2) throw late;
+      }),
+    ).rejects.toBe(late);
+    // The second page was never requested.
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it("lists every tunnel with a label prefix and keeps only those", async () => {
     const pages = [
       {

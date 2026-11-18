@@ -141,6 +141,12 @@ server before the node daemons.
   `wssp:<configuration key>:<sandbox id>` deleted. A closed row stays until its sandbox is
   deleted: it keeps the tunnel's generation, which nodes use to ignore
   stale instructions.
+- Every tunnel-server create and every clean-up (a stop, close, destroy,
+  turn-off or label sweep) first takes its row's two-minute hold, and only
+  a server process whose view of the row is current can take it. While it
+  is held no other process creates, rotates or cleans up that sandbox's
+  tunnels, so a clean-up from an old view can never delete a tunnel the
+  owner exposed again since.
 - `sandbox_tunnel_event` records config changes, enable/disable, tunnel
   create/delete and link mints (with tunnel-server ids only: never a token or
   link URL), kept 90 days.

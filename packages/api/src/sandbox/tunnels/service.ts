@@ -28,6 +28,8 @@ import {
   recordTunnelEvent,
   type SandboxTunnelRow,
   sandboxTunnelSelect,
+  TUNNEL_HOLD_MARGIN_MS,
+  TUNNEL_HOLD_MS,
   toSandboxTunnelDto,
   tunnelLabel,
 } from "./rows";
@@ -209,9 +211,12 @@ export const closeSandboxTunnel = serviceProcedure(
 /**
  * Close: mark the row closed (a tombstone that keeps its generation) and try
  * to delete its tunnel and every other one labelled for the sandbox at once,
- * with the configuration its remote state was made with. The tunnel server's
- * deletion is what stops every client and link; if it cannot be reached now
- * the controller keeps retrying (the row keeps its key until then).
+ * with the configuration its remote state was made with, under the row's
+ * clean-up hold taken by the close itself (so no other pass cleans up, and
+ * no re-expose's create starts, while this sweeps; it settles by the hold).
+ * The tunnel server's deletion is what stops every client and link; if it
+ * cannot be reached now the controller keeps retrying (the row keeps its key
+ * until then).
  * Returns the closed row, or null when there was no open tunnel.
  */
 export async function closeTunnelRow(
@@ -229,9 +234,15 @@ export async function closeTunnelRow(
       WHERE "sandboxId" = ${sandboxId} AND "userId" = ${userId} FOR UPDATE`;
     const row = await tx.sandboxTunnel.findFirst({
       where: { sandboxId, userId, closedAt: null },
-      select: sandboxTunnelSelect,
+      select: { ...sandboxTunnelSelect, creatingUntil: true },
     });
     if (!row) return null;
+    // Remote state and no create in flight (that one settles itself first):
+    // this close cleans up, under the row's hold.
+    const hold =
+      row.serverKey !== null && row.creatingUntil === null
+        ? new Date(Date.now() + TUNNEL_HOLD_MS)
+        : null;
     const updated = await tx.sandboxTunnel.update({
       where: { sandboxId, userId },
       data: {
@@ -241,6 +252,7 @@ export async function closeTunnelRow(
         generation: { increment: 1 },
         state: "SUSPENDED",
         lastError: null,
+        ...(hold ? { creatingUntil: hold } : {}),
       },
       select: sandboxTunnelSelect,
     });
@@ -251,44 +263,67 @@ export async function closeTunnelRow(
       ...actor,
       detail: row.tunTunnelId,
     });
-    return { before: row, after: updated };
+    return { before: row, after: updated, hold };
   });
   if (!closed) return null;
-  const { before, after } = closed;
+  const { before, after, hold } = closed;
   if (before.hostId && before.generation > 0)
     tunnelBridge()
       ?.link(before.hostId)
       ?.send({ type: "tunnel.clear", sandboxId, generation: after.generation });
-  try {
-    const server = after.serverKey !== null ? await readTunnelServer() : null;
-    // Only with the configuration the remote state belongs to (a create in
-    // flight settles itself first: its hold keeps the row's key).
-    if (server && server.serverKey === after.serverKey) {
-      if (after.tunTunnelId) await deleteTunnel(server, after.tunTunnelId);
-      for (const id of await tunnelsByLabel(server, tunnelLabel(server.serverKey, sandboxId)))
-        await deleteTunnel(server, id);
-      // Settled only if nothing raised a new obligation meanwhile (every
-      // such write bumps the generation). Until then the row refuses a
-      // re-expose.
-      await prisma.sandboxTunnel.updateMany({
-        where: {
-          sandboxId,
-          userId,
-          generation: after.generation,
-          serverKey: after.serverKey,
-          creatingUntil: null,
-        },
-        data: {
-          tunTunnelId: null,
-          hostTemplate: null,
-          hostId: null,
-          sweepLabel: false,
-          serverKey: null,
-        },
-      });
+  if (hold) {
+    // Each call starts early enough to end before the hold can expire.
+    const inTime = () => {
+      if (Date.now() > hold.getTime() - TUNNEL_HOLD_MARGIN_MS)
+        throw new Error("tunnel clean-up hold ran out");
+    };
+    let settled = false;
+    try {
+      const server = await readTunnelServer();
+      // Only with the configuration the remote state belongs to.
+      if (server && server.serverKey === after.serverKey) {
+        inTime();
+        if (after.tunTunnelId) await deleteTunnel(server, after.tunTunnelId);
+        for (const id of await tunnelsByLabel(
+          server,
+          tunnelLabel(server.serverKey, sandboxId),
+          undefined,
+          inTime,
+        )) {
+          inTime();
+          await deleteTunnel(server, id);
+        }
+        // Settled by the hold and the close's generation (a late obligation
+        // meanwhile bumps it: then the hold is given back and the controller
+        // finishes). Until then the row refuses a re-expose.
+        const done = await prisma.sandboxTunnel.updateMany({
+          where: {
+            sandboxId,
+            userId,
+            generation: after.generation,
+            creatingUntil: hold,
+            serverKey: after.serverKey,
+          },
+          data: {
+            tunTunnelId: null,
+            hostTemplate: null,
+            hostId: null,
+            sweepLabel: false,
+            creatingUntil: null,
+            serverKey: null,
+          },
+        });
+        settled = done.count === 1;
+      }
+    } catch {
+      // The controller retries the deletion of a closed row's tunnels.
     }
-  } catch {
-    // The controller retries the deletion of a closed row's tunnels.
+    if (!settled)
+      await prisma.sandboxTunnel
+        .updateMany({ where: { sandboxId, creatingUntil: hold }, data: { creatingUntil: null } })
+        .catch(() => {
+          // The hold expires into a label sweep.
+        });
   }
   wakeTunnelController();
   return after;

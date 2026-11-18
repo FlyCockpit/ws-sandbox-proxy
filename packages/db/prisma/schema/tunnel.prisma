@@ -79,8 +79,9 @@ model SandboxTunnel {
   /// A tunnel this row's controller made may exist without being recorded
   /// (a lost save): sweep the sandbox's label on the next pass.
   sweepLabel    Boolean            @default(false)
-  /// A tunnel-server create is in flight until this time: the row is not
-  /// retired meanwhile; an expired hold becomes a label sweep.
+  /// A tunnel-server create or clean-up is in flight until this time (the
+  /// row's hold): no other create, rotation or clean-up of the row meanwhile,
+  /// and the row is not retired; an expired hold becomes a label sweep.
   creatingUntil DateTime?
   /// The `TunnelServerConfig.serverKey` this row's remote state (tunnel id,
   /// sweep, hold) was made with; null when it has none. Set only while that

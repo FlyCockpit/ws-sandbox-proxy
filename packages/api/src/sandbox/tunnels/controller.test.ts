@@ -209,7 +209,13 @@ function setup() {
     })),
     rotateTunnelToken: vi.fn(async () => `tntun_${"b".repeat(43)}`),
     deleteTunnel: vi.fn(async () => undefined),
-    tunnelsByLabel: vi.fn(async () => [] as string[]),
+    // Calls the caller's per-page deadline check, as the real listing does.
+    tunnelsByLabel: vi.fn(
+      async (_server: unknown, _label: string, _fetch?: unknown, beforePage?: () => void) => {
+        beforePage?.();
+        return [] as string[];
+      },
+    ),
     tunnelsWithLabelPrefix: vi.fn(async () => ({
       ids: [] as string[],
       next: null as string | null,
@@ -922,5 +928,228 @@ describe("tunnel controller invalidation", () => {
     });
     await local.tick();
     expect(t.tun.createTunnel).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("tunnel controller clean-up holds", () => {
+  const prismaMock = async () =>
+    (await import("@wssp/db")).default as unknown as {
+      sandboxTunnel: { findMany: ReturnType<typeof vi.fn> };
+    };
+
+  it("a pass with an old snapshot of a closed row never sweeps a re-exposed tunnel", async () => {
+    const t = setup();
+    await t.controller.tick();
+    // The owner closed the row (tun1 still recorded): this is the stale
+    // pass's snapshot.
+    const row = db.rows.get("sbx");
+    if (!row) throw new Error("row");
+    Object.assign(row, { closedAt: new Date(), generation: row.generation + 1 });
+    const snapshot = { ...row };
+    // Meanwhile another process finished that cleanup, the owner exposed the
+    // port again and a create made tun2 (same configuration, same label).
+    Object.assign(row, {
+      closedAt: null,
+      tunTunnelId: "tun2",
+      hostTemplate: "{port}-tun2.tunnel.example.com",
+      generation: row.generation + 3,
+      state: "CONNECTED",
+    });
+    (await prismaMock()).sandboxTunnel.findMany.mockResolvedValueOnce([snapshot]);
+    t.tun.tunnelsByLabel.mockClear();
+    t.tun.tunnelsByLabel.mockResolvedValue(["tun2"]);
+    t.tun.deleteTunnel.mockClear();
+    await t.controller.tick();
+    // No call at all: its hold's compare-and-set missed.
+    expect(t.tun.deleteTunnel).not.toHaveBeenCalled();
+    expect(t.tun.tunnelsByLabel).not.toHaveBeenCalled();
+    expect(db.rows.get("sbx")).toMatchObject({
+      tunTunnelId: "tun2",
+      closedAt: null,
+      creatingUntil: null,
+      serverKey: "key-1",
+    });
+    t.tun.tunnelsByLabel.mockResolvedValue([]);
+  });
+
+  it("a pass with an old snapshot owing a sweep never sweeps a newer tunnel", async () => {
+    const t = setup();
+    // The snapshot: a key without a tunnel (a label sweep owed).
+    const row = db.rows.get("sbx");
+    if (!row) throw new Error("row");
+    Object.assign(row, { serverKey: "key-1", state: "SUSPENDED" });
+    db.sandbox = { ...db.sandbox!, state: "STOPPED" };
+    const snapshot = { ...row };
+    // Another process swept, a create recorded tun2 since.
+    Object.assign(row, { tunTunnelId: "tun2", generation: row.generation + 2 });
+    (await prismaMock()).sandboxTunnel.findMany.mockResolvedValueOnce([snapshot]);
+    t.tun.tunnelsByLabel.mockResolvedValue(["tun2"]);
+    await t.controller.tick();
+    expect(t.tun.tunnelsByLabel).not.toHaveBeenCalled();
+    expect(t.tun.deleteTunnel).not.toHaveBeenCalled();
+    expect(db.rows.get("sbx")).toMatchObject({ tunTunnelId: "tun2", creatingUntil: null });
+    t.tun.tunnelsByLabel.mockResolvedValue([]);
+  });
+
+  it("a take-down holds its row: no create starts and no rotation lands during the sweep", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.sandbox = { ...db.sandbox!, state: "STOPPED" };
+    let during: Row | undefined;
+    t.tun.tunnelsByLabel.mockImplementationOnce(async () => {
+      during = { ...db.rows.get("sbx")! };
+      return [];
+    });
+    await t.controller.tick();
+    // The sweep ran under the hold, without a generation bump.
+    expect(during?.creatingUntil).not.toBeNull();
+    expect(during?.generation).toBe(2);
+    expect(db.rows.get("sbx")).toMatchObject({
+      tunTunnelId: null,
+      serverKey: null,
+      creatingUntil: null,
+      state: "SUSPENDED",
+    });
+  });
+
+  it("a held row refuses another pass's create and rotation", async () => {
+    const t = setup();
+    await t.controller.tick();
+    const row = db.rows.get("sbx");
+    if (!row) throw new Error("row");
+    // Another process holds the row for a clean-up; this pass rotates.
+    t.reconnect();
+    row.creatingUntil = new Date(1_000_000 + 60_000);
+    const before = t.sent.length;
+    (await prismaMock()).sandboxTunnel.findMany.mockResolvedValueOnce([
+      { ...row, creatingUntil: null },
+    ]);
+    await t.controller.tick();
+    expect(t.tun.rotateTunnelToken).toHaveBeenCalledTimes(1);
+    // Its save missed (the hold): nothing applied, the hold untouched.
+    expect(t.sent).toHaveLength(before);
+    expect(db.rows.get("sbx")?.creatingUntil).toEqual(new Date(1_000_000 + 60_000));
+  });
+
+  it("a clean-up the tunnel server refuses gives its hold back and keeps the obligation", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.sandbox = null;
+    t.tun.deleteTunnel.mockRejectedValueOnce(new Error("unreachable"));
+    await t.controller.tick();
+    expect(db.rows.get("sbx")).toMatchObject({
+      tunTunnelId: "tun1",
+      serverKey: "key-1",
+      creatingUntil: null,
+    });
+    await t.controller.tick();
+    expect(db.rows.has("sbx")).toBe(false);
+  });
+
+  it("a clean-up never starts a call late in its hold", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.sandbox = { ...db.sandbox!, state: "STOPPED" };
+    t.tun.deleteTunnel.mockImplementationOnce(async () => {
+      // The first delete stalled until the hold is nearly over.
+      t.advance(100_000);
+    });
+    t.tun.tunnelsByLabel.mockClear();
+    await t.controller.tick();
+    // The listing refused to start its request (the hold's deadline).
+    await expect(t.tun.tunnelsByLabel.mock.results[0]?.value).rejects.toThrow("hold ran out");
+    // The hold was given back; the row keeps its obligation for the next pass.
+    expect(db.rows.get("sbx")).toMatchObject({ serverKey: "key-1", creatingUntil: null });
+  });
+
+  it("a create's leftover sweep never runs late in its hold", async () => {
+    const t = setup();
+    t.tun.tunnelsByLabel.mockResolvedValueOnce(["old1", "old2"]);
+    t.tun.deleteTunnel.mockImplementationOnce(async () => {
+      // The first delete stalled until the hold is nearly over.
+      t.advance(100_000);
+    });
+    await t.controller.tick();
+    expect(t.tun.deleteTunnel).toHaveBeenCalledTimes(1);
+    expect(t.tun.createTunnel).not.toHaveBeenCalled();
+    // The hold became the label sweep it owes.
+    expect(db.rows.get("sbx")).toMatchObject({
+      creatingUntil: null,
+      sweepLabel: true,
+      serverKey: "key-1",
+    });
+  });
+
+  it("a sweep from a snapshot whose tunnel was forgotten since takes no hold", async () => {
+    const t = setup();
+    await t.controller.tick();
+    const row = db.rows.get("sbx");
+    if (!row) throw new Error("row");
+    row.sweepLabel = true;
+    const snapshot = { ...row };
+    // A rotation 404 forgot tun1 meanwhile (no generation bump).
+    Object.assign(row, { tunTunnelId: null, hostTemplate: null, hostId: null });
+    (await prismaMock()).sandboxTunnel.findMany.mockResolvedValueOnce([snapshot]);
+    t.tun.tunnelsByLabel.mockClear();
+    await t.controller.tick();
+    expect(t.tun.tunnelsByLabel).not.toHaveBeenCalled();
+    expect(db.rows.get("sbx")?.creatingUntil).toBeNull();
+  });
+
+  it("an expose during a take-down keeps its state; the next pass settles", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.sandbox = { ...db.sandbox!, state: "STOPPED" };
+    t.tun.tunnelsByLabel.mockImplementationOnce(async () => {
+      // The owner exposes other ports meanwhile (bumps the generation).
+      const row = db.rows.get("sbx");
+      if (row)
+        Object.assign(row, { ports: [5173], state: "PENDING", generation: row.generation + 1 });
+      return [];
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await t.controller.tick();
+    error.mockRestore();
+    // The settle missed: the hold is given back, every obligation kept.
+    expect(db.rows.get("sbx")).toMatchObject({
+      tunTunnelId: "tun1",
+      serverKey: "key-1",
+      creatingUntil: null,
+      state: "PENDING",
+      ports: [5173],
+    });
+    await t.controller.tick();
+    expect(db.rows.get("sbx")).toMatchObject({
+      tunTunnelId: null,
+      serverKey: null,
+      creatingUntil: null,
+      ports: [5173],
+    });
+  });
+
+  it("a late create's sweep obligation recorded during a clean-up hold survives it", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.sandbox = { ...db.sandbox!, state: "STOPPED" };
+    let hold: Date | null = null;
+    t.tun.tunnelsByLabel.mockImplementationOnce(async () => {
+      // A create that outlived its hold records its sweep obligation (the
+      // fallback upsert: flag + bump, the foreign hold left in place).
+      const row = db.rows.get("sbx");
+      if (row) {
+        hold = row.creatingUntil;
+        Object.assign(row, { sweepLabel: true, generation: row.generation + 1 });
+      }
+      return [];
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await t.controller.tick();
+    error.mockRestore();
+    expect(hold).not.toBeNull();
+    expect(db.rows.get("sbx")).toMatchObject({
+      sweepLabel: true,
+      serverKey: "key-1",
+      creatingUntil: null,
+    });
   });
 });

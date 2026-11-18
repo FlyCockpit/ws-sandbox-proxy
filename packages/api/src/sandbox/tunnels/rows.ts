@@ -22,6 +22,14 @@ export type SandboxTunnelRow = Prisma.SandboxTunnelGetPayload<{
   select: typeof sandboxTunnelSelect;
 }>;
 
+/** A tunnel-server create or clean-up in flight holds its row
+ * (`creatingUntil`) this long at most (its calls time out after 10 s each);
+ * an expired hold becomes a label sweep. */
+export const TUNNEL_HOLD_MS = 120_000;
+/** A create, or a clean-up's next call, starts only this long before its
+ * hold ends (≥ the request timeout). */
+export const TUNNEL_HOLD_MARGIN_MS = 30_000;
+
 /** Rows that may have a tunnel on the tunnel server (a recorded one, a
  * label sweep owed, or a create in flight): exactly those with a server key. */
 const TUNNEL_REMOTE_OWED = {
