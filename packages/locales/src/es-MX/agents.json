@@ -63,7 +63,7 @@
     "turnOffNamed": "Desactivar: {{setting}}",
     "enableAtNode": "Ejecuta el daemon como servicio y activa la opción desde otra sesión de inicio local en el nodo. La comprobación local rechaza el caso directo desde la terminal del panel.",
     "files": "Herramientas de archivos del host: {{state}}",
-    "rootsCommand": "wssp config set-host-file-roots /ruta/absoluta",
+    "rootsCommand": "wssp host config set-host-file-roots /ruta/absoluta",
     "maxTime": "Tiempo máximo de comandos del host: {{seconds}} segundos",
     "confirmTitle": "¿Desactivar el acceso al host?",
     "confirmDescription": "Esto bloquea el acceso de inmediato y mantiene el bloqueo del panel hasta que elijas Permitir de nuevo. El nodo recibe una solicitud para desactivarlo ahora o cuando se reconecte. No se detienen los procesos iniciados fuera del árbol de procesos del daemon, como tareas cron y unidades de usuario de systemd.",

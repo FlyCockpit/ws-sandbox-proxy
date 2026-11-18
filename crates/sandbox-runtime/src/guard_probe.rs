@@ -24,7 +24,7 @@ use crate::RuntimeError;
 use crate::egress::EgressRefusal;
 
 /// The minimum guard protocol/ruleset version this runtime accepts. An older
-/// guard reports `guard_outdated` ("run `sudo wssp guard install`").
+/// guard reports `guard_outdated` ("run `sudo wssp host guard install --daemon-user <user>`").
 pub const MIN_GUARD_VERSION: u32 = 1;
 
 /// Provenance state of one guard policy source (§2.0.4). Only `valid` and
@@ -368,7 +368,7 @@ impl GuardProbe for UnavailableGuardProbe {
     fn status(&self) -> Result<GuardStatus, RuntimeError> {
         Err(RuntimeError::new(
             SandboxErrorCode::UnsupportedCapability,
-            "no egress guard client is configured: run `sudo wssp guard install`",
+            "no egress guard client is configured: run `sudo wssp host guard install --daemon-user <user>`",
         ))
     }
     fn expectations(&self) -> Result<GuardExpectations, RuntimeError> {

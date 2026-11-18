@@ -54,7 +54,7 @@ import { orpc } from "@/utils/orpc";
 
 /**
  * Host credentials (C45): dashboard-minted host tokens and the device
- * credentials `wssp login` created. A minted token's secret is shown once,
+ * credentials `wssp host enroll` created. A minted token's secret is shown once,
  * from transient component state (see useOneTimeSecret); lists carry only
  * metadata and the lookup prefix. Revoking closes any live connection that
  * used the credential, so the host's status is refetched after every revoke.

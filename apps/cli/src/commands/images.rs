@@ -1,4 +1,4 @@
-//! `wssp images`: the managed template image cache of this machine's daemons.
+//! `wssp host images`: the managed template image cache of this machine's daemons.
 //!
 //! `list` first asks each running daemon to reconcile its journal with the
 //! host image store (images deleted out of band drop out), then reads the
@@ -136,7 +136,7 @@ fn prune_dir(dir: &Path, dry_run: bool) -> Result<serde_json::Value> {
     }
     let _ = std::fs::remove_file(dir.join(PRUNE_REQUEST_FILE));
     anyhow::bail!(
-        "no running daemon answered for `{}` (prune is applied by `wssp connect`)",
+        "no running daemon answered for `{}` (prune is applied by `wssp host run`)",
         dir.display()
     )
 }

@@ -214,10 +214,10 @@ describe("commands", () => {
   it("builds nonsecret enrollment and connect commands for a host", () => {
     const commands = hostCommands("https://api.example.com", { id: "h_1", slug: "desk-01" });
     expect(commands).toEqual({
-      deviceLogin: "wssp login --slug desk-01 --server https://api.example.com",
-      connect: "wssp connect",
+      deviceLogin: "wssp host enroll --slug desk-01 --server https://api.example.com",
+      connect: "wssp host run",
       tokenConnect:
-        "wssp connect --server https://api.example.com --host-id h_1 --host-token-env WSSP_HOST_TOKEN",
+        "wssp host run --server https://api.example.com --host-id h_1 --host-token-env WSSP_HOST_TOKEN",
     });
     // Only an env var NAME appears, never a credential value or prefix.
     expect(JSON.stringify(commands)).not.toMatch(/wssp_(host|device|sdk)_/);
@@ -226,7 +226,7 @@ describe("commands", () => {
 
   it("connect commands use automatic local resource defaults", () => {
     const commands = hostCommands("https://api.example.com", { id: "h_1", slug: "desk-01" });
-    expect(commands.connect).toBe("wssp connect");
+    expect(commands.connect).toBe("wssp host run");
     expect(commands.tokenConnect).not.toContain("--max-live-sandboxes");
   });
 

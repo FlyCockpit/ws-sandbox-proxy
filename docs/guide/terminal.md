@@ -122,9 +122,9 @@ terminals do not isolate guests from local administrators.
 Local default is off with TOTP required. Enabling requires stdin and stderr
 TTYs, no `WSSP_HOST_COMMAND` or `WSSP_HOST_TERMINAL` marker, no daemon ancestry,
 and typing `on` in a local login session on the node. Enable with
-`wssp config set-host-terminal on`; local off is observed within two seconds,
+`wssp host config set-host-terminal on`; local off is observed within two seconds,
 closes host PTYs and preserves guest work. Optional mode is local-only via
-`wssp config set-host-terminal-totp optional`. The dashboard can raise the
+`wssp host config set-host-terminal-totp optional`. The dashboard can raise the
 requirement on a connected host; only a persisted ACK confirms it. Offline
 TOTP-raise requests are not stored; timeout/disconnect needs an explicit retry.
 There is no dashboard enable control. You can now choose **Turn off** for
@@ -135,7 +135,7 @@ undo the veto, even by reporting off. Every hello/report that says on while
 vetoed receives another turn-off request. Only a live owner browser session
 can choose **Allow again** to lift the dashboard block only when the node is
 online and its live report at the current epoch says host terminals are off.
-If it reports on, run `wssp config set-host-terminal off` at the node first and
+If it reports on, run `wssp host config set-host-terminal off` at the node first and
 wait for the off report. Lifting the block does not turn on the node setting. This supersedes
 the earlier absence of dashboard lowering; see [ADR-006](../design/adr-006-agent-host-access.md).
 Turning off **Agents may run host commands** separately interrupts agent host

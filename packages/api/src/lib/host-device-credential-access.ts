@@ -84,7 +84,8 @@ export async function mintHostDeviceCredentialFromApprovedDeviceCode({
   const boundSlug = hostSlugFromDeviceLoginScope(row.scope);
   if (boundSlug === null) {
     throw new ORPCError("BAD_REQUEST", {
-      message: "Device authorization does not name a host slug; upgrade wssp and log in again.",
+      message:
+        "Device authorization does not name a host slug; upgrade wssp and run `wssp host enroll` again.",
     });
   }
   if (boundSlug !== hostSlug) {

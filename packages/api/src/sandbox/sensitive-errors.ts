@@ -334,7 +334,7 @@ const OPERATION_ERRORS = {
   startup_failed: "The template start command could not be launched.",
   startup_timeout: "The template ready command did not succeed in time.",
   guest_network_unavailable:
-    "The sandbox booted without a network address (no DHCP lease). The host's firewall may drop sandbox bridge traffic; run `wssp guard status` on the host.",
+    "The sandbox booted without a network address (no DHCP lease). The host's firewall may drop sandbox bridge traffic; run `wssp host guard status` on the host.",
   credential_install_failed: "A login could not be installed in the sandbox.",
   credential_spec_invalid: "The sandbox login specification could not be verified.",
   credential_env_pending: "Login environment is still being restored; retry shortly.",

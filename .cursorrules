@@ -228,21 +228,21 @@ Safe alternatives:
 - Domain egress grants mean host-resolved IP destinations, not HTTP hostname
   or TLS identity isolation.
 - Egress is open by default. Every node needs the root-owned egress guard
-  (`sudo wssp guard install --daemon-user <user>`): a drop-only nftables table
+  (`sudo wssp host guard install --daemon-user <user>`): a drop-only nftables table
   with a 30 s dead-man; no healthy guard means no new sandboxes. Open egress
   on another user's node needs `allow_open_egress_for_others`. Daemons print the
   guard command and never run `sudo`. See `docs/guide/network.md`.
 - Host access for credentials (`hosts:execute`, `hosts:files`, ADR-006) works
   only on nodes the credential's own user owns, never through a shared pool,
   and only while the node-local setting is on. Node settings are raised only
-  at the node (`wssp config …`, local TTY); the server and dashboard may only
+  at the node (`wssp host config …`, local TTY); the server and dashboard may only
   lower them, and a dashboard lower is a sticky veto only a person lifts.
   Never add a raise frame, procedure or tool. Host command audits store the
   credential, node, program and an HMAC, never command text or output.
   Agent host access means the agent can do what the daemon user can do;
   it is off until a person enables it at the node. No separate agent user.
 - Do not launch live Incus VMs from agent work (`incus-surface`,
-  `wssp connect --runtime incus`) unless the user explicitly asks.
+  `wssp host run --runtime incus`) unless the user explicitly asks.
 - CLI-login values are write-only: never return, log or put one in an
   outbox row, receipt, event or webhook. Vault columns stay inside
   `packages/api/src/credentials/vault/`; the daemon never writes a login

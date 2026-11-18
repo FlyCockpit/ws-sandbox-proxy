@@ -13,9 +13,10 @@ workspace root `Cargo.toml` also builds `crates/sandbox-protocol` (relay
 contract + framing) and `crates/sandbox-runtime` (`SandboxRuntime`, `FakeRuntime`,
 Linux `IncusKvmRuntime` via the `incus` CLI, and non-Linux `UnsupportedRuntime`).
 
-`wssp connect` runs the outbound relay (`src/sandbox_relay/`). On Linux the
+`wssp host run` runs the outbound relay (`src/sandbox_relay/`). On Linux the
 default runtime is Incus (`--runtime fake` or `WSSP_RUNTIME=fake` for relay-only
-work). Config, completions, and connect ship with the product.
+work). Every host command lives under `wssp host` (`src/commands/host.rs`);
+`completions` is the only other top-level command.
 
 The CLI is not part of the pnpm/Turborepo graph — no `package.json`. All work
 here happens with `cargo`, run from the repo root.
@@ -32,7 +33,8 @@ here happens with `cargo`, run from the repo root.
 | `src/paths.rs`       | Cross-platform config/data directories via `dirs`.                                    |
 | `src/logging.rs`     | Tracing setup. Logs go to stderr.                                                     |
 | `src/exit.rs`        | Stable process exit codes.                                                            |
-| `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp connect` (`signal-hook`).                  |
+| `src/host_role.rs`   | Local-only enrolled-host detection for role-aware `wssp host` help and exit 6.        |
+| `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp host run` (`signal-hook`).                 |
 | `src/sandbox_relay/` | Outbound node daemon.                                                                 |
 | `tests/cli.rs`       | Black-box tests that run the built binary.                                            |
 | `xtask/`             | CLI workspace automation: `sync-docs`.                                                |
@@ -47,7 +49,7 @@ cargo build
 cargo test
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt
-cargo run -p wssp -- config path
+cargo run -p wssp -- host config path
 cargo xtask sync-docs
 ```
 
@@ -78,7 +80,7 @@ cargo xtask sync-docs --check
 8. Do not run destructive shell commands or `sudo` on the user's behalf.
 9. Do not create backup copies such as `.bak`, `.old`, or copied source files.
 10. Do not launch live Incus VMs from agent work (`incus-surface`,
-    `wssp connect --runtime incus`) unless the user explicitly asks. Tests use
+    `wssp host run --runtime incus`) unless the user explicitly asks. Tests use
     `FakeRuntime`.
 
 ## Conventions
@@ -95,8 +97,9 @@ cargo xtask sync-docs --check
 
 1. Add `src/commands/<name>.rs` with an `Args` type and `run(&Args) -> anyhow::Result<()>`.
 2. Register the module in `src/commands/mod.rs`.
-3. Add a variant to `Command` in `src/cli.rs`.
-4. Add a match arm in `src/main.rs`.
+3. Add a variant to `HostCommand` in `src/commands/host.rs` (a host command;
+   decide `allowed_without_enrollment`) or to `Command` in `src/cli.rs`.
+4. Add the match arm in `commands::host::run` or `src/main.rs`.
 5. Add focused black-box tests in `tests/cli.rs` when the command affects user-visible behavior.
 
 ## Releasing

@@ -9,6 +9,8 @@
 //!   3  the requested resource was not found
 //!   4  host credential inactive (4003 close, upgrade 401/403) — terminal
 //!   5  sandbox relay internal error (1011 close) — retryable
+//!   6  this device is not an enrolled host (a `wssp host` command that needs
+//!      an enrollment; run `wssp host enroll`)
 //!
 //! To give a specific error a non-default code, attach a [`CodedError`] via
 //! `.context(CodedError::new(ExitCode::NotFound))` and [`code_for`] will pick it
@@ -26,12 +28,15 @@ pub enum ExitCode {
     Failure = 1,
     #[allow(dead_code)] // emitted by clap, listed here for documentation.
     Usage = 2,
-    /// The requested resource was not found (e.g. `wssp drain` on a 404).
+    /// The requested resource was not found (e.g. `wssp host drain` on a 404).
     NotFound = 3,
     /// Host credential revoked, expired, banned, or policy-blocked (WebSocket 4003 or HTTP 401/403 on connect).
     CredentialInactive = 4,
     /// Relay infrastructure error during credential revalidation (WebSocket 1011).
     RelayUnavailable = 5,
+    /// A `wssp host` command that needs an enrollment ran on a machine with no
+    /// host device credential and no host token selection.
+    NotEnrolledHost = 6,
 }
 
 /// Annotate an error to request a specific [`ExitCode`].

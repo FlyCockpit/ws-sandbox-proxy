@@ -50,7 +50,7 @@ test("each chaos unit must carry the test-only shared-Incus override", () => {
 
 test("the unit's daemon binary comes from its ExecStart path", () => {
   assert.equal(
-    unitBinary("{ path=/repo/target/debug/wssp ; argv[]=/repo/target/debug/wssp connect ; }"),
+    unitBinary("{ path=/repo/target/debug/wssp ; argv[]=/repo/target/debug/wssp host run ; }"),
     "/repo/target/debug/wssp",
   );
   assert.equal(unitBinary(""), null);

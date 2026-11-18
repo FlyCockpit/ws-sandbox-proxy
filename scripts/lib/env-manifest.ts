@@ -1244,7 +1244,7 @@ export const ENV_VARS: EnvVar[] = [
     example: "",
     comment: [
       "Optional PEM CA file read by the Rust CLI, not Node processes.",
-      "Adds to webpki roots for connect, login, drain and undrain.",
+      "Adds to webpki roots for host run, enroll, drain and undrain.",
       "See docs/guide/hosts.md for private CA and local Caddy setup.",
     ],
   },
@@ -1271,7 +1271,7 @@ export const ENV_VARS: EnvVar[] = [
     example: "",
     comment: [
       "Test-only override read by DEBUG builds of the Rust node daemon",
-      "(wssp connect), not by the Zod schemas: 1 skips the",
+      "(wssp host run), not by the Zod schemas: 1 skips the",
       "one-daemon-per-Incus-server check so the local chaos stack can run",
       "two daemons on one Incus server. Release builds compile it out; the",
       "daemon refuses it unless the control plane is loopback and logs a",

@@ -2236,7 +2236,15 @@ it.each([false, true])(
     try {
       login = spawn(
         resolve("target/debug/wssp"),
-        ["-vv", "login", "--slug", "desk-01", "--server", `http://127.0.0.1:${address.port}`],
+        [
+          "-vv",
+          "host",
+          "enroll",
+          "--slug",
+          "desk-01",
+          "--server",
+          `http://127.0.0.1:${address.port}`,
+        ],
         { env, stdio: ["ignore", "pipe", "pipe"] },
       );
       login.stdout!.on("data", (chunk) => output.push(String(chunk)));
@@ -2245,10 +2253,14 @@ it.each([false, true])(
       const loginDeadline = setTimeout(() => login?.kill("SIGKILL"), 15_000);
       expect((await loginExit)[0]).toBe(0);
       clearTimeout(loginDeadline);
-      deviceHost = spawn(resolve("target/debug/wssp"), ["-vv", "connect", "--runtime", "fake"], {
-        env,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      deviceHost = spawn(
+        resolve("target/debug/wssp"),
+        ["-vv", "host", "run", "--runtime", "fake"],
+        {
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       deviceHost.stdout!.on("data", (chunk) => output.push(String(chunk)));
       deviceHost.stderr!.on("data", (chunk) => output.push(String(chunk)));
       if (mismatch) {
@@ -2561,8 +2573,8 @@ it("WP8 wire (live P1): another server process revoking the epoch under a live r
 
 /**
  * C53 wire: the browser plane end to end against the REAL node daemon. A
- * cookie session + one-use ticket upgrade opens a PTY on the real `wssp
- * connect` (its fake incus records the `exec -t` argv); a replayed ticket and
+ * cookie session + one-use ticket upgrade opens a PTY on the real `wssp host
+ * run` (its fake incus records the `exec -t` argv); a replayed ticket and
  * a host credential on the browser endpoint allocate no PTY at the host.
  */
 it("C53 wire: cookie-session upgrade drives the real host PTY; replay and wrong plane allocate none", async () => {

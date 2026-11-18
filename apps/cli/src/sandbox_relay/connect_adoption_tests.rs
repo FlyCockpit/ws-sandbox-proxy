@@ -3470,7 +3470,7 @@ fn a_command_finishing_during_the_quiesce_drain_delivers_its_output_and_result_f
     send(&mut wire, command("cmd"));
     let dispatched = Instant::now();
     until(&mut wire, |m| accepted(m, "cmd"));
-    // `wssp daemon quiesce`.
+    // `wssp host daemon quiesce`.
     assert!(shutdown.quiesce().request());
     // Output is acknowledged only after the command exited (1.5 s) and the
     // old drain had already judged "nothing running" (ack + 1 s settle,

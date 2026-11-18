@@ -545,7 +545,7 @@ The proxy is deliberately strict:
   multicast. If any address in the answer is outside it, the request fails
   (`502`); each address is checked again against the current ceiling right
   before the connect. The daemon reads the ceiling from the guard
-  (`wssp guard`); while the guard is unreachable or not healthy no upstream
+  (`wssp host guard`); while the guard is unreachable or not healthy no upstream
   connection is made (`503`). TLS uses the definition's hostname for SNI and
   certificate checks (public roots plus the daemon's `ca_file`). There is no
   plaintext fallback and no use of proxy environment variables.

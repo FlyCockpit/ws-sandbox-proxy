@@ -274,14 +274,14 @@ async function cellL3(ctx: Ctx, sandboxId: string): Promise<void> {
   const linksBefore = ctx.proxy.accepted;
   const fromSeq = ctx.proxy.cursor;
   // Never inherit MAINPID or any secret: the subcommand needs only its dirs.
-  const quiesce = exec(ctx.config.wsspBin, ["daemon", "quiesce", "--pid", String(before)], {
+  const quiesce = exec(ctx.config.wsspBin, ["host", "daemon", "quiesce", "--pid", String(before)], {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
     WSSP_DATA_DIR: ctx.config.dataDir,
     WSSP_CONFIG_DIR: ctx.config.configDir,
   });
   if (quiesce.status !== 0 || !quiesce.stdout.includes("quiescing")) {
-    throw new Error(`L3: wssp daemon quiesce did not quiesce (exit ${quiesce.status})`);
+    throw new Error(`L3: wssp host daemon quiesce did not quiesce (exit ${quiesce.status})`);
   }
   await ctx.proxy.waitForFrame(
     { dir: "n2s", type: "host.quiesce" },

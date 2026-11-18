@@ -226,14 +226,14 @@ export type WireHostOptions = {
   dir: string;
   /** The relay base URL the daemon dials (`ws://127.0.0.1:<port>`). */
   serverUrl: string;
-  /** Extra `wssp connect` arguments. */
+  /** Extra `wssp host run` arguments. */
   args?: readonly string[];
   /** Extra (debug-build-only) environment for this daemon. */
   env?: Readonly<Record<string, string>>;
 };
 
 /**
- * Spawn the real debug `target/debug/wssp connect` against the case's incus
+ * Spawn the real debug `target/debug/wssp host run` against the case's incus
  * shim, guard double and data dir. Build it first with
  * `cargo build -p wssp --bin wssp --locked`; no compiler runs here.
  */
@@ -257,7 +257,8 @@ export async function spawnWireHost({
   return spawn(
     resolve("target/debug/wssp"),
     [
-      "connect",
+      "host",
+      "run",
       "--server",
       serverUrl,
       "--host-id",

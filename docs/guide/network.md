@@ -70,22 +70,22 @@ a literal address is not stopped by a domain entry. Block an address range if
 you need a guarantee.
 
 Enforcement on the host is a root-owned, drop-only nftables table installed by
-`wssp guard install`; see [hosts](./hosts.md#egress-guard).
+`sudo wssp host guard install --daemon-user <user>`; see [hosts](./hosts.md#egress-guard).
 
 ## Open mode details
 
 - **SMTP (tcp/25) is blocked by default**, so a sandbox cannot send mail
   directly. The host owner can allow it with
-  `wssp config set-egress-block-smtp off` (applies to sandboxes created
+  `wssp host config set-egress-block-smtp off` (applies to sandboxes created
   afterwards).
 - **Direct DNS to public resolvers is allowed by default**, so scrapers and
   tools that pin a resolver just work. A host owner can reject DNS to anything
   but the sandbox's own resolver with
-  `wssp config set-egress-block-external-dns on` (key
+  `wssp host config set-egress-block-external-dns on` (key
   `egress_block_external_dns`, sandboxes created afterwards).
 - **Upstream resolvers.** The bridge resolver forwards to the host's resolvers
   by default. A host owner can name up to four IPv4 upstreams with
-  `wssp config set-egress-dns-upstreams 1.1.1.1,9.9.9.9` (key
+  `wssp host config set-egress-dns-upstreams 1.1.1.1,9.9.9.9` (key
   `egress_dns_upstreams`; `--clear` restores the host resolvers). This setting
   applies to **open mode only**; allowlist mode never forwards queries.
 
@@ -94,8 +94,8 @@ Enforcement on the host is a root-owned, drop-only nftables table installed by
 A pool can include hosts owned by other users. Open internet from a host
 exposes that owner's network identity (IP address) to whatever the sandbox
 does, so the host owner decides. `allow_open_egress_for_others` is **off by
-default**, is asked once during `wssp login`, and is changed with
-`wssp config set-open-egress-for-others on|off`. Your own sandboxes on your own
+default**, is asked once during `wssp host enroll`, and is changed with
+`wssp host config set-open-egress-for-others on|off`. Your own sandboxes on your own
 hosts are always open unless you asked for an allowlist.
 
 - Placement prefers hosts where the requested mode can be granted. If an open
@@ -118,7 +118,7 @@ a typed `reason` is attached for these two:
 
 | `reason`                    | Meaning                                                                                                                                                       | What to do                                                      |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `egress_guard_unavailable`  | The host's egress guard is missing, unhealthy, outdated, its 15 s lease expired, or it does not cover this sandbox's bridge. Applies to both modes. Retryable | Retry; the host owner runs `wssp guard status`                  |
+| `egress_guard_unavailable`  | The host's egress guard is missing, unhealthy, outdated, its 15 s lease expired, or it does not cover this sandbox's bridge. Applies to both modes. Retryable | Retry; the host owner runs `wssp host guard status`             |
 | `open_egress_not_permitted` | An open sandbox on another user's host whose owner does not (or no longer) allow open internet for other users                                                | Create a new sandbox (allowlist, or on a host that allows open) |
 
 Related: a compiled allowlist whose ACL body exceeds 64 KiB is refused at

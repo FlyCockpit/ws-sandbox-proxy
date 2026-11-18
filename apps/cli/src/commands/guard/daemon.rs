@@ -1,4 +1,4 @@
-//! `wssp guard run`: the root guard service loop.
+//! `wssp-guard __wssp-guard`: the root guard service loop.
 //!
 //! On any event (route/address/link monitor, nftables monitor, root-file
 //! change, deployment push) or every 5 s: read routes (all tables), links,
@@ -1158,7 +1158,7 @@ pub fn run() -> Result<()> {
     tracing::info!(
         instance = %daemon.instance_id,
         daemon_uid = config.daemon_uid,
-        "wssp guard running"
+        "wssp egress guard running"
     );
     daemon.resync(true);
     let mut next_periodic = Instant::now() + RESYNC_INTERVAL;

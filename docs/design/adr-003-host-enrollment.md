@@ -33,7 +33,7 @@ Revocation, expiry, ban and owner deletion close the socket with **4003** and
 reason **`credential_inactive`**. Transient revalidation failures close with
 **1011** and reason **`internal_error`**; the daemon treats that as retryable,
 not a terminal credential failure. Upgrade 401/403 remain terminal credential
-failures with no credential material printed. `wssp connect` exits **4** for a
+failures with no credential material printed. `wssp host run` exits **4** for a
 terminal credential failure (4003, upgrade 401/403) and **5** for 1011, so a
 supervisor can branch on the status. Unban permits a new connection with a
 still-valid credential. A revalidation whose authorization ticket was invalidated

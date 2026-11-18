@@ -302,7 +302,7 @@ Ubuntu 24.04 steps in [host requirements](../guide/hosts.md#requirements)):
   Zabbly stable packages instead.
 - The `br_netfilter` kernel module, loaded (`sudo modprobe br_netfilter`) and
   persisted (`echo br_netfilter | sudo tee /etc/modules-load.d/wssp-br_netfilter.conf`).
-  `wssp connect --runtime incus` refuses to start without it, or while
+  `wssp host run --runtime incus` refuses to start without it, or while
   `net.bridge.bridge-nf-call-ip6tables` is not `1`
   (`sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1`).
 

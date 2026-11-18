@@ -47,42 +47,9 @@ pub enum LogFormat {
 /// The subcommands. Add new ones here, then implement them in `src/commands/`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Inspect the configuration file and resolved paths.
-    Config(crate::commands::config::Args),
+    /// Run this machine as a wssp host: enroll, run the node daemon, manage node settings.
+    Host(crate::commands::host::Args),
 
     /// Generate shell completion scripts.
     Completions(crate::commands::completions::Args),
-
-    /// Device-code login for host enrollment.
-    Login(crate::commands::login::Args),
-
-    /// Clear stored device credentials and, best effort, any configured host token binding.
-    Logout(crate::commands::logout::Args),
-
-    /// Configure dashboard host token environment variables.
-    Token(crate::commands::token::Args),
-
-    /// Refuse new guest work on this host; running guests keep running.
-    Drain(crate::commands::drain::Args),
-
-    /// Restore admission on this host.
-    Undrain(crate::commands::drain::Args),
-
-    /// Inspect or prune the managed template image cache.
-    Images(crate::commands::images::Args),
-
-    /// Connect to the sandbox host relay and execute dispatched operations.
-    Connect(crate::commands::connect::ConnectArgs),
-
-    /// Manage the running node daemon (graceful restart for upgrades).
-    #[cfg(target_os = "linux")]
-    Daemon(crate::commands::daemon::Args),
-
-    /// Root-owned egress guard: install, status and the service entry point.
-    #[cfg(target_os = "linux")]
-    Guard(crate::commands::guard::Args),
-
-    /// Preview tunnels: install, inspect or remove the pinned `tunnel` client.
-    #[cfg(target_os = "linux")]
-    Tunnel(crate::commands::tunnel::Args),
 }

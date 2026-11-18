@@ -53,6 +53,7 @@ fn invoke(action: &str, status: u16, response: &str) -> (std::process::Output, S
     });
     let temp = tempfile::tempdir().unwrap();
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_wssp"))
+        .arg("host")
         .args(action.split_whitespace())
         .args([
             "--server",
@@ -162,9 +163,10 @@ fn drain_rejects_inconsistent_success_and_wrong_host() {
 fn drain_usage_and_cleartext_remote_origin_fail_without_stdin() {
     let temp = tempfile::tempdir().unwrap();
     for (args, exit) in [
-        (vec!["drain", "--unknown"], 2),
+        (vec!["host", "drain", "--unknown"], 2),
         (
             vec![
+                "host",
                 "undrain",
                 "--server",
                 "http://remote.example.test",

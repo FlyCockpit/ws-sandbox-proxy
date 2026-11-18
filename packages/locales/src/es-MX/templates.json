@@ -440,7 +440,7 @@
     },
     "hostStateHint": {
       "draining": "Este host está en drenado y no acepta plantillas nuevas. Quita el drenado en la página Hosts.",
-      "unavailable": "Este host no puede verificar una imagen ahora ({{state}}). Inicia su daemon con wssp connect."
+      "unavailable": "Este host no puede verificar una imagen ahora ({{state}}). Inicia su daemon con wssp host run."
     },
     "hostsFailed": "No se pudieron cargar tus hosts.",
     "noHosts": "Aún no tienes hosts. Inscribe uno primero en la página Hosts.",
@@ -619,7 +619,7 @@
     "hostRevoked": "Se revocó la credencial de su host. No pueden iniciarse sandboxes nuevos hasta que el host se vuelva a inscribir.",
     "hostDraining": "Su host está en drenado y no acepta sandboxes nuevos. Quita el drenado en la página Hosts.",
     "hostStale": "Su host no ha enviado un latido reciente. No pueden iniciarse sandboxes nuevos hasta que se reconecte.",
-    "hostOffline": "Su host no está conectado. No pueden iniciarse sandboxes nuevos hasta que ejecute wssp connect."
+    "hostOffline": "Su host no está conectado. No pueden iniciarse sandboxes nuevos hasta que ejecute wssp host run."
   },
   "verifyAvailability": "Verificar esta revisión en el host"
 }

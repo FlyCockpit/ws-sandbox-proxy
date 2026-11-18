@@ -14,7 +14,7 @@ const UNITS = [
 
 /**
  * A lease limit as typed in the dashboard: the same grammar as
- * `wssp config set-max-lease` (`90m`, `6h`, `7d`; 5 minutes to 24 days).
+ * `wssp host config set-max-lease` (`90m`, `6h`, `7d`; 5 minutes to 24 days).
  * Blank means "no limit from this layer" (null); anything else invalid is
  * `undefined`, never a guess.
  */

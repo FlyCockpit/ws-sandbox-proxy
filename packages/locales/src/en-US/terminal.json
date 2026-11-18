@@ -80,7 +80,7 @@
     "title": "Host terminal",
     "warning": "This shell runs with the daemon user’s local powers. It can reach guests through local administrator privileges. Detach ends this PTY; attaching again starts a new shell.",
     "enabled": "Local host terminals are enabled.",
-    "disabled": "Host terminals are disabled locally. Enable with wssp config set-host-terminal on on the host.",
+    "disabled": "Host terminals are disabled locally. Enable with wssp host config set-host-terminal on on the host.",
     "offline": "No current host policy is available. Connect the host before attaching or raising TOTP.",
     "required": "Fresh TOTP is required for each attach. Only local access can lower this requirement.",
     "optional": "TOTP is optional on this host. Press Attach explicitly to open a shell.",

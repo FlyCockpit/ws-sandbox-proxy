@@ -152,13 +152,14 @@ fn private_ca_wss_handshake_requires_ca_file_and_checks_hostname() {
         let mut cmd = cli(dir.path());
         if selection == "config" {
             cli(dir.path())
-                .args(["config", "set-ca-file"])
+                .args(["host", "config", "set-ca-file"])
                 .arg(fixture("ca.pem"))
                 .assert()
                 .success();
         }
         cmd.args([
-            "connect",
+            "host",
+            "run",
             "--runtime",
             "fake",
             "--server",
@@ -224,7 +225,7 @@ fn http_request(listener: &TcpListener, response: &str) -> Option<String> {
 }
 
 #[test]
-fn private_ca_https_login_start_exchange_and_persisted_restart() {
+fn private_ca_https_enroll_start_exchange_and_persisted_restart() {
     let dir = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!(
@@ -248,7 +249,8 @@ fn private_ca_https_login_start_exchange_and_persisted_restart() {
     });
     cli(dir.path())
         .args([
-            "login",
+            "host",
+            "enroll",
             "--slug",
             "tls-host",
             "--server",
@@ -259,7 +261,7 @@ fn private_ca_https_login_start_exchange_and_persisted_restart() {
         .assert()
         .success();
     let output = cli(dir.path())
-        .args(["config", "show", "--json"])
+        .args(["host", "config", "show", "--json"])
         .assert()
         .success()
         .get_output()
@@ -272,7 +274,7 @@ fn private_ca_https_login_start_exchange_and_persisted_restart() {
     );
     // A separate process has neither --server nor --ca-file nor WSSP_CA_FILE.
     cli(dir.path())
-        .args(["connect", "--runtime", "fake"])
+        .args(["host", "run", "--runtime", "fake"])
         .assert()
         // The handshake succeeded; the test server then ended the session.
         .code(4);
@@ -299,6 +301,7 @@ fn private_ca_https_drain_and_undrain_require_extra_trust() {
             });
             let mut cmd = cli(dir.path());
             cmd.args([
+                "host",
                 command,
                 "--server",
                 &origin,
@@ -328,12 +331,20 @@ fn private_ca_https_drain_and_undrain_require_extra_trust() {
 #[test]
 fn every_dialing_command_fails_closed_on_invalid_ca_selection() {
     let dir = tempfile::tempdir().unwrap();
+    // An enrolled host (a recorded host token selection): `host run`, `drain`
+    // and `undrain` reach their CA selection.
+    std::fs::create_dir_all(dir.path().join("config")).unwrap();
+    std::fs::write(
+        dir.path().join("config/config.toml"),
+        "host_token_env = \"WSSP_TLS_TEST_TOKEN\"\n",
+    )
+    .unwrap();
     let missing = dir.path().join("missing.pem");
     for args in [
-        vec!["connect", "--runtime", "fake"],
-        vec!["login", "--slug", "tls-host"],
-        vec!["drain"],
-        vec!["undrain"],
+        vec!["host", "run", "--runtime", "fake"],
+        vec!["host", "enroll", "--slug", "tls-host"],
+        vec!["host", "drain"],
+        vec!["host", "undrain"],
     ] {
         cli(dir.path())
             .args(&args)
@@ -351,7 +362,7 @@ fn every_dialing_command_fails_closed_on_invalid_ca_selection() {
     }
     // An explicit flag overrides a broken environment selection.
     cli(dir.path())
-        .args(["drain", "--ca-file"])
+        .args(["host", "drain", "--ca-file"])
         .arg(fixture("ca.pem"))
         .env("WSSP_CA_FILE", &missing)
         .assert()
@@ -360,7 +371,7 @@ fn every_dialing_command_fails_closed_on_invalid_ca_selection() {
 }
 
 #[test]
-fn environment_ca_on_login_is_not_persisted() {
+fn environment_ca_on_enroll_is_not_persisted() {
     let dir = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!(
@@ -374,13 +385,13 @@ fn environment_ca_on_login_is_not_persisted() {
         assert!(http_request(&listener, &exchange).is_some());
     });
     cli(dir.path())
-        .args(["login", "--slug", "tls-host", "--server", &origin])
+        .args(["host", "enroll", "--slug", "tls-host", "--server", &origin])
         .env("WSSP_CA_FILE", fixture("ca.pem"))
         .assert()
         .success();
     server.join().unwrap();
     let output = cli(dir.path())
-        .args(["config", "show", "--json"])
+        .args(["host", "config", "show", "--json"])
         .assert()
         .success()
         .get_output()
@@ -391,7 +402,7 @@ fn environment_ca_on_login_is_not_persisted() {
 }
 
 #[test]
-fn e47_login_missing_ca_names_server_and_trust_options() {
+fn e47_enroll_missing_ca_names_server_and_trust_options() {
     let dir = tempfile::tempdir().unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!(
@@ -400,7 +411,7 @@ fn e47_login_missing_ca_names_server_and_trust_options() {
     );
     let server = thread::spawn(move || http_request(&listener, "{}").is_some());
     cli(dir.path())
-        .args(["login", "--slug", "tls-host", "--server", &origin])
+        .args(["host", "enroll", "--slug", "tls-host", "--server", &origin])
         .assert()
         .failure()
         .stderr(predicates::str::contains(&origin))

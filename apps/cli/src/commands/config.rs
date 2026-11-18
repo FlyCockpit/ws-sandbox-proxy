@@ -1,9 +1,9 @@
-//! `wssp config` — inspect configuration and resolved paths.
+//! `wssp host config` — inspect configuration and resolved paths.
 //!
 //! Subcommands:
-//!   - `config path`  print the config file path (whether or not it exists)
-//!   - `config show`  print the effective config (defaults + file) as TOML
-//!   - `config init`  write a default config file if none exists
+//!   - `host config path`  print the config file path (whether or not it exists)
+//!   - `host config show`  print the effective config (defaults + file) as TOML
+//!   - `host config init`  write a default config file if none exists
 
 use std::path::Path;
 
@@ -19,7 +19,7 @@ use crate::slug::validate_host_slug;
 pub struct Args {
     /// Emit JSON instead of human-readable text.
     // `global` only because this command has subcommands: it lets the flag
-    // appear on either side (`config --json path` and `config path --json`).
+    // appear on either side (`host config --json path` and `host config path --json`).
     #[arg(long, global = true)]
     json: bool,
 
@@ -58,15 +58,15 @@ enum Sub {
     SetMaxLease { value: String },
     /// How long work that never started is carried across a relay outage:
     /// `10m` (1m..24h), or `default` (10 minutes). Never past the sandbox
-    /// lease or `max_carry`. A restart of `wssp connect` applies it.
+    /// lease or `max_carry`. A restart of `wssp host run` applies it.
     SetCarryIntentWindow { value: String },
     /// How long a running command is carried across a relay outage before
     /// the node stops it (`host_disconnect_expired`): `24h`, `7d` (10m..24d),
-    /// or `default` (24 hours). A restart of `wssp connect` applies it.
+    /// or `default` (24 hours). A restart of `wssp host run` applies it.
     SetMaxCarry { value: String },
     /// Run template-build VMs on this host: `on`, `off`, or `default` (on
     /// whenever the image cache is enabled). Build steps may run as guest
-    /// root inside build VMs. A restart of `wssp connect` applies it.
+    /// root inside build VMs. A restart of `wssp host run` applies it.
     SetBuilder {
         #[arg(value_enum)]
         value: BuilderMode,
@@ -89,7 +89,7 @@ enum Sub {
     SetCaFile { path: std::path::PathBuf },
     /// Clear the saved CA file (WSSP_CA_FILE can still override it).
     ClearCaFile,
-    /// Store a host slug label (login still requires explicit `--slug`).
+    /// Store a host slug label (`wssp host enroll` still requires an explicit `--slug`).
     SetSlug { slug: String },
     /// Let sandboxes from other users' pools reach the open internet from
     /// this machine (your own sandboxes always can). A running daemon reloads it.
@@ -278,7 +278,7 @@ pub fn run(args: &Args) -> Result<()> {
                 })?;
             } else {
                 output::line(format!(
-                    "set the carry window for unstarted work to `{shown}`; restart `wssp connect` to apply it"
+                    "set the carry window for unstarted work to `{shown}`; restart `wssp host run` to apply it"
                 ))?;
             }
         }
@@ -296,7 +296,7 @@ pub fn run(args: &Args) -> Result<()> {
                 })?;
             } else {
                 output::line(format!(
-                    "set the carry cap for running work to `{shown}`; restart `wssp connect` to apply it"
+                    "set the carry cap for running work to `{shown}`; restart `wssp host run` to apply it"
                 ))?;
             }
         }
@@ -318,7 +318,7 @@ pub fn run(args: &Args) -> Result<()> {
                 })?;
             } else {
                 output::line(format!(
-                    "set template builder to `{shown}`; restart `wssp connect` to apply"
+                    "set template builder to `{shown}`; restart `wssp host run` to apply"
                 ))?;
             }
         }
@@ -335,7 +335,7 @@ pub fn run(args: &Args) -> Result<()> {
                 })?;
             } else {
                 output::line(format!(
-                    "set accept_foreign_builds to `{accept}`; restart `wssp connect` to apply"
+                    "set accept_foreign_builds to `{accept}`; restart `wssp host run` to apply"
                 ))?;
             }
         }
@@ -347,7 +347,7 @@ pub fn run(args: &Args) -> Result<()> {
             })?;
             if !on {
                 output::warning(
-                    "other users' sandboxes already running with open internet keep it until they stop; they cannot be restarted on this node. Run `wssp drain` to remove them now",
+                    "other users' sandboxes already running with open internet keep it until they stop; they cannot be restarted on this node. Run `wssp host drain` to remove them now",
                 )?;
             }
             set_bool(
@@ -492,7 +492,7 @@ pub fn run(args: &Args) -> Result<()> {
                 output::text(toml::to_string_pretty(&config)?)?;
                 // Resolved values are read-only comments, so pasting this output
                 // into config.toml never creates overrides or diagnostic keys.
-                output::line("# Runtime selection follows connect (WSSP_RUNTIME)")?;
+                output::line("# Runtime selection follows `wssp host run` (WSSP_RUNTIME)")?;
                 output::line("# vm_capacity (read-only)")?;
                 for line in toml::to_string_pretty(&capacity)?.lines() {
                     output::line(format!("# {line}"))?;

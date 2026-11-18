@@ -717,7 +717,7 @@ export const listHostTokens = serviceProcedure(
   },
 );
 
-/** `wssp login` device credentials. Minted only by the device exchange (C19). */
+/** `wssp host enroll` device credentials. Minted only by the device exchange (C19). */
 export const listDeviceCredentials = serviceProcedure(
   { sessionOnly: true },
   async (owner: Principal, input: ListDeviceCredentialsInput) => {
@@ -746,7 +746,7 @@ export const listDeviceCredentials = serviceProcedure(
 /**
  * Revoke one device credential. Like host tokens, the authority change closes
  * any socket that authenticated with it (session-manager revalidation) and the
- * next `wssp connect` with it fails; the host itself is untouched.
+ * next `wssp host run` with it fails; the host itself is untouched.
  */
 export const revokeDeviceCredential = serviceProcedure(
   { sessionOnly: true },

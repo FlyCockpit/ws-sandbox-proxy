@@ -67,7 +67,7 @@ pub struct PathReport {
     pub host_firewall: Vec<String>,
 }
 
-/// Reason code (and `wssp guard status` prefix) for [`PathReport::host_firewall`].
+/// Reason code (and `wssp host guard status` prefix) for [`PathReport::host_firewall`].
 pub const HOST_FIREWALL_REASON: &str = "host_firewall_blocks_sandboxes";
 
 /// The operator's fix for [`HOST_FIREWALL_REASON`] (docs/guide/hosts.md#host-firewall-ufwfirewalld).
@@ -75,7 +75,7 @@ pub const HOST_FIREWALL_FIX: &str = "\
 the host firewall drops traffic on the sandbox bridges (`wsn-*`), so sandboxes get no \
 DHCP lease, DNS or internet; new sandboxes cannot start on this node. Let the guard add \
 the minimal rules (it prints each one; the egress guard still enforces every block):
-  sudo wssp guard install --daemon-user <user> --configure-ufw
+  sudo wssp host guard install --daemon-user <user> --configure-ufw
   (or --configure-firewalld; add --credential-proxy-port <port> if you changed `credential_proxy_port`)
 or add them yourself (ufw): DHCP, DNS and the login proxy in, routing both ways:
   sudo ufw allow in on wsn+ to any port 67 proto udp

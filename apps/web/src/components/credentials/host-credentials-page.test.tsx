@@ -526,7 +526,7 @@ describe("minting a host token", () => {
     expect(within(panel).getByText(secret)).toBeTruthy();
     // The nonsecret connect command names the env var, never the token.
     const command =
-      "wssp connect --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN";
+      "wssp host run --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN";
     expect(within(panel).getByText(command)).toBeTruthy();
     await user.click(within(panel).getByRole("button", { name: enCredentials.reveal.copy }));
     expect(await navigator.clipboard.readText()).toBe(secret);
@@ -800,7 +800,7 @@ describe("minting a host token", () => {
     await screen.findByText(enCredentials.reveal.onceWarning);
     expect(
       within(reveal()).getByText(
-        "wssp connect --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN",
+        "wssp host run --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN",
       ),
     ).toBeTruthy();
   });

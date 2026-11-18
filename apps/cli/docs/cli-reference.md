@@ -27,13 +27,13 @@ capacity_gib = 96
 draining = false
 ```
 
-Without a list, connect inspects the audited profile-root pool and creates the
+Without a list, `wssp host run` inspects the audited profile-root pool and creates the
 project-owned `wssp-pool-marker` filesystem volume once. Restore the original
 marker/backing storage after identity failure; the daemon never repairs or deletes
 it automatically. Implicit caps use free space, measured charged-root usage,
 headroom and a persisted ceiling that can only fall. Only explicit TOML can raise
 a cap. Pool drain blocks new roots; retained roots keep their pool and size.
-`config show --json` is read-only and reports partial inspection when Incus or
+`wssp host config show --json` is read-only and reports partial inspection when Incus or
 original journal evidence is unavailable. Restart/reconnect to apply changes.
 
 Journal v5 requires the coordinated breaking deployment: retire old allocations
@@ -52,453 +52,41 @@ Accepted by every command, before or after the subcommand.
 | `-v`, `--verbose` (repeatable) | Increase log verbosity (-v = debug, -vv = trace). Overridden by the `WSSP_LOG` / `RUST_LOG` env var if set |  |
 | `-q`, `--quiet` | Silence all logs except errors |  |
 
-### `wssp config`
+### `wssp host`
 
-Inspect the configuration file and resolved paths.
+Run this machine as a wssp host: enroll, run the node daemon, manage node settings.
 
 ```text
-wssp config [OPTIONS] <COMMAND>
+wssp host [OPTIONS] <COMMAND>
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
+| `--all` | With `--help`: list every host subcommand, also on a machine that is not enrolled |  |
 
-### `wssp config set-agent-host-commands`
+### `wssp host enroll`
 
-Allow agents to run host commands and use host file tools. The daemon user is an Incus admin: these tools can reach every sandbox on this node, including other users' sandboxes in shared pools. A credential's "own sandboxes only" setting does not limit host commands. Enabling requires local stdin and stderr TTYs, verified process ancestry outside the daemon, and typed confirmation.
-
-```text
-wssp config set-agent-host-commands [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-host-command-max-time`
-
-Cap each host command at 1..86400 seconds (default 600). Raising requires local confirmation.
+Enroll this machine as a host: device login for a host slug, or a dashboard host token's environment variable.
 
 ```text
-wssp config set-host-command-max-time [OPTIONS] <SECONDS>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<SECONDS>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-host-file-roots`
-
-Set up to 32 absolute host file roots (never `/`). Adding roots requires local confirmation.
-
-```text
-wssp config set-host-file-roots [OPTIONS] <PATHS>...
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<PATHS>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config clear-host-file-roots`
-
-Disable host file tools by clearing their roots. Never prompts.
-
-```text
-wssp config clear-host-file-roots [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-host-terminal`
-
-Enable or disable host terminals locally.
-
-```text
-wssp config set-host-terminal [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-host-terminal-totp`
-
-Require TOTP, or permit host terminals without a fresh code.
-
-```text
-wssp config set-host-terminal-totp [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `required`, `optional` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-max-lease`
-
-Set this host's sandbox lease ceiling: `6h`, `90m`, `7d` (5m..24d) or `unlimited`. A running daemon reloads it and reports it to the server.
-
-```text
-wssp config set-max-lease [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-carry-intent-window`
-
-How long work that never started is carried across a relay outage: `10m` (1m..24h), or `default` (10 minutes). Never past the sandbox lease or `max_carry`. A restart of `wssp connect` applies it.
-
-```text
-wssp config set-carry-intent-window [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-max-carry`
-
-How long a running command is carried across a relay outage before the node stops it (`host_disconnect_expired`): `24h`, `7d` (10m..24d), or `default` (24 hours). A restart of `wssp connect` applies it.
-
-```text
-wssp config set-max-carry [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-builder`
-
-Run template-build VMs on this host: `on`, `off`, or `default` (on whenever the image cache is enabled). Build steps may run as guest root inside build VMs. A restart of `wssp connect` applies it.
-
-```text
-wssp config set-builder [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off`, `default` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-accept-foreign-builds`
-
-Run template builds for other accounts in shared pools (default off; also needs `accept_foreign_images`). A restart applies it.
-
-```text
-wssp config set-accept-foreign-builds [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config path`
-
-Print the path to the config file.
-
-```text
-wssp config path [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config show`
-
-Print the effective configuration (defaults merged with the file).
-
-```text
-wssp config show [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config init`
-
-Create a default config file if one does not already exist.
-
-```text
-wssp config init [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-server`
-
-Set the control plane server URL.
-
-```text
-wssp config set-server [OPTIONS] <URL>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<URL>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-ca-file`
-
-Save a PEM CA file for HTTPS/WSS (added to webpki roots).
-
-```text
-wssp config set-ca-file [OPTIONS] <PATH>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<PATH>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config clear-ca-file`
-
-Clear the saved CA file (WSSP_CA_FILE can still override it).
-
-```text
-wssp config clear-ca-file [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-slug`
-
-Store a host slug label (login still requires explicit `--slug`).
-
-```text
-wssp config set-slug [OPTIONS] <SLUG>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<SLUG>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-open-egress-for-others`
-
-Let sandboxes from other users' pools reach the open internet from this machine (your own sandboxes always can). A running daemon reloads it.
-
-```text
-wssp config set-open-egress-for-others [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-allow-guest-sudo-for-others`
-
-Let sandboxes from other users' pools use `sudo` (root inside their own VM) on this machine. Default on; your own sandboxes always can. A running daemon reloads it for the next create or cold reconnect.
-
-```text
-wssp config set-allow-guest-sudo-for-others [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off`, `default` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-egress-block-smtp`
-
-Reject outbound SMTP (tcp/25) from sandboxes created afterwards.
-
-```text
-wssp config set-egress-block-smtp [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-egress-block-external-dns`
-
-Reject DNS to resolvers other than the sandbox gateway, for sandboxes created afterwards.
-
-```text
-wssp config set-egress-block-external-dns [OPTIONS] <VALUE>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<VALUE>` |  | required; one of `on`, `off` |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp config set-egress-dns-upstreams`
-
-Upstream resolvers for open-internet sandboxes created afterwards: up to 4 comma-separated IPv4 addresses, or `--clear` for the host resolvers.
-
-```text
-wssp config set-egress-dns-upstreams [OPTIONS] [IP,...]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<IP,...>` |  |  |
-| `--clear` | Use the host resolvers again |  |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp completions`
-
-Generate shell completion scripts.
-
-```text
-wssp completions [OPTIONS] <SHELL>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<SHELL>` | Shell to generate completions for | required; one of `bash`, `elvish`, `fish`, `powershell`, `zsh` |
-
-### `wssp login`
-
-Device-code login for host enrollment.
-
-```text
-wssp login [OPTIONS] --slug <SLUG>
+wssp host enroll [OPTIONS] <--slug <SLUG>|--token-env <ENV>>
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
 | `--ca-file <PATH>` | Add PEM CA certificates to webpki roots (default: WSSP_CA_FILE or saved ca_file) |  |
-| `--slug <SLUG>` | Sandbox host slug to enroll (`host-slug:<slug>` scope) | required |
+| `--slug <SLUG>` | Sandbox host slug to enroll with the device flow (`host-slug:<slug>` scope) |  |
+| `--token-env <ENV>` | Record the environment variable that holds a dashboard-minted host token instead of running the device flow (the token itself is never written to config) |  |
 | `--server <SERVER>` | Control plane origin override (defaults to configured `server_url`) |  |
 | `--json` | Emit JSON instead of human-readable text |  |
-| `--open-egress-for-others <on|off>` | Let sandboxes from other users' pools reach the open internet from this machine. Without it, an interactive login asks once | one of `on`, `off` |
+| `--open-egress-for-others <on|off>` | Let sandboxes from other users' pools reach the open internet from this machine. Without it, an interactive device enrollment asks once | one of `on`, `off` |
 
-### `wssp logout`
+### `wssp host run`
 
-Clear stored device credentials and, best effort, any configured host token binding.
-
-```text
-wssp logout [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp token`
-
-Configure dashboard host token environment variables.
+Run the node daemon: connect to the sandbox host relay and execute dispatched operations.
 
 ```text
-wssp token [OPTIONS] <COMMAND>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp token login`
-
-Record the environment variable that contains a dashboard-minted host token.
-
-```text
-wssp token login [OPTIONS] <ENV_VAR>
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `<ENV_VAR>` |  | required |
-| `--json` | Emit JSON instead of human-readable text |  |
-
-### `wssp drain`
-
-Refuse new guest work on this host; running guests keep running.
-
-```text
-wssp drain [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--ca-file <PATH>` | Add PEM CA certificates to webpki roots (default: WSSP_CA_FILE or saved ca_file) |  |
-| `--server <SERVER>` | Control plane origin (defaults to the saved selection) |  |
-| `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
-| `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
-| `--json` | Print the committed drain state and live sandbox count as JSON |  |
-| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
-
-### `wssp undrain`
-
-Restore admission on this host.
-
-```text
-wssp undrain [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--ca-file <PATH>` | Add PEM CA certificates to webpki roots (default: WSSP_CA_FILE or saved ca_file) |  |
-| `--server <SERVER>` | Control plane origin (defaults to the saved selection) |  |
-| `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
-| `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
-| `--json` | Print the committed drain state and live sandbox count as JSON |  |
-| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
-
-### `wssp images`
-
-Inspect or prune the managed template image cache.
-
-```text
-wssp images [OPTIONS] <COMMAND>
-```
-
-No command-specific options.
-
-### `wssp images list`
-
-List managed cached images (fetched, captured, replicas).
-
-```text
-wssp images list [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--json` | Print JSON |  |
-
-### `wssp images prune`
-
-Evict unpinned images nothing uses (asks the running daemon).
-
-```text
-wssp images prune [OPTIONS]
-```
-
-| Argument | Description | Notes |
-| --- | --- | --- |
-| `--dry-run` | Only list what would be evicted |  |
-| `--json` | Print JSON |  |
-
-### `wssp connect`
-
-Connect to the sandbox host relay and execute dispatched operations.
-
-```text
-wssp connect [OPTIONS]
+wssp host run [OPTIONS]
 ```
 
 | Argument | Description | Notes |
@@ -516,59 +104,447 @@ wssp connect [OPTIONS]
 | `--max-sandbox-cpu-count <MAX_SANDBOX_CPU_COUNT>` | Optional per-VM CPU cap (1..32), independent of the number of VMs. Overrides TOML max_sandbox_cpu_count, otherwise detected from the runtime |  |
 | `--max-concurrent-commands <MAX_CONCURRENT_COMMANDS>` | Maximum concurrent commands across this host (1 to 256; default 16) | default `16` |
 
-### `wssp daemon`
+### `wssp host logout`
 
-Manage the running node daemon (graceful restart for upgrades).
+Clear the stored host device credential and, best effort, any configured host token binding.
 
 ```text
-wssp daemon [OPTIONS] <COMMAND>
+wssp host logout [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host drain`
+
+Refuse new guest work on this host; running guests keep running.
+
+```text
+wssp host drain [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--ca-file <PATH>` | Add PEM CA certificates to webpki roots (default: WSSP_CA_FILE or saved ca_file) |  |
+| `--server <SERVER>` | Control plane origin (defaults to the saved selection) |  |
+| `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
+| `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
+| `--json` | Print the committed drain state and live sandbox count as JSON |  |
+| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
+
+### `wssp host undrain`
+
+Restore admission on this host.
+
+```text
+wssp host undrain [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--ca-file <PATH>` | Add PEM CA certificates to webpki roots (default: WSSP_CA_FILE or saved ca_file) |  |
+| `--server <SERVER>` | Control plane origin (defaults to the saved selection) |  |
+| `--host-token-env <HOST_TOKEN_ENV>` | Environment variable holding a dashboard host token |  |
+| `--host-id <HOST_ID>` | Host id (required with a dashboard host token) |  |
+| `--json` | Print the committed drain state and live sandbox count as JSON |  |
+| `--offload` | Drain only: also offload this host's stopped sandboxes to the image store, whatever their offload policy, and free their host copies once another eligible host could restore them. Undrain clears it |  |
+
+### `wssp host images`
+
+Inspect or prune the managed template image cache.
+
+```text
+wssp host images [OPTIONS] <COMMAND>
 ```
 
 No command-specific options.
 
-### `wssp daemon quiesce`
+### `wssp host images list`
+
+List managed cached images (fetched, captured, replicas).
+
+```text
+wssp host images list [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Print JSON |  |
+
+### `wssp host images prune`
+
+Evict unpinned images nothing uses (asks the running daemon).
+
+```text
+wssp host images prune [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--dry-run` | Only list what would be evicted |  |
+| `--json` | Print JSON |  |
+
+### `wssp host config`
+
+Inspect and change node settings, the configuration file and resolved paths.
+
+```text
+wssp host config [OPTIONS] <COMMAND>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-agent-host-commands`
+
+Allow agents to run host commands and use host file tools. The daemon user is an Incus admin: these tools can reach every sandbox on this node, including other users' sandboxes in shared pools. A credential's "own sandboxes only" setting does not limit host commands. Enabling requires local stdin and stderr TTYs, verified process ancestry outside the daemon, and typed confirmation.
+
+```text
+wssp host config set-agent-host-commands [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-host-command-max-time`
+
+Cap each host command at 1..86400 seconds (default 600). Raising requires local confirmation.
+
+```text
+wssp host config set-host-command-max-time [OPTIONS] <SECONDS>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SECONDS>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-host-file-roots`
+
+Set up to 32 absolute host file roots (never `/`). Adding roots requires local confirmation.
+
+```text
+wssp host config set-host-file-roots [OPTIONS] <PATHS>...
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<PATHS>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config clear-host-file-roots`
+
+Disable host file tools by clearing their roots. Never prompts.
+
+```text
+wssp host config clear-host-file-roots [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-host-terminal`
+
+Enable or disable host terminals locally.
+
+```text
+wssp host config set-host-terminal [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-host-terminal-totp`
+
+Require TOTP, or permit host terminals without a fresh code.
+
+```text
+wssp host config set-host-terminal-totp [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `required`, `optional` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-max-lease`
+
+Set this host's sandbox lease ceiling: `6h`, `90m`, `7d` (5m..24d) or `unlimited`. A running daemon reloads it and reports it to the server.
+
+```text
+wssp host config set-max-lease [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-carry-intent-window`
+
+How long work that never started is carried across a relay outage: `10m` (1m..24h), or `default` (10 minutes). Never past the sandbox lease or `max_carry`. A restart of `wssp host run` applies it.
+
+```text
+wssp host config set-carry-intent-window [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-max-carry`
+
+How long a running command is carried across a relay outage before the node stops it (`host_disconnect_expired`): `24h`, `7d` (10m..24d), or `default` (24 hours). A restart of `wssp host run` applies it.
+
+```text
+wssp host config set-max-carry [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-builder`
+
+Run template-build VMs on this host: `on`, `off`, or `default` (on whenever the image cache is enabled). Build steps may run as guest root inside build VMs. A restart of `wssp host run` applies it.
+
+```text
+wssp host config set-builder [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off`, `default` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-accept-foreign-builds`
+
+Run template builds for other accounts in shared pools (default off; also needs `accept_foreign_images`). A restart applies it.
+
+```text
+wssp host config set-accept-foreign-builds [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config path`
+
+Print the path to the config file.
+
+```text
+wssp host config path [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config show`
+
+Print the effective configuration (defaults merged with the file).
+
+```text
+wssp host config show [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config init`
+
+Create a default config file if one does not already exist.
+
+```text
+wssp host config init [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-server`
+
+Set the control plane server URL.
+
+```text
+wssp host config set-server [OPTIONS] <URL>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<URL>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-ca-file`
+
+Save a PEM CA file for HTTPS/WSS (added to webpki roots).
+
+```text
+wssp host config set-ca-file [OPTIONS] <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<PATH>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config clear-ca-file`
+
+Clear the saved CA file (WSSP_CA_FILE can still override it).
+
+```text
+wssp host config clear-ca-file [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-slug`
+
+Store a host slug label (`wssp host enroll` still requires an explicit `--slug`).
+
+```text
+wssp host config set-slug [OPTIONS] <SLUG>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SLUG>` |  | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-open-egress-for-others`
+
+Let sandboxes from other users' pools reach the open internet from this machine (your own sandboxes always can). A running daemon reloads it.
+
+```text
+wssp host config set-open-egress-for-others [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-allow-guest-sudo-for-others`
+
+Let sandboxes from other users' pools use `sudo` (root inside their own VM) on this machine. Default on; your own sandboxes always can. A running daemon reloads it for the next create or cold reconnect.
+
+```text
+wssp host config set-allow-guest-sudo-for-others [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off`, `default` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-egress-block-smtp`
+
+Reject outbound SMTP (tcp/25) from sandboxes created afterwards.
+
+```text
+wssp host config set-egress-block-smtp [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-egress-block-external-dns`
+
+Reject DNS to resolvers other than the sandbox gateway, for sandboxes created afterwards.
+
+```text
+wssp host config set-egress-block-external-dns [OPTIONS] <VALUE>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<VALUE>` |  | required; one of `on`, `off` |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host config set-egress-dns-upstreams`
+
+Upstream resolvers for open-internet sandboxes created afterwards: up to 4 comma-separated IPv4 addresses, or `--clear` for the host resolvers.
+
+```text
+wssp host config set-egress-dns-upstreams [OPTIONS] [IP,...]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<IP,...>` |  |  |
+| `--clear` | Use the host resolvers again |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp host daemon`
+
+Manage the running node daemon (graceful restart for upgrades).
+
+```text
+wssp host daemon [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp host daemon quiesce`
 
 Gracefully restart the running daemon: finish running commands (up to `quiesce_max`, default 10 minutes), then exit for the service manager to restart. Use as the service's `ExecReload`.
 
 ```text
-wssp daemon quiesce [OPTIONS]
+wssp host daemon quiesce [OPTIONS]
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
 | `--pid <PID>` | The daemon's process id, when not run by systemd (`$MAINPID` unset). Only a daemon whose control file verifies this pid is signalled |  |
 
-### `wssp guard`
+### `wssp host guard`
 
-Root-owned egress guard: install, status and the service entry point.
+Root-owned egress guard: install, uninstall and status.
 
 ```text
-wssp guard [OPTIONS] <COMMAND>
+wssp host guard [OPTIONS] <COMMAND>
 ```
 
 No command-specific options.
 
-### `wssp guard install`
+### `wssp host guard install`
 
 Install or upgrade the egress guard system service (run with sudo).
 
 ```text
-wssp guard install [OPTIONS] --daemon-user <USER>
+wssp host guard install [OPTIONS] --daemon-user <USER>
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
-| `--daemon-user <USER>` | Unprivileged user that runs `wssp connect`; only it may push the deployment blocklist | required |
+| `--daemon-user <USER>` | Unprivileged user that runs `wssp host run`; only it may push the deployment blocklist | required |
 | `--configure-ufw` | Also add the minimal ufw rules sandbox bridges need (DHCP, DNS, login proxy in; routing in and out), printing each one |  |
 | `--configure-firewalld` | Also add a minimal firewalld zone and policy for the sandbox bridges, printing each command |  |
 | `--credential-proxy-port <PORT>` | The daemon's `credential_proxy_port`, opened by `--configure-ufw`/`--configure-firewalld` | default `48080` |
 
-### `wssp guard uninstall`
+### `wssp host guard uninstall`
 
 Remove the egress guard service (run with sudo); keeps /etc/wssp/egress-blocklist.
 
 ```text
-wssp guard uninstall [OPTIONS]
+wssp host guard uninstall [OPTIONS]
 ```
 
 | Argument | Description | Notes |
@@ -576,44 +552,34 @@ wssp guard uninstall [OPTIONS]
 | `--configure-ufw` | Also remove the ufw rules `install --configure-ufw` added (only those) |  |
 | `--configure-firewalld` | Also remove the firewalld zone and policy `install --configure-firewalld` added |  |
 
-### `wssp guard status`
+### `wssp host guard status`
 
 Show the egress guard's health lease, policy sources and bridges.
 
 ```text
-wssp guard status [OPTIONS]
+wssp host guard status [OPTIONS]
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
 | `--json` | Print the status as JSON |  |
 
-### `wssp guard run`
-
-Service entry point, started by `wssp-guard.service` as root.
-
-```text
-wssp guard run [OPTIONS]
-```
-
-No command-specific options.
-
-### `wssp tunnel`
+### `wssp host tunnel`
 
 Preview tunnels: install, inspect or remove the pinned `tunnel` client.
 
 ```text
-wssp tunnel [OPTIONS] <COMMAND>
+wssp host tunnel [OPTIONS] <COMMAND>
 ```
 
 No command-specific options.
 
-### `wssp tunnel install`
+### `wssp host tunnel install`
 
 Copy a `tunnel` client binary into wssp's data directory after checking its SHA-256, and enable preview tunnels (restart applies).
 
 ```text
-wssp tunnel install [OPTIONS] --file <FILE> --sha256 <SHA256>
+wssp host tunnel install [OPTIONS] --file <FILE> --sha256 <SHA256>
 ```
 
 | Argument | Description | Notes |
@@ -623,26 +589,38 @@ wssp tunnel install [OPTIONS] --file <FILE> --sha256 <SHA256>
 | `--max-tunnels <MAX_TUNNELS>` | Most tunnel clients at once (1..=256) | default `16` |
 | `--allow-for-others` | Let sandboxes from other users' pools use tunnels here |  |
 
-### `wssp tunnel status`
+### `wssp host tunnel status`
 
 Show the configured client and whether it still verifies.
 
 ```text
-wssp tunnel status [OPTIONS]
+wssp host tunnel status [OPTIONS]
 ```
 
 | Argument | Description | Notes |
 | --- | --- | --- |
 | `--json` | Print JSON |  |
 
-### `wssp tunnel remove`
+### `wssp host tunnel remove`
 
 Disable preview tunnels on this node (restart applies).
 
 ```text
-wssp tunnel remove [OPTIONS]
+wssp host tunnel remove [OPTIONS]
 ```
 
 No command-specific options.
+
+### `wssp completions`
+
+Generate shell completion scripts.
+
+```text
+wssp completions [OPTIONS] <SHELL>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SHELL>` | Shell to generate completions for | required; one of `bash`, `elvish`, `fish`, `powershell`, `zsh` |
 
 <!-- END GENERATED -->

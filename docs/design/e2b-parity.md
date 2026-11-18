@@ -21,7 +21,7 @@ E2B reference: [API docs](https://docs.e2b.dev/api-reference) ·
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Guest interface | Incus guest agent only — `incus exec` (including the Python 3 file helper), `incus start/stop/delete`. No guest companion daemon. |
 | Isolation       | The VM is the sandbox. Guest paths are the VM filesystem; there is no host-directory mount or workspace jail.                     |
-| Host path       | Outbound WSS node daemon (`wssp connect`) → local Incus CLI. Clients never talk to Incus or the VM directly.                      |
+| Host path       | Outbound WSS node daemon (`wssp host run`) → local Incus CLI. Clients never talk to Incus or the VM directly.                     |
 | In scope        | Files, execution, manual templates, browser shell into the sandbox, later snapshot/fork APIs                                      |
 | Out of scope    | `getHost` / guest port URLs, macOS/Windows runtimes, file watches, volumes, the E2B wire protocols and official SDKs              |
 

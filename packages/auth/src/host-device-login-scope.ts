@@ -3,7 +3,7 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { admin } from "better-auth/plugins";
 
 /**
- * `onDeviceAuthRequest` for the deviceAuthorization plugin. `wssp login` is the
+ * `onDeviceAuthRequest` for the deviceAuthorization plugin. `wssp host enroll` is the
  * only device-flow client and every request must name exactly one host slug
  * (`scope = "host-slug:<slug>"`), so the approval page can show what approving
  * authorizes and the exchange can mint for that slug only.
@@ -25,7 +25,7 @@ export function requireHostDeviceLoginScope(clientId: string, scope: string | un
 
 /**
  * Better Auth paths turned off with `disabledPaths` (404 before any handler
- * runs). `/device/token` would redeem an approved `wssp login` code for a full
+ * runs). `/device/token` would redeem an approved `wssp host enroll` code for a full
  * browser session (Better Auth's RFC 8628 token endpoint), which is not what
  * the approval page describes. The only redemption is
  * `hostCredentials.exchangeDeviceCode`, which mints the one device credential

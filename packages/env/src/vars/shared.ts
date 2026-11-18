@@ -126,7 +126,7 @@ export const sharedVars = {
   // shim-driven harnesses. Never set in production.
   WSSP_INCUS_DAEMON_LOCK_DIR: z.string().min(1).optional(),
   // Test-only override read by DEBUG builds of the Rust node daemon
-  // (`wssp connect`), not by any Node process: `1` lets a daemon share its
+  // (`wssp host run`), not by any Node process: `1` lets a daemon share its
   // Incus server with another wssp daemon (local chaos stack). Release builds
   // compile it out; accepted only with a loopback control plane. Never set in
   // production.

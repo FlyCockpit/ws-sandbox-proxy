@@ -1,4 +1,4 @@
-//! `wssp guard install --configure-ufw` / `--configure-firewalld` and the
+//! `wssp host guard install --configure-ufw` / `--configure-firewalld` and the
 //! matching `uninstall` flags (docs/guide/hosts.md#host-firewall-ufwfirewalld).
 //!
 //! Opt-in only. Adds the minimal host-firewall rules a sandbox bridge

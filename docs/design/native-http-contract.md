@@ -2147,7 +2147,7 @@ soon as bridge creation completes rather than spanning VM boot.
 Provisioned lock location and legacy-shape fencing. The
 allocation-lock directory is an administrator-PROVISIONED system path,
 `/var/lib/wssp/incus-daemon-locks`, never created at use time: setup
-(`wssp connect` enrollment) provisions it when it can and otherwise fails
+(`wssp host run` enrollment) provisions it when it can and otherwise fails
 fast with the exact operator command (`sudo install -d -m 2770 -o root -g
 <daemon-users-group> ...`, with every authorized node-daemon user in that
 group). The path sits outside every private-temp-affected location (`/tmp`,
@@ -2183,7 +2183,7 @@ The `WSSP_INCUS_DAEMON_LOCK_DIR` dev/test seam is registered alongside the
 other node-daemon seams in `docs/design/e2b-parity.md`.
 
 Enrollment proves lock usability, not just metadata.
-`wssp connect` setup probes the provisioned lock directory with the real
+`wssp host run` setup probes the provisioned lock directory with the real
 operation (create, fsync, remove a probe file as the current user,
 O_NOFOLLOW) before the relay connects: a root-owned 2770 directory whose
 group excludes the daemon user passes metadata checks but fails every lock

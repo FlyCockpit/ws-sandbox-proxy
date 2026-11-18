@@ -3,7 +3,7 @@
   "description": "Machines enrolled to run your sandboxes.",
   "empty": {
     "title": "No hosts yet",
-    "description": "Enroll a machine with Incus by running wssp login on it, then wssp connect. It appears here once enrolled."
+    "description": "Enroll a machine with Incus by running wssp host enroll on it, then wssp host run. It appears here once enrolled."
   },
   "enroll": {
     "title": "Enroll a machine",
@@ -27,7 +27,7 @@
     "stale": "No recent heartbeat. The daemon may be down or unreachable, so work sent to it may not start until it is back.",
     "quarantined": "The daemon is running, but the server refuses its inventory, so the host takes no work. It keeps retrying on its own; there is nothing to start.",
     "reconnecting": "The daemon connected recently but did not stay connected. It retries on its own. If this lasts, check its log with journalctl --user -u wssp-host.",
-    "offline": "The daemon has not connected recently. Start it with wssp connect, or check its log with journalctl --user -u wssp-host.",
+    "offline": "The daemon has not connected recently. Start it with wssp host run, or check its log with journalctl --user -u wssp-host.",
     "never": "The daemon has not connected yet.",
     "revoked": "This host's credential was revoked. Enroll it again to reconnect.",
     "deleting": "The host is removed once its stopped sandboxes, transfers and unfinished work are gone. It accepts no new sandboxes."
@@ -81,7 +81,7 @@
   "egress": {
     "badge": "No egress enforcement",
     "incusHint": "This host can't create sandboxes: its daemon reported that it can't enforce outbound network rules. The daemon's log names the reason, for example an Incus release older than 6.14, a missing network ACL extension, or an Incus daemon it couldn't query. Fix that, then restart the daemon.",
-    "fakeHint": "This host can't create sandboxes: the fake runtime never enforces outbound network rules. Connect the daemon with the Incus runtime to run sandboxes.",
+    "fakeHint": "This host can't create sandboxes: the fake runtime never enforces outbound network rules. Run `wssp host run --runtime incus` to run sandboxes.",
     "title": "Network",
     "guard": {
       "label": "Network guard",
@@ -104,7 +104,7 @@
         "unknown": "The daemon hasn't reported a network guard on this host.",
         "guard_unreachable": "The daemon can't reach the network guard: it isn't installed or isn't running.",
         "guard_not_ok": "The network guard reports that it can't enforce its rules.",
-        "guard_quarantined": "The network guard quarantined this host because a firewall or network setting is outside the supported packet path. Run wssp guard status on the host to see which one.",
+        "guard_quarantined": "The network guard quarantined this host because a firewall or network setting is outside the supported packet path. Run wssp host guard status on the host to see which one.",
         "guard_lease_expired": "The network guard stopped renewing its health report.",
         "guard_outdated": "The network guard is older than this daemon and must be upgraded.",
         "guard_root_source": "The root blocklist (/etc/wssp/egress-blocklist) is invalid. Fix it with sudoedit.",
@@ -113,7 +113,7 @@
         "incus_server_shared": "Another wssp daemon uses this host's Incus server, and only one daemon per Incus server is supported. Running sandboxes keep running. Stop the other daemon; the host log names it."
       },
       "blocked": "New sandboxes can't start here.",
-      "install": "Install or upgrade the guard by running this on the host as the user that runs the daemon. It needs root, so you run it yourself; wssp guard status shows the details.",
+      "install": "Install or upgrade the guard by running this on the host as the user that runs the daemon. It needs root, so you run it yourself; wssp host guard status shows the details.",
       "firewall": "Run this on the host to add the minimal firewall rules (DHCP, DNS and the login proxy in from the sandbox bridges, plus routing). It prints each rule, and the network guard still enforces every block. Use --configure-firewalld instead on firewalld hosts."
     },
     "openForOthers": "Open internet for other users' sandboxes",
@@ -156,12 +156,12 @@
     "pending_other": "{{count}} sandboxes now restore from the image store. Deletion is pending until the host's remaining sandboxes and work are gone."
   },
   "connect": {
-    "caHint": "For a private CA, optionally add <code>--ca-file &lt;path&gt;</code> to login or connect, or set <code>WSSP_CA_FILE</code> to your CA bundle path. Certificates must match the server hostname and be valid.",
+    "caHint": "For a private CA, optionally add <code>--ca-file &lt;path&gt;</code> to <code>wssp host enroll</code> or <code>wssp host run</code>, or set <code>WSSP_CA_FILE</code> to your CA bundle path. Certificates must match the server hostname and be valid.",
     "title": "Connect this host",
     "device": "Device login (re-enrolls this host by its slug), then start the daemon:",
     "token": "With a host token from Host credentials, stored in WSSP_HOST_TOKEN:",
     "copyCommand": "Copy command",
-    "vmCapacityHint": "<code>wssp connect</code> detects RAM, total vCPU (threads × 2) and a per-VM CPU cap. Override independently with <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> and <code>--max-sandbox-cpu-count</code>. Storage is configured in local TOML; reconnect after changes. Each works alone; supply all three if all detection fails."
+    "vmCapacityHint": "<code>wssp host run</code> detects RAM, total vCPU (threads × 2) and a per-VM CPU cap. Override independently with <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> and <code>--max-sandbox-cpu-count</code>. Storage is configured in local TOML; reconnect after changes. Each works alone; supply all three if all detection fails."
   },
   "problem": {
     "capacity": "The host lacks resource capacity. Its report was refreshed.",
@@ -369,7 +369,7 @@
   },
   "lease": {
     "title": "Sandbox lifetime",
-    "ceiling": "Lifetime ceiling: {{value}} (set on the host with `wssp config set-max-lease`)",
+    "ceiling": "Lifetime ceiling: {{value}} (set on the host with `wssp host config set-max-lease`)",
     "ceilingHint": "Only the machine owner can raise or lower this, on the host itself. Pools and memberships can only lower it further.",
     "unlimited": "no time limit",
     "noLimit": "no limit",

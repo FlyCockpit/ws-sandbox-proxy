@@ -1,6 +1,6 @@
 # Hosts
 
-A host is a Linux machine you control that runs the `wssp connect` daemon. The
+A host is a Linux machine you control that runs the `wssp host run` daemon. The
 daemon holds one outbound WSS connection to the server, executes dispatched
 work against the local Incus daemon, and enforces sandbox leases on its own
 even while disconnected. The control plane never talks to Incus directly.
@@ -28,7 +28,7 @@ roots and unfinished work can still block deletion indefinitely. Pool drain bloc
 only new roots; global host drain also refuses cold starts. Host edit changes the
 label only; configure budgets/pools in local TOML and reconnect to apply them.
 
-Copied login/connect commands need no capacity flags. The picker estimates joint
+Copied `host enroll`/`host run` commands need no capacity flags. The picker estimates joint
 RAM/vCPU/disk fit from current discovery and an exact revision or explicit sizes;
 the server rechecks authority, source and all resource dimensions on acceptance.
 Admin observability remains metadata-only and exposes no guest execution authority.
@@ -45,7 +45,7 @@ that says on while vetoed receives another turn-off request. **Allow again**
 is a person-only action that lifts the dashboard block only while the node is
 online and its live report at the current epoch says the setting is off. It
 does not turn the node setting on. If the node still reports on, first run
-`wssp config set-agent-host-commands off` or `wssp config set-host-terminal off`
+`wssp host config set-agent-host-commands off` or `wssp host config set-host-terminal off`
 at the node and wait for its off report. The card warns if something on the node turned it back on
 while vetoed. Lowering agent access cancels in-flight
 host commands and pending file work; lowering terminals closes host PTYs.
@@ -68,10 +68,10 @@ trust it.
 Run these as the daemon user in a local login session on the node:
 
 ```sh
-wssp config set-agent-host-commands on
-wssp config set-host-command-max-time 600
-wssp config set-host-file-roots /srv/projects /home/operator/work
-wssp config set-host-terminal on
+wssp host config set-agent-host-commands on
+wssp host config set-host-command-max-time 600
+wssp host config set-host-file-roots /srv/projects /home/operator/work
+wssp host config set-host-terminal on
 ```
 
 Use existing absolute directories you intend to expose for file roots. At most
@@ -81,7 +81,7 @@ Enabling either setting, raising the cap or adding roots requires stdin and
 stderr TTYs and typing `on`; there is no `--yes`. The environment variable
 `WSSP_HOST_COMMAND` and `WSSP_HOST_TERMINAL` must be absent, and the process
 must have no daemon ancestry. A startup
-`wssp connect --host-terminal on` override uses the same gate. Revision latches
+`wssp host run --host-terminal on` override uses the same gate. Revision latches
 reduce accidental config changes; unreadable config fails closed.
 
 Run the daemon as a service (a system or user unit) and raise settings from a
@@ -96,10 +96,10 @@ These checks are not a kernel-enforced sandbox.
 Lowering never prompts:
 
 ```sh
-wssp config set-agent-host-commands off
-wssp config set-host-command-max-time 60
-wssp config clear-host-file-roots
-wssp config set-host-terminal off
+wssp host config set-agent-host-commands off
+wssp host config set-host-command-max-time 60
+wssp host config clear-host-file-roots
+wssp host config set-host-terminal off
 ```
 
 `set-host-file-roots` replaces the roots; removing roots also lowers access.
@@ -153,7 +153,7 @@ sandbox:
 - **The `br_netfilter` kernel module, loaded and persisted, with
   `net.bridge.bridge-nf-call-ip6tables=1`.** Sandbox NICs set
   `security.ipv6_filtering`, which Incus cannot start without bridge
-  netfilter. `wssp connect --runtime incus` checks for `/proc/sys/net/bridge`
+  netfilter. `wssp host run --runtime incus` checks for `/proc/sys/net/bridge`
   and that `bridge-nf-call-ip6tables` reads `1`, and refuses to start
   otherwise:
 
@@ -320,7 +320,7 @@ The rest of the setup:
 
 ### One daemon per Incus server
 
-`wssp connect --runtime incus` checks for another `wssp` daemon on its Incus
+`wssp host run --runtime incus` checks for another `wssp` daemon on its Incus
 server before it touches Incus, and refuses to start while one is running.
 This works whatever Unix user, data directory or control-plane URL each
 daemon uses, because each daemon keeps a marker in Incus itself: a profile
@@ -329,7 +329,7 @@ orders markers and `<id>` is random, so no name is ever reused. Its
 `user.wssp.lease.*` keys name the daemon's host id, label, machine and pid,
 and an expiry; the daemon replaces it with a fresh one every 15 seconds. A
 marker stays live for 60 seconds. No credential is stored there. CLI
-commands that only read Incus (`wssp config show`, `wssp images list`) never
+commands that only read Incus (`wssp host config show`, `wssp host images list`) never
 check or write a marker.
 
 The marker coordinates current `wssp` daemons; it cannot arbitrate unrelated
@@ -426,7 +426,7 @@ incus profile show wssp-daemon-lease-<n>-<id> --project default
 
 The `user.wssp.lease.host_id`, `label`, `machine` and `pid` keys name the
 daemon that wrote it: compare them with the host's id on the dashboard, the
-daemon's `--label`, the machine's hostname and a running `wssp connect`
+daemon's `--label`, the machine's hostname and a running `wssp host run`
 process there. A marker that names no daemon you run, or one whose daemon
 is stopped, is bogus or stale. Delete it with
 `incus profile delete wssp-daemon-lease-<n>-<id> --project default`. A running
@@ -459,11 +459,11 @@ cargo install --path apps/cli --bin wssp
 **Device login (recommended).** The slug names the host in your account:
 
 ```sh
-wssp login --slug desk-01 --server https://api.example.com
-wssp connect
+wssp host enroll --slug desk-01 --server https://api.example.com
+wssp host run
 ```
 
-`wssp login` prints a verification URL and code and never opens a browser or
+`wssp host enroll` prints a verification URL and code and never opens a browser or
 reads stdin. Open the URL while signed in to the dashboard, approve the
 request (verified email and 2FA required), and the daemon stores one
 `wssp_device_…` credential bound to that host. Approving a slug you have not
@@ -475,12 +475,21 @@ variable name (the secret itself is never written to config):
 
 ```sh
 export WSSP_HOST_TOKEN=wssp_host_…
-wssp token login WSSP_HOST_TOKEN
-wssp connect --server https://api.example.com --host-id <host-id>
+wssp host enroll --token-env WSSP_HOST_TOKEN
+wssp host run --server https://api.example.com --host-id <host-id>
 ```
 
-A host token always needs `--host-id`. `wssp connect --host-token-env <VAR>`
+A host token always needs `--host-id`. `wssp host run --host-token-env <VAR>`
 selects a token explicitly for one run.
+
+Until a machine is enrolled (no device credential and no recorded host token
+variable), `wssp host --help` lists only `enroll`; `wssp host --help --all`
+shows every host command. Hidden commands stay callable: only `wssp host run`,
+`drain` and `undrain` need an enrollment (or an explicit `--host-token-env`)
+and otherwise exit 6 with "this device is not an enrolled host; run `wssp host
+enroll --slug <slug>` or `wssp host enroll --token-env <ENV>` (or pass
+`--host-token-env`)". Node-local commands such as `wssp host config` (saved defaults like
+the server and CA file) and `wssp host guard` work before enrollment.
 
 Hosts must connect using the canonical server origin configured in
 `BETTER_AUTH_URL` for environment-bearing work. Set `--server` (or the enrolled
@@ -500,8 +509,8 @@ the server origin and points to both options. Check the hostname and certificate
 validity as well: adding a trusted CA does not bypass either check.
 
 `--ca-file <path>` adds every PEM certificate in a file to the default Mozilla
-webpki roots for `wssp connect`, `wssp login` (authorization and exchange),
-`wssp drain`, and `wssp undrain`. Selection is **flag → `WSSP_CA_FILE` → saved
+webpki roots for `wssp host run`, `wssp host enroll` (authorization and exchange),
+`wssp host drain`, and `wssp host undrain`. Selection is **flag → `WSSP_CA_FILE` → saved
 `ca_file`**. Certificate chains, expiry, and hostnames are always verified;
 there is no insecure mode. HTTPS/WSS is required except for explicit loopback
 development. A missing, unreadable, empty, malformed, or certificate-free file
@@ -520,22 +529,22 @@ the saved `ca_file` setting. Keep local test roots in a private directory rather
 than directly in a shared writable directory such as `/tmp`.
 
 ```sh
-wssp login --slug desk-01 --server https://api.internal.example --ca-file /etc/wssp/root-ca.pem
-wssp connect
+wssp host enroll --slug desk-01 --server https://api.internal.example --ca-file /etc/wssp/root-ca.pem
+wssp host run
 ```
 
 Successful device login with an explicit `--ca-file` saves its absolute path
 alongside the canonical server URL. `WSSP_CA_FILE` applies only to that run,
-including `login`, and never becomes a saved default. An existing saved path
-is retained when login has no explicit CA flag. Saved files must remain readable
+including `host enroll`, and never becomes a saved default. An existing saved path
+is retained when `host enroll` has no explicit CA flag. Saved files must remain readable
 by the service user after restarts. To save a default explicitly:
 
 ```sh
-wssp config set-server https://api.internal.example
-wssp config set-ca-file /etc/wssp/root-ca.pem
-wssp config show
+wssp host config set-server https://api.internal.example
+wssp host config set-ca-file /etc/wssp/root-ca.pem
+wssp host config show
 # To remove the saved extra trust (also unset WSSP_CA_FILE if set):
-wssp config clear-ca-file
+wssp host config clear-ca-file
 ```
 
 The daemon loads the bundle at process startup and reuses it across reconnects;
@@ -562,13 +571,13 @@ TLS_PROXY=$("$TLS_RUNTIME" ps --filter "label=com.docker.compose.project=$TLS_PR
 mkdir -p "$HOME/.config/wssp/local-tls"
 chmod 700 "$HOME/.config/wssp/local-tls"
 "$TLS_RUNTIME" cp "$TLS_PROXY:/data/caddy/pki/authorities/local/root.crt" "$HOME/.config/wssp/local-tls"/root.crt
-wssp login --slug local-host --server https://localhost:9300 --ca-file "$HOME/.config/wssp/local-tls"/root.crt
-wssp connect --server https://localhost:9300 --ca-file "$HOME/.config/wssp/local-tls"/root.crt
+wssp host enroll --slug local-host --server https://localhost:9300 --ca-file "$HOME/.config/wssp/local-tls"/root.crt
+wssp host run --server https://localhost:9300 --ca-file "$HOME/.config/wssp/local-tls"/root.crt
 ```
 
 For a different base port, use `https://localhost:<base-port + 6100>` in both
-commands. With a dashboard token, select it with `wssp token login <ENV_VAR>`
-and add `--host-id <host-id>` to `connect`. The CA exists in the Caddy
+commands. With a dashboard token, select it with `wssp host enroll --token-env <ENV_VAR>`
+and add `--host-id <host-id>` to `wssp host run`. The CA exists in the Caddy
 container's data storage; copy the current root again if that storage is
 replaced and Caddy generates a new CA. Browser trust is separate from CLI trust.
 Do not substitute `127.0.0.1` or the cleartext backend port: that changes the
@@ -580,10 +589,10 @@ Every host needs the **egress guard** before it can take sandboxes, in either
 egress mode. Install it once per host, as root, after enrolling:
 
 ```sh
-sudo wssp guard install --daemon-user <user>
+sudo wssp host guard install --daemon-user <user>
 ```
 
-`<user>` is the unprivileged user that runs `wssp connect`. The command copies
+`<user>` is the unprivileged user that runs `wssp host run`. The command copies
 the binary to `/usr/local/lib/wssp/wssp-guard`, writes `/etc/wssp/guard.toml`
 and the `wssp-guard.service` systemd unit
 ([example](../../apps/cli/examples/wssp-guard.service)), creates an empty
@@ -594,13 +603,17 @@ up to `/`) must be a real directory, owned by root and not group- or
 world-writable; a symlink or a user-owned or writable directory refuses the
 install before anything is written. Fix the directory, then re-run. On a first
 install the guard holds sandbox forwarding until the daemon pushes the deployment
-blocklist (start or restart `wssp connect`): the install prints "waiting for the
+blocklist (start or restart `wssp host run`): the install prints "waiting for the
 daemon's first deployment push", waits up to 10 s for it, and then shows the
 status. Each install step is announced on stderr; a failure names the step it
 stopped at and the steps already done, and the install ends by checking that
-`wssp-guard.service` is enabled and active. A dropped terminal session does not
-interrupt it, and re-running it is always safe. `wssp login` prints this
-command when the guard is not healthy, and `wssp guard status [--json]` shows
+`wssp-guard.service` is enabled and active. If a step fails (for example
+`systemctl daemon-reload`) or the install is interrupted after the new binary
+and unit were written, systemd may still have the previous unit loaded and the
+guard service can fail to start; re-run
+`sudo wssp host guard install --daemon-user <user>` until it completes. A dropped terminal session does not
+interrupt it, and re-running it is always safe. `wssp host enroll` prints this
+command when the guard is not healthy, and `wssp host guard status [--json]` shows
 the health lease, policy sources and bridges. The daemon never runs `sudo`.
 
 **What it is.** The guard is the only WS Sandbox Proxy component that runs as root. It owns
@@ -634,7 +647,7 @@ succeeded yet. VMs keep running but have no network. The guard records the links
 it took down in `/var/lib/wssp-guard/fenced.json`. When the host checks healthy
 again, and the cleanup has succeeded, it brings exactly those links back up
 (matched by name and interface index) and restores forwarding. It never brings
-up a link it did not take down. `wssp guard status` lists the reasons, for
+up a link it did not take down. `wssp host guard status` lists the reasons, for
 example `fenced_links:<n>`, `fence_unverified`, `conntrack_delete_failed` or
 `conntrack_cleanup_unconfirmed`.
 
@@ -669,10 +682,10 @@ guard's priority on prerouting, input or forward; a `netdev` chain, XDP program
 or `ingress`/`clsact` qdisc on a sandbox bridge, its ports or an uplink; and any
 `bridge` table other than Incus's own. The guard also takes the sandbox
 bridges and ports down (see Quarantine). Remove the offending configuration,
-then check `wssp guard status`. Forwarding comes back on its own once the host
+then check `wssp host guard status`. Forwarding comes back on its own once the host
 checks healthy.
 
-**Uninstall.** `sudo wssp guard uninstall` disables and stops the service and
+**Uninstall.** `sudo wssp host guard uninstall` disables and stops the service and
 confirms it stopped. It then empties the table's live set and reads it back, so
 sandbox forwarding stops immediately. Only after both steps succeed does it
 remove the binary, unit and `guard.toml`. If either step fails, it removes
@@ -685,15 +698,15 @@ quarantine stay down. Once no sandboxes run on the host, remove the table with:
 sudo nft delete table inet wssp_guard
 ```
 
-**Host egress settings** (saved in the host config, changed with `wssp config`):
+**Host egress settings** (saved in the host config, changed with `wssp host config`):
 
-| Key                            | Command                                                                | Default                  |
-| ------------------------------ | ---------------------------------------------------------------------- | ------------------------ |
-| `allow_open_egress_for_others` | `set-open-egress-for-others on\|off` (also asked once by `wssp login`) | off                      |
-| `allow_guest_sudo_for_others`  | `set-allow-guest-sudo-for-others on\|off\|default`                     | on                       |
-| `egress_block_smtp`            | `set-egress-block-smtp on\|off`                                        | on (tcp/25 blocked)      |
-| `egress_block_external_dns`    | `set-egress-block-external-dns on\|off`                                | off (direct DNS allowed) |
-| `egress_dns_upstreams`         | `set-egress-dns-upstreams IP,...` or `--clear`                         | host resolvers           |
+| Key                            | Command                                                                      | Default                  |
+| ------------------------------ | ---------------------------------------------------------------------------- | ------------------------ |
+| `allow_open_egress_for_others` | `set-open-egress-for-others on\|off` (also asked once by `wssp host enroll`) | off                      |
+| `allow_guest_sudo_for_others`  | `set-allow-guest-sudo-for-others on\|off\|default`                           | on                       |
+| `egress_block_smtp`            | `set-egress-block-smtp on\|off`                                              | on (tcp/25 blocked)      |
+| `egress_block_external_dns`    | `set-egress-block-external-dns on\|off`                                      | off (direct DNS allowed) |
+| `egress_dns_upstreams`         | `set-egress-dns-upstreams IP,...` or `--clear`                               | host resolvers           |
 
 The last three apply to sandboxes created afterwards. See
 [network egress](./network.md#other-users-hosts) for what each means.
@@ -723,8 +736,8 @@ allow, a sandbox boots with no IPv4 address and no network.
 The guard detects this: an `ip`/`inet` input or forward chain outside Incus's
 table and its own that drops by default with no rule admitting `wsn*`
 traffic. The host is then **unhealthy** with reason
-`host_firewall_blocks_sandboxes` and takes no new sandboxes. `wssp guard status`,
-`wssp login` and the host card show the reason and the fix. Sandbox readiness
+`host_firewall_blocks_sandboxes` and takes no new sandboxes. `wssp host guard status`,
+`wssp host enroll` and the host card show the reason and the fix. Sandbox readiness
 also refuses a guest that has no IPv4 default route after 30 s
 (`guest_network_unavailable`), so a create never reports READY without a network,
 even with a firewall the guard cannot see (legacy iptables).
@@ -737,9 +750,9 @@ own addresses, the blocklists) on top of these rules. Let the guard add them
 (opt-in; each rule is printed before it is applied):
 
 ```sh
-sudo wssp guard install --daemon-user <user> --configure-ufw
+sudo wssp host guard install --daemon-user <user> --configure-ufw
 # or, on firewalld hosts:
-sudo wssp guard install --daemon-user <user> --configure-firewalld
+sudo wssp host guard install --daemon-user <user> --configure-firewalld
 # if you changed the daemon's credential_proxy_port, add --credential-proxy-port <port>
 ```
 
@@ -757,10 +770,10 @@ command fails), but on an inactive ufw it still adds the rules, and they take
 effect when ufw is enabled. To see whether ufw is enforcing rules, run
 `sudo ufw status` (`Status: active`); `systemctl is-active ufw` reports only
 the boot unit, which can be active while ufw itself is disabled.
-`sudo wssp guard uninstall --configure-ufw` removes every ufw rule tagged
+`sudo wssp host guard uninstall --configure-ufw` removes every ufw rule tagged
 `wssp-guard managed`, including the tagged rules install put in place of
 untagged duplicates and of the broad rule; those originals are not restored.
-`sudo wssp guard uninstall --configure-firewalld` deletes the `wssp-guard` zone
+`sudo wssp host guard uninstall --configure-firewalld` deletes the `wssp-guard` zone
 and the `wssp-guard-out` policy; it does not move `wsn+` back into `trusted`.
 
 To add the ufw rules yourself:
@@ -780,8 +793,8 @@ With Docker, also allow the bridges in `DOCKER-USER`:
 
 ## Run as a service
 
-Keep ExecStart as bare connect with the existing credential/private-directory
-setup. Capacity flags are optional; storage is local TOML. Apply reviewed TOML
+Keep ExecStart as `wssp host run --runtime incus` with no capacity flags and
+the existing credential/private-directory setup. Capacity flags are optional; storage is local TOML. Apply reviewed TOML
 changes by reconnect/restart, retaining the same journal.
 
 [`apps/cli/examples/wssp-host.service`](../../apps/cli/examples/wssp-host.service)
@@ -803,8 +816,17 @@ relay cleanup short. It also sets `LimitCORE=0`, so a crash never writes a
 core file holding [CLI-login](./cli-logins.md#security-model) values. Copy
 the new unit and run `systemctl --user daemon-reload`.
 
+A host on a release before `wssp host` must update its unit **before**
+installing the new binary: set
+`ExecStart=%h/.local/bin/wssp host run --runtime incus` (keep any existing
+arguments) and `ExecReload=%h/.local/bin/wssp host daemon quiesce`, or copy
+the current example, then run `systemctl --user daemon-reload`. Only then
+install the new binary and reload or restart (see [Upgrades](#upgrades)). With
+the old unit, the reload fails (`unrecognized subcommand 'daemon'`) and any
+restart crash-loops on `unrecognized subcommand 'connect'`.
+
 **Graceful reload.** The example unit sets
-`ExecReload=%h/.local/bin/wssp daemon quiesce`. `systemctl --user reload
+`ExecReload=%h/.local/bin/wssp host daemon quiesce`. `systemctl --user reload
 wssp-host` then restarts the daemon without cutting off running commands:
 
 1. The daemon stops taking new commands. The server keeps new
@@ -828,7 +850,7 @@ build timeout (at most 60 minutes of credit per quiesce). A reconnect during tho
 not acknowledge the quiesce within 30 seconds (an older server), the daemon
 restarts at once, as `systemctl stop` would.
 
-`wssp daemon quiesce` signals the daemon only after it checks the daemon's
+`wssp host daemon quiesce` signals the daemon only after it checks the daemon's
 private control file, `<data>/relay/<host>/daemon.json`. The file must name
 the same process (pid and start time), must not be a symlink, and must be
 owned by you with mode 0600, and the process is pinned with a pidfd so a
@@ -839,7 +861,7 @@ service's main process: an ordinary graceful restart. Run by hand
 unless the control file verifies that pid.
 
 The capacity settings are optional. The example's ExecStart stays
-`wssp connect --runtime incus`; a service with no capacity flags uses detection
+`wssp host run --runtime incus`; a service with no capacity flags uses detection
 or saved TOML. Restart the service after changing saved overrides.
 
 **Daemon log.** The daemon logs to stderr (the journal, under systemd). At the
@@ -860,7 +882,7 @@ runtime acted is an error; other failures and unknown outcomes are warnings.
   reaped, the relay connection closes normally (1000), then the process dies
   from that same signal so the service manager sees it. The daemon never
   reconnects after a shutdown request.
-- **SIGUSR1** (sent by `wssp daemon quiesce`) starts a
+- **SIGUSR1** (sent by `wssp host daemon quiesce`) starts a
   [graceful reload](#run-as-a-service) instead. It is not a shutdown
   signal: a SIGTERM or SIGINT during the quiesce still shuts down at once,
   as above.
@@ -986,7 +1008,7 @@ there is no resize or live migration. A stopped disk can move only through
 
 ### Guest RAM budget and CPU cap
 
-Bare `wssp connect` inspects daemon CPU/RAM totals through bounded
+Bare `wssp host run` inspects daemon CPU/RAM totals through bounded
 `/1.0/resources` reads and caps RAM by kernel `/proc/meminfo` MemTotal.
 Reserve max(4096 MiB, 25% of detected RAM),
 then align the remainder down to 256 MiB (maximum 16777216 MiB). A 16-GiB host
@@ -1012,7 +1034,7 @@ overrides warn; the operator owns shared physical headroom. Avoid multiple daemo
 on one daemon; if unavoidable split both RAM and aggregate vCPU budgets so their
 sum fits one reviewed daemon budget. Projects do not partition hardware.
 
-`wssp config show --json` works without Incus and returns typed partial inspection,
+`wssp host config show --json` works without Incus and returns typed partial inspection,
 sources and scalar diagnostics. It is read-only, never initializes markers, and
 never guesses missing journal commitments or implicit ceilings. Connect recovers
 the journal and pinned weights before hello. Server startup and admission rebuild
@@ -1066,7 +1088,7 @@ raises it. This is deliberate: after sparse roots are written, a cap
 recomputed from free space would admit more than the disk can hold. A `dir`
 pool shares the host filesystem (often `/`), so a single connect made while
 that filesystem was briefly full (build caches, downloads, earlier test VMs)
-keeps the automatic cap low after the space comes back. `wssp config show
+keeps the automatic cap low after the space comes back. `wssp host config show
 --json` shows it: a low `implicitCeilingGiB` next to a much larger
 `totalBasedCapacityGiB` and `derivationFreeBytes` means P is stale, not that
 the daemon read the wrong filesystem. To raise it, set an explicit cap for that
@@ -1131,7 +1153,7 @@ default), then the host with the lowest dominant share after placement (RAM,
 vCPU or the chosen storage pool's committed GiB, whichever is fullest); see
 [pool placement](./pools.md).
 
-- `wssp connect --max-concurrent-commands <n>` bounds commands running across
+- `wssp host run --max-concurrent-commands <n>` bounds commands running across
   the host (default 16, range 1 to 256). Each sandbox may run at most 8
   commands at once, or the host limit when lower. Commands waiting for a slot
   start in FIFO order within each sandbox; the daemon serves sandbox queues
@@ -1207,7 +1229,7 @@ vCPU or the chosen storage pool's committed GiB, whichever is fullest); see
 - **Deployment caps.** An account may have at most
   `SANDBOX_MAX_HOSTS_PER_OWNER` hosts (default 20, counting hosts pending
   deletion). Creating or enrolling a host past it is refused: device-login
-  approval says so in the browser, and `wssp login` stops with a 409 naming
+  approval says so in the browser, and `wssp host enroll` stops with a 409 naming
   the variable. Each host accepts at most `SANDBOX_MAX_SOCKETS_PER_HOST`
   concurrent daemon connections per server (default 2: one session plus one
   overlapping reconnect). An extra connection gets a `rate_limited` protocol
@@ -1216,20 +1238,20 @@ vCPU or the chosen storage pool's committed GiB, whichever is fullest); see
   5 s). A self-hosted
   operator can raise both, or set the host cap to `unlimited`; see
   [environment variables](../operations/environment-variables.md#host-and-connection-caps).
-- `wssp drain` refuses new creates, cold starts and template registration on
+- `wssp host drain` refuses new creates, cold starts and template registration on
   the host (`sandbox.host_draining`); running guests and their work continue.
-  `wssp undrain` restores admission. Both report the live sandbox count;
+  `wssp host undrain` restores admission. Both report the live sandbox count;
   `--json` prints it for scripts. `drained` is true only while draining with
   zero live reservations; an idle host with drain off reports false. Draining
   never stops a VM. A draining host is never a restore target.
-- `wssp drain --offload` (or the **Offload stopped sandboxes** switch in the
+- `wssp host drain --offload` (or the **Offload stopped sandboxes** switch in the
   dashboard's drain dialog) also empties the host of stopped disks: its
   stopped sandboxes are offloaded to the image store first, whatever their
   [offload policy](./sandboxes.md#offload-policy), and each cached
   copy is then evicted once another host the sandbox may use could restore
   it. An eviction is still refused while no such host exists, so that copy
-  stays here. `wssp undrain` clears the switch; `--offload` is refused with
-  `wssp undrain`.
+  stays here. `wssp host undrain` clears the switch; `--offload` is refused with
+  `wssp host undrain`.
 - Deleting a host in the dashboard first marks it pending deletion: new
   creates, templates and enrollments are refused, while stop/destroy work,
   results and receipts still flow on its credentials. The host is removed once
@@ -1261,9 +1283,21 @@ Service units need no mandatory capacity flags. Complete
 [capacity and storage qualification](#capacity-and-storage-qualification)
 before production.
 
+**Upgrading from a release before `wssp host`.** Update the user unit first:
+`ExecStart=%h/.local/bin/wssp host run --runtime incus` (keep any existing
+arguments) and `ExecReload=%h/.local/bin/wssp host daemon quiesce`, or copy
+the current [example](../../apps/cli/examples/wssp-host.service); run
+`systemctl --user daemon-reload`; then install the new binary and reload or
+restart as below. With the old unit, the reload fails (`unrecognized
+subcommand 'daemon'`) and any restart crash-loops on `unrecognized subcommand
+'connect'`. The root guard keeps working on its old copy: it is a separate
+binary under `/usr/local/lib/wssp/` and its socket protocol is unchanged.
+Re-running `sudo wssp host guard install --daemon-user <user>` later upgrades
+it and rewrites the guard unit to the new `__wssp-guard` entry.
+
 **Upgrading a running host.** Install the new binary, then run
 `systemctl --user reload wssp-host` (the example unit's `ExecReload` runs
-`wssp daemon quiesce`). Running commands finish first, for at most
+`wssp host daemon quiesce`). Running commands finish first, for at most
 `quiesce_max`, and new ones wait in the server queue until the new daemon
 connects. Two limits apply:
 
@@ -1275,7 +1309,7 @@ Relay protocol 1.0 requires the full capability set. Deploy matching artifacts;
 unsupported versions/capabilities are refused, with no downgraded hello retry.
 
 For maintenance (a reboot, an Incus upgrade), drain first so no new sandbox
-lands here, then reload: `wssp drain`, then
+lands here, then reload: `wssp host drain`, then
 `systemctl --user reload wssp-host`. Drain is a persistent placement policy;
 quiesce is transient and holds only new commands.
 
@@ -1432,10 +1466,10 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
   as one a build cancel overtook while it was still running: the cancel
   wins, and the host's image is released as soon as its result arrives). Use
   the S3 image store when captures should leave the host.
-  `wssp images list [--json]` shows the cache (it first asks the running
+  `wssp host images list [--json]` shows the cache (it first asks the running
   daemon to drop entries for images deleted from Incus out of band, waiting up
   to 8 s; the daemon also does this every minute and re-sends its cache census
-  every 10 minutes); `wssp images prune
+  every 10 minutes); `wssp host images prune
   [--dry-run] [--json]` asks the running daemon to evict every unpinned,
   unused image (fetched copies, and in S3 mode stored captures), never a
   pinned capture.
@@ -1462,7 +1496,7 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
   until you have run the crafted-import qualification on your Incus version;
   see [foreign-image qualification](../operations/templates.md#foreign-image-qualification).
 - **Template builds.** A capture-capable host runs build VMs unless
-  `builder = false` (`wssp config set-builder off`; `default` restores the
+  `builder = false` (`wssp host config set-builder off`; `default` restores the
   default). Build steps may run as **guest root**, but only inside build
   VMs: the daemon admits a root step or a COPY step only for a sandbox whose
   journaled create carried a build id, and such a sandbox refuses
@@ -1472,7 +1506,7 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
   helper that opens the context once with `O_NOFOLLOW`, checks its sha256
   and refuses absolute or `..` names, devices, escaping symlinks and
   hardlinks before writing anything. `accept_foreign_builds`
-  (`wssp config set-accept-foreign-builds on`) also runs builds for other
+  (`wssp host config set-accept-foreign-builds on`) also runs builds for other
   accounts. A restart applies both.
 - **Community bases (upstream images).** The first build of a community
   template (for example Ubuntu 26.04) boots the distribution's raw cloud
@@ -1608,9 +1642,9 @@ size/state/expiry only: no creator identity, labels, envs, paths, command output
 or guest terminal authority. Sharing never grants this host detail to grantees.
 
 Local configuration owns `allow_host_terminal=false` and
-`host_terminal_require_totp=true`. Use `wssp config set-host-terminal on|off`
-and `wssp config set-host-terminal-totp required|optional` locally; the startup
-`wssp connect --host-terminal on|off` override does not override later local
+`host_terminal_require_totp=true`. Use `wssp host config set-host-terminal on|off`
+and `wssp host config set-host-terminal-totp required|optional` locally; the startup
+`wssp host run --host-terminal on|off` override does not override later local
 changes. Hot off is fail-closed within two seconds without restarting guests.
 The dashboard can raise the TOTP requirement on an authenticated connected
 host, after persisted acknowledgement; offline/timeout TOTP raises are unconfirmed
@@ -1658,12 +1692,12 @@ flat settings bound how long, both counted from the first drop of the outage:
 | `max_carry`           | `24h`   | `10m`..`24d` | Running work. A running command is stopped through the normal cancel path; once the stop is proven it fails with `host_disconnect_expired` (without proof it is `UNKNOWN_OUTCOME`). Other started work is revoked and settles by its journaled receipt. |
 
 ```sh
-wssp config set-carry-intent-window 30m
-wssp config set-max-carry 7d
-wssp config set-max-carry default
+wssp host config set-carry-intent-window 30m
+wssp host config set-max-carry 7d
+wssp host config set-max-carry default
 ```
 
-A restart of `wssp connect` applies them; an invalid value makes the config
+A restart of `wssp host run` applies them; an invalid value makes the config
 unreadable. Endings during an outage otherwise keep their natural code: a
 command that reaches its own `timeoutMs` reports `timeout`, and lease expiry
 stops or destroys the sandbox exactly as when connected. The window never
@@ -1683,8 +1717,8 @@ accepts: `"90m"`, `"6h"`, `"7d"` (5 minutes to 24 days) or `"unlimited"`. The
 default is `"24h"`. Set it with:
 
 ```sh
-wssp config set-max-lease 6h
-wssp config set-max-lease unlimited
+wssp host config set-max-lease 6h
+wssp host config set-max-lease unlimited
 ```
 
 A running daemon reloads it within about a second without a restart, enforces it

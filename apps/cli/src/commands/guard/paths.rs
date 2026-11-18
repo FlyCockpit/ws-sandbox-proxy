@@ -26,7 +26,7 @@ impl Paths {
         Self::under(Path::new("/"))
     }
 
-    /// The paths this node's daemon and `wssp guard status` use: the system
+    /// The paths this node's daemon and `wssp host guard status` use: the system
     /// paths. Debug builds only honour `WSSP_TEST_GUARD_ROOT` (a directory
     /// standing in for `/`) so tests never see the machine's guard; release
     /// builds do not compile the override at all.

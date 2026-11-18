@@ -139,9 +139,9 @@ and `adminTunnel.clear`.
 A node advertises tunnels only after its owner installs a pinned client:
 
 ```sh
-wssp tunnel install --file ./tunnel-x86_64-linux-musl --sha256 <64 hex> [--max-tunnels 16] [--allow-for-others]
+wssp host tunnel install --file ./tunnel-x86_64-linux-musl --sha256 <64 hex> [--max-tunnels 16] [--allow-for-others]
 systemctl --user restart wssp-host
-wssp tunnel status
+wssp host tunnel status
 ```
 
 - The binary is copied to wssp's data directory (`0555`) and recorded in the
@@ -161,7 +161,7 @@ wssp tunnel status
   tunnels on this node (your bandwidth and outbound connections). Off by
   default. You already have full access to every VM on your node; a tunnel
   adds no access to other tenants.
-- `wssp tunnel remove` turns it off (restart applies).
+- `wssp host tunnel remove` turns it off (restart applies).
 
 Placement honours it: a create with `tunnelPorts` only lands on a node that
 runs a verified client for you; otherwise it is refused with

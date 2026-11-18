@@ -1,4 +1,4 @@
-# User service. Install the wssp binary at ~/.local/bin/wssp and log in first.
+# User service. Install the wssp binary at ~/.local/bin/wssp and run `wssp host enroll` first.
 [Unit]
 Description=wssp sandbox host and independent lease expiry supervisor
 After=network-online.target
@@ -7,14 +7,14 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/wssp connect --runtime incus
+ExecStart=%h/.local/bin/wssp host run --runtime incus
 # `systemctl --user reload wssp-host` after installing a new binary: running
 # commands finish (up to `quiesce_max`, default 10 min), new ones wait in the
 # server queue, then the daemon exits 0 and Restart=always starts the new
 # binary. A daemon from before this release cannot quiesce: it gets SIGTERM
 # (an ordinary graceful restart), so the first upgrade into it restarts as
 # before.
-ExecReload=%h/.local/bin/wssp daemon quiesce
+ExecReload=%h/.local/bin/wssp host daemon quiesce
 Restart=always
 RestartSec=2s
 # SIGTERM goes to the daemon alone (`mixed`): it closes every terminal, ends

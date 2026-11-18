@@ -2,7 +2,7 @@
 
 WS Sandbox Proxy (`wssp`) is a self-hosted sandbox control plane. You run the
 server (API, dashboard, Postgres, Valkey) and enroll your own Linux machines as
-**hosts**. Each host runs the `wssp connect` daemon, which dials out to the
+**hosts**. Each host runs the `wssp host run` daemon, which dials out to the
 server over WSS and drives **Incus KVM virtual machines**. A **sandbox** is one
 such VM, booted from a **template** you registered on that host. Your programs
 reach sandboxes through the `/v1` HTTP API (or the `@wssp/sdk` TypeScript
@@ -62,7 +62,7 @@ These are deliberate, current limits, not hidden features:
 - **No memory pause.** Stop shuts the VM down; a cold reconnect boots it again.
 - **No guest port URLs, volumes, file watches or host-directory mounts.**
   Guest paths are the VM's own filesystem.
-- **Linux-only CLI and hosts.** Run the outbound `wssp connect` daemon on a
+- **Linux-only CLI and hosts.** Run the outbound `wssp host run` daemon on a
   spare Linux machine with Incus and KVM. macOS and Windows are not supported
   CLI platforms.
 - **One server replica.** Host relay sessions, in-process credential

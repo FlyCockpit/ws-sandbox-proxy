@@ -22,7 +22,7 @@
     "title": "Terminal del host",
     "warning": "Este shell usa los permisos locales del daemon. Puede acceder a las VM con privilegios de administrador local. Desconectar termina este PTY; reconectar inicia otro shell.",
     "enabled": "Las terminales locales están habilitadas.",
-    "disabled": "Las terminales están deshabilitadas localmente. Actívalas con wssp config set-host-terminal on en el host.",
+    "disabled": "Las terminales están deshabilitadas localmente. Actívalas con wssp host config set-host-terminal on en el host.",
     "offline": "No hay política actual del host. Conéctalo antes de abrir terminal o exigir TOTP.",
     "required": "Cada conexión requiere un TOTP nuevo. Solo el acceso local puede reducir este requisito.",
     "optional": "TOTP es opcional en este host. Pulsa Conectar explícitamente para abrir un shell.",

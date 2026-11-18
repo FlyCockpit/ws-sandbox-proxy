@@ -1,5 +1,5 @@
 /**
- * `wssp login` binds the host slug to the device authorization request itself,
+ * `wssp host enroll` binds the host slug to the device authorization request itself,
  * so the browser approval covers exactly one slug: the CLI sends
  * `scope = "host-slug:<slug>"` to `/api/auth/device/code`, Better Auth stores it
  * on the `DeviceCode` row, the approval page shows it, and the exchange mints

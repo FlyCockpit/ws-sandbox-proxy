@@ -387,7 +387,7 @@ On the host, these also close the sandbox's terminals:
 Daemon shutdown closes every PTY through the runtime on a dedicated thread, then
 waits up to 20 s for the pumps to confirm their reaps; slots held only by an
 uncertain reap's sweep are not waited for. A requested graceful shutdown of
-`wssp connect` first closes every terminal of the live connection with
+`wssp host run` first closes every terminal of the live connection with
 intent `shutdown` and forwards their exits (at most 5 s), then closes the
 socket normally (1000), and never reconnects. SIGTERM and SIGINT request it
 (`apps/cli/src/shutdown.rs`); after the cleanup the daemon dies from that same
@@ -447,8 +447,8 @@ idle input is ten minutes and maximum lifetime one hour; output/resize/ping
 never resets input idle. Both peers enforce these reservations before
 replacement and retain uncertain reaps as charged. Existing guest bounds,
 credits, byte caps and teardown lanes remain in force. Local config defaults
-to off/required; `config set-host-terminal on|off` and
-`config set-host-terminal-totp required|optional` persist revisions. A bounded
+to off/required; `wssp host config set-host-terminal on|off` and
+`wssp host config set-host-terminal-totp required|optional` persist revisions. A bounded
 socket-loop watcher fails closed and latches off until an explicit local enable.
 Browser proof, tickets and the registered raise procedure are paired with browser
 controls and the separately invoked operator checklist. Live qualification remains unverified.

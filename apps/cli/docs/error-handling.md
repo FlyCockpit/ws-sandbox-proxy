@@ -61,13 +61,13 @@ return Err(anyhow::Error::msg("no profile named `default`"))
 
 ## Host resource detection
 
-`wssp config show` treats a daemon resource detection error as diagnostic data,
+`wssp host config show` treats a daemon resource detection error as diagnostic data,
 not a command failure. JSON has null `detected` and a short scalar
 `detectionError`; text stays valid TOML. Raw daemon/subprocess errors never enter
 these fields. The output states the inspected runtime and retains configured
 overrides. The resource query uses the existing bounded Incus host timeout.
 
-`wssp connect` proceeds with a warning after detection failure when both valid
+`wssp host run` proceeds with a warning after detection failure when both valid
 capacity overrides are available. Otherwise its error names only the missing
 `--sandbox-memory-mib` and/or `--max-sandbox-cpu-count` flag. Flags override
 TOML independently. Invalid overrides fail; overrides above detection warn but

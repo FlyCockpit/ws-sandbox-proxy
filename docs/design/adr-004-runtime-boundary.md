@@ -15,7 +15,7 @@ node daemon is the only process that talks to Incus.
 - Define `SandboxRuntime` in `crates/sandbox-runtime`.
 - Ship `FakeRuntime` for unit tests and relay plumbing without VMs.
 - Production implementation is `IncusKvmRuntime` on Linux, driven by the host
-  daemon (`wssp connect`) through the relay protocol in
+  daemon (`wssp host run`) through the relay protocol in
   `crates/sandbox-protocol`. Non-Linux hosts use `UnsupportedRuntime`.
 - Control-plane TypeScript (`packages/api`, `apps/server`) never imports Incus
   and never executes guest work locally.

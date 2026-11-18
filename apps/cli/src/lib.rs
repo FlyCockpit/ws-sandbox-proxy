@@ -14,6 +14,7 @@ mod host_context;
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub mod host_process;
+pub mod host_role;
 pub mod logging;
 pub mod output;
 pub mod paths;

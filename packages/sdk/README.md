@@ -61,7 +61,7 @@ pools.
 **Own sandboxes only does not limit host access.**
 Direct host commands and files work only on hosts the key's owner owns and
 allows, and only after the node owner enables agent host commands at the node
-(`wssp config set-agent-host-commands on`). File tools also need node-configured
+(`wssp host config set-agent-host-commands on`). File tools also need node-configured
 `host_file_roots`. A shared-pool host never qualifies. Queuing a command for a
 person needs ownership and a host grant, but no node opt-in because it executes
 nothing.
@@ -677,7 +677,7 @@ if (stopped.disk?.offloadState === "failed") {
 // Offload policy: when a stopped disk is exported. `on_stop` (the default)
 // exports at once; `after` waits `afterMs` of being stopped; `on_pressure`
 // keeps it on its host until the host needs the space. Host pressure and
-// `wssp drain --offload` export early whatever the policy. Set it at create
+// `wssp host drain --offload` export early whatever the policy. Set it at create
 // (`offload`), with a stop (`stop(id, { offload })`), or later with `update`.
 const parked = await wssp.sandboxes.update(sandboxId, { offload: { mode: "on_pressure" } });
 console.log(parked.disk?.offloadPolicy, parked.disk?.offloadDueAt); // null: not due
@@ -1061,7 +1061,7 @@ A create or cold start refused with `UNSUPPORTED_CAPABILITY` carries a
 
 - `egress_guard_unavailable`: the host's root-owned network guard is not
   running, so no sandbox can start there. Retry later or use another host or
-  pool; the host owner fixes it with `wssp guard install`.
+  pool; the host owner fixes it with `wssp host guard install`.
 - `open_egress_not_permitted`: an open-internet sandbox on another user's host
   whose owner no longer allows it. That sandbox cannot restart there; create a
   new sandbox.

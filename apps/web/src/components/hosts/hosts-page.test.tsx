@@ -350,9 +350,9 @@ describe("hosts page query states", () => {
     mountPage();
     expect(await screen.findByText(enHosts.empty.title)).toBeTruthy();
     expect(
-      screen.getByText("wssp login --slug my-host --server https://api.example.test"),
+      screen.getByText("wssp host enroll --slug my-host --server https://api.example.test"),
     ).toBeTruthy();
-    expect(screen.getAllByText("wssp connect").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("wssp host run").length).toBeGreaterThan(0);
     const enroll = document.querySelector<HTMLElement>('[aria-labelledby="hosts-enroll-title"]')!;
     const link = within(enroll).getByRole("link", { name: enHosts.enroll.tokenLink });
     expect(link.getAttribute("href")).toBe("/en-US/settings/host-credentials");
@@ -412,7 +412,7 @@ describe("hosts page query states", () => {
       within(card("quarantined")).getByText(enHosts.quarantineReason.lease_mismatch),
     ).toBeTruthy();
     expect(within(card("quarantined")).queryByText(enHosts.statusHint.offline)).toBeNull();
-    expect(enHosts.statusHint.quarantined).not.toMatch(/wssp connect/);
+    expect(enHosts.statusHint.quarantined).not.toMatch(/wssp host run/);
     expect(within(card("reconnecting")).getByText(enHosts.statusHint.reconnecting)).toBeTruthy();
     expect(within(card("stale")).getByText(enHosts.statusHint.stale)).toBeTruthy();
     // Freshness is advisory: the relay still dispatches to a registered
@@ -510,7 +510,7 @@ describe("network guard and open-egress consent (default-open egress)", () => {
     expect(on.querySelector("[data-host-guest-sudo-hint]")?.textContent).toBe(
       enHosts.egress.guestSudoForOthersHint.replace(
         "{{command}}",
-        "wssp config set-allow-guest-sudo-for-others on|off|default",
+        "wssp host config set-allow-guest-sudo-for-others on|off|default",
       ),
     );
     const off = card("off").querySelector("[data-host-network]") as HTMLElement;
@@ -533,7 +533,7 @@ describe("network guard and open-egress consent (default-open egress)", () => {
     expect(network.textContent).toContain(
       enHosts.egress.openForOthersHint.replace(
         "{{command}}",
-        "wssp config set-open-egress-for-others on|off",
+        "wssp host config set-open-egress-for-others on|off",
       ),
     );
     expect(network.querySelector("[data-host-guard-hint]")).toBeNull();
@@ -567,7 +567,7 @@ describe("network guard and open-egress consent (default-open egress)", () => {
       expect(hint.textContent).toContain(enHosts.egress.guard.blocked);
       expect(hint.querySelector("code")?.textContent).toBe(GUARD_INSTALL_COMMAND);
       expect(GUARD_INSTALL_COMMAND).toMatch(
-        /^\S+ "\$\(command -v wssp\)" guard install --daemon-user "\$USER"$/,
+        /^\S+ "\$\(command -v wssp\)" host guard install --daemon-user "\$USER"$/,
       );
     },
   );
@@ -909,7 +909,7 @@ describe("commands and layout", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText(enHosts.enroll.title)).toBeTruthy();
     expect(
-      within(dialog).getByText("wssp login --slug my-host --server https://api.example.test"),
+      within(dialog).getByText("wssp host enroll --slug my-host --server https://api.example.test"),
     ).toBeTruthy();
     for (const flag of ["--ca-file <path>", "--sandbox-memory-mib"])
       expect(within(dialog).getByText(flag, { selector: "code" })).toBeTruthy();
@@ -924,9 +924,9 @@ describe("commands and layout", () => {
       (node) => node.textContent,
     );
     expect(values).toEqual([
-      "wssp login --slug desk-01 --server https://api.example.test",
-      "wssp connect",
-      "wssp connect --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN",
+      "wssp host enroll --slug desk-01 --server https://api.example.test",
+      "wssp host run",
+      "wssp host run --server https://api.example.test --host-id host-1 --host-token-env WSSP_HOST_TOKEN",
     ]);
     for (const field of host.querySelectorAll('[data-slot="copy-field"]'))
       expect(

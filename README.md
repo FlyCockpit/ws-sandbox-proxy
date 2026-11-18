@@ -95,14 +95,14 @@ If pnpm fails with `mkdir '/Users'` on Linux/WSL, unset a stale macOS
 On a Linux machine with Incus (6.14+) and KVM, from a checkout:
 
 ```sh
-cargo run -p wssp -- login --slug desk-01 --server https://api.example.com
-cargo run -p wssp -- connect
+cargo run -p wssp -- host enroll --slug desk-01 --server https://api.example.com
+cargo run -p wssp -- host run
 ```
 
 Device login prints a verification URI and code (no browser or stdin
 prompts). A dashboard-minted `wssp_host_…` token works too:
-`wssp token login WSSP_HOST_TOKEN`, then
-`wssp connect --server https://api.example.com --host-id <host-id>`.
+`wssp host enroll --token-env WSSP_HOST_TOKEN`, then
+`wssp host run --server https://api.example.com --host-id <host-id>`.
 `--runtime fake` (or `WSSP_RUNTIME=fake`) uses the
 in-process fake runtime and launches no VMs. For local stacks,
 `WSSP_FAKE_ENFORCE_EGRESS=1` lets a fake host accept creates and
@@ -110,9 +110,9 @@ in-process fake runtime and launches no VMs. For local stacks,
 (fake runtime only). Incus instance names are
 `wssp-sbx-<sandboxId>` in the dedicated `wssp` Incus project.
 
-Bare connect derives guest RAM and a per-VM CPU cap from the Incus daemon.
+A bare `wssp host run` derives guest RAM and a per-VM CPU cap from the Incus daemon.
 Optional `--sandbox-memory-mib` / `--max-sandbox-cpu-count` overrides also have
-TOML equivalents; `wssp config show` explains detection and effective values.
+TOML equivalents; `wssp host config show` explains detection and effective values.
 Operators own host/QEMU headroom. Native API and SDK creates accept independent
 `cpuCount` / `memoryMiB` overrides, defaulting to the selected immutable revision.
 See the [VM size guide](docs/guide/sandboxes.md#vm-size) for bounds, shared
@@ -211,8 +211,8 @@ addresses. After `pnpm run setup`:
 1. Deploy the server ([deployment](docs/operations/deployment.md)), sign up
    with an `ADMIN_EMAILS` address and enable 2FA.
 2. Enroll a Linux host with Incus and KVM: run
-   `wssp login --slug desk-01 --server https://api.example.com`, approve it in
-   the dashboard, then run `wssp connect` ([hosts](docs/guide/hosts.md)).
+   `wssp host enroll --slug desk-01 --server https://api.example.com`, approve it in
+   the dashboard, then run `wssp host run` ([hosts](docs/guide/hosts.md)).
 3. Prepare an Incus VM image on that host and register it as a template
    ([templates](docs/operations/templates.md)). OCI images are not VM images;
    [template builds](docs/guide/template-builds.md) derive new revisions from

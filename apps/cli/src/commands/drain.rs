@@ -42,8 +42,10 @@ struct DrainStatus {
 
 pub fn run(args: &Args, draining: bool) -> Result<()> {
     if args.offload && !draining {
-        return Err(anyhow::anyhow!("--offload applies to `wssp drain` only"))
-            .context(CodedError::new(ExitCode::Failure));
+        return Err(anyhow::anyhow!(
+            "--offload applies to `wssp host drain` only"
+        ))
+        .context(CodedError::new(ExitCode::Failure));
     }
     let offload = draining && args.offload;
     let trust = args.tls.load(&crate::config::Config::load()?)?;

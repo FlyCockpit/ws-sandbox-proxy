@@ -2665,7 +2665,7 @@ impl SandboxRuntime for FakeRuntime {
             return None;
         }
         Some(
-            "the fake runtime never enforces egress policies; run `wssp connect --runtime incus` on a host with incus 6.14 or later to create sandboxes"
+            "the fake runtime never enforces egress policies; run `wssp host run --runtime incus` on a host with incus 6.14 or later to create sandboxes"
                 .to_string(),
         )
     }

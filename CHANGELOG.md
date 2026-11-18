@@ -4,6 +4,10 @@ All notable changes will be documented here, following [Keep a Changelog](https:
 
 ## 1.0.0 - Unreleased
 
+### Changed
+
+- CLI: every host command moved under `wssp host`, with no aliases for the old names: `wssp connect` is `wssp host run`, `wssp login --slug` is `wssp host enroll --slug`, `wssp token login <ENV>` is `wssp host enroll --token-env <ENV>`, `wssp logout` is `wssp host logout`, and `drain`, `undrain`, `images`, `config`, `daemon quiesce`, `guard` and `tunnel` are `wssp host …`. The guard service entry `wssp-guard guard run` is now the internal `wssp-guard __wssp-guard` (re-run `sudo wssp host guard install --daemon-user <user>` to rewrite the unit; an already installed guard keeps working). On a machine that is not an enrolled host, `wssp host --help` lists only `enroll` (`--help --all` shows everything) and `host run`, `host drain` and `host undrain` exit 6 there unless given an explicit `--host-token-env`. Update systemd units to `ExecStart=%h/.local/bin/wssp host run --runtime incus` and `ExecReload=%h/.local/bin/wssp host daemon quiesce`.
+
 ### Added
 
 - Owner-scoped Incus KVM sandboxes on enrolled Linux hosts, with host pools and capacity-aware placement.

@@ -23,7 +23,7 @@ test("a Rust-only change selects the packages that read crates/", () => {
 });
 
 test("each out-of-package tree selects its readers", () => {
-  assert.deepEqual(driftTestPackages(["apps/cli/src/commands/connect.rs"]), [
+  assert.deepEqual(driftTestPackages(["apps/cli/src/commands/run.rs"]), [
     "@wssp/locales",
     "@wssp/sdk",
     "server",

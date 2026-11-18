@@ -120,7 +120,7 @@ describe("template images are named by alias only (E-09)", () => {
 
 describe("dashboard capacity hints match the real connect flags", () => {
   const fields = ["sandbox_memory_mib", "sandbox_vcpu_budget", "max_sandbox_cpu_count"] as const;
-  const connect = readFileSync(join(root, "../../../apps/cli/src/commands/connect.rs"), "utf8");
+  const connect = readFileSync(join(root, "../../../apps/cli/src/commands/run.rs"), "utf8");
   it.each(SUPPORTED_LOCALES)(
     "%s host and credential hints name supported optional flags",
     (locale) => {
@@ -136,7 +136,7 @@ describe("dashboard capacity hints match the real connect flags", () => {
         ] as const) {
           const hint = leaves(bundle(locale, ns)).get(key);
           expect(hint).toContain(`<code>${flag}</code>`);
-          expect(hint).toContain("<code>wssp connect</code>");
+          expect(hint).toContain("<code>wssp host run</code>");
           expect(hint).toContain(
             locale === "en-US" ? "Each works alone" : "Cada uno funciona por separado",
           );

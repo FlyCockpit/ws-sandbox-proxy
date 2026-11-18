@@ -1,4 +1,4 @@
-//! Outbound sandbox host relay client (`wssp connect`).
+//! Outbound sandbox host relay client (`wssp host run`).
 #[cfg(test)]
 use crate::sandbox_relay::test_support::FixtureRuntime;
 #[cfg(test)]
@@ -68,7 +68,7 @@ pub struct ConnectOptions {
     pub shutdown: ShutdownSignal,
 }
 
-/// A graceful shutdown request for `wssp connect` (C55, C52-TB-3). Once
+/// A graceful shutdown request for `wssp host run` (C55, C52-TB-3). Once
 /// requested, the relay loop closes every terminal of the connection with
 /// intent `shutdown` (each PTY's supervised shell group is killed and reaped
 /// on its pump thread, and each exit reaches the server), waits at most
@@ -113,7 +113,7 @@ impl ShutdownSignal {
     pub fn requested(&self) -> bool {
         self.requested.load(std::sync::atomic::Ordering::Acquire)
     }
-    /// WP7: the graceful quiesce request (`wssp daemon quiesce`).
+    /// WP7: the graceful quiesce request (`wssp host daemon quiesce`).
     pub fn quiesce(&self) -> &super::quiesce::QuiesceState {
         &self.quiesce
     }
@@ -745,7 +745,7 @@ fn run_connect_service_with_tls(
     );
     if config.allow_open_egress_for_others.is_none() {
         tracing::info!(
-            "open internet for other users' sandboxes is off until you choose: `wssp config set-open-egress-for-others on|off`"
+            "open internet for other users' sandboxes is off until you choose: `wssp host config set-open-egress-for-others on|off`"
         );
     }
     let mut workers = RelayWorkers {
@@ -1004,9 +1004,10 @@ fn relay_dial_error(error: tungstenite::Error, server_url: &str, reconnect: bool
     } else if let tungstenite::Error::Http(response) = &error
         && matches!(response.status().as_u16(), 401 | 403)
     {
-        let refused =
-            anyhow::anyhow!("host credential is inactive; check account access or log in again")
-                .context(CodedError::new(ExitCode::CredentialInactive));
+        let refused = anyhow::anyhow!(
+            "host credential is inactive; check account access or run `wssp host enroll` again"
+        )
+        .context(CodedError::new(ExitCode::CredentialInactive));
         // Only the server's explicit verdict about THIS credential (sent after
         // the full secret verified) stops VMs; a plain 401/403 never does.
         if super::revocation::upgrade_refusal_code(response.headers(), response.body().as_deref())
@@ -1439,7 +1440,7 @@ pub(super) fn close_during_read(code: Option<u16>, reason: Option<&str>) -> anyh
         // also makes the daemon stop its VMs (it can no longer receive stops).
         Some(4003) => {
             let error = anyhow::anyhow!(
-                "host credential is inactive; check account access or log in again"
+                "host credential is inactive; check account access or run `wssp host enroll` again"
             )
             .context(CodedError::new(ExitCode::CredentialInactive));
             if reason.is_some_and(super::revocation::is_revocation_verdict) {
@@ -4747,7 +4748,7 @@ fn deliver_unknown(
 
 /// Local-stack opt-in for `--runtime fake`: advertise egress enforcement so
 /// the control plane dispatches creates to the fake host. Honoured only by
-/// the fake runtime; `wssp connect` refuses to start a real runtime with it.
+/// the fake runtime; `wssp host run` refuses to start a real runtime with it.
 pub(crate) const FAKE_ENFORCE_EGRESS_ENV: &str = "WSSP_FAKE_ENFORCE_EGRESS";
 /// Local-stack failure injection for `--runtime fake`: while the named file
 /// exists, every new create fails definitively. Fake runtime only.
@@ -4985,7 +4986,7 @@ fn init_runtime(
             // the early admission, the heartbeat and the deployment push all
             // ask this one guard, fresh per decision.
             // The socket is the system path (debug builds: under
-            // `WSSP_TEST_GUARD_ROOT`, the same stand-in `wssp guard status` uses).
+            // `WSSP_TEST_GUARD_ROOT`, the same stand-in `wssp host guard status` uses).
             let probe: Arc<dyn sandbox_runtime::guard_probe::GuardProbe> =
                 Arc::new(sandbox_runtime::guard::client::SocketGuardProbe::new(
                     crate::commands::guard::Paths::local().socket(),
@@ -7103,7 +7104,7 @@ mod tests {
         assert_eq!(SHARED_INCUS_TEST_ENV, "WSSP_TEST_SHARED_INCUS");
     }
 
-    /// E-11: `wssp connect --runtime incus` refuses before the relay
+    /// E-11: `wssp host run --runtime incus` refuses before the relay
     /// starts when bridge netfilter is missing, naming the exact commands;
     /// the bridge check runs before any daemon-lock provisioning.
     #[cfg(target_os = "linux")]

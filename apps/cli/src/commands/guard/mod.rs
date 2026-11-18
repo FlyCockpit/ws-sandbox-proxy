@@ -1,4 +1,4 @@
-//! `wssp guard`: the root-owned egress guard (see
+//! `wssp host guard`: the root-owned egress guard (see
 //! docs/guide/hosts.md#egress-guard). This is the only code in wssp that runs as root. It reads only
 //! root-owned files and its `SO_PEERCRED`-checked socket, its nftables table
 //! contains only drops, and the daemon can add or change only the deployment
@@ -33,13 +33,22 @@ pub enum GuardCommand {
     Uninstall(UninstallArgs),
     /// Show the egress guard's health lease, policy sources and bridges.
     Status(StatusArgs),
-    /// Service entry point, started by `wssp-guard.service` as root.
-    Run,
+}
+
+/// Internal argv\[1\] of the guard service (`wssp-guard.service` runs
+/// `/usr/local/lib/wssp/wssp-guard __wssp-guard` as root). `main` dispatches it
+/// before clap, so it appears in no help, completion or reference.
+pub const ENTRY: &str = "__wssp-guard";
+
+/// The guard service loop behind [`ENTRY`].
+#[doc(hidden)]
+pub fn run_service() -> Result<()> {
+    daemon::run()
 }
 
 #[derive(Debug, clap::Args)]
 pub struct InstallArgs {
-    /// Unprivileged user that runs `wssp connect`; only it may push the deployment blocklist.
+    /// Unprivileged user that runs `wssp host run`; only it may push the deployment blocklist.
     #[arg(long, value_name = "USER")]
     pub daemon_user: String,
     /// Also add the minimal ufw rules sandbox bridges need (DHCP, DNS, login proxy in; routing in and out), printing each one.
@@ -87,7 +96,7 @@ pub struct GuardConfig {
 impl GuardConfig {
     pub fn render(&self) -> Result<String> {
         Ok(format!(
-            "# Written by `wssp guard install`; re-run it to change the daemon user.\n{}",
+            "# Written by `wssp host guard install`; re-run it to change the daemon user.\n{}",
             toml::to_string(self).context("rendering guard.toml")?
         ))
     }
@@ -112,7 +121,6 @@ pub fn run(args: &Args) -> Result<()> {
         GuardCommand::Install(args) => install::run_install(args),
         GuardCommand::Uninstall(args) => install::run_uninstall(args),
         GuardCommand::Status(args) => status::run(args),
-        GuardCommand::Run => daemon::run(),
     }
 }
 

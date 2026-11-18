@@ -1032,7 +1032,7 @@ cell("C15", async (c) => {
   await setup();
   await armed("op-1");
   const daemon = host!;
-  // `wssp daemon quiesce` as `ExecReload` runs it: the control file names
+  // `wssp host daemon quiesce` as `ExecReload` runs it: the control file names
   // this daemon, so it is sent SIGUSR1 (graceful quiesce).
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -1042,7 +1042,7 @@ cell("C15", async (c) => {
   delete env.MAINPID;
   const quiesce = spawn(
     resolve("target/debug/wssp"),
-    ["daemon", "quiesce", "--pid", String(daemon.pid)],
+    ["host", "daemon", "quiesce", "--pid", String(daemon.pid)],
     { env, stdio: ["ignore", "pipe", "pipe"] },
   );
   quiesce.stderr!.on("data", (chunk) => failures.push(String(chunk)));

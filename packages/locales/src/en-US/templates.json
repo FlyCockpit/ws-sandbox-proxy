@@ -40,7 +40,7 @@
     "hostRevoked": "Its host's credential was revoked. New sandboxes cannot start until the host is enrolled again.",
     "hostDraining": "Its host is draining and accepts no new sandboxes. Undrain the host on the Hosts page.",
     "hostStale": "Its host has not sent a recent heartbeat. New sandboxes cannot start until it reconnects.",
-    "hostOffline": "Its host is not connected. New sandboxes cannot start until it runs wssp connect."
+    "hostOffline": "Its host is not connected. New sandboxes cannot start until it runs wssp host run."
   },
   "fields": {
     "fingerprint": "Pinned fingerprint",
@@ -91,7 +91,7 @@
     },
     "hostStateHint": {
       "draining": "This host is draining and accepts no new templates. Undrain it on the Hosts page.",
-      "unavailable": "This host cannot check an image now ({{state}}). Start its daemon with wssp connect."
+      "unavailable": "This host cannot check an image now ({{state}}). Start its daemon with wssp host run."
     },
     "hostsFailed": "Could not load your hosts.",
     "noHosts": "You have no hosts yet. Enroll one on the Hosts page first.",

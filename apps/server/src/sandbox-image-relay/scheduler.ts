@@ -146,7 +146,7 @@ export async function releaseLostForeignImages(send: Send, hostId?: string) {
 /**
  * Origin-pin GC: pinned capture copies nothing references any more (their
  * revisions retired; see `originImagesToRelease`) are released with reason
- * `gc`, which unpins the copy so the host's GC and `wssp images prune` can
+ * `gc`, which unpins the copy so the host's GC and `wssp host images prune` can
  * evict it. The only copy of a live revision is never selected.
  */
 async function releaseUnreferencedOriginImages(send: Send) {

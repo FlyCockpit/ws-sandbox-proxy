@@ -1,5 +1,5 @@
-//! WP7 graceful quiesce against the real binaries: `wssp connect` (fake
-//! runtime, loopback relay fixture; no Incus) and `wssp daemon quiesce`.
+//! WP7 graceful quiesce against the real binaries: `wssp host run` (fake
+//! runtime, loopback relay fixture; no Incus) and `wssp host daemon quiesce`.
 #![cfg(target_os = "linux")]
 
 use std::net::{TcpListener, TcpStream};
@@ -49,7 +49,8 @@ fn spawn_daemon(listener: &TcpListener, temp: &tempfile::TempDir) -> ManagedChil
     let mut command = wssp(temp);
     command
         .args([
-            "connect",
+            "host",
+            "run",
             "--server",
             &origin,
             "--host-id",
@@ -66,7 +67,7 @@ fn spawn_daemon(listener: &TcpListener, temp: &tempfile::TempDir) -> ManagedChil
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .process_group(0);
-    ManagedChild::spawn(&mut command).expect("spawn wssp connect")
+    ManagedChild::spawn(&mut command).expect("spawn wssp host run")
 }
 
 fn accept(listener: &TcpListener, daemon: &mut ManagedChild) -> TcpStream {
@@ -213,17 +214,17 @@ fn quiesce_command(
     main_pid: Option<u32>,
 ) -> std::process::Output {
     let mut command = wssp(temp);
-    command.args(["daemon", "quiesce"]);
+    command.args(["host", "daemon", "quiesce"]);
     if let Some(pid) = pid {
         command.args(["--pid", &pid.to_string()]);
     }
     if let Some(main_pid) = main_pid {
         command.env("MAINPID", main_pid.to_string());
     }
-    command.output().expect("run wssp daemon quiesce")
+    command.output().expect("run wssp host daemon quiesce")
 }
 
-/// The full path: `wssp daemon quiesce` signals the verified daemon; it
+/// The full path: `wssp host daemon quiesce` signals the verified daemon; it
 /// sends `host.quiesce`; the connection drops before any ack; the reconnect
 /// hello carries `quiescing: true` and its registration counts as the ack;
 /// with no command running the daemon closes normally, exits 0 and removes

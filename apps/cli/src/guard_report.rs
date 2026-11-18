@@ -1,11 +1,11 @@
-//! The node-local egress guard summary that `wssp login`, `wssp connect` and
-//! `wssp config show` print (see docs/guide/hosts.md#egress-guard).
+//! The node-local egress guard summary that `wssp host enroll`, `wssp host run` and
+//! `wssp host config show` print (see docs/guide/hosts.md#egress-guard).
 //! The guard is root-owned and installed once per node; daemons never run
 //! `sudo`, they print the exact install command.
 
 use serde::Serialize;
 
-/// One policy source as `config show` reports it: state and digest, never
+/// One policy source as `host config show` reports it: state and digest, never
 /// the contents.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,7 +90,7 @@ impl GuardReport {
                 install_command()
             ),
             "guard_root_source" => format!(
-                "the egress guard is not healthy ({reason}): fix `{}` (see `wssp guard status`); new sandboxes cannot start on this node",
+                "the egress guard is not healthy ({reason}): fix `{}` (see `wssp host guard status`); new sandboxes cannot start on this node",
                 sandbox_runtime::guard::ROOT_BLOCKLIST_PATH
             ),
             "host_firewall_blocks_sandboxes" => sandbox_runtime::guard::path::HOST_FIREWALL_FIX
@@ -99,10 +99,10 @@ impl GuardReport {
                     &format!("--daemon-user {}", install_user()),
                 ),
             "guard_quarantined" => format!(
-                "the egress guard is quarantined ({reason}): an unsupported packet path or a failed resync; see `wssp guard status`. New sandboxes cannot start on this node"
+                "the egress guard is quarantined ({reason}): an unsupported packet path or a failed resync; see `wssp host guard status`. New sandboxes cannot start on this node"
             ),
             _ => format!(
-                "the egress guard is not healthy ({reason}); see `wssp guard status`. New sandboxes cannot start on this node. If it is not running, reinstall it:\n  {}",
+                "the egress guard is not healthy ({reason}); see `wssp host guard status`. New sandboxes cannot start on this node. If it is not running, reinstall it:\n  {}",
                 install_command()
             ),
         };
@@ -110,13 +110,16 @@ impl GuardReport {
     }
 }
 
-/// `sudo <this binary> guard install --daemon-user <user>` with the running
+/// `sudo <this binary> host guard install --daemon-user <user>` with the running
 /// binary's path and the current user's name.
 pub fn install_command() -> String {
     let exe = std::env::current_exe()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "wssp".into());
-    format!("sudo {exe} guard install --daemon-user {}", install_user())
+    format!(
+        "sudo {exe} host guard install --daemon-user {}",
+        install_user()
+    )
 }
 
 /// `$USER` when it is a plain user name, else `<user>`.
@@ -147,7 +150,7 @@ mod tests {
             counts: Default::default(),
         };
         let hint = report.hint().unwrap();
-        assert!(hint.contains("guard install --daemon-user "), "{hint}");
+        assert!(hint.contains("host guard install --daemon-user "), "{hint}");
         assert!(hint.starts_with("the egress guard is not installed"));
         report.reason = Some("guard_root_source");
         assert!(

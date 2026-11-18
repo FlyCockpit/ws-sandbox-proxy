@@ -1,4 +1,5 @@
-//! `wssp login` device-code enrollment.
+//! `wssp host enroll`: device-code enrollment (`--slug`) or a dashboard host
+//! token's environment variable (`--token-env`).
 
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,13 +16,26 @@ use crate::slug::validate_host_slug;
 use crate::state::{AuthStore, LoginStart};
 
 #[derive(Debug, clap::Args)]
+#[command(group(
+    clap::ArgGroup::new("method").required(true).args(["slug", "token_env"])
+))]
 pub struct Args {
     #[command(flatten)]
     pub tls: crate::tls::TlsArgs,
 
-    /// Sandbox host slug to enroll (`host-slug:<slug>` scope).
+    /// Sandbox host slug to enroll with the device flow (`host-slug:<slug>` scope).
     #[arg(long)]
-    slug: String,
+    slug: Option<String>,
+
+    /// Record the environment variable that holds a dashboard-minted host
+    /// token instead of running the device flow (the token itself is never
+    /// written to config).
+    #[arg(
+        long,
+        value_name = "ENV",
+        conflicts_with_all = ["slug", "server", "open_egress_for_others", "ca_file"]
+    )]
+    token_env: Option<String>,
 
     /// Control plane origin override (defaults to configured `server_url`).
     #[arg(long)]
@@ -32,12 +46,60 @@ pub struct Args {
     json: bool,
 
     /// Let sandboxes from other users' pools reach the open internet from
-    /// this machine. Without it, an interactive login asks once.
+    /// this machine. Without it, an interactive device enrollment asks once.
     #[arg(long, value_enum, value_name = "on|off")]
     open_egress_for_others: Option<crate::commands::config::OnOff>,
 }
 
 pub fn run(args: &Args) -> Result<()> {
+    match (&args.token_env, &args.slug) {
+        (Some(env_var), _) => enroll_token_env(args, env_var),
+        (None, Some(slug)) => enroll_device(args, slug),
+        (None, None) => anyhow::bail!("`wssp host enroll` needs `--slug` or `--token-env`"),
+    }
+}
+
+fn enroll_token_env(args: &Args, env_var: &str) -> Result<()> {
+    crate::auth::host_token_from_env(env_var)?;
+    crate::config::Config::update(|cfg| {
+        cfg.host_token_env = Some(env_var.to_owned());
+        Ok(())
+    })?;
+    let guard = crate::guard_report::GuardReport::local();
+    if args.json {
+        output::json(&TokenEnrolled {
+            host_token_env: env_var,
+            guard: GuardSummary::from(&guard),
+            guard_install_command: (!guard.ok).then(crate::guard_report::install_command),
+        })?;
+    } else {
+        output::line(format!(
+            "recorded host token environment variable `{env_var}`"
+        ))?;
+        print_guard_hint(&guard)?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TokenEnrolled<'a> {
+    host_token_env: &'a str,
+    guard: GuardSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    guard_install_command: Option<String>,
+}
+
+/// The egress guard line every enrollment ends with.
+fn print_guard_hint(guard: &crate::guard_report::GuardReport) -> Result<()> {
+    if let Some(hint) = guard.hint() {
+        output::line(hint)
+    } else {
+        output::line("egress guard: ok")
+    }
+}
+
+fn enroll_device(args: &Args, slug: &str) -> Result<()> {
     let store = AuthStore::open(None)?;
     let (config, _) = store.snapshot()?;
     let trust = args.tls.load(&config)?;
@@ -48,7 +110,7 @@ pub fn run(args: &Args) -> Result<()> {
     } else {
         config.ca_file.clone()
     };
-    let host_slug = args.slug.clone();
+    let host_slug = slug.to_owned();
     validate_host_slug(&host_slug)?;
     let LoginStart {
         generation,
@@ -106,7 +168,7 @@ pub fn run(args: &Args) -> Result<()> {
                 store.publish_with_ca_file(&generation, credential, saved_ca_file.clone())?;
                 drop(store);
                 if !args.json {
-                    output::line("device login complete")?;
+                    output::line("device enrollment complete")?;
                 }
                 return node_setup(args, &host_slug);
             }
@@ -160,7 +222,7 @@ fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
     let consent = answer.or(current);
     if consent.is_none() && !args.json {
         output::diagnostic(
-            "open internet for other users' sandboxes is off until you choose: `wssp config set-open-egress-for-others on|off`",
+            "open internet for other users' sandboxes is off until you choose: `wssp host config set-open-egress-for-others on|off`",
         )?;
     } else if !args.json {
         output::line(format!(
@@ -173,17 +235,11 @@ fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
         output::json(&LoginComplete {
             host_slug,
             open_egress_for_others: consent,
-            guard: GuardSummary {
-                installed: guard.installed,
-                ok: guard.ok,
-                reason: guard.reason,
-            },
+            guard: GuardSummary::from(&guard),
             guard_install_command: (!guard.ok).then(crate::guard_report::install_command),
         })?;
-    } else if let Some(hint) = guard.hint() {
-        output::line(hint)?;
     } else {
-        output::line("egress guard: ok")?;
+        print_guard_hint(&guard)?;
     }
     Ok(())
 }
@@ -210,6 +266,16 @@ struct GuardSummary {
     installed: bool,
     ok: bool,
     reason: Option<&'static str>,
+}
+
+impl From<&crate::guard_report::GuardReport> for GuardSummary {
+    fn from(guard: &crate::guard_report::GuardReport) -> Self {
+        Self {
+            installed: guard.installed,
+            ok: guard.ok,
+            reason: guard.reason,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

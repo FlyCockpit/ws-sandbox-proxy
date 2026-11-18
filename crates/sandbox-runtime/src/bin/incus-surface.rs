@@ -1,7 +1,7 @@
 //! Live Incus surface harness for the wssp node-daemon runtime.
 //!
 //! This drives the production [`sandbox_runtime::IncusKvmRuntime`] and
-//! [`sandbox_runtime::IncusClient`] — the same types `wssp connect` uses —
+//! [`sandbox_runtime::IncusClient`] — the same types `wssp host run` uses —
 //! plus a few raw `incus` probes for commands the wrapper does not expose
 //! (`stop`, `project show`, `profile show`). It never deletes images.
 //!

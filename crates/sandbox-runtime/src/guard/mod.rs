@@ -1,6 +1,6 @@
 //! The root-owned egress guard (see docs/guide/hosts.md#egress-guard).
 //!
-//! Pure, security-critical building blocks shared by the `wssp guard`
+//! Pure, security-critical building blocks shared by the `wssp host guard`
 //! service (apps/cli) and the daemon-side client ([`crate::GuardProbe`]):
 //!
 //! - [`ceiling`]: the egress ceiling host sockets obey (credential proxy);
@@ -71,7 +71,7 @@ pub const INSTALLED_BINARY: &str = "/usr/local/lib/wssp/wssp-guard";
 pub const UNIT_NAME: &str = "wssp-guard.service";
 pub const UNIT_PATH: &str = "/etc/systemd/system/wssp-guard.service";
 
-/// NSS lookup of a user's uid (`wssp guard install --daemon-user`).
+/// NSS lookup of a user's uid (`wssp host guard install --daemon-user`).
 #[cfg(target_os = "linux")]
 pub fn lookup_user_uid(name: &str) -> std::io::Result<Option<u32>> {
     nix::unistd::User::from_name(name)

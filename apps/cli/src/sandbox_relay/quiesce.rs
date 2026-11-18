@@ -1,7 +1,7 @@
 //! Graceful quiesce-then-restart for daemon upgrades (reconnect plan WP7,
 //! decisions D6 and D9).
 //!
-//! `wssp daemon quiesce` (the service's `ExecReload`) sends SIGUSR1 to a
+//! `wssp host daemon quiesce` (the service's `ExecReload`) sends SIGUSR1 to a
 //! daemon whose control file ([`CONTROL_FILE`]) proves it understands it.
 //! The signal watcher (`crate::shutdown`) records the request here, never in
 //! the shutdown slot, so a later SIGTERM still works as it always did. Then:
@@ -51,7 +51,7 @@ const POLL: Duration = Duration::from_millis(250);
 /// The running daemon's private control file, in its relay state directory
 /// (`<data>/relay/<sha256(host id)>/`).
 pub const CONTROL_FILE: &str = "daemon.json";
-/// The feature `wssp daemon quiesce` looks for before it sends SIGUSR1.
+/// The feature `wssp host daemon quiesce` looks for before it sends SIGUSR1.
 pub const QUIESCE_FEATURE: &str = "quiesce";
 
 /// The process-wide quiesce request, shared by the signal watcher, every
@@ -370,7 +370,7 @@ fn run_worker(
     }
 }
 
-/// The control file `wssp daemon quiesce` reads. Unknown fields are
+/// The control file `wssp host daemon quiesce` reads. Unknown fields are
 /// ignored, so a newer daemon's file stays readable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -471,7 +471,7 @@ fn quiesce_max(config: &crate::config::Config) -> Result<Duration> {
 
 /// Start quiescing support for this daemon run, if its SIGUSR1 handler is
 /// registered: the worker first, then the control file that advertises it.
-/// Without the file `wssp daemon quiesce` restarts this daemon with SIGTERM,
+/// Without the file `wssp host daemon quiesce` restarts this daemon with SIGTERM,
 /// as before; the worker still serves a SIGUSR1 sent by hand.
 pub(super) fn start(
     shutdown: &ShutdownSignal,
@@ -487,7 +487,7 @@ pub(super) fn start(
     let control = ControlFileGuard::write(state_dir)
         .inspect_err(|error| {
             tracing::warn!(
-                "graceful reload unavailable: {error:#}; `wssp daemon quiesce` restarts this daemon"
+                "graceful reload unavailable: {error:#}; `wssp host daemon quiesce` restarts this daemon"
             );
         })
         .ok();

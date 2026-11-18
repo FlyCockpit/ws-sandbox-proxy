@@ -375,7 +375,7 @@ export async function finalizeExpiredSandboxLifecycleOperation(
     provisioningFailureCode === "startup_failed" ||
     provisioningFailureCode === "startup_timeout";
   const errorDetail = networkFailure
-    ? "Sandbox booted without an IPv4 network address (no DHCP lease); cleanup queued. The host firewall may drop sandbox bridge traffic: run `wssp guard status` on the host."
+    ? "Sandbox booted without an IPv4 network address (no DHCP lease); cleanup queued. The host firewall may drop sandbox bridge traffic: run `wssp host guard status` on the host."
     : startupFailure
       ? "Sandbox template start command did not become ready; cleanup queued."
       : provisioningFailureCode === "unknown_outcome"

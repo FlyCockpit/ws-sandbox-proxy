@@ -78,11 +78,38 @@ fn is_daemon(dir: &Path) -> Result<bool> {
     let name = exe.file_name().unwrap_or_default().to_string_lossy();
     let wssp = name.strip_suffix(" (deleted)").unwrap_or(&name) == "wssp";
     let cmdline = std::fs::read(dir.join("cmdline")).context("reading ancestor command line")?;
-    Ok(wssp
-        && cmdline
-            .split(|b| *b == 0)
-            .skip(1)
-            .any(|arg| arg == b"connect"))
+    Ok(wssp && is_daemon_argv(&cmdline))
+}
+
+/// Whether a NUL-separated command line is a node daemon's: `wssp host run …`
+/// (global flags may appear before or after `host`), or ANY argument equal to
+/// `connect`. The `connect` match is not an alias: it is a fail-closed safety
+/// detector for the upgrade window, so that host commands started by an old,
+/// still-running pre-upgrade daemon (`wssp connect`) can never raise node
+/// settings. Over-matching only refuses a raise; under-matching would not.
+#[cfg(target_os = "linux")]
+fn is_daemon_argv(cmdline: &[u8]) -> bool {
+    let mut args = cmdline.split(|b| *b == 0).skip(1);
+    if cmdline
+        .split(|b| *b == 0)
+        .skip(1)
+        .any(|arg| arg == b"connect")
+    {
+        return true;
+    }
+    let mut positionals = Vec::with_capacity(2);
+    while let Some(arg) = args.next() {
+        if arg == b"--log-format" {
+            // The one global flag that takes a separate value.
+            args.next();
+        } else if !arg.starts_with(b"-") {
+            positionals.push(arg);
+            if positionals.len() == 2 {
+                break;
+            }
+        }
+    }
+    positionals == [b"host".as_slice(), b"run".as_slice()]
 }
 
 // comm/cmdline remain readable for the non-dumpable daemon; exe does not.
@@ -93,10 +120,7 @@ fn is_connect_process(dir: &Path) -> Result<bool> {
         return Ok(false);
     }
     let cmdline = std::fs::read(dir.join("cmdline")).context("reading ancestor command line")?;
-    Ok(cmdline
-        .split(|b| *b == 0)
-        .skip(1)
-        .any(|arg| arg == b"connect"))
+    Ok(is_daemon_argv(&cmdline))
 }
 
 /// Real and effective uid of a process, from the world-readable `status`.
@@ -233,6 +257,36 @@ mod tests {
         std::fs::write(dir.join("comm"), "x\n").unwrap();
     }
     const UID: u32 = 1000;
+    #[test]
+    fn daemon_argv_matches_host_run_and_a_pre_upgrade_connect_daemon() {
+        for daemon in [
+            b"wssp\0host\0run\0".as_slice(),
+            b"wssp\0host\0run\0--runtime\0incus\0",
+            b"/home/u/.local/bin/wssp\0-v\0host\0run\0",
+            b"wssp\0--log-format\0json\0host\0-q\0run\0",
+            b"wssp\0host\0--log-format=json\0run\0",
+            // A pre-upgrade daemon (`wssp connect`), in any argv position.
+            b"wssp\0connect\0",
+            b"wssp\0--verbose\0connect\0--runtime\0incus\0",
+        ] {
+            assert!(
+                is_daemon_argv(daemon),
+                "{}",
+                String::from_utf8_lossy(daemon)
+            );
+        }
+        for other in [
+            b"wssp\0host\0config\0show\0".as_slice(),
+            b"wssp\0host\0config\0set-host-terminal\0on\0",
+            b"wssp\0host\0daemon\0quiesce\0",
+            b"wssp\0host\0enroll\0--slug\0run\0",
+            b"wssp\0run\0",
+            b"wssp\0",
+            b"",
+        ] {
+            assert!(!is_daemon_argv(other), "{}", String::from_utf8_lossy(other));
+        }
+    }
     fn foreign(root: &Path, pid: u32) {
         let dir = root.join(pid.to_string());
         std::fs::write(dir.join("status"), "Name:\tx\nUid:\t0\t0\t0\t0\n").unwrap();
@@ -249,13 +303,13 @@ mod tests {
     fn foreign_uid_ancestors_and_the_user_manager_do_not_block_a_login_session() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        // wssp config <- bash <- sshd (root) <- pid 1
-        process(root, 40, 30, "/bin/wssp", b"wssp\0config\0", b"");
+        // wssp host config <- bash <- sshd (root) <- pid 1
+        process(root, 40, 30, "/bin/wssp", b"wssp\0host\0config\0", b"");
         process(root, 30, 20, "/bin/bash", b"bash\0", b"");
         process(root, 20, 1, "/usr/sbin/sshd", b"sshd\0", b"");
         foreign(root, 20);
         assert!(check_in(root, 40, &[], UID).is_ok());
-        // wssp config <- bash <- systemd --user (non-dumpable, same uid) <- pid 1
+        // wssp host config <- bash <- systemd --user (non-dumpable, same uid) <- pid 1
         std::fs::remove_dir_all(root.join("20")).unwrap();
         process(
             root,
@@ -285,7 +339,7 @@ mod tests {
     fn unreadable_login_session_requires_a_foreign_parent_and_never_accepts_wssp() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        process(root, 40, 30, "/bin/wssp", b"wssp\0config\0", b"");
+        process(root, 40, 30, "/bin/wssp", b"wssp\0host\0config\0", b"");
         process(
             root,
             30,
@@ -311,9 +365,9 @@ mod tests {
     fn discovers_non_dumpable_daemons_without_control_files_and_refuses_ancestors() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        process(root, 40, 30, "/bin/wssp", b"wssp\0config\0", b"");
+        process(root, 40, 30, "/bin/wssp", b"wssp\0host\0config\0", b"");
         process(root, 30, 1, "/bin/sh", b"sh\0", b"");
-        process(root, 20, 1, "/bin/wssp", b"renamed\0connect\0", b"");
+        process(root, 20, 1, "/bin/wssp", b"renamed\0host\0run\0", b"");
         unreadable(root, 20, "wssp");
         assert_eq!(discover_daemons(root, UID).unwrap(), vec![20]);
         assert!(check_in(root, 40, &discover_daemons(root, UID).unwrap(), UID).is_err());
@@ -335,7 +389,7 @@ mod tests {
     fn host_ancestry_survives_cleared_markers_and_forged_argv() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        process(root, 40, 30, "/bin/wssp", b"wssp\0config\0", b"");
+        process(root, 40, 30, "/bin/wssp", b"wssp\0host\0config\0", b"");
         process(root, 30, 20, "/usr/bin/script", b"script\0", b"");
         process(root, 20, 1, "/bin/wssp", b"renamed\0connect\0", b"");
         assert!(check_in(root, 40, &[], UID).is_err());
@@ -354,7 +408,7 @@ mod tests {
     fn host_ancestry_fails_closed_on_missing_data_cycles_and_daemon_cgroup() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        process(root, 40, 30, "/bin/wssp", b"wssp\0config\0", b"");
+        process(root, 40, 30, "/bin/wssp", b"wssp\0host\0config\0", b"");
         assert!(check_in(root, 40, &[], UID).is_err());
         process(root, 30, 1, "/bin/sh", b"sh\0", b"");
         assert!(check_in(root, 40, &[], UID).is_ok());

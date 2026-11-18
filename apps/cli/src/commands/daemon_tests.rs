@@ -1,4 +1,4 @@
-//! `wssp daemon quiesce` decisions (WP7).
+//! `wssp host daemon quiesce` decisions (WP7).
 
 use super::*;
 use crate::sandbox_relay::quiesce::QUIESCE_FEATURE;

@@ -1,4 +1,4 @@
-//! `wssp daemon quiesce`: the service's `ExecReload` (reconnect plan WP7).
+//! `wssp host daemon quiesce`: the service's `ExecReload` (reconnect plan WP7).
 //!
 //! The *new* binary on disk decides how to restart the *running* daemon:
 //!
@@ -47,7 +47,7 @@ pub struct QuiesceArgs {
     pub pid: Option<u32>,
 }
 
-/// What `wssp daemon quiesce` does.
+/// What `wssp host daemon quiesce` does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     /// SIGUSR1: the daemon quiesces, then restarts.

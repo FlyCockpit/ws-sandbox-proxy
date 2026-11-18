@@ -1,4 +1,4 @@
-//! `wssp guard status [--json]` (any user). Asks the socket; falls back to
+//! `wssp host guard status [--json]` (any user). Asks the socket; falls back to
 //! `/run/wssp-guard/status.json` when the socket is down. Prints source
 //! states, digests and counts, never list contents. Exits 1 when the guard
 //! is not healthy by the shared lease rule.
@@ -123,7 +123,7 @@ pub fn print_text(status: &GuardStatus, source: &str) -> Result<()> {
     output::line(format!("  counts: {}", counts.join(", ")))
 }
 
-/// The node-local guard view used by `login`, `connect` and `config show`:
+/// The node-local guard view used by `host enroll`, `host run` and `host config show`:
 /// the status (socket first, then the status file), where it came from, and
 /// the node-local verdict, at [`Paths::local`].
 pub fn local_snapshot() -> (
@@ -178,7 +178,7 @@ pub fn run(args: &StatusArgs) -> Result<()> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "wssp".into());
             bail!(
-                "egress guard {}: install or upgrade it with: sudo {exe} guard install --daemon-user <user>",
+                "egress guard {}: install or upgrade it with: sudo {exe} host guard install --daemon-user <user>",
                 reason.as_str()
             )
         }

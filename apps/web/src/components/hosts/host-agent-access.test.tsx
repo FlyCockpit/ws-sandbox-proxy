@@ -234,8 +234,8 @@ it("warns when raw node reports are on while effective access is vetoed", async 
   for (const setting of ["commands", "terminal"] as const) {
     const command =
       setting === "commands"
-        ? "wssp config set-agent-host-commands off"
-        : "wssp config set-host-terminal off";
+        ? "wssp host config set-agent-host-commands off"
+        : "wssp host config set-host-terminal off";
     expect(screen.getByText(en.host.tamperWarning.replace("{{command}}", command))).toBeDefined();
     expect(
       screen

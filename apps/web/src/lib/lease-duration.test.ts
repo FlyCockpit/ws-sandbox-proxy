@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatLeaseDuration, leaseLimitText, parseLeaseLimit } from "./lease-duration";
 
-describe("lease limit text (same grammar as wssp config set-max-lease)", () => {
+describe("lease limit text (same grammar as wssp host config set-max-lease)", () => {
   it("parses blank as no limit and bounded durations exactly", () => {
     expect(parseLeaseLimit("")).toBeNull();
     expect(parseLeaseLimit("  ")).toBeNull();

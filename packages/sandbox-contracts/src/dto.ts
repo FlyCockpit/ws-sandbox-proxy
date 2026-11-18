@@ -481,7 +481,7 @@ export type SandboxDiskEligibility = (typeof SANDBOX_DISK_ELIGIBILITY)[number];
  * When a stopped sandbox's disk is exported to the image store
  * (docs/guide/sandboxes.md#offload-policy): `on_stop` as soon as it stops (the
  * default), `after` once it has been stopped for `afterMs`, `on_pressure` only
- * when its host needs the space. Host pressure and `wssp drain --offload`
+ * when its host needs the space. Host pressure and `wssp host drain --offload`
  * export `after` and `on_pressure` disks early; the deployment's own gates
  * (`SANDBOX_OFFLOAD`, quotas, login and receipt settlement) still apply.
  */
@@ -509,7 +509,7 @@ export const sandboxOffloadPolicySchema = z
   ])
   .meta({
     description:
-      "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp drain --offload` export early whatever the policy.",
+      "When a stopped disk is exported to the image store: `on_stop` (default), `after` a delay, or `on_pressure` (only when its host needs the space). Host pressure and `wssp host drain --offload` export early whatever the policy.",
   });
 export type SandboxOffloadPolicy = z.infer<typeof sandboxOffloadPolicySchema>;
 /** Owner restore pin: `OWN_HOSTS` keeps the disk off other users' hosts. */

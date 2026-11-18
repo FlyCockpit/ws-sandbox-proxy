@@ -1022,7 +1022,7 @@ fn reconcile_drops_images_deleted_out_of_band_but_never_one_in_use() {
     let mut expected = vec![busy.clone(), kept.clone()];
     expected.sort();
     assert_eq!(left, expected);
-    // The journal on disk (what `wssp images list` reads) agrees.
+    // The journal on disk (what `wssp host images list` reads) agrees.
     let reopened = CacheJournal::open(&dir.path().join("images")).unwrap();
     assert_eq!(reopened.file.entries.len(), 2);
     let frames = images.drain();

@@ -214,10 +214,18 @@ fn run(mut cmd: Command) -> Output {
     output
 }
 
-fn login(root: &Path, server: &Server) -> Output {
+fn enroll(root: &Path, server: &Server) -> Output {
     run(command(
         root,
-        &["-vv", "login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "-vv",
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     ))
 }
 fn assert_clean_output(out: &Output) {
@@ -243,7 +251,7 @@ fn state(root: &Path) -> Value {
 
 #[cfg(unix)]
 #[test]
-fn closed_stdin_login_pending_then_success_logout_and_source_switch() {
+fn closed_stdin_enroll_pending_then_success_logout_and_source_switch() {
     let server = Server::new(|i, request| match i {
         0 => {
             assert!(request.starts_with(&format!("POST {ISSUE}")));
@@ -265,10 +273,13 @@ fn closed_stdin_login_pending_then_success_logout_and_source_switch() {
         _ => reply(401, error("UNAUTHORIZED", None)),
     });
     let root = tempfile::tempdir().unwrap();
-    let mut token = command(root.path(), &["token", "login", "WSSP_TEST_HOST_TOKEN"]);
+    let mut token = command(
+        root.path(),
+        &["host", "enroll", "--token-env", "WSSP_TEST_HOST_TOKEN"],
+    );
     token.env("WSSP_TEST_HOST_TOKEN", host_secret());
     assert!(run(token).status.success());
-    let out = login(root.path(), &server);
+    let out = enroll(root.path(), &server);
     assert!(
         out.status.success(),
         "{}",
@@ -304,7 +315,7 @@ fn closed_stdin_login_pending_then_success_logout_and_source_switch() {
     }
     let connect = run(command(
         root.path(),
-        &["-vv", "connect", "--runtime", "fake"],
+        &["-vv", "host", "run", "--runtime", "fake"],
     ));
     assert!(!connect.status.success());
     assert_clean_output(&connect);
@@ -313,18 +324,18 @@ fn closed_stdin_login_pending_then_success_logout_and_source_switch() {
     assert!(requests[3].0.contains(&format!("Bearer {}", secret())));
     drop(requests);
     for _ in 0..2 {
-        let out = run(command(root.path(), &["logout", "--json"]));
+        let out = run(command(root.path(), &["host", "logout", "--json"]));
         assert!(out.status.success());
         assert_clean_output(&out);
     }
     assert!(!root.path().join("data/device-auth.json").exists());
-    let connect = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let connect = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!connect.status.success());
     assert_eq!(server.count(), 4);
 }
 
 #[test]
-fn login_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_the_guard() {
+fn enroll_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_the_guard() {
     let server = || {
         Server::new(|i, _| match i {
             0 => reply(200, issued(30, 1)),
@@ -338,7 +349,8 @@ fn login_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_t
     let out = run(command(
         root.path(),
         &[
-            "login",
+            "host",
+            "enroll",
             "--slug",
             "desk-01",
             "--server",
@@ -359,7 +371,7 @@ fn login_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_t
     assert_eq!(done["guard"]["ok"], false);
     assert_eq!(done["guard"]["reason"], "guard_unreachable");
     let install = done["guardInstallCommand"].as_str().unwrap();
-    assert!(install.starts_with("sudo ") && install.contains(" guard install --daemon-user "));
+    assert!(install.starts_with("sudo ") && install.contains(" host guard install --daemon-user "));
     let config = fs::read_to_string(root.path().join("config/config.toml")).unwrap_or_default();
     assert!(!config.contains("allow_open_egress_for_others"));
 
@@ -369,7 +381,8 @@ fn login_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_t
     let out = run(command(
         root.path(),
         &[
-            "login",
+            "host",
+            "enroll",
             "--slug",
             "desk-01",
             "--server",
@@ -388,7 +401,10 @@ fn login_node_setup_sets_consent_by_flag_never_prompts_without_a_tty_and_hints_t
         stdout.contains("open internet for other users' sandboxes: on"),
         "{stdout}"
     );
-    assert!(stdout.contains(" guard install --daemon-user "), "{stdout}");
+    assert!(
+        stdout.contains(" host guard install --daemon-user "),
+        "{stdout}"
+    );
     let config = fs::read_to_string(root.path().join("config/config.toml")).unwrap();
     assert!(
         config.contains("allow_open_egress_for_others = true"),
@@ -433,7 +449,7 @@ fn every_contract_row_runs_over_http_and_unlisted_rows_stop_after_one_exchange()
             _ => reply(200, success()),
         });
         let root = tempfile::tempdir().unwrap();
-        let out = login(root.path(), &server);
+        let out = enroll(root.path(), &server);
         assert_eq!(
             out.status.success(),
             retries,
@@ -480,7 +496,7 @@ fn malformed_success_and_invalid_rate_limits_never_publish() {
             }
         });
         let root = tempfile::tempdir().unwrap();
-        let out = login(root.path(), &server);
+        let out = enroll(root.path(), &server);
         assert!(!out.status.success());
         assert_eq!(server.count(), 2);
         assert!(!root.path().join("data/device-auth.json").exists());
@@ -502,7 +518,7 @@ fn expiry_clips_huge_sleep_and_stalled_headers_and_body() {
         });
         let root = tempfile::tempdir().unwrap();
         let now = Instant::now();
-        let out = login(root.path(), &server);
+        let out = enroll(root.path(), &server);
         assert!(!out.status.success());
         assert!(now.elapsed() < Duration::from_secs(4));
         assert_eq!(server.count(), if stall.is_none() { 1 } else { 2 });
@@ -519,7 +535,7 @@ fn issuance_has_a_network_timeout() {
     });
     let root = tempfile::tempdir().unwrap();
     let now = Instant::now();
-    let out = login(root.path(), &server);
+    let out = enroll(root.path(), &server);
     assert!(!out.status.success());
     assert!(now.elapsed() < Duration::from_secs(12));
     assert_eq!(server.count(), 1);
@@ -542,7 +558,15 @@ fn all_diagnostics_and_remote_messages_redact_credentials_at_vv() {
             let root = tempfile::tempdir().unwrap();
             let mut cmd = command(
                 root.path(),
-                &["-vv", "login", "--slug", "desk-01", "--server", &server.url],
+                &[
+                    "-vv",
+                    "host",
+                    "enroll",
+                    "--slug",
+                    "desk-01",
+                    "--server",
+                    &server.url,
+                ],
             );
             if json_mode {
                 cmd.arg("--json");
@@ -565,7 +589,7 @@ fn all_diagnostics_and_remote_messages_redact_credentials_at_vv() {
     let out = run(command(root.path(), &["-vv", &secret()]));
     assert!(!out.status.success());
     assert_clean_output(&out);
-    let mut cmd = command(root.path(), &["-vv", "config", "path"]);
+    let mut cmd = command(root.path(), &["-vv", "host", "config", "path"]);
     cmd.env("WSSP_LOG", format!("{}=nonsense", secret()));
     let out = run(cmd);
     assert_clean_output(&out);
@@ -575,40 +599,49 @@ fn all_diagnostics_and_remote_messages_redact_credentials_at_vv() {
 fn required_slug_server_env_namespace_and_camel_case_config() {
     let root = tempfile::tempdir().unwrap();
     assert!(
-        !run(command(root.path(), &["login", "--slug", "desk-01"]))
-            .status
-            .success()
-    );
-    assert!(
-        run(command(
+        !run(command(
             root.path(),
-            &["config", "set-server", "https://example.test"]
+            &["host", "enroll", "--slug", "desk-01"]
         ))
         .status
         .success()
     );
     assert!(
-        run(command(root.path(), &["config", "set-slug", "desk-01"]))
-            .status
-            .success()
+        run(command(
+            root.path(),
+            &["host", "config", "set-server", "https://example.test"]
+        ))
+        .status
+        .success()
     );
-    let out = run(command(root.path(), &["login"]));
+    assert!(
+        run(command(
+            root.path(),
+            &["host", "config", "set-slug", "desk-01"]
+        ))
+        .status
+        .success()
+    );
+    let out = run(command(root.path(), &["host", "enroll"]));
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("--slug"));
-    let out = run(command(root.path(), &["config", "show", "--json"]));
+    let out = run(command(root.path(), &["host", "config", "show", "--json"]));
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["serverUrl"], "https://example.test/");
     assert_eq!(body["hostSlug"], "desk-01");
     assert!(body.get("server_url").is_none());
     for env in ["AWS_SECRET_ACCESS_KEY", "PATH", "WSSP_", "WSSP_lower"] {
-        let mut cmd = command(root.path(), &["token", "login", env]);
+        let mut cmd = command(root.path(), &["host", "enroll", "--token-env", env]);
         cmd.env(env, host_secret());
         assert!(!run(cmd).status.success());
     }
-    let mut cmd = command(root.path(), &["token", "login", "WSSP_TOKEN"]);
+    let mut cmd = command(
+        root.path(),
+        &["host", "enroll", "--token-env", "WSSP_TOKEN"],
+    );
     cmd.env("WSSP_TOKEN", host_secret());
     assert!(run(cmd).status.success());
-    let out = run(command(root.path(), &["logout", "--json"]));
+    let out = run(command(root.path(), &["host", "logout", "--json"]));
     assert!(out.status.success());
     let body: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(body["removedTokenEnv"], true);
@@ -630,10 +663,11 @@ fn malicious_urls_fail_before_dialing_and_port_or_downgrade_mismatch_is_terminal
     ] {
         let root = tempfile::tempdir().unwrap();
         for args in [
-            vec!["config", "set-server", url],
-            vec!["login", "--slug", "desk-01", "--server", url],
+            vec!["host", "config", "set-server", url],
+            vec!["host", "enroll", "--slug", "desk-01", "--server", url],
             vec![
-                "connect",
+                "host",
+                "run",
                 "--runtime",
                 "fake",
                 "--server",
@@ -658,10 +692,10 @@ fn malicious_urls_fail_before_dialing_and_port_or_downgrade_mismatch_is_terminal
     });
     let target = Server::new(|_, _| reply(401, json!({})));
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &issuing).status.success());
+    assert!(enroll(root.path(), &issuing).status.success());
     let out = run(command(
         root.path(),
-        &["connect", "--runtime", "fake", "--server", &target.url],
+        &["host", "run", "--runtime", "fake", "--server", &target.url],
     ));
     assert!(!out.status.success());
     assert_eq!(target.count(), 0);
@@ -674,7 +708,7 @@ fn malicious_urls_fail_before_dialing_and_port_or_downgrade_mismatch_is_terminal
     .unwrap();
     let out = run(command(
         root.path(),
-        &["connect", "--runtime", "fake", "--server", &target.url],
+        &["host", "run", "--runtime", "fake", "--server", &target.url],
     ));
     assert!(!out.status.success());
     assert_eq!(target.count(), 0);
@@ -710,12 +744,13 @@ fn http_and_websocket_redirects_never_forward_requests_or_credentials() {
             });
             let root = tempfile::tempdir().unwrap();
             if device {
-                assert!(login(root.path(), &server).status.success());
+                assert!(enroll(root.path(), &server).status.success());
             }
             let out = if websocket {
                 let mut args = vec![
                     "-vv",
-                    "connect",
+                    "host",
+                    "run",
                     "--runtime",
                     "fake",
                     "--server",
@@ -728,7 +763,7 @@ fn http_and_websocket_redirects_never_forward_requests_or_credentials() {
                 cmd.env("WSSP_TOKEN", host_secret());
                 run(cmd)
             } else {
-                login(root.path(), &server)
+                enroll(root.path(), &server)
             };
             assert!(!out.status.success());
             assert_clean_output(&out);
@@ -750,20 +785,20 @@ fn broad_mode_credential_is_rejected_on_reentry() {
         }
     });
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &server).status.success());
+    assert!(enroll(root.path(), &server).status.success());
     fs::set_permissions(
         root.path().join("data/device-auth.json"),
         fs::Permissions::from_mode(0o644),
     )
     .unwrap();
-    let out = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let out = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!out.status.success());
     assert_eq!(server.count(), 2);
     assert!(String::from_utf8_lossy(&out.stderr).contains("owner-only"));
 }
 
 #[test]
-fn stale_login_cannot_publish_or_exchange_after_newer_login_or_logout() {
+fn stale_enroll_cannot_publish_or_exchange_after_newer_enroll_or_logout() {
     for logout in [false, true] {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -786,14 +821,18 @@ fn stale_login_cannot_publish_or_exchange_after_newer_login_or_logout() {
         let root = tempfile::tempdir().unwrap();
         let mut first = ManagedChild::spawn(&mut command(
             root.path(),
-            &["login", "--slug", "old-host", "--server", &old.url],
+            &["host", "enroll", "--slug", "old-host", "--server", &old.url],
         ))
         .unwrap();
         ready_rx.recv_timeout(Duration::from_secs(4)).unwrap();
         if logout {
-            assert!(run(command(root.path(), &["logout"])).status.success());
+            assert!(
+                run(command(root.path(), &["host", "logout"]))
+                    .status
+                    .success()
+            );
         } else {
-            assert!(login(root.path(), &new).status.success());
+            assert!(enroll(root.path(), &new).status.success());
         }
         release_tx.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(4);
@@ -826,24 +865,24 @@ fn published_credential_survives_config_failure_and_connects_without_config() {
         }
         _ => reply(401, json!({})),
     });
-    let out = login(root.path(), &server);
+    let out = enroll(root.path(), &server);
     assert!(!out.status.success());
     assert_eq!(state(root.path())["hostId"], "host-1");
-    let mut show = command(root.path(), &["config", "show", "--json"]);
+    let mut show = command(root.path(), &["host", "config", "show", "--json"]);
     show.env("WSSP_RUNTIME", "fake");
     let shown = run(show);
     assert!(shown.status.success());
     let config: Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert!(config["hostTokenEnv"].is_null());
     assert_eq!(config["serverUrl"], format!("{}/", server.url));
-    let mut show = command(root.path(), &["config", "show"]);
+    let mut show = command(root.path(), &["host", "config", "show"]);
     show.env("WSSP_RUNTIME", "fake");
     let shown = run(show);
     assert!(shown.status.success());
     let config: toml::Value = toml::from_str(std::str::from_utf8(&shown.stdout).unwrap()).unwrap();
     assert!(config.get("host_token_env").is_none());
     assert!(!String::from_utf8_lossy(&shown.stdout).contains(&secret()));
-    let out = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let out = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!out.status.success());
     assert_eq!(server.count(), 3);
     assert!(server.requests.lock().unwrap()[2].0.contains(&secret()));
@@ -932,7 +971,14 @@ fn syscall_failure_at_every_publish_step_is_atomic_and_recoverable() {
             });
             let mut cmd = command(
                 root.path(),
-                &["login", "--slug", "desk-01", "--server", &server.url],
+                &[
+                    "host",
+                    "enroll",
+                    "--slug",
+                    "desk-01",
+                    "--server",
+                    &server.url,
+                ],
             );
             inject(&mut cmd, root.path(), &library, mode, config);
             let out = run(cmd);
@@ -969,7 +1015,7 @@ fn syscall_failure_at_every_publish_step_is_atomic_and_recoverable() {
                     "credential leaked for data-side fault: {mode}"
                 );
             }
-            let out = run(command(root.path(), &["logout"]));
+            let out = run(command(root.path(), &["host", "logout"]));
             assert!(out.status.success());
             assert!(!root.path().join("data/device-auth.json").exists());
             assert!(temps(root.path()).is_empty());
@@ -995,7 +1041,14 @@ fn crash_restart_sweeps_secrets_and_cleanup_waits_for_live_publisher_lock() {
         });
         let mut cmd = command(
             root.path(),
-            &["login", "--slug", "desk-01", "--server", &server.url],
+            &[
+                "host",
+                "enroll",
+                "--slug",
+                "desk-01",
+                "--server",
+                &server.url,
+            ],
         );
         inject(&mut cmd, root.path(), &library, mode, false);
         let mut child: ManagedChild = ManagedChild::spawn(&mut cmd).unwrap();
@@ -1006,7 +1059,7 @@ fn crash_restart_sweeps_secrets_and_cleanup_waits_for_live_publisher_lock() {
         }
         assert_eq!(temps(root.path()).len(), 1);
         let mut startup =
-            ManagedChild::spawn(&mut command(root.path(), &["config", "path"])).unwrap();
+            ManagedChild::spawn(&mut command(root.path(), &["host", "config", "path"])).unwrap();
         thread::sleep(Duration::from_millis(150));
         assert!(startup.try_wait().unwrap().is_none());
         assert_eq!(
@@ -1024,7 +1077,11 @@ fn crash_restart_sweeps_secrets_and_cleanup_waits_for_live_publisher_lock() {
         }
         assert!(startup.wait_with_output().unwrap().status.success());
         assert!(temps(root.path()).is_empty());
-        assert!(run(command(root.path(), &["logout"])).status.success());
+        assert!(
+            run(command(root.path(), &["host", "logout"]))
+                .status
+                .success()
+        );
         assert!(!root.path().join("data/device-auth.json").exists());
     }
 }
@@ -1053,7 +1110,7 @@ fn exchange_redirect_and_huge_retry_after_stop_at_deadline() {
         });
         let root = tempfile::tempdir().unwrap();
         let now = Instant::now();
-        let out = login(root.path(), &server);
+        let out = enroll(root.path(), &server);
         assert!(!out.status.success());
         assert!(now.elapsed() < Duration::from_secs(4));
         assert_eq!(server.count(), 2);
@@ -1082,12 +1139,13 @@ fn explicit_token_override_and_same_origin_websocket_redirect_are_bounded() {
     });
     *own.lock().unwrap() = server.url.replace("http:", "ws:");
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &server).status.success());
+    assert!(enroll(root.path(), &server).status.success());
     let mut cmd = command(
         root.path(),
         &[
             "-vv",
-            "connect",
+            "host",
+            "run",
             "--runtime",
             "fake",
             "--host-token-env",
@@ -1109,7 +1167,8 @@ fn explicit_token_override_and_same_origin_websocket_redirect_are_bounded() {
     let out = run(command(
         root.path(),
         &[
-            "connect",
+            "host",
+            "run",
             "--runtime",
             "fake",
             "--host-token-env",
@@ -1127,7 +1186,10 @@ fn explicit_token_override_and_same_origin_websocket_redirect_are_bounded() {
 fn failed_config_publish_does_not_resurrect_a_previous_token_binding() {
     let root = tempfile::tempdir().unwrap();
     let library = fault_library(root.path());
-    let mut token = command(root.path(), &["token", "login", "WSSP_TOKEN"]);
+    let mut token = command(
+        root.path(),
+        &["host", "enroll", "--token-env", "WSSP_TOKEN"],
+    );
     token.env("WSSP_TOKEN", host_secret());
     assert!(run(token).status.success());
     let arm = root.path().join("armed");
@@ -1141,7 +1203,14 @@ fn failed_config_publish_does_not_resurrect_a_previous_token_binding() {
     });
     let mut cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     inject(&mut cmd, root.path(), &library, "write", true);
     assert!(!run(cmd).status.success());
@@ -1151,25 +1220,29 @@ fn failed_config_publish_does_not_resurrect_a_previous_token_binding() {
             .unwrap()
             .contains("WSSP_TOKEN")
     );
-    let mut show = command(root.path(), &["config", "show", "--json"]);
+    let mut show = command(root.path(), &["host", "config", "show", "--json"]);
     show.env("WSSP_RUNTIME", "fake");
     let shown = run(show);
     assert!(shown.status.success());
     let config: Value = serde_json::from_slice(&shown.stdout).unwrap();
     assert!(config["hostTokenEnv"].is_null());
     assert_eq!(config["serverUrl"], format!("{}/", server.url));
-    let mut show = command(root.path(), &["config", "show"]);
+    let mut show = command(root.path(), &["host", "config", "show"]);
     show.env("WSSP_RUNTIME", "fake");
     let shown = run(show);
     assert!(shown.status.success());
     let config: toml::Value = toml::from_str(std::str::from_utf8(&shown.stdout).unwrap()).unwrap();
     assert!(config.get("host_token_env").is_none());
     assert!(!String::from_utf8_lossy(&shown.stdout).contains(&secret()));
-    let out = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let out = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!out.status.success());
     assert_eq!(server.count(), 3);
     assert!(server.requests.lock().unwrap()[2].0.contains(&secret()));
-    assert!(run(command(root.path(), &["logout"])).status.success());
+    assert!(
+        run(command(root.path(), &["host", "logout"]))
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -1180,7 +1253,8 @@ fn json_reports_issuance_interval_without_artificial_cap() {
     let out = run(command(
         root.path(),
         &[
-            "login",
+            "host",
+            "enroll",
             "--json",
             "--slug",
             "desk-01",
@@ -1218,7 +1292,8 @@ fn verification_uri_complete_is_absent_when_server_omits_it() {
     let out = run(command(
         root.path(),
         &[
-            "login",
+            "host",
+            "enroll",
             "--json",
             "--slug",
             "desk-01",
@@ -1249,7 +1324,14 @@ fn rate_limit_retry_floor_is_not_truncated() {
     let sleep_log = root.path().join("sleep.log");
     let mut cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     cmd.env("WSSP_TEST_RECORD_SLEEP", &sleep_log);
     let out = run(cmd);
@@ -1267,7 +1349,7 @@ fn rate_limit_retry_floor_is_not_truncated() {
 }
 
 #[test]
-fn login_publish_rejects_stale_server_after_config_set_server() {
+fn enroll_publish_rejects_stale_server_after_config_set_server() {
     let root = tempfile::tempdir().unwrap();
     let allow_success = Arc::new(Mutex::new(false));
     let allow_success_flag = allow_success.clone();
@@ -1282,7 +1364,7 @@ fn login_publish_rejects_stale_server_after_config_set_server() {
     });
     let mut login_cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &old.url],
+        &["host", "enroll", "--slug", "desk-01", "--server", &old.url],
     );
     let child: ManagedChild = ManagedChild::spawn(&mut login_cmd).unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -1292,7 +1374,7 @@ fn login_publish_rejects_stale_server_after_config_set_server() {
     }
     assert!(
         run({
-            let mut cmd = command(root.path(), &["config", "set-server", &new.url]);
+            let mut cmd = command(root.path(), &["host", "config", "set-server", &new.url]);
             cmd.env("WSSP_DATA_DIR", root.path().join("data"))
                 .env("WSSP_CONFIG_DIR", root.path().join("config"));
             cmd
@@ -1333,7 +1415,14 @@ fn shared_config_dir_does_not_let_peer_sweep_live_config_temp() {
     let library = fault_library(build.path());
     let mut publisher = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     publisher
         .env("WSSP_DATA_DIR", &data_a)
@@ -1363,7 +1452,7 @@ fn shared_config_dir_does_not_let_peer_sweep_live_config_temp() {
         1
     );
     let mut peer = ManagedChild::spawn(
-        command(root.path(), &["config", "path"])
+        command(root.path(), &["host", "config", "path"])
             .env("WSSP_DATA_DIR", &data_b)
             .env("WSSP_CONFIG_DIR", &shared_config),
     )
@@ -1396,15 +1485,15 @@ fn logout_clears_device_credential_when_config_is_unreadable() {
         _ => reply(200, success()),
     });
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &server).status.success());
+    assert!(enroll(root.path(), &server).status.success());
     fs::remove_file(root.path().join("config/config.toml")).unwrap();
     fs::create_dir(root.path().join("config/config.toml")).unwrap();
-    let out = run(command(root.path(), &["logout", "--json"]));
+    let out = run(command(root.path(), &["host", "logout", "--json"]));
     assert!(out.status.success());
     assert!(!root.path().join("data/device-auth.json").exists());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("warning:"));
-    let connect = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let connect = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!connect.status.success());
     assert_eq!(server.count(), 2);
 }
@@ -1416,21 +1505,21 @@ fn startup_finishes_logout_intent_without_parseable_config() {
         _ => reply(200, success()),
     });
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &server).status.success());
+    assert!(enroll(root.path(), &server).status.success());
     fs::write(root.path().join("config/config.toml"), "host_token_env = [").unwrap();
     fs::write(
         root.path().join("data/auth-intent.json"),
         r#"{"generation":"deadbeef","operation":"logout"}"#,
     )
     .unwrap();
-    let connect = run(command(root.path(), &["connect", "--runtime", "fake"]));
+    let connect = run(command(root.path(), &["host", "run", "--runtime", "fake"]));
     assert!(!connect.status.success());
     assert!(!root.path().join("data/device-auth.json").exists());
     assert_eq!(server.count(), 2);
 }
 
 #[test]
-fn loopback_login_ignores_environment_proxy_settings() {
+fn loopback_enroll_ignores_environment_proxy_settings() {
     let connects = Arc::new(Mutex::new(0usize));
     let proxy_connects = connects.clone();
     let proxy = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1460,7 +1549,14 @@ fn loopback_login_ignores_environment_proxy_settings() {
     let proxy_url = format!("http://{proxy_addr}");
     let mut cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     cmd.env("ALL_PROXY", &proxy_url)
         .env("HTTP_PROXY", &proxy_url)
@@ -1484,7 +1580,7 @@ fn creating_state_directories_fsyncs_new_parent_entries() {
     let parent = root.path().join("nested");
     let data = parent.join("data");
     let config = parent.join("config");
-    let mut cmd = command(root.path(), &["config", "path"]);
+    let mut cmd = command(root.path(), &["host", "config", "path"]);
     cmd.env("WSSP_DATA_DIR", &data)
         .env("WSSP_CONFIG_DIR", &config)
         .env("WSSP_TEST_RECORD_PARENT_SYNC", &parent);
@@ -1498,7 +1594,7 @@ fn config_generation_marker_survives_store_reopen() {
     assert!(
         run(command(
             root.path(),
-            &["config", "set-server", "https://example.test/"]
+            &["host", "config", "set-server", "https://example.test/"]
         ))
         .status
         .success()
@@ -1506,7 +1602,7 @@ fn config_generation_marker_survives_store_reopen() {
     let marker = root.path().join("config").join(".wssp-config-generation");
     assert!(marker.exists());
     assert!(
-        run(command(root.path(), &["config", "path"]))
+        run(command(root.path(), &["host", "config", "path"]))
             .status
             .success()
     );
@@ -1519,12 +1615,12 @@ fn config_generation_marker_survives_store_reopen() {
 }
 
 #[test]
-fn login_publish_rejects_config_init_during_pending_login() {
+fn enroll_publish_rejects_config_init_during_pending_enroll() {
     let root = tempfile::tempdir().unwrap();
     assert!(
         run(command(
             root.path(),
-            &["config", "set-server", "https://old.example.test/"]
+            &["host", "config", "set-server", "https://old.example.test/"]
         ))
         .status
         .success()
@@ -1538,7 +1634,14 @@ fn login_publish_rejects_config_init_during_pending_login() {
     });
     let mut login_cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     let child: ManagedChild = ManagedChild::spawn(&mut login_cmd).unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -1548,7 +1651,7 @@ fn login_publish_rejects_config_init_during_pending_login() {
     }
     fs::remove_file(root.path().join("config/config.toml")).unwrap();
     assert!(
-        run(command(root.path(), &["config", "init"]))
+        run(command(root.path(), &["host", "config", "init"]))
             .status
             .success(),
         "config init must recreate the file and bump generation"
@@ -1588,7 +1691,14 @@ fn rate_limit_honored_retry_is_sent_before_expiry() {
     let started = Instant::now();
     let out = run(command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     ));
     let elapsed = started.elapsed();
     assert!(
@@ -1626,7 +1736,14 @@ fn rate_limit_floor_beyond_remaining_expires_without_extra_sleep() {
     let started = Instant::now();
     let mut cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     cmd.env("WSSP_TEST_RECORD_SLEEP", &sleep_log);
     let out = run(cmd);
@@ -1662,7 +1779,14 @@ fn rate_limit_floor_applies_once_then_interval_resumes_while_slow_down_persists(
     let sleep_log = root.path().join("sleep.log");
     let mut cmd = command(
         root.path(),
-        &["login", "--slug", "desk-01", "--server", &server.url],
+        &[
+            "host",
+            "enroll",
+            "--slug",
+            "desk-01",
+            "--server",
+            &server.url,
+        ],
     );
     cmd.env("WSSP_TEST_RECORD_SLEEP", &sleep_log);
     let out = run(cmd);
@@ -1693,13 +1817,16 @@ fn logout_json_reports_token_binding_when_config_cleanup_fails() {
         _ => reply(200, success()),
     });
     let root = tempfile::tempdir().unwrap();
-    assert!(login(root.path(), &server).status.success());
-    let mut cmd = command(root.path(), &["token", "login", "WSSP_TOKEN"]);
+    assert!(enroll(root.path(), &server).status.success());
+    let mut cmd = command(
+        root.path(),
+        &["host", "enroll", "--token-env", "WSSP_TOKEN"],
+    );
     cmd.env("WSSP_TOKEN", host_secret());
     assert!(run(cmd).status.success());
     let build = tempfile::tempdir().unwrap();
     let library = fault_library(build.path());
-    let mut logout = command(root.path(), &["logout", "--json"]);
+    let mut logout = command(root.path(), &["host", "logout", "--json"]);
     inject(&mut logout, root.path(), &library, "write", true);
     logout.env("WSSP_TEST_FAULT_DIR", root.path().join("config"));
     logout.env(

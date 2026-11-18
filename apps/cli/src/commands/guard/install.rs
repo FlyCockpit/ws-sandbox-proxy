@@ -1,4 +1,4 @@
-//! `wssp guard install` / `uninstall`.
+//! `wssp host guard install` / `uninstall`.
 //!
 //! Install copies the RUNNING binary to `/usr/local/lib/wssp/wssp-guard.new`
 //! (0755), fsyncs it and renames it over `wssp-guard` (a running guard keeps
@@ -243,7 +243,7 @@ fn current_status(paths: &Paths) -> Option<GuardStatus> {
 fn require_root(command: &str) -> Result<()> {
     if !preflight::is_root() {
         bail!(
-            "`wssp guard {command}` must run as root; run: sudo {} guard {command} …",
+            "`wssp host guard {command}` must run as root; run: sudo {} host guard {command} …",
             std::env::current_exe()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "wssp".into())
@@ -295,13 +295,15 @@ fn lookup_uid(user: &str) -> Result<u32> {
 /// partial install is never silent. Re-running the install is always safe.
 pub struct Steps {
     done: Vec<String>,
+    daemon_user: String,
     say: Box<dyn FnMut(String)>,
 }
 
 impl Steps {
-    pub fn new(say: Box<dyn FnMut(String)>) -> Self {
+    pub fn new(daemon_user: &str, say: Box<dyn FnMut(String)>) -> Self {
         Self {
             done: Vec::new(),
+            daemon_user: daemon_user.to_owned(),
             say,
         }
     }
@@ -314,12 +316,20 @@ impl Steps {
                 Ok(value)
             }
             Err(err) => Err(err.context(format!(
-                "`wssp guard install` stopped at step `{name}`{}; fix the cause above and re-run \
-                 the same command (it is safe to re-run)",
+                "`wssp host guard install` stopped at step `{name}`{}; fix the cause above and re-run \
+                 `sudo wssp host guard install --daemon-user {}` (it is safe to re-run){}",
                 if self.done.is_empty() {
                     " before changing anything".to_string()
                 } else {
                     format!(" after: {}", self.done.join(", "))
+                },
+                self.daemon_user,
+                if self.done.is_empty() {
+                    ""
+                } else {
+                    ". The new binary and unit may already be in place while systemd still has the \
+                     previous unit loaded, so `wssp-guard.service` can fail to start until that \
+                     re-run completes"
                 }
             ))),
         }
@@ -388,9 +398,12 @@ fn install_live(args: &InstallArgs, source_binary: PathBuf) -> Result<()> {
         daemon_user: args.daemon_user.clone(),
         daemon_uid: lookup_uid(&args.daemon_user)?,
     };
-    let mut steps = Steps::new(Box::new(|line| {
-        let _ = output::diagnostic(line);
-    }));
+    let mut steps = Steps::new(
+        &args.daemon_user,
+        Box::new(|line| {
+            let _ = output::diagnostic(line);
+        }),
+    );
     let before = current_status(&paths).map(|s| s.instance_id);
     let report = steps.run("write the binary, config and unit", || {
         let report = install_files(&InstallPlan {
@@ -489,7 +502,7 @@ fn install_live(args: &InstallArgs, source_binary: PathBuf) -> Result<()> {
 const PUSH_WAIT: Duration = Duration::from_secs(15);
 
 const PUSH_TIMEOUT_HINT: &str = "the guard is installed and holds sandbox forwarding until the daemon's \
-     deployment push; start or restart `wssp connect`, then check `wssp guard status`";
+     deployment push; start or restart `wssp host run`, then check `wssp host guard status`";
 
 /// The deployment source is settled: pushed (valid) or deliberately empty.
 fn deployment_settled(status: &GuardStatus) -> bool {
@@ -727,7 +740,7 @@ mod tests {
             Duration::from_millis(1),
         );
         assert!(none.is_none());
-        assert!(PUSH_TIMEOUT_HINT.contains("wssp connect"));
+        assert!(PUSH_TIMEOUT_HINT.contains("wssp host run"));
     }
 
     /// E1-C-01: a failed step names itself and what already happened.
@@ -735,7 +748,10 @@ mod tests {
     fn a_failed_install_step_names_where_it_stopped() {
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = log.clone();
-        let mut steps = Steps::new(Box::new(move |line| sink.lock().unwrap().push(line)));
+        let mut steps = Steps::new(
+            "alice",
+            Box::new(move |line| sink.lock().unwrap().push(line)),
+        );
         steps
             .run("write the binary, config and unit", || Ok(()))
             .unwrap();
@@ -751,14 +767,24 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("boom"), "{text}");
+        assert!(
+            text.contains("re-run `sudo wssp host guard install --daemon-user alice`"),
+            "{text}"
+        );
+        assert!(
+            text.contains("can fail to start until that re-run completes"),
+            "{text}"
+        );
         assert_eq!(log.lock().unwrap().len(), 3);
-        let mut first = Steps::new(Box::new(|_| {}));
+        let mut first = Steps::new("alice", Box::new(|_| {}));
         let err = first
             .run("write the binary, config and unit", || -> Result<()> {
                 bail!("denied")
             })
             .unwrap_err();
-        assert!(format!("{err:#}").contains("before changing anything"));
+        let text = format!("{err:#}");
+        assert!(text.contains("before changing anything"), "{text}");
+        assert!(!text.contains("can fail to start"), "{text}");
     }
 
     #[test]
@@ -824,7 +850,7 @@ mod tests {
         let unit = root.path().join("etc/systemd/system/wssp-guard.service");
         assert_eq!(mode(&unit), 0o644);
         let text = std::fs::read_to_string(&unit).unwrap();
-        assert!(text.contains("ExecStart=/usr/local/lib/wssp/wssp-guard guard run\n"));
+        assert!(text.contains("ExecStart=/usr/local/lib/wssp/wssp-guard __wssp-guard\n"));
         // Never the user-writable binary that ran install.
         assert!(!text.contains(source.to_str().unwrap()));
         assert!(!text.contains("%h") && !text.contains(".local/bin"));

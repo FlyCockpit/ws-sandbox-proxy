@@ -215,7 +215,7 @@ model SandboxHost {
   rootCount                   Int                           @default(0)
   /// Authoritative admission switch; existing guests and relay sessions stay live.
   draining                    Boolean                       @default(false)
-  /// Offload plan §10 C7 (`wssp drain --offload`): while draining, stopped
+  /// Offload plan §10 C7 (`wssp host drain --offload`): while draining, stopped
   /// sandboxes here are offloaded and their cached copies evicted when an
   /// eligible restore host exists. Cleared by undrain.
   drainOffload                Boolean                       @default(false)
@@ -341,7 +341,7 @@ model HostToken {
   @@map("host_token")
 }
 
-/// Minted by `wssp login` for exactly one sandbox host and never rebound.
+/// Minted by `wssp host enroll` for exactly one sandbox host and never rebound.
 model HostDeviceCredential {
   id            String      @id @default(cuid(2))
   createdAt     DateTime    @default(now())
@@ -853,7 +853,7 @@ model Sandbox {
   offloadPin                 SandboxOffloadPin         @default(ANY)
   /// When a STOPPED disk is exported to the image store: at once (ON_STOP),
   /// once stopped for `offloadAfterMs` (AFTER), or only when its host needs
-  /// the space (ON_PRESSURE). Pressure and `drain --offload` override AFTER
+  /// the space (ON_PRESSURE). Pressure and `wssp host drain --offload` override AFTER
   /// and ON_PRESSURE (disk-offload/enqueue.ts). Owner data; SDK-writable.
   offloadMode                SandboxOffloadMode        @default(ON_STOP)
   /// AFTER only: milliseconds since `lastStoppedAt` (1 min to 24 days).

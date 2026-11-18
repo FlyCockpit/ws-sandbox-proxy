@@ -16,7 +16,7 @@ pub enum ConnectRuntime {
 }
 
 #[derive(Debug, Args)]
-pub struct ConnectArgs {
+pub struct RunArgs {
     /// Initial host-terminal override; later local policy changes take precedence.
     #[arg(long, value_enum)]
     pub host_terminal: Option<crate::commands::config::OnOff>,
@@ -76,7 +76,7 @@ fn default_connect_runtime() -> ConnectRuntime {
     }
 }
 
-pub fn run(args: &ConnectArgs) -> Result<()> {
+pub fn run(args: &RunArgs) -> Result<()> {
     // C55 (C52-TB-3): the SIGTERM/SIGINT handlers are registered FIRST,
     // before `run_connect` starts any relay, expiry or PTY thread, so no relay
     // effect can begin without them. The first signal requests the graceful

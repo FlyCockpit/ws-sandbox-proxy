@@ -344,7 +344,7 @@ try {
           "--",
           "script",
           "-qec",
-          [resolve(root, "target/debug/wssp"), "config", ...args]
+          [resolve(root, "target/debug/wssp"), "host", "config", ...args]
             .map((x) => "'" + x.replaceAll("'", "'\\''") + "'")
             .join(" "),
           "/dev/null",
@@ -353,7 +353,12 @@ try {
         "on\n",
       );
     } else
-      await run(label, resolve(root, "target/debug/wssp"), ["config", ...args], nodeEnvironment);
+      await run(
+        label,
+        resolve(root, "target/debug/wssp"),
+        ["host", "config", ...args],
+        nodeEnvironment,
+      );
   };
   await stage("two enrolled fake-runtime daemons / shared pool", async () => {
     await run("cargo-build", "cargo", ["build", "-p", "wssp", "--bin", "wssp", "--locked"]);
@@ -377,7 +382,8 @@ try {
         label,
         resolve(root, "target/debug/wssp"),
         [
-          "connect",
+          "host",
+          "run",
           "--runtime",
           "fake",
           "--server",

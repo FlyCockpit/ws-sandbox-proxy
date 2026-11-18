@@ -43,7 +43,7 @@ const reviewed: Record<string, string> = {
   "packages/api/src/lib/owner-device-session-gate.ts":
     "a5a5b9f7bc8e50e59525635ae44b3bfd23c664f2884534a9a5437f9c5ded9976",
   "packages/api/src/lib/host-device-credential-access.ts":
-    "a73bcc93cee271d54e8cb77809af7e36bbe59e7b41473f996ebdea619fe3f175",
+    "51da791eb6db6244959008fdb3252334d499cefab40ed11be2b20485ff05baed",
 };
 function unsafeProofWriters(source: string, reviewedDigest?: string) {
   if (/emailVerified|changeEmail|socialProviders/.test(source) && digest(source) !== reviewedDigest)

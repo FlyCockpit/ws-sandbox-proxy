@@ -1,4 +1,4 @@
-//! `wssp guard run` refuses to start unless it is uid 0 with
+//! The guard service (`__wssp-guard`) refuses to start unless it is uid 0 with
 //! `CAP_NET_ADMIN`, and `/etc/wssp` and `guard.toml` are root-owned and not
 //! group/world-writable.
 
@@ -37,10 +37,10 @@ pub fn is_root() -> bool {
 
 pub fn check_identity(euid: u32, cap_eff: u64) -> Result<()> {
     if euid != 0 {
-        bail!("`wssp guard run` must run as root (the `wssp-guard` system service)");
+        bail!("the egress guard service must run as root (the `wssp-guard` system service)");
     }
     if cap_eff & (1 << CAP_NET_ADMIN) == 0 {
-        bail!("`wssp guard run` needs `CAP_NET_ADMIN`");
+        bail!("the egress guard service needs `CAP_NET_ADMIN`");
     }
     Ok(())
 }
@@ -48,7 +48,7 @@ pub fn check_identity(euid: u32, cap_eff: u64) -> Result<()> {
 pub fn check_root_path(path: &Path, dir: bool) -> Result<()> {
     let meta = std::fs::symlink_metadata(path).with_context(|| {
         format!(
-            "`{}` is missing: run `sudo wssp guard install`",
+            "`{}` is missing: run `sudo wssp host guard install --daemon-user <user>`",
             path.display()
         )
     })?;

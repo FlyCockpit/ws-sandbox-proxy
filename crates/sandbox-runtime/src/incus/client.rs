@@ -2705,7 +2705,7 @@ impl IncusClient {
                 format!(
                     "guest_network_unavailable: the guest has no IPv4 default route after {GUEST_NETWORK_TRIES} s \
                      (no DHCP lease); a host firewall dropping `wsn-*` traffic is the usual cause, \
-                     see `wssp guard status`"
+                     see `wssp host guard status`"
                 ),
             ));
         }

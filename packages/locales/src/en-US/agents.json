@@ -63,7 +63,7 @@
     "turnOffNamed": "Turn off: {{setting}}",
     "enableAtNode": "Run the daemon as a service and turn on from a separate local login on the node. The direct dashboard host terminal is refused by the local gate.",
     "files": "Host file tools: {{state}}",
-    "rootsCommand": "wssp config set-host-file-roots /absolute/path",
+    "rootsCommand": "wssp host config set-host-file-roots /absolute/path",
     "maxTime": "Host command time cap: {{seconds}} seconds",
     "confirmTitle": "Turn off host access?",
     "confirmDescription": "This blocks access immediately and keeps the dashboard block until you choose Allow again. The node receives a turn-off request now or when it reconnects. Processes started outside the daemon process tree, such as cron jobs and systemd user units, are not stopped.",

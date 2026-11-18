@@ -139,7 +139,7 @@ pub use incus::{
     LeaseFencedProbe, LeaseHealth, LeaseHolder, LeaseTiming, ServerLease, ServerLeaseError,
 };
 
-/// Host runtime backend selected by `wssp connect`.
+/// Host runtime backend selected by `wssp host run`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostRuntimeKind {
     Fake,

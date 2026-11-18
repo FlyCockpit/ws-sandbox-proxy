@@ -272,9 +272,9 @@ it verifies each delivery with the built SDK, logs `webhook-id`, type and
 attempt, flags duplicates, and can answer `503` to exercise retries.
 
 To produce sandbox events without VMs, enroll a host and run
-`WSSP_FAKE_ENFORCE_EGRESS=1 wssp connect --runtime fake`. A fake host otherwise
+`WSSP_FAKE_ENFORCE_EGRESS=1 wssp host run --runtime fake`. A fake host otherwise
 refuses every create because it cannot enforce egress; this opt-in advertises
 enforcement the fake does not perform, so use it only on local stacks. Add
 `WSSP_FAKE_FAIL_CREATE_FILE=<path>` to make new creates fail (and emit
-`sandbox.create_failed`) while that file exists. `wssp connect` refuses to start
+`sandbox.create_failed`) while that file exists. `wssp host run` refuses to start
 the Incus runtime with either variable set.

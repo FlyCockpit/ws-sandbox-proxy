@@ -1985,7 +1985,7 @@ impl IncusClient {
     /// directory when possible (root installs, or a writable parent), then
     /// validate it — metadata AND actual usability (see
     /// `preflight_daemon_lock_dir`). Failure is returned with the exact
-    /// operator command — the caller surfaces it during `wssp connect`
+    /// operator command — the caller surfaces it during `wssp host run`
     /// setup, BEFORE the relay advertises an egress-capable host whose
     /// every create would fail at lock acquisition.
     pub fn ensure_daemon_lock_dir_provisioned() -> Result<(), RuntimeError> {
@@ -2032,7 +2032,7 @@ impl IncusClient {
 
     /// Connect-time host preflight (E-11): without bridge netfilter every
     /// sandbox VM fails to start (`security.ipv6_filtering requires bridge
-    /// netfilter`), so `wssp connect` refuses to serve creates and names the
+    /// netfilter`), so `wssp host run` refuses to serve creates and names the
     /// exact operator commands instead. `proc_path` is
     /// `BRIDGE_NETFILTER_PROC` outside tests.
     pub fn preflight_bridge_netfilter(proc_path: &std::path::Path) -> Result<(), RuntimeError> {
@@ -2047,7 +2047,7 @@ impl IncusClient {
             return Err(RuntimeError::new(
                 SandboxErrorCode::HostRuntimeUnsupported,
                 format!(
-                    "bridge netfilter is loaded but `net.bridge.bridge-nf-call-ip6tables` is not 1 (read `{}`): sandbox NICs use `security.ipv6_filtering`, which Incus refuses to start without it; enable it with `sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1`, keep it across reboots with `echo net.bridge.bridge-nf-call-ip6tables=1 | sudo tee /etc/sysctl.d/90-wssp-bridge-nf.conf`, then run `wssp connect` again",
+                    "bridge netfilter is loaded but `net.bridge.bridge-nf-call-ip6tables` is not 1 (read `{}`): sandbox NICs use `security.ipv6_filtering`, which Incus refuses to start without it; enable it with `sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1`, keep it across reboots with `echo net.bridge.bridge-nf-call-ip6tables=1 | sudo tee /etc/sysctl.d/90-wssp-bridge-nf.conf`, then run `wssp host run` again",
                     sysctl.display()
                 ),
             ));
@@ -2055,7 +2055,7 @@ impl IncusClient {
         Err(RuntimeError::new(
             SandboxErrorCode::HostRuntimeUnsupported,
             format!(
-                "bridge netfilter is unavailable (`{}` is missing): sandbox NICs use `security.ipv6_filtering`, which needs the `br_netfilter` kernel module; load it with `sudo modprobe br_netfilter`, keep it loaded across reboots with `echo br_netfilter | sudo tee /etc/modules-load.d/wssp-br_netfilter.conf`, then run `wssp connect` again",
+                "bridge netfilter is unavailable (`{}` is missing): sandbox NICs use `security.ipv6_filtering`, which needs the `br_netfilter` kernel module; load it with `sudo modprobe br_netfilter`, keep it loaded across reboots with `echo br_netfilter | sudo tee /etc/modules-load.d/wssp-br_netfilter.conf`, then run `wssp host run` again",
                 proc_path.display()
             ),
         ))

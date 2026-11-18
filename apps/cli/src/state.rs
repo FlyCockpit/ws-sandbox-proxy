@@ -164,6 +164,9 @@ fn bump_config_generation(dir: &Path) -> Result<u64> {
     Ok(next)
 }
 
+/// The host device credential file inside the data directory.
+pub const DEVICE_CREDENTIAL_FILE: &str = "device-auth.json";
+
 impl AuthStore {
     pub fn open(deadline: Option<Instant>) -> Result<Self> {
         Self::at(
@@ -214,7 +217,7 @@ impl AuthStore {
         self.dir.join("auth-intent.json")
     }
     fn credential_path(&self) -> PathBuf {
-        self.dir.join("device-auth.json")
+        self.dir.join(DEVICE_CREDENTIAL_FILE)
     }
     fn intent(&self) -> Result<Intent> {
         Ok(read_json(&self.intent_path())?.unwrap_or_default())
@@ -351,7 +354,7 @@ impl AuthStore {
         self.reconcile_login()?;
         let config = Config::read(&self.config_path)?;
         let server_url = server_override.or(config.server_url.as_deref()).context(
-            "server URL is not configured; pass `--server` or run `wssp config set-server`",
+            "server URL is not configured; pass `--server` or run `wssp host config set-server`",
         )?;
         let server_url = canonical_control_plane_origin(server_url)?;
         let config_generation = read_config_generation(&self.config_dir)?;
@@ -370,7 +373,7 @@ impl AuthStore {
         let intent = self.intent()?;
         anyhow::ensure!(
             intent.operation == Operation::Login && intent.generation == generation,
-            "login superseded by a newer local selection; start a new login"
+            "login superseded by a newer local selection; run `wssp host enroll` again"
         );
         Ok(())
     }
@@ -391,7 +394,7 @@ impl AuthStore {
         let current = read_config_generation(&self.config_dir)?;
         anyhow::ensure!(
             intent.config_generation == Some(current),
-            "configured server changed during login; start a new login"
+            "configured server changed during login; run `wssp host enroll` again"
         );
         test_barrier("before_publish");
         self.sweep()?;

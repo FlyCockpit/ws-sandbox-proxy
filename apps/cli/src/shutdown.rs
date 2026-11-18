@@ -1,9 +1,9 @@
-//! OS shutdown signals for `wssp connect` (C55, C52-TB-3).
+//! OS shutdown signals for `wssp host run` (C55, C52-TB-3).
 //!
 //! [`install`] registers SIGTERM and SIGINT with `signal-hook`'s iterator: a
 //! process-wide handler (nothing is blocked, so every thread and every child
 //! keeps its signal mask) feeds one dedicated watcher thread. The handler is
-//! registered before `install` returns. `commands::connect::run` calls it
+//! registered before `install` returns. `commands::run::run` calls it
 //! FIRST, before the relay, expiry, or PTY pump threads exist, so no relay
 //! effect can start without the handler in place; a signal that lands before
 //! that still takes the default action (the process dies with nothing
@@ -21,14 +21,14 @@
 //!   C55-L11). That is the documented forced path: PTY shells are not reaped (each setsid shell
 //!   still gets SIGHUP when its master closes with the process).
 //!
-//! - WP7: on Linux SIGUSR1 (sent by `wssp daemon quiesce`, the service's
+//! - WP7: on Linux SIGUSR1 (sent by `wssp host daemon quiesce`, the service's
 //!   reload) asks for a graceful *quiesce* first
 //!   (`crate::sandbox_relay::quiesce`): it never takes the first-signal slot,
 //!   so a later SIGTERM or SIGINT still starts (or a second one forces) the
 //!   shutdown exactly as above. The quiesce ends in the same graceful
 //!   shutdown, under the same deadline, and the process exits 0. The handler
 //!   is registered here, before the daemon writes the control file that
-//!   tells `wssp daemon quiesce` it may send SIGUSR1; without that file it
+//!   tells `wssp host daemon quiesce` it may send SIGUSR1; without that file it
 //!   sends SIGTERM under systemd, avoiding an unverified SIGUSR1.
 //!
 //! SIGINT from an interactive terminal reaches the whole foreground process

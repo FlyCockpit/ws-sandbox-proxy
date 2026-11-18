@@ -78,16 +78,16 @@ export function HostAgentAccess({
       on: host.agentPolicy?.nodeHostCommands ?? host.agentPolicy?.hostCommands,
       vetoed: host.agentHostCommandsVetoedAt,
       canLift: host.status === "CONNECTED" && host.agentPolicy?.nodeHostCommands === false,
-      offCommand: "wssp config set-agent-host-commands off",
-      command: "wssp config set-agent-host-commands on",
+      offCommand: "wssp host config set-agent-host-commands off",
+      command: "wssp host config set-agent-host-commands on",
     },
     {
       id: "terminal" as const,
       on: host.terminalPolicy?.nodeHostTerminal ?? host.terminalPolicy?.hostTerminal,
       vetoed: host.hostTerminalVetoedAt,
       canLift: host.status === "CONNECTED" && host.terminalPolicy?.nodeHostTerminal === false,
-      offCommand: "wssp config set-host-terminal off",
-      command: "wssp config set-host-terminal on",
+      offCommand: "wssp host config set-host-terminal off",
+      command: "wssp host config set-host-terminal on",
     },
   ];
   const liftUnavailable =
@@ -164,7 +164,7 @@ export function HostAgentAccess({
       </p>
       <code className="font-mono text-sm [overflow-wrap:anywhere]">{t("host.rootsCommand")}</code>
       <code className="font-mono text-sm [overflow-wrap:anywhere]">
-        wssp config set-host-command-max-time 600
+        wssp host config set-host-command-max-time 600
       </code>
       {host.agentPolicy?.hostCommandMaxMs !== undefined ? (
         <p>{t("host.maxTime", { seconds: host.agentPolicy.hostCommandMaxMs / 1000 })}</p>

@@ -1,4 +1,4 @@
-//! C55 (C52-TB-3): OS shutdown signals against the real `wssp connect`
+//! C55 (C52-TB-3): OS shutdown signals against the real `wssp host run`
 //! binary (fake runtime, loopback relay fixture; no Incus, no stdin).
 #![cfg(unix)]
 
@@ -30,7 +30,7 @@ impl Callback for RelayHandshake {
     }
 }
 
-/// Starts `wssp connect` as its own process-group leader, so a test can
+/// Starts `wssp host run` as its own process-group leader, so a test can
 /// signal the whole group the way a terminal's Ctrl-C does.
 fn spawn_daemon(listener: &TcpListener, temp: &tempfile::TempDir) -> ManagedChild {
     spawn_daemon_via(&[], listener, temp)
@@ -43,10 +43,10 @@ fn spawn_daemon_via(
     listener: &TcpListener,
     temp: &tempfile::TempDir,
 ) -> ManagedChild {
-    ManagedChild::spawn(&mut daemon_command(wrapper, listener, temp)).expect("spawn wssp connect")
+    ManagedChild::spawn(&mut daemon_command(wrapper, listener, temp)).expect("spawn wssp host run")
 }
 
-/// The `wssp connect` command `spawn_daemon_via` runs, for callers that add
+/// The `wssp host run` command `spawn_daemon_via` runs, for callers that add
 /// environment before spawning.
 fn daemon_command(
     wrapper: &[&str],
@@ -63,7 +63,8 @@ fn daemon_command(
     command
         .args(prefix)
         .args([
-            "connect",
+            "host",
+            "run",
             "--server",
             &origin,
             "--host-id",
@@ -237,7 +238,7 @@ fn c55_a_second_signal_during_shutdown_exits_at_once_by_that_signal() {
         "WSSP_TEST_BARRIER_GRACEFUL_SHUTDOWN",
         temp.path().join("never-released"),
     ))
-    .expect("spawn wssp connect");
+    .expect("spawn wssp host run");
     // Accepted but never answered: the daemon is mid-handshake.
     let _stalled = accept(&listener, &mut daemon);
     let pid = daemon.id().to_string();

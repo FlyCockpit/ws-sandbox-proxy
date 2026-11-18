@@ -1,4 +1,4 @@
-//! `wssp tunnel`: install, inspect or remove the pinned preview-tunnel
+//! `wssp host tunnel`: install, inspect or remove the pinned preview-tunnel
 //! client this node runs outside its sandboxes.
 
 use std::io::Write;

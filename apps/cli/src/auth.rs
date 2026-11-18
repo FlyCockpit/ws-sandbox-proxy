@@ -36,7 +36,9 @@ pub fn resolve_connect(
             }
         })
         .or(config.server_url.as_deref())
-        .context("server URL is not configured; pass `--server` or run `wssp config set-server`")?;
+        .context(
+            "server URL is not configured; pass `--server` or run `wssp host config set-server`",
+        )?;
     let origin = canonical_control_plane_origin(server_url)?;
     if let Some(env) = token_env {
         let secret = host_token_from_env(env)?;
@@ -48,10 +50,10 @@ pub fn resolve_connect(
             secret,
         });
     }
-    let device = device.context("no credential selected; run `wssp login --slug <slug> --server <url>` or `wssp token login <ENV_VAR>`")?;
+    let device = device.context("no credential selected; run `wssp host enroll --slug <slug> --server <url>` or `wssp host enroll --token-env <ENV_VAR>`")?;
     if device.origin != origin {
         anyhow::bail!(
-            "device credential was issued for `{}`; run `wssp login` again to change servers",
+            "device credential was issued for `{}`; run `wssp host enroll` again to change servers",
             device.origin
         );
     }
@@ -313,7 +315,7 @@ const ERROR_CONTRACT: &[(u16, &str, Option<&str>, ContractOutcome)] = &[
 fn classify_exchange_error(status: u16, body: &str) -> ExchangeError {
     let terminal = |message: &str| {
         ExchangeError::Other(anyhow::anyhow!(
-            "device credential exchange failed (HTTP {status}): {}; start a new device login",
+            "device credential exchange failed (HTTP {status}): {}; run `wssp host enroll` again",
             crate::output::remote_message(message)
         ))
     };

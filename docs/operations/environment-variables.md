@@ -271,7 +271,7 @@ No new capacity environment variables are introduced. Use local TOML
 `sandbox_memory_mib`, `sandbox_vcpu_budget`, `max_sandbox_cpu_count` and
 `[[storage_pools]]` (`name`, `capacity_gib`, `draining`); flags override the
 three CPU/RAM dimensions independently. Storage lists are TOML-only and replace
-the implicit profile-root pool. Bare connect detects defaults. Restart/reconnect
+the implicit profile-root pool. A bare `wssp host run` detects defaults. Restart/reconnect
 to apply changes; shared host policy and the daemon journal retain pinned charges and
 implicit ceilings. See [host capacity](../guide/hosts.md#capacity-drain-and-deletion).
 

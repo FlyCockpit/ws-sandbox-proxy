@@ -15,19 +15,19 @@ It lives at `apps/cli`, outside the pnpm/Turborepo graph. The crate and binary
 are both `wssp`.
 
 ```sh
-wssp config path           # print the config file path
-wssp config show           # print the effective config
-wssp config init           # write a default config file if missing
-wssp config --json show
-wssp completions zsh       # shell completions
-wssp login --slug desk-01 --server https://api.example.com
-wssp connect              # use the saved device credential and assigned host
-wssp logout               # remove device state and the configured token binding
-wssp token login WSSP_HOST_TOKEN # env must already contain a dashboard host token
-wssp connect --server https://api.example.com --host-id <host-id>
-wssp connect --help        # outbound sandbox node daemon
-wssp drain --json          # refuse new work; existing guests keep running
-wssp undrain --json        # restore admission
+wssp host config path            # print the config file path
+wssp host config show            # print the effective config
+wssp host config init            # write a default config file if missing
+wssp host config --json show
+wssp completions zsh             # shell completions
+wssp host enroll --slug desk-01 --server https://api.example.com
+wssp host run                    # use the saved device credential and assigned host
+wssp host logout                 # remove device state and the configured token binding
+wssp host enroll --token-env WSSP_HOST_TOKEN # env must already contain a dashboard host token
+wssp host run --server https://api.example.com --host-id <host-id>
+wssp host run --help             # outbound sandbox node daemon
+wssp host drain --json           # refuse new work; existing guests keep running
+wssp host undrain --json         # restore admission
 ```
 
 Every command and flag is listed in the generated
@@ -35,37 +35,45 @@ Every command and flag is listed in the generated
 enrollment, the service unit, upgrades, credential rotation, release notes)
 are in the [hosts guide](../../docs/guide/hosts.md).
 
+On a machine that is not an enrolled host (no host device credential and no
+`host_token_env` in config), `wssp host --help` lists only `enroll`; `wssp host
+--help --all` shows every host command. Hidden commands stay callable; only
+`host run`, `host drain` and `host undrain` need an enrollment (or an explicit
+`--host-token-env`) and otherwise exit 6 with "this device is not an enrolled
+host; run `wssp host enroll --slug <slug>` or `wssp host enroll --token-env
+<ENV>` (or pass `--host-token-env`)". Completions and the command reference always list everything.
+
 Release binaries for x86_64 and ARM64 Linux link musl statically and need no
 glibc runtime. Static musl resolves users through `/etc/passwd`; it does not
 load glibc NSS modules such as LDAP/SSSD. Provision the daemon's local account
 and group entries on the host when your login directory uses those modules.
 
-Configuration is stored in a TOML file. `wssp config path` prints the resolved
+Configuration is stored in a TOML file. `wssp host config path` prints the resolved
 Linux path (`~/.config/wssp`). Logs go to stderr;
 pass `-v`/`-vv` for more, `--quiet` for less, or set `WSSP_LOG`.
 
-`wssp connect` holds an outbound WebSocket to the control plane and executes
+`wssp host run` holds an outbound WebSocket to the control plane and executes
 dispatched sandbox operations. The CLI is Linux-only; the default runtime is Incus
 (`--runtime fake` or `WSSP_RUNTIME=fake` for relay-only work without VMs).
 The fake runtime refuses creates unless `WSSP_FAKE_ENFORCE_EGRESS=1` makes it
 advertise egress enforcement it does not perform; with
 `WSSP_FAKE_FAIL_CREATE_FILE=<path>`, new creates fail while that file exists.
-Both are for local stacks only, and `connect` refuses to start Incus with
+Both are for local stacks only, and `host run` refuses to start Incus with
 either set.
 Device login prints a verification URI and code; it never opens a browser or
-reads stdin. `--slug` is always required, even after `config set-slug`. The server
-must be explicit or set with `config set-server`. HTTPS/WSS is required except
+reads stdin. `--slug` is always required, even after `host config set-slug`. The server
+must be explicit or set with `host config set-server`. HTTPS/WSS is required except
 for localhost, 127.0.0.0/8 and ::1 development. Credential-bearing HTTP and
 WebSocket requests never follow redirects.
 
 Device login stores one `wssp_device_…` credential, with its issuing origin
 (including port) and assigned host, outside config. It clears any previous token
 binding. A dashboard `wssp_host_…` token instead comes from a variable whose name
-matches `^WSSP_[A-Z0-9_]{1,64}$`; use `token login <ENV_VAR>` to configure it, or
-`connect --host-token-env <ENV_VAR>` for an explicit override. Host tokens require
+matches `^WSSP_[A-Z0-9_]{1,64}$`; use `host enroll --token-env <ENV_VAR>` to configure it, or
+`host run --host-token-env <ENV_VAR>` for an explicit override. Host tokens require
 `--host-id`. An explicit env selection takes precedence and never silently falls
 back on a missing or invalid token. Device credentials are long-lived until
-revoked; `logout` always removes the local device credential and, best effort, the
+revoked; `host logout` always removes the local device credential and, best effort, the
 env binding (a warning reports a config cleanup failure). It does not revoke the
 server credential or unset the environment variable itself.
 
@@ -84,7 +92,7 @@ per-request connect/read/overall timeouts clipped to expiry.
 
 ### Private CA trust
 
-`connect`, `login`, `drain`, and `undrain` accept `--ca-file <path>` (or
+`host run`, `host enroll`, `host drain`, and `host undrain` accept `--ca-file <path>` (or
 `WSSP_CA_FILE`). The PEM bundle adds certificates to the default webpki roots;
 chain, expiry, and hostname verification remain required. Missing, unreadable,
 empty, malformed, or certificate-free files fail closed. There is no insecure
@@ -92,24 +100,25 @@ mode. Precedence: flag, environment, then saved `ca_file` in TOML (`caFile` in
 JSON output).
 
 ```sh
-wssp login --slug desk-01 --server https://api.internal.example --ca-file /etc/wssp/root-ca.pem
-wssp connect
-# Save or clear a default explicitly (connect overrides are per-run):
-wssp config set-ca-file /etc/wssp/root-ca.pem
-wssp config clear-ca-file
+wssp host enroll --slug desk-01 --server https://api.internal.example --ca-file /etc/wssp/root-ca.pem
+wssp host run
+# Save or clear a default explicitly (`host run` overrides are per-run):
+wssp host config set-ca-file /etc/wssp/root-ca.pem
+wssp host config clear-ca-file
 ```
 
-Successful device login with `--ca-file` saves its absolute path with the server
-URL, so a service restart retains trust. `WSSP_CA_FILE` is run-only, including
-for login; it never replaces the saved default. Login without a CA flag retains
-an existing saved path. Keep the file readable and restart after CA
+A successful device enrollment (`wssp host enroll --slug`) with `--ca-file`
+saves its absolute path with the server URL, so a service restart retains
+trust. `WSSP_CA_FILE` is run-only, including for `host enroll`; it never
+replaces the saved default. `host enroll` without a CA flag retains an existing
+saved path. Keep the file readable and restart after CA
 rotation. Always dial the exact canonical origin, including its port. See the
 [hosts guide](../../docs/guide/hosts.md#private-certificate-authorities) for the
 local Caddy `pnpm dev:docker <port> --prod` recipe.
 
 ### Host capacity defaults and optional overrides
 
-Bare `wssp connect` and the systemd ExecStart require no new flags. Incus
+Bare `wssp host run` and the systemd ExecStart require no new flags. Incus
 `/1.0/resources` supplies total RAM/threads; interim RAM budget subtracts
 max(2048 MiB,25%), aligns down to 256 MiB, and caps at 16777216 MiB. Each live
 VM pays guest RAM + 256 MiB; total vCPU defaults to threads × 2, per-VM CPU to
@@ -148,7 +157,7 @@ inspection never creates/repairs it. Native caches remain uncharged operational
 headroom. Root size defaults to 32 GiB; retained commitment is size + 1 GiB.
 Pool drain blocks new roots; stopped/UNKNOWN disks keep charges and identity.
 
-`wssp config show --json` returns typed partial read-only inspection, sources,
+`wssp host config show --json` returns typed partial read-only inspection, sources,
 cap inputs and scalar diagnostics without Incus. Restart/reconnect for config
 changes. The journal pins historical live/root weights and implicit ceilings;
 stop releases only live RAM/vCPU, deletion requires healthy original-root and
@@ -175,7 +184,7 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
   [Zabbly](https://github.com/zabbly/incus) stable packages.
 - **`br_netfilter` loaded and persisted, with
   `net.bridge.bridge-nf-call-ip6tables=1`.** Sandbox NICs use
-  `security.ipv6_filtering`, which needs bridge netfilter. `wssp connect
+  `security.ipv6_filtering`, which needs bridge netfilter. `wssp host run
   --runtime incus` refuses to start while `/proc/sys/net/bridge` is missing
   or `bridge-nf-call-ip6tables` is not `1`:
 
@@ -185,7 +194,7 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
   # only if the sysctl was turned off:
   sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=1
   ```
-- **One `wssp` daemon per Incus server.** `wssp connect --runtime incus`
+- **One `wssp` daemon per Incus server.** `wssp host run --runtime incus`
   keeps a marker in Incus (profile `wssp-daemon-lease-<n>-<id>` in the `default`
   project, renewed every 15 s, live for 60 s) and refuses to start while
   another daemon's marker is live, naming that daemon. A running daemon is
@@ -202,14 +211,15 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
 
 ### Exit Codes
 
-| Code | Meaning                                                                           |
-| ---- | --------------------------------------------------------------------------------- |
-| 0    | success                                                                           |
-| 1    | runtime error                                                                     |
-| 2    | usage error                                                                       |
-| 3    | not found                                                                         |
-| 4    | host credential inactive (`4003` close, HTTP 401/403 on connect or drain/undrain) |
-| 5    | relay internal error during revalidation (`1011` close; retry connect)            |
+| Code | Meaning                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                           |
+| 1    | runtime error                                                                                     |
+| 2    | usage error                                                                                       |
+| 3    | not found                                                                                         |
+| 4    | host credential inactive (`4003` close, HTTP 401/403 on run or drain/undrain)                     |
+| 5    | relay internal error during revalidation (`1011` close; retry `host run`)                         |
+| 6    | not an enrolled host (run `wssp host enroll --slug` or `--token-env`, or pass `--host-token-env`) |
 
 ## Install After Release
 
@@ -240,7 +250,7 @@ cargo build
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt
-cargo run -p wssp -- config path
+cargo run -p wssp -- host config path
 ```
 
 Before considering a change done, run the full local gate:
@@ -424,9 +434,9 @@ the host receipt journal owns cross-restart idempotency.
 
 ### Drain and undrain
 
-`wssp drain` sets the durable server admission flag; `wssp undrain` clears it.
+`wssp host drain` sets the durable server admission flag; `wssp host undrain` clears it.
 Both use the same saved device credential or `--server`, `--host-id`, and
-`--host-token-env` selection as connect. They do not start a runtime or stop guests.
+`--host-token-env` selection as `wssp host run`. They do not start a runtime or stop guests.
 They print the committed flag, live sandbox count and `drained`; `--json` prints
 `{id, draining, liveSandboxCount, drained}`. They return immediately, with no wait
 for zero guests and no deadline. Run drain again to refresh the count.
@@ -625,7 +635,7 @@ cannot authorize this release. No session or terminal rotation is required.
 A VM contradicting this release quarantines new admissions while leaving
 owner destroy reachable on the connected host.
 
-After disconnect (including credential rejection 4003/401/403), `wssp connect`
+After disconnect (including credential rejection 4003/401/403), `wssp host run`
 keeps enforcing accepted leases locally before returning the original relay
 result. Already inactive guests whose selected final state is confirmed need no
 future action. Once a session has existed, a lost connection or a transient
@@ -654,7 +664,7 @@ converges offline results from the host's receipts and census.
 
 [examples/wssp-host.service](examples/wssp-host.service) is a user-service
 example. Install the binary at `~/.local/bin/wssp`, grant that user access to
-the Incus project, and run `wssp login` before enabling it. Copy the unit into
+the Incus project, and run `wssp host enroll` before enabling it. Copy the unit into
 `~/.config/systemd/user/`, then run `systemctl --user daemon-reload` and
 `systemctl --user enable --now wssp-host`. Arrange user lingering with the host
 administrator if enforcement must continue after logout. Keep the private `wssp` daemon
@@ -717,8 +727,8 @@ workload owners. The server and every daemon must run the same release (relay
 protocol 1.0); a journal with an unknown version is refused, never converted.
 
 Host terminals default off with TOTP required. Local commands are
-`wssp config set-host-terminal on|off` and
-`wssp config set-host-terminal-totp required|optional`. `wssp connect --host-terminal
+`wssp host config set-host-terminal on|off` and
+`wssp host config set-host-terminal-totp required|optional`. `wssp host run --host-terminal
 on|off` is a startup override; subsequent local edits take precedence. Enabling
 host terminals (including the startup override) and making TOTP optional require
 stdin and stderr TTYs, neither `WSSP_HOST_COMMAND` nor `WSSP_HOST_TERMINAL`
@@ -745,11 +755,11 @@ See the root [changelog](../../CHANGELOG.md) for release history and
 Agent host access defaults off and is separate from person-only host terminals:
 
 ```sh
-wssp config set-agent-host-commands on
-wssp config set-host-command-max-time 600
-wssp config set-host-file-roots /srv/projects /home/operator/work
-wssp config clear-host-file-roots
-wssp config set-agent-host-commands off
+wssp host config set-agent-host-commands on
+wssp host config set-host-command-max-time 600
+wssp host config set-host-file-roots /srv/projects /home/operator/work
+wssp host config clear-host-file-roots
+wssp host config set-agent-host-commands off
 ```
 
 Agent host access means the agent can do what the wssp daemon user can do. It is
@@ -763,7 +773,8 @@ Every raise (enabling access, raising the time cap, or adding file roots)
 requires stdin and stderr TTYs, neither host-child environment marker, verified
 local process ancestry, and typing `on` at the prompt. A daemon ancestor, an ancestor
 with either marker, unverifiable process ancestry, or the same cgroup as a
-same-uid daemon discovered by live state or its comm/connect arguments prevents
+same-uid daemon discovered by live state or its comm and `host run` (or
+pre-upgrade `connect`) arguments prevents
 raising access. Non-dumpable login-session boundaries are accepted only under
 a foreign-uid parent, or for the user manager directly under pid 1. This deliberately
 fails closed, including when a manually started daemon shares the local
@@ -823,7 +834,7 @@ use the local enable command. The dashboard can persistently turn off agent host
 access or host terminals, including while disconnected by retrying on reconnect.
 It cannot raise node access. **Allow again** requires the node to be online
 and report the setting off at the current epoch; it only clears the dashboard
-veto. If the node reports on, first run `wssp config set-agent-host-commands off`
-or `wssp config set-host-terminal off` at the node and wait for its off report.
+veto. If the node reports on, first run `wssp host config set-agent-host-commands off`
+or `wssp host config set-host-terminal off` at the node and wait for its off report.
 Lowering cancels affected work before acknowledging
 the persisted, re-read policy.

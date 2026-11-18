@@ -80,7 +80,7 @@ webpki-roots = "=1.0.12"
 httparse = "=1.10.1"
 
 [target.'cfg(unix)'.dependencies]
-# SIGTERM/SIGINT binding for `wssp connect` without
+# SIGTERM/SIGINT binding for `wssp host run` without
 # `unsafe` (the crate forbids it). Only the `iterator` feature: a process-wide
 # handler feeds one watcher thread (no blocked signal mask, so children keep
 # theirs), and `low_level::emulate_default_handler` re-raises the signal after
@@ -94,7 +94,7 @@ signal-hook = { version = "0.4.6", default-features = false, features = ["iterat
 nix = { workspace = true, features = ["process", "signal"] }
 # Egress guard: `SO_PEERCRED` on the guard socket without `unsafe` (std's
 # `peer_cred` is unstable). rustix (>= 1.1.5) is already in Cargo.lock through
-# tempfile; this adds only its `net` feature, no new crate. `wssp daemon
+# tempfile; this adds only its `net` feature, no new crate. `wssp host daemon
 # quiesce`: `fs` opens the control file with `O_NOFOLLOW` and `process`
 # sends the reload signal; features of the same crate, no new crate.
 rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process"] }

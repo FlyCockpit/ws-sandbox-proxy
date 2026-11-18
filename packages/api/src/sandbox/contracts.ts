@@ -524,7 +524,7 @@ export const setHostDrainingInput = hostIdInput
   .extend({
     id: entityId.regex(/^[A-Za-z0-9_-]+$/),
     draining: z.boolean(),
-    /** C7 (`wssp drain --offload`): while draining, offload
+    /** C7 (`wssp host drain --offload`): while draining, offload
      * stopped sandboxes here and evict their cached copies when an eligible
      * restore host exists. Ignored (cleared) by undrain. */
     offload: z.boolean().optional(),

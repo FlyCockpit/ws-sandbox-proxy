@@ -69,7 +69,7 @@ A device credential is long-lived and revocation-only. The relay rechecks it and
 the owner's ban/deletion policy at every active boundary. An inactive credential
 closes an existing websocket with code `4003`, reason `credential_inactive`, when
 revalidation definitively fails; dependency failures use `1011`/`internal_error`
-(retryable — `wssp connect` exits **5**). Terminal credential failure (`4003`,
+(retryable — `wssp host run` exits **5**). Terminal credential failure (`4003`,
 upgrade 401/403) exits **4**. Messages never include the secret.
 The owner revokes one from the dashboard's Host credentials page
 (`sandboxHosts.revokeDeviceCredential`). Unban restores access with the same still-valid credential. Device replacement

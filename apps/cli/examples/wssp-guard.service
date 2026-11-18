@@ -1,4 +1,4 @@
-# System service. Installed by `sudo wssp guard install --daemon-user <user>`;
+# System service. Installed by `sudo wssp host guard install --daemon-user <user>`;
 # re-running that command upgrades it. Do not edit the installed copy.
 #
 # The egress guard owns one nftables table (`inet wssp_guard`) that only
@@ -14,7 +14,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/local/lib/wssp/wssp-guard guard run
+ExecStart=/usr/local/lib/wssp/wssp-guard __wssp-guard
 Restart=always
 RestartSec=1
 User=root

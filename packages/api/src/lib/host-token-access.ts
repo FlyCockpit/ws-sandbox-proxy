@@ -52,7 +52,7 @@ export const hostTokenListSelect = {
   SandboxHost: { select: credentialHostSummarySelect },
 } satisfies Prisma.HostTokenSelect;
 
-/** Browser list/revoke projection of `wssp login` device credentials: no `secretDigest`. */
+/** Browser list/revoke projection of `wssp host enroll` device credentials: no `secretDigest`. */
 export const hostDeviceCredentialListSelect = {
   id: true,
   lookupPrefix: true,

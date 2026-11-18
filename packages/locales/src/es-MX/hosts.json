@@ -4,12 +4,12 @@
     "value": "{{live}} activos"
   },
   "connect": {
-    "caHint": "Si usas una CA privada, puedes agregar <code>--ca-file &lt;path&gt;</code> a login o connect, o definir <code>WSSP_CA_FILE</code> con la ruta de tu archivo de certificados CA. Los certificados deben ser válidos y coincidir con el nombre del servidor.",
+    "caHint": "Si usas una CA privada, puedes agregar <code>--ca-file &lt;path&gt;</code> a <code>wssp host enroll</code> o <code>wssp host run</code>, o definir <code>WSSP_CA_FILE</code> con la ruta de tu archivo de certificados CA. Los certificados deben ser válidos y coincidir con el nombre del servidor.",
     "title": "Conectar este host",
     "device": "Inicio de sesión de dispositivo (vuelve a inscribir este host por su slug) y luego inicia el daemon:",
     "token": "Con un token de host de Credenciales de host, guardado en WSSP_HOST_TOKEN:",
     "copyCommand": "Copiar comando",
-    "vmCapacityHint": "<code>wssp connect</code> detecta RAM, vCPU totales (hilos × 2) y el máximo de CPU por VM. Puedes ajustar cada valor con <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> y <code>--max-sandbox-cpu-count</code>. El almacenamiento se configura en el TOML local; vuelve a conectar después de cambiarlo. Cada uno funciona por separado; usa los tres si falla toda la detección."
+    "vmCapacityHint": "<code>wssp host run</code> detecta RAM, vCPU totales (hilos × 2) y el máximo de CPU por VM. Puedes ajustar cada valor con <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> y <code>--max-sandbox-cpu-count</code>. El almacenamiento se configura en el TOML local; vuelve a conectar después de cambiarlo. Cada uno funciona por separado; usa los tres si falla toda la detección."
   },
   "daemon": {
     "label": "Daemon",
@@ -60,7 +60,7 @@
   "egress": {
     "badge": "Sin control de salida",
     "incusHint": "Este host no puede crear sandboxes: su daemon informó que no puede aplicar las reglas de red saliente. El registro del daemon indica el motivo, por ejemplo una versión de Incus anterior a 6.14, una extensión de ACL de red que falta, o un daemon de Incus que no pudo consultar. Corrígelo y reinicia el daemon.",
-    "fakeHint": "Este host no puede crear sandboxes: el runtime simulado nunca aplica reglas de red saliente. Conecta el daemon con el runtime de Incus para ejecutar sandboxes.",
+    "fakeHint": "Este host no puede crear sandboxes: el runtime simulado nunca aplica reglas de red saliente. Ejecuta `wssp host run --runtime incus` para ejecutar sandboxes.",
     "title": "Red",
     "guard": {
       "label": "Protección de red",
@@ -83,7 +83,7 @@
         "unknown": "El daemon no ha informado una protección de red en este host.",
         "guard_unreachable": "El daemon no puede comunicarse con la protección de red: no está instalada o no está en ejecución.",
         "guard_not_ok": "La protección de red reporta que no puede aplicar sus reglas.",
-        "guard_quarantined": "La protección de red puso en cuarentena este host porque una configuración de firewall o red está fuera de la ruta de paquetes soportada. Ejecuta wssp guard status en el host para ver cuál es.",
+        "guard_quarantined": "La protección de red puso en cuarentena este host porque una configuración de firewall o red está fuera de la ruta de paquetes soportada. Ejecuta wssp host guard status en el host para ver cuál es.",
         "guard_lease_expired": "La protección de red dejó de renovar su reporte de salud.",
         "guard_outdated": "La protección de red es más antigua que este daemon y debe actualizarse.",
         "guard_root_source": "La lista de bloqueo raíz (/etc/wssp/egress-blocklist) es inválida. Corrígela con sudoedit.",
@@ -92,7 +92,7 @@
         "incus_server_shared": "Otro daemon wssp usa el servidor Incus de este host, y solo se admite un daemon por servidor Incus. Los sandboxes en ejecución continúan ejecutándose. Detén el otro daemon; el registro del host lo identifica."
       },
       "blocked": "Los nuevos sandboxes no pueden iniciarse aquí.",
-      "install": "Instala o actualiza la protección ejecutando esto en el host como el usuario que ejecuta el daemon. Requiere root, así que debes ejecutarlo tú; wssp guard status muestra los detalles.",
+      "install": "Instala o actualiza la protección ejecutando esto en el host como el usuario que ejecuta el daemon. Requiere root, así que debes ejecutarlo tú; wssp host guard status muestra los detalles.",
       "firewall": "Ejecuta esto en el host para agregar las reglas mínimas del firewall (DHCP, DNS y el proxy de inicio de sesión desde los puentes de los sandboxes, más el enrutamiento). Muestra cada regla, y la protección de red sigue aplicando todos los bloqueos. En hosts con firewalld, usa --configure-firewalld."
     },
     "openForOthers": "Internet abierto para sandboxes de otros usuarios",
@@ -108,7 +108,7 @@
   },
   "empty": {
     "title": "Aún no hay hosts",
-    "description": "Inscribe una máquina con Incus ejecutando wssp login en ella y luego wssp connect. Aparecerá aquí una vez inscrita."
+    "description": "Inscribe una máquina con Incus ejecutando wssp host enroll en ella y luego wssp host run. Aparecerá aquí una vez inscrita."
   },
   "enroll": {
     "title": "Inscribir una máquina",
@@ -177,7 +177,7 @@
   },
   "lease": {
     "title": "Vigencia de sandboxes",
-    "ceiling": "Tope de vigencia: {{value}} (se configura en el host con `wssp config set-max-lease`)",
+    "ceiling": "Tope de vigencia: {{value}} (se configura en el host con `wssp host config set-max-lease`)",
     "unlimited": "sin límite de tiempo",
     "noLimit": "sin límite",
     "drainEmpty": "Vacío ahora: ningún sandbox ocupa este host.",
@@ -426,7 +426,7 @@
     "stale": "No hay latido reciente. El daemon puede estar caído o inaccesible, así que el trabajo que se le envíe puede no empezar hasta que vuelva.",
     "quarantined": "El daemon está en ejecución, pero el servidor rechaza su inventario, así que el host no recibe trabajo. Sigue reintentando por sí solo; no hay nada que iniciar.",
     "reconnecting": "El daemon se conectó hace poco, pero no siguió conectado. Reintenta por sí solo. Si esto continúa, revisa su registro con journalctl --user -u wssp-host.",
-    "offline": "El daemon no se ha conectado recientemente. Inícialo con wssp connect o revisa su registro con journalctl --user -u wssp-host.",
+    "offline": "El daemon no se ha conectado recientemente. Inícialo con wssp host run o revisa su registro con journalctl --user -u wssp-host.",
     "never": "El daemon aún no se ha conectado.",
     "revoked": "La credencial de este host fue revocada. Vuelve a inscribirlo para reconectarlo.",
     "deleting": "El host se elimina cuando ya no tenga sandboxes detenidos, transferencias ni trabajo pendiente. No acepta sandboxes nuevos."

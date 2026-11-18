@@ -10,15 +10,15 @@
 
 pub mod completions;
 pub mod config;
-pub mod connect;
 #[cfg(target_os = "linux")]
 pub mod daemon;
 pub mod drain;
+pub mod enroll;
 #[cfg(target_os = "linux")]
 pub mod guard;
+pub mod host;
 pub mod images;
-pub mod login;
 pub mod logout;
-pub mod token;
+pub mod run;
 #[cfg(target_os = "linux")]
 pub mod tunnel;

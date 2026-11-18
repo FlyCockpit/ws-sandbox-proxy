@@ -110,7 +110,7 @@ pub struct Config {
         deserialize_with = "deserialize_dns_upstreams"
     )]
     pub egress_dns_upstreams: Vec<std::net::Ipv4Addr>,
-    /// Graceful restart (`wssp daemon quiesce`, the service's reload): how
+    /// Graceful restart (`wssp host daemon quiesce`, the service's reload): how
     /// long the daemon waits for running commands before it restarts
     /// (`"10m"`, `"90s"`, `"1h"`; at most 24 hours). Default 10 minutes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -130,7 +130,7 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offload_fetch_mbps: Option<u32>,
     /// Preview tunnels: the pinned `tunnel` client this node runs outside
-    /// the guests (set by `wssp tunnel install`). Absent: no tunnels here.
+    /// the guests (set by `wssp host tunnel install`). Absent: no tunnels here.
     /// A restart applies it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tunnel: Option<TunnelConfig>,

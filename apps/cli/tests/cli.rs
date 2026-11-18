@@ -38,7 +38,7 @@ fn json_stdout(mut cmd: Command) -> Value {
 fn config_path_json_is_machine_readable() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cmd = cli(tmp.path());
-    cmd.args(["config", "--json", "path"]);
+    cmd.args(["host", "config", "--json", "path"]);
     let value = json_stdout(cmd);
 
     assert!(value["path"].as_str().is_some_and(|path| !path.is_empty()));
@@ -48,7 +48,7 @@ fn config_path_json_is_machine_readable() {
 fn config_show_json_is_machine_readable() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cmd = cli(tmp.path());
-    cmd.args(["config", "--json", "show"]);
+    cmd.args(["host", "config", "--json", "show"]);
     let value = json_stdout(cmd);
 
     assert!(value.is_object());
@@ -58,11 +58,11 @@ fn config_show_json_is_machine_readable() {
 fn config_init_json_reports_whether_it_created_the_file() {
     let tmp = tempfile::tempdir().unwrap();
     let mut first = cli(tmp.path());
-    first.args(["config", "--json", "init"]);
+    first.args(["host", "config", "--json", "init"]);
     let first_value = json_stdout(first);
 
     let mut second = cli(tmp.path());
-    second.args(["config", "--json", "init"]);
+    second.args(["host", "config", "--json", "init"]);
     let second_value = json_stdout(second);
 
     assert_eq!(first_value["created"], true);
@@ -73,10 +73,13 @@ fn config_init_json_reports_whether_it_created_the_file() {
 #[test]
 fn config_init_then_show() {
     let tmp = tempfile::tempdir().unwrap();
-    cli(tmp.path()).args(["config", "init"]).assert().success();
+    cli(tmp.path())
+        .args(["host", "config", "init"])
+        .assert()
+        .success();
     let output = cli(tmp.path())
         .env("WSSP_RUNTIME", "fake")
-        .args(["config", "show"])
+        .args(["host", "config", "show"])
         .assert()
         .success()
         .get_output()
@@ -146,35 +149,47 @@ fn help_lists_commands() {
         .success()
         .stdout(predicate::str::contains("Usage: wssp"))
         .stdout(predicate::str::contains("Commands:"))
-        .stdout(predicate::str::contains("config"))
-        .stdout(predicate::str::contains("completions"))
-        .stdout(predicate::str::contains("connect"))
-        .stdout(predicate::str::contains("login"))
-        .stdout(predicate::str::contains("logout"))
-        .stdout(predicate::str::contains("token"));
+        .stdout(predicate::str::contains("host"))
+        .stdout(predicate::str::contains("completions"));
 }
 
 #[test]
-fn login_requires_slug_and_server_without_stdin() {
+fn enroll_requires_slug_and_server_without_stdin() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cmd = cli(tmp.path());
-    cmd.args(["login", "--slug", "desk-01"])
+    cmd.args(["host", "enroll", "--slug", "desk-01"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("server URL"));
 }
 
 #[test]
-fn token_login_records_env_var_name_not_secret_value() {
+fn token_enroll_records_env_var_name_not_secret_value() {
     let tmp = tempfile::tempdir().unwrap();
     let mut cmd = cli(tmp.path());
-    cmd.args(["token", "--json", "login", "WSSP_TEST_HOST_TOKEN"])
-        .env(
-            "WSSP_TEST_HOST_TOKEN",
-            format!("wssp_host_{}", "B".repeat(43)),
-        );
+    cmd.args([
+        "host",
+        "enroll",
+        "--json",
+        "--token-env",
+        "WSSP_TEST_HOST_TOKEN",
+    ])
+    .env(
+        "WSSP_TEST_HOST_TOKEN",
+        format!("wssp_host_{}", "B".repeat(43)),
+    );
     let value = json_stdout(cmd);
     assert_eq!(value["hostTokenEnv"], "WSSP_TEST_HOST_TOKEN");
+    // The same guard summary as device enrollment.
+    assert!(value["guard"]["ok"].is_boolean(), "{value}");
+    assert!(value["guard"]["installed"].is_boolean(), "{value}");
+    if value["guard"]["ok"] == false {
+        let command = value["guardInstallCommand"].as_str().unwrap();
+        assert!(
+            command.contains("host guard install --daemon-user "),
+            "{command}"
+        );
+    }
     let text = std::fs::read_to_string(tmp.path().join("config.toml")).unwrap();
     assert!(text.contains("WSSP_TEST_HOST_TOKEN"));
     assert!(!text.contains("wssp_host_secret"));
@@ -184,7 +199,14 @@ fn token_login_records_env_var_name_not_secret_value() {
 fn global_log_flags_do_not_pollute_stdout() {
     let tmp = tempfile::tempdir().unwrap();
     cli(tmp.path())
-        .args(["--verbose", "--log-format", "json", "config", "path"])
+        .args([
+            "--verbose",
+            "--log-format",
+            "json",
+            "host",
+            "config",
+            "path",
+        ])
         .assert()
         .success()
         .stdout(predicate::str::contains("config.toml"))
@@ -195,7 +217,7 @@ fn global_log_flags_do_not_pollute_stdout() {
 fn quiet_conflicts_with_verbose() {
     let tmp = tempfile::tempdir().unwrap();
     cli(tmp.path())
-        .args(["--quiet", "--verbose", "config", "path"])
+        .args(["--quiet", "--verbose", "host", "config", "path"])
         .assert()
         .code(2);
 }
@@ -204,7 +226,7 @@ fn quiet_conflicts_with_verbose() {
 fn config_path_text_prints_path() {
     let tmp = tempfile::tempdir().unwrap();
     cli(tmp.path())
-        .args(["config", "path"])
+        .args(["host", "config", "path"])
         .assert()
         .success()
         .stdout(predicate::str::contains("config.toml"));
@@ -213,26 +235,29 @@ fn config_path_text_prints_path() {
 #[test]
 fn config_show_text_prints_toml() {
     let tmp = tempfile::tempdir().unwrap();
-    cli(tmp.path()).args(["config", "show"]).assert().success();
+    cli(tmp.path())
+        .args(["host", "config", "show"])
+        .assert()
+        .success();
 }
 
 #[test]
 fn auth_command_help_matches_final_flags() {
     let tmp = tempfile::tempdir().unwrap();
     cli(tmp.path())
-        .args(["login", "--help"])
+        .args(["host", "enroll", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--slug <SLUG>"));
     cli(tmp.path())
-        .args(["connect", "--help"])
+        .args(["host", "run", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--host-token-env"))
         .stdout(predicate::str::contains("required with a host token"))
         .stdout(predicate::str::contains("--token <").not());
     cli(tmp.path())
-        .args(["logout", "--help"])
+        .args(["host", "logout", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("--token").not())
@@ -240,27 +265,33 @@ fn auth_command_help_matches_final_flags() {
 }
 
 #[test]
-fn connect_command_concurrency_range_and_default() {
+fn run_command_concurrency_range_and_default() {
     use clap::Parser;
     use wssp::cli::{Cli, Command as CliCommand};
     for invalid in ["0", "257"] {
         let tmp = tempfile::tempdir().unwrap();
         cli(tmp.path())
-            .args(["connect", "--max-concurrent-commands", invalid])
+            .args(["host", "run", "--max-concurrent-commands", invalid])
             .assert()
             .code(2)
             .stderr(predicate::str::contains("--max-concurrent-commands"));
     }
     for (args, expected) in [
-        (vec!["wssp", "connect"], 16),
-        (vec!["wssp", "connect", "--max-concurrent-commands", "1"], 1),
+        (vec!["wssp", "host", "run"], 16),
         (
-            vec!["wssp", "connect", "--max-concurrent-commands", "256"],
+            vec!["wssp", "host", "run", "--max-concurrent-commands", "1"],
+            1,
+        ),
+        (
+            vec!["wssp", "host", "run", "--max-concurrent-commands", "256"],
             256,
         ),
     ] {
-        let CliCommand::Connect(connect) = Cli::try_parse_from(args).unwrap().command else {
-            panic!("connect args")
+        let CliCommand::Host(host) = Cli::try_parse_from(args).unwrap().command else {
+            panic!("host args")
+        };
+        let wssp::commands::host::HostCommand::Run(connect) = host.command else {
+            panic!("host run args")
         };
         assert_eq!(connect.max_concurrent_commands, expected);
     }
@@ -275,7 +306,7 @@ fn config_show_detection_failure_is_successful_scalar_json_and_valid_toml() {
     let mut json = cli(dir.path());
     json.env_remove("WSSP_RUNTIME")
         .env("WSSP_INCUS_BINARY", dir.path().join("absent-incus"))
-        .args(["config", "show", "--json"]);
+        .args(["host", "config", "show", "--json"]);
     let output = json.output().unwrap();
     assert!(
         output.status.success(),
@@ -291,7 +322,7 @@ fn config_show_detection_failure_is_successful_scalar_json_and_valid_toml() {
     let mut text = cli(dir.path());
     text.env_remove("WSSP_RUNTIME")
         .env("WSSP_INCUS_BINARY", dir.path().join("absent-incus"))
-        .args(["config", "show"]);
+        .args(["host", "config", "show"]);
     let output = text.assert().success().get_output().stdout.clone();
     let toml: toml::Value = toml::from_str(std::str::from_utf8(&output).unwrap()).unwrap();
     assert_eq!(toml["sandbox_memory_mib"].as_integer(), Some(8192));
@@ -312,7 +343,7 @@ fn config_show_fake_reports_effective_capacity_without_new_arguments() {
     let dir = tempfile::tempdir().unwrap();
     let mut json = cli(dir.path());
     json.env("WSSP_RUNTIME", "fake")
-        .args(["config", "show", "--json"]);
+        .args(["host", "config", "show", "--json"]);
     let value = json_stdout(json);
     assert_eq!(value["vmCapacity"]["runtime"], "fake");
     assert_eq!(value["vmCapacity"]["effective"]["memoryBudgetMiB"], 4096);
@@ -320,7 +351,8 @@ fn config_show_fake_reports_effective_capacity_without_new_arguments() {
     assert_eq!(value["vmCapacity"]["memorySource"], "detected");
     assert!(value["vmCapacity"]["detectionError"].is_null());
     let mut text = cli(dir.path());
-    text.env("WSSP_RUNTIME", "fake").args(["config", "show"]);
+    text.env("WSSP_RUNTIME", "fake")
+        .args(["host", "config", "show"]);
     let output = text.assert().success().get_output().stdout.clone();
     let toml: toml::Value = toml::from_str(std::str::from_utf8(&output).unwrap()).unwrap();
     assert!(toml.get("vm_capacity").is_none());
@@ -338,7 +370,7 @@ fn config_show_daemon_totals_and_overrides_match_the_shared_resolver() {
     let mut json = cli(dir.path());
     json.env_remove("WSSP_RUNTIME")
         .env("WSSP_INCUS_BINARY", &shim)
-        .args(["config", "show", "--json"]);
+        .args(["host", "config", "show", "--json"]);
     let value = json_stdout(json);
     assert_eq!(value["vmCapacity"]["derived"]["memoryBudgetMiB"], 12288);
     assert_eq!(value["vmCapacity"]["effective"]["memoryBudgetMiB"], 12288);
@@ -346,13 +378,13 @@ fn config_show_daemon_totals_and_overrides_match_the_shared_resolver() {
     assert!(value["vmCapacity"]["detectionError"].is_null());
 }
 
-/// One wssp daemon per Incus server, through the real binary: `connect`
+/// One wssp daemon per Incus server, through the real binary: `host run`
 /// refuses while another daemon's lease is live, before any other Incus
 /// call; the test-only override is refused off loopback before Incus is
-/// touched; `config show` reads Incus without ever claiming it.
+/// touched; `host config show` reads Incus without ever claiming it.
 #[cfg(target_os = "linux")]
 #[test]
-fn connect_refuses_an_incus_server_another_daemon_holds() {
+fn run_refuses_an_incus_server_another_daemon_holds() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let shim = dir.path().join("incus");
@@ -392,7 +424,8 @@ sys.exit(1)
             .env_remove("WSSP_TEST_SHARED_INCUS")
             .env("WSSP_GUARD_TEST_HOST_TOKEN", &token)
             .args([
-                "connect",
+                "host",
+                "run",
                 "--runtime",
                 "incus",
                 "--host-token-env",
@@ -444,7 +477,7 @@ sys.exit(1)
     let mut show = cli(dir.path());
     show.env_remove("WSSP_RUNTIME")
         .env("WSSP_INCUS_BINARY", &shim)
-        .args(["config", "show", "--json"]);
+        .args(["host", "config", "show", "--json"]);
     json_stdout(show);
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
     assert!(!calls.contains("profiles"), "{calls}");
@@ -473,7 +506,7 @@ impl tungstenite::handshake::server::Callback for RelayHandshake {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn connect_detection_failure_obeys_overrides_through_the_real_cli() {
+fn run_detection_failure_obeys_overrides_through_the_real_cli() {
     use std::{
         net::TcpListener,
         os::unix::fs::PermissionsExt,
@@ -545,7 +578,7 @@ sys.exit(1)
                 let mut show = cli(dir.path());
                 show.env("WSSP_INCUS_BINARY", &shim)
                     .env_remove("WSSP_RUNTIME")
-                    .args(["config", "show", "--json"]);
+                    .args(["host", "config", "show", "--json"]);
                 let view = json_stdout(show);
                 assert_eq!(view["vmCapacity"]["detected"]["cpuThreads"], 4);
                 assert_eq!(
@@ -627,7 +660,8 @@ sys.exit(1)
                 .env_remove("WSSP_RUNTIME")
                 .env("WSSP_B3_HOST_TOKEN", &token)
                 .args([
-                    "connect",
+                    "host",
+                    "run",
                     "--sandbox-vcpu-budget",
                     "8",
                     "--host-token-env",
@@ -710,7 +744,10 @@ fn systemd_execstart_keeps_capacity_overrides_optional() {
         .lines()
         .find(|line| line.starts_with("ExecStart="))
         .unwrap();
-    assert_eq!(exec, "ExecStart=%h/.local/bin/wssp connect --runtime incus");
+    assert_eq!(
+        exec,
+        "ExecStart=%h/.local/bin/wssp host run --runtime incus"
+    );
 }
 
 #[test]
@@ -735,7 +772,7 @@ fn invalid_capacity_toml_is_a_keyed_diagnostic_in_show_and_error_elsewhere() {
             std::fs::write(dir.path().join("config.toml"), &original).unwrap();
             let mut show = cli(dir.path());
             show.env("WSSP_RUNTIME", "fake")
-                .args(["config", "show", "--json"]);
+                .args(["host", "config", "show", "--json"]);
             let view = json_stdout(show);
             assert_eq!(view["serverUrl"], "https://config.example");
             assert_eq!(view["hostSlug"], "preserved");
@@ -745,7 +782,8 @@ fn invalid_capacity_toml_is_a_keyed_diagnostic_in_show_and_error_elsewhere() {
             assert!(diagnostic.contains("config file"));
             assert!(!diagnostic.contains("--"));
             let mut show = cli(dir.path());
-            show.env("WSSP_RUNTIME", "fake").args(["config", "show"]);
+            show.env("WSSP_RUNTIME", "fake")
+                .args(["host", "config", "show"]);
             let output = show.assert().success().get_output().stdout.clone();
             let text = std::str::from_utf8(&output).unwrap();
             let parsed: toml::Value = toml::from_str(text).unwrap();
@@ -763,7 +801,7 @@ fn invalid_capacity_toml_is_a_keyed_diagnostic_in_show_and_error_elsewhere() {
             assert!(parsed.get(key).is_none());
             assert!(text.contains(&format!("# invalid config file value for `{key}`")));
             let mut connect = cli(dir.path());
-            connect.env("WSSP_RUNTIME", "fake").args(["connect"]);
+            connect.env("WSSP_RUNTIME", "fake").args(["host", "run"]);
             let output = connect.assert().failure().get_output().stderr.clone();
             let diagnostic = std::str::from_utf8(&output).unwrap();
             assert!(diagnostic.contains(key), "{diagnostic}");
@@ -793,10 +831,10 @@ fn config_errors_keep_locations_without_echoing_capacity_values() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config.toml"), body).unwrap();
         for args in [
-            vec!["config", "show"],
-            vec!["config", "show", "--json"],
-            vec!["connect"],
-            vec!["drain"],
+            vec!["host", "config", "show"],
+            vec!["host", "config", "show", "--json"],
+            vec!["host", "run"],
+            vec!["host", "drain"],
         ] {
             let mut cmd = cli(dir.path());
             cmd.env("WSSP_RUNTIME", "fake").args(args);
@@ -813,28 +851,28 @@ fn config_errors_keep_locations_without_echoing_capacity_values() {
 fn set_max_lease_validates_saves_and_warns_without_a_terminal_revision() {
     let tmp = tempfile::tempdir().unwrap();
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     assert_eq!(json_stdout(command)["maxLease"], "24h");
     let assert = cli(tmp.path())
-        .args(["config", "set-max-lease", "6h"])
+        .args(["host", "config", "set-max-lease", "6h"])
         .assert()
         .success();
     let output = assert.get_output();
     assert!(String::from_utf8_lossy(&output.stdout).contains("`6h`"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("shortened"));
     let mut command = cli(tmp.path());
-    command.args(["config", "set-max-lease", "unlimited", "--json"]);
+    command.args(["host", "config", "set-max-lease", "unlimited", "--json"]);
     let saved = json_stdout(command);
     assert_eq!(saved["key"], "maxLease");
     assert_eq!(saved["value"], "unlimited");
     for invalid in ["4m", "25d", "6", "forever"] {
         cli(tmp.path())
-            .args(["config", "set-max-lease", invalid])
+            .args(["host", "config", "set-max-lease", invalid])
             .assert()
             .failure();
     }
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let shown = json_stdout(command);
     assert_eq!(shown["maxLease"], "unlimited");
     assert_eq!(shown["hostTerminalPolicyRevision"], 0);
@@ -844,17 +882,17 @@ fn set_max_lease_validates_saves_and_warns_without_a_terminal_revision() {
 fn carry_setters_validate_save_show_and_restore_defaults() {
     let tmp = tempfile::tempdir().unwrap();
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let shown = json_stdout(command);
     assert_eq!(shown["carryIntentWindow"], "10m");
     assert_eq!(shown["maxCarry"], "24h");
     let assert = cli(tmp.path())
-        .args(["config", "set-carry-intent-window", "30m"])
+        .args(["host", "config", "set-carry-intent-window", "30m"])
         .assert()
         .success();
     assert!(String::from_utf8_lossy(&assert.get_output().stdout).contains("`30m`"));
     let mut command = cli(tmp.path());
-    command.args(["config", "set-max-carry", "7d", "--json"]);
+    command.args(["host", "config", "set-max-carry", "7d", "--json"]);
     let saved = json_stdout(command);
     assert_eq!(saved["key"], "maxCarry");
     assert_eq!(saved["value"], "7d");
@@ -866,22 +904,22 @@ fn carry_setters_validate_save_show_and_restore_defaults() {
         ("set-max-carry", "unlimited"),
     ] {
         cli(tmp.path())
-            .args(["config", key, invalid])
+            .args(["host", "config", key, invalid])
             .assert()
             .failure();
     }
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let shown = json_stdout(command);
     assert_eq!(shown["carryIntentWindow"], "30m");
     assert_eq!(shown["maxCarry"], "7d");
     assert_eq!(shown["hostTerminalPolicyRevision"], 0);
     cli(tmp.path())
-        .args(["config", "set-max-carry", "default"])
+        .args(["host", "config", "set-max-carry", "default"])
         .assert()
         .success();
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     assert_eq!(json_stdout(command)["maxCarry"], "24h");
 }
 
@@ -890,7 +928,7 @@ fn builder_setters_save_and_show_without_a_terminal_revision() {
     let tmp = tempfile::tempdir().unwrap();
     let show = |path: &std::path::Path| {
         let mut command = cli(path);
-        command.args(["config", "show"]);
+        command.args(["host", "config", "show"]);
         String::from_utf8(command.assert().success().get_output().stdout.clone()).unwrap()
     };
     assert!(!show(tmp.path()).contains("builder"));
@@ -904,7 +942,7 @@ fn builder_setters_save_and_show_without_a_terminal_revision() {
         ),
     ] {
         let mut command = cli(tmp.path());
-        command.args(["config", sub, value, "--json"]);
+        command.args(["host", "config", sub, value, "--json"]);
         let out = json_stdout(command);
         assert_eq!(out["key"], key);
         assert_eq!(out["value"], saved);
@@ -913,15 +951,15 @@ fn builder_setters_save_and_show_without_a_terminal_revision() {
     assert!(text.contains("builder = false"), "{text}");
     assert!(text.contains("accept_foreign_builds = true"), "{text}");
     let mut command = cli(tmp.path());
-    command.args(["config", "set-builder", "default", "--json"]);
+    command.args(["host", "config", "set-builder", "default", "--json"]);
     assert_eq!(json_stdout(command)["value"], "default");
     assert!(!show(tmp.path()).contains("builder ="));
     cli(tmp.path())
-        .args(["config", "set-builder", "maybe"])
+        .args(["host", "config", "set-builder", "maybe"])
         .assert()
         .failure();
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     assert_eq!(json_stdout(command)["hostTerminalPolicyRevision"], 0);
 }
 
@@ -929,18 +967,18 @@ fn builder_setters_save_and_show_without_a_terminal_revision() {
 fn host_terminal_setters_are_local_atomic_and_inspectable() {
     let tmp = tempfile::tempdir().unwrap();
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let initial = json_stdout(command);
     assert_eq!(initial["allowHostTerminal"], false);
     assert_eq!(initial["hostTerminalRequireTotp"], true);
     for (sub, value) in [("set-host-terminal", "off"), ("set-host-terminal", "off")] {
         cli(tmp.path())
-            .args(["config", sub, value])
+            .args(["host", "config", sub, value])
             .assert()
             .success();
     }
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let saved = json_stdout(command);
     assert_eq!(saved["allowHostTerminal"], false);
     assert_eq!(saved["hostTerminalRequireTotp"], true);
@@ -958,10 +996,16 @@ fn host_terminal_setters_are_local_atomic_and_inspectable() {
         );
     }
     let mut command = cli(tmp.path());
-    command.args(["config", "set-host-terminal-totp", "required", "--json"]);
+    command.args([
+        "host",
+        "config",
+        "set-host-terminal-totp",
+        "required",
+        "--json",
+    ]);
     assert_eq!(json_stdout(command)["key"], "hostTerminalRequireTotp");
     cli(tmp.path())
-        .args(["connect", "--host-terminal", "off", "--help"])
+        .args(["host", "run", "--host-terminal", "off", "--help"])
         .assert()
         .success();
 }
@@ -971,7 +1015,7 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
     let tmp = tempfile::tempdir().unwrap();
     let shown = json_stdout({
         let mut cmd = cli(tmp.path());
-        cmd.args(["config", "show", "--json"])
+        cmd.args(["host", "config", "show", "--json"])
             .env("WSSP_RUNTIME", "fake");
         cmd
     });
@@ -1005,14 +1049,14 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
         ),
     ] {
         let mut cmd = cli(tmp.path());
-        cmd.args(["config", "--json"]).args(args);
+        cmd.args(["host", "config", "--json"]).args(args);
         let set = json_stdout(cmd);
         assert_eq!(set["key"], key);
         assert_eq!(set["value"], value);
     }
     let shown = json_stdout({
         let mut cmd = cli(tmp.path());
-        cmd.args(["config", "show", "--json"])
+        cmd.args(["host", "config", "show", "--json"])
             .env("WSSP_RUNTIME", "fake");
         cmd
     });
@@ -1025,7 +1069,7 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
     );
     let text = cli(tmp.path())
         .env("WSSP_RUNTIME", "fake")
-        .args(["config", "show"])
+        .args(["host", "config", "show"])
         .assert()
         .success()
         .get_output()
@@ -1036,18 +1080,18 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
         text.contains("# egress_dns_upstreams = 1.1.1.1,9.9.9.9"),
         "{text}"
     );
-    assert!(text.contains("guard install --daemon-user"), "{text}");
+    assert!(text.contains("host guard install --daemon-user"), "{text}");
     toml::from_str::<toml::Value>(&text).expect("show output stays valid TOML");
 
     // Turning consent off warns about running foreign sandboxes.
     cli(tmp.path())
-        .args(["config", "set-open-egress-for-others", "off"])
+        .args(["host", "config", "set-open-egress-for-others", "off"])
         .assert()
         .success()
-        .stderr(predicate::str::contains("wssp drain"));
+        .stderr(predicate::str::contains("wssp host drain"));
     // Clearing upstreams; invalid lists are refused and change nothing.
     cli(tmp.path())
-        .args(["config", "set-egress-dns-upstreams", "--clear"])
+        .args(["host", "config", "set-egress-dns-upstreams", "--clear"])
         .assert()
         .success();
     for bad in [
@@ -1056,17 +1100,17 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
         "example.com",
     ] {
         cli(tmp.path())
-            .args(["config", "set-egress-dns-upstreams", bad])
+            .args(["host", "config", "set-egress-dns-upstreams", bad])
             .assert()
             .failure();
     }
     cli(tmp.path())
-        .args(["config", "set-egress-dns-upstreams"])
+        .args(["host", "config", "set-egress-dns-upstreams"])
         .assert()
         .failure();
     let shown = json_stdout({
         let mut cmd = cli(tmp.path());
-        cmd.args(["config", "show", "--json"])
+        cmd.args(["host", "config", "show", "--json"])
             .env("WSSP_RUNTIME", "fake");
         cmd
     });
@@ -1078,10 +1122,10 @@ fn egress_config_setters_persist_and_show_reports_effective_values_and_guard() {
 fn host_access_raises_refuse_non_ttys_and_command_marker_but_lowering_is_unattended() {
     let tmp = tempfile::tempdir().unwrap();
     for args in [
-        vec!["config", "set-agent-host-commands", "on"],
-        vec!["config", "set-host-terminal", "on"],
-        vec!["config", "set-host-terminal-totp", "optional"],
-        vec!["config", "set-host-command-max-time", "601"],
+        vec!["host", "config", "set-agent-host-commands", "on"],
+        vec!["host", "config", "set-host-terminal", "on"],
+        vec!["host", "config", "set-host-terminal-totp", "optional"],
+        vec!["host", "config", "set-host-command-max-time", "601"],
     ] {
         cli(tmp.path())
             .args(&args)
@@ -1100,7 +1144,7 @@ fn host_access_raises_refuse_non_ttys_and_command_marker_but_lowering_is_unatten
             ));
     }
     cli(tmp.path())
-        .args(["config", "set-host-file-roots"])
+        .args(["host", "config", "set-host-file-roots"])
         .arg(tmp.path())
         .assert()
         .failure()
@@ -1108,9 +1152,9 @@ fn host_access_raises_refuse_non_ttys_and_command_marker_but_lowering_is_unatten
             "requires local stdin and stderr TTYs",
         ));
     for args in [
-        ["config", "set-agent-host-commands", "off"],
-        ["config", "set-host-terminal", "off"],
-        ["config", "set-host-command-max-time", "60"],
+        ["host", "config", "set-agent-host-commands", "off"],
+        ["host", "config", "set-host-terminal", "off"],
+        ["host", "config", "set-host-command-max-time", "60"],
     ] {
         cli(tmp.path())
             .env("WSSP_HOST_COMMAND", "1")
@@ -1120,20 +1164,176 @@ fn host_access_raises_refuse_non_ttys_and_command_marker_but_lowering_is_unatten
     }
     cli(tmp.path())
         .env("WSSP_HOST_COMMAND", "1")
-        .args(["config", "clear-host-file-roots"])
+        .args(["host", "config", "clear-host-file-roots"])
         .assert()
         .success();
     cli(tmp.path())
-        .args(["connect", "--runtime", "fake", "--host-terminal", "on"])
+        .args(["host", "run", "--runtime", "fake", "--host-terminal", "on"])
+        // An explicit token selection runs without an enrollment.
+        .args(["--host-token-env", "WSSP_TEST_HOST_TOKEN"])
         .assert()
         .failure()
         .stderr(predicates::str::contains(
             "requires local stdin and stderr TTYs",
         ));
     let mut command = cli(tmp.path());
-    command.args(["config", "show", "--json"]);
+    command.args(["host", "config", "show", "--json"]);
     let config = json_stdout(command);
     assert_eq!(config["allowAgentHostCommands"], false);
     assert_eq!(config["hostCommandMaxMs"], 60000);
     assert_eq!(config["hostFileRoots"], serde_json::json!([]));
+}
+
+#[cfg(target_os = "linux")]
+const HOST_SUBCOMMANDS: &[&str] = &[
+    "enroll", "run", "logout", "drain", "undrain", "images", "config", "daemon", "guard", "tunnel",
+];
+
+#[cfg(target_os = "linux")]
+fn help_text(mut cmd: Command) -> String {
+    String::from_utf8(cmd.assert().success().get_output().stdout.clone()).unwrap()
+}
+
+/// The `Commands:` block of a help text: subcommand names only.
+#[cfg(target_os = "linux")]
+fn listed_subcommands(help: &str) -> Vec<String> {
+    help.split("Commands:\n")
+        .nth(1)
+        .unwrap_or("")
+        .lines()
+        .take_while(|line| !line.trim().is_empty())
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .filter_map(|line| line.split_whitespace().next().map(str::to_owned))
+        .filter(|name| name != "help")
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn not_enrolled_help_lists_only_enroll_until_all_is_requested() {
+    let tmp = tempfile::tempdir().unwrap();
+    let top = help_text({
+        let mut cmd = cli(tmp.path());
+        cmd.arg("--help");
+        cmd
+    });
+    assert!(
+        top.contains("host         Run this machine as a wssp host — not enrolled here"),
+        "{top}"
+    );
+    let host = help_text({
+        let mut cmd = cli(tmp.path());
+        cmd.args(["host", "--help"]);
+        cmd
+    });
+    assert_eq!(listed_subcommands(&host), ["enroll"], "{host}");
+    assert!(host.contains("docs/guide/hosts.md"), "{host}");
+    assert!(host.contains("wssp host --help --all"), "{host}");
+    for args in [["host", "--help", "--all"], ["host", "--all", "--help"]] {
+        let all = help_text({
+            let mut cmd = cli(tmp.path());
+            cmd.args(args);
+            cmd
+        });
+        assert_eq!(listed_subcommands(&all), HOST_SUBCOMMANDS, "{all}");
+        assert!(!all.contains("not enrolled here"), "{all}");
+    }
+    // No guard service entry anywhere in help.
+    assert!(!top.contains("__wssp-guard") && !host.contains("__wssp-guard"));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn enrolled_help_lists_every_host_command() {
+    // A device credential file (only its presence is checked) or a host token
+    // selection in config each make this machine an enrolled host.
+    let device = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(device.path().join("data")).unwrap();
+    std::fs::write(device.path().join("data/device-auth.json"), "{}").unwrap();
+    let token = tempfile::tempdir().unwrap();
+    std::fs::write(
+        token.path().join("config.toml"),
+        "host_token_env = \"WSSP_TEST_HOST_TOKEN\"\n",
+    )
+    .unwrap();
+    for dir in [device.path(), token.path()] {
+        let host = help_text({
+            let mut cmd = cli(dir);
+            cmd.args(["host", "--help"]);
+            cmd
+        });
+        assert_eq!(listed_subcommands(&host), HOST_SUBCOMMANDS, "{host}");
+        assert!(!host.contains("not enrolled here"), "{host}");
+        assert!(!host.contains("only `enroll` is listed"), "{host}");
+        let top = help_text({
+            let mut cmd = cli(dir);
+            cmd.arg("--help");
+            cmd
+        });
+        assert!(!top.contains("not enrolled here"), "{top}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn hidden_host_commands_fail_fast_with_exit_6_when_not_enrolled() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["host", "run", "--runtime", "fake"],
+        vec!["host", "drain"],
+        vec!["host", "undrain", "--server", "https://127.0.0.1:1"],
+    ] {
+        cli(tmp.path())
+            .args(&args)
+            .assert()
+            .code(6)
+            .stderr(predicate::str::contains(
+                "this device is not an enrolled host; run `wssp host enroll --slug <slug>` or `wssp host enroll --token-env <ENV>` (or pass `--host-token-env`)",
+            ));
+    }
+    // Fails before the auth store: nothing was created.
+    assert!(!tmp.path().join("data").exists());
+    // Exempt: node-local commands, e.g. guard (root has no enrollment state)
+    // and config (saved defaults such as the server and CA file come before
+    // enrollment).
+    let guard = cli(tmp.path())
+        .args(["host", "guard", "status"])
+        .assert()
+        .get_output()
+        .clone();
+    assert_ne!(guard.status.code(), Some(6));
+    assert!(!String::from_utf8_lossy(&guard.stderr).contains("not an enrolled host"));
+    cli(tmp.path())
+        .args(["host", "config", "path"])
+        .assert()
+        .success();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn completions_list_every_host_command_whatever_the_role() {
+    let empty = tempfile::tempdir().unwrap();
+    let token = tempfile::tempdir().unwrap();
+    std::fs::write(
+        token.path().join("config.toml"),
+        "host_token_env = \"WSSP_TEST_HOST_TOKEN\"\n",
+    )
+    .unwrap();
+    let mut outputs = Vec::new();
+    for dir in [empty.path(), token.path()] {
+        let text = help_text({
+            let mut cmd = cli(dir);
+            cmd.args(["completions", "bash"]);
+            cmd
+        });
+        for sub in HOST_SUBCOMMANDS {
+            assert!(
+                text.contains(&format!("wssp__subcmd__host__subcmd__{sub}")),
+                "{sub}"
+            );
+        }
+        assert!(!text.contains("__wssp-guard"));
+        outputs.push(text);
+    }
+    assert_eq!(outputs[0], outputs[1], "completions are state-independent");
 }

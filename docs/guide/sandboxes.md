@@ -162,7 +162,7 @@ longer tied to the host that created it.
    host and in the store (`host_and_store`). A start now is an ordinary cold
    reconnect on that host and downloads nothing.
 3. **Evict.** When the host needs the space, is drained with
-   `wssp drain --offload`, or cannot run the next start, it deletes the
+   `wssp host drain --offload`, or cannot run the next start, it deletes the
    local VM under a short server grant and proves the root volume is gone.
    The sandbox becomes `OFFLOADED` (`store`): it has no host, holds no
    capacity and has no lease. Eviction is refused while no eligible restore
@@ -249,7 +249,7 @@ update needs `sandboxes:manage`. Managed sandboxes refuse it.
 | `{mode: "on_pressure"}`       | Only when its host needs the space                                                                  |
 
 - **Host pressure overrides every policy, for every owner.** A host needs
-  the space when it is draining with `wssp drain --offload`, when a create
+  the space when it is draining with `wssp host drain --offload`, when a create
   waiting for capacity in one of its pools is blocked on disk, storage or
   the root ceiling (a stopped disk keeps its disk reservation), or when the
   storage pool holding the disk was last reported at least 90% full (the
@@ -405,12 +405,12 @@ the disk on timeout. Explicit stop keeps disk; it does not preserve RAM/processe
 The effective maximum lease is `min(deployment, host ceiling, pool max,
 membership max)`. A layer with no value adds no limit.
 
-| Layer              | Set by                     | Where                                                                                                   |
-| ------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Deployment         | Operator                   | `SANDBOX_MAX_TIMEOUT_MS`: 300000..2073600000 ms (5 minutes to 24 days) or `unlimited`; default 86400000 |
-| Host ceiling       | Machine owner, on the host | `wssp config set-max-lease 6h` (default `24h`; `unlimited` allowed). The dashboard shows it read-only   |
-| Pool maximum       | Pool owner                 | Pool settings; blank means no pool limit                                                                |
-| Membership maximum | Host owner                 | Own-host member settings, or the contribution form for a contributed host                               |
+| Layer              | Set by                     | Where                                                                                                      |
+| ------------------ | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Deployment         | Operator                   | `SANDBOX_MAX_TIMEOUT_MS`: 300000..2073600000 ms (5 minutes to 24 days) or `unlimited`; default 86400000    |
+| Host ceiling       | Machine owner, on the host | `wssp host config set-max-lease 6h` (default `24h`; `unlimited` allowed). The dashboard shows it read-only |
+| Pool maximum       | Pool owner                 | Pool settings; blank means no pool limit                                                                   |
+| Membership maximum | Host owner                 | Own-host member settings, or the contribution form for a contributed host                                  |
 
 - **Lease path.** On the creator's own host, the pool and membership layers
   come from the pool the sandbox was created through (its origin pool) and that

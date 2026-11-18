@@ -23,7 +23,7 @@ User-facing explanations of these decisions are in the [guide](../guide/README.m
 - [Host policy reconciliation](./host-policy-reconciliation.md)
 - [Terminal relay contract](./terminal-relay-contract.md) (frames, fences, flow control, close intent)
 - [Browser terminal authentication](./browser-terminal-auth.md) (tickets, refusals, re-reads and web client)
-- [Device flow contract](./device-flow-contract.md) (`wssp login` exchange)
+- [Device flow contract](./device-flow-contract.md) (`wssp host enroll` exchange)
 - [Webhooks contract](./webhooks-contract.md) (emission triggers, ledger state machine, signing bytes, versioning)
 - [Credential vault crypto](./credential-vault.md) (CLI-login value encryption, sealed captures, envelope v1, feature gate, vectors)
 - Prisma models: `packages/db/prisma/schema/sandbox.prisma`

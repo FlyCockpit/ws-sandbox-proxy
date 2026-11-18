@@ -1,4 +1,4 @@
-//! `wssp logout`.
+//! `wssp host logout`.
 
 use anyhow::Result;
 use serde::Serialize;

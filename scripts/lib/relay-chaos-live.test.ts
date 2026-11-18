@@ -65,7 +65,7 @@ const productionShow = parseSystemctlShow(
     "LoadState=loaded",
     "ActiveState=active",
     "MainPID=4242",
-    "ExecStart={ path=/home/op/.local/bin/wssp ; argv[]=/home/op/.local/bin/wssp connect --runtime incus ; ignore_errors=no }",
+    "ExecStart={ path=/home/op/.local/bin/wssp ; argv[]=/home/op/.local/bin/wssp host run --runtime incus ; ignore_errors=no }",
     "WorkingDirectory=",
     `Environment=WSSP_HOST_TOKEN=${HOST_TOKEN} "WSSP_LOG=info debug"`,
   ].join("\n"),
@@ -177,7 +177,7 @@ test("refuses a config dir that is wssp-host's", () => {
 
 test("refuses the host id wssp-host serves (ExecStart, open journal, or on-disk journal)", () => {
   const byFlag = parseSystemctlShow(
-    `LoadState=loaded\nExecStart={ argv[]=/bin/wssp connect --host-id ${HOST_ID} ; }\n`,
+    `LoadState=loaded\nExecStart={ argv[]=/bin/wssp host run --host-id ${HOST_ID} ; }\n`,
   );
   assert.ok(
     guardRefusals(config(), productionFootprint(byFlag, [], HOME), facts()).some((r) =>

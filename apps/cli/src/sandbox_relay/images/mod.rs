@@ -2537,7 +2537,7 @@ impl ImageService {
         self.progress(d, phase, None, None);
     }
 
-    /// `wssp images prune`: the CLI drops a request file next to the cache
+    /// `wssp host images prune`: the CLI drops a request file next to the cache
     /// journal; the running daemon (the journal's only writer) applies it and
     /// writes the result. Checked every few seconds by the connect loop.
     pub fn poll_prune_request(&self) {
@@ -2667,7 +2667,7 @@ impl ImageService {
         dropped.len()
     }
 
-    /// `wssp images list`: like prune, the CLI drops a request file and the
+    /// `wssp host images list`: like prune, the CLI drops a request file and the
     /// running daemon (the journal's only writer) reconciles the journal with
     /// the host image store before the CLI reads it.
     pub fn poll_list_request(&self) {
@@ -2702,7 +2702,7 @@ impl ImageService {
             .to_path_buf()
     }
 
-    /// `wssp images list` rows.
+    /// `wssp host images list` rows.
     pub fn entries(&self) -> Vec<CacheEntry> {
         self.lock_journal().file.entries.values().cloned().collect()
     }

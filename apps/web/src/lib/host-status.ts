@@ -197,16 +197,16 @@ export function hostGuardState(host: {
  * include the user's install directory; `$USER` is the daemon's user.
  */
 export const GUARD_INSTALL_COMMAND =
-  'sudo "$(command -v wssp)" guard install --daemon-user "$USER"';
+  'sudo "$(command -v wssp)" host guard install --daemon-user "$USER"';
 /**
  * The fix for `host_firewall_blocks_sandboxes`: the guard adds the minimal
  * ufw rules for the sandbox bridges (DHCP, DNS, login proxy; routing), printing each.
  */
 export const GUARD_FIREWALL_COMMAND = `${GUARD_INSTALL_COMMAND} --configure-ufw`;
-export const OPEN_EGRESS_FOR_OTHERS_COMMAND = "wssp config set-open-egress-for-others on|off";
+export const OPEN_EGRESS_FOR_OTHERS_COMMAND = "wssp host config set-open-egress-for-others on|off";
 /** Display-only: the node owner's guest-sudo consent for other users' sandboxes. */
 export const GUEST_SUDO_FOR_OTHERS_COMMAND =
-  "wssp config set-allow-guest-sudo-for-others on|off|default";
+  "wssp host config set-allow-guest-sudo-for-others on|off|default";
 
 /** Report freshness is separate from the last stored budget used by offline cold boots. */
 export function hostCapacityState(
@@ -288,10 +288,10 @@ export function shellWord(value: string): string {
 export function hostCommands(serverUrl: string, host?: { id: string; slug: string }) {
   const server = shellWord(serverUrl);
   return {
-    deviceLogin: `wssp login --slug ${shellWord(host?.slug ?? "my-host")} --server ${server}`,
-    connect: `wssp connect`,
+    deviceLogin: `wssp host enroll --slug ${shellWord(host?.slug ?? "my-host")} --server ${server}`,
+    connect: `wssp host run`,
     tokenConnect: host
-      ? `wssp connect --server ${server} --host-id ${shellWord(host.id)} --host-token-env WSSP_HOST_TOKEN`
+      ? `wssp host run --server ${server} --host-id ${shellWord(host.id)} --host-token-env WSSP_HOST_TOKEN`
       : null,
   };
 }

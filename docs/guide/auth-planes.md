@@ -5,12 +5,12 @@ and checks, and **a credential from one plane is refused on every other
 plane**. All four resolve to the same owner model: every host, template,
 sandbox, operation and transfer belongs to exactly one user account.
 
-| Plane   | Who                                     | Endpoint                                           | Credential                                                          |
-| ------- | --------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- |
-| Browser | You, in the dashboard                   | `/rpc`, `/api/dashboard/…`, the terminal WebSocket | Better Auth cookie session, CSRF, required-2FA policy               |
-| SDK     | Your programs                           | `/v1/…`                                            | `Authorization: Bearer wssp_sdk_…`                                  |
-| MCP     | Your agents                             | `/mcp`                                             | `wssp_agent_…` bearer token or OAuth access token backed by a grant |
-| Host    | The `wssp connect` daemon on your hosts | `/ws/sandbox-host` (outbound WSS)                  | `wssp_host_…` (dashboard token) or `wssp_device_…` (device login)   |
+| Plane   | Who                                      | Endpoint                                           | Credential                                                          |
+| ------- | ---------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- |
+| Browser | You, in the dashboard                    | `/rpc`, `/api/dashboard/…`, the terminal WebSocket | Better Auth cookie session, CSRF, required-2FA policy               |
+| SDK     | Your programs                            | `/v1/…`                                            | `Authorization: Bearer wssp_sdk_…`                                  |
+| MCP     | Your agents                              | `/mcp`                                             | `wssp_agent_…` bearer token or OAuth access token backed by a grant |
+| Host    | The `wssp host run` daemon on your hosts | `/ws/sandbox-host` (outbound WSS)                  | `wssp_host_…` (dashboard token) or `wssp_device_…` (device login)   |
 
 ## Browser plane
 
@@ -116,18 +116,18 @@ blanket restriction on SDK host execution. Browser terminals remain session-only
 - The daemon connects **outbound**; hosts need no inbound ports. HTTPS/WSS is
   required except for explicit loopback development origins, and
   credential-bearing requests never follow redirects.
-- A **device credential** (`wssp_device_…`) comes from `wssp login`: the
+- A **device credential** (`wssp_device_…`) comes from `wssp host enroll`: the
   daemon prints a verification URL and code, and you approve it in the
   dashboard (verified email and 2FA required). It is bound to one host slug and
   does not expire; revoke it on the **Host credentials** page.
 - A **host token** (`wssp_host_…`) is minted on the **Host credentials** page,
   shown once, may expire, and is read by the daemon from an environment
-  variable you name (`wssp token login <ENV_VAR>`), never from a flag or the
+  variable you name (`wssp host enroll --token-env <ENV_VAR>`), never from a flag or the
   config file.
 - The server rechecks the credential, the owner's ban/2FA/deletion state and
   host ownership at hello, on every heartbeat and dispatch, and on every
   upload, stdin and download chunk. A revoked or expired credential, a ban or
-  an owner deletion closes the connection with **4003**; `wssp connect` exits
+  an owner deletion closes the connection with **4003**; `wssp host run` exits
   with code **4** and does not reconnect.
 - The host plane carries terminal bytes, but a host credential can never open
   a browser terminal, call `/v1` or `/rpc`.
@@ -155,8 +155,8 @@ subprotocol carrying a machine-credential prefix before it reads the cookie
 - **Host token:** mint a new token, update the environment variable the daemon
   reads, restart the daemon, then revoke the old token (its live connection
   closes with 4003).
-- **Device credential:** run `wssp logout` then `wssp login --slug <slug>` on
-  the host, and revoke the old credential in the dashboard. `wssp logout` only
+- **Device credential:** run `wssp host logout` then `wssp host enroll --slug <slug>` on
+  the host, and revoke the old credential in the dashboard. `wssp host logout` only
   removes local state; it does not revoke anything server-side.
 - **`BETTER_AUTH_SECRET`:** rotating it invalidates every session **and every
   product credential** (host tokens, device credentials, SDK keys, agent tokens). Treat it as

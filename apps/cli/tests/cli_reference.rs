@@ -59,7 +59,7 @@ fn about(command: &Command) -> String {
 }
 
 /// Arguments whose clap default is computed per target or from the
-/// environment (`connect --runtime`: Incus on Linux unless `WSSP_RUNTIME=fake`,
+/// environment (`host run --runtime`: Incus on Linux unless `WSSP_RUNTIME=fake`,
 /// fake elsewhere).
 const TARGET_DEPENDENT_DEFAULTS: &[&str] = &["runtime"];
 
@@ -387,7 +387,7 @@ fn invocations(line: &str) -> Vec<Vec<&str>> {
             }
             continue;
         }
-        // `WSSP_RUNTIME=fake wssp connect`: skip leading env assignments.
+        // `WSSP_RUNTIME=fake wssp host run`: skip leading env assignments.
         let mut start = index;
         while start > 0 && is_env_assignment(tokens[start - 1]) {
             start -= 1;
@@ -441,17 +441,17 @@ fn invocation_checker_rejects_unknown_commands_and_flags() {
             .flat_map(|tokens| check_invocation(&root, &tokens))
             .collect::<Vec<_>>()
     };
-    assert!(check("wssp connect --server https://x --host-id h").is_empty());
-    assert!(check("cargo run -p wssp -- config --json show").is_empty());
-    assert!(check("wssp token login WSSP_HOST_TOKEN").is_empty());
+    assert!(check("wssp host run --server https://x --host-id h").is_empty());
+    assert!(check("cargo run -p wssp -- host config --json show").is_empty());
+    assert!(check("wssp host enroll --token-env WSSP_HOST_TOKEN").is_empty());
     assert!(check("brew install flycockpit/tap/wssp").is_empty());
-    assert!(check("WSSP_RUNTIME=fake wssp connect --runtime fake").is_empty());
+    assert!(check("WSSP_RUNTIME=fake wssp host run --runtime fake").is_empty());
     assert_eq!(
-        check("WSSP_RUNTIME=fake WSSP_LOG=debug wssp connect --nope").len(),
+        check("WSSP_RUNTIME=fake WSSP_LOG=debug wssp host run --nope").len(),
         1
     );
-    assert_eq!(check("wssp connect --no-such-flag").len(), 1);
+    assert_eq!(check("wssp host run --no-such-flag").len(), 1);
     assert_eq!(check("wssp deploy").len(), 1);
-    assert_eq!(check("wssp config frobnicate").len(), 1);
-    assert_eq!(check("cargo run -p wssp -- drain --wait").len(), 1);
+    assert_eq!(check("wssp host config frobnicate").len(), 1);
+    assert_eq!(check("cargo run -p wssp -- host drain --wait").len(), 1);
 }

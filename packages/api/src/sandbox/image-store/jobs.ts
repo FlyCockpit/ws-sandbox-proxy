@@ -148,7 +148,7 @@ export type ReleasableOriginImage = {
  * it is STORED, which never happens there): a pinned `captured` copy that
  * nothing references any more (its revisions retired or never created, see
  * `originImageReferenced`) is released, so the host unpins it and its own
- * GC or `wssp images prune` can evict it. A copy any live revision uses is
+ * GC or `wssp host images prune` can evict it. A copy any live revision uses is
  * never released, so the only copy of a live revision always stays pinned.
  * One page per run from a durable rotating cursor (connected hosts only);
  * a release is re-sent at most every RELEASE_RETRY_MS (`releaseSentAt`)

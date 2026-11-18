@@ -100,7 +100,7 @@ live, non-impersonated browser session can choose **Allow again** to lift a veto
 the node must be connected and its live report at the current epoch must say
 that setting is off. An offline lower or failed node save cannot be undone by
 lifting the veto. Turn it off at the node first with
-`wssp config set-agent-host-commands off` or `wssp config set-host-terminal off`.
+`wssp host config set-agent-host-commands off` or `wssp host config set-host-terminal off`.
 The lift is audited as PERSON/POLICY_VETO_LIFT and never enables a node setting.
 After lowering, the setting stays off until someone raises it locally. `host.policy.lower` persists off, reports the new policy and
 acknowledges it. Lowering agent access cancels in-flight host commands and

@@ -2,12 +2,12 @@
   "$schema": "https://turbo.build/schema.json",
   "extends": ["//"],
   "tasks": {
-    // locale-parity.test.ts checks hint copy against the real `wssp connect`
+    // locale-parity.test.ts checks hint copy against the real `wssp host run`
     // flags and guide labels against the en-US bundle.
     "test": {
       "inputs": [
         "$TURBO_EXTENDS$",
-        "$TURBO_ROOT$/apps/cli/src/commands/connect.rs",
+        "$TURBO_ROOT$/apps/cli/src/commands/run.rs",
         "$TURBO_ROOT$/docs/**/*.md"
       ]
     }
