@@ -1399,7 +1399,8 @@ export const JSON_ROUTES = {
   getSandboxTunnel: {
     method: "get",
     path: "/v1/sandboxes/{id}/tunnel",
-    summary: "Read the sandbox's preview tunnel: exposed ports, state and preview origins.",
+    summary:
+      "Read the sandbox's preview tunnel: exposed ports, state and preview origins. A closed tunnel reads `closed` with its `cleanup` (`pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped, then `done`).",
     feature: "sandboxes.tunnel",
     scopes: ["sandboxes:tunnel"],
     params: resourceIdParamsSchema,
@@ -1434,7 +1435,8 @@ export const JSON_ROUTES = {
   closeSandboxTunnel: {
     method: "delete",
     path: "/v1/sandboxes/{id}/tunnel",
-    summary: "Close the sandbox's preview tunnel: the tunnel and every link to it stop working.",
+    summary:
+      "Close the sandbox's preview tunnel: the tunnel and every link to it stop working. Answers the closed tunnel (also when it was closed already); `cleanup` stays `pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped (poll the read until `done`).",
     feature: "sandboxes.tunnel",
     scopes: ["sandboxes:tunnel"],
     successStatus: 200,

@@ -186,6 +186,12 @@ export const adminTunnelRouter = {
           WHERE id = ${TUNNEL_CONFIG_ID} FOR UPDATE`;
         const rows = await context.adminTx.sandboxTunnel.count({ where: TUNNEL_OWED });
         const closedAt = new Date();
+        // Remote state forgotten without the tunnel server's confirmation:
+        // such a row's clean-up is never reported done (until re-exposed).
+        await context.adminTx.sandboxTunnel.updateMany({
+          where: { serverKey: { not: null } },
+          data: { cleanupForgottenAt: closedAt },
+        });
         await context.adminTx.sandboxTunnel.updateMany({
           where: TUNNEL_OWED,
           data: {

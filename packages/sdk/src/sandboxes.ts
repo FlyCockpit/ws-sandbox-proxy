@@ -193,8 +193,15 @@ export type ConnectResult = Sandbox;
 export type SandboxTunnelApi = {
   /** Expose `ports` (default: every declared port). Idempotent. */
   expose(input?: ExposeTunnelBody, options?: WaitOptions): Promise<SandboxTunnelDto>;
+  /** The tunnel, also once closed (`state: "closed"` with its `cleanup`). */
   get(options?: WaitOptions): Promise<SandboxTunnelDto>;
-  /** Delete the tunnel; every link to it stops working. */
+  /**
+   * Delete the tunnel; every link to it stops working. Answers the closed
+   * tunnel (also when already closed): `cleanup` is `pending` until the
+   * tunnel server confirmed the deletion and the host confirmed its client
+   * stopped. Poll `get()` until `cleanup === "done"` before treating access
+   * granted through the tunnel as cut.
+   */
   close(options?: WaitOptions): Promise<SandboxTunnelDto>;
   /** A short-lived (single-use by default) access URL for one exposed port. Treat it as a secret. */
   link(input: CreateTunnelLinkBody, options?: WaitOptions): Promise<TunnelLinkDto>;

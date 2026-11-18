@@ -49,7 +49,21 @@ export const TUNNEL_REFUSAL_REASONS = [
 export const tunnelRefusalReasonSchema = z.enum(TUNNEL_REFUSAL_REASONS);
 export type TunnelRefusalReason = z.infer<typeof tunnelRefusalReasonSchema>;
 
-export const TUNNEL_STATES = ["pending", "connecting", "connected", "suspended", "error"] as const;
+export const TUNNEL_STATES = [
+  "pending",
+  "connecting",
+  "connected",
+  "suspended",
+  "error",
+  "closed",
+] as const;
+/**
+ * A closed tunnel's clean-up (docs/guide/tunnels.md#closing-and-cleanup):
+ * `done` once the tunnel server confirmed every tunnel of it deleted AND
+ * every host that ran its client confirmed the client stopped; `pending`
+ * until then.
+ */
+export const TUNNEL_CLEANUP_STATES = ["pending", "done"] as const;
 export const TUNNEL_ERRORS = [
   "tunnel_gone",
   "replaced",
@@ -113,7 +127,8 @@ export const sandboxTunnelSchema = z
     /**
      * `pending` (waiting for a running sandbox on a connected host),
      * `connecting`, `connected`, `suspended` (stopped, offloaded or host away:
-     * no tunnel exists until it runs again) or `error` (`lastError`).
+     * no tunnel exists until it runs again), `error` (`lastError`) or
+     * `closed` (closed by its owner; see `cleanup`).
      */
     state: z.enum(TUNNEL_STATES),
     lastError: z.enum(TUNNEL_ERRORS).nullable(),
@@ -122,6 +137,13 @@ export const sandboxTunnelSchema = z
       .array(z.object({ port: tunnelPortSchema, url: z.string() }).strict())
       .max(TUNNEL_MAX_PORTS),
     connectedAt: z.iso.datetime().nullable(),
+    /**
+     * Only for a `closed` tunnel (null otherwise): `pending` until the
+     * tunnel server confirmed every tunnel of it deleted and every host that
+     * ran its client confirmed the client stopped, then `done`. Until `done`,
+     * treat access granted through the tunnel as possibly still live.
+     */
+    cleanup: z.enum(TUNNEL_CLEANUP_STATES).nullable(),
     updatedAt: z.iso.datetime(),
   })
   .strict();

@@ -216,7 +216,9 @@ pub(crate) struct TunnelManager {
 
 enum Cmd {
     Apply(TunnelApplyV11),
-    Clear(TunnelClearV11),
+    /// A clear; `true` when it fences an apply refused for a full queue (the
+    /// refusal is reported once the older client stopped).
+    Clear(TunnelClearV11, bool),
     ReportAll,
 }
 
@@ -225,7 +227,7 @@ impl Cmd {
     fn fence(&self) -> Option<(&str, u64)> {
         match self {
             Cmd::Apply(apply) => Some((&apply.sandbox_id, apply.generation)),
-            Cmd::Clear(clear) => Some((&clear.sandbox_id, clear.generation)),
+            Cmd::Clear(clear, _) => Some((&clear.sandbox_id, clear.generation)),
             Cmd::ReportAll => None,
         }
     }
@@ -383,12 +385,12 @@ impl TunnelManager {
         let mut command = command;
         match command.fence() {
             Some((sandbox_id, generation)) => {
-                let is_clear = matches!(command, Cmd::Clear(_));
+                let is_clear = matches!(command, Cmd::Clear(..));
                 let superseded = commands.iter().any(|queued| {
                     queued.fence().is_some_and(|(id, queued_generation)| {
                         id == sandbox_id
                             && queued_generation >= generation
-                            && (!is_clear || matches!(queued, Cmd::Clear(_)))
+                            && (!is_clear || matches!(queued, Cmd::Clear(..)))
                     })
                 });
                 if superseded {
@@ -411,12 +413,16 @@ impl TunnelManager {
             && let Cmd::Apply(apply) = &command
         {
             tracing::warn!(sandbox = %apply.sandbox_id, generation = apply.generation, "tunnel apply refused: too many queued frames");
-            self.refuse(&apply.sandbox_id, apply.generation);
-            // Still fences: the older client stops and the floor moves.
-            command = Cmd::Clear(TunnelClearV11 {
-                sandbox_id: apply.sandbox_id.clone(),
-                generation: apply.generation,
-            });
+            // Still fences: the older client stops and the floor moves. The
+            // refusal is reported only after that stop: a report at this
+            // generation tells the control plane every older client is gone.
+            command = Cmd::Clear(
+                TunnelClearV11 {
+                    sandbox_id: apply.sandbox_id.clone(),
+                    generation: apply.generation,
+                },
+                true,
+            );
         }
         commands.push_back(command);
         self.wake.notify_all();
@@ -437,7 +443,7 @@ impl TunnelManager {
 
     /// `tunnel.clear`: queued; the manager's thread stops the client.
     pub(crate) fn clear(&self, clear: &TunnelClearV11) {
-        self.enqueue(Cmd::Clear(clear.clone()));
+        self.enqueue(Cmd::Clear(clear.clone(), false));
     }
 
     fn run_commands(&self) {
@@ -449,7 +455,7 @@ impl TunnelManager {
                 .pop_front();
             match next {
                 Some(Cmd::Apply(apply)) => self.apply_now(apply),
-                Some(Cmd::Clear(clear)) => self.clear_now(&clear),
+                Some(Cmd::Clear(clear, refused)) => self.clear_now(&clear, refused),
                 Some(Cmd::ReportAll) => self.report_all_now(),
                 None => return,
             }
@@ -556,28 +562,39 @@ impl TunnelManager {
         entries.insert(apply.sandbox_id, entry);
     }
 
-    /// Stop the client of any generation up to this one.
-    fn clear_now(&self, clear: &TunnelClearV11) {
+    /// Stop the client of any generation up to this one, then confirm it
+    /// (`stopped` at this generation), also when the clear is older than the
+    /// newest frame (the control plane re-sends a clear until it hears that
+    /// confirmation; a client applied above it stands).
+    fn clear_now(&self, clear: &TunnelClearV11, refused: bool) {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         {
             // Recorded whatever the runtime or the lease journal says right
             // now; dropped only at a confirmed `network_removed`.
             let mut floors = self.floors.lock().unwrap_or_else(|e| e.into_inner());
             let floor = floors.entry(clear.sandbox_id.clone()).or_insert(0);
-            if *floor > clear.generation {
-                return;
+            // Every apply up to this generation is now stale (a higher floor
+            // stays).
+            if *floor < clear.generation {
+                *floor = clear.generation;
             }
-            // Every apply up to this generation is now stale.
-            *floor = clear.generation;
         }
-        // Reaped under the lock: a teardown hook waiting for it cannot
-        // release the network while this client still runs.
-        if let Some(mut entry) = entries.remove(&clear.sandbox_id) {
-            stop_child(&mut entry.child);
-            tracing::info!(sandbox = %clear.sandbox_id, generation = entry.generation, "tunnel client stopped");
+        let newer = entries
+            .get(&clear.sandbox_id)
+            .is_some_and(|entry| entry.generation > clear.generation);
+        if !newer {
+            // Reaped under the lock: a teardown hook waiting for it cannot
+            // release the network while this client still runs.
+            if let Some(mut entry) = entries.remove(&clear.sandbox_id) {
+                stop_child(&mut entry.child);
+                tracing::info!(sandbox = %clear.sandbox_id, generation = entry.generation, "tunnel client stopped");
+            }
+            let _ = std::fs::remove_dir_all(self.dir(&clear.sandbox_id));
         }
-        let _ = std::fs::remove_dir_all(self.dir(&clear.sandbox_id));
         drop(entries);
+        if refused {
+            self.refuse(&clear.sandbox_id, clear.generation);
+        }
         self.push(TunnelStatusV11 {
             sandbox_id: clear.sandbox_id.clone(),
             generation: clear.generation,

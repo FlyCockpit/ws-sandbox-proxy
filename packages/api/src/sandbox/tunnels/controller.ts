@@ -73,6 +73,9 @@ const PAGE = 500;
 const PORTS_RESEND_MS = 10_000;
 /** ... and after this when the host had no plan for it (or failed). */
 const PORTS_BACKOFF_MS = 30_000;
+/** A `tunnel.clear` for a client-stop obligation not confirmed yet is sent
+ * again after this (at once on a new connection). */
+const STOP_RESEND_MS = 10_000;
 
 type Tun = Pick<
   typeof tun,
@@ -156,6 +159,10 @@ export class TunnelController {
   >();
   /** Keyset cursor of the port-sync scan (each pass the next page, wrapping). */
   private portsCursor = "";
+  /** `tunnel.clear` sent per client-stop obligation (`sandbox\0host`). */
+  private stopsSent = new Map<string, { epoch: number; generation: number; at: number }>();
+  /** Keyset cursor of the client-stop scan (each pass the next page, wrapping). */
+  private stopsCursor: { sandboxId: string; hostId: string } | null = null;
   /** Where the turn-off's listing of a configuration's tunnels continues. */
   private drainFrom: { serverKey: string; cursor: string } | null = null;
 
@@ -220,6 +227,9 @@ export class TunnelController {
     }
     // Declared-port changes reach hosts whether or not a tunnel exists.
     await this.syncPorts().catch(() => console.error("[tunnels] port sync failed"));
+    // Hosts confirm their clients stopped whether or not tunnels are still
+    // configured (a remove-now leaves obligations behind too).
+    await this.syncClientStops().catch(() => console.error("[tunnels] client-stop sync failed"));
     let server: TunnelServer | null;
     try {
       server = await (this.deps.server ?? readTunnelServer)();
@@ -388,6 +398,97 @@ export class TunnelController {
     if (whole) {
       for (const id of this.portsSent.keys()) if (!live.has(id)) this.portsSent.delete(id);
     } else if (this.portsSent.size > 8 * PAGE) this.portsSent.clear();
+  }
+
+  /**
+   * Send `tunnel.clear` for every client-stop obligation
+   * (`sandbox_tunnel_client_stop`, recorded by the database whenever a
+   * tunnel row stops naming a host) whose host is registered here, at the
+   * obligation's own generation (never the row's current one: that could
+   * stop a client applied since), until the host confirms (`onStatus`).
+   * Bounded page, wrapping keyset cursor, throttled per obligation and
+   * connection. A session whose daemon runs no tunnel manager proves the
+   * host runs no client (the daemon's start stopped every earlier one), and
+   * a deleted host can never run one for wssp again nor confirm: both settle
+   * the obligation. `only` targets one sandbox right after its take-down.
+   */
+  private async syncClientStops(only?: string) {
+    const from = only ? null : this.stopsCursor;
+    const due = await prisma.sandboxTunnelClientStop.findMany({
+      where: only
+        ? { sandboxId: only }
+        : from
+          ? {
+              OR: [
+                { sandboxId: { gt: from.sandboxId } },
+                { sandboxId: from.sandboxId, hostId: { gt: from.hostId } },
+              ],
+            }
+          : {},
+      orderBy: [{ sandboxId: "asc" }, { hostId: "asc" }],
+      take: PAGE,
+      select: { sandboxId: true, hostId: true, generation: true },
+    });
+    if (!only) {
+      const last = due[due.length - 1];
+      this.stopsCursor =
+        due.length === PAGE && last ? { sandboxId: last.sandboxId, hostId: last.hostId } : null;
+    }
+    const whole = !only && from === null && due.length < PAGE;
+    if (due.length === 0) {
+      if (whole) this.stopsSent.clear();
+      return;
+    }
+    const hosts = new Set(
+      // pagination:audited — bounded by the hosts of the page's ≤PAGE obligations
+      (
+        await prisma.sandboxHost.findMany({
+          where: { id: { in: [...new Set(due.map((stop) => stop.hostId))] } },
+          select: { id: true },
+        })
+      ).map((host) => host.id),
+    );
+    const bridge = this.bridge();
+    const now = this.now();
+    const live = new Set<string>();
+    for (const stop of due) {
+      const key = `${stop.sandboxId}\0${stop.hostId}`;
+      const link = hosts.has(stop.hostId) ? (bridge?.link(stop.hostId) ?? null) : null;
+      if (!hosts.has(stop.hostId) || (link && !link.capable)) {
+        await this.settleClientStop(stop.sandboxId, stop.hostId, { lte: stop.generation });
+        continue;
+      }
+      live.add(key);
+      if (!link) continue;
+      const last = this.stopsSent.get(key);
+      if (
+        last &&
+        last.epoch === link.epoch &&
+        last.generation === stop.generation &&
+        now - last.at < STOP_RESEND_MS
+      )
+        continue;
+      if (
+        link.send({ type: "tunnel.clear", sandboxId: stop.sandboxId, generation: stop.generation })
+      )
+        this.stopsSent.set(key, { epoch: link.epoch, generation: stop.generation, at: now });
+    }
+    if (whole) {
+      for (const key of this.stopsSent.keys()) if (!live.has(key)) this.stopsSent.delete(key);
+    } else if (this.stopsSent.size > 8 * PAGE) this.stopsSent.clear();
+  }
+
+  /** The host confirmed (or cannot run) the client: its obligations up to
+   * the generation go. */
+  private async settleClientStop(
+    sandboxId: string,
+    hostId: string,
+    generation: { lte: number } | { lt: number },
+  ) {
+    const settled = await prisma.sandboxTunnelClientStop.deleteMany({
+      where: { sandboxId, hostId, generation },
+    });
+    if (settled.count > 0) this.stopsSent.delete(`${sandboxId}\0${hostId}`);
   }
 
   /** `tunnel.portsStatus` from a registered host session: an `applied`
@@ -571,8 +672,9 @@ export class TunnelController {
   /**
    * Delete the live tunnel and every other one labelled for the sandbox
    * (tunnel server first, with the row's own configuration, under the row's
-   * clean-up hold), tell the host, then record it: the row has no remote
-   * state left, so its key goes. The settle compare-and-sets (generation,
+   * clean-up hold), then record it: the row has no remote state left, so its
+   * key goes, and nor does it name a host any more (the database records
+   * that host's client-stop obligation, which `syncClientStops` delivers). The settle compare-and-sets (generation,
    * key) and, with remote state, this pass's hold: an expose, close or late
    * obligation meanwhile (each bumps the generation), an expired hold or a
    * remove-now makes it miss, and the hold is given back with every
@@ -599,10 +701,6 @@ export class TunnelController {
         throw error;
       }
     }
-    if (row.hostId && row.generation > 0)
-      this.bridge()
-        ?.link(row.hostId)
-        ?.send({ type: "tunnel.clear", sandboxId: row.sandboxId, generation: row.generation });
     this.applied.delete(row.sandboxId);
     const settle = async (tx: Prisma.TransactionClient) => {
       if (drain) await this.requireDraining(tx, server);
@@ -646,6 +744,9 @@ export class TunnelController {
       if (hold) await this.releaseCleanup(row, hold);
       throw error;
     }
+    // The settle forgot the row's host (the trigger recorded its client-stop
+    // obligation): tell it now rather than on the next pass.
+    if (row.hostId) await this.syncClientStops(row.sandboxId).catch(() => undefined);
   }
 
   private async converge(
@@ -1129,6 +1230,16 @@ export class TunnelController {
 
   /** `tunnel.status` from a registered host session. */
   async onStatus(hostId: string, epoch: number, status: TunnelStatusV11): Promise<void> {
+    // A host runs at most one client per sandbox and refuses an apply at or
+    // below its floor: `stopped` at generation G proves no client of
+    // generation ≤ G runs; any other report proves only that every client
+    // below its own generation was replaced (a client still running reports
+    // its own generation, so it never settles its own obligation).
+    await this.settleClientStop(
+      status.sandboxId,
+      hostId,
+      status.state === "stopped" ? { lte: status.generation } : { lt: status.generation },
+    );
     const row = await prisma.sandboxTunnel.findFirst({
       where: { sandboxId: status.sandboxId, hostId, generation: status.generation },
       select: sandboxTunnelSelect,
@@ -1225,6 +1336,8 @@ export class TunnelController {
     this.replaced.clear();
     this.gone.clear();
     this.portsSent.clear();
+    this.stopsSent.clear();
+    this.stopsCursor = null;
     this.drainFrom = null;
   }
 }

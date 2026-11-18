@@ -16,6 +16,7 @@ export const sandboxTunnelSelect = {
   closedAt: true,
   sweepLabel: true,
   serverKey: true,
+  cleanupForgottenAt: true,
   updatedAt: true,
 } satisfies Prisma.SandboxTunnelSelect;
 export type SandboxTunnelRow = Prisma.SandboxTunnelGetPayload<{
@@ -59,19 +60,68 @@ export function tunnelLabel(serverKey: string, sandboxId: string) {
   return `wssp:${serverKey}:${sandboxId}`;
 }
 
-export function toSandboxTunnelDto(row: SandboxTunnelRow): SandboxTunnelDto {
+/**
+ * A closed row's clean-up is done once nothing of it can serve a visitor:
+ * the tunnel server confirmed every tunnel of it deleted (no remote state,
+ * none forgotten by a remove-now) and no host may still run its client (no
+ * host recorded, no `sandbox_tunnel_client_stop` obligation left).
+ */
+function tunnelCleanupDone(
+  row: Pick<SandboxTunnelRow, "serverKey" | "hostId" | "cleanupForgottenAt">,
+  clientStopsLeft: number,
+): boolean {
+  return (
+    row.serverKey === null &&
+    row.hostId === null &&
+    row.cleanupForgottenAt === null &&
+    clientStopsLeft === 0
+  );
+}
+
+/** `clientStopsLeft`: the row's `sandbox_tunnel_client_stop` count (only
+ * read for a closed row; pass 0 for an open one). */
+export function toSandboxTunnelDto(
+  row: SandboxTunnelRow,
+  clientStopsLeft: number,
+): SandboxTunnelDto {
+  const closed = row.closedAt !== null;
   const lastError = (TUNNEL_ERRORS as readonly string[]).includes(row.lastError ?? "")
     ? (row.lastError as SandboxTunnelDto["lastError"])
     : null;
   return {
     sandboxId: row.sandboxId,
     ports: [...row.ports],
-    state: row.state.toLowerCase() as SandboxTunnelDto["state"],
-    lastError: row.state === "ERROR" ? lastError : null,
-    urls: row.tunTunnelId ? previewUrls(row.hostTemplate, row.ports) : [],
-    connectedAt: row.connectedAt?.toISOString() ?? null,
+    state: closed ? "closed" : (row.state.toLowerCase() as SandboxTunnelDto["state"]),
+    lastError: !closed && row.state === "ERROR" ? lastError : null,
+    urls: !closed && row.tunTunnelId ? previewUrls(row.hostTemplate, row.ports) : [],
+    connectedAt: closed ? null : (row.connectedAt?.toISOString() ?? null),
+    cleanup: closed ? (tunnelCleanupDone(row, clientStopsLeft) ? "done" : "pending") : null,
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/**
+ * The DTO of a sandbox's tunnel row as stored now, or null. ONE statement
+ * (one snapshot) reads the row and its client-stop obligations together: a
+ * row read and a separate count could pair a stale "closed, confirmed
+ * deleted" row with obligations settled after a later re-expose and close,
+ * and report `done` for a tunnel that still exists.
+ */
+export async function readSandboxTunnelDto(
+  client: Pick<Prisma.TransactionClient, "$queryRaw">,
+  sandboxId: string,
+  userId: string,
+): Promise<SandboxTunnelDto | null> {
+  const [row] = await client.$queryRaw<(SandboxTunnelRow & { clientStops: number })[]>`
+    SELECT t."sandboxId", t."userId", t.ports, t.state::text AS state, t."lastError",
+           t."tunTunnelId", t."hostTemplate", t."hostId", t.generation, t."connectedAt",
+           t."closedAt", t."sweepLabel", t."serverKey", t."cleanupForgottenAt", t."updatedAt",
+           (SELECT count(*)::int FROM sandbox_tunnel_client_stop s
+             WHERE s."sandboxId" = t."sandboxId") AS "clientStops"
+    FROM sandbox_tunnel t
+    WHERE t."sandboxId" = ${sandboxId} AND t."userId" = ${userId}`;
+  if (!row) return null;
+  return toSandboxTunnelDto(row, row.closedAt === null ? 0 : row.clientStops);
 }
 
 export async function recordTunnelEvent(

@@ -157,8 +157,21 @@ mod tests {
         assert!(!requested(&["host", "images", "prune", "--all", "--help"]));
         assert!(!requested(&["host", "images", "--all", "--help"]));
         assert!(!requested(&["--all", "--help"]));
-        assert!(requested(&["host", "--log-format", "json", "--help", "--all"]));
+        assert!(requested(&[
+            "host",
+            "--log-format",
+            "json",
+            "--help",
+            "--all"
+        ]));
         assert!(requested(&["host", "--log-format=json", "--all", "--help"]));
-        assert!(!requested(&["host", "--log-format", "json", "run", "--all", "--help"]));
+        assert!(!requested(&[
+            "host",
+            "--log-format",
+            "json",
+            "run",
+            "--all",
+            "--help"
+        ]));
     }
 }

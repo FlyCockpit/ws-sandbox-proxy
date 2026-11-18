@@ -54,41 +54,45 @@ enum SandboxTunnelState {
 /// remote-cleanup obligation and must outlive both; the controller deletes it
 /// only after the tunnel server confirmed every tunnel labelled for it gone.
 model SandboxTunnel {
-  sandboxId     String             @id
-  userId        String
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @default(now()) @updatedAt
-  ports         Int[]
-  state         SandboxTunnelState @default(PENDING)
+  sandboxId          String             @id
+  userId             String
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @default(now()) @updatedAt
+  ports              Int[]
+  state              SandboxTunnelState @default(PENDING)
   /// `tunnel_gone` | `replaced` | `client_failed` | `refused` | `quota` | `server_unavailable` | `host_full` | `not_shared`.
-  lastError     String?
+  lastError          String?
   /// The tunnel server's id of the live tunnel, when one exists.
-  tunTunnelId   String?
+  tunTunnelId        String?
   /// `{port}-<id>.<zone>` from the tunnel server.
-  hostTemplate  String?
+  hostTemplate       String?
   /// The host the live tunnel was last applied to.
-  hostId        String?
+  hostId             String?
   /// Strictly increasing per apply; the host ignores older frames.
-  generation    Int                @default(0)
-  appliedAt     DateTime?
-  connectedAt   DateTime?
+  generation         Int                @default(0)
+  appliedAt          DateTime?
+  connectedAt        DateTime?
   /// Closed by its owner: kept (with its generation, so a later expose
   /// never reuses one a host already saw) until the sandbox is deleted; the
   /// controller deletes its tunnel.
-  closedAt      DateTime?
+  closedAt           DateTime?
   /// A tunnel this row's controller made may exist without being recorded
   /// (a lost save): sweep the sandbox's label on the next pass.
-  sweepLabel    Boolean            @default(false)
+  sweepLabel         Boolean            @default(false)
   /// A tunnel-server create or clean-up is in flight until this time (the
   /// row's hold): no other create, rotation or clean-up of the row meanwhile,
   /// and the row is not retired; an expired hold becomes a label sweep.
-  creatingUntil DateTime?
+  creatingUntil      DateTime?
   /// The `TunnelServerConfig.serverKey` this row's remote state (tunnel id,
   /// sweep, hold) was made with; null when it has none. Set only while that
   /// configuration is current; it cannot go while a row references it, so
   /// every cleanup and settlement uses (and compare-and-sets) this identity.
   /// A key with no tunnel id owes a label sweep.
-  serverKey     String?
+  serverKey          String?
+  /// The admin's remove-now forgot this row's remote state without the
+  /// tunnel server confirming its deletion: its clean-up is never reported
+  /// done (cleared by the next expose).
+  cleanupForgottenAt DateTime?
 
   // @check sandbox_tunnel_ports: cardinality(ports) >= 1 AND cardinality(ports) <= 8
   // @check sandbox_tunnel_generation: generation >= 0
@@ -98,6 +102,25 @@ model SandboxTunnel {
   @@index([tunTunnelId])
   @@index([serverKey])
   @@map("sandbox_tunnel")
+}
+
+/// A host that may still run a tunnel client of this sandbox, at a generation
+/// up to `generation`, and must confirm it runs none (docs/guide/tunnels.md#closing-and-cleanup).
+/// Written only by the `wssp_tunnel_client_stop` trigger whenever a tunnel
+/// row's `hostId` changes away from a host (and deleted with the row); the
+/// controller sends that host `tunnel.clear` at exactly `generation` until
+/// it reports the client stopped (or its session shows it runs no client
+/// manager, or the host is deleted). A closed tunnel's clean-up is done only
+/// once none is left. No foreign key, like `SandboxTunnel`.
+model SandboxTunnelClientStop {
+  sandboxId  String
+  hostId     String
+  generation Int
+  createdAt  DateTime @default(now())
+
+  @@id([sandboxId, hostId])
+  @@index([hostId])
+  @@map("sandbox_tunnel_client_stop")
 }
 
 /// Tunnel audit (bounded by the 90-day prune in the tunnel controller):

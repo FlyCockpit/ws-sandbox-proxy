@@ -2143,8 +2143,19 @@ CREATE TABLE "sandbox_tunnel" (
     "sweepLabel" BOOLEAN NOT NULL DEFAULT false,
     "creatingUntil" TIMESTAMP(3),
     "serverKey" TEXT,
+    "cleanupForgottenAt" TIMESTAMP(3),
 
     CONSTRAINT "sandbox_tunnel_pkey" PRIMARY KEY ("sandboxId")
+);
+
+-- CreateTable
+CREATE TABLE "sandbox_tunnel_client_stop" (
+    "sandboxId" TEXT NOT NULL,
+    "hostId" TEXT NOT NULL,
+    "generation" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "sandbox_tunnel_client_stop_pkey" PRIMARY KEY ("sandboxId","hostId")
 );
 
 -- CreateTable
@@ -3132,6 +3143,9 @@ CREATE INDEX "sandbox_tunnel_serverKey_idx" ON "sandbox_tunnel"("serverKey");
 CREATE UNIQUE INDEX "sandbox_tunnel_sandboxId_userId_key" ON "sandbox_tunnel"("sandboxId", "userId");
 
 -- CreateIndex
+CREATE INDEX "sandbox_tunnel_client_stop_hostId_idx" ON "sandbox_tunnel_client_stop"("hostId");
+
+-- CreateIndex
 CREATE INDEX "sandbox_tunnel_event_createdAt_idx" ON "sandbox_tunnel_event"("createdAt");
 
 -- CreateIndex
@@ -4030,6 +4044,26 @@ BEGIN
 END $wssp$;
 
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
+CREATE OR REPLACE FUNCTION public.wssp_tunnel_client_stop() RETURNS trigger LANGUAGE plpgsql AS $wssp$
+BEGIN
+  -- A host a tunnel row stops naming may still run a client of it: record
+  -- that it must confirm the client stopped, at the generation the row now
+  -- has (the controller's tunnel.clear carries exactly it). The obligations
+  -- go with the row (its sandbox is deleted and its tunnels confirmed gone).
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM sandbox_tunnel_client_stop WHERE "sandboxId" = OLD."sandboxId";
+    RETURN NULL;
+  END IF;
+  IF OLD."hostId" IS NOT NULL AND NEW."hostId" IS DISTINCT FROM OLD."hostId" THEN
+    INSERT INTO sandbox_tunnel_client_stop ("sandboxId", "hostId", generation)
+    VALUES (OLD."sandboxId", OLD."hostId", NEW.generation)
+    ON CONFLICT ("sandboxId", "hostId")
+    DO UPDATE SET generation = GREATEST(sandbox_tunnel_client_stop.generation, EXCLUDED.generation);
+  END IF;
+  RETURN NULL;
+END $wssp$;
+
+-- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_share_guard BEFORE INSERT OR UPDATE OR DELETE ON share FOR EACH ROW EXECUTE FUNCTION public.wssp_share_guard();
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_pool_guard BEFORE UPDATE OR DELETE ON sandbox_pool FOR EACH ROW EXECUTE FUNCTION public.wssp_pool_guard();
@@ -4045,6 +4079,8 @@ CREATE TRIGGER wssp_webhook_operation_event AFTER INSERT OR UPDATE OF state ON s
 CREATE TRIGGER wssp_webhook_credential_event AFTER INSERT ON credential_event FOR EACH ROW EXECUTE FUNCTION public.wssp_webhook_credential_event();
 -- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
 CREATE TRIGGER wssp_sandbox_stopped_at BEFORE UPDATE OF state ON sandbox_instance FOR EACH ROW EXECUTE FUNCTION public.wssp_sandbox_stopped_at();
+-- wssp:reviewed preserve existing sharing and webhook enforcement in the fresh baseline
+CREATE TRIGGER wssp_tunnel_client_stop AFTER UPDATE OR DELETE ON sandbox_tunnel FOR EACH ROW EXECUTE FUNCTION public.wssp_tunnel_client_stop();
 -- wssp:initial-hardening-end
 
 -- wssp:commit-marker (lets the runner prove this transaction committed; keep it last)

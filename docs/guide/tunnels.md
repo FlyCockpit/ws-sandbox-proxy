@@ -41,8 +41,11 @@ exactly as before: `GET /v1/capabilities` reports `ports.tunnel: false` and no
    server's gate turns it into a cookie for that tunnel; a second use of a
    single-use link is refused (401).
 5. **Read and close.** `GET` shows `state` (`pending`, `connecting`,
-   `connected`, `suspended`, `error` with `lastError`) and the preview
-   origins; `DELETE` deletes the tunnel, and every link to it stops working.
+   `connected`, `suspended`, `error` with `lastError`, or `closed`) and the
+   preview origins; `DELETE` deletes the tunnel, and every link to it stops
+   working. A closed tunnel reports its `cleanup`: `pending` until access
+   through it is confirmed cut, then `done`. See
+   [Closing and cleanup](#closing-and-cleanup).
 
 6. **Change ports at runtime.** `POST /v1/sandboxes/{id}/tunnel/ports`
    `{add?, remove?}` (scope `sandboxes:tunnel`; also the MCP tool
@@ -85,6 +88,43 @@ The SDK wraps these as `sandbox.tunnel.expose()`, `.get()`, `.close()`,
   links). Removing the last exposed port closes the tunnel. The host hears
   of the removal only after the old tunnel is deleted (or its clean-up
   hold has ended).
+
+## Closing and cleanup
+
+`DELETE /v1/sandboxes/{id}/tunnel` answers the closed tunnel at once:
+`state: "closed"` and `cleanup: "pending"`. `GET` keeps answering it (until
+the sandbox is deleted), and so does a repeated `DELETE`. `cleanup` turns
+`done` only when both of these are confirmed:
+
+- **The tunnel server deleted the tunnel** (and every other tunnel labelled
+  for the sandbox). That deletion cuts every client and link, including
+  in-flight responses and WebSockets. If the tunnel server cannot be
+  reached, the controller retries every pass until it confirms.
+- **Every host that may still run the tunnel's client confirmed it
+  stopped.** Whenever a tunnel record stops naming a host (a close, a stop, a
+  port change, the host away), the database records that host's obligation
+  (`sandbox_tunnel_client_stop`, written by a trigger, so no code path can
+  skip it). The server sends that host `tunnel.clear` at the recorded
+  generation, again every 10 s and at once after a reconnect, until the host
+  reports the client stopped. A client that is still running reports its own
+  generation, which never counts as a stop. Two other facts also settle an
+  obligation: the host reconnects without a tunnel client configured (the
+  daemon stops every leftover client when it starts), or the host is deleted
+  (it can never run a client for wssp again).
+
+A host that is merely offline keeps the clean-up `pending` until it is back.
+After the admin's **remove the setting now**, tunnels on the tunnel server
+were forgotten without confirmation, so those tunnels never report `done`
+(until exposed again). While tunnels are turned off, tunnel calls answer
+`tunnel_off`. When a sandbox is destroyed its tunnel record goes once the
+tunnel server confirmed the deletion. Its `GET` then answers 404, and the
+destroy itself tears the client down with the sandbox's network.
+
+**Integrators** (for example a workspace app that removes a member): close
+(or replace) the tunnel, then keep treating access as live until `GET`
+reports `cleanup: "done"`. A re-expose of the same sandbox is accepted once
+the tunnel server confirmed the deletion, even while a host's stop is still
+owed. That host obligation is kept and counts again at the next close.
 
 ## Lifecycle
 
@@ -129,7 +169,8 @@ The SDK wraps these as `sandbox.tunnel.expose()`, `.get()`, `.close()`,
 5. **Remove the setting now** is the last resort when the tunnel server is
    gone for good or no configured data key opens the stored credential any
    more: wssp forgets every tunnel at once; tunnels still on the tunnel
-   server stop when their 7-day lifetime ends.
+   server stop when their 7-day lifetime ends. Their closed records never
+   report `cleanup: "done"` (nothing confirmed the deletion).
 
 The same actions are the admin procedures `adminTunnel.get`, `adminTunnel.set`
 and `adminTunnel.clear`.
@@ -189,6 +230,8 @@ server before the node daemons.
   is held no other process creates, rotates or cleans up that sandbox's
   tunnels, so a clean-up from an old view can never delete a tunnel the
   owner exposed again since.
+- `sandbox_tunnel_client_stop` holds one row per (sandbox, host) whose
+  client stop is not confirmed yet; it goes with the tunnel record.
 - `sandbox_tunnel_event` records config changes, enable/disable, port
   changes, tunnel create/delete and link mints (with tunnel-server ids only: never a token or
   link URL), kept 90 days.

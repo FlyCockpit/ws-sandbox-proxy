@@ -157,7 +157,13 @@ it("remove now closes every owed row (generation kept rising) instead of deletin
     tunnelsLeft: 0,
   });
   expect(db.sandboxTunnel.deleteMany).not.toHaveBeenCalled();
-  expect(db.sandboxTunnel.updateMany).toHaveBeenCalledWith({
+  // Rows whose remote state is forgotten unconfirmed never report their
+  // clean-up done, and are marked before their key goes.
+  expect(db.sandboxTunnel.updateMany).toHaveBeenNthCalledWith(1, {
+    where: { serverKey: { not: null } },
+    data: { cleanupForgottenAt: expect.any(Date) },
+  });
+  expect(db.sandboxTunnel.updateMany).toHaveBeenNthCalledWith(2, {
     where: TUNNEL_OWED,
     data: expect.objectContaining({
       closedAt: expect.any(Date),

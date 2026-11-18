@@ -16,11 +16,17 @@ type Row = {
   sweepLabel: boolean;
   creatingUntil: Date | null;
   serverKey: string | null;
+  cleanupForgottenAt?: Date | null;
   updatedAt: Date;
 };
+type Stop = { sandboxId: string; hostId: string; generation: number };
 
 const db = vi.hoisted(() => ({
   rows: new Map<string, Row>(),
+  /** `sandbox_tunnel_client_stop`, written as its trigger does (`write`). */
+  stops: new Map<string, Stop>(),
+  /** The host row is deleted. */
+  hostGone: false,
   sandbox: {
     state: "READY",
     sandboxHostId: "host-1",
@@ -68,8 +74,10 @@ vi.mock("../sharing-access", () => ({
   currentHostUsability: vi.fn(async () => db.usable),
 }));
 
-/** Prisma-style update data, `{ increment }` included. */
+/** Prisma-style update data, `{ increment }` included; records a host the
+ * row stops naming as the `wssp_tunnel_client_stop` trigger does. */
 function write(row: Row, data: Record<string, unknown>) {
+  const host = row.hostId;
   for (const [key, value] of Object.entries(data)) {
     const increment = (value as { increment?: number } | null)?.increment;
     (row as Record<string, unknown>)[key] =
@@ -77,6 +85,18 @@ function write(row: Row, data: Record<string, unknown>) {
   }
   row.updatedAt = new Date();
   checkRow(row);
+  if (host !== null && row.hostId !== host) {
+    const key = `${row.sandboxId}\0${host}`;
+    const generation = Math.max(db.stops.get(key)?.generation ?? 0, row.generation);
+    db.stops.set(key, { sandboxId: row.sandboxId, hostId: host, generation });
+  }
+}
+
+function generationMatches(value: number, filter: { lte?: number; lt?: number }) {
+  return (
+    (filter.lte === undefined || value <= filter.lte) &&
+    (filter.lt === undefined || value < filter.lt)
+  );
 }
 
 /** The `sandbox_tunnel_server_key` CHECK: remote state always carries its key. */
@@ -146,13 +166,63 @@ vi.mock("@wssp/db", () => {
         const row = [...db.rows.values()].find((candidate) => matches(candidate, where));
         if (!row) return { count: 0 };
         db.rows.delete(row.sandboxId);
+        // The trigger's DELETE branch.
+        for (const [key, stop] of db.stops)
+          if (stop.sandboxId === row.sandboxId) db.stops.delete(key);
         return { count: 1 };
       }),
     },
+    sandboxTunnelClientStop: {
+      findMany: vi.fn(
+        async ({
+          where,
+          take,
+        }: {
+          where: {
+            sandboxId?: string;
+            OR?: [{ sandboxId: { gt: string } }, { sandboxId: string; hostId: { gt: string } }];
+          };
+          take: number;
+        }) =>
+          [...db.stops.values()]
+            .filter((stop) =>
+              where.sandboxId !== undefined
+                ? stop.sandboxId === where.sandboxId
+                : where.OR
+                  ? stop.sandboxId > where.OR[0].sandboxId.gt ||
+                    (stop.sandboxId === where.OR[1].sandboxId &&
+                      stop.hostId > where.OR[1].hostId.gt)
+                  : true,
+            )
+            .sort((a, b) =>
+              a.sandboxId === b.sandboxId
+                ? a.hostId.localeCompare(b.hostId)
+                : a.sandboxId.localeCompare(b.sandboxId),
+            )
+            .slice(0, take)
+            .map((stop) => ({ ...stop })),
+      ),
+      deleteMany: vi.fn(
+        async ({
+          where,
+        }: {
+          where: { sandboxId: string; hostId: string; generation: { lte?: number; lt?: number } };
+        }) => {
+          const key = `${where.sandboxId}\0${where.hostId}`;
+          const stop = db.stops.get(key);
+          if (!stop || !generationMatches(stop.generation, where.generation)) return { count: 0 };
+          db.stops.delete(key);
+          return { count: 1 };
+        },
+      ),
+    },
     sandboxHost: {
-      findMany: vi.fn(async () => [
-        db.snapshotBeat ? { ...db.host, lastHeartbeatAt: db.snapshotBeat } : db.host,
-      ]),
+      findMany: vi.fn(async ({ select }: { select: Record<string, unknown> }) =>
+        // The client-stop scan asks only for ids: a deleted host has no row.
+        Object.keys(select).length === 1 && db.hostGone
+          ? []
+          : [db.snapshotBeat ? { ...db.host, lastHeartbeatAt: db.snapshotBeat } : db.host],
+      ),
       findUnique: vi.fn(async () => db.host),
     },
     sandbox: {
@@ -219,6 +289,7 @@ function setup() {
   const sent: { type: string; generation: number; token?: string; ports?: number[] }[] = [];
   let epoch = 7;
   let linked = true;
+  let capable = true;
   const tun = {
     createTunnel: vi.fn(async () => ({
       id: "tun1",
@@ -251,7 +322,7 @@ function setup() {
               ownerId: "owner",
               epoch,
               reconciledAt: now - 60_000,
-              capable: true,
+              capable,
               plan: true,
               send: (frame) => {
                 sent.push(frame as (typeof sent)[number]);
@@ -274,11 +345,18 @@ function setup() {
     unlink: () => {
       linked = false;
     },
+    relink: (withClient = true) => {
+      linked = true;
+      capable = withClient;
+      epoch += 1;
+    },
   };
 }
 
 beforeEach(() => {
   db.rows.clear();
+  db.stops.clear();
+  db.hostGone = false;
   db.events.length = 0;
   db.sandbox = {
     state: "READY",
@@ -614,7 +692,12 @@ describe("tunnel controller invalidation", () => {
     Object.assign(row, { closedAt: null, generation: row.generation + 1, state: "PENDING" });
     const again = setup();
     await again.controller.tick();
-    expect(again.sent).toEqual([expect.objectContaining({ type: "tunnel.apply", generation: 6 })]);
+    // The turn-off ran with no host session: its client stop is delivered
+    // (at the turned-off generation) as soon as one exists, before the apply.
+    expect(again.sent).toEqual([
+      expect.objectContaining({ type: "tunnel.clear", generation: 3 }),
+      expect.objectContaining({ type: "tunnel.apply", generation: 6 }),
+    ]);
   });
 
   it("a create that outlives its row's retirement leaves a sweep obligation", async () => {
@@ -1352,5 +1435,174 @@ describe("tunnel controller: runtime port changes", () => {
         outcome,
       });
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("client-stop obligations", () => {
+  const stopped = (generation: number) =>
+    ({ type: "tunnel.status", sandboxId: "sbx", generation, state: "stopped" }) as const;
+  const stopSandbox = () => {
+    db.sandbox = {
+      state: "STOPPED",
+      sandboxHostId: "host-1",
+      tunnelPorts: [3000, 5173],
+      tunnelPortsRevision: 0,
+      tunnelPortsAckHostId: null,
+      tunnelPortsAckRevision: 0,
+      lastStoppedAt: new Date(2_000_000),
+    };
+  };
+  const clears = (t: ReturnType<typeof setup>) =>
+    t.sent.filter((frame) => frame.type === "tunnel.clear").map((frame) => frame.generation);
+
+  it("a take-down records the host's obligation and re-sends its clear until the host confirms", async () => {
+    const t = setup();
+    await t.controller.tick();
+    stopSandbox();
+    await t.controller.tick();
+    expect([...db.stops.values()]).toEqual([{ sandboxId: "sbx", hostId: "host-1", generation: 2 }]);
+    expect(clears(t)).toEqual([2]);
+    // Throttled within one connection, then sent again.
+    t.advance(5_000);
+    await t.controller.tick();
+    expect(clears(t)).toEqual([2]);
+    t.advance(10_000);
+    await t.controller.tick();
+    expect(clears(t)).toEqual([2, 2]);
+    // A new connection gets it at once.
+    t.reconnect();
+    await t.controller.tick();
+    expect(clears(t)).toEqual([2, 2, 2]);
+    await t.controller.onStatus("host-1", 8, stopped(2));
+    expect(db.stops.size).toBe(0);
+    t.advance(60_000);
+    await t.controller.tick();
+    expect(clears(t)).toEqual([2, 2, 2]);
+  });
+
+  it("a host that missed the stop gets it when it is back, and only its stopped report settles it", async () => {
+    const t = setup();
+    await t.controller.tick();
+    // The host is away past the grace: the tunnel is deleted without it.
+    t.unlink();
+    t.advance(120_000);
+    await t.controller.tick();
+    expect(t.tun.deleteTunnel).toHaveBeenCalledWith(server, "tun1");
+    expect(db.rows.get("sbx")).toMatchObject({ hostId: null, serverKey: null });
+    expect(clears(t)).toEqual([]);
+    expect(db.stops.get("sbx\0host-1")?.generation).toBe(2);
+    // Back: it re-reports its still running generation-2 client first. That
+    // report proves nothing about the client's stop.
+    t.relink();
+    await t.controller.onStatus("host-1", 8, {
+      type: "tunnel.status",
+      sandboxId: "sbx",
+      generation: 2,
+      state: "connected",
+      tunnelId: "tun1",
+    });
+    expect(db.stops.has("sbx\0host-1")).toBe(true);
+    await t.controller.tick();
+    expect(clears(t)).toEqual([2]);
+    // A stopped report below the obligation does not settle it either.
+    await t.controller.onStatus("host-1", 8, stopped(1));
+    expect(db.stops.has("sbx\0host-1")).toBe(true);
+    await t.controller.onStatus("host-1", 8, stopped(2));
+    expect(db.stops.has("sbx\0host-1")).toBe(false);
+  });
+
+  it("a report above the obligation's generation settles it (the client was replaced)", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.stops.set("sbx\0host-1", { sandboxId: "sbx", hostId: "host-1", generation: 2 });
+    await t.controller.onStatus("host-1", 7, {
+      type: "tunnel.status",
+      sandboxId: "sbx",
+      generation: 2,
+      state: "error",
+      error: "client_failed",
+    });
+    expect(db.stops.has("sbx\0host-1")).toBe(true);
+    await t.controller.onStatus("host-1", 7, {
+      type: "tunnel.status",
+      sandboxId: "sbx",
+      generation: 3,
+      state: "connecting",
+    });
+    expect(db.stops.has("sbx\0host-1")).toBe(false);
+  });
+
+  it("only the obligation's own host settles it", async () => {
+    const t = setup();
+    db.stops.set("sbx\0host-1", { sandboxId: "sbx", hostId: "host-1", generation: 4 });
+    await t.controller.onStatus("host-2", 7, stopped(9));
+    expect(db.stops.has("sbx\0host-1")).toBe(true);
+  });
+
+  it("a session without a tunnel client manager proves no client runs; a deleted host can never confirm", async () => {
+    const t = setup();
+    db.rows.clear();
+    db.stops.set("sbx\0host-1", { sandboxId: "sbx", hostId: "host-1", generation: 4 });
+    t.relink(false);
+    await t.controller.tick();
+    expect(db.stops.size).toBe(0);
+    expect(clears(t)).toEqual([]);
+    db.stops.set("sbx\0host-1", { sandboxId: "sbx", hostId: "host-1", generation: 4 });
+    t.unlink();
+    await t.controller.tick();
+    expect(db.stops.size).toBe(1);
+    db.hostGone = true;
+    await t.controller.tick();
+    expect(db.stops.size).toBe(0);
+  });
+
+  it("delivers obligations without any tunnel configuration (after a remove-now)", async () => {
+    const t = setup();
+    db.rows.clear();
+    db.stops.set("sbx\0host-1", { sandboxId: "sbx", hostId: "host-1", generation: 4 });
+    const unconfigured = new TunnelController({
+      now: () => 1_000_000,
+      tun: t.tun,
+      server: async () => null,
+      bridge: () => ({
+        link: (hostId: string) => ({
+          hostId,
+          ownerId: "owner",
+          epoch: 1,
+          reconciledAt: 0,
+          capable: true,
+          plan: true,
+          send: (frame) => {
+            t.sent.push(frame as (typeof t.sent)[number]);
+            return true;
+          },
+        }),
+      }),
+    });
+    await unconfigured.tick();
+    expect(clears(t)).toEqual([4]);
+  });
+
+  it("pages through more obligations than one page and reaches every one", async () => {
+    const t = setup();
+    db.rows.clear();
+    for (let i = 0; i < 501; i++) {
+      const id = `s${String(i).padStart(4, "0")}`;
+      db.stops.set(`${id}\0host-1`, { sandboxId: id, hostId: "host-1", generation: 1 });
+    }
+    await t.controller.tick();
+    expect(clears(t)).toHaveLength(500);
+    await t.controller.tick();
+    expect(t.sent.at(-1)).toMatchObject({ type: "tunnel.clear", sandboxId: "s0500" });
+  });
+
+  it("a destroyed sandbox's row takes its obligations with it", async () => {
+    const t = setup();
+    await t.controller.tick();
+    db.stops.set("sbx\0host-9", { sandboxId: "sbx", hostId: "host-9", generation: 1 });
+    db.sandbox = null;
+    await t.controller.tick();
+    expect(db.rows.has("sbx")).toBe(false);
+    expect(db.stops.size).toBe(0);
   });
 });

@@ -61,7 +61,13 @@ import { createSandbox } from "../services/sandboxes";
 import { poolFixture } from "../testing/pool-fixtures";
 import { seedSandboxInstance } from "../testing/resource-fixtures";
 import { TunnelController } from "./controller";
-import { closeTunnelRow, exposeSandboxTunnel, updateSandboxTunnelPorts } from "./service";
+import {
+  closeSandboxTunnel,
+  closeTunnelRow,
+  exposeSandboxTunnel,
+  getSandboxTunnel,
+  updateSandboxTunnelPorts,
+} from "./service";
 
 const db = await pgTestDatabase();
 afterAll(() => db.close());
@@ -433,5 +439,127 @@ describe("carried (c) interleavings on real PostgreSQL", () => {
     await controller(later).tick();
     expect(tun.deleteTunnel).toHaveBeenLastCalledWith(tunServer, "tunA");
     expect(await row(s.id)).toMatchObject({ sweepLabel: false, creatingUntil: null });
+  });
+});
+
+describe("a closed tunnel's clean-up (PostgreSQL)", () => {
+  function stops(sandboxId: string) {
+    return db.inspect.sandboxTunnelClientStop.findMany({
+      where: { sandboxId },
+      select: { hostId: true, generation: true },
+    });
+  }
+
+  async function appliedTunnel() {
+    const s = await sandbox();
+    await db.inspect.sandboxTunnel.create({
+      data: {
+        sandboxId: s.id,
+        userId: f.id,
+        ports: [3000],
+        state: "CONNECTED",
+        tunTunnelId: "tun1",
+        hostTemplate: "{port}-tun1.example",
+        hostId: f.host.id,
+        generation: 3,
+        serverKey: "key-1",
+      },
+    });
+    return s;
+  }
+
+  it("pending through an unreachable tunnel server and a host that missed the stop; done once both confirmed", async () => {
+    const s = await appliedTunnel();
+    tun.deleteTunnel.mockRejectedValue(new Error("unreachable"));
+    const closed = await closeSandboxTunnel(f.owner, { id: s.id });
+    expect(closed).toMatchObject({ state: "closed", cleanup: "pending", urls: [] });
+    // The close's own write recorded the host's obligation (the trigger), at
+    // the closed generation.
+    expect(await stops(s.id)).toEqual([{ hostId: f.host.id, generation: 4 }]);
+    expect(await row(s.id)).toMatchObject({ hostId: null, serverKey: "key-1", generation: 4 });
+    // No host session yet (it missed the stop), the tunnel server still down.
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await controller().tick();
+    expect(await getSandboxTunnel(f.owner, { id: s.id })).toMatchObject({ cleanup: "pending" });
+    // The tunnel server is back: its deletion is confirmed, the host's stop
+    // is still owed.
+    tun.deleteTunnel.mockResolvedValue(undefined);
+    await controller().tick();
+    error.mockRestore();
+    expect(await row(s.id)).toMatchObject({ serverKey: null, tunTunnelId: null });
+    expect(await getSandboxTunnel(f.owner, { id: s.id })).toMatchObject({ cleanup: "pending" });
+    // The host is back: it gets the clear at the obligation's generation.
+    const sent: { type: string; sandboxId: string; generation: number }[] = [];
+    const linked = new TunnelController({
+      tun,
+      server: async () => tunServer,
+      bridge: () => ({
+        link: (hostId) => ({
+          hostId,
+          ownerId: f.id,
+          epoch: 1,
+          reconciledAt: 0,
+          capable: true,
+          plan: true,
+          send: (frame) => {
+            sent.push(frame as (typeof sent)[number]);
+            return true;
+          },
+        }),
+      }),
+    });
+    await linked.tick();
+    expect(sent).toContainEqual({ type: "tunnel.clear", sandboxId: s.id, generation: 4 });
+    // Its still-running client's own report settles nothing; the stop does.
+    await linked.onStatus(f.host.id, 1, {
+      type: "tunnel.status",
+      sandboxId: s.id,
+      generation: 4,
+      state: "connected",
+      tunnelId: "tun1",
+    });
+    expect(await stops(s.id)).toHaveLength(1);
+    await linked.onStatus(f.host.id, 1, {
+      type: "tunnel.status",
+      sandboxId: s.id,
+      generation: 4,
+      state: "stopped",
+    });
+    expect(await stops(s.id)).toEqual([]);
+    expect(await getSandboxTunnel(f.owner, { id: s.id })).toMatchObject({
+      state: "closed",
+      cleanup: "done",
+    });
+    // A repeated close answers the same.
+    expect(await closeSandboxTunnel(f.owner, { id: s.id })).toMatchObject({ cleanup: "done" });
+  });
+
+  it("the trigger keeps the highest generation per host, one row per host, and goes with the tunnel row", async () => {
+    const s = await appliedTunnel();
+    const other = `${f.host.id}-b`;
+    const set = (data: { hostId: string | null; generation: number }) =>
+      db.inspect.sandboxTunnel.update({ where: { sandboxId: s.id }, data });
+    await set({ hostId: null, generation: 5 });
+    await set({ hostId: f.host.id, generation: 6 });
+    await set({ hostId: other, generation: 7 });
+    await set({ hostId: null, generation: 7 });
+    // A stale lower generation never lowers an obligation.
+    await set({ hostId: f.host.id, generation: 7 });
+    await db.inspect.$executeRaw`UPDATE sandbox_tunnel SET "hostId" = NULL, generation = 2
+      WHERE "sandboxId" = ${s.id}`;
+    expect((await stops(s.id)).sort((a, b) => a.hostId.localeCompare(b.hostId))).toEqual([
+      { hostId: f.host.id, generation: 7 },
+      { hostId: other, generation: 7 },
+    ]);
+    // Unchanged host or other columns: nothing new.
+    await db.inspect.sandboxTunnelClientStop.deleteMany({ where: { sandboxId: s.id } });
+    await set({ hostId: null, generation: 9 });
+    expect(await stops(s.id)).toEqual([]);
+    // The row's deletion (its sandbox deleted, tunnels confirmed) takes them.
+    await set({ hostId: f.host.id, generation: 10 });
+    await set({ hostId: null, generation: 11 });
+    expect(await stops(s.id)).toHaveLength(1);
+    await db.inspect.sandboxTunnel.delete({ where: { sandboxId: s.id } });
+    expect(await stops(s.id)).toEqual([]);
   });
 });

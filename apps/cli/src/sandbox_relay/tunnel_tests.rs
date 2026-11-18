@@ -455,6 +455,107 @@ fn a_clear_fences_every_older_apply() {
 }
 
 #[test]
+fn a_clear_below_the_floor_is_confirmed_and_spares_the_newer_client() {
+    let f = fixture(false);
+    f.runtime
+        .set_tunnel_target("sbx-1", "10.9.8.2".parse().unwrap(), vec![3000]);
+    f.manager
+        .apply(apply("sbx-1", 5, "secretsecretsecret30", vec![3000]));
+    f.manager.poll();
+    let pid = client_pid(&f, "sbx-1");
+    f.manager.drain_events();
+    // The control plane re-sends an older generation's clear until it hears
+    // the stop confirmed: it is confirmed, and the client applied above it
+    // keeps running.
+    f.manager.clear(&TunnelClearV11 {
+        sandbox_id: "sbx-1".into(),
+        generation: 3,
+    });
+    f.manager.poll();
+    let events = f.manager.drain_events();
+    assert!(
+        events
+            .iter()
+            .any(|status| status.generation == 3 && status.state == TunnelStateV11::Stopped),
+        "{events:?}"
+    );
+    assert_eq!(f.manager.entries.lock().unwrap()["sbx-1"].generation, 5);
+    assert!(
+        f.base.join("sbx-1").exists(),
+        "the newer client keeps its state"
+    );
+    assert!(
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok(),
+        "the newer client still runs"
+    );
+    assert_eq!(
+        f.manager.floors.lock().unwrap()["sbx-1"],
+        5,
+        "the floor never drops"
+    );
+    // Its own generation's clear stops it and is confirmed as well.
+    f.manager.clear(&TunnelClearV11 {
+        sandbox_id: "sbx-1".into(),
+        generation: 5,
+    });
+    f.manager.poll();
+    let events = f.manager.drain_events();
+    assert!(
+        events
+            .iter()
+            .any(|status| status.generation == 5 && status.state == TunnelStateV11::Stopped)
+    );
+    assert!(!f.manager.entries.lock().unwrap().contains_key("sbx-1"));
+    f.manager.stop_all();
+}
+
+#[test]
+fn a_full_queue_reports_its_refusal_only_after_the_older_client_stopped() {
+    let f = fixture(false);
+    f.runtime
+        .set_tunnel_target("sbx-1", "10.9.8.2".parse().unwrap(), vec![3000]);
+    f.manager
+        .apply(apply("sbx-1", 1, "secretsecretsecret31", vec![3000]));
+    f.manager.poll();
+    let pid = client_pid(&f, "sbx-1");
+    f.manager.drain_events();
+    // Fill the queue with other sandboxes' clears (one per sandbox).
+    for i in 0..MAX_QUEUED {
+        f.manager.clear(&TunnelClearV11 {
+            sandbox_id: format!("fill-{i}"),
+            generation: 1,
+        });
+    }
+    f.manager
+        .apply(apply("sbx-1", 2, "secretsecretsecret32", vec![3000]));
+    // No report yet: a report at generation 2 would tell the control plane
+    // the generation-1 client is gone while it still runs.
+    assert!(
+        f.manager
+            .drain_events()
+            .iter()
+            .all(|status| status.sandbox_id != "sbx-1"),
+    );
+    f.manager.poll();
+    assert!(
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_err(),
+        "the older client was reaped"
+    );
+    let mine: Vec<_> = f
+        .manager
+        .drain_events()
+        .into_iter()
+        .filter(|status| status.sandbox_id == "sbx-1")
+        .collect();
+    assert_eq!(mine.len(), 2, "{mine:?}");
+    assert_eq!(mine[0].error, Some(TunnelErrorV11::Refused));
+    assert_eq!(mine[0].generation, 2);
+    assert_eq!(mine[1].state, TunnelStateV11::Stopped);
+    assert_eq!(mine[1].generation, 2);
+    f.manager.stop_all();
+}
+
+#[test]
 fn reapplying_an_ended_client_needs_a_free_slot() {
     let f = fixture(false);
     for id in ["sbx-1", "sbx-2", "sbx-3"] {

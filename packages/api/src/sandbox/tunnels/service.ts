@@ -20,7 +20,7 @@ import {
   tunnelUnavailable,
 } from "../errors";
 import { budgetSubjectOf, recordedKeyIdOf } from "../principal-kinds";
-import { tunnelBridge, wakeTunnelController } from "./bridge";
+import { wakeTunnelController } from "./bridge";
 import {
   readTunnelServer,
   TUNNEL_CONFIG_ID,
@@ -28,6 +28,7 @@ import {
   tunnelConfigured,
 } from "./config";
 import {
+  readSandboxTunnelDto,
   recordTunnelEvent,
   type SandboxTunnelRow,
   sandboxTunnelSelect,
@@ -89,12 +90,11 @@ export const getSandboxTunnel = serviceProcedure(
   async (owner: Principal, input: { id: string }): Promise<SandboxTunnelDto> => {
     await requireConfigured();
     await ownedSandbox(owner, input.id);
-    const row = await prisma.sandboxTunnel.findFirst({
-      where: { sandboxId: input.id, userId: owner.ownerId, closedAt: null },
-      select: sandboxTunnelSelect,
-    });
-    if (!row) throw tunnelNotFound();
-    return toSandboxTunnelDto(row);
+    // A closed tunnel too (its tombstone lives until the sandbox is
+    // deleted): the caller learns when its clean-up is done.
+    const dto = await readSandboxTunnelDto(prisma, input.id, owner.ownerId);
+    if (!dto) throw tunnelNotFound();
+    return dto;
   },
 );
 
@@ -176,8 +176,11 @@ export const exposeSandboxTunnel = serviceProcedure(
             where: { sandboxId: sandbox.id, userId: owner.ownerId },
             data: {
               ports,
+              // A host the row named may still run the old client: the
+              // trigger records it (`sandbox_tunnel_client_stop`).
               hostId: null,
               closedAt: null,
+              cleanupForgottenAt: null,
               // credential-settlement: exempt (preview-tunnel row generation)
               generation: { increment: 1 },
               // A new port set is not connected until the host confirms it.
@@ -203,7 +206,7 @@ export const exposeSandboxTunnel = serviceProcedure(
       return saved;
     });
     wakeTunnelController();
-    return toSandboxTunnelDto(row);
+    return toSandboxTunnelDto(row, 0);
   },
 );
 
@@ -213,12 +216,13 @@ export const closeSandboxTunnel = serviceProcedure(
     await spend(owner);
     await requireConfigured();
     await ownedSandbox(owner, input.id);
-    const row = await closeTunnelRow(owner, input.id);
-    if (!row) throw tunnelNotFound();
-    return toSandboxTunnelDto({
-      ...row,
-      tunTunnelId: null,
-    });
+    await closeTunnelRow(owner, input.id);
+    // The row as it is now: what the close (or an earlier one) left, so a
+    // repeated close answers the closed tunnel and its clean-up too (or an
+    // expose that came after it).
+    const dto = await readSandboxTunnelDto(prisma, input.id, owner.ownerId);
+    if (!dto) throw tunnelNotFound();
+    return dto;
   },
 );
 
@@ -230,7 +234,9 @@ export const closeSandboxTunnel = serviceProcedure(
  * no re-expose's create starts, while this sweeps; it settles by the hold).
  * The tunnel server's deletion is what stops every client and link; if it
  * cannot be reached now the controller keeps retrying (the row keeps its key
- * until then).
+ * until then). The same write forgets the row's host, so the trigger records
+ * that host's obligation to confirm its client stopped; the controller sends
+ * it `tunnel.clear` until it does.
  * Returns the closed row, or null when there was no open tunnel.
  */
 export async function closeTunnelRow(
@@ -266,6 +272,9 @@ export async function closeTunnelRow(
         generation: { increment: 1 },
         state: "SUSPENDED",
         lastError: null,
+        // The trigger records this host's client-stop obligation.
+        hostId: null,
+        connectedAt: null,
         ...(hold ? { creatingUntil: hold } : {}),
       },
       select: sandboxTunnelSelect,
@@ -277,36 +286,35 @@ export async function closeTunnelRow(
       ...actor,
       detail: row.tunTunnelId,
     });
-    return { before: row, after: updated, hold };
+    return { after: updated, hold };
   });
   if (!closed) return null;
-  const { before, after, hold } = closed;
-  await cleanUpHeld({ sandboxId, userId, before, after, hold, tunnelId: after.tunTunnelId });
+  const { after, hold } = closed;
+  // The host's `tunnel.clear` comes from the obligation (the controller's
+  // next pass), before the tunnel-server calls below.
+  wakeTunnelController();
+  await cleanUpHeld({ sandboxId, userId, after, hold, tunnelId: after.tunTunnelId });
   wakeTunnelController();
   return after;
 }
 
 /**
  * The remote half of a close (or of a port removal that replaces the
- * tunnel): stop the host's client of the old generation, then, under the
- * row's clean-up hold its transaction took, delete `tunnelId` and every other
- * tunnel labelled for the sandbox with the configuration the remote state was
- * made with. Settled by the hold and the new generation; anything that fails
- * is left to the controller (the row keeps its key and owes the sweep).
+ * tunnel): under the row's clean-up hold its transaction took, delete
+ * `tunnelId` and every other tunnel labelled for the sandbox with the
+ * configuration the remote state was made with. Settled by the hold and the
+ * new generation; anything that fails is left to the controller (the row
+ * keeps its key and owes the sweep). The host's client is stopped through
+ * the obligation the transaction's trigger recorded (the controller).
  */
 async function cleanUpHeld(input: {
   sandboxId: string;
   userId: string;
-  before: SandboxTunnelRow;
   after: SandboxTunnelRow;
   hold: Date | null;
   tunnelId: string | null;
 }) {
-  const { sandboxId, userId, before, after, hold, tunnelId } = input;
-  if (before.hostId && before.generation > 0)
-    tunnelBridge()
-      ?.link(before.hostId)
-      ?.send({ type: "tunnel.clear", sandboxId, generation: after.generation });
+  const { sandboxId, userId, after, hold, tunnelId } = input;
   if (!hold) return;
   // Each call starts early enough to end before the hold can expire.
   const inTime = () => {
@@ -433,7 +441,6 @@ export const updateSandboxTunnelPorts = serviceProcedure(
       });
       const kept = row ? row.ports.filter((port) => next.includes(port)) : [];
       let cleanup: {
-        before: SandboxTunnelRow;
         after: SandboxTunnelRow;
         hold: Date | null;
         tunnelId: string | null;
@@ -479,7 +486,7 @@ export const updateSandboxTunnelPorts = serviceProcedure(
             ...actor,
             detail: row.tunTunnelId,
           });
-        cleanup = { before: row, after, hold, tunnelId: row.tunTunnelId };
+        cleanup = { after, hold, tunnelId: row.tunTunnelId };
       }
       await recordTunnelEvent(tx, {
         kind: "ports.changed",
@@ -490,7 +497,11 @@ export const updateSandboxTunnelPorts = serviceProcedure(
       });
       return { ...current, ports: next, tunnelPortsRevision: revision, cleanup };
     });
-    if (changed.cleanup) await cleanUpHeld({ sandboxId: sandbox.id, userId, ...changed.cleanup });
+    if (changed.cleanup) {
+      // The host's `tunnel.clear` (from the obligation) first.
+      wakeTunnelController();
+      await cleanUpHeld({ sandboxId: sandbox.id, userId, ...changed.cleanup });
+    }
     wakeTunnelController();
     const acked =
       changed.tunnelPortsRevision === 0 ||

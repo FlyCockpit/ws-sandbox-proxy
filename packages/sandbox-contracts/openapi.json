@@ -23382,7 +23382,7 @@
     "/v1/sandboxes/{id}/tunnel": {
       "get": {
         "operationId": "getSandboxTunnel",
-        "summary": "Read the sandbox's preview tunnel: exposed ports, state and preview origins.",
+        "summary": "Read the sandbox's preview tunnel: exposed ports, state and preview origins. A closed tunnel reads `closed` with its `cleanup` (`pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped, then `done`).",
         "x-wssp-scopes": [
           "sandboxes:tunnel"
         ],
@@ -23400,7 +23400,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Read the sandbox's preview tunnel: exposed ports, state and preview origins.",
+            "description": "Read the sandbox's preview tunnel: exposed ports, state and preview origins. A closed tunnel reads `closed` with its `cleanup` (`pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped, then `done`).",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -23914,7 +23914,7 @@
       },
       "delete": {
         "operationId": "closeSandboxTunnel",
-        "summary": "Close the sandbox's preview tunnel: the tunnel and every link to it stop working.",
+        "summary": "Close the sandbox's preview tunnel: the tunnel and every link to it stop working. Answers the closed tunnel (also when it was closed already); `cleanup` stays `pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped (poll the read until `done`).",
         "x-wssp-scopes": [
           "sandboxes:tunnel"
         ],
@@ -23932,7 +23932,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Close the sandbox's preview tunnel: the tunnel and every link to it stop working.",
+            "description": "Close the sandbox's preview tunnel: the tunnel and every link to it stop working. Answers the closed tunnel (also when it was closed already); `cleanup` stays `pending` until the tunnel server confirmed the deletion and its host confirmed the client stopped (poll the read until `done`).",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -38383,7 +38383,8 @@
               "connecting",
               "connected",
               "suspended",
-              "error"
+              "error",
+              "closed"
             ]
           },
           "lastError": {
@@ -38440,6 +38441,20 @@
               }
             ]
           },
+          "cleanup": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "done"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "updatedAt": {
             "type": "string",
             "format": "date-time",
@@ -38453,6 +38468,7 @@
           "lastError",
           "urls",
           "connectedAt",
+          "cleanup",
           "updatedAt"
         ],
         "additionalProperties": false
