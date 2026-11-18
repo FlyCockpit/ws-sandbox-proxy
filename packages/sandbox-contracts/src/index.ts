@@ -36,5 +36,6 @@ export * from "./template-builds";
 export { parseTemplateSelector, templateSelectorSchema } from "./template-selector";
 export * from "./transfers";
 export * from "./tunnel-wire";
+export * from "./tunnels";
 export * from "./vm-size";
 export * from "./webhooks";

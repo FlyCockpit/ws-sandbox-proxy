@@ -164,6 +164,8 @@ const routeIds = SDK_ROUTE_IDS.filter(
     // Host routes answer directly (no receipt); host-access tests cover them.
     !SDK_ROUTES[id].path.startsWith("/v1/hosts/") &&
     SDK_ROUTES[id].feature !== "templates.build" &&
+    // Preview tunnels answer with the tunnel or link itself (no receipt).
+    SDK_ROUTES[id].feature !== "sandboxes.tunnel" &&
     SDK_ROUTES[id].feature?.startsWith("credentials.") !== true,
 );
 function bodyFor(id: SdkRouteId, f: Fixture): Record<string, unknown> {

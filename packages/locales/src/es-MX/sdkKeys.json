@@ -93,7 +93,8 @@
       "read": "Leer sandboxes y sus procesos.",
       "create": "Crear sandboxes.",
       "manage": "Detener, reconectar, renovar, renombrar y capturar sandboxes.",
-      "destroy": "Destruir sandboxes."
+      "destroy": "Destruir sandboxes.",
+      "tunnel": "Exponer los puertos declarados mediante túneles de vista previa y crear enlaces de acceso."
     },
     "commands": {
       "execute": "Ejecutar comandos, escribir en stdin y enviar señales a procesos.",

@@ -11,6 +11,7 @@ import {
   poolFullReasonSchema,
   SDK_ERRORS,
   skippedHostReasonsSchema,
+  tunnelRefusalReasonSchema,
 } from "@wssp/sandbox-contracts";
 import resultErrors from "../../../config/src/sandbox-result-errors.json";
 
@@ -49,6 +50,7 @@ function safeCapability(value: unknown) {
     case "pause":
     case "ingress":
     case "credentials":
+    case "tunnel":
       return value;
     default:
       return undefined;
@@ -78,7 +80,7 @@ export function rethrowSensitiveSandboxError(error: unknown): never {
         : undefined;
     const egressReason =
       domain === "UNSUPPORTED_CAPABILITY" && data && typeof data === "object" && "reason" in data
-        ? egressRefusalReasonSchema.safeParse(data.reason)
+        ? egressRefusalReasonSchema.or(tunnelRefusalReasonSchema).safeParse(data.reason)
         : null;
     const reason =
       (code === "sandbox.host_capacity" || code === "sandbox.pool_full") &&

@@ -30,6 +30,7 @@ import {
 } from "@wssp/api/sandbox/sdk-reads";
 import { getSandboxCapabilities } from "@wssp/api/sandbox/services/capabilities";
 import { getCommandOutput } from "@wssp/api/sandbox/services/sandboxes";
+import { tunnelConfigured } from "@wssp/api/sandbox/tunnels/config";
 import { templateBuildCapabilities } from "@wssp/api/template-builds/config";
 import { webhooksConfigured } from "@wssp/api/webhooks/config";
 import prisma from "@wssp/db";
@@ -169,42 +170,47 @@ export function sdkReadHandlers(registered: readonly SdkRouteId[]): RouteHandler
     ...webhookHandlers,
     ...templateBuildHandlers,
     ...credentialHandlers,
-    getCapabilities: async (principal) => ({
-      apiVersion: API_VERSION,
-      // Webhooks are listed only when this server can encrypt endpoint secrets.
-      features: enabledSdkFeatures(registered).filter(
-        (feature) =>
-          (feature !== "webhooks.write" || webhooksConfigured()) &&
-          (!feature.startsWith("credentials.") || readCredentialsAvailability().enabled),
-      ),
-      guestApi: guestApiCapabilities(enabledSdkFeatures(registered).includes("processes.signal")),
-      limits: {
-        ...FS_PROCESS_LIMITS,
-        ...VM_SIZE_PUBLIC_LIMITS,
-        commandTimeoutZero:
-          FS_PROCESS_LIMITS.commandTimeoutZero &&
-          enabledSdkFeatures(registered).includes("commands.execute"),
-        sandboxTimeoutMinMs: 1,
-        sandboxTimeoutDefaultMs: 300000,
-        sandboxTimeoutMaxMs: deploymentFiniteMaxMs(),
-        sandboxTimeoutZero: deploymentLeaseMaxMs() === null,
-        pageSizeDefault: PAGE_SIZE_DEFAULT,
-        pageSizeMax: PAGE_SIZE_MAX,
-        jsonBodyMaxBytes: JSON_BODY_MAX_BYTES,
-        transferMaxBytes: env.TRANSFER_MAX_BYTES,
-        imageStore: {
-          mode: imageDistributionMode(),
-          ...(await accountImageQuotas(prisma, principal.ownerId)),
+    getCapabilities: async (principal) => {
+      // Preview tunnels are optional: listed only once an admin configured them.
+      const tunnels = await tunnelConfigured();
+      return {
+        apiVersion: API_VERSION,
+        // Webhooks are listed only when this server can encrypt endpoint secrets.
+        features: enabledSdkFeatures(registered).filter(
+          (feature) =>
+            (feature !== "webhooks.write" || webhooksConfigured()) &&
+            (!feature.startsWith("credentials.") || readCredentialsAvailability().enabled) &&
+            (feature !== "sandboxes.tunnel" || tunnels),
+        ),
+        guestApi: guestApiCapabilities(enabledSdkFeatures(registered).includes("processes.signal")),
+        limits: {
+          ...FS_PROCESS_LIMITS,
+          ...VM_SIZE_PUBLIC_LIMITS,
+          commandTimeoutZero:
+            FS_PROCESS_LIMITS.commandTimeoutZero &&
+            enabledSdkFeatures(registered).includes("commands.execute"),
+          sandboxTimeoutMinMs: 1,
+          sandboxTimeoutDefaultMs: 300000,
+          sandboxTimeoutMaxMs: deploymentFiniteMaxMs(),
+          sandboxTimeoutZero: deploymentLeaseMaxMs() === null,
+          pageSizeDefault: PAGE_SIZE_DEFAULT,
+          pageSizeMax: PAGE_SIZE_MAX,
+          jsonBodyMaxBytes: JSON_BODY_MAX_BYTES,
+          transferMaxBytes: env.TRANSFER_MAX_BYTES,
+          imageStore: {
+            mode: imageDistributionMode(),
+            ...(await accountImageQuotas(prisma, principal.ownerId)),
+          },
+          templateBuilds: await templateBuildCapabilities(prisma, principal.ownerId),
+          capacityWaitMaxMs: deploymentWaitMaxMs(),
+          capacityQueuePerKey: deploymentQueuePerKey(),
+          capacityQueuePerOwner: deploymentQueuePerOwner(),
         },
-        templateBuilds: await templateBuildCapabilities(prisma, principal.ownerId),
-        capacityWaitMaxMs: deploymentWaitMaxMs(),
-        capacityQueuePerKey: deploymentQueuePerKey(),
-        capacityQueuePerOwner: deploymentQueuePerOwner(),
-      },
-      ports: { ingress: false, proxy: false },
-      network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
-      key: await sdkGetKeyGrant(principal),
-    }),
+        ports: { ingress: false, proxy: false, tunnel: tunnels },
+        network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
+        key: await sdkGetKeyGrant(principal),
+      };
+    },
     listPools: (principal, { query }) => sdkListPools(principal, query),
     getPool: (principal, { params }) => sdkGetPool(principal, params.id),
     listPoolMembers: (principal, { params, query }) =>

@@ -24,6 +24,8 @@ import {
   skippedHostReasonsSchema,
   TEMPLATE_BUILD_ERROR_EXTRAS,
   TEMPLATE_IMAGE_UNAVAILABLE_REASONS,
+  type TunnelRefusalReason,
+  tunnelRefusalReasonSchema,
 } from "@wssp/sandbox-contracts";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -42,7 +44,8 @@ type SandboxApiError = {
       | PoolFullReason
       | CapacityReason
       | (typeof CAPTURE_UNSUPPORTED_REASONS)[number]
-      | EgressRefusalReason;
+      | EgressRefusalReason
+      | TunnelRefusalReason;
     maxTimeoutMs?: number;
     skipped?: SkippedHostReason[];
     maxWaitMs?: number;
@@ -109,7 +112,7 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
       if (parsed.success) reason = parsed.data;
     }
     if (code === "UNSUPPORTED_CAPABILITY" && data && typeof data === "object" && "reason" in data) {
-      const parsed = egressRefusalReasonSchema.safeParse(data.reason);
+      const parsed = egressRefusalReasonSchema.or(tunnelRefusalReasonSchema).safeParse(data.reason);
       if (parsed.success) reason = parsed.data;
     }
     if (

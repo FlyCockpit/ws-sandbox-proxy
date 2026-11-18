@@ -63,6 +63,12 @@ export const DATA_KEY_COLUMNS = [
     count: (db: Client) => countDiskOffloadWrapKids(db, KID_GROUP_CAP),
   },
   {
+    // Preview tunnels: the singleton tunnel server credential.
+    source: "tunnel_server_config.credentialKeyId",
+    count: (db: Client) => db.$queryRaw<KidCount[]>`SELECT "credentialKeyId" AS kid,
+      count(*)::int AS rows FROM tunnel_server_config GROUP BY 1 ORDER BY 1 LIMIT ${KID_GROUP_CAP}`,
+  },
+  {
     // An OPEN disk upload session holds its own wrap until Complete.
     source: "sandbox_image_upload_session.keyId",
     count: (db: Client) => countDiskSessionWrapKids(db, KID_GROUP_CAP),

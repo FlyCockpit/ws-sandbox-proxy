@@ -5,6 +5,7 @@ import { isEmailConfigured } from "@wssp/mailer";
 import { publicProcedure } from "../index";
 import { adminDataKeysRouter } from "./admin-data-keys";
 import { adminObservabilityRouter } from "./admin-observability";
+import { adminTunnelRouter } from "./admin-tunnel";
 import { agentTokensRouter } from "./agent-tokens";
 import { authRouter } from "./auth";
 import { communityTemplatesRouter } from "./community-templates";
@@ -56,6 +57,7 @@ export const appRouter = {
   users: usersRouter,
   adminObservability: adminObservabilityRouter,
   adminDataKeys: adminDataKeysRouter,
+  adminTunnel: adminTunnelRouter,
   hostCredentials: hostCredentialsRouter,
   sandboxHosts: sandboxHostsRouter,
   sandboxPools: sandboxPoolsRouter,

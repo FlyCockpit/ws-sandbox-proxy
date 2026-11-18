@@ -79,6 +79,7 @@ export const SDK_SCOPES = [
   "credentials:read",
   "credentials:write",
   "credentials:use",
+  "sandboxes:tunnel",
 ] as const;
 export type SdkScope = (typeof SDK_SCOPES)[number];
 
@@ -817,6 +818,9 @@ export const sandboxSchema = z
      * daemon cannot grant it). Null otherwise.
      */
     guestSudoReason: z.enum(SANDBOX_GUEST_SUDO_REASONS).nullable(),
+    /** Ports declared at create for preview tunnels (immutable, ascending);
+     * omitted when none were declared. */
+    tunnelPorts: z.array(z.number().int().min(1).max(65535)).min(1).max(8).optional(),
     /**
      * The guest may reach root (guest sudo, or a revision built with root or
      * captured with guest root). Every command result is then guest-attested,
@@ -994,6 +998,7 @@ export const SDK_FEATURES = [
   "credentials.use",
   "sandboxes.guestSudo",
   "sandboxes.offloadPolicy",
+  "sandboxes.tunnel",
 ] as const;
 export type SdkFeature = (typeof SDK_FEATURES)[number];
 
@@ -1214,7 +1219,14 @@ export const capabilitiesSchema = z
       })
       .strict(),
     guestApi: guestApiSchema,
-    ports: z.object({ ingress: z.literal(false), proxy: z.literal(false) }).strict(),
+    ports: z
+      .object({
+        ingress: z.literal(false),
+        proxy: z.literal(false),
+        /** Preview tunnels are configured on this deployment (`sandboxes.tunnel`). */
+        tunnel: z.boolean(),
+      })
+      .strict(),
     network: z
       .object({
         egressModes: z.array(z.enum(EGRESS_MODES)),

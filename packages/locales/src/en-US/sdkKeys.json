@@ -97,7 +97,8 @@
       "read": "Read sandboxes and their processes.",
       "create": "Create sandboxes.",
       "manage": "Stop, reconnect, renew, rename and capture sandboxes.",
-      "destroy": "Destroy sandboxes."
+      "destroy": "Destroy sandboxes.",
+      "tunnel": "Expose declared ports through preview tunnels and mint access links."
     },
     "commands": {
       "execute": "Run commands, write stdin and signal processes.",

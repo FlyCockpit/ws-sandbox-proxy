@@ -351,6 +351,10 @@ async function selectRestoreTargetOrNull(
   const root = vmRootChargeGiB(size.diskGiB);
   const now = await hostDatabaseNow(tx);
   const hint = request.target;
+  // Declared tunnel ports ride the restore's dispatch: only daemons that
+  // compile them into the network plan can take it.
+  const tunnelGate =
+    sandbox.tunnelPorts.length > 0 ? PrismaValue.sql`AND h."daemonTunnelPorts"` : PrismaValue.empty;
   const poolId = hint && "poolId" in hint ? hint.poolId : hint ? null : sandbox.originPoolId;
   // G before any H: the pool path the lease policy reads (own host: the
   // origin pool) and the pool a pool target is placed through.
@@ -375,7 +379,7 @@ async function selectRestoreTargetOrNull(
         SELECT h.id FROM sandbox_host h
         WHERE h."userId" = ${ownerId} AND h.status::text = 'CONNECTED'
           AND h."deletionRequestedAt" IS NULL ${hostFilter} AND h.id > ${after}
-          AND h."daemonDiskOffload"
+          AND h."daemonDiskOffload" ${tunnelGate}
           AND h."daemonMemoryBudgetMiB" IS NOT NULL AND h."daemonVcpuBudget" IS NOT NULL
           AND h."memoryReservedMiB"::bigint + ${charge}::bigint <= h."daemonMemoryBudgetMiB"
           AND h."vcpuReserved" + ${size.cpuCount} <= h."daemonVcpuBudget"
@@ -452,7 +456,7 @@ async function selectRestoreTargetOrNull(
     {
       stages: RESTORE_POOL_STAGES,
       // Restore eligibility's capability gate in SQL; the rest per candidate.
-      where: PrismaValue.sql`h."daemonDiskOffload"`,
+      where: PrismaValue.sql`h."daemonDiskOffload" ${tunnelGate}`,
       admit: async (candidate) => {
         const own = candidate.hostOwnerId === ownerId;
         const restriction = candidateRestriction(legs, { hostId: candidate.id, own, poolId });

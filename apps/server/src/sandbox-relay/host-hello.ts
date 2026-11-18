@@ -106,6 +106,9 @@ export async function commitHostHello(input: {
         daemonGuestSudoForOthers: false,
         // Disk offload is optional runtime support, refreshed on every hello.
         daemonDiskOffload: message.daemon.capabilities.diskOffload === true,
+        // Preview tunnels: the hello capability, refreshed on every hello.
+        daemonTunnel: message.daemon.capabilities.tunnel ?? Prisma.DbNull,
+        daemonTunnelPorts: message.daemon.capabilities.tunnelPorts === true,
         daemonEgressGuardOk: message.daemon.capabilities.egress.guard === true,
         daemonEgressGuardReason: null,
         daemonEgressGuardLeaseUntil: null,

@@ -27,6 +27,7 @@ const {
   launchStartup,
   retainedStorageAdmits,
   templateStartupHostUnsupported,
+  tunnelPortsHostUnsupported,
 } = await import("./dispatch-gates");
 const { requireRetainedStorage } = await import("@wssp/api/sandbox/host-admission");
 
@@ -399,5 +400,20 @@ describe("diskOffloadHostUnsupported (U9.2)", () => {
       diskOffloadHostUnsupported({ ...host, status: "DISCONNECTED", daemonDiskOffload: false }),
     ).toBe(false);
     expect(diskOffloadHostUnsupported(null)).toBe(false);
+  });
+});
+
+describe("tunnelPortsHostUnsupported", () => {
+  it("refuses declared tunnel ports only on positive current-epoch evidence", () => {
+    const host = { status: "CONNECTED", connectionEpoch: 3, admissionEpoch: 3 };
+    expect(tunnelPortsHostUnsupported({ ...host, daemonTunnelPorts: false })).toBe(true);
+    expect(tunnelPortsHostUnsupported({ ...host, daemonTunnelPorts: true })).toBe(false);
+    expect(
+      tunnelPortsHostUnsupported({ ...host, admissionEpoch: 2, daemonTunnelPorts: false }),
+    ).toBe(false);
+    expect(
+      tunnelPortsHostUnsupported({ ...host, status: "DISCONNECTED", daemonTunnelPorts: false }),
+    ).toBe(false);
+    expect(tunnelPortsHostUnsupported(null)).toBe(false);
   });
 });

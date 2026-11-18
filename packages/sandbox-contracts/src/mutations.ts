@@ -18,6 +18,7 @@ import { isSafeMapText } from "./map-primitives";
 import { metadataSchema } from "./metadata";
 import { sandboxNameSchema } from "./sandbox-name";
 import { templateSelectorSchema } from "./template-selector";
+import { tunnelPortsSchema } from "./tunnels";
 import { revisionSizeOverridesSchema, vmDiskGiBSchema, vmSizeOverridesSchema } from "./vm-size";
 
 export const idempotencyKeySchema = z
@@ -59,7 +60,17 @@ export const lifecycleInputSchema = z
   })
   .strict();
 // Reserved, deliberately unsupported until an ingress contract is implemented.
-export const networkInputSchema = z.object({ ingress: z.object({}).strict().optional() }).strict();
+export const networkInputSchema = z
+  .object({
+    ingress: z.object({}).strict().optional(),
+    /**
+     * Preview tunnels: the guest ports that may ever be exposed (≤ 8, fixed
+     * for the sandbox's life). Needs a configured tunnel server and a host
+     * that runs the tunnel client; otherwise `UNSUPPORTED_CAPABILITY`.
+     */
+    tunnelPorts: tunnelPortsSchema.optional(),
+  })
+  .strict();
 /**
  * UTF-8 budget of the serialized `{argv, script, cwd, env}` command payload,
  * enforced server-side (packages/config sandbox-command-limits.json).

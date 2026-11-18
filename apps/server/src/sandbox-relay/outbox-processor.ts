@@ -104,6 +104,7 @@ import {
   retainedStorageAdmits,
   sdkHostBindingHolds,
   templateStartupHostUnsupported,
+  tunnelPortsHostUnsupported,
 } from "./dispatch-gates.js";
 import {
   classifyRelayDispatchKind,
@@ -1284,6 +1285,13 @@ async function dispatchClaimedEvent(
         (sandbox.guestRoot || sandbox.guestSudo)
           ? (true as const)
           : undefined,
+      // Preview tunnels: the declared ports compile into the launch's network
+      // plan (create, and a restore's new root; a cold reconnect keeps its plan).
+      tunnelPorts:
+        (kind === "sandbox.create" || kind === "sandbox.reconnect") &&
+        (sandbox.tunnelPorts ?? []).length > 0
+          ? [...sandbox.tunnelPorts].sort((a, b) => a - b)
+          : undefined,
       // §8.6 (rows only; `diskUnavailable` refused above).
       disk: typeof diskFields === "string" ? {} : diskFields,
       restore,
@@ -1486,6 +1494,9 @@ async function dispatchClaimedEvent(
         ...("startup" in prepared && prepared.startup ? { startup: prepared.startup } : {}),
         ...("guestSudo" in prepared && prepared.guestSudo ? { guestSudo: true as const } : {}),
         ...("guestRoot" in prepared && prepared.guestRoot ? { guestRoot: true as const } : {}),
+        ...("tunnelPorts" in prepared && prepared.tunnelPorts
+          ? { tunnelPorts: prepared.tunnelPorts }
+          : {}),
         signal:
           payload.signal === "SIGTERM" ||
           payload.signal === "SIGINT" ||
@@ -2011,6 +2022,8 @@ async function settleRefusedDispatch(input: {
     startup?: unknown;
     /** The launch carried guest privilege fields (DG-8). */
     guestRoot?: true;
+    /** Preview tunnels: the launch's declared ports. */
+    tunnelPorts?: number[];
     /** §8.6: the dispatch's disk fields. */
     disk?: DispatchDiskFields;
   };
@@ -2077,6 +2090,7 @@ async function settleRefusedDispatch(input: {
               admissionEpoch: true,
               daemonFeatures: true,
               daemonDiskOffload: true,
+              daemonTunnelPorts: true,
             },
           })
         : null;
@@ -2092,6 +2106,9 @@ async function settleRefusedDispatch(input: {
       // DG-8: a guest-privileged launch on an admitted daemon without
       // `guestSudo` (a taint-only `guestRoot` cannot degrade either).
       (launch && input.prepared.guestRoot === true && guestSudoHostUnsupported(support)) ||
+      // Preview tunnels: a launch with declared ports on an admitted daemon
+      // without the tunnel plan (typed refusal, never a frame it would reject).
+      (launch && input.prepared.tunnelPorts !== undefined && tunnelPortsHostUnsupported(support)) ||
       (launch &&
         support != null &&
         support.status === "CONNECTED" &&

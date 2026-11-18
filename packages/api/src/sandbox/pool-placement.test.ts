@@ -59,10 +59,42 @@ it.each([new ORPCError("FORBIDDEN"), new Error("database fault"), unsupportedCap
 
 it("orders the build and startup stages right after compatible, in the static set too", async () => {
   const { PLACEMENT_STAGES, STATIC_STAGES } = await import("./pool-placement");
-  // CLI logins' static owner stage follows them, before templateKnown.
-  const head = ["enabled", "compatible", "builder", "startup", "credentialOwner", "templateKnown"];
-  expect(PLACEMENT_STAGES.slice(0, 6)).toEqual(head);
-  expect(STATIC_STAGES.slice(0, 6)).toEqual(head);
+  // The tunnel stage and CLI logins' static owner stage follow them, before templateKnown.
+  const head = [
+    "enabled",
+    "compatible",
+    "builder",
+    "startup",
+    "tunnel",
+    "credentialOwner",
+    "templateKnown",
+  ];
+  expect(PLACEMENT_STAGES.slice(0, 7)).toEqual(head);
+  expect(STATIC_STAGES.slice(0, 7)).toEqual(head);
+});
+
+it("the tunnel stage is inert unless the create declares tunnel ports", async () => {
+  const { placementSql } = await import("./pool-placement");
+  const { requestDigestMetadata } = await import("./idempotency");
+  vi.mocked(requestDigestMetadata).mockReturnValue({ requestDigestKeyId: "kid" } as never);
+  const base = {
+    viewer: { ownerId: "owner", allowedHostIds: "allOwned" as const },
+    poolId: "pool",
+    revision: {
+      id: "rev",
+      incusFingerprint: "f",
+      architecture: "x86_64",
+      manifestDigest: "d",
+    } as never,
+    size: { cpuCount: 1, memoryMiB: 1024, diskGiB: 32 },
+    now: new Date(),
+  };
+  const off = placementSql(base).stages.tunnel;
+  const on = placementSql({ ...base, tunnel: true }).stages.tunnel;
+  expect(off.sql).toBe("TRUE");
+  expect(on.sql).toContain('"daemonTunnel" IS NOT NULL');
+  expect(on.sql).toContain("allowForOthers");
+  expect(on.values).toContain("owner");
 });
 
 it("the startup stage is inert unless the revision has a start command", async () => {

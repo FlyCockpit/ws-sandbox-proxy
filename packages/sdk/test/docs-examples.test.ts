@@ -123,6 +123,7 @@ function uppercaseAllowlist(): Set<string> {
     "O_NOFOLLOW", // open(2) flag named in the aarch64 release note
     "SO_PEERCRED", // socket(7) option the egress guard authenticates with (hosts.md)
     "INCUS_DIR", // Incus client directory the build resolver's pid file lives under (template-builds.md)
+    "XDG_RUNTIME_DIR", // the node's tmpfs runtime directory preview-tunnel clients keep state in (tunnels.md)
     // iptables/firewalld chain, target and protocol names in the host
     // firewall setup steps (hosts.md)
     ...["FORWARD", "ACCEPT", "ANY"],

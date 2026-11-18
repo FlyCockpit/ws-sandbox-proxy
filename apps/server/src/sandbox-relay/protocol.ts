@@ -60,7 +60,12 @@ import {
   serverCredentialMessageSchema,
   serverDiskMessageSchema,
   serverImageMessageSchema,
+  type TunnelApplyV11,
+  type TunnelClearV11,
+  tunnelApplyV11Schema,
+  tunnelClearV11Schema,
   tunnelStatusV11Schema,
+  tunnelWirePortsSchema,
   type VmSize,
   validDispatchBuildFields,
   validDispatchDiskFields,
@@ -999,6 +1004,8 @@ export type CensusEntryResult = {
 export type ServerControlMessage =
   | HostServerMessage
   | EgressBlocklistV11
+  | TunnelApplyV11
+  | TunnelClearV11
   | z.infer<typeof allocationRequestSchema>
   | z.infer<typeof journalKeyInstallSchema>
   | z.infer<typeof hostQuiesceAckV11Schema>
@@ -1161,6 +1168,8 @@ export type ServerControlMessage =
       guestSudo?: true;
       /** The guest may reach root: host-proof-only retirement. Launches only. */
       guestRoot?: true;
+      /** Preview tunnels: the sandbox's declared ports (ascending); launches only. */
+      tunnelPorts?: number[];
       /** §8.6 (only to `diskOffload` daemons): a reconnect
        * that boots a new root from the stored disk, with `launchMode:
        * "new_root"` and a `fetch` image of the same fingerprint. */
@@ -1433,6 +1442,12 @@ export function encodeServerControlMessage(
       (message.guestSudo === true && message.build !== undefined)
     )
       throw new SandboxRelayDispatchValidationError("Invalid guest privilege fields.");
+    if (
+      message.tunnelPorts !== undefined &&
+      ((message.kind !== "sandbox.create" && message.kind !== "sandbox.reconnect") ||
+        !tunnelWirePortsSchema.safeParse(message.tunnelPorts).success)
+    )
+      throw new SandboxRelayDispatchValidationError("Invalid tunnel ports.");
     // E4-01: the daemon refuses a signal whose wire pid is not its qualified
     // target's pid; never send one (a deterministic, settled producer bug).
     if (
@@ -1447,6 +1462,10 @@ export function encodeServerControlMessage(
     !privateConfigInstallSchema.safeParse(message).success
   )
     throw new SandboxRelayDispatchValidationError("Invalid private config frame.");
+  if (message.type === "tunnel.apply" && !tunnelApplyV11Schema.safeParse(message).success)
+    throw new SandboxRelayDispatchValidationError("Invalid tunnel apply frame.");
+  if (message.type === "tunnel.clear" && !tunnelClearV11Schema.safeParse(message).success)
+    throw new SandboxRelayDispatchValidationError("Invalid tunnel clear frame.");
   if (message.type === "egress.blocklist" && !egressBlocklistV11Schema.safeParse(message).success)
     throw new SandboxRelayDispatchValidationError("Invalid egress blocklist frame.");
   if (message.type === "journal.key.install" && !journalKeyInstallSchema.safeParse(message).success)

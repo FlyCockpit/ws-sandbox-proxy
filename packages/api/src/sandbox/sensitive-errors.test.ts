@@ -167,6 +167,27 @@ describe("sensitive producer errors", () => {
       }
     }
   });
+
+  it("keeps a tunnel refusal's capability and closed reason", () => {
+    for (const reason of ["tunnel_no_host", "tunnel_host_unsupported", sentinel])
+      try {
+        rethrowSensitiveSandboxError(
+          new ORPCError("BAD_REQUEST", {
+            message: sentinel,
+            data: { code: "UNSUPPORTED_CAPABILITY", capability: "tunnel", reason },
+          }),
+        );
+      } catch (safe) {
+        expect(safe).toMatchObject({
+          data: {
+            code: "UNSUPPORTED_CAPABILITY",
+            capability: "tunnel",
+            ...(reason === sentinel ? {} : { reason }),
+          },
+        });
+        expect(inspect(safe, { depth: 10 })).not.toContain(sentinel);
+      }
+  });
 });
 
 it("passes only errno tokens through safeErrnoCode", () => {

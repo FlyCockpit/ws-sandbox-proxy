@@ -25,6 +25,7 @@ import { deploymentFiniteMaxMs, deploymentLeaseMaxMs } from "../lease-policy";
 import { grantOf, viewerOf } from "../principal-kinds";
 import { requireCurrentHostUsability } from "../sharing-access";
 import { requireOwnedSandboxPlacement } from "../sharing-authority";
+import { tunnelConfigured } from "../tunnels/config";
 
 export type KeyGrant = {
   ownSandboxesOnly: boolean;
@@ -115,10 +116,15 @@ export const getSandboxCapabilities = serviceProcedure(
         host.daemonMemoryBudgetMiB !== null &&
         host.daemonMaxCpuCount !== null &&
         host.daemonVcpuBudget !== null;
+      // Preview tunnels only while a tunnel server is configured (not while
+      // turning off), as in the global capabilities.
+      const tunnels = await tunnelConfigured(tx);
       const features = enabledSdkFeatures(input.routes ?? SDK_ROUTE_IDS).filter((feature) =>
         feature === "sandboxes.vmSize"
           ? sizeSupported
-          : supported || !FS_PROCESS_FEATURES.has(feature),
+          : feature === "sandboxes.tunnel"
+            ? tunnels
+            : supported || !FS_PROCESS_FEATURES.has(feature),
       );
       if (!current()) throw new ORPCError("FORBIDDEN");
       return sandboxCapabilitiesSchema.parse({

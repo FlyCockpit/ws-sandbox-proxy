@@ -1,6 +1,8 @@
 import type {
   attachCredentialBodySchema,
+  CreateTunnelLinkBody,
   createSandboxBodySchema,
+  ExposeTunnelBody,
   mutationReceiptSchema,
   ProcessRef,
   reconnectBodySchema,
@@ -10,6 +12,8 @@ import type {
   SandboxOffloadPolicy,
   SandboxPage,
   SandboxStateDto,
+  SandboxTunnelDto,
+  TunnelLinkDto,
   updateSandboxBodySchema,
 } from "@wssp/sandbox-contracts";
 import { sandboxListFiltersSchema } from "@wssp/sandbox-contracts";
@@ -166,6 +170,8 @@ export type Sandbox = SandboxDto & {
   captureTemplate(input?: CaptureTemplateInput, options?: MutationOptions): Promise<CaptureResult>;
   destroy(options?: TeardownOptions): Promise<void>;
   readonly credentials: SandboxCredentials;
+  /** Preview tunnels (optional on a deployment): expose declared ports, mint links. */
+  readonly tunnel: SandboxTunnelApi;
   isAlive(options?: MutationOptions): Promise<boolean>;
   pause(): Promise<never>;
   snapshot(): Promise<never>;
@@ -174,6 +180,22 @@ export type Sandbox = SandboxDto & {
   getHost(port: number): never;
 };
 export type ConnectResult = Sandbox;
+
+/**
+ * Preview tunnels for ports declared at create (`network.tunnelPorts`). The
+ * node runs the tunnel client outside the VM; you never hold a tunnel
+ * credential. Refused with kind `unsupported` (`reason: "tunnel_off"`) on a
+ * deployment without a tunnel server.
+ */
+export type SandboxTunnelApi = {
+  /** Expose `ports` (default: every declared port). Idempotent. */
+  expose(input?: ExposeTunnelBody, options?: WaitOptions): Promise<SandboxTunnelDto>;
+  get(options?: WaitOptions): Promise<SandboxTunnelDto>;
+  /** Delete the tunnel; every link to it stops working. */
+  close(options?: WaitOptions): Promise<SandboxTunnelDto>;
+  /** A short-lived (single-use by default) access URL for one exposed port. Treat it as a secret. */
+  link(input: CreateTunnelLinkBody, options?: WaitOptions): Promise<TunnelLinkDto>;
+};
 
 /** The exact host-acknowledged renewal intent and the latest sandbox snapshot.
  * The snapshot may already reflect expiry or a later lease revision. */
@@ -939,6 +961,34 @@ export function createSandboxesApi(
           attachCredential(id, input, options),
         free: (credentialId: string, options?: TeardownOptions) =>
           freeCredential(id, credentialId, options),
+      }),
+      tunnel: Object.freeze({
+        expose: (input: ExposeTunnelBody = {}, options: WaitOptions = {}) =>
+          transport.request("exposeSandboxTunnel", {
+            params: { id },
+            body: input,
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
+        get: (options: WaitOptions = {}) =>
+          transport.request("getSandboxTunnel", {
+            params: { id },
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
+        close: (options: WaitOptions = {}) =>
+          transport.request("closeSandboxTunnel", {
+            params: { id },
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
+        link: (input: CreateTunnelLinkBody, options: WaitOptions = {}) =>
+          transport.request("createSandboxTunnelLink", {
+            params: { id },
+            body: input,
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
       }),
       isAlive: (options?: MutationOptions) => isAlive(id, options),
       pause: async () => refuseCapability("pause"),

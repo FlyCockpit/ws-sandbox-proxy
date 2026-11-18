@@ -172,6 +172,9 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
     'message.kind !== "sandbox.create" &&': "kind-agnostic",
     'message.kind !== "sandbox.reconnect") ||': "kind-agnostic",
     '(message.kind === "sandbox.create" || message.kind === "sandbox.reconnect")': "kind-agnostic",
+    // Preview tunnels: declared ports ride on any launch (validation only).
+    '((message.kind !== "sandbox.create" && message.kind !== "sandbox.reconnect") ||':
+      "kind-agnostic",
   },
   "apps/server/src/sandbox-relay/session-manager.ts": {
     'if (input.kind === "sandbox.create" || input.kind === "sandbox.reconnect") {': "kind-agnostic",

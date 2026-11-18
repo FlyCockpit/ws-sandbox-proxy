@@ -243,7 +243,7 @@ function fakeServer(config: {
           capacityQueuePerKey: 16,
           capacityQueuePerOwner: 64,
         },
-        ports: { ingress: false, proxy: false },
+        ports: { ingress: false, proxy: false, tunnel: false },
         network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
         key: {
           ownSandboxesOnly: false,

@@ -116,6 +116,10 @@ const expected = {
   "sandboxes.reconnect": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.setTimeout": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.update": { scopes: ["sandboxes:manage"], requiresSandbox: true },
+  "sandboxes.tunnelGet": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelExpose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelClose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {
@@ -203,6 +207,7 @@ const allScopes: ServiceScope[] = [
   "credentials:read",
   "credentials:write",
   "credentials:use",
+  "sandboxes:tunnel",
 ];
 const kindScopes: Record<SandboxOperationKind, [ServiceScope, ServiceScope]> = {
   CREATE_SANDBOX: ["sandboxes:create", "sandboxes:read"],
@@ -606,6 +611,11 @@ describe("independent SDK scope and service inventory", () => {
         "operations.getRenameResult",
         "operations.getCommandResult",
         "operations.getSignalResult",
+        // Preview tunnels: /v1 only (no dashboard router, no MCP tool).
+        "sandboxes.tunnelGet",
+        "sandboxes.tunnelExpose",
+        "sandboxes.tunnelClose",
+        "sandboxes.tunnelLink",
       ].sort(),
     ).toEqual(Object.keys(expected).sort());
     expect(production.SERVICE_ACTIONS.slice().sort()).toEqual(Object.keys(expected).sort());

@@ -28,6 +28,16 @@ const server = vi.hoisted(() => ({
   ignoreWrites: false,
   /** the consumed-copy grace the server reports. */
   graceSeconds: 3600,
+  tunnel: {
+    configured: false,
+    turningOff: false,
+    apiUrl: null as string | null,
+    maxTunnelsPerOwner: 10,
+    updatedAt: null,
+    keyAvailable: true,
+    tunnels: { total: 0, connected: 0 },
+  },
+  tunnelError: null as unknown,
 }));
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -53,6 +63,38 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("@/utils/orpc", () => ({
   orpc: {
     appConfig: { key: () => ["appConfig"] },
+    adminTunnel: {
+      key: () => ["adminTunnel"],
+      get: {
+        queryOptions: () => ({
+          queryKey: ["adminTunnel", "get"],
+          queryFn: async () => ({ ...server.tunnel }),
+        }),
+      },
+      set: {
+        mutationOptions: () => ({
+          mutationFn: async (input: { apiUrl: string; credential?: string }) => {
+            server.calls.push({ procedure: "tunnelSet", input });
+            if (server.tunnelError) {
+              const error = server.tunnelError;
+              server.tunnelError = null;
+              throw error;
+            }
+            server.tunnel = { ...server.tunnel, configured: true, apiUrl: input.apiUrl };
+            return { configured: true, apiUrl: input.apiUrl, changed: true };
+          },
+        }),
+      },
+      clear: {
+        mutationOptions: () => ({
+          mutationFn: async () => {
+            server.calls.push({ procedure: "tunnelClear", input: undefined });
+            server.tunnel = { ...server.tunnel, configured: false, turningOff: true };
+            return { turningOff: true, tunnelsLeft: 0 };
+          },
+        }),
+      },
+    },
     settings: {
       key: () => ["settings"],
       adminGet: {
@@ -139,6 +181,16 @@ beforeEach(() => {
   server.policy = { signupEnabled: false, force2faInternalUsers: true, force2faPublicUsers: false };
   server.calls = [];
   server.nextError = null;
+  server.tunnelError = null;
+  server.tunnel = {
+    configured: false,
+    turningOff: false,
+    apiUrl: null,
+    maxTunnelsPerOwner: 10,
+    updatedAt: null,
+    keyAvailable: true,
+    tunnels: { total: 0, connected: 0 },
+  };
   server.ignoreWrites = false;
   server.graceSeconds = 3600;
   toast.success.mockReset();
@@ -263,6 +315,43 @@ describe("admin settings", () => {
     expect(isWeakeningChange({ key: "signupEnabled", next: true })).toBe(true);
     expect(isWeakeningChange({ key: "force2faInternalUsers", next: true })).toBe(false);
     expect(isWeakeningChange({ key: "signupEnabled", next: false })).toBe(false);
+  });
+
+  it("preview tunnels: optional, write-only credential, typed refusals", async () => {
+    const u = userEvent.setup();
+    mount();
+    expect(await screen.findByText(enAdmin.settings.tunnel.statusOff)).toBeTruthy();
+    const url = screen.getByLabelText(enAdmin.settings.tunnel.urlLabel) as HTMLInputElement;
+    const credential = screen.getByLabelText(
+      enAdmin.settings.tunnel.credentialLabel,
+    ) as HTMLInputElement;
+    expect(credential.type).toBe("password");
+    const save = screen.getByRole("button", { name: enAdmin.settings.tunnel.save });
+    await u.type(url, "http://tunnel.example.com/path");
+    await u.click(save);
+    expect(await screen.findByText(enAdmin.settings.tunnel.urlInvalid)).toBeTruthy();
+    await u.clear(url);
+    await u.type(url, "https://tunnel.example.com");
+    await u.type(credential, `tnsvc_${"a".repeat(43)}`);
+    server.tunnelError = Object.assign(new Error("refused"), {
+      code: "CONFLICT",
+      data: { code: "admin.tunnel_config_refused", reason: "credential_rejected" },
+    });
+    await u.click(save);
+    expect(
+      await screen.findByText(enAdmin.settings.tunnel.refused.credential_rejected),
+    ).toBeTruthy();
+    await u.click(save);
+    await waitFor(() =>
+      expect(server.calls.filter((call) => call.procedure === "tunnelSet").at(-1)?.input).toEqual({
+        apiUrl: "https://tunnel.example.com",
+        credential: `tnsvc_${"a".repeat(43)}`,
+        maxTunnelsPerOwner: 10,
+      }),
+    );
+    expect(toast.success).toHaveBeenCalledWith(enAdmin.settings.tunnel.saved);
+    // The credential is never echoed back into the form.
+    await waitFor(() => expect(credential.value).toBe(""));
   });
 
   it("offload grace (§6a): shows the server's value, refuses out-of-range input, saves a valid one", async () => {

@@ -394,3 +394,21 @@ export function diskOffloadHostUnsupported(
   if (host?.status !== "CONNECTED" || host.admissionEpoch !== host.connectionEpoch) return false;
   return !host.daemonDiskOffload;
 }
+
+/**
+ * Caller holds H. Declared tunnel ports (`tunnelPorts`) go only to daemons
+ * whose hello on this epoch advertised `tunnelPorts` (an older daemon's
+ * strict dispatch parser would refuse the frame and drop the relay). Refused
+ * (`unsupported_capability`) on positive current-epoch evidence only.
+ */
+export function tunnelPortsHostUnsupported(
+  host: {
+    status: string;
+    connectionEpoch: number;
+    admissionEpoch: number | null;
+    daemonTunnelPorts: boolean;
+  } | null,
+): boolean {
+  if (host?.status !== "CONNECTED" || host.admissionEpoch !== host.connectionEpoch) return false;
+  return !host.daemonTunnelPorts;
+}

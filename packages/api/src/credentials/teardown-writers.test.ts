@@ -201,6 +201,53 @@ const WRITERS: readonly Entry[] = [
     text: 'data: { state: "DELETED" },',
     exempt: "disk offload row",
   },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "generation: { increment: 1 },",
+    exempt: "preview-tunnel row: the turn-off's close fences older reads",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "generation: { increment: 1 },",
+    exempt: "preview-tunnel row: a create hold fences older reads",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "return held.count === 1 ? { until, generation: row.generation + 1 } : null;",
+    exempt: "preview-tunnel row: the generation a create hold took",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "update: { sweepLabel: true, serverKey: server.serverKey, generation: { increment: 1 } },",
+    exempt: "preview-tunnel row: a sweep obligation fences older reads",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "data: { sweepLabel: true, creatingUntil: null, generation: { increment: 1 } },",
+    exempt: "preview-tunnel row: a create hold moves into a sweep obligation",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "generation: hold.generation + 1,",
+    exempt: "preview-tunnel tombstone row",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/controller.ts",
+    text: "data: { sweepLabel: true, creatingUntil: null, generation: { increment: 1 } },",
+    exempt: "preview-tunnel row: an expired create hold becomes a sweep",
+  },
+  // Expose and close bump the tunnel row's own generation.
+  {
+    file: "packages/api/src/sandbox/tunnels/service.ts",
+    text: "generation: { increment: 1 },",
+    exempt: "preview-tunnel row expose generation",
+  },
+  {
+    file: "packages/api/src/sandbox/tunnels/service.ts",
+    text: "generation: { increment: 1 },",
+    exempt: "preview-tunnel row close generation",
+  },
+
   // Offload §8.9: the server-completed destroy of an OFFLOADED sandbox.
   {
     file: SANDBOXES,

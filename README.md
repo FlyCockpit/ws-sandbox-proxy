@@ -254,7 +254,8 @@ See the [filesystem and command behavior](docs/guide/sandboxes.md#filesystem-and
   talk to it. The plan is to make `@wssp/sdk` E2B-shaped, not to build a full
   E2B facade.
 - **No public URLs for guest ports.** There is no equivalent of E2B's
-  `getHost`: WS Sandbox Proxy does not publish a port inside a sandbox at a URL.
+  `getHost`. With an optional tunnel server, declared ports can be shared
+  through short-lived, gated links instead ([preview tunnels](docs/guide/tunnels.md)).
 - **No pool wait queue, migration or failover.** Placement chooses among
   currently verified, eligible hosts. Full/unavailable pools refuse immediately
   so callers can choose a fallback; accepted sandboxes keep their original

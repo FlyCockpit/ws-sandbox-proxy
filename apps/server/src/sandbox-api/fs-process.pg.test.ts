@@ -231,6 +231,8 @@ it("advertises non-kill signals and binds a signal to the exact owned command", 
     "SIGKILL",
   ]);
   expect(capabilities.features).toContain("processes.signal");
+  // No tunnel server is configured here: preview tunnels are not advertised.
+  expect(capabilities.features).not.toContain("sandboxes.tunnel");
   // A guest the host observed without group signals (kernel < 6.9) lists only
   // SIGKILL; a positive observation lists all four. Calls still check.
   const signalsWith = async (guestGroupSignals: boolean | null) => {

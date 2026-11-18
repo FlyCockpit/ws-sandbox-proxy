@@ -37,6 +37,7 @@ import {
   poolUnavailable,
   templateImageMissing,
   templateUnavailable,
+  tunnelRefused,
   unsupportedCapability,
   vmSizeUnsupported,
   withRetryable,
@@ -135,6 +136,9 @@ export const PLACEMENT_STAGES = [
   "builder",
   // Revisions with a start command only (TRUE otherwise): `templateStartup`.
   "startup",
+  // Creates with declared tunnel ports only (TRUE otherwise): a verified
+  // tunnel client the host owner lets this owner use.
+  "tunnel",
   // CLI logins (§8, TRUE without logins): hosts the logins' owner policy admits.
   "credentialOwner",
   "templateKnown",
@@ -165,6 +169,7 @@ export const STATIC_STAGES: readonly PlacementStage[] = [
   "compatible",
   "builder",
   "startup",
+  "tunnel",
   "credentialOwner",
   "templateKnown",
   "lease",
@@ -195,6 +200,8 @@ export type PlacementQuery = {
   credential?: CredentialPlacementContext | null;
   /** The requested egress mode: `open` ranks hosts that would grant it first. */
   egressMode?: EgressMode;
+  /** Preview tunnels: activates the `tunnel` stage. */
+  tunnel?: boolean;
 };
 
 /**
@@ -285,6 +292,10 @@ export function placementSql(q: PlacementQuery) {
     builder: builder ? builder.admits : PrismaValue.sql`TRUE`,
     startup: q.startup
       ? PrismaValue.sql`COALESCE((h."daemonFeatures"->'templateStartup') = 'true'::jsonb, false)`
+      : PrismaValue.sql`TRUE`,
+    tunnel: q.tunnel
+      ? PrismaValue.sql`(h."daemonTunnelPorts" AND h."daemonTunnel" IS NOT NULL AND (h."userId" = ${owner.ownerId}
+          OR COALESCE((h."daemonTunnel"->'allowForOthers') = 'true'::jsonb, false)))`
       : PrismaValue.sql`TRUE`,
     credentialOwner: credentialOwnerSql(q.credential, owner.ownerId),
     // Extended (image distribution): known here, OR fetchable to this host.
@@ -565,6 +576,8 @@ type PlacementInput = {
     timeoutMs?: number;
     /** Requested egress mode (ranking only; the effective mode is resolved at materialization). */
     egressMode?: EgressMode;
+    /** Preview tunnels: the create declares tunnel ports (the `tunnel` stage). */
+    tunnel?: boolean;
   };
 
 /** Pool context resolved under User → G, before any host is chosen. */
@@ -744,6 +757,15 @@ export async function resolvePlacement(
       if (!hostAdmitsTemplateStartup(host?.daemonFeatures ?? null))
         throw unsupportedCapability("template_startup");
     }
+    // Preview tunnels on a direct (own) target: a verified client.
+    if (input.tunnel === true) {
+      const host = await tx.sandboxHost.findFirst({
+        where: { id: input.sandboxHostId, userId: owner.ownerId },
+        select: { daemonTunnel: true, daemonTunnelPorts: true },
+      });
+      if (!host?.daemonTunnel || !host.daemonTunnelPorts)
+        throw tunnelRefused("tunnel_host_unsupported");
+    }
     // H is held (resolveDirectPlacement → lockAdmissionHost): the host
     // ceiling cannot change before commit. No pool path on a direct target.
     const limit = effectiveLeaseLimit({
@@ -826,6 +848,7 @@ export async function resolvePlacement(
     startup: await revisionNeedsStartup(tx, owner.ownerId, revision.id, options.buildId),
     credential: input.credential ?? null,
     egressMode: input.egressMode,
+    tunnel: input.tunnel === true,
   };
   let feasible: Promise<boolean> | undefined;
   /** Static feasibility (§4.1), read at most once per placement attempt. */
@@ -959,6 +982,8 @@ async function placementCascade(
   if (!(await passes("builder"))) throw buildNoBuilder(await buildSkipped(tx, query));
   // No visible host runs start/ready commands: static, like `compatible`.
   if (!(await passes("startup"))) throw poolNoCompatibleHost();
+  // No visible host runs tunnels for this owner: typed, never a wait.
+  if (!(await passes("tunnel"))) throw tunnelRefused("tunnel_no_host");
   if (!(await passes("credentialOwner"))) throw credentialError("credential.host_forbidden");
   if (!(await passes("templateKnown"))) throw templateUnavailable();
   if (!(await passes("online"))) throw poolUnavailable(await feasible(), await skipped());

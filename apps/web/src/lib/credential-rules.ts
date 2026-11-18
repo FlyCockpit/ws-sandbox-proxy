@@ -29,7 +29,13 @@ export const SCOPE_GROUPS: readonly { id: string; scopes: readonly ServiceScope[
   { id: "templates", scopes: ["templates:read", "templates:write", "templates:build"] },
   {
     id: "sandboxes",
-    scopes: ["sandboxes:read", "sandboxes:create", "sandboxes:manage", "sandboxes:destroy"],
+    scopes: [
+      "sandboxes:read",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "sandboxes:tunnel",
+    ],
   },
   { id: "commands", scopes: ["commands:read", "commands:execute"] },
   { id: "files", scopes: ["files:read", "files:write"] },

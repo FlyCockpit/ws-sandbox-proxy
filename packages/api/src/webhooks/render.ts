@@ -80,6 +80,7 @@ export const webhookSandboxRenderSelect = {
   guestSudo: true,
   guestSudoRequested: true,
   guestSudoReason: true,
+  tunnelPorts: true,
   guestRoot: true,
   createdAt: true,
   updatedAt: true,

@@ -54,6 +54,7 @@ describe("status", () => {
       "credential_secret_version.rootKid",
       "credential_return_key.rootKid",
       "sandbox_disk_offload.rootKid",
+      "tunnel_server_config.credentialKeyId",
       "sandbox_image_upload_session.keyId",
     ]);
   });

@@ -34,6 +34,9 @@ const FAMILY_POINTS = {
   image: 30,
   /** Template-build acceptance, cancel and context (re)open (template-builds §7). */
   build: 30,
+  /** Preview tunnels: expose/close and link mints, each one tunnel-server call
+   * (a preview opener mints one single-use link per visit). */
+  tunnel: 60,
 } as const;
 const mutations = new Map<string, (key: string) => Promise<void>>();
 export function consumeSandboxWriteBudget(ownerId: string, family: keyof typeof FAMILY_POINTS) {

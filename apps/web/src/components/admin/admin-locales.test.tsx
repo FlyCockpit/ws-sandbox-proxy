@@ -42,6 +42,15 @@ vi.mock("@tanstack/react-router", () => ({
 
 const at = new Date("2026-03-01T00:00:00.000Z");
 const data: Record<string, unknown> = {
+  adminTunnel: {
+    configured: true,
+    turningOff: false,
+    apiUrl: "https://tunnel.example.com",
+    maxTunnelsPerOwner: 10,
+    updatedAt: null,
+    keyAvailable: true,
+    tunnels: { total: 2, connected: 1 },
+  },
   counters: {
     users: 2,
     hosts: 1,
@@ -186,6 +195,12 @@ vi.mock("@/utils/orpc", () => {
         },
       },
       settings: { key: () => ["settings"], adminGet: query("adminGet"), update: query("update") },
+      adminTunnel: {
+        key: () => ["adminTunnel"],
+        get: query("adminTunnel"),
+        set: query("set"),
+        clear: query("clear"),
+      },
       users: {
         key: () => ["users"],
         list: {

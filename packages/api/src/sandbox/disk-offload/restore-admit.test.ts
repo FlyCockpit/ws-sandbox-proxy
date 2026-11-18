@@ -183,6 +183,7 @@ beforeEach(() => {
     diskGiB: 10,
     buildId: null,
     verifyBuildId: null,
+    tunnelPorts: [],
   })) as unknown as typeof db.sandbox.findFirst);
   db.sandboxOperation.updateMany.mockImplementation((async (args: {
     data: Record<string, unknown>;

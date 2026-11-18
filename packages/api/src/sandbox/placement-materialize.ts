@@ -57,6 +57,8 @@ export type CreateIntent = {
    * creates). A stored pre-feature intent reads false (`parseIntent`).
    */
   guestSudo: boolean;
+  /** Preview tunnels: declared ports, ascending (absent on a pre-feature intent). */
+  tunnelPorts?: number[];
 };
 
 /**
@@ -198,6 +200,7 @@ export async function materializePlacement(
     } satisfies Prisma.SandboxTemplateRevisionSelect,
   });
   const guestSudoFields = {
+    tunnelPorts: intent.tunnelPorts ?? [],
     guestSudoRequested: intent.guestSudo,
     guestSudo: guestSudo.effective,
     guestSudoReason: guestSudo.reason,

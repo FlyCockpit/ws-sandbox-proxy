@@ -25,6 +25,7 @@ import { formatBytes } from "@/lib/format-bytes";
 import { orpc } from "@/utils/orpc";
 
 import { AdminConfirmDialog } from "./admin-confirm-dialog";
+import { TunnelServerCard } from "./tunnel-server-card";
 
 type AdminSettings = Awaited<ReturnType<AppRouterClient["settings"]["adminGet"]>>;
 type PolicyKey = "signupEnabled" | "force2faInternalUsers" | "force2faPublicUsers";
@@ -139,6 +140,7 @@ export function AdminSettingsPage({ lang, adminHas2FA }: { lang: string; adminHa
             </CardContent>
           </Card>
           <OffloadGraceCard seconds={settings.data.offloadConsumedGraceSeconds} onSaved={refresh} />
+          <TunnelServerCard />
           <LimitsCard limits={settings.data.limits} />
           <p className="text-sm text-muted-foreground">
             {t("admin:settings.recoveryNote")}{" "}

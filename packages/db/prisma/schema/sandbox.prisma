@@ -292,6 +292,14 @@ model SandboxHost {
   /// The current session's hello reported the disk offload capability;
   /// rewritten on every hello (false until the daemon reports it).
   daemonDiskOffload           Boolean                       @default(false)
+  /// Preview tunnels: the current session's hello capability
+  /// `{clientSha256, maxTunnels, allowForOthers}`; null when not advertised.
+  /// Rewritten on every hello.
+  daemonTunnel                Json?
+  /// The current session's hello reported `tunnelPorts` (the daemon compiles
+  /// a launch's declared tunnel ports into its network plan); rewritten on
+  /// every hello. Launches with declared ports go only to such daemons.
+  daemonTunnelPorts           Boolean                       @default(false)
 
   // @check sandbox_host_vcpu_budget: "daemonVcpuBudget" IS NULL OR ("daemonVcpuBudget" >= 1 AND "daemonVcpuBudget" <= 8192)
   // @check sandbox_host_vcpu_reserved: "vcpuReserved" >= 0 AND "vcpuReserved" <= 8000
@@ -798,6 +806,9 @@ model Sandbox {
   /// Effective guest sudo, resolved once at materialization
   /// (resolveEffectiveGuestSudo). Immutable.
   guestSudo                  Boolean                   @default(false)
+  /// Preview tunnels: the ports declared at create (immutable; ascending,
+  /// at most 8). Only these can ever be exposed.
+  tunnelPorts                Int[]                     @default([])
   /// Why the effective value is false although sudo was requested.
   guestSudoReason            SandboxGuestSudoReason?
   /// The guest may reach root: guestSudo || revisionRootTaint(revision),

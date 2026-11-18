@@ -165,6 +165,9 @@ CREATE TYPE "TemplateCaptureState" AS ENUM ('PENDING', 'CAPTURED', 'STORING', 'F
 CREATE TYPE "ImageUploadSessionState" AS ENUM ('OPEN', 'COMPLETE', 'ABORTED');
 
 -- CreateEnum
+CREATE TYPE "SandboxTunnelState" AS ENUM ('PENDING', 'CONNECTING', 'CONNECTED', 'SUSPENDED', 'ERROR');
+
+-- CreateEnum
 CREATE TYPE "WebhookDeliveryState" AS ENUM ('PENDING', 'IN_FLIGHT', 'SUCCEEDED', 'FAILED', 'CANCELLED');
 
 -- CreateTable
@@ -1067,6 +1070,8 @@ CREATE TABLE "sandbox_host" (
     "imageCacheForeignBytes" BIGINT,
     "imageCacheEpoch" INTEGER,
     "daemonDiskOffload" BOOLEAN NOT NULL DEFAULT false,
+    "daemonTunnel" JSONB,
+    "daemonTunnelPorts" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "sandbox_host_pkey" PRIMARY KEY ("id")
 );
@@ -1372,6 +1377,7 @@ CREATE TABLE "sandbox_instance" (
     "egressModeReason" "SandboxEgressModeReason",
     "guestSudoRequested" BOOLEAN NOT NULL DEFAULT false,
     "guestSudo" BOOLEAN NOT NULL DEFAULT false,
+    "tunnelPorts" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
     "guestSudoReason" "SandboxGuestSudoReason",
     "guestRoot" BOOLEAN NOT NULL DEFAULT false,
     "egressDeniedGrants" TEXT[] DEFAULT ARRAY[]::TEXT[],
@@ -2088,6 +2094,62 @@ CREATE TABLE "sandbox_restore_wait" (
     "lastLoginRefusal" TEXT,
 
     CONSTRAINT "sandbox_restore_wait_pkey" PRIMARY KEY ("operationId")
+);
+
+-- CreateTable
+CREATE TABLE "tunnel_server_config" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "apiUrl" TEXT NOT NULL,
+    "credentialCiphertext" BYTEA NOT NULL,
+    "credentialNonce" BYTEA NOT NULL,
+    "credentialKeyId" TEXT NOT NULL,
+    "credentialSha256" TEXT NOT NULL,
+    "serverKey" TEXT NOT NULL,
+    "maxTunnelsPerOwner" INTEGER NOT NULL DEFAULT 10,
+    "disabledAt" TIMESTAMP(3),
+    "updatedById" TEXT,
+
+    CONSTRAINT "tunnel_server_config_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "sandbox_tunnel" (
+    "sandboxId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "ports" INTEGER[],
+    "state" "SandboxTunnelState" NOT NULL DEFAULT 'PENDING',
+    "lastError" TEXT,
+    "tunTunnelId" TEXT,
+    "hostTemplate" TEXT,
+    "hostId" TEXT,
+    "generation" INTEGER NOT NULL DEFAULT 0,
+    "appliedAt" TIMESTAMP(3),
+    "connectedAt" TIMESTAMP(3),
+    "closedAt" TIMESTAMP(3),
+    "sweepLabel" BOOLEAN NOT NULL DEFAULT false,
+    "creatingUntil" TIMESTAMP(3),
+    "serverKey" TEXT,
+
+    CONSTRAINT "sandbox_tunnel_pkey" PRIMARY KEY ("sandboxId")
+);
+
+-- CreateTable
+CREATE TABLE "sandbox_tunnel_event" (
+    "id" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "kind" TEXT NOT NULL,
+    "userId" TEXT,
+    "sandboxId" TEXT,
+    "actorId" TEXT,
+    "actorKeyId" TEXT,
+    "port" INTEGER,
+    "detail" TEXT,
+
+    CONSTRAINT "sandbox_tunnel_event_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -3045,6 +3107,24 @@ CREATE INDEX "sandbox_restore_wait_userId_idx" ON "sandbox_restore_wait"("userId
 CREATE UNIQUE INDEX "sandbox_restore_wait_operationId_sandboxId_userId_key" ON "sandbox_restore_wait"("operationId", "sandboxId", "userId");
 
 -- CreateIndex
+CREATE INDEX "sandbox_tunnel_userId_idx" ON "sandbox_tunnel"("userId");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_tunTunnelId_idx" ON "sandbox_tunnel"("tunTunnelId");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_serverKey_idx" ON "sandbox_tunnel"("serverKey");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "sandbox_tunnel_sandboxId_userId_key" ON "sandbox_tunnel"("sandboxId", "userId");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_event_createdAt_idx" ON "sandbox_tunnel_event"("createdAt");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_event_sandboxId_createdAt_idx" ON "sandbox_tunnel_event"("sandboxId", "createdAt");
+
+-- CreateIndex
 CREATE INDEX "webhook_endpoint_userId_createdAt_idx" ON "webhook_endpoint"("userId", "createdAt");
 
 -- CreateIndex
@@ -3734,6 +3814,11 @@ ALTER TABLE "sandbox_disk_offload" ADD CONSTRAINT "sandbox_disk_offload_shredded
 ALTER TABLE "sandbox_disk_offload" ADD CONSTRAINT "sandbox_disk_offload_wrap_all_ck1a592c76" CHECK (("wrappedKey" IS NULL) = ("wrapSalt" IS NULL) AND ("wrappedKey" IS NULL) = ("wrapNonce" IS NULL) AND ("wrappedKey" IS NULL OR "completedSessionId" IS NOT NULL));
 ALTER TABLE "sandbox_restore_wait" ADD CONSTRAINT "sandbox_restore_wait_intent_ck3be86db2" CHECK ((state::text = 'WAITING' AND "intent" IS NOT NULL AND "endedAt" IS NULL) OR (state::text <> 'WAITING' AND "intent" IS NULL AND "endedAt" IS NOT NULL));
 ALTER TABLE "sandbox_restore_wait" ADD CONSTRAINT "sandbox_restore_wait_deadline_ckb6bfa91a" CHECK ("deadlineAt" > "enqueuedAt");
+ALTER TABLE "tunnel_server_config" ADD CONSTRAINT "tunnel_server_config_singleton_ckea4e5f4a" CHECK (id = 'default');
+ALTER TABLE "tunnel_server_config" ADD CONSTRAINT "tunnel_server_config_max_per_owner_ckc5447fae" CHECK ("maxTunnelsPerOwner" >= 1 AND "maxTunnelsPerOwner" <= 1000);
+ALTER TABLE "sandbox_tunnel" ADD CONSTRAINT "sandbox_tunnel_ports_ckd13c90d1" CHECK (cardinality(ports) >= 1 AND cardinality(ports) <= 8);
+ALTER TABLE "sandbox_tunnel" ADD CONSTRAINT "sandbox_tunnel_generation_ck8313aadc" CHECK (generation >= 0);
+ALTER TABLE "sandbox_tunnel" ADD CONSTRAINT "sandbox_tunnel_server_key_ckc4e7c91e" CHECK ("serverKey" IS NOT NULL OR ("tunTunnelId" IS NULL AND NOT "sweepLabel" AND "creatingUntil" IS NULL));
 -- wssp:initial-checks-end
 
 -- wssp:initial-hardening-begin

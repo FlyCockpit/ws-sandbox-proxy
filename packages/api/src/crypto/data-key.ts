@@ -33,6 +33,8 @@ export const DATA_KEY_PURPOSES = [
   "cred-return-key-wrap:v1",
   // Disk offload (sandbox/disk-offload/keys.ts): wraps per-upload-session disk DEKs.
   "sandbox-disk-dek-wrap:v1",
+  // Preview tunnels (sandbox/tunnels/config.ts): the admin-set service credential.
+  "tunnel-service-credential:v1",
 ] as const;
 export type DataKeyPurpose = (typeof DATA_KEY_PURPOSES)[number];
 

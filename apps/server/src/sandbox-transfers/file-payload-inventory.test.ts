@@ -87,6 +87,9 @@ describe("file payload inventory", () => {
       // retention (template builds §3.3). Never file content; its 8 KiB bound
       // is a CHECK, pinned below.
       "SandboxTemplateBuild.failureTail",
+      // Preview tunnels: the sealed admin service credential, never file content.
+      "TunnelServerConfig.credentialCiphertext",
+      "TunnelServerConfig.credentialNonce",
       "WebhookEndpoint.previousSecretCiphertext",
       "WebhookEndpoint.previousSecretNonce",
       "WebhookEndpoint.secretCiphertext",

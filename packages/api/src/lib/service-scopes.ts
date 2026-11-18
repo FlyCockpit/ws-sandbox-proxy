@@ -23,6 +23,7 @@ export const SERVICE_SCOPES = [
   "credentials:read",
   "credentials:write",
   "credentials:use",
+  "sandboxes:tunnel",
 ] as const;
 
 export type ServiceScope = (typeof SERVICE_SCOPES)[number];
@@ -102,6 +103,10 @@ export const SERVICE_ACTIONS = [
   "sandboxes.setTimeout",
   "sandboxes.update",
   "sandboxes.capture",
+  "sandboxes.tunnelGet",
+  "sandboxes.tunnelExpose",
+  "sandboxes.tunnelClose",
+  "sandboxes.tunnelLink",
   "operations.get",
   "operations.getFileResult",
   "operations.getFileMutationResult",
@@ -294,6 +299,11 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   // Not an operation and not host-bound (no HOST_USABILITY_ACTIONS entry).
   "sandboxes.update": { scopes: ["sandboxes:manage"], requiresSandbox: true },
   "sandboxes.capture": { scopes: ["sandboxes:manage", "templates:write"], requiresSandbox: true },
+  // Preview tunnels: not operations; the controller drives the host.
+  "sandboxes.tunnelGet": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelExpose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelClose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {

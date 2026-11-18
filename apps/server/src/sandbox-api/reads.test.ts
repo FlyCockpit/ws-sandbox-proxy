@@ -431,6 +431,7 @@ describe("route and schema coverage", () => {
         "listCredentialAccounts",
         "listCredentialInstances",
         "listCredentialLeases",
+        "getSandboxTunnel",
       ].sort(),
     );
     for (const id of SDK_ROUTE_IDS) {
@@ -438,6 +439,7 @@ describe("route and schema coverage", () => {
       if (route.method !== "get") continue;
       if (["getHost", "getHostCommand", "getQueuedHostCommand"].includes(id)) continue; // Host adapters: host-access.test.ts and host-access.pg.test.ts.
       if (["getOperationResult", "getSandboxCapabilities", "connectProcess"].includes(id)) continue; // Real services covered in fs-process.pg.test.ts.
+      if (id === "getSandboxTunnel") continue; // Preview tunnels: the off-refusal test below and the live e2e.
       if (SDK_ROUTES[id].feature === "webhooks.write") continue; // Real services: webhooks.pg.test.ts.
       if (SDK_ROUTES[id].feature === "credentials.read") continue; // Real services: credentials.pg.test.ts.
       if (id === "getPoolCapacity") continue; // Real service covered in capacity-view.pg.test.ts.
@@ -720,6 +722,25 @@ describe("disclosure", () => {
     },
   );
 
+  it("refuses a create with tunnel ports with tunnel_off while no tunnel server is configured", async () => {
+    db.tunnelServerConfig.findUnique.mockResolvedValue(null);
+    // A create that declares tunnel ports is refused before any write.
+    const create = await app.request("/v1/sandboxes", {
+      method: "POST",
+      headers: { ...bearer, "content-type": "application/json", "idempotency-key": "tunnel-off" },
+      body: JSON.stringify({
+        sandboxHostId: "host1",
+        template: "revision/tpl1",
+        network: { tunnelPorts: [3000] },
+      }),
+    });
+    await expectError(create.clone(), 400, "UNSUPPORTED_CAPABILITY");
+    expect(sdkErrorEnvelopeSchema.parse(await json(create)).error).toMatchObject({
+      reason: "tunnel_off",
+    });
+    expect(db.sandbox.create).not.toHaveBeenCalled();
+  });
+
   it("reports the calling key's grant and only registered features", async () => {
     db.sdkKey.findUnique.mockResolvedValue(
       keyRow({
@@ -732,8 +753,12 @@ describe("disclosure", () => {
     expect(body).toEqual({
       apiVersion: "v1",
       // DATA_ENCRYPTION_KEY is unset here, so webhooks and CLI logins are not advertised.
+      // No tunnel server is configured, so preview tunnels are not advertised.
       features: enabledSdkFeatures().filter(
-        (feature) => feature !== "webhooks.write" && !feature.startsWith("credentials."),
+        (feature) =>
+          feature !== "webhooks.write" &&
+          !feature.startsWith("credentials.") &&
+          feature !== "sandboxes.tunnel",
       ),
       guestApi: guestApiCapabilities(true),
       limits: {
@@ -764,7 +789,7 @@ describe("disclosure", () => {
         capacityQueuePerKey: 16,
         capacityQueuePerOwner: 64,
       },
-      ports: { ingress: false, proxy: false },
+      ports: { ingress: false, proxy: false, tunnel: false },
       network: { egressModes: ["open", "allowlist"], defaultEgressMode: "open" },
       key: {
         scopes: ["sandboxes:read"],

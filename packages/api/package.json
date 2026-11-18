@@ -94,6 +94,12 @@
     "./sandbox/image-store/s3": {
       "default": "./src/sandbox/image-store/s3.ts"
     },
+    "./sandbox/tunnels/config": {
+      "default": "./src/sandbox/tunnels/config.ts"
+    },
+    "./sandbox/tunnels/service": {
+      "default": "./src/sandbox/tunnels/service.ts"
+    },
     "./sandbox/disk-offload/availability": {
       "default": "./src/sandbox/disk-offload/availability.ts"
     },

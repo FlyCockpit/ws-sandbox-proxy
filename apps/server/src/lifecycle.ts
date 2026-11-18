@@ -14,6 +14,11 @@ import { env } from "@wssp/env/server";
 import { redisConnection } from "@wssp/queue";
 import { startWorkerRuntime, WorkerDrainError, type WorkerRuntime } from "worker/runtime";
 import { bindHostAccess } from "../../../packages/api/src/sandbox/host-access.js";
+import {
+  bindTunnelBridge,
+  bindTunnelWake,
+} from "../../../packages/api/src/sandbox/tunnels/bridge.js";
+import { tunnelController } from "../../../packages/api/src/sandbox/tunnels/controller.js";
 import { resetImageRelay } from "./sandbox-image-relay/index.js";
 import { startImageScheduler } from "./sandbox-image-relay/scheduler.js";
 import { browserTerminalService } from "./sandbox-relay/browser-terminal.js";
@@ -64,6 +69,7 @@ export function createServerLifecycle() {
   let contextStartup: ReturnType<typeof startBuildContextStore> | undefined;
   let stopOutputRetention: (() => Promise<void>) | undefined;
   let stopTerminalSessionSweep: (() => Promise<void>) | undefined;
+  let stopTunnels: (() => Promise<void>) | undefined;
   let stopTemplateBuilds: (() => Promise<void>) | undefined;
   let readinessTimer: ReturnType<typeof setTimeout> | undefined;
   startup.signal.addEventListener("abort", () => clearTimeout(readinessTimer), { once: true });
@@ -130,6 +136,9 @@ export function createServerLifecycle() {
             // Host sockets stay up for the drains' in-flight sends, then close
             // even when a drain rejected (the rejection still fails the exit).
             bindHostAccess(null);
+            await stopTunnels?.();
+            bindTunnelWake(null);
+            bindTunnelBridge(null);
             await sandboxRelaySessionManager.dispose();
           }
         })();
@@ -309,6 +318,15 @@ export function createServerLifecycle() {
         bindHostImageVerifier((input) => sandboxRelaySessionManager.verifyHostImage(input));
         bindHostSandboxProbe((input) => sandboxRelaySessionManager.probeSandbox(input));
         bindHostAccess(sandboxRelaySessionManager.hostAccess);
+        // Preview tunnels: optional; the controller idles without a configured server.
+        bindTunnelBridge({ link: (hostId) => sandboxRelaySessionManager.tunnelLink(hostId) });
+        bindTunnelWake(
+          () =>
+            void tunnelController()
+              .tick()
+              .catch(() => undefined),
+        );
+        stopTunnels = tunnelController().start(startup.signal);
         bindHostTerminalPolicy({
           read: (hostId, ownerId) =>
             sandboxRelaySessionManager.hostTerminalPolicies.read(hostId, ownerId),

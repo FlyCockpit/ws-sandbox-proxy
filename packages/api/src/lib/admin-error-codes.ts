@@ -29,7 +29,22 @@ export const ADMIN_ERROR_CODES = {
   signupEmailRequired: "admin.signup_email_required",
   /** CONFLICT: a data-key or return-key action was refused; `data.reason` is a {@link DataKeyRefusal}. */
   dataKeyRefused: "admin.data_key_refused",
+  /** CONFLICT: the tunnel server setting was refused; `data.reason` is a {@link TunnelConfigRefusal}. */
+  tunnelConfigRefused: "admin.tunnel_config_refused",
 } as const;
+
+/** `data.reason` of {@link ADMIN_ERROR_CODES.tunnelConfigRefused}; the tunnel card translates each. */
+export const TUNNEL_CONFIG_REFUSALS = [
+  "url_invalid",
+  "key_missing",
+  "credential_invalid",
+  "credential_required",
+  "credential_rejected",
+  "server_unreachable",
+  "turning_off",
+  "turn_off_first",
+] as const;
+export type TunnelConfigRefusal = (typeof TUNNEL_CONFIG_REFUSALS)[number];
 
 /** `data.reason` of {@link ADMIN_ERROR_CODES.dataKeyRefused}; the admin card translates each. */
 export const DATA_KEY_REFUSALS = [

@@ -4,6 +4,7 @@ export {
   operationNotFound,
   sandboxStateConflict,
   templateNotFound,
+  tunnelRefused,
   unsupportedCapability,
 } from "./errors";
 export { hashRequestBody, requestDigestMetadata } from "./idempotency";

@@ -66,6 +66,14 @@ export type WsspErrorReason =
   | "open_egress_not_permitted"
   /** The node owner does not allow root (`guestSudo`) in other users' sandboxes. */
   | "guest_sudo_not_permitted"
+  /** `UNSUPPORTED_CAPABILITY` (tunnel): no tunnel server is configured on this deployment. */
+  | "tunnel_off"
+  /** `UNSUPPORTED_CAPABILITY` (tunnel): no eligible host runs the tunnel client for you. */
+  | "tunnel_no_host"
+  /** `UNSUPPORTED_CAPABILITY` (tunnel): this sandbox's host does not run the tunnel client. */
+  | "tunnel_host_unsupported"
+  /** `UNSUPPORTED_CAPABILITY` (tunnel): the host owner does not allow tunnels for others. */
+  | "tunnel_not_shared"
   /** `packContext` (local): no descriptor-anchored traversal on this platform. */
   | "unanchored_context"
   | "network"
@@ -173,6 +181,11 @@ const KIND_BY_CODE = {
   "sandbox.operation_not_found": "not_found",
   "sandbox.invalid_transition": "conflict",
   UNSUPPORTED_CAPABILITY: "unsupported",
+  "sandbox.tunnel_not_found": "not_found",
+  "sandbox.tunnel_port_undeclared": "invalid_request",
+  "sandbox.tunnel_not_ready": "conflict",
+  "sandbox.tunnel_quota": "capacity",
+  "sandbox.tunnel_unavailable": "unavailable",
   TRANSFER_EXPIRED: "gone",
   TRANSFER_QUOTA: "capacity",
   TRANSFER_IO: "unavailable",

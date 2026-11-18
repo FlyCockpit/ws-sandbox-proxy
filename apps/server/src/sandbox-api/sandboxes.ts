@@ -15,6 +15,12 @@ import {
   setSandboxTimeout,
   stopSandbox,
 } from "@wssp/api/sandbox/services/sandboxes";
+import {
+  closeSandboxTunnel,
+  createSandboxTunnelLink,
+  exposeSandboxTunnel,
+  getSandboxTunnel,
+} from "@wssp/api/sandbox/tunnels/service";
 import type { RouteHandlers } from "./reads.js";
 
 export const sandboxMutationHandlers = {
@@ -53,6 +59,12 @@ export const sandboxMutationHandlers = {
     probeSandboxReceipt(owner, { id: params.id, idempotencyKey }),
   captureSandbox: (owner, { params, body, idempotencyKey }) =>
     captureSandbox(owner, { ...body, id: params.id, idempotencyKey }),
+  getSandboxTunnel: (owner, { params }) => getSandboxTunnel(owner, { id: params.id }),
+  exposeSandboxTunnel: (owner, { params, body }) =>
+    exposeSandboxTunnel(owner, { id: params.id, ...(body.ports ? { ports: body.ports } : {}) }),
+  closeSandboxTunnel: (owner, { params }) => closeSandboxTunnel(owner, { id: params.id }),
+  createSandboxTunnelLink: (owner, { params, body }) =>
+    createSandboxTunnelLink(owner, { ...body, id: params.id }),
 } satisfies Pick<
   RouteHandlers,
   | "createSandbox"
@@ -63,4 +75,8 @@ export const sandboxMutationHandlers = {
   | "renewSandboxLease"
   | "probeSandbox"
   | "captureSandbox"
+  | "getSandboxTunnel"
+  | "exposeSandboxTunnel"
+  | "closeSandboxTunnel"
+  | "createSandboxTunnelLink"
 >;

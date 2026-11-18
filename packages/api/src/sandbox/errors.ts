@@ -1,5 +1,9 @@
 import { ORPCError } from "@orpc/server";
-import { type EgressRefusalReason, SDK_ERRORS } from "@wssp/sandbox-contracts";
+import {
+  type EgressRefusalReason,
+  SDK_ERRORS,
+  type TunnelRefusalReason,
+} from "@wssp/sandbox-contracts";
 
 /**
  * Stable sandbox control-plane error codes. Node daemons, adapters, and clients
@@ -49,6 +53,11 @@ const SandboxErrorCode = {
   invalidTransition: "sandbox.invalid_transition",
   unsupportedCapability: "UNSUPPORTED_CAPABILITY",
   leaseExceedsPolicy: "lease_exceeds_policy",
+  tunnelNotFound: "sandbox.tunnel_not_found",
+  tunnelPortUndeclared: "sandbox.tunnel_port_undeclared",
+  tunnelNotReady: "sandbox.tunnel_not_ready",
+  tunnelQuota: "sandbox.tunnel_quota",
+  tunnelUnavailable: "sandbox.tunnel_unavailable",
 } as const;
 
 type SandboxErrorCode = (typeof SandboxErrorCode)[keyof typeof SandboxErrorCode];
@@ -329,6 +338,55 @@ export function unsupportedCapability(
     `Unsupported capability: ${capability}.`,
     "BAD_REQUEST",
     { capability },
+  );
+}
+
+/** A preview-tunnel refusal: `UNSUPPORTED_CAPABILITY` for capability `tunnel`. */
+export function tunnelRefused(reason: TunnelRefusalReason) {
+  const messages: Record<TunnelRefusalReason, string> = {
+    tunnel_off: "Preview tunnels are not configured on this deployment.",
+    tunnel_no_host: "No eligible host runs preview tunnels for you.",
+    tunnel_host_unsupported: "This sandbox's host does not run preview tunnels.",
+    tunnel_not_shared: "The host owner does not allow preview tunnels for other users' sandboxes.",
+  };
+  return sandboxOrpcError(SandboxErrorCode.unsupportedCapability, messages[reason], "BAD_REQUEST", {
+    capability: "tunnel",
+    reason,
+  });
+}
+
+export function tunnelNotFound() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelNotFound,
+    "This sandbox has no tunnel.",
+    "NOT_FOUND",
+  );
+}
+export function tunnelPortUndeclared() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelPortUndeclared,
+    "The port was not declared for tunnels when the sandbox was created.",
+  );
+}
+export function tunnelNotReady() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelNotReady,
+    "The tunnel is not connected yet; retry shortly.",
+    "CONFLICT",
+  );
+}
+export function tunnelQuota() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelQuota,
+    "The account's tunnel limit is reached.",
+    "CONFLICT",
+  );
+}
+export function tunnelUnavailable() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelUnavailable,
+    "The tunnel server is unavailable.",
+    "SERVICE_UNAVAILABLE",
   );
 }
 

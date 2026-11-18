@@ -8,6 +8,7 @@ import {
   buildIdOfContextPath,
   failureSchema,
   metadataSchema,
+  normalizeTunnelPorts,
   publicOperationErrorCode,
   RESULT_LIMITS,
   type RunAsV11,
@@ -61,6 +62,7 @@ import {
   requestDigestMetadata,
   sandboxStateConflict,
   templateNotFound,
+  tunnelRefused,
   unsupportedCapability,
 } from "..";
 import { consumeCreateConnectBudget, consumeSandboxWriteBudget } from "../budgets";
@@ -208,6 +210,7 @@ import {
 import { requirePoolMemberAcquisition, requirePoolShareAcquisition } from "../sharing-quota";
 import { ACTIVE_OPERATION_STATES, STOPPABLE_SANDBOX_STATES } from "../state-transitions";
 import { pinnedLaunchSource, templateDispatchPayload } from "../template-dispatch";
+import { tunnelConfigured } from "../tunnels/config";
 import { validateVmSizeOverrides } from "../vm-size-input";
 
 const NOT_FOUND = "Sandbox not found";
@@ -257,6 +260,7 @@ const sandboxSelect = {
   guestSudo: true,
   guestSudoRequested: true,
   guestSudoReason: true,
+  tunnelPorts: true,
   guestRoot: true,
   createdAt: true,
   updatedAt: true,
@@ -1183,6 +1187,16 @@ export const createSandbox = serviceProcedure(
     if (input.lifecycle?.onTimeout === "pause" || input.lifecycle?.autoResume === true)
       throw unsupportedCapability("pause");
     if (input.network?.ingress !== undefined) throw unsupportedCapability("ingress");
+    // Preview tunnels: declared ports are a WORKLOAD feature of a deployment
+    // whose admin configured a tunnel server (refused before any write).
+    const tunnelPorts = input.network?.tunnelPorts
+      ? normalizeTunnelPorts(input.network.tunnelPorts)
+      : [];
+    if (tunnelPorts.length > 0) {
+      if (buildId !== null || managed !== undefined)
+        throw new ORPCError("BAD_REQUEST", { message: "Invalid managed create." });
+      if (!(await tunnelConfigured())) throw tunnelRefused("tunnel_off");
+    }
     requireCreateCredentialsAllowed(owner, input.credentials);
     const credentialRequests = input.credentials ?? [];
     // Direct placement is the host owner's escape hatch: it never joins a
@@ -1220,6 +1234,7 @@ export const createSandbox = serviceProcedure(
       timeoutMs: input.timeoutMs ?? LEASE_DEFAULT_MS,
       onExpire: input.lifecycle?.onTimeout === "stop" ? "stop" : "destroy",
       guestSudo: guestSudoRequested,
+      ...(tunnelPorts.length > 0 ? { tunnelPorts } : {}),
     };
     const created = retryPlacement(() =>
       operationTransaction(
@@ -1251,6 +1266,7 @@ export const createSandbox = serviceProcedure(
             const placementInput = {
               ...input,
               egressMode: egress.mode,
+              tunnel: tunnelPorts.length > 0,
               credential:
                 managed?.credential ??
                 (await credentialPlacementContextFor(

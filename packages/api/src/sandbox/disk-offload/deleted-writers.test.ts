@@ -89,6 +89,9 @@ const READS: Record<string, number> = {
   "packages/api/src/sandbox/sharing-access.ts": 2,
   "packages/api/src/sandbox/state-transitions.ts": 13,
   "packages/api/src/sandbox/terminal-tickets.ts": 1,
+  // Preview tunnels: a destroyed sandbox's tunnel is deleted; a read.
+  "packages/api/src/sandbox/tunnels/controller.ts": 1,
+  "packages/api/src/sandbox/tunnels/service.ts": 1,
   "packages/api/src/template-builds/cleanup.ts": 1,
   "packages/api/src/template-builds/decide.ts": 1,
   "packages/api/src/template-builds/orchestrator.ts": 1,

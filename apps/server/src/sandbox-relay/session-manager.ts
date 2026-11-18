@@ -50,6 +50,11 @@ import {
   TRANSFER_MAX_BYTES,
   vmSizeSchema,
 } from "@wssp/sandbox-contracts";
+import {
+  type TunnelHostLink,
+  wakeTunnelController,
+} from "../../../../packages/api/src/sandbox/tunnels/bridge.js";
+import { tunnelController } from "../../../../packages/api/src/sandbox/tunnels/controller.js";
 import { AllocationAttestation } from "./allocation-attestation.js";
 import type { SandboxHostWebsocketIdentity } from "./auth.js";
 import { AvailabilityCensus } from "./availability-census.js";
@@ -255,6 +260,12 @@ type SessionState = {
   /** Hello `diskOffload`: the daemon speaks the `disk.*`
    * frames and accepts the reconnect disk fields. */
   diskOffload?: boolean;
+  /** Hello `tunnel`: the daemon runs a verified preview-tunnel client. */
+  tunnelCapable?: boolean;
+  /** Hello `tunnelPorts`: the daemon accepts a launch's `tunnelPorts`. */
+  tunnelPorts?: boolean;
+  /** When reconciliation completed (ms): tunnel applies wait briefly after it. */
+  reconciledAt?: number;
   /** `disk.offload.inventory` pages this session sent (bounded). */
   diskInventoryPages?: number;
   /** Census keys seen on this connection until the complete page. */
@@ -398,6 +409,8 @@ export type DispatchOperationInput = {
   /** Guest privilege from the sandbox row (launches on `guestSudo` daemons). */
   guestSudo?: true;
   guestRoot?: true;
+  /** Preview tunnels: declared ports (launches only). */
+  tunnelPorts?: number[];
   /** §8.6 disk fields (launches on `diskOffload` daemons). */
   restore?: import("@wssp/sandbox-contracts").DispatchRestoreV11;
   launchMode?: import("@wssp/sandbox-contracts").LaunchMode;
@@ -1426,6 +1439,13 @@ export class SandboxRelaySessionManager {
       if (!socket || this.sessionsBySocket.get(socket)?.guestSudo !== true)
         return "refused_before_frame";
     }
+    // Declared tunnel ports require runtime support for the tunnel plan
+    // (an older daemon's strict dispatch parser would drop the relay).
+    if (input.tunnelPorts !== undefined) {
+      const socket = this.socketByHostId.get(hostId);
+      if (!socket || this.sessionsBySocket.get(socket)?.tunnelPorts !== true)
+        return "refused_before_frame";
+    }
     // Disk offload requires runtime support for stopped-disk transfer.
     if (dispatchHasDiskFields(input)) {
       const socket = this.socketByHostId.get(hostId);
@@ -1700,6 +1720,7 @@ export class SandboxRelaySessionManager {
               ...(input.startup ? { startup: input.startup } : {}),
               ...(input.guestSudo ? { guestSudo: true as const } : {}),
               ...(input.guestRoot ? { guestRoot: true as const } : {}),
+              ...(input.tunnelPorts ? { tunnelPorts: input.tunnelPorts } : {}),
               // Omitted (never null) when absent: a dispatch without them is
               // byte-identical to one from before disk offload.
               ...(input.restore ? { restore: input.restore } : {}),
@@ -2526,8 +2547,11 @@ export class SandboxRelaySessionManager {
             );
             await session.allocationAttestation.request();
           }
-          if (session.reconciled && this.isCurrentRegistered(session, socket))
+          if (session.reconciled && this.isCurrentRegistered(session, socket)) {
+            session.reconciledAt = Date.now();
             notifySandboxDispatchPending();
+            wakeTunnelController();
+          }
           return;
         case "terminal.ready":
         case "terminal.ack":
@@ -2594,6 +2618,16 @@ export class SandboxRelaySessionManager {
           this.recordQuiesceHold(session, true);
           return;
         }
+        case "tunnel.status":
+          // Accepted from registration on: a reconnecting daemon reports its
+          // running clients before reconciliation, so they are not re-applied.
+          if (session.tunnelCapable && session.registered)
+            await tunnelController().onStatus(
+              session.identity.hostId,
+              session.connectionEpoch,
+              message,
+            );
+          return;
         case "host.lease-policy":
           if (!this.isCurrentRegistered(session, socket)) return;
           await recordHostLeasePolicy(session, message, () =>
@@ -2605,11 +2639,6 @@ export class SandboxRelaySessionManager {
           await recordHostEgressState(session, message, () =>
             this.isCurrentRegistered(session, socket),
           );
-          return;
-        case "tunnel.status":
-          // Preview tunnels: this control plane sends no `tunnel.apply`
-          // yet, so a configured daemon's status reports are accepted
-          // (well-formed) and ignored.
           return;
         case "host.admission":
           await recordHostAdmission(sender, message, now, session.admissionState);
@@ -3215,6 +3244,42 @@ export class SandboxRelaySessionManager {
 
   /** a disk frame goes only to the current, reconciled
    * session of that epoch that advertised `diskOffload`. */
+  /** Preview tunnels: the registered, reconciled session of `hostId` here. */
+  tunnelLink(hostId: string): TunnelHostLink | null {
+    const socket = this.socketByHostId.get(hostId);
+    if (!socket || socket.readyState !== WS_READY_STATE_OPEN) return null;
+    const session = this.sessionsBySocket.get(socket);
+    if (
+      !session?.registered ||
+      !session.reconciled ||
+      session.reconciledAt === undefined ||
+      !session.authorized() ||
+      !this.isCurrentRegistered(session, socket)
+    )
+      return null;
+    return {
+      hostId,
+      ownerId: session.identity.userId,
+      epoch: session.connectionEpoch,
+      reconciledAt: session.reconciledAt,
+      capable: session.tunnelCapable === true,
+      send: (frame) => {
+        if (
+          socket.readyState !== WS_READY_STATE_OPEN ||
+          !session.authorized() ||
+          !this.isCurrentRegistered(session, socket)
+        )
+          return false;
+        try {
+          socket.send(encodeServerControlMessage(frame, session.protocolVersion));
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    };
+  }
+
   sendDiskFrame(
     hostId: string,
     connectionEpoch: number,
@@ -3587,6 +3652,8 @@ export class SandboxRelaySessionManager {
     session.templateStartup = message.daemon.capabilities.templateStartup === true;
     session.guestSudo = message.daemon.capabilities.guestSudo === true;
     session.diskOffload = message.daemon.capabilities.diskOffload === true;
+    session.tunnelCapable = message.daemon.capabilities.tunnel !== undefined;
+    session.tunnelPorts = message.daemon.capabilities.tunnelPorts === true;
     session.credentialFeatures = message.daemon.capabilities.credentials ?? null;
     const outputChunkBytes = negotiatedOutputChunkBytes(
       message.daemon.capabilities.maxOutputChunkBytes,

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CAPACITY_WAIT_MAX_MS } from "./capacity-wait";
 import { LEASE_FINITE_MAX_MS, LEASE_LIMIT_MIN_MS } from "./lease-limits";
+import { tunnelRefusalReasonSchema } from "./tunnels";
 
 /**
  * The public `/v1` error catalog: stable code → [HTTP status, constant message].
@@ -127,6 +128,14 @@ export const SDK_ERRORS = {
   "sandbox.operation_not_found": [404, "Operation not found."],
   "sandbox.invalid_transition": [409, "Sandbox transition is invalid."],
   UNSUPPORTED_CAPABILITY: [400, "Capability is unsupported."],
+  "sandbox.tunnel_not_found": [404, "This sandbox has no tunnel."],
+  "sandbox.tunnel_port_undeclared": [
+    400,
+    "The port was not declared for tunnels when the sandbox was created.",
+  ],
+  "sandbox.tunnel_not_ready": [409, "The tunnel is not connected yet; retry shortly."],
+  "sandbox.tunnel_quota": [409, "The account's tunnel limit is reached."],
+  "sandbox.tunnel_unavailable": [503, "The tunnel server is unavailable."],
   TRANSFER_EXPIRED: [410, "Transfer content has expired; the receipt is still available."],
   TRANSFER_QUOTA: [429, "Transfer capacity is full."],
   TRANSFER_IO: [503, "Transfer storage is unavailable."],
@@ -577,8 +586,8 @@ export const sdkErrorEnvelopeSchema = z.strictObject({
     z.strictObject({
       code: z.literal("UNSUPPORTED_CAPABILITY"),
       ...errorFields,
-      /** Present only for an egress refusal. */
-      reason: egressRefusalReasonSchema.optional(),
+      /** Present only for an egress or tunnel refusal. */
+      reason: z.union([egressRefusalReasonSchema, tunnelRefusalReasonSchema]).optional(),
     }),
     z.strictObject({
       code: z.literal("credential.value_invalid"),

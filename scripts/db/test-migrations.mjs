@@ -419,7 +419,7 @@ async function main() {
                 "SELECT count(*)::int AS n FROM pg_constraint WHERE contype='c' AND connamespace='public'::regnamespace",
               )
             ).rows[0].n,
-            147,
+            152,
           );
           assert.equal(
             (
