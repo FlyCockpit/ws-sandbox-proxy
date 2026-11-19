@@ -264,6 +264,9 @@ impl DnsTestClock {
     }
 }
 
+/// Guest terminate helper deadline under the shims (see `client_for_project`).
+pub(super) const SHIM_GUEST_TERMINATE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub(super) fn client_for(mode: &str) -> IncusClient {
     client_for_project(mode, "default").0
 }
@@ -305,6 +308,13 @@ fn client_for_project(mode: &str, project: &str) -> (IncusClient, PathBuf) {
         fs::set_permissions(&lock_dir, fs::Permissions::from_mode(0o2770)).unwrap();
     }
     client.daemon_lock_dir_override = Some(lock_dir);
+    // The shim runs the guest terminate helper against the HOST's /proc
+    // (hundreds of processes, scanned by a shell loop several times per
+    // TERM/KILL round), not a VM's: on a loaded 8-core host one run was
+    // measured at 2.2-4.3 s of wall time, over the 2 s a VM gets. A finite
+    // hang guard keeps every stop proof; the 2 s VM deadline is not what
+    // these tests assert.
+    client.guest_terminate_timeout_override = Some(SHIM_GUEST_TERMINATE_TIMEOUT);
     (client, log)
 }
 
@@ -413,6 +423,8 @@ fn runtime_for_project(mode: &str, project: &str) -> (IncusKvmRuntime, PathBuf) 
     })
     .expect("runtime");
     runtime.override_network_test_state(path.parent().unwrap().join("host-state"), Vec::new());
+    // See `client_for_project`.
+    runtime.client_mut().guest_terminate_timeout_override = Some(SHIM_GUEST_TERMINATE_TIMEOUT);
     (runtime, log)
 }
 
@@ -4496,7 +4508,10 @@ fn metrics_disabled_running_vm_becomes_ready_and_ops_succeed() {
 #[test]
 fn agent_down_probe_deadline_is_guest_unavailable() {
     let mut client = client_for("agent_down");
-    client.agent_timeout = Duration::from_millis(200);
+    // Any finite budget ends a probe that never succeeds; it must only
+    // exceed one shimmed state query, which a budget-cut query turns into
+    // `Timeout` by design. 200 ms did not on a loaded host.
+    client.agent_timeout = Duration::from_secs(5);
     let err = bound_call!(client, wait_for_agent()).expect_err("probe never succeeds");
     assert_eq!(err.code, SandboxErrorCode::GuestUnavailable);
 }
@@ -4815,7 +4830,8 @@ fn a_stalled_binding_refresh_after_a_stop_is_bounded_by_the_settle_window() {
 #[test]
 fn a_wrong_uid_fails_fast_as_guest_user_not_agent_timeout() {
     let (mut runtime, _) = runtime_for("home_not_searchable");
-    runtime.client_mut().agent_timeout = Duration::from_secs(30);
+    let agent_timeout = Duration::from_secs(60);
+    runtime.client_mut().agent_timeout = agent_timeout;
     let started = Instant::now();
     let err = runtime
         .create_bound(&create_req())
@@ -4826,11 +4842,10 @@ fn a_wrong_uid_fails_fast_as_guest_user_not_agent_timeout() {
         err.readiness_reason(),
         Some(sandbox_protocol::ReadinessFailureReason::GuestUser)
     );
-    assert!(
-        started.elapsed() < Duration::from_secs(10),
-        "{:?}",
-        started.elapsed()
-    );
+    // Fast means before the agent budget ran out, the only wait a
+    // non-fast failure would add. The shimmed create before readiness
+    // takes over 10 s by itself when the suite shares a busy host.
+    assert!(started.elapsed() < agent_timeout, "{:?}", started.elapsed());
 }
 
 /// Live 1: an unreadable boot id is never READY (it counts as a restart,
@@ -6068,8 +6083,11 @@ template_fingerprint: crate::CreateSandboxRequest::for_test("sbx", "key").templa
         thread::sleep(Duration::from_millis(5));
     }
     supervisor.cancel("c10-writer").expect("cancel request");
+    // A hang guard, not a deadline under test: the TERM-ignoring workload
+    // takes the full TERM, grace and KILL rounds of the terminate helper,
+    // several seconds under the shims on a loaded host.
     let response = rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(60))
         .expect("command finished")
         .expect("response");
     assert_eq!(
@@ -6143,8 +6161,11 @@ fn c10_guest_cancel_cleanup_runs_termination_helper() {
         std::thread::sleep(Duration::from_millis(5));
     }
     supervisor.cancel("c10-kill").expect("cancel");
+    // A hang guard, not a deadline under test: the TERM-ignoring workload
+    // takes the full TERM, grace and KILL rounds of the terminate helper,
+    // several seconds under the shims on a loaded host.
     let response = rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(60))
         .expect("join")
         .expect("response");
     assert_eq!(
@@ -8460,7 +8481,12 @@ fn qualification_delete_timeout_settles_when_host_proves_absence() {
 #[test]
 fn qualification_dir_unpack_outlives_the_ordinary_agent_deadline() {
     let (mut runtime, log) = runtime_for("c32_delayed_init");
-    runtime.override_agent_timeout(Duration::from_secs(2));
+    // The same budget also bounds the readiness that follows the unpack,
+    // which alone measured 8-9 s of shimmed agent probes on a loaded host;
+    // 20 s matches the storage fixture's room for parallel readiness. The
+    // unpack is then held past it, so it outlives the agent deadline.
+    let agent_timeout = Duration::from_secs(20);
+    runtime.override_agent_timeout(agent_timeout);
     let dir = log.parent().unwrap();
     std::thread::scope(|scope| {
         let create = scope.spawn(|| runtime.create_bound(&create_req()));
@@ -8472,7 +8498,7 @@ fn qualification_dir_unpack_outlives_the_ordinary_agent_deadline() {
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        std::thread::sleep(Duration::from_secs(4));
+        std::thread::sleep(agent_timeout + Duration::from_secs(2));
         fs::write(dir.join("release-init"), "").unwrap();
         assert_eq!(
             create.join().unwrap().unwrap().sandbox.state,

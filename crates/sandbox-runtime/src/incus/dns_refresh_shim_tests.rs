@@ -657,9 +657,15 @@ fn lifecycle_priority_preempts_a_six_second_refresh_commit() {
         fx.create(&[DOMAIN], &[]);
         let due = fx.state_expiry().unwrap() - 100;
         *fx.answer.lock().unwrap() = Ok(vec![B]);
+        // The refresh's commit lock stays held until this test releases it
+        // (120 s is only a hang guard): preemption is proven by order, the
+        // lifecycle request and the refresh pass both finishing while the
+        // lock is still held, not by racing a six-second wall-clock hold.
         let hold = Arc::new(super::client::DnsCommitHold {
             entered: std::sync::atomic::AtomicBool::new(false),
-            duration: Duration::from_secs(6),
+            release: std::sync::atomic::AtomicBool::new(false),
+            lapsed: std::sync::atomic::AtomicBool::new(false),
+            duration: Duration::from_secs(120),
         });
         fx.runtime.client_mut().dns_commit_hold = Some(hold.clone());
         let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -677,10 +683,16 @@ fn lifecycle_priority_preempts_a_six_second_refresh_commit() {
                 std::thread::sleep(Duration::from_millis(10));
             }
             barrier.wait(); // release into the production contended-lock loop
+            // The expiry action's production budget (5 s), on a logical
+            // clock: the shimmed kill/stop spends real CPU on dozens of
+            // python `incus` stand-ins, which on a loaded machine alone
+            // exceeds 5 s of wall time. Waiting for the held lock instead
+            // would never finish while it is held, which `lapsed` catches.
             let lifecycle =
                 fx.runtime
-                    .with_cancellation(Arc::new(crate::RuntimePermit::with_timeout(
+                    .with_cancellation(Arc::new(crate::RuntimePermit::with_test_clock(
                         Duration::from_secs(5),
+                        Arc::new(std::sync::Mutex::new(Instant::now())),
                     )));
             let create = create_req();
             match action {
@@ -708,8 +720,13 @@ fn lifecycle_priority_preempts_a_six_second_refresh_commit() {
                 }
             }
             let pass = completed
-                .recv_timeout(Duration::from_secs(5))
+                .recv_timeout(Duration::from_secs(120))
                 .expect("the lifecycle request preempts the held refresh");
+            assert!(
+                !hold.lapsed.load(Ordering::Acquire),
+                "{action}: the lifecycle request and the refresh finished only after the commit lock was free"
+            );
+            hold.release.store(true, Ordering::Release);
             assert!(
                 pass.refreshed.is_empty() && !pass.failed.is_empty(),
                 "{action}: {pass:?}"

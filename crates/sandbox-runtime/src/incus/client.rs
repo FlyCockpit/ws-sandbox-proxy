@@ -643,6 +643,10 @@ pub struct IncusClient {
     pub dns_commit_barrier: Option<std::sync::Arc<std::sync::Barrier>>,
     #[cfg(test)]
     pub(crate) dns_commit_hold: Option<std::sync::Arc<DnsCommitHold>>,
+    /// Replaces the guest terminate helper's exec deadline in shim fixtures,
+    /// whose "guest" is the host: see `GUEST_TERMINATE_TIMEOUT`.
+    #[cfg(test)]
+    pub(crate) guest_terminate_timeout_override: Option<Duration>,
     /// Freeze permit time for functional fault tests; individual command
     /// waits retain this finite budget.
     #[cfg(test)]
@@ -788,6 +792,12 @@ impl std::fmt::Debug for TestResolver {
 #[derive(Debug)]
 pub(crate) struct DnsCommitHold {
     pub(crate) entered: std::sync::atomic::AtomicBool,
+    /// Set by the test to end the hold.
+    pub(crate) release: std::sync::atomic::AtomicBool,
+    /// Set when the hold ended at `duration` without a release: whatever
+    /// the test awaited only finished once the lock was free again.
+    pub(crate) lapsed: std::sync::atomic::AtomicBool,
+    /// Hang guard: the longest the lock is held without a release.
     pub(crate) duration: Duration,
 }
 
@@ -1104,6 +1114,8 @@ impl IncusClient {
             dns_commit_barrier: None,
             #[cfg(test)]
             dns_commit_hold: None,
+            #[cfg(test)]
+            guest_terminate_timeout_override: None,
             #[cfg(test)]
             policy_observation_budget_override: None,
             #[cfg(test)]

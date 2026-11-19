@@ -15,7 +15,7 @@ token = os.environ.get("TUNNEL_TOKEN", "")
 with open(os.path.join(state, "seen.json"), "w") as f:
     json.dump({"argv": sys.argv, "target": os.environ.get("TUNNEL_TARGET_HOST"),
                "server": os.environ.get("TUNNEL_SERVER"), "token_set": bool(token),
-               "env_keys": sorted(os.environ.keys())}, f)
+               "env_keys": sorted(os.environ.keys()), "path": os.environ.get("PATH")}, f)
 if "exitthree" in token:
     sys.exit(3)
 if "crash" in token:
@@ -220,6 +220,27 @@ fn client_gets_the_recorded_target_and_token_only_through_its_environment() {
     assert_eq!(seen["target"], "10.9.8.2");
     assert_eq!(seen["server"], "https://tunnel.example.com");
     assert_eq!(seen["token_set"], true);
+    // Nothing is inherited from the daemon: only the fixed PATH and the
+    // tunnel variables reach the client (LC_CTYPE is Python's own PEP 538
+    // locale coercion in the stand-in, not something the daemon passed).
+    let keys: Vec<&str> = seen["env_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|key| key.as_str())
+        .filter(|key| *key != "LC_CTYPE")
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "PATH",
+            "RUST_LOG",
+            "TUNNEL_SERVER",
+            "TUNNEL_TARGET_HOST",
+            "TUNNEL_TOKEN"
+        ]
+    );
+    assert_eq!(seen["path"], "/usr/bin:/bin");
     assert!(
         !seen["argv"].to_string().contains("tntun_"),
         "token must never be in argv"

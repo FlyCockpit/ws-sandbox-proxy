@@ -26,7 +26,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,7 +34,7 @@ use sandbox_protocol::{
     TunnelApplyV11, TunnelCapabilityV11, TunnelClearV11, TunnelErrorV11, TunnelStateV11,
     TunnelStatusV11,
 };
-use sandbox_runtime::SandboxRuntime;
+use sandbox_runtime::{HostChildEnvironment, SandboxRuntime, host_child_command};
 
 /// Exit codes of the pinned client (`tunnel` README "Supervised daemon").
 const EXIT_GONE: i32 = 3;
@@ -755,11 +755,13 @@ impl TunnelManager {
             .mode(0o600)
             .open(dir.join(LOG_FILE))?;
         let state_dir = dir.join(STATE_SUBDIR);
-        let child = Command::new(&self.settings.client)
+        // The audited constructor clears the environment and inherits only
+        // PATH, which is then pinned to a fixed value: the client sees
+        // exactly the variables set here.
+        let child = host_child_command(&self.settings.client, HostChildEnvironment::PathOnly)
             .arg("--state-dir")
             .arg(&state_dir)
             .arg("daemon")
-            .env_clear()
             .env("PATH", "/usr/bin:/bin")
             .env("TUNNEL_TOKEN", entry.token.as_str())
             .env("TUNNEL_SERVER", &entry.server)

@@ -577,9 +577,19 @@ fn env_frame_preserves_timeout_cancel_and_expiry_cleanup() {
         let ops = root.join("ops");
         fs::create_dir(&ops).unwrap();
         let _ops = super::exec::set_test_guest_ops_dir(Some(ops));
-        let permit = Arc::new(crate::RuntimePermit::with_timeout(Duration::from_millis(
-            if mode == "expiry" { 500 } else { 8000 },
-        )));
+        // The expiry lease runs on a logical clock that only this test
+        // advances, once the command is running: a wall-clock lease short
+        // enough to bound setup below its 5 s cap could lapse on a loaded
+        // machine before the helper chain even started the command. (The
+        // logical clock also drives the command timer, so the timeout and
+        // cancel cases keep a wall-clock permit.)
+        let clock = Arc::new(std::sync::Mutex::new(Instant::now()));
+        let lease = Duration::from_millis(3000);
+        let permit = Arc::new(if mode == "expiry" {
+            crate::RuntimePermit::with_test_clock(lease, clock.clone())
+        } else {
+            crate::RuntimePermit::with_timeout(Duration::from_millis(8000))
+        });
         let supervisor = supervisor.with_cancellation(permit);
         let mut req = run_req("cleanup");
         req.env = vec![("APP".into(), "workload-value".into())];
@@ -601,7 +611,7 @@ fn env_frame_preserves_timeout_cancel_and_expiry_cleanup() {
                 serde_json::from_slice(&fs::read(root.join("actual-argv")).unwrap()).unwrap();
             // Setup is independent of the command's execution timer (D-20),
             // but remains at most 5s and never exceeds remaining lease authority.
-            let setup_max = if mode == "expiry" { 500 } else { 5000 };
+            let setup_max = if mode == "expiry" { 3000 } else { 5000 };
             assert!(
                 (1..=setup_max).contains(&args[6].parse::<u64>().unwrap()),
                 "helper budget exceeds finite setup/lease remainder"
@@ -611,6 +621,9 @@ fn env_frame_preserves_timeout_cancel_and_expiry_cleanup() {
         assert_eq!(super::client::process_group_of(&pid.to_string()), Some(pid));
         if mode == "cancel" {
             supervisor.cancel(&req.operation_id).unwrap();
+        }
+        if mode == "expiry" {
+            *clock.lock().unwrap() += lease;
         }
         let result = handle.join().unwrap();
         // Expired authority leaves guest outcome uncertain; the test owns this

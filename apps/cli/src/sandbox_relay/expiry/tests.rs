@@ -1030,7 +1030,10 @@ raise RuntimeError('unexpected mutation')
         HostAuthority::with_journal(j.clone()),
     );
     c.mono.store(1001, Ordering::SeqCst);
-    let deadline = Instant::now() + Duration::from_secs(8);
+    // A hang guard, not a deadline under test: the arm needs one 1 s retry
+    // backoff plus dozens of python shim calls, which took 6.6-9.3 s here
+    // with other suites running. The attempts themselves are pinned below.
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !j.lease("sbx").unwrap().expiry_complete {
         assert!(
             Instant::now() < deadline,

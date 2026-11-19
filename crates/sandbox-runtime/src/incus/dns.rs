@@ -6070,7 +6070,15 @@ impl IncusClient {
         let hold = self.dns_commit_hold.as_ref().expect("hold configured");
         hold.entered
             .store(true, std::sync::atomic::Ordering::Release);
-        std::thread::sleep(hold.duration);
+        let until = std::time::Instant::now() + hold.duration;
+        while !hold.release.load(std::sync::atomic::Ordering::Acquire) {
+            if std::time::Instant::now() >= until {
+                hold.lapsed
+                    .store(true, std::sync::atomic::Ordering::Release);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Path of the restart-durable expiry obligations for a sandbox.

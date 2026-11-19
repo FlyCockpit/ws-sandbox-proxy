@@ -19,9 +19,12 @@ fn fixture() -> (IncusKvmRuntime, PathBuf) {
     install_executable(&binary, SCRIPT, 0o755);
     let mut client = IncusClient::new(binary.to_string_lossy().into_owned(), "default");
     client.set_host_state_dir(log.parent().unwrap().join("host-state"));
-    // Room for every readiness exec (create adds the root-grow helper)
-    // when the suite runs in parallel.
-    client.agent_timeout = Duration::from_secs(20);
+    // Room for every readiness exec (create adds the root-grow helper and
+    // the guest-sudo step, both bounded by this budget too) when the suite
+    // runs in parallel. No test here expects the budget to run out, so it
+    // is only a hang guard: 20 s ran out with the 16 storage tests sharing
+    // a loaded 8-core host (each create is hundreds of python shim calls).
+    client.agent_timeout = Duration::from_secs(120);
     let mut runtime = IncusKvmRuntime::from_test_client(client);
     runtime.override_network_test_state(log.parent().unwrap().join("host-state"), Vec::new());
     fs::write(log.parent().unwrap().join("allocation-list"), "").unwrap();

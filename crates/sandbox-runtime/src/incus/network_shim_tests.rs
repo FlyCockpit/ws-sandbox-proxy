@@ -3655,7 +3655,10 @@ fn crash_after_init_before_start_is_recovered_by_the_retry() {
 fn crash_after_start_before_readiness_is_fenced_then_cleaned() {
     let (mut runtime, log) = runtime_for("c37_agent_down");
     let statedir = log.parent().expect("log parent").to_path_buf();
-    runtime.override_agent_timeout(std::time::Duration::from_millis(300));
+    // The agent never answers, so any finite budget ends readiness; it must
+    // only exceed one shimmed state query, which a budget-cut query turns
+    // into `Timeout` by design. 300 ms did not on a loaded host.
+    runtime.override_agent_timeout(std::time::Duration::from_secs(5));
     let err = runtime
         .create_bound(&create_with_policy())
         .expect_err("readiness never arrives");
@@ -6092,7 +6095,11 @@ fn cancelled_boot_starts_teardown_before_readiness_gate_opens() {
                 .send(boot.create_bound(&create_with_policy()))
                 .unwrap();
         });
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Both waits are hang guards, not deadlines under test: the gate
+        // only opens below after a failed wait, so a create that finishes
+        // at all was interrupted with the gate still closed. Shimmed create
+        // work alone can take over 10 s when the suite shares a busy host.
+        let deadline = Instant::now() + Duration::from_secs(120);
         while !root.join("boot-entered").exists() {
             assert!(
                 Instant::now() < deadline,
@@ -6101,7 +6108,7 @@ fn cancelled_boot_starts_teardown_before_readiness_gate_opens() {
             std::thread::sleep(Duration::from_millis(10));
         }
         permit.revoke();
-        let finished = finished_rx.recv_timeout(Duration::from_secs(5));
+        let finished = finished_rx.recv_timeout(Duration::from_secs(60));
         if finished.is_err() {
             fs::write(root.join("boot-release"), "").unwrap();
         }
@@ -6434,20 +6441,46 @@ E43DEADLINE
             .replacen(marker, &format!("{marker}{gate}"), 1);
     super::shim_tests::install_executable(Path::new(&binary), &script, 0o755);
     // The larger host-call bound must not replace this whole-create deadline.
-    let scoped = runtime.with_cancellation(Arc::new(crate::RuntimePermit::with_timeout(
+    // Logical permit time stands still, so the shimmed work before the gate
+    // can never spend the deadline on a loaded host (it then rolled back
+    // before reaching the gate, and the accept below waited forever). The
+    // settled call still gets only the 2 s that remain.
+    let scoped = runtime.with_cancellation(Arc::new(crate::RuntimePermit::with_test_clock(
         Duration::from_secs(2),
+        Arc::new(std::sync::Mutex::new(std::time::Instant::now())),
     )));
     let (tx, rx) = mpsc::channel();
     let worker = std::thread::spawn(move || {
         tx.send(scoped.create_bound(&create_with_policy())).unwrap();
     });
-    let (mut connection, _) = socket.accept().unwrap();
+    // Bounded: a create that ends before the gate fails here, never hangs.
+    socket.set_nonblocking(true).unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(120);
+    let mut connection = loop {
+        match socket.accept() {
+            Ok((connection, _)) => break connection,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Ok(outcome) = rx.try_recv() {
+                    panic!("create ended before reaching the gated launch: {outcome:?}");
+                }
+                assert!(
+                    std::time::Instant::now() < until,
+                    "create never reached the gated launch"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("accept: {error}"),
+        }
+    };
+    connection.set_nonblocking(false).unwrap();
     connection
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
     let mut entered = [0];
     connection.read_exact(&mut entered).unwrap();
-    let bounded = rx.recv_timeout(Duration::from_secs(5));
+    // Under the 20 s the gate holds before giving up on its own, so an
+    // ignored deadline is still told apart from the 2 s one on a busy host.
+    let bounded = rx.recv_timeout(Duration::from_secs(15));
     // Always release and join on an inverse failure too.
     let _ = connection.write_all(b"x");
     worker.join().unwrap();

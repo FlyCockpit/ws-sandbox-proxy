@@ -2160,6 +2160,10 @@ fn drain_pipe(rx: &PipeEvidence, dest: &mut Vec<u8>) {
     dest.extend_from_slice(&evidence.bytes);
 }
 
+/// Exec deadline of one guest terminate helper run (TERM, grace, KILL and
+/// the group-gone proof inside a VM).
+const GUEST_TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
+
 impl IncusClient {
     /// Spawn a supervised `incus exec`. The supervisor starts the command
     /// deadline before this spawn so a blocked pre-start (no guest banner)
@@ -2238,6 +2242,14 @@ impl IncusClient {
         Ok(args)
     }
 
+    fn guest_terminate_timeout(&self) -> Duration {
+        #[cfg(test)]
+        if let Some(timeout) = self.guest_terminate_timeout_override {
+            return timeout;
+        }
+        GUEST_TERMINATE_TIMEOUT
+    }
+
     fn terminate_guest_group(
         &self,
         name: &BoundInstance,
@@ -2258,7 +2270,7 @@ impl IncusClient {
                     command_nonce.into(),
                 ],
                 None,
-                Some(Duration::from_secs(2)),
+                Some(self.guest_terminate_timeout()),
             )
             .map_err(EffectError::into_error)?;
         super::effect_completion::group_gone(&nonce, &out)
