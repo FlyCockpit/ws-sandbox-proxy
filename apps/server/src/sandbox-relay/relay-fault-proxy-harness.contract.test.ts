@@ -407,6 +407,42 @@ describe("fault points", () => {
     expect(server.received).toEqual([]);
   });
 
+  it("a held link-direction also holds a fault point's trigger", async () => {
+    // relay-chaos C10: the daemon sends a result and its receipt back to
+    // back. The result's hold-then-reset must also swallow the receipt; if
+    // the receipt fault armed on that doomed link, the replay on the next
+    // link would never be its trigger and the lost reply never dropped.
+    const first = await connect();
+    const hold = proxy.holdUntil({ dir: "n2s", type: "operation.result" });
+    const fault = proxy.dropReplyThenReset({ dir: "n2s", type: "operation.receipt" });
+    first.node.send(result("op-1"));
+    await hold.matched;
+    first.node.send({ type: "operation.receipt", operationId: "op-1" });
+    const deadline = Date.now() + 5000;
+    while (!proxy.frames.some((f) => f.type === "operation.receipt")) {
+      if (Date.now() > deadline) throw new Error("the receipt never reached the proxy");
+      await sleep(2);
+    }
+    expect(proxy.frames.find((f) => f.type === "operation.receipt")?.disposition).toBe("held");
+    proxy.reset();
+    expect(first.server.received).toEqual([]);
+    // The replay on the next link is the trigger; its reply is the one lost.
+    const second = await connect();
+    second.node.send({ type: "operation.receipt", operationId: "op-1" });
+    await second.server.waitFor(1);
+    second.server.send({ type: "receipt.ack", operationId: "op-1" });
+    const { trigger, dropped } = await Promise.race([
+      fault,
+      sleep(5000).then(() => {
+        throw new Error("the reply on the replay's link was not dropped");
+      }),
+    ]);
+    const heldLink = proxy.frames.find((f) => f.type === "operation.result")!.linkId;
+    expect(trigger.linkId).toBeGreaterThan(heldLink);
+    expect(dropped).toMatchObject({ linkId: trigger.linkId, type: "receipt.ack" });
+    expect((await second.node.closed).code).toBe(1006);
+  });
+
   it("(iii) drop-reply-then-reset: non-replies pass, the first reply is lost", async () => {
     const { node, server } = await connect();
     const fault = proxy.dropReplyThenReset({ dir: "n2s", type: "operation.result" });

@@ -59,7 +59,7 @@ pub use dns::{
     DnsRefreshOutcome, DnsTransport, FakeDnsOutcome, FakeDnsRecord, FakeDnsTransport,
     UdpDnsTransport, host_dns_servers,
 };
-pub use exec::ExecSupervisor;
+pub use exec::{ExecSupervisor, GUEST_TERMINATE_TIMEOUT};
 pub use kvm::{IncusConfig, IncusKvmRuntime};
 pub use network::sandbox_network_names;
 pub use server_lease::{

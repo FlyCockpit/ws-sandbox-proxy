@@ -1929,8 +1929,15 @@ PYCODE
     }}
     if [ "$mode" = "deadline_edge" ]; then
       case "$qpath" in
-        */state*) sleep 0.17 ;;
+        */state*) sleep 1.7 ;;
       esac
+    fi
+    if [ "$mode" = "query_blocked" ]; then
+      # Blocks until released (60 s hang guard); a query that ever gets
+      # past here leaves a marker.
+      i=0
+      while [ ! -f "$statedir/release-query" ] && [ "$i" -lt 1200 ]; do sleep 0.05; i=$((i+1)); done
+      : > "$statedir/query-finished"
     fi
     if [ "$mode" = "slow_query_700" ]; then
       sleep 0.7
@@ -4864,40 +4871,59 @@ fn an_unreadable_boot_id_is_never_ready() {
     );
 }
 
+/// Readiness has ONE budget: after a slow state query spent part of it, the
+/// probe runs with what is left, and its exit 0 is final (no deadline
+/// recheck after the probe). Built so only that first probe can succeed: a
+/// dropped or overruled first probe would need a second pass (another 1.7 s
+/// query after a 2 s readiness poll), which cannot fit the 4 s budget, so
+/// exactly one probe ran. The real-time `wait_process` final-poll edge is
+/// `client::tests::run_process_keeps_a_child_that_exits_inside_the_final_poll`.
 #[test]
-fn wait_for_agent_keeps_a_probe_that_exits_inside_the_final_poll() {
-    let mut client = client_for("deadline_edge");
-    client.agent_timeout = Duration::from_millis(400);
+fn wait_for_agent_gives_the_probe_the_budget_a_slow_state_query_left() {
+    let (mut client, log) = client_for_with_log("deadline_edge");
+    client.agent_timeout = Duration::from_secs(4);
     bound_call!(client, wait_for_agent())
-        .expect("binding, Running state query and immediate true are ready within the budget");
+        .expect("binding, a 1.7 s Running state query and the probe fit one 4 s budget");
+    let log = fs::read_to_string(log).unwrap();
+    let probes = log
+        .lines()
+        .filter(|line| line.starts_with("exec ") && line.ends_with(" true"))
+        .count();
+    assert_eq!(probes, 1, "{log}");
 }
 
+/// A state query that never answers is cut by the readiness budget. The
+/// shim's queries block until released, which the test never does, so no
+/// query can have finished (structural: no `query-finished` marker) and the
+/// wait can only have ended through its own deadline. The elapsed bound only
+/// separates the 200 ms budget from every other bound on this path (the
+/// shim's 60 s hang guard, the production agent budget): it is not the edge
+/// under test, so it leaves room for kill and reap under load.
 #[test]
 fn wait_for_agent_bounds_a_slow_state_query() {
-    for (mode, delay_ms) in [("slow_query_700", 700u64), ("slow_query_1200", 1200u64)] {
-        let mut client = client_for(mode);
-        client.agent_timeout = Duration::from_millis(200);
-        let started = Instant::now();
-        let err = bound_call!(client, wait_for_agent())
-            .expect_err("blocked query must not hang past the budget");
-        let elapsed = started.elapsed();
-        assert_eq!(
-            err.code,
-            SandboxErrorCode::Timeout,
-            "{mode}: hung query before a Running/Starting fact is Timeout, got {}",
-            err.code
-        );
-        assert!(
-            elapsed < Duration::from_millis(450),
-            "{mode}: budget 200ms, query delay {delay_ms}ms, elapsed {:?}",
-            elapsed
-        );
-        assert!(
-            elapsed < Duration::from_millis(delay_ms),
-            "{mode}: must return before the shim sleep finishes, elapsed {:?}",
-            elapsed
-        );
-    }
+    let (mut client, log) = client_for_with_log("query_blocked");
+    let statedir = log.parent().unwrap().to_path_buf();
+    client.agent_timeout = Duration::from_millis(200);
+    let started = Instant::now();
+    let err = bound_call!(client, wait_for_agent())
+        .expect_err("blocked query must not hang past the budget");
+    let elapsed = started.elapsed();
+    assert_eq!(
+        err.code,
+        SandboxErrorCode::Timeout,
+        "hung query before a Running/Starting fact is Timeout, got {}",
+        err.code
+    );
+    assert!(
+        !statedir.join("query-finished").exists(),
+        "the wait returned only after a query finished"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "budget 200ms, blocked query, elapsed {elapsed:?}"
+    );
+    // Release any shim the kill missed, so none outlives the test.
+    fs::write(statedir.join("release-query"), b"").unwrap();
 }
 
 #[test]

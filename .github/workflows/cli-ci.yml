@@ -86,9 +86,10 @@ jobs:
       - run: cargo test --workspace --doc --locked
       # Slow tests are `#[ignore]`d so local runs stay fast; CI still runs them.
       - run: cargo test -p wssp --locked -- --ignored census_registers_after_more_than_thirty_seconds_of_acl_writer_contention
-      # Reconnect chaos timing knob (`WSSP_TEST_RELAY_TIMING`) is
-      # debug-only: the release unit test proves it inert, and the shipped
-      # binary must not even name the variable.
+      # Reconnect chaos timing knob (`WSSP_TEST_RELAY_TIMING`) and the
+      # widen-only runtime timing knob (`WSSP_TEST_RUNTIME_TIMING`) are
+      # debug-only: the release unit tests prove them inert, and the shipped
+      # binary must not even name the variables.
       - name: Release build ignores the debug-only test knobs
         run: |
           cargo test -p wssp --release --locked --lib sandbox_relay::test_timing
@@ -96,6 +97,10 @@ jobs:
           cargo build -p wssp --release --locked --bin wssp
           if grep -q WSSP_TEST_RELAY_TIMING target/release/wssp; then
             echo "release wssp references WSSP_TEST_RELAY_TIMING" >&2
+            exit 1
+          fi
+          if grep -q WSSP_TEST_RUNTIME_TIMING target/release/wssp; then
+            echo "release wssp references WSSP_TEST_RUNTIME_TIMING" >&2
             exit 1
           fi
           # One-daemon-per-Incus-server test override: debug builds only.

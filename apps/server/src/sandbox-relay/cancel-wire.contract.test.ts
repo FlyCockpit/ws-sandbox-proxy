@@ -56,7 +56,11 @@ import {
   removeWireDir,
   spawnWireHost,
   startFakeGuard,
+  stopEveryWireHost,
   stopWireHost,
+  WIRE_EXPIRY_OBSERVATION_MS,
+  WIRE_GUEST_TERMINATE_MS,
+  WIRE_STORAGE_POLL_MS,
   pinnedSize as wirePinnedSize,
   wireStore,
   writeBootstrapVm,
@@ -136,6 +140,58 @@ const receivedFrames = new EventEmitter();
 // that finish under CPU contention, plus 5 s for relay delivery. Command and
 // cancellation assertions retain until()'s independent 12 s failure bound.
 const BOOTSTRAP_TIMEOUT_MS = 125_000;
+// A daemon session (first connect, reconnect after a drop, or restart) re-runs
+// the whole host observation (census, capacity, storage pools) before
+// `reconcile.complete`; a reconnect adds adoption, the dispatch audit and an
+// inventory census. That is about 190 Incus-double invocations, each a fresh
+// Python interpreter (~60 ms of CPU each, several times that in wall time
+// under CPU contention). Measured on an 8-thread machine at load ~20: up to
+// 27 s for a first session and 42 s for a reconnect (18 s after the double
+// stopped recompiling itself per call), so until()'s 12 s step bound is not
+// a session bound. The relay-chaos suite bounds the same reconnect at 60 s.
+const SESSION_TIMEOUT_MS = 60_000;
+// The config's testTimeout (scripts/vitest-cancel-wire.config.ts): setup's
+// first session and bootstrap create, plus a body of 12 s steps. A case
+// that waits for more sessions or VM lifecycle results adds their bounds, so
+// until()'s labelled failure always fires before the case budget does.
+const CASE_TIMEOUT_MS = 240_000;
+// The dispatched command's own budget (`timeoutMs`).
+const COMMAND_TIMEOUT_MS = 15_000;
+// A command carried across a relay drop must still be inside its budget when
+// the daemon adopts or revokes it and when the case releases or cancels it:
+// one session bound plus the steps around it. Otherwise its own timeout
+// cleanup races the scenario under test (a slow reconnect outlasts 15 s).
+const CARRIED_COMMAND_TIMEOUT_MS = 2 * SESSION_TIMEOUT_MS;
+// Cases whose double holds the guest terminate helper on a release barrier
+// wait for that helper's exec deadline (the fixtures' widened
+// WIRE_GUEST_TERMINATE_MS) to end a held attempt: one step past it. Their
+// command outlives two held attempts and the steps around them, so its own
+// timeout cleanup never races the held cleanup.
+const HELD_HELPER_BOUND_MS = WIRE_GUEST_TERMINATE_MS + 12_000;
+// C37/C38 after storage heals. While storage was failed, every expiry action
+// attempt failed and backed off (apps/cli expiry.rs: 1 s doubling, at most
+// 30 s), more of them the slower the machine: one attempt may still be in
+// flight and fail, then the backoff runs, then the destroying attempt.
+const LOSS_DESTROY_BOUND_MS = 30_000 + 2 * 12_000;
+// Then the settlement and the network cleanup report. Expiry evidence whose
+// root census failed (its calls time out under load), or whose absent root
+// still owes network cleanup, is re-offered once per newer storage
+// observation, at most ROOTLESS_RETRIES (8, apps/cli evidence.rs) times
+// between them: each round is one storage poll plus one expiry observation
+// (the fixtures' widened values).
+const SETTLEMENT_BOUND_MS = (8 + 1) * (WIRE_STORAGE_POLL_MS + WIRE_EXPIRY_OBSERVATION_MS);
+const HELD_HELPER_COMMAND_TIMEOUT_MS = 2 * HELD_HELPER_BOUND_MS + 30_000;
+function caseTimeout({ sessions = 0, lifecycles = 0 }) {
+  return CASE_TIMEOUT_MS + sessions * SESSION_TIMEOUT_MS + lifecycles * BOOTSTRAP_TIMEOUT_MS;
+}
+const CASE_BUDGET = {
+  oneSession: caseTimeout({ sessions: 1 }),
+  twoSessions: caseTimeout({ sessions: 2 }),
+  threeSessions: caseTimeout({ sessions: 3 }),
+  fourSessions: caseTimeout({ sessions: 4 }),
+  sessionAndCreate: caseTimeout({ sessions: 1, lifecycles: 1 }),
+  sessionAndTwoLifecycles: caseTimeout({ sessions: 1, lifecycles: 2 }),
+};
 function bootstrapResult(operationId: string): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const cleanup = () => {
@@ -164,9 +220,24 @@ let rejectAdoption = false;
 // Live finding B-1: a dispatch frame dies in transit (written, never read).
 let loseDispatches = false;
 
+// A case that hit its vitest timeout keeps running in the background; its
+// polls must not act on the next case's daemon, store or directory. The
+// generation is checked before every predicate call (a predicate may send
+// through `peer` synchronously or start a nested `until`, which then captures
+// the same generation) and after it, so a stale poll neither acts nor
+// reports success.
+let caseGeneration = 0;
 async function until(check: () => boolean | Promise<boolean>, label: string, boundMs = 12000) {
+  const generation = caseGeneration;
+  const live = () => {
+    if (generation !== caseGeneration) throw new Error(`${label}: the case already ended`);
+  };
   const deadline = Date.now() + boundMs;
-  while (!(await check())) {
+  for (;;) {
+    live();
+    const done = await check();
+    live();
+    if (done) return;
     if (Date.now() > deadline)
       throw new Error(`${label}: ${failures.join("\n")}; frames=${JSON.stringify(frames)}`);
     await delay(5);
@@ -232,6 +303,7 @@ async function setup(
   holdWrapper = false,
   commandEnv?: Array<[string, string]>,
   beforeStart?: () => Promise<void>,
+  commandTimeoutMs = COMMAND_TIMEOUT_MS,
 ) {
   vi.clearAllMocks();
   refuseConnections = false;
@@ -271,7 +343,7 @@ async function setup(
     dispatchAttempt: 0,
     idempotencyKey: "key-1",
     argv: ["python3", join(dir, "writer.py"), dir],
-    timeoutMs: 15000,
+    timeoutMs: commandTimeoutMs,
     incusFingerprint: "sha256:" + "abcdef0123456789".repeat(4),
     ...(commandEnv ? { env: commandEnv } : {}),
   });
@@ -425,7 +497,11 @@ async function setup(
   seeded.state = "PROVISIONING";
   await beforeStart?.();
   await startHost();
-  await until(() => frames.some((f) => f.type === "reconcile.complete"), "initial reconciliation");
+  await until(
+    () => frames.some((f) => f.type === "reconcile.complete"),
+    "initial reconciliation",
+    SESSION_TIMEOUT_MS,
+  );
   await until(() => manager.isHostConnected("host-1"), "host registered");
   await until(
     () => [...store.credentialCensuses.values()].some((row) => row.hostId === "host-1"),
@@ -546,12 +622,15 @@ function receivedOutput() {
 }
 
 afterEach(async () => {
+  caseGeneration += 1;
   try {
     if (dir) await releaseWireFixture(dir);
   } finally {
     try {
       await stopHost();
     } finally {
+      // Any daemon the case spawned and did not stop (watchdog backstop).
+      await stopEveryWireHost();
       await manager.dispose();
       server?.close();
       guard?.server.close();
@@ -574,11 +653,14 @@ async function dropAndReconnect() {
       manager.isHostConnected("host-1") &&
       store.hosts.get("host-1")!.connectionEpoch > epoch,
     "daemon reconnected and reconciled",
+    SESSION_TIMEOUT_MS,
   );
 }
 
-it("relay drop: a running command is adopted on reconnect and finishes SUCCEEDED", async () => {
-  await setup("normal");
+it("relay drop: a running command is adopted on reconnect and finishes SUCCEEDED", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
+  await setup("normal", false, undefined, undefined, CARRIED_COMMAND_TIMEOUT_MS);
   await until(() => exists("armed"), "writer armed");
   const before = store.operations.get("op-1")!.dispatchedConnectionEpoch;
   await dropAndReconnect();
@@ -599,7 +681,9 @@ it("relay drop: a running command is adopted on reconnect and finishes SUCCEEDED
   expect(await exists("term-observed")).toBe(false);
 });
 
-it("relay drop: a create held in Effect is adopted on reconnect and finishes ready", async () => {
+it("relay drop: a create held in Effect is adopted on reconnect and finishes ready", {
+  timeout: CASE_BUDGET.sessionAndCreate,
+}, async () => {
   await setup("readiness-adopt-create");
   // The create journaled Effect and waits at the barrier, before any runtime call.
   await until(
@@ -615,16 +699,18 @@ it("relay drop: a create held in Effect is adopted on reconnect and finishes rea
   await until(
     () => store.operations.get("op-1")!.state === "SUCCEEDED",
     "adopted create result",
-    60_000,
+    BOOTSTRAP_TIMEOUT_MS,
   );
   expect(store.sandboxes.get("sbx-1")!.state).toBe("READY");
   expect(
     [...store.operations.values()].some((op) => op.kind === "KILL_SANDBOX"),
     "no teardown is enqueued",
   ).toBe(false);
-}, 120_000);
+});
 
-it("relay drop: a dispatch lost in transit is proved never received and runs, never UNKNOWN", async () => {
+it("relay drop: a dispatch lost in transit is proved never received and runs, never UNKNOWN", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
   // "terminal-" modes stop setup before the command dispatch.
   await setup("terminal-lost-dispatch");
   const states: string[] = [];
@@ -632,7 +718,10 @@ it("relay drop: a dispatch lost in transit is proved never received and runs, ne
   try {
     loseDispatches = true;
     await processSandboxOutboxBatch();
-    expect(store.operations.get("op-1")).toMatchObject({ state: "DISPATCHED", dispatchAttempt: 1 });
+    expect(store.operations.get("op-1")).toMatchObject({
+      state: "DISPATCHED",
+      dispatchAttempt: 1,
+    });
     loseDispatches = false;
     await dropAndReconnect();
     expect(
@@ -651,10 +740,12 @@ it("relay drop: a dispatch lost in transit is proved never received and runs, ne
     clearInterval(watch);
   }
   expect(states).not.toContain("UNKNOWN_OUTCOME");
-}, 60_000);
+});
 
-it("relay drop: a cancel requested while the host is away is delivered after adoption", async () => {
-  await setup("normal");
+it("relay drop: a cancel requested while the host is away is delivered after adoption", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
+  await setup("normal", false, undefined, undefined, CARRIED_COMMAND_TIMEOUT_MS);
   await until(() => exists("armed"), "writer armed");
   const epoch = store.hosts.get("host-1")!.connectionEpoch;
   const reconciled = frames.filter((f) => f.type === "reconcile.complete").length;
@@ -678,6 +769,7 @@ it("relay drop: a cancel requested while the host is away is delivered after ado
       frames.filter((f) => f.type === "reconcile.complete").length > reconciled &&
       manager.isHostConnected("host-1"),
     "daemon reconnected and reconciled",
+    SESSION_TIMEOUT_MS,
   );
   expect(frames.some((f) => f.type === "operation.adopt" && f.operationId === "op-1")).toBe(true);
   const adopted = store.operations.get("op-1")!;
@@ -691,10 +783,12 @@ it("relay drop: a cancel requested while the host is away is delivered after ado
     "cancel applied after adoption",
   );
   expect(await exists("term-observed")).toBe(true);
-}, 60_000);
+});
 
-it("relay drop: a server that rejects operation.adopt degrades to today's revoke", async () => {
-  await setup("normal");
+it("relay drop: a server that rejects operation.adopt degrades to today's revoke", {
+  timeout: CASE_BUDGET.twoSessions,
+}, async () => {
+  await setup("normal", false, undefined, undefined, CARRIED_COMMAND_TIMEOUT_MS);
   await until(() => exists("armed"), "writer armed");
   rejectAdoption = true;
   const reconciled = frames.filter((f) => f.type === "reconcile.complete").length;
@@ -707,7 +801,7 @@ it("relay drop: a server that rejects operation.adopt degrades to today's revoke
       manager.isHostConnected("host-1"),
     "daemon reconnected after the refusal",
     // Two reconnects, each re-running the shim's startup census.
-    45_000,
+    2 * SESSION_TIMEOUT_MS,
   );
   expect(frames.filter((f) => f.type === "operation.adopt")).toHaveLength(1);
   await until(
@@ -720,7 +814,7 @@ it("relay drop: a server that rejects operation.adopt degrades to today's revoke
     "the revoked attempt's journal records an uncertain outcome",
   );
   expect(store.operations.get("op-1")!.state).toBe("UNKNOWN_OUTCOME");
-}, 90_000);
+});
 
 async function retireExecs(): Promise<string[]> {
   return readFile(join(dir, "retire-execs"), "utf8").then(
@@ -732,7 +826,7 @@ async function retireExecs(): Promise<string[]> {
 it.each(["killed", "not-due", "unscoped"])(
   "Plan §10 wire %s: an UNKNOWN command whose guest group outlived its revoked owner meets the root retire helper",
   async (verdict) => {
-    await setup("normal");
+    await setup("normal", false, undefined, undefined, CARRIED_COMMAND_TIMEOUT_MS);
     await until(() => exists("armed"), "writer armed");
     // A strict server refuses adoption: the daemon revokes its carried
     // work, the attempt ends UNKNOWN, and the guest group keeps running.
@@ -744,7 +838,8 @@ it.each(["killed", "not-due", "unscoped"])(
         frames.filter((f) => f.type === "reconcile.complete").length > reconciled &&
         manager.isHostConnected("host-1"),
       "daemon reconnected after the refusal",
-      45_000,
+      // Two reconnects, as above.
+      2 * SESSION_TIMEOUT_MS,
     );
     await until(
       () => store.operations.get("op-1")!.state === "UNKNOWN_OUTCOME",
@@ -752,7 +847,10 @@ it.each(["killed", "not-due", "unscoped"])(
     );
     await until(async () => (await receipt())?.state === "unknown_outcome", "journal UNKNOWN");
     // Decision 2: the start was journaled when it bound.
-    expect((await receipt()).ext?.commandStart).toMatchObject({ uid: 1000, budgetMs: 15000 });
+    expect((await receipt()).ext?.commandStart).toMatchObject({
+      uid: 1000,
+      budgetMs: CARRIED_COMMAND_TIMEOUT_MS,
+    });
     const pgid = Number(await readFile(join(dir, "guest-pgid"), "utf8"));
     expect(() => process.kill(-pgid, 0)).not.toThrow();
     expect(await retireExecs()).toEqual([]);
@@ -763,7 +861,9 @@ it.each(["killed", "not-due", "unscoped"])(
     dropConfirmation = false;
     await dropAndReconnect();
     await until(async () => (await retireExecs()).length > 0, "root retire helper ran", 20_000);
-    expect((await retireExecs())[0]).toBe("kill-deadline wssp-cmd-op-1-1-1.scope 15000");
+    expect((await retireExecs())[0]).toBe(
+      `kill-deadline wssp-cmd-op-1-1-1.scope ${CARRIED_COMMAND_TIMEOUT_MS}`,
+    );
     if (verdict !== "killed") {
       // Kept: the group lives and the receipt stays.
       await delay(1500);
@@ -799,7 +899,7 @@ it.each(["killed", "not-due", "unscoped"])(
       [...store.outbox.values()].some((e) => String(e.payload.kind).startsWith("sandbox.stop")),
     ).toBe(false);
   },
-  150_000,
+  CASE_BUDGET.threeSessions,
 );
 
 it("harness tears down a daemon that is reconnecting without a WebSocket peer", async () => {
@@ -892,6 +992,9 @@ it.each([
       await until(
         () => frames.some((f) => f.type === "operation.result" && f.operationId === id),
         `allocation ${id}`,
+        // A create/reconnect result (a refusal answers at once): bounded like
+        // the bootstrap create.
+        BOOTSTRAP_TIMEOUT_MS,
       );
       return frames.find((f) => f.type === "operation.result" && f.operationId === id)!;
     }
@@ -1161,7 +1264,7 @@ it.each([
       }
     }
     await expect(
-      until(() => exists("deleted"), "loss drain destroyed the VM"),
+      until(() => exists("deleted"), "loss drain destroyed the VM", LOSS_DESTROY_BOUND_MS),
     ).resolves.toBeUndefined();
     // E-15: the slot can be released one step early. A host expiry status
     // that proves the halted VM STOPPED frees the slot from STOPPED
@@ -1177,7 +1280,7 @@ it.each([
           // cadence, then a census converges the row: allow several passes.
         },
         "connected lifecycle settlement released server slot",
-        45_000,
+        SETTLEMENT_BOUND_MS,
       ),
     ).resolves.toBeUndefined();
     expect(store.sandboxes.get("sbx-1")).toMatchObject({
@@ -1188,18 +1291,26 @@ it.each([
     expect(store.hosts.get("host-1")!.liveCount).toBe(0);
     // The census that converged the row and the expiry status that reports
     // network cleanup complete are independent frames: wait for the latter.
+    // An absent root still owing network cleanup is re-proven under newer
+    // storage observations on the same budget as missing root evidence.
     const lastStatus = () => frames.filter((f) => f.type === "sandbox.expiry_status").at(-1);
-    await until(() => {
-      const entry = (
-        lastStatus()?.entries as
-          | Array<{
-              root?: { networkCleanupComplete?: boolean };
-              lease?: { expiryComplete?: boolean };
-            }>
-          | undefined
-      )?.[0];
-      return entry?.root?.networkCleanupComplete === true && entry?.lease?.expiryComplete === true;
-    }, "expiry status reports network cleanup complete");
+    await until(
+      () => {
+        const entry = (
+          lastStatus()?.entries as
+            | Array<{
+                root?: { networkCleanupComplete?: boolean };
+                lease?: { expiryComplete?: boolean };
+              }>
+            | undefined
+        )?.[0];
+        return (
+          entry?.root?.networkCleanupComplete === true && entry?.lease?.expiryComplete === true
+        );
+      },
+      "expiry status reports network cleanup complete",
+      SETTLEMENT_BOUND_MS,
+    );
     const completed = lastStatus();
     expect(completed).toMatchObject({
       entries: [
@@ -1257,12 +1368,19 @@ it.each([
       });
     }
   },
+  CASE_TIMEOUT_MS + LOSS_DESTROY_BOUND_MS + 2 * SETTLEMENT_BOUND_MS,
 );
 
 it.each(["normal", "blocked", "failed"])(
   "C10 wire %s: service → outbox → relay → host evidence → result/receipt",
   async (mode) => {
-    await setup(mode);
+    await setup(
+      mode,
+      false,
+      undefined,
+      undefined,
+      mode === "blocked" ? HELD_HELPER_COMMAND_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+    );
     await until(() => exists("armed"), "controlled writer armed");
     await writeFile(join(dir, "write-before"), "");
     await until(() => exists("write-before-done"), "writer produced initial byte");
@@ -1287,6 +1405,7 @@ it.each(["normal", "blocked", "failed"])(
       await until(
         () => store.operations.get("op-1")!.state === "UNKNOWN_OUTCOME",
         "failed/blocked cleanup exposed uncertainty",
+        HELD_HELPER_BOUND_MS,
       );
       expect((await receipt()).phase).toBe("effect");
       expect((await receipt()).cancelRequested).toBe(true);
@@ -1316,6 +1435,7 @@ it.each(["normal", "blocked", "failed"])(
     await until(
       () => frames.some((f) => f.type === "reconcile.complete"),
       "reconnect receipt replay",
+      SESSION_TIMEOUT_MS,
     );
     expect(frames.some((f) => f.type === "operation.receipt" && f.state === "cancelled")).toBe(
       true,
@@ -1323,7 +1443,7 @@ it.each(["normal", "blocked", "failed"])(
     await until(async () => !(await receipt()), "exact receipt confirmation compacts journal");
     expect(store.operations.get("op-1")!.state).toBe("CANCELLED");
   },
-  60000,
+  CASE_BUDGET.oneSession + HELD_HELPER_BOUND_MS,
 );
 
 it("1.0 wire: a precise missing-path stat keeps the session open", async () => {
@@ -1621,7 +1741,9 @@ it("C10 wire: complete natural EXIT before cancel retains exit 0", async () => {
   expect(await exists("cleanup-entered")).toBe(false);
 });
 
-it("C10 wire: a command that ran without its start record is uncertain, never an unappliable success", async () => {
+it("C10 wire: a command that ran without its start record is uncertain, never an unappliable success", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
   // The real wrapper never runs argv without its start record; this shim
   // head (PID banner, natural EXIT, no READY) models evidence lost anyway.
   // 1.0 has no command payload without a bound birth, so the host reports
@@ -1665,7 +1787,7 @@ it("C10 wire: a command that ran without its start record is uncertain, never an
 it.each(["natural-during-cleanup", "natural-after-retry", "natural-cleanup-release"])(
   "C10 wire: %s retains EXIT(0) while cleanup is blocked before signal",
   async (mode) => {
-    await setup(mode);
+    await setup(mode, false, undefined, undefined, HELD_HELPER_COMMAND_TIMEOUT_MS);
     await until(() => exists("armed"), "writer armed");
     await cancelOperation({ kind: "session" as const, ownerId: "user-1" }, { operationId: "op-1" });
     await processSandboxOutboxBatch();
@@ -1674,6 +1796,7 @@ it.each(["natural-during-cleanup", "natural-after-retry", "natural-cleanup-relea
       await until(
         () => store.operations.get("op-1")!.state === "UNKNOWN_OUTCOME",
         "first failed helper published uncertainty; same owner continues",
+        HELD_HELPER_BOUND_MS,
       );
       expect((await receipt()).phase).toBe("effect");
     }
@@ -1682,7 +1805,11 @@ it.each(["natural-during-cleanup", "natural-after-retry", "natural-cleanup-relea
     if (mode === "natural-cleanup-release") await writeFile(join(dir, "release-cleanup"), "");
     // Cover both group_gone after release and helper timeout while still blocked.
     // Either continuation must classify the drained natural completion.
-    await until(() => store.operations.get("op-1")!.state === "SUCCEEDED", "natural result");
+    await until(
+      () => store.operations.get("op-1")!.state === "SUCCEEDED",
+      "natural result",
+      HELD_HELPER_BOUND_MS,
+    );
     expectStoredCommandExit(0);
     expect(await exists("term-observed")).toBe(false);
     expect(frames.some((f) => f.state === "cancelled")).toBe(false);
@@ -1692,12 +1819,13 @@ it.each(["natural-during-cleanup", "natural-after-retry", "natural-cleanup-relea
     expect(store.operations.get("op-1")!.state).toBe("SUCCEEDED");
     expect([...store.outbox.values()].every((e) => e.processedAt !== null)).toBe(true);
   },
+  CASE_TIMEOUT_MS + 2 * HELD_HELPER_BOUND_MS,
 );
 
 it.each(["natural-late-output", "natural-late-reframed"])(
   "C10 wire: %s classifies the complete stream after parent reap",
   async (mode) => {
-    await setup(mode);
+    await setup(mode, false, undefined, undefined, HELD_HELPER_COMMAND_TIMEOUT_MS);
     await until(() => exists("armed"), "writer armed");
     await until(() => exists("holder-pid"), "independent descriptor holder started");
     await cancelOperation({ kind: "session" as const, ownerId: "user-1" }, { operationId: "op-1" });
@@ -1705,10 +1833,15 @@ it.each(["natural-late-output", "natural-late-reframed"])(
     await until(() => exists("cleanup-entered"), "helper blocked before signal");
     await writeFile(join(dir, "release-natural"), "");
     await until(() => exists("natural-finished"), "real wrapper emitted first EXIT");
-    await until(() => exists("late-done"), "holder wrote tails after transport reap");
+    await until(
+      () => exists("late-done"),
+      "holder wrote tails after transport reap",
+      HELD_HELPER_BOUND_MS,
+    );
     await until(
       () => frames.some((f) => f.type === "operation.result"),
       "final output journaled and published",
+      HELD_HELPER_BOUND_MS,
     );
     const reframed = mode === "natural-late-reframed";
     const state = reframed ? "succeeded" : "unknown_outcome";
@@ -1744,6 +1877,7 @@ it.each(["natural-late-output", "natural-late-reframed"])(
     expect(await exists("term-observed")).toBe(false);
     expect(frames.some((f) => f.state === "cancelled")).toBe(false);
   },
+  CASE_TIMEOUT_MS + HELD_HELPER_BOUND_MS,
 );
 
 it.each(["exit", "setup"])(
@@ -1947,6 +2081,8 @@ it.each(["readiness-create", "readiness-reconnect"])(
     await until(
       () => store.operations.get("op-1")!.state === "FAILED",
       "readiness cleanup committed",
+      // The create's own result: bounded like the bootstrap create.
+      BOOTSTRAP_TIMEOUT_MS,
     );
     expect(
       frames.find((frame) => frame.type === "operation.result" && frame.operationId === "op-1"),
@@ -1986,6 +2122,7 @@ it.each(["readiness-create", "readiness-reconnect"])(
     await until(
       () => frames.some((frame) => frame.type === "operation.receipt"),
       "readiness receipt replay",
+      SESSION_TIMEOUT_MS,
     );
     expect(frames.find((frame) => frame.type === "operation.receipt")).toMatchObject({
       state: "unknown_outcome",
@@ -1996,6 +2133,8 @@ it.each(["readiness-create", "readiness-reconnect"])(
     await until(
       () => store.sandboxes.get("sbx-1")!.state === "DELETED",
       "confirmed readiness cleanup",
+      // The cleanup kill's own lifecycle result (stop and delete).
+      BOOTSTRAP_TIMEOUT_MS,
     );
     expect(store.sandboxes.get("sbx-1")!.liveResourcesHeld).toBe(false);
     expect(store.hosts.get("host-1")!.liveCount).toBe(0);
@@ -2003,6 +2142,7 @@ it.each(["readiness-create", "readiness-reconnect"])(
       1,
     );
   },
+  CASE_BUDGET.sessionAndTwoLifecycles,
 );
 
 it("root growth wire: a create whose root did not grow fails root_disk_not_grown and is destroyed", async () => {
@@ -2010,6 +2150,8 @@ it("root growth wire: a create whose root did not grow fails root_disk_not_grown
   await until(
     () => store.operations.get("op-1")!.state === "FAILED",
     "readiness cleanup committed",
+    // The create's own result: bounded like the bootstrap create.
+    BOOTSTRAP_TIMEOUT_MS,
   );
   expect(
     frames.find((frame) => frame.type === "operation.result" && frame.operationId === "op-1"),
@@ -2030,6 +2172,8 @@ it("guestSudo wire: a create whose image grants root statically fails guest_root
   await until(
     () => store.operations.get("op-1")!.state === "FAILED",
     "readiness cleanup committed",
+    // The create's own result: bounded like the bootstrap create.
+    BOOTSTRAP_TIMEOUT_MS,
   );
   expect(
     frames.find((frame) => frame.type === "operation.result" && frame.operationId === "op-1"),
@@ -2047,8 +2191,10 @@ it("guestSudo wire: a create whose image grants root statically fails guest_root
   expect([...store.operations.values()].filter((op) => op.kind === "KILL_SANDBOX")).toHaveLength(1);
 });
 
-it("guestSudo wire: a guestRoot sandbox's UNKNOWN command is killed once, parked while the VM runs, and retires only after the VM stops", async () => {
-  await setup("guest-root");
+it("guestSudo wire: a guestRoot sandbox's UNKNOWN command is killed once, parked while the VM runs, and retires only after the VM stops", {
+  timeout: CASE_BUDGET.fourSessions,
+}, async () => {
+  await setup("guest-root", false, undefined, undefined, CARRIED_COMMAND_TIMEOUT_MS);
   await until(() => exists("armed"), "writer armed");
   rejectAdoption = true;
   const reconciled = frames.filter((f) => f.type === "reconcile.complete").length;
@@ -2058,7 +2204,8 @@ it("guestSudo wire: a guestRoot sandbox's UNKNOWN command is killed once, parked
       frames.filter((f) => f.type === "reconcile.complete").length > reconciled &&
       manager.isHostConnected("host-1"),
     "daemon reconnected after the refusal",
-    45_000,
+    // Two reconnects, as above.
+    2 * SESSION_TIMEOUT_MS,
   );
   await until(
     () => store.operations.get("op-1")!.state === "UNKNOWN_OUTCOME",
@@ -2071,7 +2218,9 @@ it("guestSudo wire: a guestRoot sandbox's UNKNOWN command is killed once, parked
   await dropAndReconnect();
   await until(async () => (await retireExecs()).length > 0, "root retire helper ran", 20_000);
   // The due kill ran for its effect (the group is dead) ...
-  expect((await retireExecs())[0]).toBe("kill-deadline wssp-cmd-op-1-1-1.scope 15000");
+  expect((await retireExecs())[0]).toBe(
+    `kill-deadline wssp-cmd-op-1-1-1.scope ${CARRIED_COMMAND_TIMEOUT_MS}`,
+  );
   await until(() => {
     try {
       process.kill(-pgid, 0);
@@ -2094,7 +2243,7 @@ it("guestSudo wire: a guestRoot sandbox's UNKNOWN command is killed once, parked
   // Retired on host proof alone: no further guest exec. (The observed stop
   // then settles the server row like any stopped sandbox.)
   expect(await retireExecs()).toHaveLength(1);
-}, 150_000);
+});
 
 it.each([false, true])(
   "C20 saved device login → real relay middleware (host mismatch: %s)",
@@ -2346,14 +2495,17 @@ it("C52 wire: the real host opens a fenced PTY from its journal and refuses forg
   const sink = new TerminalSink();
   const session = openTerminal(sink);
   await until(() => sink.readies.length === 1, "terminal ready");
+  expect(session.input(new TextEncoder().encode("hello\n")).ok).toBe(true);
+  await until(() => sink.text.includes("got:hello"), "echo through the real PTY");
   // The PTY child is "incus exec -t" for the journal-bound sandbox and guest.
+  // Read after the echo: "terminal ready" only means the daemon spawned the
+  // child; the shim records its argv before it reads input, so the echo
+  // proves the record is complete.
   const argv: string[] = JSON.parse(await readFile(join(dir, "pty-argv"), "utf8"));
   expect(argv).toContain("-t");
   expect(argv.slice(argv.indexOf("--") + 1)).toEqual(["/bin/bash"]);
   expect(argv[argv.indexOf("--user") + 1]).toBe("1000");
   expect(argv).toContain("wssp-sbx-sbx-1");
-  expect(session.input(new TextEncoder().encode("hello\n")).ok).toBe(true);
-  await until(() => sink.text.includes("got:hello"), "echo through the real PTY");
   // Forged input frames straight onto the host socket: wrong generation,
   // epoch and operation. The host writes ZERO bytes and, on the third
   // violation, closes the session with an explicit protocol_violation.
@@ -2382,7 +2534,9 @@ it("C52 wire: the real host opens a fenced PTY from its journal and refuses forg
   expect(manager.terminals.sessionCount()).toBe(0);
 });
 
-it("C52 wire: a PTY flood keeps heartbeats and control moving, then a stalled browser is detached with 4401", async () => {
+it("C52 wire: a PTY flood keeps heartbeats and control moving, then a stalled browser is detached with 4401", {
+  timeout: CASE_TIMEOUT_MS,
+}, async () => {
   await setup("terminal-flood");
   const sink = new TerminalSink();
   openTerminal(sink);
@@ -2427,7 +2581,7 @@ it("C52 wire: a PTY flood keeps heartbeats and control moving, then a stalled br
     reaped: true,
   });
   expect(manager.terminals.sessionCount()).toBe(0);
-}, 60000);
+});
 
 class ResumableSink extends TerminalSink {
   readonly resumable = true;
@@ -2446,7 +2600,9 @@ class ResumableSink extends TerminalSink {
   }
 }
 
-it("WP8 wire: a sandbox PTY survives a relay drop and the real host resumes it once", async () => {
+it("WP8 wire: a sandbox PTY survives a relay drop and the real host resumes it once", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
   await setup("terminal-echo");
   const hello = frames.find((f) => f.type === "hello") as
     | { daemon: { capabilities: Record<string, unknown> } }
@@ -2505,7 +2661,9 @@ it("WP8 wire: a sandbox PTY survives a relay drop and the real host resumes it o
   expect(failures.join("")).not.toMatch(/panicked/);
 });
 
-it("WP8 wire (live P1): another server process revoking the epoch under a live relay leaves the PTY to the real host, which resumes it after the drop", async () => {
+it("WP8 wire (live P1): another server process revoking the epoch under a live relay leaves the PTY to the real host, which resumes it after the drop", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
   await setup("terminal-echo");
   const first = new ResumableSink();
   const opened = manager.terminals.open({

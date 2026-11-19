@@ -112,6 +112,7 @@ import {
   removeWireDir,
   spawnWireHost,
   startFakeGuard,
+  stopEveryWireHost,
   stopWireHost,
   WIRE_FINGERPRINT,
   wireStore,
@@ -184,18 +185,51 @@ function newManager(options: ManagerOptions = {}) {
 
 type ManagerOptions = { pingIntervalMs?: number; livenessTimeoutMs?: number };
 
-async function until(check: () => boolean | Promise<boolean>, label: string, boundMs = 20_000) {
+/** until()'s default bound: one relay step (a frame, a command start or exit). */
+const STEP_TIMEOUT_MS = 20_000;
+/**
+ * A daemon session (connect, reconnect or restart) re-runs the whole host
+ * observation before `reconcile.complete` (about 190 Incus-double calls):
+ * up to 42 s at load ~20 (cancel-wire's `SESSION_TIMEOUT_MS`).
+ */
+const SESSION_TIMEOUT_MS = 60_000;
+/** IncusClient's 120 s readiness bound plus relay delivery (the bootstrap create). */
+const BOOTSTRAP_TIMEOUT_MS = 125_000;
+
+async function until(
+  check: () => boolean | Promise<boolean>,
+  label: string,
+  boundMs = STEP_TIMEOUT_MS,
+) {
   const deadline = Date.now() + boundMs;
   while (!(await check())) {
-    if (Date.now() > deadline) {
-      const tail = (proxy?.frames ?? [])
-        .slice(-40)
-        .map((f) => `${f.linkId}:${f.dir}:${f.type}:${f.operationId ?? ""}:${f.disposition}`);
-      throw new Error(
-        `${label}: ops=${JSON.stringify([...history])}; frames=${tail.join(" ")}; daemon=${failures.join("").slice(-4000)}`,
-      );
-    }
+    if (Date.now() > deadline) throw new Error(diagnosis(label));
     await delay(5);
+  }
+}
+
+/** A step's failure message: committed op states, the proxy's frame tail, daemon stderr. */
+function diagnosis(label: string) {
+  const tail = (proxy?.frames ?? [])
+    .slice(-40)
+    .map((f) => `${f.linkId}:${f.dir}:${f.type}:${f.operationId ?? ""}:${f.disposition}`);
+  return `${label}: ops=${JSON.stringify([...history])}; frames=${tail.join(" ")}; daemon=${failures.join("").slice(-4000)}`;
+}
+
+/**
+ * `promise` (a proxy fault point, a process exit), or after `boundMs` a
+ * labelled failure like until()'s: a cell never hangs on an event that is
+ * not coming.
+ */
+async function within<T>(promise: Promise<T>, label: string, boundMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(diagnosis(label))), boundMs);
+  });
+  try {
+    return await Promise.race([promise, expired]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -352,7 +386,11 @@ async function setup(options: CellSetup = {}) {
   const seededState = seeded.state;
   seeded.state = "PROVISIONING";
   await startHost(options.timing);
-  await until(() => manager().isHostConnected("host-1"), "host registered and reconciled", 125_000);
+  await until(
+    () => manager().isHostConnected("host-1"),
+    "host registered and reconciled",
+    BOOTSTRAP_TIMEOUT_MS,
+  );
   await until(() => (guard?.pushes() ?? 0) > 0, "deployment blocklist pushed to the guard");
   await until(
     () => store.hosts.get("host-1")?.daemonEgressGuardOk === true,
@@ -364,7 +402,7 @@ async function setup(options: CellSetup = {}) {
     store,
     send: (frame) => peer!.send(frame),
     result: bootstrapResult,
-    until: (check, label) => until(check, label, 125_000),
+    until: (check, label) => until(check, label, BOOTSTRAP_TIMEOUT_MS),
   });
   if (options.dispatch === false) return;
   await processSandboxOutboxBatch();
@@ -376,7 +414,7 @@ function bootstrapResult(operationId: string): Promise<Record<string, unknown>> 
     const timer = setTimeout(() => {
       receivedFrames.off("frame", onFrame);
       reject(new Error("bootstrap lease result exceeded the readiness and relay deadline"));
-    }, 125_000);
+    }, BOOTSTRAP_TIMEOUT_MS);
     const onFrame = (frame: Record<string, unknown>) => {
       if (frame.type !== "operation.result" || frame.operationId !== operationId) return;
       clearTimeout(timer);
@@ -468,7 +506,7 @@ async function reconnectedAfter(epoch: number, label = "daemon reconnected and r
       store.hosts.get("host-1")!.connectionEpoch > epoch &&
       manager().isHostConnected("host-1", Number(store.hosts.get("host-1")!.connectionEpoch)),
     label,
-    60_000,
+    SESSION_TIMEOUT_MS,
   );
 }
 const epoch = () => Number(store.hosts.get("host-1")!.connectionEpoch);
@@ -577,6 +615,8 @@ afterEach(async () => {
       await stopWireHost(host);
       host = undefined;
     } finally {
+      // A daemon a cell replaced (DmnR respawn) or left behind.
+      await stopEveryWireHost();
       for (const created of managers.splice(0)) await created.dispose();
       dead.clear();
       await proxy?.close();
@@ -597,7 +637,17 @@ afterEach(async () => {
 const subset = (process.env.RELAY_CHAOS_SUBSET ?? "pr") as RelayChaosSubset;
 const selected = new Set(relayChaosCells(subset).map((cell) => cell.id));
 const registered = new Set<string>();
-const CELL_TIMEOUT_MS = 180_000;
+/**
+ * setup()'s step bounds: the first session (registered, bounded like the
+ * bootstrap), the guard push and lease, the bootstrap create, op-1 accepted.
+ */
+const SETUP_TIMEOUT_MS = 2 * BOOTSTRAP_TIMEOUT_MS + 3 * STEP_TIMEOUT_MS;
+/**
+ * setup() plus the longest cell body's step bounds (C10: three sessions and
+ * five steps), so a hang always fails at its labelled step bound first.
+ * 180 s was below setup's own bounds under load.
+ */
+const CELL_TIMEOUT_MS = SETUP_TIMEOUT_MS + 3 * SESSION_TIMEOUT_MS + 5 * STEP_TIMEOUT_MS;
 
 function cell(
   id: (typeof RELAY_CHAOS_MATRIX)[number]["id"],
@@ -650,7 +700,7 @@ cell("C2", async (c) => {
   await processSandboxOutboxBatch();
   await until(() => op("op-1").acceptedAttempt === 1, "host accepted op-1");
   await armed("op-1");
-  await acks.matched;
+  await within(acks.matched, "the server's output ACKs held", STEP_TIMEOUT_MS);
   const before = epoch();
   await restartServer("graceful");
   await reconnectedAfter(before);
@@ -702,8 +752,16 @@ cell("C4", async (c) => {
 
 cell("C5", async (c) => {
   // A short liveness bound: a false removal would happen well inside the
-  // slow-DB window if the clock ran while reads are paused.
-  const liveness = { pingIntervalMs: 250, livenessTimeoutMs: 1_000 };
+  // slow-DB window (three bounds) if the clock ran while reads are paused.
+  // It is bounded on both sides. Below: the bound also covers every new
+  // session before its hello, which the debug daemon sends only after its
+  // first Incus-double calls without reading the socket; that took
+  // 1.5-1.9 s at load ~20, so 1 s removed every session before its hello
+  // (`host_liveness_timeout`, `registered: false`) until setup gave up.
+  // Above: the window (15 s) stays well inside the daemon's own 30 s
+  // server-silence deadline (`SERVER_SILENCE_MIN`); the server sends nothing
+  // while its reads are paused, and a 30 s window let the daemon drop the link.
+  const liveness = { pingIntervalMs: 250, livenessTimeoutMs: 5_000 };
   await setup({ manager: liveness });
   await armed("op-1");
   const before = epoch();
@@ -714,7 +772,7 @@ cell("C5", async (c) => {
   // heartbeats follow the adopt on the same link at once.
   const adopt = proxy!.holdUntil({ dir: "n2s", type: "operation.adopt", operationId: "op-1" });
   proxy!.reset();
-  const held = await adopt.matched;
+  const held = await within(adopt.matched, "the reconnect's adoption held", SESSION_TIMEOUT_MS);
   let slow: (() => void) | undefined;
   const stalled = new Promise<void>((resolve) => {
     slow = resolve;
@@ -752,7 +810,7 @@ cell("C6", async (c) => {
   await setup({ dispatch: false });
   const lost = proxy!.dropNext({ dir: "s2n", type: "operation.dispatch", operationId: "op-1" });
   await processSandboxOutboxBatch();
-  await lost;
+  await within(lost, "the dispatch was dropped", STEP_TIMEOUT_MS);
   expect(op("op-1")).toMatchObject({ state: "DISPATCHED", dispatchAttempt: 1 });
   const before = epoch();
   const cursor = proxy!.cursor;
@@ -779,7 +837,7 @@ cell("C7", async (c) => {
   const lost = proxy!.holdThenReset({ dir: "n2s", type: "operation.result", operationId: "op-1" });
   const before = epoch();
   await release("op-1");
-  const result = await lost;
+  const result = await within(lost, "the live result was held", STEP_TIMEOUT_MS);
   expect(result.disposition).toBe("discarded");
   await reconnectedAfter(before);
   await until(() => op("op-1").state === "SUCCEEDED", "replayed receipt applied");
@@ -820,7 +878,7 @@ cell("C8", async (c) => {
   );
   const before = epoch();
   await release("op-1");
-  const { dropped } = await lost;
+  const { dropped } = await within(lost, "the result's confirmation was dropped", STEP_TIMEOUT_MS);
   // The server applied the live result before its confirmation was lost.
   await until(() => op("op-1").state === "SUCCEEDED", "live result applied");
   const completedAt = op("op-1").completedAt;
@@ -876,8 +934,9 @@ cell("C10", async (c) => {
   );
   let before = epoch();
   await release("op-1");
-  const { seq } = await lostResult;
-  await lostConfirmation;
+  const { seq } = await within(lostResult, "the live result was held", STEP_TIMEOUT_MS);
+  // The replay comes with the next session's reconciliation.
+  await within(lostConfirmation, "the replay's confirmation was dropped", SESSION_TIMEOUT_MS);
   await reconnectedAfter(before);
   await until(() => op("op-1").state === "SUCCEEDED", "versioned receipt applied");
   // (3) The second replay is confirmed and the journal compacts...
@@ -908,7 +967,7 @@ cell("C11", async (c) => {
   // nothing reaches either side and neither side sees a close.
   const census = proxy!.holdUntil({ dir: "n2s", type: "sandbox.inventory" });
   proxy!.reset();
-  const page = await census.matched;
+  const page = await within(census.matched, "the reconnect's census held", SESSION_TIMEOUT_MS);
   expect(page.linkId).toBe(links + 1);
   proxy!.blackhole();
   census.release();
@@ -1046,7 +1105,7 @@ cell("C15", async (c) => {
     { env, stdio: ["ignore", "pipe", "pipe"] },
   );
   quiesce.stderr!.on("data", (chunk) => failures.push(String(chunk)));
-  const [quiesceExit] = await once(quiesce, "exit");
+  const [quiesceExit] = await within(once(quiesce, "exit"), "quiesce exited", STEP_TIMEOUT_MS);
   expect(quiesceExit).toBe(0);
   await until(() => manager().isHostQuiescing("host-1"), "the server holds the host quiescing");
   // A new command is held in the server queue, before any claim.
@@ -1058,7 +1117,7 @@ cell("C15", async (c) => {
   const exited = once(daemon, "exit");
   await release("op-1");
   await until(() => op("op-1").state === "SUCCEEDED", "running command finished while quiescing");
-  const [code] = await exited;
+  const [code] = await within(exited, "the quiesced daemon exited", STEP_TIMEOUT_MS);
   expect(code).toBe(0);
   expect(op("op-2")).toMatchObject({ state: "QUEUED", dispatchAttempt: 0 });
   // DmnR: the service manager starts the new binary on the same data dir.

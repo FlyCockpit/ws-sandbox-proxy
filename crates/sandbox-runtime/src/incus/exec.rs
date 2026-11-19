@@ -2161,8 +2161,9 @@ fn drain_pipe(rx: &PipeEvidence, dest: &mut Vec<u8>) {
 }
 
 /// Exec deadline of one guest terminate helper run (TERM, grace, KILL and
-/// the group-gone proof inside a VM).
-const GUEST_TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
+/// the group-gone proof inside a VM). Debug builds may only widen it
+/// (`IncusKvmRuntime::set_guest_terminate_timeout`).
+pub const GUEST_TERMINATE_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl IncusClient {
     /// Spawn a supervised `incus exec`. The supervisor starts the command
@@ -2242,8 +2243,8 @@ impl IncusClient {
         Ok(args)
     }
 
-    fn guest_terminate_timeout(&self) -> Duration {
-        #[cfg(test)]
+    pub(super) fn guest_terminate_timeout(&self) -> Duration {
+        #[cfg(any(test, debug_assertions))]
         if let Some(timeout) = self.guest_terminate_timeout_override {
             return timeout;
         }
@@ -2393,6 +2394,34 @@ def _in_scope_open(path, *args, **kwargs):
     return _real_open(path, *args, **kwargs)
 builtins.open = _in_scope_open
 "#;
+
+    /// The debug test daemon's widen-only terminate deadline reaches every
+    /// client copy the terminate helper can run through: the runtime's, the
+    /// supervisor the daemon takes from `exec_supervisor`, and its
+    /// cancellation scopes. A shorter value never lowers the 2 s floor.
+    #[test]
+    fn widened_guest_terminate_timeout_reaches_every_client_copy() {
+        let client = IncusClient::new("/no-such-incus", "default");
+        assert_eq!(client.guest_terminate_timeout(), GUEST_TERMINATE_TIMEOUT);
+        let mut runtime = super::super::IncusKvmRuntime::from_test_client(client);
+        runtime.set_guest_terminate_timeout(Duration::from_secs(30));
+        let supervisor = runtime.exec_supervisor();
+        let scoped = supervisor.with_cancellation(Arc::new(crate::RuntimePermit::with_timeout(
+            Duration::from_secs(4),
+        )));
+        for timeout in [
+            runtime.client().guest_terminate_timeout(),
+            supervisor.client.guest_terminate_timeout(),
+            scoped.client.guest_terminate_timeout(),
+        ] {
+            assert_eq!(timeout, Duration::from_secs(30));
+        }
+        runtime.set_guest_terminate_timeout(Duration::from_millis(100));
+        assert_eq!(
+            runtime.exec_supervisor().client.guest_terminate_timeout(),
+            GUEST_TERMINATE_TIMEOUT
+        );
+    }
 
     #[test]
     fn command_scope_units_are_exact_and_validated() {

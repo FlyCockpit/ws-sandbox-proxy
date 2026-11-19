@@ -419,6 +419,29 @@ Three layers, from cheapest to real VMs:
   (`scripts/lib/relay-chaos-live.test.ts`,
   `scripts/lib/relay-chaos-front-door.test.ts`).
 
+### Debug-only daemon timing knobs
+
+Debug `wssp` builds read two test knobs at daemon start
+(`apps/cli/src/sandbox_relay/test_timing.rs`); release builds never name
+either (`cli-ci.yml` greps the release binary):
+
+- `WSSP_TEST_RELAY_TIMING=<silence>,<intent_window>,<max_carry>,<quiesce_max>,<terminal_grace>`
+  shortens relay deadlines so a chaos cell runs in seconds.
+- `WSSP_TEST_RUNTIME_TIMING=<guest_terminate>,<expiry_observation>,<storage_poll>`
+  only lengthens: the guest terminate helper's exec deadline (2 s, up to
+  60 s), the connected expiry observation (4 s) and the storage health poll
+  period (5 s, up to 10 s so storage reports stay inside the 15 s freshness
+  bound). The expiry observation must stay below the storage poll: the
+  daemon retries an observation a newer storage poll overtook, and one as
+  long as the poll period may never converge. It is refused unless the
+  control plane is loopback and `WSSP_INCUS_BINARY` names an Incus double. The cancel-wire and relay-chaos fixtures
+  (`apps/server/src/sandbox-relay/cancel-wire-fixtures.ts`) set it: their
+  double runs the guest helper and every Incus call on the host, which under
+  CPU load takes longer than a VM would.
+
+Each field is `<n>ms` or `<n>s`; an empty field keeps the default; a
+malformed value refuses the start.
+
 ### Live cells
 
 | Cell | Fault                                                                                                                            | Pass condition                                                                                                                                                                                                                                  |

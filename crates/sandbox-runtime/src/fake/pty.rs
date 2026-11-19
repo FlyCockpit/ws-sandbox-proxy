@@ -121,6 +121,29 @@ impl FakePtyControl {
     pub fn input(&self) -> Vec<u8> {
         self.inner.with(|wire| wire.input.clone())
     }
+    /// The child's input once it equals `expected`, or what it is when
+    /// `timeout` (a hang guard) runs out. A terminal input ack promises the
+    /// session QUEUED the bytes (`write_input`; terminal relay contract:
+    /// "the host acknowledges after `write_input` accepts a frame"); the
+    /// session's PTY writer thread hands them to the child afterwards. A
+    /// test that asserts delivery after an ack waits for it here.
+    pub fn wait_for_input(&self, expected: &[u8], timeout: std::time::Duration) -> Vec<u8> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut wire = self.inner.wire.lock().unwrap_or_else(|e| e.into_inner());
+        while wire.input != expected {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            wire = self
+                .inner
+                .changed
+                .wait_timeout(wire, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        wire.input.clone()
+    }
     /// Every size the child observed: the initial size, then each resize.
     pub fn sizes(&self) -> Vec<PtySize> {
         self.inner.with(|wire| wire.sizes.clone())

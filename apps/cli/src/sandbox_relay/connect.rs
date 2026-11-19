@@ -422,6 +422,11 @@ pub fn run_connect_with_config(
     // runtime/PTY orphans here would take them from their existing reapers.
     // WP1 chaos knob: read once, debug builds only (release: always None).
     install_relay_test_timing(super::test_timing::relay_test_timing()?);
+    // Widen-only runtime waits for test daemons on an Incus double; debug
+    // builds only (release: always None).
+    install_runtime_test_timing(super::test_timing::runtime_test_timing(
+        &options.server_url,
+    )?);
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut lease = LeaseSlot::default();
     let result = run_connect_service_with_tls(
@@ -1356,6 +1361,44 @@ fn install_relay_test_timing(timing: Option<super::test_timing::RelayTestTiming>
         );
     }
     let _ = RELAY_TEST_TIMING.set(timing);
+}
+
+/// The process's `WSSP_TEST_RUNTIME_TIMING` widening, set once by
+/// [`run_connect_with_config`]; always `None` in release builds.
+static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<super::test_timing::RuntimeTestTiming>> =
+    std::sync::OnceLock::new();
+
+fn install_runtime_test_timing(timing: Option<super::test_timing::RuntimeTestTiming>) {
+    #[cfg(debug_assertions)]
+    if let Some(timing) = &timing {
+        tracing::warn!(
+            ?timing,
+            "TEST-ONLY OVERRIDE `{}`: this daemon waits longer than production for the guest \
+             terminate helper and the connected expiry observation, and may poll storage \
+             less often; never set it in production",
+            super::test_timing::RUNTIME_TIMING_ENV
+        );
+    }
+    let _ = RUNTIME_TEST_TIMING.set(timing);
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn installed_runtime_test_timing() -> Option<super::test_timing::RuntimeTestTiming> {
+    RUNTIME_TEST_TIMING.get().copied().flatten()
+}
+
+/// Permit of one connected expiry observation (host census of expiring
+/// sandboxes). Debug test daemons may widen it (`WSSP_TEST_RUNTIME_TIMING`).
+pub(super) const EXPIRY_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(4);
+
+fn expiry_observation_timeout() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(timeout) =
+        installed_runtime_test_timing().and_then(|timing| timing.expiry_observation)
+    {
+        return timeout;
+    }
+    EXPIRY_OBSERVATION_TIMEOUT
 }
 
 /// The override [`run_connect_with_config`] read once at start; WP3 carry,
@@ -2868,7 +2911,7 @@ fn relay_session_loop(
             {
                 let journal = journal.clone();
                 let runtime = runtime.with_cancellation(Arc::new(
-                    sandbox_runtime::RuntimePermit::with_timeout(Duration::from_secs(4)),
+                    sandbox_runtime::RuntimePermit::with_timeout(expiry_observation_timeout()),
                 ));
                 let observation_sequence = storage_sequence;
                 let reported = expiry_reported.clone();
@@ -4867,15 +4910,9 @@ fn shared_incus_override(value: Option<std::ffi::OsString>, server_url: &str) ->
              a normal daemon"
         );
     }
-    let url = Url::parse(server_url).with_context(|| {
+    let loopback = loopback_control_plane(server_url).with_context(|| {
         format!("`{SHARED_INCUS_TEST_ENV}` needs a valid loopback control-plane URL")
     })?;
-    let loopback = match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    };
     if !loopback {
         bail!(
             "`{SHARED_INCUS_TEST_ENV}` is a test-only override accepted only with a loopback control \
@@ -4884,6 +4921,19 @@ fn shared_incus_override(value: Option<std::ffi::OsString>, server_url: &str) ->
         );
     }
     Ok(true)
+}
+
+/// Whether `server_url` names a loopback control plane (`localhost`,
+/// 127.0.0.0/8 or `::1`): the gate of every debug-only test override.
+#[cfg(debug_assertions)]
+pub(super) fn loopback_control_plane(server_url: &str) -> Result<bool, url::ParseError> {
+    let url = Url::parse(server_url)?;
+    Ok(match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    })
 }
 
 /// Start as this Incus server's only wssp daemon, and keep checking. A
@@ -4978,6 +5028,14 @@ fn init_runtime(
                 *lease = claim_incus_server(&config, options, state_dir)?;
             }
             let mut runtime = IncusKvmRuntime::new(config)?;
+            // Debug test daemons on an Incus double only (gated at start);
+            // set before `exec_supervisor` below clones the client.
+            #[cfg(debug_assertions)]
+            if let Some(timeout) =
+                installed_runtime_test_timing().and_then(|timing| timing.guest_terminate)
+            {
+                runtime.set_guest_terminate_timeout(timeout);
+            }
             // The runtime's durable host state (network cleanup journal,
             // resolved plans, locks) lives under the same host state dir the
             // relay journal already uses — passed in, never env-derived.

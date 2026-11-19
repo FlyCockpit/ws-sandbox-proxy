@@ -643,9 +643,11 @@ pub struct IncusClient {
     pub dns_commit_barrier: Option<std::sync::Arc<std::sync::Barrier>>,
     #[cfg(test)]
     pub(crate) dns_commit_hold: Option<std::sync::Arc<DnsCommitHold>>,
-    /// Replaces the guest terminate helper's exec deadline in shim fixtures,
-    /// whose "guest" is the host: see `GUEST_TERMINATE_TIMEOUT`.
-    #[cfg(test)]
+    /// Replaces the guest terminate helper's exec deadline in shim fixtures
+    /// and debug test daemons, whose "guest" is the host: see
+    /// `GUEST_TERMINATE_TIMEOUT` and `IncusKvmRuntime::set_guest_terminate_timeout`.
+    /// Release builds have no such field.
+    #[cfg(any(test, debug_assertions))]
     pub(crate) guest_terminate_timeout_override: Option<Duration>,
     /// Freeze permit time for functional fault tests; individual command
     /// waits retain this finite budget.
@@ -1114,7 +1116,7 @@ impl IncusClient {
             dns_commit_barrier: None,
             #[cfg(test)]
             dns_commit_hold: None,
-            #[cfg(test)]
+            #[cfg(any(test, debug_assertions))]
             guest_terminate_timeout_override: None,
             #[cfg(test)]
             policy_observation_budget_override: None,
@@ -4601,12 +4603,18 @@ fn wait_process_with_limit(
     let pid = child.id();
     let (tx, rx) = mpsc::channel();
     let (overflow_tx, overflow_rx) = mpsc::channel();
+    #[cfg(test)]
+    let final_poll = final_poll_edge::armed();
+    #[cfg(test)]
+    let sent = final_poll.clone();
     thread::spawn(move || {
         let result = match cap {
             Some(cap) => bounded_output(child, cap, overflow_tx),
             None => child.wait_with_output(),
         };
         let _ = tx.send(result);
+        #[cfg(test)]
+        final_poll_edge::announce(sent.as_ref());
     });
     let deadline = Instant::now() + timeout;
     loop {
@@ -4623,6 +4631,10 @@ fn wait_process_with_limit(
         }
         let preempted = cancelled.is_some_and(|c| c.is_cancelled());
         if preempted || Instant::now() >= deadline {
+            // Test seam: hold the expired wait until the child's result is
+            // queued, so the edge below is constructed, not raced.
+            #[cfg(test)]
+            final_poll_edge::await_result(final_poll.as_ref());
             if let Ok(result) = rx.try_recv() {
                 return result.map_err(|e| {
                     crate::effect::Observation::from(RuntimeError::new(
@@ -4662,6 +4674,52 @@ fn wait_process_with_limit(
                     RuntimeError::new(SandboxErrorCode::UnknownOutcome, "incus wait lost").into(),
                 );
             }
+        }
+    }
+}
+
+/// Test seam of `wait_process_with_limit`: a test arms the calling thread,
+/// and the next wait that finds its deadline passed first waits (bounded)
+/// until the child's result is in the channel. That constructs the final
+/// poll edge: the child exited, its result was queued, and only then did
+/// the deadline check run.
+#[cfg(test)]
+pub(super) mod final_poll_edge {
+    use std::cell::RefCell;
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    pub(in super::super) type Edge = Arc<(Mutex<bool>, Condvar)>;
+
+    thread_local! {
+        static ARMED: RefCell<Option<Edge>> = const { RefCell::new(None) };
+    }
+
+    /// Arm the calling thread's next process wait.
+    pub(in super::super) fn arm() {
+        ARMED.with(|armed| *armed.borrow_mut() = Some(Arc::default()));
+    }
+
+    pub(super) fn armed() -> Option<Edge> {
+        ARMED.with(|armed| armed.borrow_mut().take())
+    }
+
+    pub(super) fn announce(edge: Option<&Edge>) {
+        if let Some(edge) = edge {
+            *edge.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            edge.1.notify_all();
+        }
+    }
+
+    pub(super) fn await_result(edge: Option<&Edge>) {
+        if let Some(edge) = edge {
+            let queued = edge.0.lock().unwrap_or_else(|e| e.into_inner());
+            // Hang guard only: the armed child exits at once.
+            let (queued, _) = edge
+                .1
+                .wait_timeout_while(queued, Duration::from_secs(30), |queued| !*queued)
+                .unwrap_or_else(|e| e.into_inner());
+            assert!(*queued, "the armed child's result was never queued");
         }
     }
 }
@@ -5205,13 +5263,18 @@ mod tests {
         }
     }
 
+    /// The final-poll edge, constructed: the deadline has already passed
+    /// (zero budget) when the wait first checks it, and the seam holds that
+    /// check until the child's exit is queued. A child that finished before
+    /// the deadline check is kept, never killed and reported as a timeout.
     #[test]
     fn run_process_keeps_a_child_that_exits_inside_the_final_poll() {
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 0.08; exit 0"]);
+        command.args(["-c", "exit 0"]);
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
-        let output = run_process(command, Duration::from_millis(100)).expect("completed in budget");
+        final_poll_edge::arm();
+        let output = run_process(command, Duration::ZERO).expect("completed before the check");
         assert_eq!(output.status.code(), Some(0));
     }
 

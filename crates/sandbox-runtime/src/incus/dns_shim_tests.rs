@@ -8007,8 +8007,9 @@ fn a_cancelled_revocation_still_fences_the_destination() {
 fn an_interrupted_initial_allow_is_fenced_journaled_and_never_effective() {
     // C36 r21 F4: the initial allow issuance goes through the journaled,
     // fenced, tombstone-aware DNS mutation boundary — not a raw rule-add
-    // loop. Interrupt the INITIAL allow (the daemon applies it at +45s
-    // while the CLI reports a transport failure): the create completes
+    // loop. Interrupt the INITIAL allow (the daemon queues it while the CLI
+    // reports a transport failure; the test lands it after the retry): the
+    // create completes
     // with the destination fenced and the mutation journaled, the late
     // daemon-side apply lands BEHIND the fence, and a later refresh
     // reconciles the stale rule away — the interrupted destination is
@@ -8030,10 +8031,9 @@ fn an_interrupted_initial_allow_is_fenced_journaled_and_never_effective() {
     // Scoped to the DNS allow: the base allow rules must install. (C36
     // r26 F1: the first issuance is generation 1.)
     let tag0 = dns_rule_tag("grants.example.com", 1);
-    let started = std::time::Instant::now();
     fs::write(
         statedir.join("defer-acl-allow-add-fail"),
-        format!("25 {tag0}"),
+        format!("queue {tag0}"),
     )
     .unwrap();
     let marker_path = statedir.join("host-state/dns-revocations/sbx-1.json");
@@ -8088,11 +8088,10 @@ fn an_interrupted_initial_allow_is_fenced_journaled_and_never_effective() {
     // The deferred daemon-side apply then fires against the LIVE
     // recreated ACL: the name-keyed update succeeds — and lands BEHIND
     // the standing fence, so the interrupted destination is never
-    // effective.
-    let wait = Duration::from_secs(30).saturating_sub(started.elapsed());
-    if !wait.is_zero() {
-        std::thread::sleep(wait);
-    }
+    // effective. It lands only now: a fixed +25 s delay landed it DURING
+    // the retry under load, whose verification then refused the unexpected
+    // allow (fail closed, but not this scenario).
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
     let egress_after_apply = acl_egress(&log, &acl);
     assert!(
         egress_after_apply
@@ -14679,9 +14678,13 @@ fn reconcile_preserves_sibling_coverage_for_a_stale_pending_allow() {
     };
     let marker_path = statedir.join("host-state/dns-revocations/sbx-1.json");
     // The interrupted pass: both allow adds are accepted daemon-side but
-    // reported failed (deferred apply at +8s) — both grants are denied,
-    // fenced, and journaled pending.
-    fs::write(statedir.join("defer-acl-allow-add-fail"), "8 128.66.0.7").unwrap();
+    // reported failed (queued; the test lands them after the retry) — both
+    // grants are denied, fenced, and journaled pending.
+    fs::write(
+        statedir.join("defer-acl-allow-add-fail"),
+        "queue 128.66.0.7",
+    )
+    .unwrap();
     answer(&transport);
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("the interrupted pass completes with both grants denied");
@@ -14710,19 +14713,16 @@ fn reconcile_preserves_sibling_coverage_for_a_stale_pending_allow() {
     refresh(&client, "sbx-1", &policy, &hash, &transport).expect("the retry commits");
     let egress = acl_egress(&log, &acl);
     assert_dest_reachable(&egress, "128.66.0.7/32");
-    // The stale applies land (~+8s): BOTH generations of each allow now
-    // coexist.
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if stale.iter().all(|tag| egress.contains(tag.as_str())) {
-            break;
-        }
+    // The stale applies land only now, after the retry committed (a fixed
+    // +8 s delay landed them DURING the retry under load, which then saw an
+    // unexplained extra allow): BOTH generations of each allow coexist.
+    assert_eq!(apply_queued_acl_adds(&statedir), 2);
+    let egress = acl_egress(&log, &acl);
+    for tag in &stale {
         assert!(
-            std::time::Instant::now() < deadline,
+            egress.contains(tag.as_str()),
             "the stale pending applies land daemon-side: {egress}"
         );
-        std::thread::sleep(Duration::from_millis(250));
     }
     // The reconcile: the stale allows' withdrawal is REFUSED. Coverage
     // must keep the destination un-fenced — the live retry identities
@@ -16713,12 +16713,34 @@ fn atomic_acl_timeout_is_bounded_journaled_and_recovers_without_partial_publicat
     };
     let (_, acl) = sandbox_network_names("sbx-1");
     let before = acl_egress(&log, &acl);
-    fs::write(log.parent().unwrap().join("slow-acl-put"), "90").unwrap();
-    client.agent_timeout = Duration::from_millis(250);
+    // The PUT stalls for 90 s; every host call of the pass is bounded by
+    // `agent_timeout`. The pass makes five calls (three reads, the PUT, a
+    // re-read), each ~0.1 s quiet, so 5 s is ample even at load ~25, where
+    // the former 250 ms let a READ before the PUT time out (nothing was
+    // journaled yet). The pass therefore ends within 5 x 5 s = 25 s, which
+    // the 45 s bound checks with margin: well before the 90 s stall, so the
+    // stalled write was cut, never waited out.
+    let stall = Duration::from_secs(90);
+    fs::write(
+        log.parent().unwrap().join("slow-acl-put"),
+        stall.as_secs().to_string(),
+    )
+    .unwrap();
+    client.agent_timeout = Duration::from_secs(5);
     script();
+    let calls_before = log_lines(&log).len();
     let started = std::time::Instant::now();
-    refresh(&client, "sbx-1", &policy, &hash, &transport).expect_err("stalled atomic write");
-    assert!(started.elapsed() < Duration::from_secs(5));
+    let error =
+        refresh(&client, "sbx-1", &policy, &hash, &transport).expect_err("stalled atomic write");
+    assert!(started.elapsed() < stall / 2, "{:?}", started.elapsed());
+    assert_eq!(error.code, SandboxErrorCode::Timeout, "{error:?}");
+    // It is the atomic PUT that timed out, not an earlier read.
+    assert!(
+        log_lines(&log)[calls_before..]
+            .iter()
+            .any(|line| line.contains("-X PUT") && line.contains("/network-acls/")),
+        "the stalled PUT was issued"
+    );
     assert_eq!(acl_egress(&log, &acl), before);
     let marker: serde_json::Value = serde_json::from_slice(
         &fs::read(

@@ -5,6 +5,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -111,7 +112,8 @@ export function wireStore(kind: string): FenceStore {
 
 /** The incus shim and its scenario mode, in a fresh case directory. */
 export async function writeWireShim(dir: string, mode: string) {
-  await writeFile(join(dir, "incus"), cancelIncusFixture);
+  await writeFile(join(dir, "incus_double.py"), cancelIncusFixture);
+  await writeFile(join(dir, "incus"), cancelIncusLauncher);
   await chmod(join(dir, "incus"), 0o700);
   await writeFile(join(dir, "mode"), mode);
 }
@@ -254,7 +256,7 @@ export async function spawnWireHost({
     join(configDir, "config.toml"),
     `host_token_env = "WSSP_CANCEL_WIRE_HOST_TOKEN"\nserver_url = "${serverUrl}"\n`,
   );
-  return spawn(
+  const child = spawn(
     resolve("target/debug/wssp"),
     [
       "host",
@@ -290,12 +292,204 @@ export async function spawnWireHost({
         // file exists the periodic sweep skips policy inspection and
         // acknowledges with `<path>.held`. Inert unless a case creates it.
         WSSP_TEST_HOLD_POLICY_RECONCILER: join(dir, "hold-policy-reconciler"),
+        WSSP_TEST_RUNTIME_TIMING: WIRE_RUNTIME_TIMING,
         ...env,
       },
       detached: true, // Own the entire daemon -> shim process group.
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  watchWireHost(child, dir);
+  return child;
+}
+
+/**
+ * The guest terminate helper's exec deadline in every wire daemon. Debug
+ * builds may widen the production 2 s (`WSSP_TEST_RUNTIME_TIMING`, below): the
+ * double runs the helper on this HOST, scanning its whole /proc (~450
+ * processes) per TERM/KILL round, which took 1.1-4.4 s under load, so a
+ * working stop ended UNKNOWN_OUTCOME. 30 s is the runtime shim tests'
+ * `SHIM_GUEST_TERMINATE_TIMEOUT`: a hang guard, not a measured edge. A case
+ * whose double holds the helper on a release barrier waits for this deadline
+ * to expire (see `HELD_HELPER_BOUND_MS` in the cancel-wire test).
+ */
+export const WIRE_GUEST_TERMINATE_MS = 30_000;
+
+/**
+ * `WSSP_TEST_RUNTIME_TIMING` for every wire daemon: debug-build-only and
+ * widen-only (apps/cli `test_timing.rs`; loopback server and an Incus double
+ * required). Fields: the guest terminate helper (above), the connected
+ * expiry observation, and the storage poll period.
+ *
+ * The expiry observation (census, pool and root proofs through the double)
+ * took 1.4-2.2 s quiet and 3.9-8.4 s (median ~5.2 s) at load ~11, so the
+ * production 4 s permit cut most of them. It must also end before the next storage poll, or the
+ * daemon drops it as overtaken and retries (the server never judges root
+ * evidence older than the pool's last storage observation); a permit as
+ * long as the 5 s poll let every slow one be overtaken forever. Hence the
+ * storage poll at its 10 s cap (a storage observation took at most 1.5 s
+ * under that load, so reports stay well inside the 15 s freshness bound)
+ * and the observation at 9 s, just below it: above the worst measured, and
+ * with back-to-back retries shorter than the poll period, one always lands
+ * between two polls. Neither can grow further: at load ~19 (six CPU hogs at
+ * the test's own priority) root proofs outgrew 9 s and C37/C38 rows ran out
+ * of re-offers, a limit of the per-call double, not of the daemon.
+ */
+export const WIRE_EXPIRY_OBSERVATION_MS = 9_000;
+export const WIRE_STORAGE_POLL_MS = 10_000;
+const WIRE_RUNTIME_TIMING = [
+  WIRE_GUEST_TERMINATE_MS,
+  WIRE_EXPIRY_OBSERVATION_MS,
+  WIRE_STORAGE_POLL_MS,
+]
+  .map((ms) => `${ms}ms`)
+  .join(",");
+
+/**
+ * Every wire daemon this test worker spawned and has not stopped yet, with
+ * its watchdog. A daemon is detached (its own process group and session), so
+ * nothing kills it when the worker goes away: a hook that timed out before
+ * `stopWireHost`, a daemon a case replaced without stopping, or a worker
+ * killed outright (vitest worker teardown, `timeout`/Ctrl-C on the run)
+ * left one reconnecting to a dead loopback port for days, its Incus double
+ * still spawning `incus` calls.
+ */
+const liveWireHosts = new Map<ChildProcess, ChildProcess>();
+
+/**
+ * The watchdog body (`node -e`, argv: daemon pid; env: the case dir). When
+ * its stdin closes it SIGKILLs, from one /proc snapshot, the daemon's process
+ * group and session, every process naming a path under the case dir, and
+ * every descendant of those (the double's `incus exec` children lead their
+ * own groups, guest workloads their own sessions); a few more passes catch
+ * what was reparented meanwhile. It never walks up to its parents.
+ *
+ * PID reuse: the worker reads the daemon's start time right after the spawn,
+ * before Node can reap it (an unreaped child keeps its pid), and passes it as
+ * the second argument. A group or session id equal to the daemon's pid is
+ * the daemon's own only while that pid is free (Linux never hands out a pid
+ * still in use as a group or session id, so surviving members keep it
+ * reserved) or still belongs to that same process; otherwise the
+ * group/session match is dropped and only processes naming the case dir
+ * (and their descendants) are killed. Every target's start time is read
+ * again immediately before its signal and must equal the snapshot's, so a pid
+ * reused after the snapshot is skipped (the remaining window is one
+ * stat-to-kill step; a reuse inside it would need a full pid wrap).
+ */
+const WATCHDOG_SCRIPT = String.raw`
+const fs = require("node:fs");
+const daemon = Number(process.argv[1]);
+const daemonStart = process.argv[2] || undefined;
+const root = process.env.WSSP_WIRE_WATCHDOG_ROOT + "/";
+for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.on(signal, () => undefined);
+// Fields after the command name: state ppid pgrp session ... starttime (22nd).
+function fields(pid) {
+  const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
+  return stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+}
+function rows() {
+  const out = [];
+  for (const entry of fs.readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    try {
+      const f = fields(entry);
+      const cmdline = fs.readFileSync("/proc/" + entry + "/cmdline", "utf8");
+      out.push({
+        pid: Number(entry),
+        ppid: Number(f[1]),
+        pgid: Number(f[2]),
+        sid: Number(f[3]),
+        start: f[19],
+        named: cmdline.includes(root),
+      });
+    } catch {}
+  }
+  return out;
+}
+function sweep() {
+  const all = rows();
+  const holder = all.find((r) => r.pid === daemon);
+  const ours = holder === undefined || (daemonStart !== undefined && holder.start === daemonStart);
+  const byPid = new Map(all.map((r) => [r.pid, r]));
+  const live = new Set(
+    all
+      .filter((r) => r.named || (ours && (r.pgid === daemon || r.sid === daemon)))
+      .map((r) => r.pid),
+  );
+  for (let grown = true; grown; ) {
+    grown = false;
+    for (const r of all)
+      if (!live.has(r.pid) && live.has(r.ppid)) {
+        live.add(r.pid);
+        grown = true;
+      }
+  }
+  let signalled = 0;
+  for (const pid of live)
+    try {
+      if (fields(pid)[19] !== byPid.get(pid).start) continue;
+      process.kill(pid, "SIGKILL");
+      signalled += 1;
+    } catch {}
+  return signalled;
+}
+process.stdin.on("error", () => undefined);
+process.stdin.on("close", () => {
+  let passes = 0;
+  const again = () => {
+    if (sweep() === 0 || ++passes >= 20) process.exit(0);
+    setTimeout(again, 100);
+  };
+  again();
+});
+process.stdin.resume();
+`;
+
+/**
+ * Pair `child` with a detached watchdog that kills the daemon and every
+ * fixture process of its case dir as soon as this worker dies, however it
+ * dies: the watchdog reads a pipe whose only writer is this worker, so the
+ * kernel closes it on any worker exit, SIGKILL included. It ignores the
+ * terminal and `timeout` signals that would otherwise end it with the run,
+ * names no fixture path and leads its own session (outside
+ * `fixtureProcesses`). `stopWireHost`/`crashWireHost` retire it once the
+ * daemon's group is gone; `removeWireDir` still owns the normal teardown.
+ */
+function watchWireHost(child: ChildProcess, dir: string) {
+  if (!child.pid) return;
+  // Synchronously, before Node can reap the child (see WATCHDOG_SCRIPT).
+  let start = "";
+  try {
+    const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");
+    start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? "";
+  } catch {}
+  const watchdog = spawn(process.execPath, ["-e", WATCHDOG_SCRIPT, String(child.pid), start], {
+    detached: true,
+    env: { PATH: process.env.PATH ?? "", WSSP_WIRE_WATCHDOG_ROOT: dir },
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+  // Never keeps the worker alive, and a worker exit still closes the pipe.
+  watchdog.unref();
+  (watchdog.stdin as Socket | null)?.unref();
+  watchdog.on("error", () => undefined);
+  watchdog.stdin?.on("error", () => undefined);
+  liveWireHosts.set(child, watchdog);
+}
+
+/** The daemon's group is gone: its watchdog must never fire later. */
+function retireWatchdog(child: ChildProcess) {
+  const watchdog = liveWireHosts.get(child);
+  liveWireHosts.delete(child);
+  if (watchdog && watchdog.exitCode === null && watchdog.signalCode === null)
+    watchdog.kill("SIGKILL");
+}
+
+/**
+ * Teardown backstop: stop every wire daemon this worker still tracks (the
+ * case's current one included), so no case can leave one running.
+ */
+export async function stopEveryWireHost() {
+  for (const child of [...liveWireHosts.keys()]) await stopWireHost(child);
 }
 
 /** Graceful stop of the daemon's whole process group (SIGTERM, then SIGKILL). */
@@ -325,6 +519,7 @@ export async function stopWireHost(child: ChildProcess | undefined) {
     signal("SIGKILL");
   }
   await stopped;
+  retireWatchdog(child);
 }
 
 /** SIGKILL the daemon's process group; false when it had already exited. */
@@ -333,6 +528,7 @@ export async function crashWireHost(child: ChildProcess | undefined): Promise<bo
   const stopped = once(child, "exit");
   process.kill(-child.pid, "SIGKILL");
   await stopped;
+  retireWatchdog(child);
   return true;
 }
 
@@ -705,18 +901,29 @@ export async function startFakeGuard(root: string, networksDir: string): Promise
   return { server, pushes: () => pushes };
 }
 
-const cancelIncusFixture = String.raw`#!/usr/bin/env python3
-"""Incus transport double: real wrapper/helper processes, no Incus or VM calls.
+/**
+ * The `incus` binary the daemon runs: one Python process per Incus call, a
+ * few hundred per case (each session's host observation alone is about 190).
+ * Under CPU contention that interpreter start-up is what a case waits on, so
+ * the double is imported as a module (its bytecode is cached after the first
+ * call instead of compiled on every call) and imports what only one path
+ * needs on that path.
+ */
+const cancelIncusLauncher = `#!/usr/bin/env python3
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import incus_double  # noqa: E402,F401
+`;
+
+const cancelIncusFixture = String.raw`"""Incus transport double: real wrapper/helper processes, no Incus or VM calls.
 All ordering is file-barrier driven; polling intervals are not test assertions.
 """
-import ctypes
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import signal
-import subprocess
 import sys
 import time
 
@@ -753,6 +960,7 @@ def metadata_stat(argv):
 # override its init recorded (root disk stays profile-inherited).
 _device = root / "device-eth0"
 if not _device.exists():
+    import hashlib
     _bridge = "wsn-" + hashlib.sha256(b"sbx-1").hexdigest()[:10]
     _device.write_text("eth0,network=" + _bridge + ",security.mac_filtering=true,security.ipv4_filtering=true,security.ipv6_filtering=true,security.port_isolation=true")
 
@@ -957,6 +1165,7 @@ if cmd == "query" and (args[-1].startswith("/1.0?") or "/1.0/networks/" in args[
             return [{key:rule.get(key, "") for key in fields if rule.get(key, "") or key in ("action", "state")} for rule in rules]
         values = [name, state.get("description", ""), etag_rules("ingress"), etag_rules("egress"), dict(sorted(state["config"].items()))]
         encoded = json.dumps(values, separators=(",",":"), ensure_ascii=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029") + "\n"
+        import hashlib
         expected = hashlib.sha256(encoded.encode()).hexdigest()
         header = args[args.index("--header") + 1].removeprefix("If-Match: ").strip('"')
         if header != expected:
@@ -1307,6 +1516,8 @@ if helper == "wssp-terminate":
     os.execvp(argv[0], argv)
 if helper != "wssp-run":
     raise RuntimeError("unsupported guest helper: " + helper)
+import ctypes
+import subprocess
 # Reap the guest descendants too, as a VM's init would. No host PID1 assumptions.
 ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
 script = argv[offset + 2].replace(guest_env["HOME"] + "/.wssp/ops", str(root / "ops"))

@@ -182,7 +182,22 @@ fn typescript_wire_gate_overrides_incus_with_the_executable_fixture() {
     let fixtures = fs::read_to_string(relay.join("cancel-wire-fixtures.ts")).unwrap();
     assert!(fixtures.contains("WSSP_INCUS_BINARY: join(dir, \"incus\")"));
     assert!(fixtures.contains("const cancelIncusFixture"));
-    assert!(fixtures.contains("writeFile(join(dir, \"incus\"), cancelIncusFixture)"));
+    // `incus` is a launcher that only imports the double, written beside it
+    // (the module form caches its bytecode across the per-call processes).
+    assert!(fixtures.contains("writeFile(join(dir, \"incus_double.py\"), cancelIncusFixture)"));
+    assert!(fixtures.contains("writeFile(join(dir, \"incus\"), cancelIncusLauncher)"));
+    let launcher = fixtures
+        .split("const cancelIncusLauncher = `")
+        .nth(1)
+        .and_then(|rest| rest.split('`').next())
+        .expect("launcher literal");
+    assert_eq!(
+        launcher.lines().filter(|l| !l.trim().is_empty()).count(),
+        5,
+        "the launcher only imports the double: {launcher}"
+    );
+    assert!(launcher.contains("sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))"));
+    assert!(launcher.contains("import incus_double"));
     for gate in [
         "cancel-wire.contract.test.ts",
         "relay-chaos.contract.test.ts",

@@ -129,9 +129,9 @@ pub use unsupported::UnsupportedRuntime;
 #[cfg(target_os = "linux")]
 pub use incus::{
     BindingIdentity, BoundInstance, DnsRefreshOutcome, DnsTransport, ExecSupervisor,
-    FakeDnsOutcome, FakeDnsRecord, FakeDnsTransport, HostInstance, IncusClient, IncusCommandOutput,
-    IncusConfig, IncusKvmRuntime, ListedInstance, UdpDnsTransport, host_dns_servers,
-    sandbox_network_names,
+    FakeDnsOutcome, FakeDnsRecord, FakeDnsTransport, GUEST_TERMINATE_TIMEOUT, HostInstance,
+    IncusClient, IncusCommandOutput, IncusConfig, IncusKvmRuntime, ListedInstance, UdpDnsTransport,
+    host_dns_servers, sandbox_network_names,
 };
 #[cfg(target_os = "linux")]
 pub use incus::{

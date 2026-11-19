@@ -42,6 +42,10 @@ async function upstreamServer() {
   });
   server.on("upgrade", (request, socket) => {
     upgrades.push(request.url ?? "");
+    // The front door turns a client's reset into a reset here (destroying a
+    // socket with the 101 reply still unread sends RST): without a listener
+    // that `read ECONNRESET` is an uncaught exception after the test ended.
+    socket.on("error", () => undefined);
     socket.end("HTTP/1.1 101 Switching Protocols\r\nupgrade: test\r\nconnection: upgrade\r\n\r\n");
   });
   server.listen(0, "127.0.0.1");

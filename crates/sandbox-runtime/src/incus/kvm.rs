@@ -92,6 +92,19 @@ impl IncusKvmRuntime {
         self.client.guard_fence_wait = wait;
     }
 
+    /// Debug builds only (test daemons on an Incus double, whose "guest"
+    /// terminate helper runs on the loaded host): widen the guest terminate
+    /// helper's exec deadline. Never shortens it below
+    /// [`GUEST_TERMINATE_TIMEOUT`](super::GUEST_TERMINATE_TIMEOUT). Sets the
+    /// runtime's client and its supervisor's copy; call it before
+    /// [`Self::exec_supervisor`], which hands out a clone of the client.
+    #[cfg(any(test, debug_assertions))]
+    pub fn set_guest_terminate_timeout(&mut self, timeout: std::time::Duration) {
+        self.client.guest_terminate_timeout_override =
+            Some(timeout.max(super::GUEST_TERMINATE_TIMEOUT));
+        self.supervisor = self.supervisor.with_client(self.client.clone());
+    }
+
     /// Test-only mutable client access (verdict-budget and failure-injection
     /// overrides, C37 R4).
     /// Test-only: wrap a shim-backed client without the daemon bootstrap

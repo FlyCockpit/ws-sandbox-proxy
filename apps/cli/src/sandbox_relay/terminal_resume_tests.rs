@@ -232,7 +232,11 @@ fn wp8_resume_after_loss_replays_exactly_once_and_never_retypes_input() {
     // Input restarts at 0 on the new fence; nothing typed before is resent.
     input(&mut rig, &second, 0, b"cd");
     assert_eq!(acks(&drive(&mut rig, |o| !acks(o).is_empty())), vec![0]);
-    assert_eq!(control.input(), b"abcd");
+    // An ack means queued; the PTY writer thread delivers afterwards.
+    assert_eq!(
+        control.wait_for_input(b"abcd", Duration::from_secs(10)),
+        b"abcd"
+    );
     // The old fence is foreign on the new connection: zero bytes.
     input(&mut rig, &first, 2, b"old");
     settle(&mut rig, Duration::from_millis(50));
@@ -330,7 +334,10 @@ fn wp8_resume_identity_must_match_the_daemons_own_record() {
     assert!(resume(&mut rig, &again, 0).is_empty());
     input(&mut rig, &fence, 0, b"still-mine");
     drive(&mut rig, |o| !acks(o).is_empty());
-    assert_eq!(control.input(), b"still-mine");
+    assert_eq!(
+        control.wait_for_input(b"still-mine", Duration::from_secs(10)),
+        b"still-mine"
+    );
 
     // Without the negotiated capability nothing is detached or resumed.
     let mut plain = TerminalHost::new(
@@ -572,7 +579,10 @@ fn wp8_r1_input_validated_before_a_detach_is_never_written_or_acked_later() {
     let out = drive(&mut rig, |o| !acks(o).is_empty());
     assert_eq!(acks(&out), vec![0]);
     assert!(acks(&settle(&mut rig, Duration::from_millis(100))).is_empty());
-    assert_eq!(control.input(), b"new");
+    assert_eq!(
+        control.wait_for_input(b"new", Duration::from_secs(10)),
+        b"new"
+    );
 }
 
 #[test]

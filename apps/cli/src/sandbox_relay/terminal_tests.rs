@@ -161,6 +161,13 @@ fn drive(rig: &mut Rig, done: impl Fn(&[Out]) -> bool) -> Vec<Out> {
     }
 }
 
+/// The fake child's input once it is `expected` (10 s hang guard). An input
+/// ack means the session queued the bytes; its PTY writer thread delivers
+/// them to the child afterwards (`FakePtyControl::wait_for_input`).
+fn delivered(control: &sandbox_runtime::FakePtyControl, expected: &[u8]) -> Vec<u8> {
+    control.wait_for_input(expected, Duration::from_secs(10))
+}
+
 /// Poll for a fixed time (for "nothing more happens" assertions).
 fn settle(rig: &mut Rig, wait: Duration) -> Vec<Out> {
     let deadline = Instant::now() + wait;
@@ -306,7 +313,7 @@ fn c52_input_is_sequenced_acked_and_duplicates_or_gaps_write_zero_bytes() {
     input(&mut rig, &fence, 0, b"ab");
     input(&mut rig, &fence, 1, b"c");
     assert_eq!(acks(&drive(&mut rig, |o| !acks(o).is_empty())), vec![1]);
-    assert_eq!(control.input(), b"abc");
+    assert_eq!(delivered(&control, b"abc"), b"abc");
     // A gap closes the session; the gapped bytes never reach the PTY.
     input(&mut rig, &fence, 5, b"zzz");
     let out = drive(&mut rig, |o| exit(o).is_some());
@@ -380,7 +387,7 @@ fn c52_mismatched_identity_legs_write_zero_bytes_and_repeat_violations_close() {
     // The genuine fence still works.
     input(&mut rig, &fence, 0, b"ok");
     drive(&mut rig, |o| acks(o) == [0]);
-    assert_eq!(control.input(), b"ok");
+    assert_eq!(delivered(&control, b"ok"), b"ok");
     // The third violation closes it; every remaining leg writes zero bytes.
     for leg in &legs[2..] {
         input(&mut rig, leg, 1, b"x");
@@ -1157,7 +1164,7 @@ fn c52_each_identity_leg_alone_writes_zero_bytes_to_a_live_session() {
         // The session is live (not stopping): the genuine sequence 0 lands.
         input(&mut rig, &fence, 0, b"ok");
         drive(&mut rig, |o| acks(o) == [0]);
-        assert_eq!(control.input(), b"ok", "{name}");
+        assert_eq!(delivered(&control, b"ok"), b"ok", "{name}");
         rig.host
             .handle_control(ServerControlMessage::TerminalClose {
                 request_id: format!("close-{name}"),
@@ -1361,7 +1368,7 @@ fn c55_closing_a_terminal_never_touches_the_vm_or_a_sibling_terminal() {
     );
     input(&mut rig, &sibling, 0, b"still-here");
     drive(&mut rig, |o| acks(o) == vec![0]);
-    assert_eq!(sibling_control.input(), b"still-here");
+    assert_eq!(delivered(&sibling_control, b"still-here"), b"still-here");
 }
 
 /// C55 (C52-TB-3) CLI shutdown ordering: every live PTY of the connection
@@ -1590,7 +1597,7 @@ fn pty_env_opening_input_and_resize_are_refused_then_post_open_resize_works() {
     drive(&mut rig, ready);
     input(&mut rig, &fence, 0, b"after");
     drive(&mut rig, |out| acks(out) == [0]);
-    assert_eq!(control.input(), b"after");
+    assert_eq!(delivered(&control, b"after"), b"after");
     assert_eq!(control.sizes(), [PtySize::new(24, 80).unwrap()]);
     rig.host
         .handle_control(ServerControlMessage::TerminalResize {
@@ -1678,6 +1685,7 @@ fn t1_host_hot_off_under_flood_rejects_stale_opens_and_preserves_guest() {
     let control = rig.fake.pty_control("sbx-1", "host-live").unwrap();
     input(&mut rig, &host, 0, b"before");
     drive(&mut rig, |o| !acks(o).is_empty());
+    assert_eq!(delivered(&control, b"before"), b"before");
     policy.enabled = false;
     policy.revision += 1;
     rig.host.configure_host(policy, Some(opener.clone()));
@@ -1691,7 +1699,7 @@ fn t1_host_hot_off_under_flood_rejects_stale_opens_and_preserves_guest() {
     assert!(rig.fake.pty_control("sbx-1", "stale").is_none());
     input(&mut rig, &guest, 0, b"guest-ok");
     drive(&mut rig, |o| !acks(o).is_empty());
-    assert_eq!(guest_control.input(), b"guest-ok");
+    assert_eq!(delivered(&guest_control, b"guest-ok"), b"guest-ok");
     // No restart: a new required revision refuses an old optional grant.
     policy.enabled = true;
     policy.required = true;

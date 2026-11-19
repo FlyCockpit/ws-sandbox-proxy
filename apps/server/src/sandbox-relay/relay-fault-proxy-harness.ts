@@ -687,6 +687,18 @@ export class RelayFaultProxy {
   }
 
   private route(link: ProxyLink, frame: RelayProxyFrame, out: Outgoing): void {
+    // A held link-direction holds every frame (holdUntil's contract), before
+    // any fault point or drop sees it: a fault trigger that escaped a
+    // hold-then-reset would arm on the doomed link (relay-chaos C10's result
+    // and receipt arrive back to back) and never fire on the next one.
+    const holding = this.holds.find(
+      (hold) => hold.scope?.linkId === link.id && hold.scope.dir === frame.dir,
+    );
+    if (holding) {
+      frame.disposition = "held";
+      holding.queue.push({ frame, out });
+      return;
+    }
     for (const fault of [...this.faults]) {
       const verdict = fault(link, frame);
       if (verdict === undefined) continue;
@@ -708,13 +720,9 @@ export class RelayFaultProxy {
       return;
     }
     for (const hold of this.holds) {
-      const inScope =
-        hold.scope !== null && hold.scope.linkId === link.id && hold.scope.dir === frame.dir;
-      if (!inScope && (hold.scope !== null || !relayFrameMatches(hold.match, frame))) continue;
-      if (hold.scope === null) {
-        hold.scope = { linkId: link.id, dir: frame.dir };
-        hold.matched.resolve(frame);
-      }
+      if (hold.scope !== null || !relayFrameMatches(hold.match, frame)) continue;
+      hold.scope = { linkId: link.id, dir: frame.dir };
+      hold.matched.resolve(frame);
       frame.disposition = "held";
       hold.queue.push({ frame, out });
       return;

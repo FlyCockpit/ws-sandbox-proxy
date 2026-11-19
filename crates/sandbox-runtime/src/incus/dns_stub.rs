@@ -813,9 +813,15 @@ mod tests {
         }
     }
 
-    /// One query to `port` and its answer, with how long it took (`None`:
-    /// no answer within 3 s).
-    fn timed_ask(port: u16, id: u16, name: &str, qtype: u16) -> (Option<Vec<u8>>, Duration) {
+    /// One query to `port` and its answer, with how long it took (`Err`:
+    /// no answer within 3 s, or the receive failed: kept, so a failure
+    /// names its errno).
+    fn timed_ask(
+        port: u16,
+        id: u16,
+        name: &str,
+        qtype: u16,
+    ) -> (std::io::Result<Vec<u8>>, Duration) {
         let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(3)))
@@ -827,7 +833,6 @@ mod tests {
         let mut buf = [0u8; 1024];
         let answer = client
             .recv_from(&mut buf)
-            .ok()
             .map(|(read, _)| buf[..read].to_vec());
         (answer, started.elapsed())
     }
@@ -897,7 +902,8 @@ mod tests {
         for (index, &(name, qtype, rcode, answers, what)) in cases.iter().enumerate() {
             let id = 0x0b00 + index as u16;
             let (answer, took) = timed_ask(port, id, name, qtype);
-            let answer = answer.unwrap_or_else(|| panic!("{what}: dnsmasq answers ({took:?})"));
+            let answer = answer
+                .unwrap_or_else(|error| panic!("{what}: dnsmasq answers ({took:?}): {error:?}"));
             assert!(took < Duration::from_millis(100), "{what}: took {took:?}");
             assert_eq!(&answer[..2], &id.to_be_bytes(), "{what}");
             assert_eq!(answer[3] & 0x0f, rcode, "{what}: rcode");
