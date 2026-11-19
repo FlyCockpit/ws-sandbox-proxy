@@ -22,21 +22,37 @@ const STAGING_SUFFIX: &str = ".tmp";
 const TOMBSTONE_PREFIX: &str = ".wssp-tombstone-";
 const STAGING_HEX_LEN: usize = 32;
 
-/// Names the startup sweep may delete (strict staging/tombstone patterns only).
-pub(crate) fn is_sweepable_staging_name(name: &str) -> bool {
-    parse_staging_temp_name(name).is_some() || parse_tombstone_name(name).is_some()
+/// The staging and tombstone name prefixes one store writes and sweeps. Each
+/// store sweeps only its own prefixes, so a misconfigured directory shared by
+/// two stores can never make one delete the other's in-flight files.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StagingNames {
+    staging: &'static str,
+    tombstone: &'static str,
 }
 
-fn parse_staging_temp_name(name: &str) -> Option<()> {
-    let hex = name
-        .strip_prefix(STAGING_PREFIX)?
-        .strip_suffix(STAGING_SUFFIX)?;
-    parse_fixed_hex(hex).map(|_| ())
-}
+/// The host auth/config store's staging names.
+pub(crate) const HOST_STAGING: StagingNames = StagingNames {
+    staging: STAGING_PREFIX,
+    tombstone: TOMBSTONE_PREFIX,
+};
 
-fn parse_tombstone_name(name: &str) -> Option<()> {
-    let hex = name.strip_prefix(TOMBSTONE_PREFIX)?;
-    parse_fixed_hex(hex).map(|_| ())
+/// The user login store's staging names (disjoint from [`HOST_STAGING`]).
+pub(crate) const USER_STAGING: StagingNames = StagingNames {
+    staging: ".wssp-user-staging-",
+    tombstone: ".wssp-user-tombstone-",
+};
+
+impl StagingNames {
+    /// Names this store's sweep may delete (strict staging/tombstone patterns only).
+    pub(crate) fn is_sweepable(self, name: &str) -> bool {
+        let staging = name
+            .strip_prefix(self.staging)
+            .and_then(|rest| rest.strip_suffix(STAGING_SUFFIX))
+            .and_then(parse_fixed_hex);
+        let tombstone = name.strip_prefix(self.tombstone).and_then(parse_fixed_hex);
+        staging.is_some() || tombstone.is_some()
+    }
 }
 
 fn parse_fixed_hex(hex: &str) -> Option<&str> {
@@ -54,9 +70,9 @@ fn random_staging_hex() -> Result<String> {
     Ok(random.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn staging_temp_path(dir: &Path) -> Result<(PathBuf, File)> {
+fn staging_temp_path(dir: &Path, names: StagingNames) -> Result<(PathBuf, File)> {
     loop {
-        let name = format!("{STAGING_PREFIX}{}{STAGING_SUFFIX}", random_staging_hex()?);
+        let name = format!("{}{}{STAGING_SUFFIX}", names.staging, random_staging_hex()?);
         let path = dir.join(&name);
         let mut options = OpenOptions::new();
         options.write(true).create_new(true);
@@ -75,9 +91,9 @@ fn staging_temp_path(dir: &Path) -> Result<(PathBuf, File)> {
 }
 
 #[cfg(windows)]
-fn unique_tombstone_path(parent: &Path) -> Result<PathBuf> {
+fn unique_tombstone_path(parent: &Path, names: StagingNames) -> Result<PathBuf> {
     loop {
-        let path = parent.join(format!("{TOMBSTONE_PREFIX}{}", random_staging_hex()?));
+        let path = parent.join(format!("{}{}", names.tombstone, random_staging_hex()?));
         if !path.exists() {
             return Ok(path);
         }
@@ -452,7 +468,7 @@ impl AuthStore {
     }
 
     fn write_json(&self, path: &Path, value: &impl Serialize) -> Result<()> {
-        atomic_write(path, &serde_json::to_vec_pretty(value)?)
+        write_json_file(path, value)
     }
 
     pub fn logout(&self) -> Result<LogoutOutcome> {
@@ -504,6 +520,11 @@ fn same_lock_dir(left: &Path, right: &Path) -> Result<bool> {
 }
 
 fn open_lock_file(dir: &Path) -> Result<File> {
+    open_named_lock_file(dir, "auth.lock")
+}
+
+/// Open (creating 0600) the lock file `name` inside `dir`.
+pub(crate) fn open_named_lock_file(dir: &Path, name: &str) -> Result<File> {
     let mut options = OpenOptions::new();
     options.create(true).read(true).write(true).truncate(false);
     #[cfg(unix)]
@@ -512,11 +533,11 @@ fn open_lock_file(dir: &Path) -> Result<File> {
         options.mode(0o600);
     }
     options
-        .open(dir.join("auth.lock"))
-        .context("opening auth state lock")
+        .open(dir.join(name))
+        .with_context(|| format!("opening state lock `{name}`"))
 }
 
-fn wait_for_lock(lock: &File, deadline: Option<Instant>) -> Result<()> {
+pub(crate) fn wait_for_lock(lock: &File, deadline: Option<Instant>) -> Result<()> {
     let deadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_secs(15));
     loop {
         match lock.try_lock() {
@@ -549,7 +570,7 @@ pub(crate) fn test_barrier(name: &str) {
 #[cfg(not(debug_assertions))]
 pub(crate) fn test_barrier(_name: &str) {}
 
-fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
+pub(crate) fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
     match std::fs::read(path) {
         Ok(bytes) => {
             Ok(Some(serde_json::from_slice(&bytes).with_context(|| {
@@ -561,10 +582,38 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
     }
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Atomically write `value` as pretty JSON (file 0600, directory 0700).
+pub(crate) fn write_json_file(path: &Path, value: &impl Serialize) -> Result<()> {
+    private_dir(path.parent().context("state path has no parent")?)?;
+    write_json_in_prepared_dir(path, value)
+}
+
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let dir = path.parent().context("state path has no parent")?;
     private_dir(dir)?;
-    let (temp_path, mut temp) = staging_temp_path(dir)?;
+    publish_file(path, bytes, HOST_STAGING)
+}
+
+/// Atomically write `value` as pretty JSON (file 0600) into a directory the
+/// caller already prepared; the directory's mode is left as it is.
+pub(crate) fn write_json_in_prepared_dir(path: &Path, value: &impl Serialize) -> Result<()> {
+    write_json_in_prepared_dir_with(path, value, HOST_STAGING)
+}
+
+/// [`write_json_in_prepared_dir`] staging under `names`.
+pub(crate) fn write_json_in_prepared_dir_with(
+    path: &Path,
+    value: &impl Serialize,
+    names: StagingNames,
+) -> Result<()> {
+    publish_file(path, &serde_json::to_vec_pretty(value)?, names)
+}
+
+/// Stage, flush and rename `bytes` into `path` (file 0600) without touching
+/// the directory's mode.
+fn publish_file(path: &Path, bytes: &[u8], names: StagingNames) -> Result<()> {
+    let dir = path.parent().context("state path has no parent")?;
+    let (temp_path, mut temp) = staging_temp_path(dir, names)?;
     let write_result = (|| -> Result<()> {
         #[cfg(unix)]
         {
@@ -585,7 +634,15 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     write_result
 }
 
-fn remove_durable(path: &Path) -> Result<()> {
+pub(crate) fn remove_durable(path: &Path) -> Result<()> {
+    remove_durable_with(path, HOST_STAGING)
+}
+
+/// [`remove_durable`] with `names` for the Windows tombstone.
+pub(crate) fn remove_durable_with(
+    path: &Path,
+    #[cfg_attr(not(windows), allow(unused_variables))] names: StagingNames,
+) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).context("reading auth file metadata"),
@@ -594,7 +651,7 @@ fn remove_durable(path: &Path) -> Result<()> {
     #[cfg(windows)]
     {
         let parent = path.parent().context("state path has no parent")?;
-        let tombstone = unique_tombstone_path(parent)?;
+        let tombstone = unique_tombstone_path(parent, names)?;
         std::fs::rename(path, &tombstone).context("renaming auth file to tombstone")?;
         std::fs::remove_file(&tombstone).context("removing auth tombstone")?;
         sync_directory(parent)
@@ -609,7 +666,13 @@ fn remove_durable(path: &Path) -> Result<()> {
     }
 }
 
-fn sweep_dir(dir: &Path) -> Result<()> {
+pub(crate) fn sweep_dir(dir: &Path) -> Result<()> {
+    sweep_dir_with(dir, HOST_STAGING)
+}
+
+/// Delete the abandoned staging/tombstone files of `names` in `dir`; every
+/// other name (another store's staging files included) is left alone.
+pub(crate) fn sweep_dir_with(dir: &Path, names: StagingNames) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -619,8 +682,8 @@ fn sweep_dir(dir: &Path) -> Result<()> {
         let entry = entry?;
         let file_name = entry.file_name();
         let name = file_name.to_string_lossy();
-        if is_sweepable_staging_name(&name) {
-            remove_durable(&entry.path())?;
+        if names.is_sweepable(&name) {
+            remove_durable_with(&entry.path(), names)?;
         }
     }
     Ok(())
@@ -665,7 +728,7 @@ fn create_durable_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn private_dir(path: &Path) -> Result<()> {
+pub(crate) fn private_dir(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -845,16 +908,17 @@ mod tests {
             ".wssp-auth-leftover.tmp",
         ] {
             assert!(
-                !is_sweepable_staging_name(name),
+                !HOST_STAGING.is_sweepable(name),
                 "{name} must not match the staging sweep parser"
             );
         }
-        assert!(is_sweepable_staging_name(
-            ".wssp-staging-0123456789abcdef0123456789abcdef.tmp"
-        ));
-        assert!(is_sweepable_staging_name(
-            ".wssp-tombstone-fedcba9876543210fedcba9876543210"
-        ));
+        assert!(HOST_STAGING.is_sweepable(".wssp-staging-0123456789abcdef0123456789abcdef.tmp"));
+        assert!(HOST_STAGING.is_sweepable(".wssp-tombstone-fedcba9876543210fedcba9876543210"));
+        let user = ".wssp-user-staging-0123456789abcdef0123456789abcdef.tmp";
+        assert!(!HOST_STAGING.is_sweepable(user));
+        assert!(USER_STAGING.is_sweepable(user));
+        assert!(!USER_STAGING.is_sweepable(".wssp-staging-0123456789abcdef0123456789abcdef.tmp"));
+        assert!(!USER_STAGING.is_sweepable(".wssp-tombstone-fedcba9876543210fedcba9876543210"));
     }
 
     /// E-16: under a permissive umask (002, Ubuntu's default) every

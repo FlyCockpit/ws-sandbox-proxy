@@ -170,6 +170,9 @@ fn agent_environment(
         .into_iter()
         .filter(|(key, value)| {
             let key = key.to_string_lossy();
+            // Every `WSSP_` name is dropped, including the user login's CI
+            // credential (`WSSP_API_KEY`, `WSSP_SERVER`): an agent's host
+            // command never inherits the daemon user's login.
             !key.starts_with("WSSP_")
                 && (matches!(
                     key.as_ref(),
@@ -193,12 +196,18 @@ mod agent_tests {
             ("LC_ALL", "C"),
             ("TZ", "wssp_sdk_fake"),
             ("WSSP_HOST_TOKEN", "refused"),
+            ("WSSP_API_KEY", "refused"),
+            ("WSSP_SERVER", "https://wssp.example.test"),
             ("SHELL", "/bin/sh"),
             ("LD_PRELOAD", "refused"),
             ("INCUS_DIR", "refused"),
         ];
         let env = agent_environment(input.map(|(k, v)| (k.into(), v.into())));
         assert_eq!(env.len(), 3);
+        assert!(
+            !env.iter()
+                .any(|(k, _)| k == "WSSP_API_KEY" || k == "WSSP_SERVER")
+        );
         let child = agent_command("/bin/true");
         assert_eq!(
             child

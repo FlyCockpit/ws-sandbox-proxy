@@ -256,6 +256,9 @@ const reviewed = new Map([
   // Read-only TOML inspection comments on stdout, never relay frames.
   ["apps/cli/src/commands/config.rs|to_string_pretty ( & capacity )", 1],
   ["apps/cli/src/output.rs|to_string ( value )", 1],
+  // User commands (`wssp sandbox …`): typed `/v1` HTTP request bodies sent
+  // to the control plane with the user login, never a relay frame.
+  ["apps/cli/src/api.rs|to_vec ( body )", 1],
   // Preview tunnels: newline-JSON requests (`expose`/`status`) to the local
   // tunnel client's private socket, never a relay frame.
   ["apps/cli/src/sandbox_relay/tunnel.rs|to_vec ( request )", 1],

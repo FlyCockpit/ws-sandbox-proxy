@@ -197,19 +197,20 @@ fn post(
     Ok((status, body))
 }
 
+/// Start a device authorization for `scope` (`host-slug:<slug>` for a host
+/// enrollment, `user-login` for `wssp login`).
 pub fn start_device_authorization(
     trust: &crate::tls::Trust,
     server: &str,
-    slug: &str,
+    scope: &str,
     deadline: Instant,
 ) -> Result<DeviceCodeStartResponse> {
-    crate::slug::validate_host_slug(slug)?;
     let (status, body) = post(
         trust,
         server,
         "/api/auth/device/code",
         serde_json::json!({
-            "client_id": "wssp", "scope": device_login_scope(slug),
+            "client_id": "wssp", "scope": scope,
         }),
         deadline,
     )?;
@@ -231,6 +232,32 @@ pub fn start_device_authorization(
     Ok(started)
 }
 
+/// One oRPC device-code exchange: `json` is the request input, the answer is
+/// the oRPC `json` payload on 200, else classified by `ERROR_CONTRACT`.
+/// `again` names the command to run after a terminal refusal.
+pub fn exchange<T: serde::de::DeserializeOwned>(
+    trust: &crate::tls::Trust,
+    server: &str,
+    path: &str,
+    json: serde_json::Value,
+    again: &str,
+    deadline: Instant,
+) -> std::result::Result<T, ExchangeError> {
+    let (status, body) = post(
+        trust,
+        server,
+        path,
+        serde_json::json!({ "json": json }),
+        deadline,
+    )?;
+    if status != 200 {
+        return Err(classify_exchange_error(status, &body, again));
+    }
+    let RpcResponse { json: parsed }: RpcResponse<T> =
+        serde_json::from_str(&body).context("parsing device credential response")?;
+    Ok(parsed)
+}
+
 pub fn exchange_device_code(
     trust: &crate::tls::Trust,
     server: &str,
@@ -238,20 +265,14 @@ pub fn exchange_device_code(
     slug: &str,
     deadline: Instant,
 ) -> std::result::Result<DeviceCredential, ExchangeError> {
-    let (status, body) = post(
+    let parsed: DeviceCredentialExchangeResponse = exchange(
         trust,
         server,
         "/rpc/hostCredentials/exchangeDeviceCode",
-        serde_json::json!({
-            "json": { "deviceCode": code, "hostSlug": slug }
-        }),
+        serde_json::json!({ "deviceCode": code, "hostSlug": slug }),
+        "wssp host enroll",
         deadline,
     )?;
-    if status != 200 {
-        return Err(classify_exchange_error(status, &body));
-    }
-    let RpcResponse { json: parsed }: RpcResponse<DeviceCredentialExchangeResponse> =
-        serde_json::from_str(&body).context("parsing device credential response")?;
     if parsed.credential_id.is_empty() || parsed.user_id.is_empty() || parsed.host_id.is_empty() {
         return Err(anyhow::anyhow!("missing device credential identity").into());
     }
@@ -265,6 +286,91 @@ pub fn exchange_device_code(
         secret: parsed.secret,
         generation: String::new(),
     })
+}
+
+/// How long a started device flow may be polled, and how often.
+pub struct DeviceFlowTiming {
+    pub expires_in: Duration,
+    pub deadline: Instant,
+    pub interval: Duration,
+}
+
+impl DeviceFlowTiming {
+    pub fn new(started: &DeviceCodeStartResponse, login_started: Instant) -> Self {
+        let expires_in = Duration::from_secs(started.expires_in).min(MAX_LOGIN_DURATION);
+        Self {
+            expires_in,
+            deadline: login_started + expires_in,
+            interval: Duration::from_secs(started.interval.max(1)),
+        }
+    }
+}
+
+/// The RFC 8628 poll loop shared by `wssp host enroll` and `wssp login`:
+/// wait the interval, honor `slow_down` (+5 s) and a rate limit's
+/// `retryAfterSeconds`, stop on denial or expiry. `attempt` runs one exchange
+/// and returns its typed outcome.
+pub fn poll_device_flow<T>(
+    timing: &DeviceFlowTiming,
+    mut attempt: impl FnMut() -> std::result::Result<T, ExchangeError>,
+) -> Result<T> {
+    let deadline = timing.deadline;
+    let mut interval = timing.interval;
+    let mut next_rate_limit_floor: Option<Duration> = None;
+    loop {
+        let mut wait = interval;
+        if let Some(retry_floor) = next_rate_limit_floor.take() {
+            wait = wait.max(retry_floor);
+        }
+        if wait > remaining(deadline)? {
+            anyhow::bail!("device authorization expired");
+        }
+        poll_sleep(wait);
+        match attempt() {
+            Ok(value) => return Ok(value),
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Pending)) => {
+                tracing::debug!("device authorization pending");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::SlowDown)) => {
+                interval = slowed_down_interval(interval);
+                tracing::debug!(?interval, "device authorization polling too fast");
+            }
+            Err(ExchangeError::RateLimited(delay)) => {
+                if delay > remaining(deadline)? {
+                    anyhow::bail!("device authorization expired");
+                }
+                next_rate_limit_floor = Some(delay);
+                tracing::debug!(?delay, "device exchange rate limited");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Denied)) => {
+                anyhow::bail!("device authorization denied");
+            }
+            Err(ExchangeError::DeviceFlow(DeviceFlowState::Expired)) => {
+                anyhow::bail!("device authorization expired");
+            }
+            Err(ExchangeError::Other(error)) => return Err(error),
+        }
+    }
+}
+
+fn slowed_down_interval(interval: Duration) -> Duration {
+    interval.saturating_add(Duration::from_secs(5))
+}
+
+fn poll_sleep(duration: Duration) {
+    #[cfg(debug_assertions)]
+    if let Ok(record) = std::env::var("WSSP_TEST_RECORD_SLEEP") {
+        let _ = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(record)
+            .and_then(|mut file| {
+                use std::io::Write;
+                writeln!(file, "{}", duration.as_secs())
+            });
+        return;
+    }
+    std::thread::sleep(duration);
 }
 
 #[derive(Clone, Copy)]
@@ -312,10 +418,10 @@ const ERROR_CONTRACT: &[(u16, &str, Option<&str>, ContractOutcome)] = &[
     ),
 ];
 
-fn classify_exchange_error(status: u16, body: &str) -> ExchangeError {
+fn classify_exchange_error(status: u16, body: &str, again: &str) -> ExchangeError {
     let terminal = |message: &str| {
         ExchangeError::Other(anyhow::anyhow!(
-            "device credential exchange failed (HTTP {status}): {}; run `wssp host enroll` again",
+            "device credential exchange failed (HTTP {status}): {}; run `{again}` again",
             crate::output::remote_message(message)
         ))
     };
@@ -462,7 +568,7 @@ mod tests {
                         data["deviceFlowError"] = tag.into();
                     }
                     let body = serde_json::json!({"json":{"code":code,"data":data}}).to_string();
-                    let actual = match classify_exchange_error(status, &body) {
+                    let actual = match classify_exchange_error(status, &body, "wssp host enroll") {
                         ExchangeError::DeviceFlow(state) => format!("{state:?}"),
                         ExchangeError::RateLimited(delay) => {
                             assert_eq!(delay.as_secs(), 2);
@@ -495,13 +601,24 @@ mod tests {
         ] {
             let body = serde_json::json!({"json":{"code":"TOO_MANY_REQUESTS","data":{"retryAfterSeconds":retry}}}).to_string();
             assert!(matches!(
-                classify_exchange_error(429, &body),
+                classify_exchange_error(429, &body, "wssp host enroll"),
                 ExchangeError::Other(_)
             ));
         }
         let body = serde_json::json!({"json":{"code":"TOO_MANY_REQUESTS","data":{"retryAfterSeconds":120}}}).to_string();
         assert!(
-            matches!(classify_exchange_error(429, &body), ExchangeError::RateLimited(d) if d == Duration::from_secs(120))
+            matches!(classify_exchange_error(429, &body, "wssp host enroll"), ExchangeError::RateLimited(d) if d == Duration::from_secs(120))
+        );
+    }
+    #[test]
+    fn slow_down_adds_five_seconds_without_an_artificial_cap() {
+        assert_eq!(
+            slowed_down_interval(Duration::from_secs(5)),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            slowed_down_interval(Duration::from_secs(118)),
+            Duration::from_secs(123)
         );
     }
     #[test]

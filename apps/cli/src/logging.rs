@@ -13,10 +13,11 @@
 //! `--json` output piped into `jq`).
 
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::Layer;
-use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -127,7 +128,22 @@ impl<W: Write> Drop for RedactingWriter<W> {
 fn resolve_env_filter(verbose: u8, quiet: bool) -> EnvFilter {
     env_filter(LOG_ENV)
         .or_else(|| env_filter("RUST_LOG"))
-        .unwrap_or_else(|| EnvFilter::new(default_directive(verbose, quiet)))
+        .unwrap_or_else(|| {
+            DEFAULT_VERBOSITY.store(verbose == 0, Ordering::Relaxed);
+            EnvFilter::new(default_directive(verbose, quiet))
+        })
+}
+
+/// Set when the filter is the default (no `WSSP_LOG`/`RUST_LOG`, no `-v`).
+static DEFAULT_VERBOSITY: AtomicBool = AtomicBool::new(false);
+
+/// A user command's `--json` keeps stderr to its single JSON error line: at
+/// the default verbosity only WARN and ERROR events pass once it is set. An
+/// explicit `-v` or log filter still applies.
+fn pass_json_quiet(metadata: &tracing::Metadata<'_>) -> bool {
+    *metadata.level() <= tracing::Level::WARN
+        || !DEFAULT_VERBOSITY.load(Ordering::Relaxed)
+        || !crate::output::json_errors()
 }
 
 /// Build the tracing subscriber used by the binary (and tests). Does not install globally.
@@ -141,7 +157,10 @@ where
     Mw: Fn() -> RedactingWriter<W> + Send + Sync + 'static,
     W: Write + Send + 'static,
 {
-    let ceiling = filter_fn(pass_confidentiality_ceiling);
+    // Dynamic: `--json` is known only once the command runs.
+    let ceiling = dynamic_filter_fn(|metadata, _| {
+        pass_confidentiality_ceiling(metadata) && pass_json_quiet(metadata)
+    });
 
     match format {
         LogFormat::Text => Box::new(

@@ -37,13 +37,25 @@ pub fn bytes(bytes: &[u8]) -> Result<()> {
     out.write_all(bytes).context("writing to stdout")
 }
 
+/// Write raw bytes to stderr (a guest command's stderr stream).
+pub fn stderr_bytes(bytes: &[u8]) -> Result<()> {
+    let mut err = io::stderr().lock();
+    err.write_all(bytes).context("writing to stderr")?;
+    err.flush().context("flushing stderr")
+}
+
 /// Serialize a typed value as one JSON object to stdout.
 pub fn json<T: Serialize>(value: &T) -> Result<()> {
+    let json = encode(value)?;
     let mut out = io::stdout().lock();
-    let json = serde_json::to_string(value).context("serializing JSON output")?;
     out.write_all(crate::logging::redact_product_credentials(&json).as_bytes())
         .context("writing JSON output")?;
     writeln!(out).context("writing to stdout")
+}
+
+/// The one JSON encoder of command output (stdout documents, stderr error lines).
+fn encode<T: Serialize>(value: &T) -> Result<String> {
+    serde_json::to_string(value).context("serializing JSON output")
 }
 
 /// Flush stdout before exiting the process explicitly.
@@ -74,4 +86,47 @@ pub fn remote_message(text: &str) -> String {
         .filter(|c| !c.is_control())
         .take(512)
         .collect()
+}
+
+static JSON_ERRORS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A user command with `--json` reports its failure as one JSON line on
+/// stderr instead of `error: …` (stdout stays command output only).
+pub fn set_json_errors(enabled: bool) {
+    JSON_ERRORS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn json_errors() -> bool {
+    JSON_ERRORS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[derive(Serialize)]
+struct ErrorLine<'a> {
+    error: ErrorBody<'a>,
+}
+
+#[derive(Serialize)]
+struct ErrorBody<'a> {
+    code: &'a str,
+    status: Option<u16>,
+    message: &'a str,
+    data: Option<&'a serde_json::Value>,
+}
+
+/// Write `{"error":{"code","status","message","data"}}` to stderr.
+pub fn json_error(
+    code: &str,
+    status: Option<u16>,
+    message: &str,
+    data: Option<&serde_json::Value>,
+) -> Result<()> {
+    let line = encode(&ErrorLine {
+        error: ErrorBody {
+            code,
+            status,
+            message,
+            data,
+        },
+    })?;
+    diagnostic(line)
 }

@@ -38,7 +38,15 @@ fn main() {
         Ok(cli) => cli,
         Err(error) => {
             let code = error.exit_code();
-            if error.use_stderr() {
+            let args: Vec<_> = std::env::args_os().skip(1).collect();
+            if error.use_stderr() && user_json_in(&args) {
+                // A user command asked for JSON: one JSON error line only.
+                let rendered = error.render().to_string();
+                let first = rendered.lines().next().unwrap_or_default();
+                let message =
+                    output::remote_message(first.strip_prefix("error: ").unwrap_or(first));
+                let _ = output::json_error(ExitCode::Usage.name(), None, &message, None);
+            } else if error.use_stderr() {
                 let _ = output::diagnostic(error);
             } else {
                 let _ = output::text(error);
@@ -46,20 +54,35 @@ fn main() {
             std::process::exit(code);
         }
     };
-    logging::init(cli.log_format, cli.verbose, cli.quiet);
+    // User commands (login, sandbox, …) talk to agents and scripts: their
+    // stderr carries only errors (one JSON line with `--json`) unless `-v`
+    // asks for logs. Host commands keep their info-level operator logs.
+    let user_command = !matches!(cli.command, Command::Host(_) | Command::Completions(_));
+    logging::init(
+        cli.log_format,
+        cli.verbose,
+        cli.quiet || (user_command && cli.verbose == 0),
+    );
     finish(run(&cli, role));
 }
 
 fn finish(result: anyhow::Result<()>) -> ! {
+    if let Err(err) = &result
+        && let Some(status) = exit::process_exit_of(err)
+    {
+        let _ = output::flush_stdout();
+        std::process::exit(status);
+    }
     let code = match result {
         Ok(()) => ExitCode::Success,
-        Err(err) if exit::is_broken_pipe(&err) => ExitCode::Success,
-        Err(err) => {
-            // Identifiers in error messages are wrapped in `backticks`, never
-            // 'single quotes' — see AGENTS.md.
-            let _ = output::diagnostic(format!("error: {}", exit::message_for(&err)));
-            exit::code_for(&err)
+        // A closed stdout ends a plain listing quietly; commands whose output
+        // is the point (`sandbox exec`, `logs`, `files read`) carry exit 141.
+        Err(err)
+            if exit::is_broken_pipe(&err) && exit::code_for(&err) != ExitCode::OutputClosed =>
+        {
+            ExitCode::Success
         }
+        Err(err) => exit::report_failure(&err),
     };
 
     let _ = output::flush_stdout();
@@ -120,10 +143,45 @@ fn help_all_in(args: &[std::ffi::OsString]) -> bool {
     all && (help || args.iter().any(|arg| arg == "--help" || arg == "-h"))
 }
 
+/// Whether argv names a user command (`login`, `logout`, `whoami`,
+/// `sandbox`, `template`) as its subcommand and carries `--json` before any
+/// `--` (after it the words are the guest argv of `sandbox exec`).
+fn user_json_in(args: &[std::ffi::OsString]) -> bool {
+    let mut rest = args.iter();
+    let command = loop {
+        match rest.next() {
+            None => return false,
+            Some(arg) if arg == "--" => return false,
+            // The only value-taking global flag: skip its separate value.
+            Some(arg) if arg == "--log-format" => {
+                rest.next();
+            }
+            Some(arg) if arg.to_string_lossy().starts_with('-') => {}
+            Some(arg) => break arg,
+        }
+    };
+    if !["login", "logout", "whoami", "sandbox", "template"]
+        .iter()
+        .any(|name| command == name)
+    {
+        return false;
+    }
+    args.iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "--json")
+}
+
 /// Dispatch to the selected subcommand. Returning `Result` here keeps `main`
 /// free of branching and lets every command use `?`.
 fn run(cli: &Cli, role: HostRole) -> anyhow::Result<()> {
     match &cli.command {
+        // User commands: the user login only, never `config.toml` or the host
+        // auth store.
+        Command::Login(args) => commands::login::run(args, role),
+        Command::Logout(args) => commands::user_logout::run(args),
+        Command::Whoami(args) => commands::whoami::run(args),
+        Command::Sandbox(args) => commands::sandbox::run(args),
+        Command::Template(args) => commands::template::run(args),
         Command::Completions(args) => commands::completions::run(args),
         Command::Host(args) => {
             // Fail fast, before any network call or auth store.
@@ -141,7 +199,23 @@ fn run(cli: &Cli, role: HostRole) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::help_all_in;
+    use super::{help_all_in, user_json_in};
+
+    #[test]
+    fn json_usage_errors_only_for_user_commands_with_json() {
+        let json = |args: &[&str]| {
+            let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
+            user_json_in(&args)
+        };
+        assert!(json(&["sandbox", "list", "--json", "--limit", "0"]));
+        assert!(json(&["-v", "--log-format", "json", "whoami", "--json"]));
+        assert!(json(&["login", "--json", "--bogus"]));
+        assert!(!json(&["sandbox", "list", "--limit", "0"]));
+        assert!(!json(&["host", "images", "--json"]));
+        assert!(!json(&["--json", "help", "sandbox"]));
+        assert!(!json(&["sandbox", "exec", "s", "--", "echo", "--json"]));
+        assert!(!json(&["--log-format", "sandbox", "host", "--json"]));
+    }
 
     fn requested(args: &[&str]) -> bool {
         let args: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();

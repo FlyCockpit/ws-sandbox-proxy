@@ -11,6 +11,23 @@
 //!   5  sandbox relay internal error (1011 close) — retryable
 //!   6  this device is not an enrolled host (a `wssp host` command that needs
 //!      an enrollment; run `wssp host enroll`)
+//!   7  not logged in: no user login (`wssp login`), or the server answered 401
+//!   8  forbidden: the server answered 403 (the login's scopes or pools do not
+//!      allow the action)
+//!   9  a limit was reached: `sandbox.key_limit_reached`, a quota or
+//!      `sandbox.capacity_queue_full`
+//!  10  conflict: any other 409 (state conflict, name taken, …)
+//!  11  retryable: the server answered 429, 503 or 504; retry later
+//! 130  interrupted (Ctrl-C) while `wssp sandbox exec` followed a command; its
+//!      cancellation was requested
+//! 125  `wssp sandbox exec` only: wssp itself failed or the command's outcome
+//!      is unknown (the guest's own exit code is passed through otherwise)
+//! 141  stdout closed early (128 + SIGPIPE): `wssp sandbox exec` (its
+//!      cancellation was requested), `wssp sandbox logs` and
+//!      `wssp sandbox files read` to stdout
+//!
+//! `/v1` answers map to these codes in `src/api.rs`: 404 → 3 and 400, 413 and
+//! 415 → 2 as well.
 //!
 //! To give a specific error a non-default code, attach a [`CodedError`] via
 //! `.context(CodedError::new(ExitCode::NotFound))` and [`code_for`] will pick it
@@ -26,7 +43,8 @@ use std::io;
 pub enum ExitCode {
     Success = 0,
     Failure = 1,
-    #[allow(dead_code)] // emitted by clap, listed here for documentation.
+    /// Bad arguments (clap emits this itself) or a request the server refused
+    /// as invalid (400, 413, 415).
     Usage = 2,
     /// The requested resource was not found (e.g. `wssp host drain` on a 404).
     NotFound = 3,
@@ -37,6 +55,45 @@ pub enum ExitCode {
     /// A `wssp host` command that needs an enrollment ran on a machine with no
     /// host device credential and no host token selection.
     NotEnrolledHost = 6,
+    /// No user login, or the server refused the login's key (401).
+    NotLoggedIn = 7,
+    /// The server refused the action for this key (403).
+    Forbidden = 8,
+    /// A key, quota or queue limit was reached.
+    LimitReached = 9,
+    /// Any other conflict (409).
+    Conflict = 10,
+    /// The server is busy or unavailable (429, 503, 504); retry later.
+    Retryable = 11,
+    /// `wssp sandbox exec`: wssp-side failure or unknown command outcome.
+    ExecFailure = 125,
+    /// Interrupted by Ctrl-C (the followed command's cancellation was requested).
+    Interrupted = 130,
+    /// stdout closed before the output was written (128 + SIGPIPE).
+    OutputClosed = 141,
+}
+
+impl ExitCode {
+    /// Stable machine name, used as the `code` of a local `--json` error.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Success => "ok",
+            Self::Failure => "error",
+            Self::Usage => "usage",
+            Self::NotFound => "not_found",
+            Self::CredentialInactive => "credential_inactive",
+            Self::RelayUnavailable => "relay_unavailable",
+            Self::NotEnrolledHost => "not_enrolled_host",
+            Self::NotLoggedIn => "not_logged_in",
+            Self::Forbidden => "forbidden",
+            Self::LimitReached => "limit_reached",
+            Self::Conflict => "conflict",
+            Self::Retryable => "retryable",
+            Self::ExecFailure => "exec_failed",
+            Self::Interrupted => "interrupted",
+            Self::OutputClosed => "output_closed",
+        }
+    }
 }
 
 /// Annotate an error to request a specific [`ExitCode`].
@@ -72,6 +129,26 @@ impl fmt::Display for CodedError {
 
 impl std::error::Error for CodedError {}
 
+/// End the process with this exact status and no message: `wssp sandbox exec`
+/// passes the guest command's own exit code through.
+#[derive(Debug)]
+pub struct ProcessExit(pub i32);
+
+impl fmt::Display for ProcessExit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("")
+    }
+}
+
+impl std::error::Error for ProcessExit {}
+
+/// The [`ProcessExit`] of an error, if any.
+pub fn process_exit_of(err: &anyhow::Error) -> Option<i32> {
+    err.chain()
+        .find_map(|cause| cause.downcast_ref::<ProcessExit>())
+        .map(|exit| exit.0)
+}
+
 /// Resolve the exit code for an error by looking for a [`CodedError`] anywhere
 /// in it; defaults to [`ExitCode::Failure`].
 pub fn code_for(err: &anyhow::Error) -> ExitCode {
@@ -106,6 +183,36 @@ pub fn message_for(err: &anyhow::Error) -> String {
         .filter(|message| !message.is_empty())
         .collect::<Vec<_>>()
         .join(": ")
+}
+
+/// Print a command failure to stderr (one JSON line with `--json`, else
+/// `error: …`) and return its exit code.
+pub fn report_failure(err: &anyhow::Error) -> ExitCode {
+    let code = code_for(err);
+    if crate::output::json_errors() {
+        let message = message_for(err);
+        let _ = match crate::api::api_error_of(err) {
+            Some(api) => {
+                crate::output::json_error(&api.code, Some(api.status), &message, api.data.as_ref())
+            }
+            None => match crate::api::operation_error_of(err) {
+                Some(operation) => {
+                    let data = serde_json::json!({
+                        "operationId": operation.operation_id,
+                        "outcome": operation.outcome,
+                        "state": operation.state,
+                    });
+                    crate::output::json_error(&operation.code(), None, &message, Some(&data))
+                }
+                None => crate::output::json_error(code.name(), None, &message, None),
+            },
+        };
+    } else {
+        // Identifiers in error messages are wrapped in `backticks`, never
+        // 'single quotes' — see AGENTS.md.
+        let _ = crate::output::diagnostic(format!("error: {}", message_for(err)));
+    }
+    code
 }
 
 #[cfg(test)]

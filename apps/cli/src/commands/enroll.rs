@@ -1,15 +1,14 @@
 //! `wssp host enroll`: device-code enrollment (`--slug`) or a dashboard host
 //! token's environment variable (`--token-env`).
 
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use serde::Serialize;
 
 use crate::auth::{
-    DeviceFlowState, ExchangeError, MAX_LOGIN_DURATION, approval_url, exchange_device_code,
-    remaining, start_device_authorization,
+    DeviceFlowTiming, MAX_LOGIN_DURATION, approval_url, device_login_scope, exchange_device_code,
+    poll_device_flow, remaining, start_device_authorization,
 };
 use crate::output;
 use crate::slug::validate_host_slug;
@@ -122,22 +121,20 @@ fn enroll_device(args: &Args, slug: &str) -> Result<()> {
     let started = start_device_authorization(
         &trust,
         server_url,
-        &host_slug,
+        &device_login_scope(&host_slug),
         login_started + MAX_LOGIN_DURATION,
     )?;
     let approval = approval_url(&started)?;
-    let expires_in = Duration::from_secs(started.expires_in).min(MAX_LOGIN_DURATION);
-    let deadline = login_started + expires_in;
-    let mut interval = Duration::from_secs(started.interval.max(1));
-    let mut next_rate_limit_floor: Option<Duration> = None;
+    let timing = DeviceFlowTiming::new(&started, login_started);
+    let deadline = timing.deadline;
     if args.json {
         output::json(&LoginStarted {
             host_slug: &host_slug,
             user_code: &started.user_code,
             verification_uri: Some(started.verification_uri.as_str()),
             verification_uri_complete: started.verification_uri_complete.as_deref(),
-            expires_in: Some(expires_in.as_secs()),
-            interval: Some(interval.as_secs()),
+            expires_in: Some(timing.expires_in.as_secs()),
+            interval: Some(timing.interval.as_secs()),
         })?;
     } else {
         output::line(format!("host slug: {host_slug}"))?;
@@ -145,56 +142,24 @@ fn enroll_device(args: &Args, slug: &str) -> Result<()> {
         output::line(format!("verification URI: {approval}"))?;
     }
 
-    loop {
-        let mut wait = interval;
-        if let Some(retry_floor) = next_rate_limit_floor.take() {
-            wait = wait.max(retry_floor);
-        }
-        if wait > remaining(deadline)? {
-            anyhow::bail!("device authorization expired");
-        }
-        poll_sleep(wait);
+    poll_device_flow(&timing, || {
         let store = AuthStore::open(Some(deadline))?;
         store.check_generation(&generation)?;
-        match exchange_device_code(
+        let credential = exchange_device_code(
             &trust,
             server_url,
             &started.device_code,
             &host_slug,
             deadline,
-        ) {
-            Ok(credential) => {
-                remaining(deadline)?;
-                store.publish_with_ca_file(&generation, credential, saved_ca_file.clone())?;
-                drop(store);
-                if !args.json {
-                    output::line("device enrollment complete")?;
-                }
-                return node_setup(args, &host_slug);
-            }
-            Err(ExchangeError::DeviceFlow(DeviceFlowState::Pending)) => {
-                tracing::debug!("device authorization pending");
-            }
-            Err(ExchangeError::DeviceFlow(DeviceFlowState::SlowDown)) => {
-                interval = slowed_down_interval(interval);
-                tracing::debug!(?interval, "device authorization polling too fast");
-            }
-            Err(ExchangeError::RateLimited(delay)) => {
-                if delay > remaining(deadline)? {
-                    anyhow::bail!("device authorization expired");
-                }
-                next_rate_limit_floor = Some(delay);
-                tracing::debug!(?delay, "device exchange rate limited");
-            }
-            Err(ExchangeError::DeviceFlow(DeviceFlowState::Denied)) => {
-                anyhow::bail!("device authorization denied");
-            }
-            Err(ExchangeError::DeviceFlow(DeviceFlowState::Expired)) => {
-                anyhow::bail!("device authorization expired");
-            }
-            Err(ExchangeError::Other(error)) => return Err(error),
-        }
+        )?;
+        remaining(deadline)?;
+        store.publish_with_ca_file(&generation, credential, saved_ca_file.clone())?;
+        Ok(())
+    })?;
+    if !args.json {
+        output::line("device enrollment complete")?;
     }
+    node_setup(args, &host_slug)
 }
 
 const OPEN_EGRESS_QUESTION: &str =
@@ -289,26 +254,6 @@ struct LoginComplete<'a> {
     guard_install_command: Option<String>,
 }
 
-fn slowed_down_interval(interval: Duration) -> Duration {
-    interval.saturating_add(Duration::from_secs(5))
-}
-
-fn poll_sleep(duration: Duration) {
-    #[cfg(debug_assertions)]
-    if let Ok(record) = std::env::var("WSSP_TEST_RECORD_SLEEP") {
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(record)
-            .and_then(|mut file| {
-                use std::io::Write;
-                writeln!(file, "{}", duration.as_secs())
-            });
-        return;
-    }
-    thread::sleep(duration);
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginStarted<'a> {
@@ -333,17 +278,5 @@ mod tests {
         for no in ["", "\n", "n", "no", "yess", "sure"] {
             assert!(!parse_yes(no), "{no}");
         }
-    }
-
-    #[test]
-    fn slow_down_adds_five_seconds_without_an_artificial_cap() {
-        assert_eq!(
-            slowed_down_interval(Duration::from_secs(5)),
-            Duration::from_secs(10)
-        );
-        assert_eq!(
-            slowed_down_interval(Duration::from_secs(118)),
-            Duration::from_secs(123)
-        );
     }
 }

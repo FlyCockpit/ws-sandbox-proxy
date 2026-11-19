@@ -52,6 +52,430 @@ Accepted by every command, before or after the subcommand.
 | `-v`, `--verbose` (repeatable) | Increase log verbosity (-v = debug, -vv = trace). Overridden by the `WSSP_LOG` / `RUST_LOG` env var if set |  |
 | `-q`, `--quiet` | Silence all logs except errors |  |
 
+### `wssp login`
+
+Log in to a wssp server as yourself (device flow; the browser chooses what this login may do).
+
+```text
+wssp login [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--server <URL>` | Server origin, e.g. `https://wssp.example.com` (default: the origin of the current login) |  |
+| `--ca-file <PATH>` | Add PEM CA certificates to webpki roots for this server (saved with the login; `WSSP_CA_FILE` overrides) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp logout`
+
+Revoke this machine's user login on the server and remove it here.
+
+```text
+wssp logout [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--local` | Only remove the saved login; do not revoke its key on the server |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp whoami`
+
+Show the user login of this machine and what its key may do.
+
+```text
+wssp whoami [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--offline` | Show only the saved login; make no network call |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox`
+
+Create, inspect, run commands in and manage sandboxes through the `/v1` API.
+
+```text
+wssp sandbox [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp sandbox create`
+
+Create a sandbox from a template on a pool or one of your hosts.
+
+```text
+wssp sandbox create [OPTIONS] --template <SEL>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--template <SEL>` | Template selector: a template slug or id, `slug:tag`, `template/<id>` or `revision/<id>` | required |
+| `--pool <ID>` | Place the sandbox through this pool |  |
+| `--host <ID>` | Place the sandbox on this host (one of yours) |  |
+| `--name <N>` | Sandbox name (default: a generated adjective-noun name) |  |
+| `--timeout <DUR>` | Lease, e.g. `30m`, `2h`, `1d` (`0`: no lease timer where policy allows it; default 5m) |  |
+| `--cpu <N>` | vCPUs (default: the template revision's) |  |
+| `--memory <MiB>` | Guest memory in MiB (default: the template revision's) |  |
+| `--disk <GiB>` | Root disk in GiB (default: the template revision's) |  |
+| `--metadata <K=V>` | Metadata label `key=value` (repeatable) |  |
+| `--wait` | Wait until the sandbox is READY (or fails) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox list`
+
+List sandboxes (newest first, one bounded page).
+
+```text
+wssp sandbox list [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--state <S>` | Only sandboxes in this state (repeatable; default READY), e.g. `--state STOPPED` |  |
+| `--limit <N>` | Page size, 1–100 (default 20) |  |
+| `--cursor <C>` | Continue after a previous page (`nextCursor`) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox get`
+
+Show one sandbox.
+
+```text
+wssp sandbox get [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox exec`
+
+Run a command in a sandbox and stream its output; exits with the command's exit code.
+
+```text
+wssp sandbox exec [OPTIONS] <ID> -- <ARGV>...
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--timeout <DUR>` | Command timeout, e.g. `90s` or `10m` (at most 30m; default 2m) |  |
+| `--cwd <P>` | Working directory in the guest (absolute) |  |
+| `--env <K=V>` | Environment variable `KEY=VALUE` for the command (repeatable) |  |
+| `--detach` | Start the command and print its operation id without waiting |  |
+| `--json` | Print `{operationId, exitCode, stdout, stderr, truncated, gaps, restarts}` at the end instead of streaming |  |
+| `<ARGV>` | The command and its arguments, after `--` | required |
+
+### `wssp sandbox ps`
+
+List the commands running in a sandbox.
+
+```text
+wssp sandbox ps [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--limit <N>` | Page size, 1–100 |  |
+| `--cursor <C>` | Continue after a previous page (`nextCursor`) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox logs`
+
+Print a command's retained output by operation id.
+
+```text
+wssp sandbox logs [OPTIONS] <OPERATION_ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<OPERATION_ID>` | Operation id of the command (`wssp sandbox exec --detach` prints it) | required |
+| `--follow` | Keep reading until the command completes |  |
+| `--json` | Print `{operationId, state, exitCode, complete, stdout, stderr, truncated, gaps, restarts}` instead of streaming |  |
+
+### `wssp sandbox stop`
+
+Stop a sandbox (its disk is kept).
+
+```text
+wssp sandbox stop [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--wait` | Wait until the operation finishes (and, for `start`, the sandbox is READY) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox start`
+
+Start a stopped sandbox again (cold reconnect).
+
+```text
+wssp sandbox start [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--wait` | Wait until the operation finishes (and, for `start`, the sandbox is READY) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox destroy`
+
+Destroy a sandbox and its disk.
+
+```text
+wssp sandbox destroy [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--wait` | Wait until the operation finishes (and, for `start`, the sandbox is READY) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files`
+
+Guest files: list, stat, read, write, mkdir, move and remove.
+
+```text
+wssp sandbox files [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp sandbox files ls`
+
+List a directory.
+
+```text
+wssp sandbox files ls [OPTIONS] <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest directory path | required |
+| `--depth <N>` | Levels to list below the directory, 1–8 |  |
+| `--limit <N>` | Page size, 1–100 (default 100) |  |
+| `--cursor <C>` | Continue after a previous page (`nextCursor`) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files stat`
+
+Show one entry's metadata.
+
+```text
+wssp sandbox files stat [OPTIONS] <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest path | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files read`
+
+Print a file's bytes (or save them with `--output`).
+
+```text
+wssp sandbox files read [OPTIONS] <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest file path | required |
+| `-o`, `--output <FILE>` | Write the bytes to this local file instead of stdout |  |
+| `--json` | With `--output`: print `{path, bytes, sha256}` as JSON |  |
+
+### `wssp sandbox files write`
+
+Replace a file with the bytes of a local file or stdin.
+
+```text
+wssp sandbox files write [OPTIONS] --from <FILE|-> <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest file path | required |
+| `--from <FILE|->` | Local file to upload, or `-` for stdin | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files mkdir`
+
+Create a directory.
+
+```text
+wssp sandbox files mkdir [OPTIONS] <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest path | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files mv`
+
+Move or rename an entry.
+
+```text
+wssp sandbox files mv [OPTIONS] <ID> <PATH> <DEST>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest source path | required |
+| `<DEST>` | Absolute guest destination path | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox files rm`
+
+Remove an entry.
+
+```text
+wssp sandbox files rm [OPTIONS] <ID> <PATH>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PATH>` | Absolute guest path | required |
+| `-r`, `--recursive` | Remove a directory and everything in it |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox ports`
+
+Preview tunnel ports: show, expose, change, close and link.
+
+```text
+wssp sandbox ports [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp sandbox ports get`
+
+Show the tunnel: exposed ports, state and preview URLs.
+
+```text
+wssp sandbox ports get [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox ports expose`
+
+Expose declared ports through the tunnel (default: every declared port).
+
+```text
+wssp sandbox ports expose [OPTIONS] <ID> [PORT]...
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PORT>` | Declared ports to expose (default: all of them) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox ports set`
+
+Change the declared ports of a tunnel sandbox.
+
+```text
+wssp sandbox ports set [OPTIONS] <--add <PORT>|--remove <PORT>> <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--add <PORT>` | Port to declare (repeatable) |  |
+| `--remove <PORT>` | Port to stop declaring (repeatable); removing an exposed port replaces the tunnel |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox ports close`
+
+Close the tunnel; every link to it stops working.
+
+```text
+wssp sandbox ports close [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp sandbox ports link`
+
+Mint a short-lived access link to one exposed port and print it.
+
+```text
+wssp sandbox ports link [OPTIONS] <ID> <PORT>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Sandbox id | required |
+| `<PORT>` | The exposed port the link opens | required |
+| `--ttl <S>` | Seconds the link can be redeemed, 30–3600 (default 60) |  |
+| `--multi-use` | Let the link be opened more than once |  |
+| `--session-ttl <S>` | Seconds the browser session it grants lasts, 60–86400 (default 3600) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp template`
+
+List templates and their revisions.
+
+```text
+wssp template [OPTIONS] <COMMAND>
+```
+
+No command-specific options.
+
+### `wssp template list`
+
+List templates (newest first, one bounded page).
+
+```text
+wssp template list [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--limit <N>` | Page size, 1–100 (default 20) |  |
+| `--cursor <C>` | Continue after a previous page (`nextCursor`) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
+### `wssp template get`
+
+Show one template and its revisions.
+
+```text
+wssp template get [OPTIONS] <ID>
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<ID>` | Template id | required |
+| `--cursor <C>` | Continue the revision list after a previous page (`revisionsNextCursor`) |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
 ### `wssp host`
 
 Run this machine as a wssp host: enroll, run the node daemon, manage node settings.

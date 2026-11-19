@@ -4,6 +4,7 @@
 //! codes, logging, paths, and output helpers live here so they can be tested and
 //! documented like normal Rust code.
 
+pub mod api;
 pub mod auth;
 pub mod cli;
 pub mod commands;
@@ -24,6 +25,7 @@ pub mod slug;
 pub mod state;
 pub mod storage_capacity;
 pub mod tls;
+pub mod user_state;
 pub mod vm_capacity;
 
 #[cfg(test)]

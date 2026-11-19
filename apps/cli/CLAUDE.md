@@ -18,8 +18,11 @@ Linux `IncusKvmRuntime` via the `incus` CLI, and non-Linux `UnsupportedRuntime`)
 
 `wssp host run` runs the outbound relay (`src/sandbox_relay/`). On Linux the
 default runtime is Incus (`--runtime fake` or `WSSP_RUNTIME=fake` for relay-only
-work). Every host command lives under `wssp host` (`src/commands/host.rs`);
-`completions` is the only other top-level command.
+work). Every host command lives under `wssp host` (`src/commands/host.rs`).
+The user commands (`login`, `logout`, `whoami`, `sandbox`, `template`) talk
+to `/v1` with the user login (`src/user_state.rs`, `src/api.rs`) and never
+read `config.toml` or the host auth store; `completions` is the remaining
+top-level command.
 
 The CLI is not part of the pnpm/Turborepo graph — no `package.json`. All work
 here happens with `cargo`, run from the repo root.
@@ -37,6 +40,8 @@ here happens with `cargo`, run from the repo root.
 | `src/logging.rs`     | Tracing setup. Logs go to stderr.                                                     |
 | `src/exit.rs`        | Stable process exit codes.                                                            |
 | `src/host_role.rs`   | Local-only enrolled-host detection for role-aware `wssp host` help and exit 6.        |
+| `src/user_state.rs`  | The user login (`login.json`, `WSSP_API_KEY` + `WSSP_SERVER`).                        |
+| `src/api.rs`         | `/v1` client; error envelope → exit codes 7–11.                                       |
 | `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp host run` (`signal-hook`).                 |
 | `src/sandbox_relay/` | Outbound node daemon.                                                                 |
 | `tests/cli.rs`       | Black-box tests that run the built binary.                                            |
@@ -101,7 +106,9 @@ cargo xtask sync-docs --check
 1. Add `src/commands/<name>.rs` with an `Args` type and `run(&Args) -> anyhow::Result<()>`.
 2. Register the module in `src/commands/mod.rs`.
 3. Add a variant to `HostCommand` in `src/commands/host.rs` (a host command;
-   decide `allowed_without_enrollment`) or to `Command` in `src/cli.rs`.
+   decide `allowed_without_enrollment`), to `SandboxCommand` in
+   `src/commands/sandbox/mod.rs` (a `/v1` user command), or to `Command` in
+   `src/cli.rs`.
 4. Add the match arm in `commands::host::run` or `src/main.rs`.
 5. Add focused black-box tests in `tests/cli.rs` when the command affects user-visible behavior.
 

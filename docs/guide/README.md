@@ -6,7 +6,7 @@ server (API, dashboard, Postgres, Valkey) and enroll your own Linux machines as
 server over WSS and drives **Incus KVM virtual machines**. A **sandbox** is one
 such VM, booted from a **template** you registered on that host. Your programs
 reach sandboxes through the `/v1` HTTP API (or the `@wssp/sdk` TypeScript
-client), agents can use [MCP](./auth-planes.md#mcp-plane), and you reach them in the browser
+client, or the [`wssp` CLI](./cli.md)), agents can use [MCP](./auth-planes.md#mcp-plane), and you reach them in the browser
 through the dashboard, including a terminal.
 
 Every resource has one user owner; there are no organizations or teams.
@@ -31,6 +31,7 @@ cross-owner **metadata** only; an admin role never grants command, file or termi
 | [Webhooks](./webhooks.md)                                          | Signed event deliveries: events, payloads, verification, retries, destination rules, operator setup                                                                                                                                                                 |
 | [Preview tunnels](./tunnels.md)                                    | Optional: share declared guest ports through a tunnel server; admin setup, node install, lifecycle, limits                                                                                                                                                          |
 | [CLI logins](./cli-logins.md)                                      | Signed-in CLIs in sandboxes: logins, accounts and instances, pause, sharing, selection and resume pins, attach/free, login sandbox and upload, copy-back and recovery, webhooks, scopes, limits, security model, and the definition format with user-owned examples |
+| [Using the CLI](./cli.md)                                          | `wssp login`, `whoami`, `logout`; sandbox, command, file, tunnel and template commands; exit codes, JSON output, CI variables and local state                                                                                                                       |
 | [TypeScript SDK](../../packages/sdk/README.md)                     | `@wssp/sdk` with compiled examples                                                                                                                                                                                                                                  |
 | [CLI reference](../../apps/cli/docs/cli-reference.md)              | Every `wssp` command and flag (generated)                                                                                                                                                                                                                           |
 | [Deployment](../operations/deployment.md) and [infra](../infra.md) | Running the server: images, environment, schema, proxies                                                                                                                                                                                                            |

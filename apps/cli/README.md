@@ -14,6 +14,23 @@ Node daemon and CLI for [WS Sandbox Proxy](https://github.com/FlyCockpit/ws-sand
 It lives at `apps/cli`, outside the pnpm/Turborepo graph. The crate and binary
 are both `wssp`.
 
+As a user, log in once and work with your sandboxes over the `/v1` API
+([CLI guide](../../docs/guide/cli.md)):
+
+```sh
+wssp login --server https://api.example.com   # device flow; the browser chooses the key's access
+wssp whoami                      # the saved login and what its key may do
+wssp sandbox create --template ubuntu --pool <pool-id> --wait
+wssp sandbox list
+wssp sandbox exec <sandbox-id> -- uname -a   # exits with the command's exit code
+wssp sandbox files read <sandbox-id> /etc/os-release
+wssp sandbox ports link <sandbox-id> 3000
+wssp template list
+wssp logout                      # revoke the key on the server and remove the login
+```
+
+As a host operator, every host command lives under `wssp host`:
+
 ```sh
 wssp host config path            # print the config file path
 wssp host config show            # print the effective config
@@ -220,6 +237,22 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
 | 4    | host credential inactive (`4003` close, HTTP 401/403 on run or drain/undrain)                     |
 | 5    | relay internal error during revalidation (`1011` close; retry `host run`)                         |
 | 6    | not an enrolled host (run `wssp host enroll --slug` or `--token-env`, or pass `--host-token-env`) |
+| 7    | not logged in (`wssp login`), or the server refused the user login's key (401)                    |
+| 8    | forbidden: the login's scopes or pools do not allow the action (403)                              |
+| 9    | limit reached: `sandbox.key_limit_reached`, a quota or `sandbox.capacity_queue_full`              |
+| 10   | any other conflict (409)                                                                          |
+| 11   | retryable: the server answered 429, 503 or 504                                                    |
+| 125  | `wssp sandbox exec` only: wssp failed or the command's outcome is unknown                         |
+| 130  | `wssp sandbox exec` interrupted with Ctrl-C (its cancellation was requested)                      |
+| 141  | stdout closed early: `wssp sandbox exec` (its cancellation was requested), `logs`, `files read`   |
+
+User commands also map `/v1` 404 to 3 and 400/413/415 to 2. With `--json`, a
+failing user command prints one line `{"error":{"code","status","message","data"}}`
+on stderr and nothing on stdout. `wssp sandbox exec` otherwise exits with the
+guest command's own exit code once its operation SUCCEEDED (125 for a failed,
+cancelled or unknown operation, or an exit code outside 0–255). A command
+that exits 125 itself is passed through too; a wssp-side 125 is the one that
+prints wssp's error message (with `--json`, the `{"error":…}` line) on stderr.
 
 ## Install After Release
 
@@ -270,6 +303,7 @@ See [AGENTS.md](AGENTS.md) for CLI conventions and
 ## Guides
 
 - [Command reference](docs/cli-reference.md) (generated from the clap definitions)
+- [Using the CLI](../../docs/guide/cli.md) (login, sandboxes, commands, files, exit codes)
 - [Hosts guide](../../docs/guide/hosts.md)
 - [Error handling](docs/error-handling.md)
 - [Releasing](docs/releasing.md)
@@ -286,6 +320,8 @@ src/
   paths.rs       cross-platform config/data dirs
   logging.rs     tracing setup; logs go to stderr
   exit.rs        stable exit codes
+  user_state.rs  the user login (`wssp login`), separate from host state
+  api.rs         `/v1` client and error-to-exit-code mapping
   sandbox_relay/ outbound node daemon
 tests/cli.rs     black-box CLI tests
 xtask/           project automation: sync-docs

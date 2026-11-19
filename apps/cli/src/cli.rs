@@ -47,6 +47,21 @@ pub enum LogFormat {
 /// The subcommands. Add new ones here, then implement them in `src/commands/`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Log in to a wssp server as yourself (device flow; the browser chooses what this login may do).
+    Login(crate::commands::login::Args),
+
+    /// Revoke this machine's user login on the server and remove it here.
+    Logout(crate::commands::user_logout::Args),
+
+    /// Show the user login of this machine and what its key may do.
+    Whoami(crate::commands::whoami::Args),
+
+    /// Create, inspect, run commands in and manage sandboxes through the `/v1` API.
+    Sandbox(crate::commands::sandbox::Args),
+
+    /// List templates and their revisions.
+    Template(crate::commands::template::Args),
+
     /// Run this machine as a wssp host: enroll, run the node daemon, manage node settings.
     Host(crate::commands::host::Args),
 

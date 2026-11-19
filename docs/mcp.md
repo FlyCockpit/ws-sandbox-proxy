@@ -105,7 +105,8 @@ Groups cover sandbox list/get/wait/create/stop/destroy, command
 run/start/output/stdin/cancel, guest file read/list/write, owned host list/get,
 host command run/get/cancel/queue, and host file read/list/write/edit.
 A tool is listed only when every required scope is present. Calling a hidden
-tool has the same `Tool <name> not found` response as an unknown tool.
+tool has the same `Tool <name> not found` response as an unknown tool. The same
+sandbox, command and file actions from a shell: [docs/guide/cli.md](guide/cli.md).
 
 Success responses contain text plus `structuredContent.result`. Errors contain
 `structuredContent.error` with `code`, a public `message`, and applicable

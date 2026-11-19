@@ -10,6 +10,7 @@ All notable changes will be documented here, following [Keep a Changelog](https:
 
 ### Added
 
+- CLI user side: `wssp login` (device flow with scope `user-login`; the browser approval chooses the key's name, read or write access, pools, own-sandboxes-only, live sandbox limit and expiry), `wssp logout` (self-revokes with `DELETE /v1/key`; `--local` skips the server), `wssp whoami`, `wssp sandbox create|list|get|exec|ps|logs|stop|start|destroy`, `wssp sandbox files ls|stat|read|write|mkdir|mv|rm`, `wssp sandbox ports get|expose|set|close|link` and `wssp template list|get`, all with `--json`. The login is saved at `<data_dir>/user/login.json` (0600) apart from host state; CI uses `WSSP_API_KEY` with `WSSP_SERVER`. New exit codes: 7 not logged in or 401, 8 forbidden, 9 limit reached, 10 conflict, 11 retryable, and for `sandbox exec` 125 (wssp failure or unknown outcome) and 130 (Ctrl-C); `sandbox exec` otherwise exits with the guest command's exit code. See docs/guide/cli.md.
 - Owner-scoped Incus KVM sandboxes on enrolled Linux hosts, with host pools and capacity-aware placement.
 - Native HTTP API and TypeScript SDK for commands, streamed output, files and resumable transfers.
 - Localized web dashboard with browser terminals and PWA support.

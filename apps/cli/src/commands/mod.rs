@@ -18,7 +18,12 @@ pub mod enroll;
 pub mod guard;
 pub mod host;
 pub mod images;
+pub mod login;
 pub mod logout;
 pub mod run;
+pub mod sandbox;
+pub mod template;
 #[cfg(target_os = "linux")]
 pub mod tunnel;
+pub mod user_logout;
+pub mod whoami;
