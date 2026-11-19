@@ -5,12 +5,14 @@ import {
   type SandboxTunnelPortsDto,
   TUNNEL_MAX_PORTS,
   type TunnelLinkDto,
+  type TunnelLinkRevokedDto,
 } from "@wssp/sandbox-contracts";
 import { authorizeServiceAction, serviceProcedure } from "../../lib/sdk-key-access";
 import { consumeSandboxWriteBudget } from "../budgets";
 import type { Principal } from "../contracts";
 import {
   sandboxNotFound,
+  tunnelLinkNotFound,
   tunnelNotFound,
   tunnelNotReady,
   tunnelPortsLimit,
@@ -37,7 +39,13 @@ import {
   toSandboxTunnelDto,
   tunnelLabel,
 } from "./rows";
-import { deleteTunnel, mintAccessLink, TunServerError, tunnelsByLabel } from "./tun-client";
+import {
+  deleteTunnel,
+  mintAccessLink,
+  revokeAccessLink,
+  TunServerError,
+  tunnelsByLabel,
+} from "./tun-client";
 
 export { recordTunnelEvent, sandboxTunnelSelect, toSandboxTunnelDto };
 
@@ -575,13 +583,14 @@ export const createSandboxTunnelLink = serviceProcedure(
     // The tunnel belongs to the configuration it was made with.
     if (row.serverKey !== server.serverKey) throw tunnelNotReady();
     const singleUse = input.singleUse ?? true;
+    const sessionTtlSeconds = input.sessionTtlSeconds ?? 3600;
     let link: Awaited<ReturnType<typeof mintAccessLink>>;
     try {
       link = await mintAccessLink(server, row.tunTunnelId, {
         port: input.port,
         ttlSeconds: input.ttlSeconds ?? 60,
         singleUse,
-        sessionTtlSeconds: input.sessionTtlSeconds ?? 3600,
+        sessionTtlSeconds,
       });
     } catch (error) {
       if (error instanceof TunServerError && error.notFound) {
@@ -590,20 +599,177 @@ export const createSandboxTunnelLink = serviceProcedure(
       }
       throw tunnelUnavailable();
     }
-    await recordTunnelEvent(prisma, {
-      kind: "link.minted",
-      userId: owner.ownerId,
-      sandboxId: input.id,
-      actorId: owner.ownerId,
-      actorKeyId: recordedKeyIdOf(owner),
-      port: input.port,
-      detail: link.id,
-    });
+    // The record that scopes its revocation (and its audit), before the URL
+    // is handed out: without one the link is revoked again and the mint fails.
+    try {
+      await prisma.$transaction(async (tx) => {
+        // Serialized with remove-now and the turn-off's final removal (FOR
+        // UPDATE there): a configuration no longer current is recorded as
+        // forgotten (its tunnels may outlive it).
+        const [config] = await tx.$queryRaw<{ serverKey: string }[]>`
+          SELECT "serverKey" FROM tunnel_server_config WHERE id = ${TUNNEL_CONFIG_ID} FOR SHARE`;
+        await tx.sandboxTunnelLink.create({
+          data: {
+            id: link.id,
+            sandboxId: input.id,
+            userId: owner.ownerId,
+            serverKey: server.serverKey,
+            port: input.port,
+            liveUntil: new Date(link.expiresAt.getTime() + sessionTtlSeconds * 1000 + LINK_SKEW_MS),
+            forgottenAt: config?.serverKey === server.serverKey ? null : new Date(),
+          },
+        });
+        await recordTunnelEvent(tx, {
+          kind: "link.minted",
+          userId: owner.ownerId,
+          sandboxId: input.id,
+          actorId: owner.ownerId,
+          actorKeyId: recordedKeyIdOf(owner),
+          port: input.port,
+          detail: link.id,
+        });
+      });
+    } catch {
+      await revokeAccessLink(server, link.id).catch(() => undefined);
+      throw tunnelUnavailable();
+    }
     return {
+      id: link.id,
       url: link.url,
       port: input.port,
       expiresAt: link.expiresAt.toISOString(),
       singleUse,
     };
+  },
+);
+
+/** Clock skew allowed between wssp and the tunnel server on link lifetimes. */
+const LINK_SKEW_MS = 5 * 60_000;
+
+/**
+ * Revoke one access link of the sandbox's tunnel (audited, idempotent). The
+ * link must be one this deployment minted for THIS sandbox and owner (its
+ * `sandbox_tunnel_link` record; the service credential could revoke any link
+ * of any of its tunnels): another sandbox's link is not found. One
+ * transaction re-authorizes the caller and admits the request (recorded and
+ * audited once, like a close); the tunnel server then ends the link and
+ * every browser session it granted, while the tunnel's other links keep
+ * working. A 404 from the tunnel server confirms the link gone only when the
+ * current credential is the one that minted it, or the minting
+ * configuration was drained (its tunnels confirmed deleted), or the link has
+ * outlived any session: after a remove-now another server may still honour
+ * it, so the call answers 503 instead of a false success.
+ */
+export const revokeSandboxTunnelLink = serviceProcedure(
+  {
+    action: "sandboxes.tunnelLinkRevoke",
+    target: (input: { id: string; linkId: string }) => ({ sandboxId: input.id }),
+  },
+  async (
+    owner: Principal,
+    input: { id: string; linkId: string },
+  ): Promise<TunnelLinkRevokedDto> => {
+    await spend(owner);
+    // Not refused while tunnels are off: a link of a forgotten configuration
+    // still answers truthfully (503 while it may live).
+    await ownedSandbox(owner, input.id);
+    const result = { id: input.linkId, sandboxId: input.id };
+    const admitted = await prisma.$transaction(async (tx) => {
+      // The caller's authority is re-checked (and its owner/key locked) by
+      // the admission itself: a key revoked meanwhile revokes nothing.
+      await authorizeServiceAction(
+        owner,
+        "sandboxes.tunnelLinkRevoke",
+        { sandboxId: input.id },
+        tx,
+      );
+      // The configuration before the link: remove-now locks it FOR UPDATE
+      // before it marks that configuration's links forgotten.
+      const [config] = await tx.$queryRaw<{ serverKey: string }[]>`
+        SELECT "serverKey" FROM tunnel_server_config WHERE id = ${TUNNEL_CONFIG_ID} FOR SHARE`;
+      const [link] = await tx.$queryRaw<
+        {
+          serverKey: string;
+          port: number;
+          liveUntil: Date;
+          revokeRequestedAt: Date | null;
+          revokedAt: Date | null;
+          forgottenAt: Date | null;
+          now: Date;
+        }[]
+      >`SELECT "serverKey", port, "liveUntil", "revokeRequestedAt", "revokedAt", "forgottenAt",
+               clock_timestamp() AS now
+        FROM sandbox_tunnel_link
+        WHERE id = ${input.linkId} AND "sandboxId" = ${input.id} AND "userId" = ${owner.ownerId}
+        FOR UPDATE`;
+      if (!link) throw tunnelLinkNotFound();
+      if (link.revokeRequestedAt === null) {
+        await tx.sandboxTunnelLink.update({
+          where: { id: input.linkId },
+          data: { revokeRequestedAt: link.now },
+        });
+        await recordTunnelEvent(tx, {
+          kind: "link.revoked",
+          userId: owner.ownerId,
+          sandboxId: input.id,
+          actorId: owner.ownerId,
+          actorKeyId: recordedKeyIdOf(owner),
+          port: link.port,
+          detail: input.linkId,
+        });
+      }
+      // Gone without asking: confirmed already, past any session's life, or
+      // minted under a configuration that was drained (every tunnel of it
+      // deleted on the tunnel server, its links with them).
+      const dead =
+        link.revokedAt !== null ||
+        link.liveUntil < link.now ||
+        (link.forgottenAt === null && link.serverKey !== config?.serverKey);
+      if (dead && link.revokedAt === null)
+        await tx.sandboxTunnelLink.update({
+          where: { id: input.linkId },
+          data: { revokedAt: link.now },
+        });
+      return { dead, current: config?.serverKey ?? null };
+    });
+    if (admitted.dead) return result;
+    // Asked with the current credential (the same server may have been
+    // configured again after a remove-now), opened only now (a confirmed
+    // revocation never needs it); none, or a newer one than the admission
+    // saw: unconfirmed, retry.
+    let server: Awaited<ReturnType<typeof readTunnelServer>>;
+    try {
+      server = await readTunnelServer();
+    } catch (error) {
+      if (error instanceof TunnelCredentialUnavailable) throw tunnelUnavailable();
+      throw error;
+    }
+    if (!server || server.serverKey !== admitted.current) throw tunnelUnavailable();
+    let revoked: boolean;
+    try {
+      revoked = await revokeAccessLink(server, input.linkId);
+    } catch {
+      // The outcome is uncertain (the deletion may have landed): a retry is safe.
+      throw tunnelUnavailable();
+    }
+    // A 404 confirms only what the row says NOW (a remove-now since the
+    // admission marked it forgotten): read in the confirming statement.
+    const now = new Date();
+    const confirmed = await prisma.sandboxTunnelLink.updateMany({
+      where: {
+        id: input.linkId,
+        revokedAt: null,
+        ...(revoked ? {} : { OR: [{ forgottenAt: null }, { liveUntil: { lt: now } }] }),
+      },
+      data: { revokedAt: now },
+    });
+    if (confirmed.count === 0) {
+      const row = await prisma.sandboxTunnelLink.findUnique({
+        where: { id: input.linkId },
+        select: { revokedAt: true },
+      });
+      if (!row?.revokedAt) throw tunnelUnavailable();
+    }
+    return result;
   },
 );

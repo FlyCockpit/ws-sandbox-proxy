@@ -123,13 +123,45 @@ model SandboxTunnelClientStop {
   @@map("sandbox_tunnel_client_stop")
 }
 
+/// An access link this deployment minted (docs/guide/tunnels.md#revoking-one-link):
+/// the record that scopes a revocation to its sandbox and owner (the service
+/// credential could revoke any link of any of its tunnels) and remembers
+/// which configuration minted it. No foreign key (like `SandboxTunnel`);
+/// pruned by the tunnel controller a day after `liveUntil`. Never the URL.
+model SandboxTunnelLink {
+  /// The tunnel server's access-link id (`al_…`).
+  id                String    @id
+  sandboxId         String
+  userId            String
+  /// The `TunnelServerConfig.serverKey` of the configuration that minted it.
+  serverKey         String
+  port              Int
+  createdAt         DateTime  @default(now())
+  /// Neither the link nor any browser session it granted lives past this
+  /// (link expiry + session lifetime + clock skew).
+  liveUntil         DateTime
+  /// The first revocation request admitted for it (audited then, once).
+  revokeRequestedAt DateTime?
+  /// Confirmed revoked or gone on the tunnel server.
+  revokedAt         DateTime?
+  /// Its configuration was removed now (or was no longer current when the
+  /// mint was recorded): the tunnel server may still honour it, and a 404
+  /// from another configuration's credential proves nothing until `liveUntil`.
+  forgottenAt       DateTime?
+
+  @@index([sandboxId])
+  @@index([serverKey])
+  @@index([liveUntil])
+  @@map("sandbox_tunnel_link")
+}
+
 /// Tunnel audit (bounded by the 90-day prune in the tunnel controller):
-/// config changes, enable/disable, port changes and link mints. Never a
-/// token or link URL.
+/// config changes, enable/disable, port changes, link mints and
+/// revocation requests. Never a token or link URL.
 model SandboxTunnelEvent {
   id         String   @id @default(cuid(2))
   createdAt  DateTime @default(now())
-  /// `config.set` | `config.cleared` | `tunnel.enabled` | `tunnel.disabled` | `ports.changed` | `tunnel.created` | `tunnel.deleted` | `link.minted`.
+  /// `config.set` | `config.cleared` | `tunnel.enabled` | `tunnel.disabled` | `ports.changed` | `tunnel.created` | `tunnel.deleted` | `link.minted` | `link.revoked`.
   kind       String
   /// The sandbox owner (null for config events).
   userId     String?

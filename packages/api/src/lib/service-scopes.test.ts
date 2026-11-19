@@ -123,6 +123,7 @@ const expected = {
   "sandboxes.tunnelExpose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelClose": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.tunnelLinkRevoke": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelPorts": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
@@ -621,6 +622,7 @@ describe("independent SDK scope and service inventory", () => {
         "sandboxes.tunnelExpose",
         "sandboxes.tunnelClose",
         "sandboxes.tunnelLink",
+        "sandboxes.tunnelLinkRevoke",
         "sandboxes.tunnelPorts",
         // The calling key itself: /v1 only (GET/DELETE /v1/key), never MCP.
         "key.get",

@@ -277,6 +277,33 @@ export async function mintAccessLink(
   };
 }
 
+/**
+ * Revoke an access link (`DELETE /v1/access-links/{id}`): the tunnel server
+ * refuses the link and every gate session it granted at once, in-flight
+ * responses and WebSockets included. True when this call revoked it; false
+ * when the tunnel server no longer has it (revoked already, expired and
+ * purged, or its tunnel deleted).
+ */
+export async function revokeAccessLink(
+  server: Pick<TunnelServer, "apiUrl" | "credential">,
+  linkId: string,
+  doFetch?: TunFetch,
+): Promise<boolean> {
+  try {
+    await call(
+      server,
+      "DELETE",
+      `/v1/access-links/${encodeURIComponent(requireId(linkId, LINK_ID))}`,
+      undefined,
+      doFetch,
+    );
+    return true;
+  } catch (error) {
+    if (error instanceof TunServerError && error.notFound) return false;
+    throw error;
+  }
+}
+
 /** `https://<port>-<id>.<zone>` for each port. */
 export function previewUrls(hostTemplate: string | null, ports: readonly number[]) {
   if (!hostTemplate) return [];

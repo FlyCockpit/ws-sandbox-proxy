@@ -79,6 +79,7 @@ const actions = {
   exposeSandboxTunnel: "sandboxes.tunnelExpose",
   closeSandboxTunnel: "sandboxes.tunnelClose",
   createSandboxTunnelLink: "sandboxes.tunnelLink",
+  revokeSandboxTunnelLink: "sandboxes.tunnelLinkRevoke",
   updateSandboxTunnelPorts: "sandboxes.tunnelPorts",
   destroySandbox: "sandboxes.kill",
   stopSandbox: "sandboxes.stop",
@@ -323,6 +324,7 @@ for (const id of SDK_ROUTE_IDS) {
         route.path
           .replace(/\{pid\}/g, "42")
           .replace(/\{commandId\}/g, "abcdefghijklmnopqrstuv")
+          .replace(/\{linkId\}/g, "al_resource")
           .replace(/\{[^}]+\}/g, "resource"),
         "http://localhost",
       );

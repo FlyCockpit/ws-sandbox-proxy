@@ -150,6 +150,7 @@ it("turning off only marks the setting; rows stay for the controller", async () 
 });
 
 it("remove now closes every owed row (generation kept rising) instead of deleting it", async () => {
+  db.$queryRaw.mockResolvedValue([{ serverKey: "key-1" }]);
   db.tunnelServerConfig.deleteMany.mockResolvedValue({ count: 1 });
   db.sandboxTunnel.count.mockResolvedValue(2);
   await expect(client.clear({ removeNow: true })).resolves.toEqual({
@@ -178,4 +179,10 @@ it("remove now closes every owed row (generation kept rising) instead of deletin
   const locks = db.$queryRaw.mock.calls.map(([query]) => (query as string[]).join("?"));
   expect(locks.some((query) => /tunnel_server_config[\s\S]*FOR UPDATE/.test(query))).toBe(true);
   expect(db.tunnelServerConfig.deleteMany).toHaveBeenCalledWith({ where: { id: "default" } });
+  // Its links may outlive it on the tunnel server: no revocation confirms
+  // them gone by a later configuration's 404 any more.
+  expect(db.sandboxTunnelLink.updateMany).toHaveBeenCalledWith({
+    where: { serverKey: "key-1", revokedAt: null, forgottenAt: null },
+    data: { forgottenAt: expect.any(Date) },
+  });
 });

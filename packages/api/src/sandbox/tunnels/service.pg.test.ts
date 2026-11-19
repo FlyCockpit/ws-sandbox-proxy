@@ -37,6 +37,7 @@ const tun = vi.hoisted(() => ({
   tunnelsByLabel: vi.fn(),
   tunnelsWithLabelPrefix: vi.fn(),
   mintAccessLink: vi.fn(),
+  revokeAccessLink: vi.fn(),
 }));
 vi.mock("./tun-client", async (actual) => ({
   ...(await actual<typeof import("./tun-client")>()),
@@ -64,8 +65,10 @@ import { TunnelController } from "./controller";
 import {
   closeSandboxTunnel,
   closeTunnelRow,
+  createSandboxTunnelLink,
   exposeSandboxTunnel,
   getSandboxTunnel,
+  revokeSandboxTunnelLink,
   updateSandboxTunnelPorts,
 } from "./service";
 
@@ -561,5 +564,105 @@ describe("a closed tunnel's clean-up (PostgreSQL)", () => {
     expect(await stops(s.id)).toHaveLength(1);
     await db.inspect.sandboxTunnel.delete({ where: { sandboxId: s.id } });
     expect(await stops(s.id)).toEqual([]);
+  });
+});
+
+describe("revoking one access link (PostgreSQL)", () => {
+  it("revokes only a link minted for this sandbox, by its stable id, and audits it", async () => {
+    const mine = await sandbox();
+    const other = await sandbox();
+    for (const s of [mine, other])
+      await db.inspect.sandboxTunnel.create({
+        data: {
+          sandboxId: s.id,
+          userId: f.id,
+          ports: [3000],
+          state: "CONNECTED",
+          tunTunnelId: `tun${s.id.slice(0, 4)}`,
+          hostTemplate: "{port}-x.example",
+          hostId: f.host.id,
+          generation: 2,
+          serverKey: "key-1",
+        },
+      });
+    tun.mintAccessLink
+      .mockResolvedValueOnce({
+        id: "al_mine0001",
+        url: "https://tunnel.example.com/__access/3000-x/tnacc_a",
+        expiresAt: new Date(Date.now() + 60_000),
+      })
+      .mockResolvedValueOnce({
+        id: "al_other001",
+        url: "https://tunnel.example.com/__access/3000-y/tnacc_b",
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    expect((await createSandboxTunnelLink(f.owner, { id: mine.id, port: 3000 })).id).toBe(
+      "al_mine0001",
+    );
+    await createSandboxTunnelLink(f.owner, { id: other.id, port: 3000 });
+    // The other sandbox's link is not this sandbox's to revoke.
+    await expect(
+      revokeSandboxTunnelLink(f.owner, { id: mine.id, linkId: "al_other001" }),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ code: "sandbox.tunnel_link_not_found" }),
+    });
+    expect(tun.revokeAccessLink).not.toHaveBeenCalled();
+    tun.revokeAccessLink.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    for (let i = 0; i < 2; i++)
+      await expect(
+        revokeSandboxTunnelLink(f.owner, { id: mine.id, linkId: "al_mine0001" }),
+      ).resolves.toEqual({ id: "al_mine0001", sandboxId: mine.id });
+    expect(tun.revokeAccessLink).toHaveBeenCalledWith(tunServer, "al_mine0001");
+    // Audited once: the repeat found it gone already.
+    const revoked = await db.inspect.sandboxTunnelEvent.findMany({
+      where: { sandboxId: mine.id, kind: "link.revoked" },
+      select: { detail: true, port: true, actorId: true },
+    });
+    expect(revoked).toEqual([{ detail: "al_mine0001", port: 3000, actorId: f.id }]);
+    expect(tun.revokeAccessLink).toHaveBeenCalledTimes(1);
+    const record = await db.inspect.sandboxTunnelLink.findUnique({ where: { id: "al_mine0001" } });
+    expect(record).toMatchObject({ sandboxId: mine.id, serverKey: "key-1", forgottenAt: null });
+    expect(record?.revokedAt).not.toBeNull();
+  });
+
+  it("a remove-now's link is never confirmed gone by a later configuration's 404 while it may live", async () => {
+    const s = await sandbox();
+    await db.inspect.sandboxTunnelLink.create({
+      data: {
+        id: "al_forgot001",
+        sandboxId: s.id,
+        userId: f.id,
+        serverKey: "key-1",
+        port: 3000,
+        liveUntil: new Date(Date.now() + 3_600_000),
+        forgottenAt: new Date(),
+      },
+    });
+    // Another configuration is current now (the first was removed now).
+    await db.inspect.tunnelServerConfig.update({
+      where: { id: "default" },
+      data: { serverKey: "key-2" },
+    });
+    tunServer.serverKey = "key-2";
+    try {
+      tun.revokeAccessLink.mockResolvedValueOnce(false);
+      await expect(
+        revokeSandboxTunnelLink(f.owner, { id: s.id, linkId: "al_forgot001" }),
+      ).rejects.toMatchObject({
+        data: expect.objectContaining({ code: "sandbox.tunnel_unavailable" }),
+      });
+      expect(
+        (await db.inspect.sandboxTunnelLink.findUnique({ where: { id: "al_forgot001" } }))
+          ?.revokedAt,
+      ).toBeNull();
+      // Its request was admitted and audited once even so.
+      expect(
+        await db.inspect.sandboxTunnelEvent.count({
+          where: { sandboxId: s.id, kind: "link.revoked" },
+        }),
+      ).toBe(1);
+    } finally {
+      tunServer.serverKey = "key-1";
+    }
   });
 });

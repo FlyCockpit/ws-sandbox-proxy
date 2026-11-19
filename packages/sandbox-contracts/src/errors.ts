@@ -134,6 +134,7 @@ export const SDK_ERRORS = {
   "sandbox.invalid_transition": [409, "Sandbox transition is invalid."],
   UNSUPPORTED_CAPABILITY: [400, "Capability is unsupported."],
   "sandbox.tunnel_not_found": [404, "This sandbox has no tunnel."],
+  "sandbox.tunnel_link_not_found": [404, "This sandbox has no such tunnel link."],
   "sandbox.tunnel_port_undeclared": [400, "The port is not declared for tunnels on this sandbox."],
   "sandbox.tunnel_not_ready": [409, "The tunnel is not connected yet; retry shortly."],
   "sandbox.tunnel_quota": [409, "The account's tunnel limit is reached."],

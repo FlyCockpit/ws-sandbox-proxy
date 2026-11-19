@@ -1649,6 +1649,7 @@ export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" |
   "sandboxes.tunnelExpose": "custody",
   "sandboxes.tunnelClose": "custody",
   "sandboxes.tunnelLink": "custody",
+  "sandboxes.tunnelLinkRevoke": "custody",
   "sandboxes.tunnelPorts": "custody",
   "hosts.list": "custody",
   "hosts.get": "custody",

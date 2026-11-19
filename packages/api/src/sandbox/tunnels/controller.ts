@@ -68,6 +68,7 @@ const CREATE_START_MARGIN_MS = TUNNEL_HOLD_MARGIN_MS;
 /** An apply the connection could not take is retried after this. */
 const UNSENT_RETRY_MS = 10_000;
 const EVENT_RETENTION_MS = 90 * 24 * 3600 * 1000;
+const LINK_RETENTION_MS = 24 * 3600 * 1000;
 const PAGE = 500;
 /** A `tunnel.ports` not acknowledged is sent again after this. */
 const PORTS_RESEND_MS = 10_000;
@@ -223,6 +224,10 @@ export class TunnelController {
       this.lastPrune = this.now();
       await prisma.sandboxTunnelEvent
         .deleteMany({ where: { createdAt: { lt: new Date(this.now() - EVENT_RETENTION_MS) } } })
+        .catch(() => undefined);
+      // A link record outlives the link and every session it granted by a day.
+      await prisma.sandboxTunnelLink
+        .deleteMany({ where: { liveUntil: { lt: new Date(this.now() - LINK_RETENTION_MS) } } })
         .catch(() => undefined);
     }
     // Declared-port changes reach hosts whether or not a tunnel exists.

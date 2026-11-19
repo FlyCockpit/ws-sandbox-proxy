@@ -182,8 +182,15 @@ export const adminTunnelRouter = {
       if (input?.removeNow) {
         // Serialized with every write that gives a row this configuration's
         // key (FOR SHARE there): no row keeps a key the setting outlived.
-        await context.adminTx.$queryRaw`SELECT 1 AS locked FROM tunnel_server_config
-          WHERE id = ${TUNNEL_CONFIG_ID} FOR UPDATE`;
+        const [locked] = await context.adminTx.$queryRaw<{ serverKey: string }[]>`
+          SELECT "serverKey" FROM tunnel_server_config WHERE id = ${TUNNEL_CONFIG_ID} FOR UPDATE`;
+        // Its links may outlive it on the tunnel server: a revocation can no
+        // longer confirm them gone (docs/guide/tunnels.md#revoking-one-link).
+        if (locked)
+          await context.adminTx.sandboxTunnelLink.updateMany({
+            where: { serverKey: locked.serverKey, revokedAt: null, forgottenAt: null },
+            data: { forgottenAt: new Date() },
+          });
         const rows = await context.adminTx.sandboxTunnel.count({ where: TUNNEL_OWED });
         const closedAt = new Date();
         // Remote state forgotten without the tunnel server's confirmation:

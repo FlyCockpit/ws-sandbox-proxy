@@ -128,6 +128,8 @@ import {
   exposeTunnelBodySchema,
   sandboxTunnelPortsSchema,
   sandboxTunnelSchema,
+  tunnelLinkParamsSchema,
+  tunnelLinkRevokedSchema,
   tunnelLinkSchema,
   updateTunnelPortsBodySchema,
 } from "./tunnels";
@@ -1492,6 +1494,21 @@ export const JSON_ROUTES = {
       "UNSUPPORTED_CAPABILITY",
     ],
   },
+  revokeSandboxTunnelLink: {
+    method: "delete",
+    path: "/v1/sandboxes/{id}/tunnel/links/{linkId}",
+    summary:
+      "Revoke one access link minted for this sandbox's tunnel: the tunnel server refuses it and ends every browser session it granted (in-flight responses and WebSockets included) within moments, while the tunnel's other links and sessions keep working. Idempotent; audited.",
+    feature: "sandboxes.tunnel",
+    scopes: ["sandboxes:tunnel"],
+    successStatus: 200,
+    params: tunnelLinkParamsSchema,
+    query: emptyQuerySchema,
+    response: { name: "TunnelLinkRevoked", schema: tunnelLinkRevokedSchema },
+    notFound: "sandbox.not_found",
+    paginated: false,
+    errors: ["sandbox.tunnel_link_not_found", "sandbox.tunnel_unavailable"],
+  },
   destroySandbox: mutation(
     "/v1/sandboxes/{id}",
     "sandboxes.destroy",
@@ -1734,6 +1751,7 @@ export const SDK_FEATURE_ROUTES = {
     "exposeSandboxTunnel",
     "closeSandboxTunnel",
     "createSandboxTunnelLink",
+    "revokeSandboxTunnelLink",
   ],
   "templates.build": [
     "createTemplateBuild",

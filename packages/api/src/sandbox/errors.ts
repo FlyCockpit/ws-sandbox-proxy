@@ -54,6 +54,7 @@ const SandboxErrorCode = {
   unsupportedCapability: "UNSUPPORTED_CAPABILITY",
   leaseExceedsPolicy: "lease_exceeds_policy",
   tunnelNotFound: "sandbox.tunnel_not_found",
+  tunnelLinkNotFound: "sandbox.tunnel_link_not_found",
   tunnelPortUndeclared: "sandbox.tunnel_port_undeclared",
   tunnelNotReady: "sandbox.tunnel_not_ready",
   tunnelQuota: "sandbox.tunnel_quota",
@@ -362,6 +363,13 @@ export function tunnelNotFound() {
   return sandboxOrpcError(
     SandboxErrorCode.tunnelNotFound,
     "This sandbox has no tunnel.",
+    "NOT_FOUND",
+  );
+}
+export function tunnelLinkNotFound() {
+  return sandboxOrpcError(
+    SandboxErrorCode.tunnelLinkNotFound,
+    "This sandbox has no such tunnel link.",
     "NOT_FOUND",
   );
 }

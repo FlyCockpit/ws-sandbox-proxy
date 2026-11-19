@@ -20,6 +20,7 @@ import {
   createSandboxTunnelLink,
   exposeSandboxTunnel,
   getSandboxTunnel,
+  revokeSandboxTunnelLink,
   updateSandboxTunnelPorts,
 } from "@wssp/api/sandbox/tunnels/service";
 import type { RouteHandlers } from "./reads.js";
@@ -66,6 +67,8 @@ export const sandboxMutationHandlers = {
   closeSandboxTunnel: (owner, { params }) => closeSandboxTunnel(owner, { id: params.id }),
   createSandboxTunnelLink: (owner, { params, body }) =>
     createSandboxTunnelLink(owner, { ...body, id: params.id }),
+  revokeSandboxTunnelLink: (owner, { params }) =>
+    revokeSandboxTunnelLink(owner, { id: params.id, linkId: params.linkId }),
   updateSandboxTunnelPorts: (owner, { params, body }) =>
     updateSandboxTunnelPorts(owner, {
       id: params.id,
@@ -86,5 +89,6 @@ export const sandboxMutationHandlers = {
   | "exposeSandboxTunnel"
   | "closeSandboxTunnel"
   | "createSandboxTunnelLink"
+  | "revokeSandboxTunnelLink"
   | "updateSandboxTunnelPorts"
 >;

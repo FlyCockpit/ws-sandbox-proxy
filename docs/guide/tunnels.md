@@ -37,9 +37,11 @@ exactly as before: `GET /v1/capabilities` reports `ports.tunnel: false` and no
    forwards visitor streams only to the exposed ports.
 4. **Link.** `POST /v1/sandboxes/{id}/tunnel/links` `{port, ttlSeconds?,
    singleUse?, sessionTtlSeconds?}` returns a one-time URL (default: valid
-   60 s, single use, a 1 h browser session). Treat it as a secret. The tunnel
-   server's gate turns it into a cookie for that tunnel; a second use of a
-   single-use link is refused (401).
+   60 s, single use, a 1 h browser session) and the link's stable `id`.
+   Treat the URL as a secret. The tunnel server's gate turns it into a cookie
+   for that tunnel; a second use of a single-use link is refused (401).
+   `DELETE /v1/sandboxes/{id}/tunnel/links/{linkId}` revokes one link. See
+   [Revoking one link](#revoking-one-link).
 5. **Read and close.** `GET` shows `state` (`pending`, `connecting`,
    `connected`, `suspended`, `error` with `lastError`, or `closed`) and the
    preview origins; `DELETE` deletes the tunnel, and every link to it stops
@@ -55,7 +57,48 @@ exactly as before: `GET /v1/capabilities` reports `ports.tunnel: false` and no
    [Changing ports at runtime](#changing-ports-at-runtime).
 
 The SDK wraps these as `sandbox.tunnel.expose()`, `.get()`, `.close()`,
-`.link({ port })` and `.updatePorts({ add, remove })`.
+`.link({ port })`, `.revokeLink(id)` and `.updatePorts({ add, remove })`.
+
+## Revoking one link
+
+To remove one person's access without disturbing everyone else, revoke the
+link you gave them: `DELETE /v1/sandboxes/{id}/tunnel/links/{linkId}` (scope
+`sandboxes:tunnel`, the same per-account budget as link mints), with the
+`id` that `POST …/tunnel/links` returned.
+
+- The tunnel server refuses the link and ends every browser session it
+  granted within moments: requests in progress, streaming responses (SSE,
+  downloads), uploads and WebSockets are cut, and new requests get `401`.
+  The tunnel's other links and their sessions keep working (closing or
+  replacing the tunnel would end them all).
+- Only a link minted for this sandbox can be revoked through it. wssp keeps
+  its own record of every link it minted (`sandbox_tunnel_link`: sandbox,
+  owner, the configuration that minted it, and how long the link and any
+  session it granted can live; never the URL). Another sandbox's link
+  answers `sandbox.tunnel_link_not_found` (404).
+- One transaction re-checks the caller's authority and admits the request:
+  a key revoked meanwhile revokes nothing. The first admitted request per
+  link is audited (`link.revoked`: actor, key, port, link id).
+- Idempotent: a link that is already revoked, expired or gone with its
+  tunnel answers `200` too, for as long as wssp keeps its record: until a
+  day after the link and every session it granted expired. After that
+  the link answers `sandbox.tunnel_link_not_found` (404), and nothing it
+  granted can still work. wssp asks the tunnel server with the current
+  credential. A link that server no longer has counts as gone if one of
+  these holds:
+  - it was minted under the current configuration;
+  - its configuration was turned off normally (every tunnel deleted, links
+    with them);
+  - it has outlived any session it could have granted.
+- `sandbox.tunnel_unavailable` (503) means wssp could not confirm the
+  revocation. Either the tunnel server did not answer (the revocation may
+  or may not have landed; retrying is safe), or the link was minted under a
+  configuration removed with **remove the setting now** and may still live
+  on a tunnel server wssp no longer reaches. In that case it ends when its
+  own lifetime does (at most the link's lifetime plus its session's, 25 h
+  with the maximums).
+- Revocation works while tunnels are turned off too (it answers what it can
+  confirm).
 
 ## Changing ports at runtime
 
@@ -230,14 +273,16 @@ server before the node daemons.
   is held no other process creates, rotates or cleans up that sandbox's
   tunnels, so a clean-up from an old view can never delete a tunnel the
   owner exposed again since.
+- `sandbox_tunnel_link` records each minted access link until a day after
+  it and every session it granted expired.
 - `sandbox_tunnel_client_stop` holds one row per (sandbox, host) whose
   client stop is not confirmed yet; it goes with the tunnel record.
 - `sandbox_tunnel_event` records config changes, enable/disable, port
-  changes, tunnel create/delete and link mints (with tunnel-server ids only: never a token or
-  link URL), kept 90 days.
-- One MCP tool, `sandbox_tunnel_ports`, changes declared ports; exposing and
-  links stay with the API (links are person-facing secrets), with a key that
-  has `sandboxes:tunnel`.
+  changes, tunnel create/delete, link mints and revocation requests (with
+  tunnel-server ids only: never a token or link URL), kept 90 days.
+- One MCP tool, `sandbox_tunnel_ports`, changes declared ports; exposing,
+  links and link revocation stay with the API (links are person-facing
+  secrets), with a key that has `sandboxes:tunnel`.
 
 ## Security notes
 

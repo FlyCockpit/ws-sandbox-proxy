@@ -70,6 +70,7 @@ export type {
   TemplatePage,
   TemplateRevisionDto,
   TunnelLinkDto,
+  TunnelLinkRevokedDto,
   UpdateTunnelPortsBody,
   WebhookDeliveryDetailDto,
   WebhookDeliveryDto,

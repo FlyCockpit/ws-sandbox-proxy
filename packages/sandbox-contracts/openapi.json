@@ -379,6 +379,10 @@
       "status": 404,
       "message": "This sandbox has no tunnel."
     },
+    "sandbox.tunnel_link_not_found": {
+      "status": 404,
+      "message": "This sandbox has no such tunnel link."
+    },
     "sandbox.tunnel_port_undeclared": {
       "status": 400,
       "message": "The port is not declared for tunnels on this sandbox."
@@ -1002,7 +1006,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -4900,7 +4904,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -7538,7 +7542,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -8645,7 +8649,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -9493,7 +9497,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -10550,7 +10554,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -19684,7 +19688,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -21774,7 +21778,7 @@
             }
           },
           "404": {
-            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
+            "description": "Error codes: host.command_not_found, sandbox.process_not_found, NOT_FOUND, sandbox.template_not_found, sandbox.host_not_found, sandbox.pool_not_found, sandbox.not_found, sandbox.operation_not_found, sandbox.tunnel_not_found, sandbox.tunnel_link_not_found, webhook.endpoint_not_found, webhook.delivery_not_found, credential.not_found, credential.account_not_found, credential.instance_not_found, credential.lease_not_found, credential.definition_not_found, credential.not_attached, credential.login_session_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -24600,6 +24604,271 @@
           },
           "404": {
             "description": "Error codes: sandbox.not_found, sandbox.tunnel_not_found.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Error codes: host.agent_access_off, host.node_offline, host_queue.limit, host.file_outcome_unknown, OPERATION_RESULT_NOT_READY, RESULT_CURSOR_STALE, sandbox.process_exited, sandbox.process_stale, sandbox.process_not_started, sandbox.process_stdin_closed, sandbox.process_cancel_pending, sandbox.process_permission_denied, sandbox.process_unknown_outcome, sandbox.process_unavailable, sandbox.vm_size_unsupported, sandbox.vm_size_mismatch, sandbox.name_taken, sandbox.capacity_queue_full, sandbox.key_limit_reached, digest_key_changed, digest_key_unavailable, receipt_digest_pruned, CONFLICT, sandbox.idempotency_conflict, sandbox.state_conflict, sandbox.managed, sandbox.template_in_use, sandbox.template_image_missing, sandbox.template_unavailable, sandbox.template_revision_exists, sandbox.template_image_unavailable, sandbox.template_store_unavailable, sandbox.capture_unsupported, sandbox.capture_policy_forbidden, sandbox.capture_busy, sandbox.disk_evicting, sandbox.restoring, restore_no_allowed_host, sandbox.disk_offloaded, sandbox.disk_unavailable, sandbox.host_forget_unsafe, sandbox.image_quota_exceeded, sandbox.pool_no_compatible_host, sandbox.pool_unavailable, sandbox.share_quota, sandbox.member_quota, sandbox.pool_policy_changed, sandbox.pool_full, sandbox.host_capacity, sandbox.host_draining, sandbox.host_delete_conflict, sandbox.host_unavailable, sandbox.invalid_transition, sandbox.tunnel_not_ready, sandbox.tunnel_quota, TRANSFER_NOT_READY, webhook.endpoint_limit, webhook.endpoint_disabled, template.build_disabled, template.build_no_builder, template.build_concurrency, template.build_minutes_exhausted, template.build_not_cancellable, template.community_unavailable, template.community_managed, credential.in_use, credential.account_paused, credential.needs_login, credential.limit_reached, credential.repin_blocked, credential.definition_corrupt, credential.name_taken, credential.busy, credential.pending_drain, credential.recovery_required, credential.capture_in_progress, credential.host_forbidden, credential.env_conflict, credential.path_conflict, credential.proxy_not_enabled, credential.already_attached, credential.login_needs_consent, credential.login_requires_upload, credential.login_state.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "Retry-After": {
+                "description": "On host.node_offline, capacity, quota and pool refusals with `retryable: true` (the deployment's `CAPACITY_RETRY_AFTER_SECONDS`). Never sent with `retryable: false`.",
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Error codes: PAYLOAD_TOO_LARGE.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Error codes: UNSUPPORTED_MEDIA_TYPE.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Error codes: OPERATION_RESULT_QUOTA, TOO_MANY_REQUESTS, TRANSFER_QUOTA, template.build_context_busy.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error codes: INTERNAL_SERVER_ERROR.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Error codes: sandbox.host_reconnecting, SERVICE_UNAVAILABLE, sandbox.tunnel_unavailable, TRANSFER_IO.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/sandboxes/{id}/tunnel/links/{linkId}": {
+      "delete": {
+        "operationId": "revokeSandboxTunnelLink",
+        "summary": "Revoke one access link minted for this sandbox's tunnel: the tunnel server refuses it and ends every browser session it granted (in-flight responses and WebSockets included) within moments, while the tunnel's other links and sessions keep working. Idempotent; audited.",
+        "x-wssp-scopes": [
+          "sandboxes:tunnel"
+        ],
+        "x-wssp-feature": "sandboxes.tunnel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            }
+          },
+          {
+            "name": "linkId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^al_[A-Za-z0-9]{1,64}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revoke one access link minted for this sandbox's tunnel: the tunnel server refuses it and ends every browser session it granted (in-flight responses and WebSockets included) within moments, while the tunnel's other links and sessions keep working. Idempotent; audited.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TunnelLinkRevoked"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error codes: OPERATION_RESULT_UNSUPPORTED, RESULT_CURSOR_INVALID, sandbox.vm_size_invalid, sandbox.disk_below_image, sandbox.metadata_invalid, sandbox.name_invalid, sandbox.egress_policy_invalid, lease_exceeds_policy, capacity_wait_exceeds_policy, BAD_REQUEST, sandbox.template_image_rejected, sandbox.capture_invalid, host_runtime_unsupported, UNSUPPORTED_CAPABILITY, sandbox.tunnel_port_undeclared, sandbox.tunnel_ports_limit, webhook.destination_invalid, webhook.destination_blocked, template.build_recipe_invalid, template.build_context_required, template.build_context_too_large, template.build_context_mismatch, template.build_egress_mode_unavailable, credential.unavailable, credential.repin_confirm_erase, credential.value_invalid, credential.spec_too_large, definition.invalid, definition.spec_too_large, definition.schema_version_unsupported.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Error codes: UNAUTHORIZED.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Error codes: host.not_owned, key.self_revoke_forbidden, FORBIDDEN, template.community_key_scope.",
+            "headers": {
+              "X-Request-Id": {
+                "description": "Server-generated request ID, also echoed in error bodies.",
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error codes: sandbox.not_found, sandbox.tunnel_link_not_found.",
             "headers": {
               "X-Request-Id": {
                 "description": "Server-generated request ID, also echoed in error bodies.",
@@ -36902,6 +37171,7 @@
                       "sandbox.invalid_transition",
                       "UNSUPPORTED_CAPABILITY",
                       "sandbox.tunnel_not_found",
+                      "sandbox.tunnel_link_not_found",
                       "sandbox.tunnel_port_undeclared",
                       "sandbox.tunnel_not_ready",
                       "sandbox.tunnel_quota",
@@ -38512,6 +38782,10 @@
       "TunnelLink": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^al_[A-Za-z0-9]{1,64}$"
+          },
           "url": {
             "type": "string"
           },
@@ -38530,10 +38804,28 @@
           }
         },
         "required": [
+          "id",
           "url",
           "port",
           "expiresAt",
           "singleUse"
+        ],
+        "additionalProperties": false
+      },
+      "TunnelLinkRevoked": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^al_[A-Za-z0-9]{1,64}$"
+          },
+          "sandboxId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "sandboxId"
         ],
         "additionalProperties": false
       },
@@ -38750,6 +39042,7 @@
                       "sandbox.operation_not_found",
                       "sandbox.invalid_transition",
                       "sandbox.tunnel_not_found",
+                      "sandbox.tunnel_link_not_found",
                       "sandbox.tunnel_port_undeclared",
                       "sandbox.tunnel_not_ready",
                       "sandbox.tunnel_quota",

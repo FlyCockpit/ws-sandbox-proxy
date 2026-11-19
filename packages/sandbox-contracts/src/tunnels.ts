@@ -171,8 +171,13 @@ export const createTunnelLinkBodySchema = z
   .strict();
 export type CreateTunnelLinkBody = z.infer<typeof createTunnelLinkBodySchema>;
 
+/** An access link's stable id (the tunnel server's), as `link` returns it. */
+export const tunnelLinkIdSchema = z.string().regex(/^al_[A-Za-z0-9]{1,64}$/);
+
 export const tunnelLinkSchema = z
   .object({
+    /** The link's stable id: `DELETE …/tunnel/links/{id}` revokes it. */
+    id: tunnelLinkIdSchema,
     /** The one-time access URL. Treat it as a secret: whoever opens it first gets in. */
     url: z.string(),
     port: tunnelPortSchema,
@@ -181,3 +186,25 @@ export const tunnelLinkSchema = z
   })
   .strict();
 export type TunnelLinkDto = z.infer<typeof tunnelLinkSchema>;
+
+export const tunnelLinkParamsSchema = z
+  .object({
+    id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+    linkId: tunnelLinkIdSchema,
+  })
+  .strict();
+
+/**
+ * A revoked link (idempotent: also when it was revoked, expired or its
+ * tunnel deleted already; a link whose record was pruned, a day after it and
+ * every session it granted expired, answers `sandbox.tunnel_link_not_found`). The tunnel server refuses it and ends every
+ * browser session it granted, in-flight responses and WebSockets included;
+ * the tunnel's other links and sessions keep working.
+ */
+export const tunnelLinkRevokedSchema = z
+  .object({
+    id: tunnelLinkIdSchema,
+    sandboxId: z.string(),
+  })
+  .strict();
+export type TunnelLinkRevokedDto = z.infer<typeof tunnelLinkRevokedSchema>;

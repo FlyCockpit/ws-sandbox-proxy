@@ -4,6 +4,7 @@ import {
   deleteTunnel,
   mintAccessLink,
   previewUrls,
+  revokeAccessLink,
   rotateTunnelToken,
   TunServerError,
   tunnelsByLabel,
@@ -25,6 +26,26 @@ function respond(status: number, body?: unknown) {
 }
 
 describe("tunnel server client", () => {
+  it("revokes an access link by its id; a link the server no longer has is not an error", async () => {
+    const fetch = respond(204);
+    await expect(revokeAccessLink(server, "al_0123456789abcdef", fetch)).resolves.toBe(true);
+    const [url, init] = fetch.mock.calls[0] ?? [];
+    expect(url).toBe("https://tunnel.example.com/v1/access-links/al_0123456789abcdef");
+    expect(init?.method).toBe("DELETE");
+    expect(init?.redirect).toBe("manual");
+    await expect(
+      revokeAccessLink(server, "al_0123456789abcdef", respond(404, { error: "not_found" })),
+    ).resolves.toBe(false);
+    await expect(
+      revokeAccessLink(server, "al_0123456789abcdef", respond(500)),
+    ).rejects.toBeInstanceOf(TunServerError);
+    // Never a path built from anything but a link id.
+    const never = respond(204);
+    for (const id of ["../tunnels/abc", "al_x/y", "abc123", "al_"])
+      await expect(revokeAccessLink(server, id, never)).rejects.toBeInstanceOf(TunServerError);
+    expect(never).not.toHaveBeenCalled();
+  });
+
   it("creates a link-mode tunnel without ICE and never follows redirects", async () => {
     const fetch = respond(201, {
       id: "abc123def4",

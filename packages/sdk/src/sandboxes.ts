@@ -15,6 +15,7 @@ import type {
   SandboxTunnelDto,
   SandboxTunnelPortsDto,
   TunnelLinkDto,
+  TunnelLinkRevokedDto,
   UpdateTunnelPortsBody,
   updateSandboxBodySchema,
 } from "@wssp/sandbox-contracts";
@@ -205,6 +206,12 @@ export type SandboxTunnelApi = {
   close(options?: WaitOptions): Promise<SandboxTunnelDto>;
   /** A short-lived (single-use by default) access URL for one exposed port. Treat it as a secret. */
   link(input: CreateTunnelLinkBody, options?: WaitOptions): Promise<TunnelLinkDto>;
+  /**
+   * Revoke one link (its `id` from `link()`): the tunnel server ends it and
+   * every browser session it granted, in-flight streams included, within
+   * moments; the tunnel's other links keep working. Idempotent.
+   */
+  revokeLink(linkId: string, options?: WaitOptions): Promise<TunnelLinkRevokedDto>;
   /**
    * Add or remove declared ports at runtime. `state` is `pending` until the
    * sandbox's host recorded the change (expose an added port after that, or
@@ -1003,6 +1010,12 @@ export function createSandboxesApi(
           transport.request("createSandboxTunnelLink", {
             params: { id },
             body: input,
+            signal: options.signal,
+            timeoutMs: waitTimeout(options),
+          }),
+        revokeLink: (linkId: string, options: WaitOptions = {}) =>
+          transport.request("revokeSandboxTunnelLink", {
+            params: { id, linkId },
             signal: options.signal,
             timeoutMs: waitTimeout(options),
           }),

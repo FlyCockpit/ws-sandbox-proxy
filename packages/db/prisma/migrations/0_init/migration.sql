@@ -2159,6 +2159,22 @@ CREATE TABLE "sandbox_tunnel_client_stop" (
 );
 
 -- CreateTable
+CREATE TABLE "sandbox_tunnel_link" (
+    "id" TEXT NOT NULL,
+    "sandboxId" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "serverKey" TEXT NOT NULL,
+    "port" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "liveUntil" TIMESTAMP(3) NOT NULL,
+    "revokeRequestedAt" TIMESTAMP(3),
+    "revokedAt" TIMESTAMP(3),
+    "forgottenAt" TIMESTAMP(3),
+
+    CONSTRAINT "sandbox_tunnel_link_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "sandbox_tunnel_event" (
     "id" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3144,6 +3160,15 @@ CREATE UNIQUE INDEX "sandbox_tunnel_sandboxId_userId_key" ON "sandbox_tunnel"("s
 
 -- CreateIndex
 CREATE INDEX "sandbox_tunnel_client_stop_hostId_idx" ON "sandbox_tunnel_client_stop"("hostId");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_link_sandboxId_idx" ON "sandbox_tunnel_link"("sandboxId");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_link_serverKey_idx" ON "sandbox_tunnel_link"("serverKey");
+
+-- CreateIndex
+CREATE INDEX "sandbox_tunnel_link_liveUntil_idx" ON "sandbox_tunnel_link"("liveUntil");
 
 -- CreateIndex
 CREATE INDEX "sandbox_tunnel_event_createdAt_idx" ON "sandbox_tunnel_event"("createdAt");

@@ -186,6 +186,7 @@ const KIND_BY_CODE = {
   "sandbox.invalid_transition": "conflict",
   UNSUPPORTED_CAPABILITY: "unsupported",
   "sandbox.tunnel_not_found": "not_found",
+  "sandbox.tunnel_link_not_found": "not_found",
   "sandbox.tunnel_port_undeclared": "invalid_request",
   "sandbox.tunnel_ports_limit": "invalid_request",
   "sandbox.tunnel_not_ready": "conflict",
