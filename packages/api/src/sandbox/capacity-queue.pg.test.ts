@@ -809,6 +809,31 @@ describe("deferred authority (M3) and access loss", () => {
   });
 });
 
+/**
+ * Copies one row of `table` once per override index, replacing the overridden
+ * text columns and letting sequence defaults (`seq`) number the copies.
+ */
+async function cloneRows(table: string, sourceId: string, overrides: Record<string, string[]>) {
+  const columns = (
+    await db.inspect.$queryRaw<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = ${table}
+        AND (column_default IS NULL OR column_default NOT LIKE 'nextval(%')`
+  ).map((c) => c.column_name);
+  const names = Object.keys(overrides);
+  const quote = (name: string) => `"${name}"`;
+  const values = columns.map((c) => (names.includes(c) ? `v.${quote(c)}` : `src.${quote(c)}`));
+  const inserted = await db.inspect.$executeRawUnsafe(
+    `INSERT INTO ${quote(table)} (${columns.map(quote).join(", ")})
+     SELECT ${values.join(", ")} FROM ${quote(table)} src,
+       unnest(${names.map((_, i) => `$${i + 2}::text[]`).join(", ")}) AS v(${names.map(quote).join(", ")})
+     WHERE src.id = $1`,
+    sourceId,
+    ...names.map((name) => overrides[name]),
+  );
+  expect(inserted).toBe(overrides[names[0]!]!.length);
+}
+
 describe("queue limits under concurrency", () => {
   it.each(["owner", "key"] as const)(
     "a %s queue limit of 0 is a permanent capacity_queue_full",
@@ -856,35 +881,33 @@ describe("queue limits under concurrency", () => {
         const { CAPACITY_QUEUE_POOL_CEILING } = await import("./capacity-limits");
         const filler = await createSandbox(f.owner, wait(f));
         const row = await waitRow(filler.id);
-        const { id: _id, seq: _seq, sandboxId: _s, operationId: _o, ...template } = row;
-        for (let i = 1; i < CAPACITY_QUEUE_POOL_CEILING - 1; i++) {
-          const sandbox = await db.inspect.sandbox.create({
-            data: {
-              userId: f.id,
-              templateId: f.revision.templateId,
-              templateRevisionId: f.revision.id,
-              originalSelector: "base",
-              originPoolId: f.pool.id,
-              state: "WAITING_FOR_CAPACITY",
-            },
-          });
-          const op = await db.inspect.sandboxOperation.create({
-            data: {
-              digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
-              ...requestDigestMetadata(),
-
-              userId: f.id,
-              sandboxId: sandbox.id,
-              generation: 1,
-              kind: "CREATE_SANDBOX",
-              idempotencyKey: randomUUID(),
-              requestBodyHash: "fixture",
-            },
-          });
-          await db.inspect.sandboxCapacityWait.create({
-            data: { ...template, intent: {}, sandboxId: sandbox.id, operationId: op.id },
-          });
-        }
+        // The other ceiling - 2 waiting entries are SQL-side copies of the
+        // filler's real sandbox, operation and wait rows. Inserting ~4k rows per
+        // table through the client (serially or batched) costs ~1 ms per row
+        // and used most of the 30 s budget on a loaded machine.
+        const count = CAPACITY_QUEUE_POOL_CEILING - 2;
+        const ids = () => Array.from({ length: count }, () => randomUUID());
+        const sandboxIds = ids();
+        const operationIds = ids();
+        await cloneRows("sandbox_instance", filler.id, {
+          id: sandboxIds,
+          name: sandboxIds.map((_, i) => `fill-${i}`),
+        });
+        await cloneRows("sandbox_mutation_operation", row.operationId, {
+          id: operationIds,
+          sandboxId: sandboxIds,
+          idempotencyKey: ids(),
+        });
+        await cloneRows("sandbox_capacity_wait", row.id, {
+          id: ids(),
+          sandboxId: sandboxIds,
+          operationId: operationIds,
+        });
+        expect(
+          await db.inspect.sandboxCapacityWait.count({
+            where: { poolId: f.pool.id, state: row.state },
+          }),
+        ).toBe(CAPACITY_QUEUE_POOL_CEILING - 1);
       }
       const results = await Promise.allSettled(
         [0, 1].map((i) =>
@@ -1183,7 +1206,26 @@ describe("security review round 2 regressions", () => {
     const seed = await createSandbox(front.owner, front.input());
     for (let i = 1; i < 16; i++) await cloneWait(seed.id);
     const target = await createSandbox(victim.owner, victim.input());
-    const pass = () => runCapacityQueuePass(leaseNow, () => false, { poolIds: [f.pool.id] });
+    // A connected daemon keeps reporting; the fixture stamps its hosts' heartbeat
+    // and storage report once at seed time, and placement drops a host whose
+    // heartbeat is older than HOST_HEARTBEAT_STALE_AFTER_MS (30 s) or whose
+    // storage report is older than STORAGE_HEALTH_STALE_MS (15 s). This test
+    // runs 10-18 s quietly and 37-40 s on a loaded machine, where the victim
+    // stayed WAITING because no host was eligible. Renew both before each
+    // pass, as the daemon's own reports would.
+    const hostIds = [f.host.id, f.other.id];
+    const pass = async () => {
+      const now = new Date();
+      await db.inspect.sandboxHost.updateMany({
+        where: { id: { in: hostIds } },
+        data: { lastHeartbeatAt: now },
+      });
+      await db.inspect.sandboxHostStoragePool.updateMany({
+        where: { sandboxHostId: { in: hostIds } },
+        data: { reportedAt: now },
+      });
+      return runCapacityQueuePass(leaseNow, () => false, { poolIds: [f.pool.id] });
+    };
     const churn = async () => {
       const next = await createSandbox(attacker.owner, attacker.input());
       const ids = [next.id];

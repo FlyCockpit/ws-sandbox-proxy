@@ -389,14 +389,18 @@ describe("resize", () => {
       seed ^= seed << 5;
       return (seed >>> 0) / 0x100000000;
     };
+    // Compared in plain code and asserted once: 100 000 `expect` calls cost
+    // seconds of matcher overhead, not coverage.
+    const mismatches: { text: string; stripped: string }[] = [];
     for (let round = 0; round < 50_000; round += 1) {
       let text = "";
       const length = Math.floor(rand() * 24);
       for (let i = 0; i < length; i += 1) text += alphabet[Math.floor(rand() * alphabet.length)];
       const stripped = stripPasteMarkers(text);
-      expect(stripped).toBe(reference(text));
-      expect(markers.some((marker) => stripped.includes(marker))).toBe(false);
+      if (stripped !== reference(text) || markers.some((marker) => stripped.includes(marker)))
+        mismatches.push({ text, stripped });
     }
+    expect(mismatches).toEqual([]);
   });
 
   it("does not send resizes before ready", async () => {

@@ -168,8 +168,17 @@ function client(userId = "test-user-id") {
 }
 
 describe("sandboxesRouter", () => {
+  /**
+   * One database clock per test. Placement reads `clock_timestamp()` and then
+   * the host row, and refuses a heartbeat newer than that clock (age < 0).
+   * The mocks used to take each from the real clock at call time
+   * (`new Date()` vs `Date.now() - 1`), so 2 ms of scheduling delay between
+   * the two reads (a loaded machine) made the host "unavailable" (CONFLICT).
+   */
+  let dbNow = new Date();
   beforeEach(() => {
     vi.clearAllMocks();
+    dbNow = new Date();
     db.sandbox.findMany.mockResolvedValue([]);
     db.sandboxHostStoragePool.findFirst.mockResolvedValue({ id: "storage-1" } as never);
     db.$queryRaw.mockImplementation(async (query) => {
@@ -179,7 +188,7 @@ describe("sandboxesRouter", () => {
         sql.includes("FROM sandbox_template_availability a JOIN")
         ? [{ id: "locked" }]
         : sql.includes("clock_timestamp()")
-          ? [{ now: new Date() }]
+          ? [{ now: dbNow }]
           : [];
     });
     db.appSetting.findMany.mockResolvedValue([]);
@@ -246,7 +255,7 @@ describe("sandboxesRouter", () => {
             daemonOpenEgressForOthers: false,
 
             status: "CONNECTED",
-            lastHeartbeatAt: new Date(Date.now() - 1),
+            lastHeartbeatAt: new Date(dbNow.getTime() - 1),
             admissionEpoch: 1,
             inventoryAcknowledgedEpoch: 1,
             admissionRuntime: "FAKE",
@@ -282,7 +291,7 @@ describe("sandboxesRouter", () => {
             daemonOpenEgressForOthers: false,
 
             status: "CONNECTED",
-            lastHeartbeatAt: new Date(Date.now() - 1),
+            lastHeartbeatAt: new Date(dbNow.getTime() - 1),
             admissionEpoch: 1,
             inventoryAcknowledgedEpoch: 1,
             admissionRuntime: "FAKE",
@@ -318,7 +327,7 @@ describe("sandboxesRouter", () => {
             daemonOpenEgressForOthers: false,
 
             status: "CONNECTED",
-            lastHeartbeatAt: new Date(Date.now() - 1),
+            lastHeartbeatAt: new Date(dbNow.getTime() - 1),
             admissionEpoch: 1,
             inventoryAcknowledgedEpoch: 1,
             admissionRuntime: "FAKE",
@@ -354,7 +363,7 @@ describe("sandboxesRouter", () => {
             daemonOpenEgressForOthers: false,
 
             status: "CONNECTED",
-            lastHeartbeatAt: new Date(Date.now() - 1),
+            lastHeartbeatAt: new Date(dbNow.getTime() - 1),
             admissionEpoch: 1,
             inventoryAcknowledgedEpoch: 1,
             admissionRuntime: "FAKE",
@@ -388,7 +397,7 @@ describe("sandboxesRouter", () => {
           daemonEgressGuardLeaseUntil: new Date(Date.now() + 60_000),
           daemonOpenEgressForOthers: false,
           status: "CONNECTED",
-          lastHeartbeatAt: new Date(Date.now() - 1),
+          lastHeartbeatAt: new Date(dbNow.getTime() - 1),
           admissionEpoch: 1,
           inventoryAcknowledgedEpoch: 1,
           admissionRuntime: "FAKE",

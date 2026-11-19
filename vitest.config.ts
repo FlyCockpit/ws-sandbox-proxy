@@ -28,6 +28,12 @@ export default defineConfig({
     globals: false,
     environment: "node",
     passWithNoTests: true,
+    // Hermetic unit tests are CPU-bound, so their wall time scales with
+    // machine load. Vitest's generic 5 s default left ~25% headroom: whole
+    // component flows took 3.8 s with one other heavy job on the 8-core
+    // development host and 5.1-5.5 s at load average ~20. 15 s keeps a hang a
+    // fast failure; tests with a longer intrinsic budget still set their own.
+    testTimeout: 15_000,
     setupFiles: [testIoGuard],
     // `*.pg.test.ts` needs a real PostgreSQL and runs only under `pnpm test:pg`.
     exclude: [

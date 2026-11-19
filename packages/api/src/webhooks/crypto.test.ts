@@ -52,7 +52,11 @@ describe("webhook secret encryption (AES-256-GCM)", () => {
     const sealed = sealSecret(Buffer.alloc(32, 2), binding, previous);
     expect(openSecret(sealed, binding, [current, previous])).toEqual(Buffer.alloc(32, 2));
     expect(() => openSecret(sealed, binding, [current])).toThrow(WebhookSecretUnavailableError);
-    const tampered = { ...sealed, ciphertext: Buffer.from(sealed.ciphertext).fill(0, 0, 1) };
+    // Flip, never overwrite: zeroing the first byte left 1 in 256 random
+    // nonces' ciphertexts untouched (the byte was already 0), which opened.
+    const ciphertext = Buffer.from(sealed.ciphertext);
+    ciphertext[0] = (ciphertext[0] ?? 0) ^ 0xff;
+    const tampered = { ...sealed, ciphertext };
     expect(() => openSecret(tampered, binding, [current, previous])).toThrow(
       WebhookSecretUnavailableError,
     );

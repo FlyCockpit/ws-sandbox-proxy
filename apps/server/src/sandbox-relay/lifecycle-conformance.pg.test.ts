@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { Hono } from "hono";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import matrix from "../../../../crates/sandbox-protocol/fixtures/lifecycle_fault_matrix.json";
 import { seedTemplateRevision } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 import {
@@ -266,7 +266,7 @@ async function fixture(
       baseUrl,
       apiKey: key.secret,
       fetch,
-      polling: { intervalMs: 2, maxIntervalMs: 10, waitTimeoutMs: 20_000 },
+      polling: polling(),
     });
   if (options.memoryBudgetMiB) daemon.vmCapacity.memoryBudgetMiB = options.memoryBudgetMiB;
   await daemon.connect();
@@ -276,22 +276,101 @@ async function fixture(
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 
-/** Every fixture ends with no stray task failures on either side. */
+/**
+ * This file drives the whole stack (SDK → /v1 → PostgreSQL → outbox → relay
+ * → host double) and its slowest tests run hundreds of serialized database
+ * transactions: eight creates on one host, 256 committed 8 KiB output chunks,
+ * two-identity pool lifecycles. Measured on the 8-core development host they
+ * take up to ~25 s while one other heavy job runs and up to ~38 s at load
+ * average ~21; the 30 s pg default (vitest.pg.config.ts) is a generic value,
+ * not a budget for this file. 90 s keeps >2x headroom over the worst
+ * measured run; a real stall still fails with its own label, because `until`
+ * and every fixture SDK wait end just before this deadline.
+ */
+vi.setConfig({ testTimeout: 90_000 });
+/** `until` and fixture SDK waits end this long before the test deadline. */
+const UNTIL_MARGIN_MS = 1_000;
+
+/** The running test's wall-clock deadline (its own timeout), read by `until`. */
+let testDeadline = 0;
+beforeEach(({ task }) => {
+  testDeadline = Date.now() + task.timeout;
+});
+/**
+ * Fixture SDK polling. The default wait used to be a fixed 20 s, below the
+ * test timeout and unrelated to the awaited work (a 2 MiB command follow
+ * alone needed ~19 s under load). It now ends just before the test's own
+ * deadline, so the SDK's labelled timeout, not Vitest's, reports a stall.
+ * Calls that pin their own `waitTimeoutMs` are unaffected. A getter, because
+ * the SDK reads its default wait afresh for every operation: a value fixed
+ * when the client is built would let a wait started late in the test run
+ * past the test's deadline.
+ */
+function polling() {
+  return {
+    intervalMs: 2,
+    maxIntervalMs: 10,
+    get waitTimeoutMs() {
+      return Math.max(1_000, testDeadline - Date.now() - UNTIL_MARGIN_MS);
+    },
+  };
+}
+
+/**
+ * Settles `promise` or gives up at `deadline`. Teardown must not hang on one
+ * fixture past the hook timeout: Vitest would abandon the hook and leave the
+ * remaining fixtures' daemons connected for the next test.
+ */
+async function byDeadline(promise: Promise<unknown>, deadline: number, label: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`teardown timed out waiting for ${label}`)),
+          Math.max(0, deadline - Date.now()),
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Every fixture ends with no stray task failures on either side. Each one is
+ * crashed and disconnected even when an earlier check (or an earlier
+ * fixture) failed, so one failing test cannot leave a live host behind; the
+ * first failure is rethrown after every fixture is down.
+ */
+const TEARDOWN_BUDGET_MS = 45_000; // below the 60 s hookTimeout
 const live: Fixture[] = [];
 afterEach(async () => {
+  const deadline = Date.now() + TEARDOWN_BUDGET_MS;
+  const errors: unknown[] = [];
   for (const f of live.splice(0)) {
-    await f.daemon.idle();
-    await f.pump.idle();
-    expect(f.daemon.failures).toEqual([]);
-    expect(f.pump.failures).toEqual([]);
+    try {
+      await byDeadline(f.daemon.idle(), deadline, "daemon idle");
+      await byDeadline(f.pump.idle(), deadline, "outbox pump idle");
+      expect(f.daemon.failures).toEqual([]);
+      expect(f.pump.failures).toEqual([]);
+    } catch (error) {
+      errors.push(error);
+    }
     f.daemon.crash();
     // removeSession revokes the epoch asynchronously: wait for it to land.
-    for (let i = 0; i < 500; i++) {
+    for (;;) {
       const host = await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } });
       if (host.status !== "CONNECTED") break;
+      if (Date.now() >= deadline) {
+        errors.push(new Error(`teardown: host ${f.host.id} still CONNECTED after crash`));
+        break;
+      }
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
   }
+  if (errors.length > 0) throw errors[0];
 });
 async function setup(options?: Parameters<typeof fixture>[0]) {
   const f = await fixture(options);
@@ -403,6 +482,18 @@ describe("C57 full lifecycle through SDK → /v1 → PostgreSQL → outbox → r
     // Long-running: the guest holds the script open after its output until the
     // SDK has followed the committed output while the operation still runs.
     const booted = (async () => {
+      try {
+        await follow();
+      } finally {
+        // Never leave the gated guest script open: a failed wait above must
+        // surface as itself (via `await booted`), not as the SDK's run
+        // timing out on a script that can never finish.
+        finishBoot();
+      }
+    })();
+    // Handled here, rethrown by `await booted` below.
+    booted.catch(() => {});
+    async function follow() {
       await until(() => f.daemon.dispatches.some((d) => d.script === longScript), "long dispatch");
       const id = String(f.daemon.dispatches.find((d) => d.script === longScript)!.operationId);
       await until(
@@ -416,8 +507,7 @@ describe("C57 full lifecycle through SDK → /v1 → PostgreSQL → outbox → r
         "long output committed",
       );
       await new Promise((resolve) => setTimeout(resolve, 25));
-      finishBoot();
-    })();
+    }
     const transcript = await runHarnessLifecycle(f.client(), {
       template: "revision/" + f.template.id,
       sandboxHostId: f.host.id,
@@ -525,12 +615,25 @@ function errorOf<T>(
   if (outcome.ok) throw new Error("expected a failure");
   return outcome.error;
 }
+/**
+ * Polls `check` until it holds, up to the running test's own deadline.
+ *
+ * This was 2000 iterations of `setTimeout(2)`: an iteration count (about
+ * 4–5 s of wall time) unrelated to the awaited work. On this suite's real
+ * stack one create costs ~0.4–0.9 s server-side and concurrent creates
+ * serialize, so a correct run could outlast the count (C57 six workers reach
+ * their peak after ~10 s even on a quiet machine). The deadline is the
+ * test's own timeout less a margin, so a real stall still fails with this
+ * label rather than Vitest's generic test timeout.
+ */
 async function until(check: () => boolean | Promise<boolean>, label: string) {
-  for (let i = 0; i < 2000; i++) {
-    if (await check()) return;
+  const started = Date.now();
+  const deadline = testDeadline - UNTIL_MARGIN_MS;
+  while (!(await check())) {
+    if (Date.now() >= deadline)
+      throw new Error(`timed out waiting for ${label} after ${Date.now() - started} ms`);
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
-  throw new Error(`timed out waiting for ${label}`);
 }
 
 /** Arm the cell's loss: a fetch fault (commit) or a host crash point (dispatch/effect/ack). */
@@ -738,6 +841,10 @@ describe("C57 concurrency: six workers, retained VMs and a detached broker", () 
       release = resolve;
     });
     const ready: string[] = [];
+    let atPeak!: () => void;
+    const allReady = new Promise<void>((resolve) => {
+      atPeak = resolve;
+    });
     const workers = Array.from({ length: 6 }, async (_, worker) => {
       const client = f.client();
       const sandbox = await client.sandboxes.create(body, { idempotencyKey: `worker-${worker}` });
@@ -752,11 +859,23 @@ describe("C57 concurrency: six workers, retained VMs and a detached broker", () 
       const tail = await broker.commands.tail(process.operationId);
       const stat = await broker.commands.stat(process.operationId);
       ready.push(sandbox.id);
+      if (ready.length === 6) atPeak();
       await peak;
       await client.sandboxes.destroy(sandbox.id);
       return { sandbox, run, tail, stat };
     });
-    await until(() => ready.length === 6, "six live workers");
+    // Await the peak itself, not a poll budget: six creates serialize on the
+    // host and each worker then runs three commands, so the peak takes
+    // seconds of real work. A worker that fails before the peak rejects the
+    // race; the rest are released so none is left parked on `peak`.
+    try {
+      await Promise.race([allReady, Promise.all(workers)]);
+    } catch (error) {
+      release();
+      await Promise.allSettled(workers);
+      throw error;
+    }
+    expect(ready).toHaveLength(6);
     // At the peak: exactly the six live slots, the cap holds for creates AND cold boots.
     expect((await host()).liveCount).toBe(6);
     const creates = () =>
@@ -883,11 +1002,16 @@ describe("C57 cancellation and capture safety", () => {
     );
     const client = f.client();
     const abort = new AbortController();
+    // The ACK is held below, so the acknowledgement window always expires;
+    // the same budget also bounds the cancel submission itself, which must
+    // commit (CANCEL_REQUESTED) inside it. 400 ms was exceeded by that one
+    // request under load (the run then settled on an uncertain submission
+    // before the cancel committed); 5 s covers it with wide margin.
     const run = settle(
       client.commands.run(
         sandbox.id,
         { script: "./serve --forever" },
-        { signal: abort.signal, onAbort: "cancel", cancelAckTimeoutMs: 400 },
+        { signal: abort.signal, onAbort: "cancel", cancelAckTimeoutMs: 5_000 },
       ),
     );
     await until(
@@ -1548,7 +1672,7 @@ async function sharingFixture(mode: "shared" | "contributed" = "shared", termina
     baseUrl: "https://wssp.test",
     apiKey: key.secret,
     fetch: async (input, init) => app.fetch(new Request(input, init)),
-    polling: { intervalMs: 2, maxIntervalMs: 10, waitTimeoutMs: 20_000 },
+    polling: polling(),
   });
   const create = () =>
     client.sandboxes.create({
@@ -1731,7 +1855,7 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
       baseUrl: "https://wssp.test",
       apiKey: renewed.secret,
       fetch: async (input, init) => app.fetch(new Request(input, init)),
-      polling: { intervalMs: 2, maxIntervalMs: 10, waitTimeoutMs: 20_000 },
+      polling: polling(),
     });
     // Cold start uses current pool selection; immutable creation-key authority
     // still owns retained work, so use a fresh all-owned key for this restart.
@@ -1746,7 +1870,7 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
       baseUrl: "https://wssp.test",
       apiKey: all.secret,
       fetch: async (input, init) => app.fetch(new Request(input, init)),
-      polling: { intervalMs: 2, maxIntervalMs: 10, waitTimeoutMs: 20_000 },
+      polling: polling(),
     });
     await expect(client.sandboxes.connect(sandbox.id, { mode: "cold" })).rejects.toMatchObject({
       status: 403,
@@ -1872,7 +1996,7 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
       baseUrl: "https://wssp.test",
       apiKey: allB.secret,
       fetch: async (input, init) => app.fetch(new Request(input, init)),
-      polling: { intervalMs: 2, maxIntervalMs: 10, waitTimeoutMs: 20_000 },
+      polling: polling(),
     });
     const { SDK_ROUTES } = await import("@wssp/sandbox-contracts");
     type Route = keyof typeof SDK_ROUTES;

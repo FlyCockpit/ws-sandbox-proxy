@@ -254,6 +254,8 @@ export default defineConfig(({ mode }) => {
     // without changing web build or development configuration.
     test: {
       clearMocks: false,
+      // Same CPU-bound unit default as the root vitest.config.ts (see there).
+      testTimeout: 15_000,
       // Let jsdom provide storage and navigator globals on Node 26.
       execArgv: ["--no-experimental-webstorage", "--no-experimental-global-navigator"],
       setupFiles: [path.resolve(__dirname, "../../scripts/test-io-guard.ts")],

@@ -935,6 +935,7 @@ describe("C55-CO-1: browser liveness through the REAL ws adapter (ping/pong)", (
   it("a silent browser that answers pings stays open well past the idle bound", async () => {
     const before = hostFrames("terminal.close").length;
     const inbox = await connected(true);
+    const { sessionId } = hostFrames("terminal.open").at(-1).fence as TerminalFence;
     // Six heartbeat rounds: after each pong the idle clock moves 3/4 of the
     // bound, so the socket outlives 4.5 idle bounds. Every heartbeat measures
     // from the last pong; without pongs it would be closed by the second round.
@@ -952,6 +953,13 @@ describe("C55-CO-1: browser liveness through the REAL ws adapter (ping/pong)", (
     expect(hostFrames("terminal.close").slice(before)).toEqual([]);
     inbox.close();
     await inbox.closed;
+    // The browser's close reaches the host as `terminal.close` only after the
+    // socket settles here; wait for it, or on a loaded machine it lands in
+    // the next test's frame window as a second close.
+    await until(
+      () => hostFrames("terminal.close").some((frame) => frame.fence.sessionId === sessionId),
+      "host terminal.close",
+    );
   });
 
   it("a browser that never answers (half-open) is closed detached + timeout with 4401", async () => {

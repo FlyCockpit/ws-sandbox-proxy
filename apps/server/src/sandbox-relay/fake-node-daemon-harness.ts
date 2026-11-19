@@ -113,6 +113,8 @@ class DaemonSocket implements SandboxRelaySocket {
 }
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+/** The real daemon's egress-state cadence (see `renewEgressState`). */
+const EGRESS_GUARD_RENEW_MS = 5_000;
 const OUTPUT_CHUNK = 8 * 1024;
 const encoder = new TextEncoder();
 
@@ -262,11 +264,35 @@ export class FakeNodeDaemon {
   }
 
   private egressSequence = 0;
+  private egressReport: { guardOk?: boolean; openEgressForOthers?: boolean } = {};
+  private egressRenewal: ReturnType<typeof setInterval> | undefined;
+  /**
+   * The real daemon re-sends its last `host.egress-state` every 5 s
+   * (`EGRESS_STATE_INTERVAL`, apps/cli/src/sandbox_relay/egress_state.rs);
+   * the server's guard lease lasts 15 s on the server clock. A double that
+   * reported only at admission lost its lease 15 s of real time after
+   * connecting, so a test still placing sandboxes then (six serialized
+   * workers, or any run on a loaded machine) was refused
+   * `egress_guard_unavailable`. Repeats the last report on this link only.
+   */
+  private renewEgressState(connectionEpoch: number, socket: DaemonSocket) {
+    this.stopEgressRenewal();
+    this.egressRenewal = setInterval(() => {
+      if (socket !== this.socket || socket.readyState !== 1) return this.stopEgressRenewal();
+      this.track(this.reportEgressState(connectionEpoch, this.egressReport));
+    }, EGRESS_GUARD_RENEW_MS);
+    this.egressRenewal.unref();
+  }
+  private stopEgressRenewal() {
+    clearInterval(this.egressRenewal);
+    this.egressRenewal = undefined;
+  }
   /** Send `host.egress-state` on the current link (a lease renewal). */
   async reportEgressState(
     connectionEpoch: number,
     report: { guardOk?: boolean; openEgressForOthers?: boolean } = {},
   ) {
+    this.egressReport = report;
     const guardOk = report.guardOk ?? this.options.guardOk ?? true;
     this.egressSequence += 1;
     await this.text({
@@ -390,6 +416,7 @@ export class FakeNodeDaemon {
       // (and every 5 s; `reportEgressState` models a later report).
       this.egressSequence = 0;
       await this.reportEgressState(hello.connectionEpoch as number);
+      this.renewEgressState(hello.connectionEpoch as number, socket);
       await this.options.afterAdmission?.();
     }
     // reconcile.rs: later generations first, one outstanding receipt at a time.
@@ -432,6 +459,7 @@ export class FakeNodeDaemon {
 
   /** Host process death: the socket drops, in-flight tasks stop, the journal stays. */
   crash() {
+    this.stopEgressRenewal();
     this.lives += 1;
     // In-flight effects of this life end with the process.
     for (const upload of this.uploads.values()) upload.fail(new HostCrashed());

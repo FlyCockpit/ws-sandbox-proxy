@@ -309,7 +309,11 @@ it.each(["http", "direct"] as const)(
 it("real auth challenge→host replay and after-hook→host mint race share the User watermark", async () => {
   const user = await enrolledUser();
   const challenge = await twoFactorChallenge(user.email);
-  const response = await post("/two-factor/verify-totp", { code: totp(user.secret) }, challenge);
+  // One code for the login and every replay below: a second `totp()` call
+  // that crossed a 30 s step boundary would be a fresh, legitimately
+  // accepted code, not a replay.
+  const code = totp(user.secret);
+  const response = await post("/two-factor/verify-totp", { code }, challenge);
   const login = await auth.api.getSession({
     headers: new Headers({ cookie: cookiesFrom(response) }),
   });
@@ -349,7 +353,7 @@ it("real auth challenge→host replay and after-hook→host mint race share the 
     authorize: async () => true,
   });
   const owner = { userId: user.userId, sessionId: login.session.id };
-  const input = { hostId: host.id, rows: 24, cols: 80, code: totp(user.secret) };
+  const input = { hostId: host.id, rows: 24, cols: 80, code };
   try {
     await expect(mintHostTerminalTicket(owner, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
     const nextChallenge = await twoFactorChallenge(user.email);
