@@ -59,11 +59,16 @@ the cap is exceeded by at most one frame per starting channel.
 
 The node's socket thread is the only decider. It owns every channel's state and byte IO and makes every close
 decision, so no output frame and no stdin byte is handed over after a channel's close decision. A chunk handed to the
-guest's stdin before the decision is still written, as for a pipe. Each socket-loop tick checks a channel's authority
-and deadline right before deciding for it and never blocks on the socket: its frames are queued and written in order
-after the tick. An output frame is handed over when its tick queues it, so a socket write that blocks never separates
-a decision from the check it rests on; whatever changed during the write (a deadline, a revocation) is acted on by the
-next tick first. A per-channel custodian thread holds the process and decides nothing. It closes as told, kills when
+guest's stdin before the decision is still written, as for a pipe. Each socket-loop tick first gathers what it
+decides on: every channel's authority verdict (these lookups may wait on a lock), then the custodians' queued events,
+then one clock read. Its decisions then use only that snapshot, with no lookup and no clock read in between, and never
+block on the socket: its frames are queued and written in order after the tick. An output frame is handed over when
+its tick queues it, so no wait separates a decision from the check it rests on. Whatever changed after the snapshot
+(a deadline, a revocation, an event) is acted on by the next tick first. A deadline or revocation therefore takes
+effect at most one tick plus one flush late. A flush is small (one tick's frames: at most 16 data frames plus control
+frames), and a socket write that makes no progress for 30 s fails the session, after which every custodian kills. A
+peer that keeps accepting bytes slowly can stretch a flush beyond 30 s; the custodian's own deadline kill does not
+depend on the socket thread. A per-channel custodian thread holds the process and decides nothing. It closes as told, kills when
 the connection is gone, and kills shortly after the channel's absolute deadline if the node has not closed the channel
 by then. The deadline also kills a normal close or natural end that is still settling. A kill-class close that arrives
 during a normal close waits for the hangup (at most about 20 s), with the channel's IO already cut.

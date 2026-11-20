@@ -9,9 +9,12 @@
 //! path, and [`Chan::finish`] the only emitter of `channel.exit`. Because the
 //! decision, every stdin hand-over, every guest read and every data frame
 //! run on this one thread, nothing crosses a channel after its close
-//! decision. A tick never blocks: it queues its frames, and the socket
-//! writes follow once it has decided everything, so a blocking write never
-//! separates a check from the action it guards. A guest read happens only
+//! decision. A tick first gathers a [`Snapshot`] (every authority verdict,
+//! then every custodian event, then one clock read), then decides in
+//! [`step`], which has no lookup, custodian or clock in scope and never
+//! blocks: it queues its frames, and the socket writes follow once it has
+//! decided everything, so no wait separates a check from the action it
+//! guards. A guest read happens only
 //! when its frame can be sent at once; the frame then waits at most for the
 //! rest of its tick's flush.
 //!
@@ -822,7 +825,6 @@ struct Chan {
     io: Option<Box<dyn ChannelIo>>,
     orders: mpsc::SyncSender<Order>,
     signals: mpsc::SyncSender<(ChannelBirth, ProcessSignal)>,
-    events: mpsc::Receiver<Evt>,
     filter: FrameFilter,
     /// The env + secret preamble, until it is handed over (the go).
     preamble: Option<Vec<u8>>,
@@ -879,15 +881,13 @@ fn skew_now(skew: &std::sync::atomic::AtomicU64) -> Instant {
     Instant::now() + Duration::from_millis(skew.load(std::sync::atomic::Ordering::SeqCst))
 }
 
-/// Time and authority for the owner's decisions. A tick never blocks on
-/// the socket (its frames are queued and written after it); a check is
-/// made right before the decisions it guards, with nothing that can wait
-/// in between.
+/// Authority lookups (journal, lease and credential state; each may wait on
+/// a lock). Used by the frame handlers and by a tick's gather phase only:
+/// the tick's decisions ([`step`]) never see it.
 struct Judge {
     journal: Arc<HostJournal>,
     authority: HostAuthority,
     credentials: Option<super::credentials::service::CredentialService>,
-    skew: Arc<std::sync::atomic::AtomicU64>,
     /// Runs at every authority lookup (tests: a lock wait inside it).
     #[cfg(test)]
     hook: CheckHook,
@@ -899,10 +899,6 @@ type CheckFn = Box<dyn FnMut(&ChannelFence) + std::marker::Send>;
 type CheckHook = Arc<Mutex<Option<CheckFn>>>;
 
 impl Judge {
-    fn now(&self) -> Instant {
-        skew_now(&self.skew)
-    }
-
     fn refusal(&self, chan: &Chan) -> Option<ChannelCloseIntent> {
         #[cfg(test)]
         if let Some(hook) = self.hook.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
@@ -918,31 +914,27 @@ impl Judge {
             &chan.credential_leases,
         )
     }
+}
 
-    /// Apply an authority loss and the absolute deadline as of now (both
-    /// kill; in every phase, so a settling close is upgraded too).
-    fn check(&self, chan: &mut Chan) {
-        if let Some(intent) = self.refusal(chan) {
-            chan.decide(Some(intent), None, true);
-        }
-        if self.now() >= chan.deadline {
-            chan.decide(Some(ChannelCloseIntent::Expired), None, true);
-        }
-    }
+/// What one tick decides on, gathered before it decides anything: every
+/// channel's authority verdict, then every custodian's queued events, then
+/// one clock read (so the clock is never older than a lookup or an event).
+/// [`step`] sees only this: no lookup and no clock is in its scope, so no
+/// wait can separate a check from the action it guards.
+struct Snapshot {
+    now: Instant,
+    seen: HashMap<(String, String), Seen>,
+}
 
-    /// The setup deadline as of now: a channel not running by then is
-    /// killed (read after any lookup that may have waited).
-    fn check_setup(&self, chan: &mut Chan) {
-        if matches!(chan.phase, Phase::Opening | Phase::Starting)
-            && self.now() >= chan.setup_deadline
-        {
-            chan.decide(
-                None,
-                Some((SandboxErrorCode::Timeout, "channel setup timed out".into())),
-                true,
-            );
-        }
-    }
+/// One channel's part of a [`Snapshot`].
+#[derive(Default)]
+struct Seen {
+    /// The authority loss found by the gather's lookup, if any.
+    refusal: Option<ChannelCloseIntent>,
+    /// The custodian's events, in order.
+    events: Vec<Evt>,
+    /// The custodian's sender is gone (after `events`; only a panic).
+    custodian_gone: bool,
 }
 
 fn text(message: DaemonControlMessage) -> Outgoing {
@@ -1124,31 +1116,31 @@ impl Chan {
         }
     }
 
-    /// Custodian events (never block).
-    fn drain_events(&mut self, outbox: Outbox<'_>) {
-        loop {
-            let event = match self.events.try_recv() {
-                Ok(event) => event,
-                Err(mpsc::TryRecvError::Empty) => return,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    // The custodian is gone (it never leaves unsettled; a
-                    // panic is the only way here).
-                    if !self.exit_sent {
-                        self.outstanding = 0;
-                        self.end = Some(ChannelEnd {
-                            reaped: false,
-                            scope: ChannelScope::Uncertain,
-                        });
-                        if self.error.is_none() {
-                            self.error =
-                                Some((SandboxErrorCode::Internal, "channel process failed".into()));
-                        }
-                        self.finish(outbox);
-                    }
-                    self.gone = true;
-                    return;
-                }
-            };
+    /// The authority verdict and the absolute deadline of the snapshot
+    /// (both kill; in every phase, so a settling close is upgraded too).
+    fn apply(&mut self, refusal: Option<ChannelCloseIntent>, now: Instant) {
+        if let Some(intent) = refusal {
+            self.decide(Some(intent), None, true);
+        }
+        if now >= self.deadline {
+            self.decide(Some(ChannelCloseIntent::Expired), None, true);
+        }
+    }
+
+    /// The setup deadline: a channel not running by then is killed.
+    fn apply_setup(&mut self, now: Instant) {
+        if matches!(self.phase, Phase::Opening | Phase::Starting) && now >= self.setup_deadline {
+            self.decide(
+                None,
+                Some((SandboxErrorCode::Timeout, "channel setup timed out".into())),
+                true,
+            );
+        }
+    }
+
+    /// The custodian's events of the snapshot, in order.
+    fn on_events(&mut self, events: Vec<Evt>, custodian_gone: bool, outbox: Outbox<'_>) {
+        for event in events {
             match event {
                 Evt::Spawned(io) => {
                     if self.phase == Phase::Opening {
@@ -1205,6 +1197,23 @@ impl Chan {
                     self.finish(outbox);
                 }
             }
+        }
+        if custodian_gone {
+            // The custodian never leaves unsettled; a panic is the only way
+            // here.
+            if !self.exit_sent {
+                self.outstanding = 0;
+                self.end = Some(ChannelEnd {
+                    reaped: false,
+                    scope: ChannelScope::Uncertain,
+                });
+                if self.error.is_none() {
+                    self.error =
+                        Some((SandboxErrorCode::Internal, "channel process failed".into()));
+                }
+                self.finish(outbox);
+            }
+            self.gone = true;
         }
     }
 
@@ -1291,7 +1300,7 @@ impl Chan {
     /// Guest output, read only when its frame can be sent at once.
     fn read_output(
         &mut self,
-        judge: &Judge,
+        now: Instant,
         budget: &mut usize,
         credit: &mut BulkCredit,
         outbox: Outbox<'_>,
@@ -1325,7 +1334,7 @@ impl Chan {
                 ChannelRead::WouldBlock => {
                     quiet += 1;
                     empty_now[stream as usize] = true;
-                    self.idle_since[stream as usize].get_or_insert_with(|| judge.now());
+                    self.idle_since[stream as usize].get_or_insert(now);
                 }
                 // Every read costs budget, also one whose bytes the setup
                 // filter drops: guest chatter can never hold the loop.
@@ -1334,12 +1343,12 @@ impl Chan {
                     *budget = budget.saturating_sub(1);
                     empty_now[stream as usize] = false;
                     self.idle_since[stream as usize] = None;
-                    self.on_bytes(stream, &bytes, judge, credit, outbox)?;
+                    self.on_bytes(stream, &bytes, now, credit, outbox)?;
                 }
                 ChannelRead::Eof => {
                     quiet = 0;
                     *budget = budget.saturating_sub(1);
-                    self.on_eof(stream, judge, credit, outbox)?;
+                    self.on_eof(stream, now, credit, outbox)?;
                 }
             }
         }
@@ -1355,26 +1364,26 @@ impl Chan {
         &mut self,
         stream: ChannelOutput,
         bytes: &[u8],
-        judge: &Judge,
+        now: Instant,
         credit: &mut BulkCredit,
         outbox: Outbox<'_>,
     ) -> Result<()> {
         let data = if stream == self.frame_stream() {
             let (data, frames) = self.filter.feed(bytes);
             for frame in frames {
-                self.on_frame(frame, judge, outbox);
+                self.on_frame(frame, now, outbox);
             }
             data
         } else {
             bytes.to_vec()
         };
         if self.live() && !data.is_empty() {
-            self.data_frame(stream, &data, judge, credit, outbox)?;
+            self.data_frame(stream, &data, now, credit, outbox)?;
         }
         Ok(())
     }
 
-    fn on_frame(&mut self, frame: GuestFrame, judge: &Judge, outbox: Outbox<'_>) {
+    fn on_frame(&mut self, frame: GuestFrame, now: Instant, outbox: Outbox<'_>) {
         match frame {
             GuestFrame::Prompt => self.prompted = true,
             GuestFrame::Refused => self.refused = true,
@@ -1395,9 +1404,7 @@ impl Chan {
             GuestFrame::Exit(status) => {
                 self.exit = Some(status);
                 if self.phase == Phase::Running {
-                    self.phase = Phase::Draining {
-                        exit_at: judge.now(),
-                    };
+                    self.phase = Phase::Draining { exit_at: now };
                     // The workload is gone: unwritten stdin is dropped, its
                     // credit returned.
                     for (seq, _) in self.pending_in.drain(..) {
@@ -1412,7 +1419,7 @@ impl Chan {
         &mut self,
         stream: ChannelOutput,
         data: &[u8],
-        judge: &Judge,
+        now: Instant,
         credit: &mut BulkCredit,
         outbox: Outbox<'_>,
     ) -> Result<()> {
@@ -1427,8 +1434,8 @@ impl Chan {
             data,
         )?;
         self.out[index].sent += 1;
-        // Stamped as sent now (not at the tick's start).
-        self.out[index].unacked_since.push_back(judge.now());
+        // Stamped with the tick's clock (read after its lookups).
+        self.out[index].unacked_since.push_back(now);
         if self.kind == ChannelKind::Exec {
             credit.charge(&self.creator, 1);
         }
@@ -1439,7 +1446,7 @@ impl Chan {
     fn on_eof(
         &mut self,
         stream: ChannelOutput,
-        judge: &Judge,
+        now: Instant,
         credit: &mut BulkCredit,
         outbox: Outbox<'_>,
     ) -> Result<()> {
@@ -1447,7 +1454,7 @@ impl Chan {
         if stream == self.frame_stream() {
             let rest = self.filter.finish();
             if self.birth.is_some() && !rest.is_empty() {
-                self.data_frame(stream, &rest, judge, credit, outbox)?;
+                self.data_frame(stream, &rest, now, credit, outbox)?;
             }
         }
         self.eof[index] = true;
@@ -1567,6 +1574,9 @@ pub(super) struct ChannelHost {
     binding: Option<TransportBindingV11>,
     negotiated: bool,
     channels: HashMap<(String, String), Chan>,
+    /// Each channel's custodian event receiver, read only by a tick's gather
+    /// (so [`step`] cannot see a custodian).
+    lanes: HashMap<(String, String), mpsc::Receiver<Evt>>,
     /// Round-robin offset of the forwarding order.
     rr: usize,
     tombstones: VecDeque<(String, String)>,
@@ -1601,6 +1611,7 @@ impl ChannelHost {
             binding: None,
             negotiated: false,
             channels: HashMap::new(),
+            lanes: HashMap::new(),
             rr: 0,
             tombstones: VecDeque::new(),
             audits: 0,
@@ -1709,7 +1720,6 @@ impl ChannelHost {
             journal: self.journal.clone(),
             authority: self.authority.clone(),
             credentials: self.credentials.clone(),
-            skew: self.skew.clone(),
             #[cfg(test)]
             hook: self.check_hook.clone(),
         }
@@ -2151,6 +2161,7 @@ impl ChannelHost {
         }
         let now = self.now();
         let deadline = now + lifetime;
+        self.lanes.insert(key.clone(), events_rx);
         self.channels.insert(
             key,
             Chan {
@@ -2161,7 +2172,6 @@ impl ChannelHost {
                 io: None,
                 orders: orders_tx,
                 signals: signals_tx,
-                events: events_rx,
                 preamble: Some(preamble),
                 size,
                 prompted: false,
@@ -2237,20 +2247,11 @@ impl ChannelHost {
         Ok(frames)
     }
 
-    fn bulk_credit(&self) -> BulkCredit {
-        let mut credit = BulkCredit::default();
-        for chan in self.channels.values() {
-            if chan.kind == ChannelKind::Exec && chan.live() {
-                credit.charge(&chan.creator, chan.unacked());
-            }
-        }
-        credit
-    }
-
     /// One socket-loop tick, then its flush. Every decision, guest read,
     /// stdin hand-over and frame of every channel happens in the tick (or in
-    /// the frame handlers above), on this thread, without blocking: its
-    /// frames only queue. The socket writes follow in order once the tick
+    /// the frame handlers above), on this thread: the tick gathers its
+    /// snapshot, then decides on it without blocking; its frames only
+    /// queue. The socket writes follow in order once the tick
     /// has decided everything, so a write that blocks across a deadline or
     /// an authority loss delays only frames decided before it; the next tick
     /// acts on what changed. A failed write ends the session (and with it
@@ -2278,109 +2279,8 @@ impl ChannelHost {
     }
 
     fn tick(&mut self, outbox: Outbox<'_>) -> Result<()> {
-        let now = self.now();
-        let judge = self.judge();
-        let keys: Vec<(String, String)> = self.channels.keys().cloned().collect();
-        // Events, authority and deadlines.
-        for key in &keys {
-            let Some(chan) = self.channels.get_mut(key) else {
-                continue;
-            };
-            // Authority and the absolute deadline right before the events, in
-            // every phase (also while a normal close or an unsettled end is
-            // in progress): a loss seen now upgrades a close whose settled
-            // answer is already queued (the exit then waits for the kill's
-            // answer too).
-            judge.check(chan);
-            chan.drain_events(outbox);
-            if chan.gone {
-                continue;
-            }
-            judge.check_setup(chan);
-        }
-        // One stall rule: a channel whose oldest unacknowledged output frame
-        // is 60 s old closes with `backpressure`. It needs no thresholds and
-        // no view of contention: every holder of credit, small or large,
-        // returns each frame within 60 s or is closed (and its credit with
-        // it), so nothing pins the host cap.
-        for chan in self.channels.values_mut().filter(|chan| chan.live()) {
-            let stalled = chan.out.iter().any(|out| {
-                out.unacked_since
-                    .front()
-                    .is_some_and(|sent| now.saturating_duration_since(*sent) >= STALL_TIMEOUT)
-            });
-            if stalled {
-                chan.decide(Some(ChannelCloseIntent::Backpressure), None, true);
-            }
-        }
-        // Fair, bounded IO: pty channels first, then bulk ones, each group
-        // rotated per tick; at most `TICK_DATA_FRAMES` data frames per tick,
-        // `HOST_UNACKED_FRAMES` unacknowledged bulk frames across the host
-        // and half of that per sandbox owner, so the socket loop returns to
-        // reading acks, heartbeats and closes and no tenant holds the cap.
-        let mut order: Vec<(bool, (String, String))> = self
-            .channels
-            .iter()
-            .map(|(key, chan)| (chan.kind != ChannelKind::Pty, key.clone()))
-            .collect();
-        order.sort();
-        let pty = order.iter().filter(|(bulk, _)| !bulk).count();
-        let rr = self.rr;
-        self.rr = self.rr.wrapping_add(1);
-        if pty > 0 {
-            order[..pty].rotate_left(rr % pty);
-        }
-        if order.len() > pty {
-            let bulk = order.len() - pty;
-            order[pty..].rotate_left(rr % bulk);
-        }
-        let mut credit = self.bulk_credit();
-        let mut budget = TICK_DATA_FRAMES;
-        for (_, key) in order {
-            let Some(chan) = self.channels.get_mut(&key) else {
-                continue;
-            };
-            if chan.gone {
-                continue;
-            }
-            // This channel's IO decisions rest on checks right before them:
-            // another channel's check in this tick may have waited on a
-            // journal or credential lock since the ones before its events.
-            judge.check(chan);
-            judge.check_setup(chan);
-            chan.write_stdin(outbox);
-            chan.read_output(&judge, &mut budget, &mut credit, outbox)?;
-            // The go: the preamble is handed over only after the guest's
-            // PROMPT, while the channel is still starting, inside its
-            // deadlines, with its authority intact (the check above), and
-            // (pty) once the host tty is raw.
-            if chan.prompted && chan.preamble.is_some() {
-                let ready = chan.admissible(judge.now())
-                    && chan.io.as_mut().is_some_and(|io| io.input_ready());
-                if ready
-                    && let (Some(io), Some(preamble)) = (&mut chan.io, chan.preamble.take())
-                    && let Err(refusal) = io.try_write(preamble)
-                {
-                    if refusal.closed {
-                        chan.setup_failed();
-                    } else {
-                        chan.preamble = Some(refusal.bytes);
-                    }
-                }
-            }
-            if end_due(
-                chan.phase,
-                chan.all_streams(),
-                chan.eof,
-                chan.idle_since,
-                judge.now(),
-            ) {
-                if chan.kind == ChannelKind::Exec {
-                    credit.refund(&chan.creator, chan.unacked());
-                }
-                chan.end_naturally();
-            }
-        }
+        let snapshot = self.gather();
+        step(&mut self.channels, &mut self.rr, snapshot, outbox)?;
         let gone: Vec<(String, String)> = self
             .channels
             .iter()
@@ -2389,12 +2289,52 @@ impl ChannelHost {
             .collect();
         for key in gone {
             self.channels.remove(&key);
+            self.lanes.remove(&key);
             self.tombstones.push_back(key);
             while self.tombstones.len() > ENDED_TOMBSTONES {
                 self.tombstones.pop_front();
             }
         }
         Ok(())
+    }
+
+    /// A tick's gather phase: every authority verdict first (each lookup may
+    /// wait on a lock), then every custodian's queued events, then one clock
+    /// read. Nothing here decides.
+    fn gather(&mut self) -> Snapshot {
+        let judge = self.judge();
+        let mut seen: HashMap<(String, String), Seen> = self
+            .channels
+            .iter()
+            .map(|(key, chan)| {
+                (
+                    key.clone(),
+                    Seen {
+                        refusal: judge.refusal(chan),
+                        ..Seen::default()
+                    },
+                )
+            })
+            .collect();
+        for (key, lane) in &self.lanes {
+            let Some(seen) = seen.get_mut(key) else {
+                continue;
+            };
+            loop {
+                match lane.try_recv() {
+                    Ok(event) => seen.events.push(event),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        seen.custodian_gone = true;
+                        break;
+                    }
+                }
+            }
+        }
+        Snapshot {
+            now: self.now(),
+            seen,
+        }
     }
 
     /// Graceful shutdown: every channel closes with `shutdown`; bounded.
@@ -2413,6 +2353,129 @@ impl ChannelHost {
     }
 }
 
+/// A tick's decisions on its [`Snapshot`]: every close decision, guest read,
+/// stdin hand-over and frame of every channel. Pure but for the channels'
+/// non-blocking IO: no authority lookup, custodian or clock is in scope, so
+/// every decision rests on the same gathered facts and nothing can wait
+/// between a check and the action it guards. Its frames only queue.
+fn step(
+    channels: &mut HashMap<(String, String), Chan>,
+    rr: &mut usize,
+    mut snapshot: Snapshot,
+    outbox: Outbox<'_>,
+) -> Result<()> {
+    let now = snapshot.now;
+    let keys: Vec<(String, String)> = channels.keys().cloned().collect();
+    // Authority and the absolute deadline before the events, in every phase
+    // (also while a normal close or an unsettled end is in progress): a loss
+    // upgrades a close whose settled answer is among the events (the exit
+    // then waits for the kill's answer too).
+    for key in &keys {
+        let Some(chan) = channels.get_mut(key) else {
+            continue;
+        };
+        let seen = snapshot.seen.remove(key).unwrap_or_default();
+        chan.apply(seen.refusal, now);
+        chan.on_events(seen.events, seen.custodian_gone, outbox);
+        if chan.gone {
+            continue;
+        }
+        chan.apply_setup(now);
+    }
+    // One stall rule: a channel whose oldest unacknowledged output frame is
+    // 60 s old closes with `backpressure`. It needs no thresholds and no view
+    // of contention: every holder of credit, small or large, returns each
+    // frame within 60 s or is closed (and its credit with it), so nothing
+    // pins the host cap.
+    for chan in channels.values_mut().filter(|chan| chan.live()) {
+        let stalled = chan.out.iter().any(|out| {
+            out.unacked_since
+                .front()
+                .is_some_and(|sent| now.saturating_duration_since(*sent) >= STALL_TIMEOUT)
+        });
+        if stalled {
+            chan.decide(Some(ChannelCloseIntent::Backpressure), None, true);
+        }
+    }
+    // Fair, bounded IO: pty channels first, then bulk ones, each group
+    // rotated per tick; at most `TICK_DATA_FRAMES` data frames per tick,
+    // `HOST_UNACKED_FRAMES` unacknowledged bulk frames across the host and
+    // half of that per sandbox owner, so the socket loop returns to reading
+    // acks, heartbeats and closes and no tenant holds the cap.
+    let mut order: Vec<(bool, (String, String))> = channels
+        .iter()
+        .map(|(key, chan)| (chan.kind != ChannelKind::Pty, key.clone()))
+        .collect();
+    order.sort();
+    let pty = order.iter().filter(|(bulk, _)| !bulk).count();
+    let turn = *rr;
+    *rr = rr.wrapping_add(1);
+    if pty > 0 {
+        order[..pty].rotate_left(turn % pty);
+    }
+    if order.len() > pty {
+        let bulk = order.len() - pty;
+        order[pty..].rotate_left(turn % bulk);
+    }
+    let mut credit = bulk_credit(channels);
+    let mut budget = TICK_DATA_FRAMES;
+    for (_, key) in order {
+        let Some(chan) = channels.get_mut(&key) else {
+            continue;
+        };
+        if chan.gone {
+            continue;
+        }
+        chan.write_stdin(outbox);
+        chan.read_output(now, &mut budget, &mut credit, outbox)?;
+        // The go: the preamble is handed over only after the guest's PROMPT,
+        // while the channel is still starting, inside its deadlines, with its
+        // authority intact (applied above), and (pty) once the host tty is
+        // raw.
+        if chan.prompted && chan.preamble.is_some() {
+            let ready = chan.admissible(now) && chan.io.as_mut().is_some_and(|io| io.input_ready());
+            if ready
+                && let (Some(io), Some(preamble)) = (&mut chan.io, chan.preamble.take())
+                && let Err(refusal) = io.try_write(preamble)
+            {
+                if refusal.closed {
+                    chan.setup_failed();
+                } else {
+                    chan.preamble = Some(refusal.bytes);
+                }
+            }
+        }
+        if end_due(
+            chan.phase,
+            chan.all_streams(),
+            chan.eof,
+            chan.idle_since,
+            now,
+        ) {
+            if chan.kind == ChannelKind::Exec {
+                credit.refund(&chan.creator, chan.unacked());
+            }
+            chan.end_naturally();
+        }
+    }
+    Ok(())
+}
+
+/// Unacknowledged bulk frames of the live exec channels.
+fn bulk_credit(channels: &HashMap<(String, String), Chan>) -> BulkCredit {
+    let mut credit = BulkCredit::default();
+    for chan in channels.values() {
+        if chan.kind == ChannelKind::Exec && chan.live() {
+            credit.charge(&chan.creator, chan.unacked());
+        }
+    }
+    credit
+}
+
 #[cfg(test)]
 #[path = "channel_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "channel_model_tests.rs"]
+mod model_tests;

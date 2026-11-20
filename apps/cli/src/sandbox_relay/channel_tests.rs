@@ -3365,10 +3365,11 @@ fn a_natural_end_decided_before_a_flush_crossing_is_killed_next_tick() {
     }
 }
 
-/// Codex v3 r1.1: the setup deadline passes while a pty channel's IO-slot
-/// authority lookup waits (on a journal or credential lock); a starting
-/// channel later in that tick, with READY waiting in its pipe, is ended by
-/// the setup rule right before its IO, never moved to Running.
+/// Codex v3 r1.1 (1a.1: by construction): the setup deadline passes while
+/// another channel's authority lookup waits (on a journal or credential
+/// lock) in the tick's gather phase. The tick's one clock read follows every
+/// lookup, so a starting channel with READY waiting in its pipe is ended by
+/// the setup rule, never moved to Running.
 #[test]
 fn a_setup_deadline_crossed_during_a_lookup_wait_refuses_ready() {
     let mut rig = rig();
@@ -3387,15 +3388,15 @@ fn a_setup_deadline_crossed_during_a_lookup_wait_refuses_ready() {
     let mut out = outs(rig.host.poll().unwrap());
     assert!(starting.started());
     assert_eq!(starting.queued(ChannelOutput::Stderr), 1);
-    // Next tick: the pty's second lookup (its IO slot, first in the IO
-    // order) "waits" across the setup deadline.
+    // Next tick: the pty's lookup in the gather "waits" across the setup
+    // deadline.
     let clock = rig.host.clock_handle();
     let mut shell_lookups = 0;
     rig.host
         .set_check_hook(Some(Box::new(move |fence: &ChannelFence| {
             if fence.channel_id == "shell" {
                 shell_lookups += 1;
-                if shell_lookups == 2 {
+                if shell_lookups == 1 {
                     clock.fetch_add(
                         SETUP_DEADLINE.as_millis() as u64,
                         std::sync::atomic::Ordering::SeqCst,
