@@ -1868,6 +1868,42 @@ pub trait SandboxRuntime: Send + Sync {
         0
     }
 
+    /// Whether this runtime implements CLI channels (`pty` and `exec`,
+    /// [`SandboxRuntime::open_channel`]). Fail-closed default.
+    fn channel_capability(&self) -> bool {
+        false
+    }
+
+    /// Spawn one channel process in its own guest scope (wssp-ssh). The
+    /// spawn blocks (instance binding, host spawn) but carries no secret and
+    /// starts no workload: the guest waits for the preamble the IO owner
+    /// writes through the returned [`crate::ChannelIo`].
+    fn spawn_channel(
+        &self,
+        request: &crate::SpawnChannelRequest,
+    ) -> Result<crate::SpawnedChannel, crate::ChannelOpenFailure> {
+        let _ = request;
+        Err(RuntimeError::new(
+            SandboxErrorCode::UnsupportedCapability,
+            "Unsupported capability: channels",
+        )
+        .into())
+    }
+
+    /// Tombstone, kill and prove gone each listed channel scope of one
+    /// sandbox (durable-registry sweep and retried uncertain kills). A
+    /// positively stopped or absent instance proves every scope gone.
+    fn kill_channel_scopes(
+        &self,
+        request: &crate::KillScopesRequest,
+    ) -> Result<Vec<(String, crate::ScopeKill)>, RuntimeError> {
+        let _ = request;
+        Err(RuntimeError::new(
+            SandboxErrorCode::UnsupportedCapability,
+            "Unsupported capability: channels",
+        ))
+    }
+
     fn read_file(&self, request: &ReadFileRequest) -> Result<ReadFileResponse, RuntimeError>;
 
     fn write_file(&self, request: &WriteFileRequest) -> crate::EffectOutcome<WriteFileResponse>;

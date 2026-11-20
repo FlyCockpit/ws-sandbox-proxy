@@ -3,10 +3,12 @@ import { type HostLease, leaseWireSchema } from "@wssp/api/sandbox/lease-wire";
 import {
   type BuildCopyV11,
   hostHelloV11Schema as baseHostHelloV11Schema,
+  CHANNEL_KINDS,
   CREDENTIAL_CAPTURE_DISPATCH_KINDS,
   CREDENTIAL_SPEC_DISPATCH_KINDS,
   type CredentialSpecRefV11,
   capacityReasonSchema,
+  channelsCapabilitySchema,
   credentialSpecRefV11Schema,
   credentialTeardownOriginSchema,
   type DispatchBuildV11,
@@ -94,12 +96,15 @@ const hostHelloV11Schema = baseHostHelloV11Schema.safeExtend({
   }),
 });
 
+import channelLimits from "../../../../packages/config/src/sandbox-channel-limits.json";
 import commandLimits from "../../../../packages/config/src/sandbox-command-limits.json";
 import receiptLimits from "../../../../packages/config/src/sandbox-receipt-limits.json";
 import terminalLimits from "../../../../packages/config/src/sandbox-terminal-limits.json";
 export const RECEIPT_LIMITS = receiptLimits;
 /** C52 terminal channel bounds, shared with Rust (`sandbox_protocol::terminal`). */
 export const TERMINAL_LIMITS = terminalLimits;
+/** Interactive channel bounds, shared with Rust (`sandbox_protocol::channel`). */
+export const CHANNEL_LIMITS = channelLimits;
 const COMMAND_LIMITS = commandLimits;
 /** Stateless (non-streaming) codecs, shared by every frame. */
 const textEncoder = new TextEncoder();
@@ -546,6 +551,105 @@ const serverTerminalMessageSchema = z.discriminatedUnion("type", [
 ]);
 type ServerTerminalMessage = z.infer<typeof serverTerminalMessageSchema>;
 
+/** Channel and connection ids: shorter than terminal ids so the guest unit
+ * `wssp-chan-<connectionId>.<channelId>.scope` stays short. */
+const channelIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/);
+const channelFenceSchema = z.strictObject({
+  channelId: channelIdSchema,
+  connectionId: channelIdSchema,
+  hostId: terminalIdSchema,
+  epoch: admissionEpochSchema,
+  target: z.strictObject({
+    kind: z.literal("sandbox"),
+    sandboxId: terminalIdSchema,
+    generation: admissionEpochSchema,
+  }),
+});
+const utf8Bytes = (value: string) => Buffer.byteLength(value, "utf8");
+const noNul = (value: string) => !value.includes("\0");
+const channelArgvSchema = z
+  .array(z.string().refine(noNul))
+  .min(1)
+  .max(CHANNEL_LIMITS.argvMaxItems)
+  .refine(
+    (argv) => argv.reduce((total, arg) => total + utf8Bytes(arg), 0) <= CHANNEL_LIMITS.argvMaxBytes,
+  );
+const channelCwdSchema = z
+  .string()
+  .refine(
+    (cwd) => cwd.startsWith("/") && noNul(cwd) && utf8Bytes(cwd) <= CHANNEL_LIMITS.cwdMaxBytes,
+  );
+/** Only locale and colour hints; `TERM` travels in `pty.term`. */
+const channelEnvSchema = z
+  .record(
+    z.string().regex(/^(COLORTERM|LANG|LC_[A-Z0-9_]+)$/),
+    z
+      .string()
+      .refine((value) => noNul(value) && utf8Bytes(value) <= CHANNEL_LIMITS.envValueMaxBytes),
+  )
+  .refine((env) => Object.keys(env).length <= CHANNEL_LIMITS.envMaxEntries);
+const channelPtyParamsSchema = z.strictObject({
+  rows: terminalRowsSchema,
+  cols: terminalColsSchema,
+  term: z
+    .string()
+    .min(1)
+    .max(CHANNEL_LIMITS.termMaxBytes)
+    .regex(/^[A-Za-z0-9._+-]+$/),
+});
+const channelOutputStreamSchema = z.enum(["stdout", "stderr"]);
+const channelStreamSchema = z.enum(["stdin", "stdout", "stderr"]);
+
+const serverChannelMessageSchema = z.discriminatedUnion("type", [
+  z
+    .strictObject({
+      type: z.literal("channel.open"),
+      fence: channelFenceSchema,
+      kind: z.enum(CHANNEL_KINDS),
+      argv: channelArgvSchema.optional(),
+      login: z.boolean(),
+      cwd: channelCwdSchema.optional(),
+      env: channelEnvSchema.optional(),
+      pty: channelPtyParamsSchema.optional(),
+    })
+    .refine((v) => (v.kind === "pty") === (v.pty !== undefined)),
+  /** Cumulative credit: the highest delivered output `seq` of `stream`. */
+  z.strictObject({
+    type: z.literal("channel.ack"),
+    fence: channelFenceSchema,
+    stream: channelOutputStreamSchema,
+    seq: terminalSequenceSchema,
+  }),
+  z.strictObject({
+    type: z.literal("channel.eof"),
+    fence: channelFenceSchema,
+    stream: z.literal("stdin"),
+    frames: terminalSequenceSchema,
+  }),
+  z.strictObject({
+    type: z.literal("channel.resize"),
+    fence: channelFenceSchema,
+    rows: terminalRowsSchema,
+    cols: terminalColsSchema,
+  }),
+  z.strictObject({
+    type: z.literal("channel.signal"),
+    fence: channelFenceSchema,
+    signal: z.enum(["TERM", "INT", "HUP", "KILL"]),
+  }),
+  /** `client` is a normal close; any other intent kill-closes the channel. */
+  z.strictObject({
+    type: z.literal("channel.close"),
+    fence: channelFenceSchema,
+    intent: terminalCloseIntentSchema,
+  }),
+]);
+type ServerChannelMessage = z.infer<typeof serverChannelMessageSchema>;
+
 export const availabilityBindingSchema = z
   .object({
     revisionId: messageIdSchema,
@@ -767,6 +871,41 @@ const coreDaemonControlMessageSchema = z.discriminatedUnion("type", [
       error: protocolErrorDetailSchema.optional(),
     })
     .strict(),
+  z.strictObject({
+    type: z.literal("channel.ready"),
+    fence: channelFenceSchema,
+    pty: z.strictObject({ rows: terminalRowsSchema, cols: terminalColsSchema }).optional(),
+  }),
+  z.strictObject({
+    type: z.literal("channel.ack"),
+    fence: channelFenceSchema,
+    stream: z.literal("stdin"),
+    seq: terminalSequenceSchema,
+  }),
+  z.strictObject({
+    type: z.literal("channel.eof"),
+    fence: channelFenceSchema,
+    stream: channelOutputStreamSchema,
+    frames: terminalSequenceSchema,
+  }),
+  z.strictObject({
+    type: z.literal("channel.error"),
+    fence: channelFenceSchema,
+    code: z.enum(["unsupported_signal", "state_conflict"]),
+  }),
+  /** The channel's last frame; at most one of `exitCode` and `signal`. */
+  z
+    .strictObject({
+      type: z.literal("channel.exit"),
+      fence: channelFenceSchema,
+      exitCode: z.number().int().min(-2147483648).max(2147483647).optional(),
+      signal: z.number().int().min(1).max(64).optional(),
+      intent: terminalCloseIntentSchema.optional(),
+      error: protocolErrorDetailSchema.optional(),
+      reaped: z.boolean(),
+      frames: z.strictObject({ stdout: terminalSequenceSchema, stderr: terminalSequenceSchema }),
+    })
+    .refine((v) => v.exitCode === undefined || v.signal === undefined),
   z
     .object({
       type: z.literal("allocation.attest.result"),
@@ -988,6 +1127,8 @@ const negotiatedCapabilitiesSchema = z
     /** Plan §10: sent only to daemons that offered `commandRetire`:
      * `receipt.confirmed` may then carry `retireCommand`. */
     commandRetire: z.literal(true),
+    /** Echoed only to a daemon that offered `channels`. */
+    channels: channelsCapabilitySchema.optional(),
   })
   .strict();
 
@@ -1023,6 +1164,7 @@ export type ServerControlMessage =
       bindings: AvailabilityBinding[];
     }
   | ServerTerminalMessage
+  | ServerChannelMessage
   | {
       type: "command.output.ack" | "file.chunk.ack";
       operationId: string;
@@ -1257,6 +1399,8 @@ export type StreamBinaryMetadata = z.infer<typeof streamBinaryMetadataSchema>;
 
 export function negotiatedCapabilities(
   protocolVersion: NegotiatedVersion = SANDBOX_RELAY_PROTOCOL_VERSION,
+  /** The daemon's hello offer: optional features echoed only when offered. */
+  offered?: { channels?: NegotiatedCapabilities["channels"] },
 ): NegotiatedCapabilities {
   return {
     protocolVersion,
@@ -1270,6 +1414,7 @@ export function negotiatedCapabilities(
     expiryStatusResults: true,
     observationFence: true,
     commandRetire: true,
+    ...(offered?.channels === undefined ? {} : { channels: offered.channels }),
   };
 }
 
@@ -1489,6 +1634,8 @@ export function encodeServerControlMessage(
     !serverTerminalMessageSchema.safeParse(message).success
   )
     throw new SandboxRelayDispatchValidationError("refusing terminal frame: invalid fence or size");
+  if (message.type.startsWith("channel.") && !serverChannelMessageSchema.safeParse(message).success)
+    throw new SandboxRelayDispatchValidationError("Invalid channel frame.");
   if (
     message.type === "operation.dispatch" &&
     !terminalIdSchema.safeParse(message.sandboxOwnerId).success
@@ -1726,6 +1873,61 @@ export function parseTerminalDataFrame(
   }
   return {
     metadata: terminalDataMetadataSchema.parse(raw),
+    body: new Uint8Array(frame, 4 + metadataLength, bodyLength),
+  };
+}
+
+const channelDataMetadataSchema = z.strictObject({
+  type: z.literal("channel.data"),
+  fence: channelFenceSchema,
+  stream: channelStreamSchema,
+  seq: terminalSequenceSchema,
+});
+export type ChannelDataMetadata = z.infer<typeof channelDataMetadataSchema>;
+
+/** Body 1..=`bulkDataMaxBytes`; the 16 KiB PTY bound is the endpoints'. */
+export function encodeChannelDataFrame(
+  metadata: ChannelDataMetadata,
+  body: Uint8Array,
+): ArrayBuffer {
+  if (body.byteLength === 0 || body.byteLength > CHANNEL_LIMITS.bulkDataMaxBytes) {
+    throw new SandboxRelayDispatchValidationError("Channel data body is empty or oversized.");
+  }
+  const checked = channelDataMetadataSchema.parse(metadata);
+  const metadataBytes = textEncoder.encode(JSON.stringify(checked));
+  const frame = new Uint8Array(4 + metadataBytes.byteLength + body.byteLength);
+  new DataView(frame.buffer).setUint32(0, metadataBytes.byteLength, false);
+  frame.set(metadataBytes, 4);
+  frame.set(body, 4 + metadataBytes.byteLength);
+  return frame.buffer;
+}
+
+/**
+ * `null` when the binary frame is not a channel frame (a command/file stream
+ * or terminal frame). Otherwise the strictly parsed channel frame; an empty or
+ * oversized body, unknown field or invalid fence throws.
+ */
+export function parseChannelDataFrame(
+  frame: ArrayBuffer,
+): { metadata: ChannelDataMetadata; body: Uint8Array } | null {
+  if (frame.byteLength < 4) return null;
+  const metadataLength = new DataView(frame).getUint32(0, false);
+  if (metadataLength > SANDBOX_JSON_CONTROL_MAX_BYTES || 4 + metadataLength > frame.byteLength)
+    return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(textDecoder.decode(new Uint8Array(frame, 4, metadataLength)));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || (raw as { type?: unknown }).type !== "channel.data")
+    return null;
+  const bodyLength = frame.byteLength - 4 - metadataLength;
+  if (bodyLength === 0 || bodyLength > CHANNEL_LIMITS.bulkDataMaxBytes) {
+    throw new SandboxRelayProtocolError("Channel data body is empty or oversized.");
+  }
+  return {
+    metadata: channelDataMetadataSchema.parse(raw),
     body: new Uint8Array(frame, 4 + metadataLength, bodyLength),
   };
 }

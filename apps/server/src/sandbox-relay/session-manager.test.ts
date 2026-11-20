@@ -53,6 +53,7 @@ import {
 } from "./fenced-prisma-harness.js";
 import {
   encodeBinaryFrame,
+  encodeChannelDataFrame,
   parseBinaryFrame,
   parseDaemonControlFrame,
   SandboxRelayDispatchValidationError,
@@ -375,6 +376,36 @@ describe("ordered socket authority", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("echoes a channels offer and refuses every unsolicited channel frame", async () => {
+    const fence = {
+      channelId: "chan-1",
+      connectionId: "conn-1",
+      hostId: "host-1",
+      epoch: 1,
+      target: { kind: "sandbox" as const, sandboxId: "sbx-1", generation: 1 },
+    };
+    const plain = await registered();
+    const plainAck = JSON.parse(plain.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
+    expect(plainAck.capabilities).not.toHaveProperty("channels");
+    manager.handleTextFrame(
+      plain,
+      JSON.stringify({ type: "channel.ready", fence, pty: { rows: 24, cols: 80 } }),
+    );
+    expect(plain.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+
+    const offered = await registered(false, true, { channels: { kinds: ["pty", "exec"] } });
+    const ack = JSON.parse(offered.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
+    expect(ack.capabilities.channels).toEqual({ kinds: ["pty", "exec"] });
+    manager.handleBinaryFrame(
+      offered,
+      encodeChannelDataFrame(
+        { type: "channel.data", fence, stream: "stdout", seq: 0 },
+        new Uint8Array([1]),
+      ),
+    );
+    expect(offered.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
   });
 
   it.each([false, true])(

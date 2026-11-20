@@ -305,6 +305,15 @@ export const TERMINAL_RESUME_GRACE_MAX_MS = 600_000;
 export const terminalResumeCapabilitySchema = z.strictObject({
   graceMs: z.number().int().min(TERMINAL_RESUME_GRACE_MIN_MS).max(TERMINAL_RESUME_GRACE_MAX_MS),
 });
+/** Interactive channel kinds (`channel.open` `kind`, Rust `ChannelKind`). */
+export const CHANNEL_KINDS = ["pty", "exec"] as const;
+/** Optional hello capability: the channel kinds a node opens (Rust `ChannelsCapability`). */
+export const channelsCapabilitySchema = z.strictObject({
+  kinds: z
+    .array(z.enum(CHANNEL_KINDS))
+    .min(1)
+    .refine((kinds) => new Set(kinds).size === kinds.length, "duplicate channel kind"),
+});
 export const daemonCapabilitiesV11Schema = z.strictObject({
   protocolVersion: z.literal("1.0"),
   binaryFrames: z.literal(true),
@@ -357,6 +366,8 @@ export const daemonCapabilitiesV11Schema = z.strictObject({
   /** The daemon accepts a launch dispatch's `tunnelPorts` (its runtime
    * compiles them into the recorded plan), with or without a client. */
   tunnelPorts: z.literal(true).optional(),
+  /** Interactive channels (`channel.*`); omitted by daemons that open none. */
+  channels: channelsCapabilitySchema.optional(),
 });
 export const hostHelloV11Schema = z
   .strictObject({

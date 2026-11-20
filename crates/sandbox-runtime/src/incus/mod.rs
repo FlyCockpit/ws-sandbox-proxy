@@ -1,4 +1,5 @@
 pub(crate) mod acl;
+mod channel;
 pub(crate) mod client;
 mod command_scope;
 #[cfg(test)]
@@ -29,6 +30,8 @@ mod tunnel_ports_tests;
 
 #[cfg(test)]
 mod bootstrap_shim_tests;
+#[cfg(test)]
+mod channel_shim_tests;
 #[cfg(test)]
 mod command_scope_shim_tests;
 #[cfg(test)]

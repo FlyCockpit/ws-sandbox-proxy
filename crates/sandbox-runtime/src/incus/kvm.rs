@@ -1164,6 +1164,24 @@ impl SandboxRuntime for IncusKvmRuntime {
         self.client.pty_sessions.close_matching(sandbox_id, intent)
     }
 
+    fn channel_capability(&self) -> bool {
+        true
+    }
+
+    fn spawn_channel(
+        &self,
+        request: &crate::SpawnChannelRequest,
+    ) -> Result<crate::SpawnedChannel, crate::ChannelOpenFailure> {
+        super::channel::spawn(&self.client, request)
+    }
+
+    fn kill_channel_scopes(
+        &self,
+        request: &crate::KillScopesRequest,
+    ) -> Result<Vec<(String, crate::ScopeKill)>, RuntimeError> {
+        super::channel::kill_scopes(&self.client, request)
+    }
+
     fn read_file(&self, request: &ReadFileRequest) -> Result<ReadFileResponse, RuntimeError> {
         let client = self.client.with_guest(&request.guest);
         let bound = client.bind_instance(

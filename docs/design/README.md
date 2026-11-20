@@ -22,6 +22,7 @@ User-facing explanations of these decisions are in the [guide](../guide/README.m
 - [Declarative template builds](./declarative-build.md)
 - [Host policy reconciliation](./host-policy-reconciliation.md)
 - [Terminal relay contract](./terminal-relay-contract.md) (frames, fences, flow control, close intent)
+- [CLI channel relay contract](./connect-channel-contract.md) (`channel.*` frames, guest scope launcher, kill proof, durable registry)
 - [Browser terminal authentication](./browser-terminal-auth.md) (tickets, refusals, re-reads and web client)
 - [Device flow contract](./device-flow-contract.md) (`wssp host enroll` exchange)
 - [Webhooks contract](./webhooks-contract.md) (emission triggers, ledger state machine, signing bytes, versioning)

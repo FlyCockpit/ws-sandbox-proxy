@@ -403,6 +403,9 @@ pub struct DaemonCapabilitiesV11 {
     /// Optional: the daemon accepts a launch dispatch's `tunnelPorts`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tunnel_ports: bool,
+    /// Optional interactive channels (`channel.*`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channels: Option<crate::ChannelsCapability>,
 }
 impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
     type Error = VmSizeError;
@@ -540,6 +543,17 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
                 Some(tunnel)
             }
         };
+        let channels = match object.remove("channels") {
+            None => None,
+            Some(raw) => {
+                let channels: crate::ChannelsCapability =
+                    serde_json::from_value(raw).map_err(|_| VmSizeError)?;
+                if !channels.is_valid() {
+                    return Err(VmSizeError);
+                }
+                Some(channels)
+            }
+        };
         let terminal_resume = match object.remove("terminalResume") {
             None => None,
             Some(raw) => {
@@ -577,6 +591,7 @@ impl TryFrom<serde_json::Value> for DaemonCapabilitiesV11 {
             disk_offload,
             tunnel,
             tunnel_ports,
+            channels,
         })
     }
 }

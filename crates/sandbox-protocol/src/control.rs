@@ -574,6 +574,38 @@ daemon_control! {
         #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
         error: Option<ProtocolErrorDetail>,
     },
+    /// The channel's process is running; `pty` is the applied PTY size.
+    #[serde(rename = "channel.ready")]
+    ChannelReady {
+        fence: crate::ChannelFence,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
+        pty: Option<crate::ChannelPtySize>,
+    },
+    /// Cumulative credit: the highest written `stdin` `seq`.
+    #[serde(rename = "channel.ack")]
+    ChannelAck { fence: crate::ChannelFence, stream: crate::ChannelStream, seq: u64 },
+    /// End of `stdout` or `stderr` after `frames` data frames.
+    #[serde(rename = "channel.eof")]
+    ChannelEof { fence: crate::ChannelFence, stream: crate::ChannelStream, frames: u64 },
+    /// A non-fatal refusal of one request on a live channel.
+    #[serde(rename = "channel.error")]
+    ChannelError { fence: crate::ChannelFence, code: crate::ChannelNotice },
+    /// The channel's last frame, sent after every output frame and eof. At
+    /// most one of `exit_code` and `signal`.
+    #[serde(rename = "channel.exit")]
+    ChannelExit {
+        fence: crate::ChannelFence,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
+        signal: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
+        intent: Option<crate::ChannelCloseIntent>,
+        #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "crate::terminal::present_terminal_field")]
+        error: Option<ProtocolErrorDetail>,
+        reaped: bool,
+        frames: crate::ChannelExitFrames,
+    },
 }
 
 struct DaemonControlEncoder<'a>(&'a DaemonControlMessage);
@@ -1105,6 +1137,73 @@ pub enum ServerControlMessage {
     /// Credit: every host→server output frame up to `sequence` was delivered.
     #[serde(rename = "terminal.ack")]
     TerminalAck { fence: TerminalFence, sequence: u64 },
+    /// Open an interactive channel (a PTY shell or an exec) in the fenced
+    /// sandbox generation. The host takes the guest identity from its own
+    /// journal, never the frame. Answered by `channel.ready` or `channel.exit`.
+    #[serde(rename = "channel.open")]
+    ChannelOpen {
+        fence: crate::ChannelFence,
+        kind: crate::ChannelKind,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        argv: Option<Vec<String>>,
+        login: bool,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        cwd: Option<String>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        env: Option<std::collections::BTreeMap<String, String>>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        pty: Option<crate::ChannelPtyParams>,
+    },
+    /// Cumulative credit: the highest delivered output `seq` of `stream`
+    /// (`stdout` or `stderr`).
+    #[serde(rename = "channel.ack")]
+    ChannelAck {
+        fence: crate::ChannelFence,
+        stream: crate::ChannelStream,
+        seq: u64,
+    },
+    /// End of `stdin` after `frames` data frames.
+    #[serde(rename = "channel.eof")]
+    ChannelEof {
+        fence: crate::ChannelFence,
+        stream: crate::ChannelStream,
+        frames: u64,
+    },
+    /// PTY channels only.
+    #[serde(rename = "channel.resize")]
+    ChannelResize {
+        fence: crate::ChannelFence,
+        rows: u16,
+        cols: u16,
+    },
+    /// Exec channels only.
+    #[serde(rename = "channel.signal")]
+    ChannelSignal {
+        fence: crate::ChannelFence,
+        signal: crate::ChannelSignal,
+    },
+    /// `client` is a normal close; any other intent kill-closes the channel.
+    #[serde(rename = "channel.close")]
+    ChannelClose {
+        fence: crate::ChannelFence,
+        intent: crate::ChannelCloseIntent,
+    },
     #[serde(rename = "image.fetch.grant")]
     ImageFetchGrant(crate::ImageFetchGrantV11),
     #[serde(rename = "image.fetch.refused")]
@@ -1184,6 +1283,8 @@ pub enum ControlError {
     InvalidInventory,
     #[error("invalid terminal frame")]
     InvalidTerminal,
+    #[error("invalid channel frame")]
+    InvalidChannel,
     #[error("invalid environment map")]
     InvalidEnvironment,
     #[error("invalid image frame")]
@@ -1317,6 +1418,7 @@ pub fn parse_server_control(text: &str) -> Result<ServerControlMessage, ControlE
     }
     validate_server_admission(&message)?;
     validate_server_terminal(&message)?;
+    validate_server_channel(&message)?;
     validate_server_env(&message)?;
     Ok(message)
 }
@@ -1324,6 +1426,7 @@ pub fn parse_server_control(text: &str) -> Result<ServerControlMessage, ControlE
 pub fn encode_server_control(message: &ServerControlMessage) -> Result<String, ControlError> {
     validate_server_admission(message)?;
     validate_server_terminal(message)?;
+    validate_server_channel(message)?;
     validate_server_env(message)?;
     let text = serde_json::to_string(message).map_err(|_| ControlError::Serialize)?;
     if text.len() > server_control_limit(message) {
@@ -1677,6 +1780,93 @@ fn validate_daemon_terminal(message: &DaemonControlMessage) -> Result<(), Contro
     }
 }
 
+fn validate_server_channel(message: &ServerControlMessage) -> Result<(), ControlError> {
+    let valid = match message {
+        // The echo of the daemon's offer: as strict as the offer itself.
+        ServerControlMessage::HelloOk { capabilities, .. } => capabilities
+            .channels
+            .as_ref()
+            .is_none_or(crate::ChannelsCapability::is_valid),
+        ServerControlMessage::ChannelOpen {
+            fence,
+            kind,
+            argv,
+            cwd,
+            env,
+            pty,
+            ..
+        } => crate::valid_channel_open(
+            fence,
+            *kind,
+            argv.as_deref(),
+            cwd.as_deref(),
+            env.as_ref(),
+            pty.as_ref(),
+        ),
+        ServerControlMessage::ChannelAck { fence, stream, seq } => {
+            fence.is_valid() && stream.is_output() && crate::channel::valid_channel_seq(*seq)
+        }
+        ServerControlMessage::ChannelEof {
+            fence,
+            stream,
+            frames,
+        } => {
+            fence.is_valid()
+                && *stream == crate::ChannelStream::Stdin
+                && crate::channel::valid_channel_seq(*frames)
+        }
+        ServerControlMessage::ChannelResize { fence, rows, cols } => {
+            fence.is_valid() && valid_terminal_size(*rows, *cols)
+        }
+        ServerControlMessage::ChannelSignal { fence, .. }
+        | ServerControlMessage::ChannelClose { fence, .. } => fence.is_valid(),
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ControlError::InvalidChannel)
+    }
+}
+
+fn validate_daemon_channel(message: &DaemonControlMessage) -> Result<(), ControlError> {
+    let valid = match message {
+        DaemonControlMessage::Hello { daemon, .. } => daemon
+            .capabilities
+            .channels
+            .as_ref()
+            .is_none_or(crate::ChannelsCapability::is_valid),
+        DaemonControlMessage::ChannelReady { fence, pty } => {
+            fence.is_valid() && pty.is_none_or(|p| valid_terminal_size(p.rows, p.cols))
+        }
+        DaemonControlMessage::ChannelAck { fence, stream, seq } => {
+            fence.is_valid()
+                && *stream == crate::ChannelStream::Stdin
+                && crate::channel::valid_channel_seq(*seq)
+        }
+        DaemonControlMessage::ChannelEof {
+            fence,
+            stream,
+            frames,
+        } => fence.is_valid() && stream.is_output() && crate::channel::valid_channel_seq(*frames),
+        DaemonControlMessage::ChannelError { fence, .. } => fence.is_valid(),
+        DaemonControlMessage::ChannelExit {
+            fence,
+            exit_code,
+            signal,
+            error,
+            frames,
+            ..
+        } => crate::valid_channel_exit(fence, *exit_code, *signal, error.as_ref(), frames),
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ControlError::InvalidChannel)
+    }
+}
+
 pub fn parse_daemon_control(text: &str) -> Result<DaemonControlMessage, ControlError> {
     if text.len() > crate::HOST_CONTROL_MAX_BYTES {
         return Err(ControlError::TooLarge);
@@ -1736,7 +1926,8 @@ fn validate_daemon_receipt(message: &DaemonControlMessage) -> Result<(), Control
         DaemonControlMessage::OperationResult { error, .. }
         | DaemonControlMessage::OperationReceipt { error, .. }
         | DaemonControlMessage::ImageVerifyResult { error, .. }
-        | DaemonControlMessage::TerminalExit { error, .. } => error.as_ref(),
+        | DaemonControlMessage::TerminalExit { error, .. }
+        | DaemonControlMessage::ChannelExit { error, .. } => error.as_ref(),
         _ => None,
     };
     if detail.is_some_and(|e| {
@@ -1830,6 +2021,7 @@ fn validate_daemon_receipt(message: &DaemonControlMessage) -> Result<(), Control
         _ => {}
     }
     validate_daemon_terminal(message)?;
+    validate_daemon_channel(message)?;
     if let DaemonControlMessage::AllocationAttestResult {
         connection_epoch,
         barrier,

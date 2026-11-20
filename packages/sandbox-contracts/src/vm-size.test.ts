@@ -154,3 +154,26 @@ it("Prisma defaults and managed numeric bounds match the canonical policy", asyn
   );
   expect(schema).toContain(`"capacityGiB" <= ${limits.storageCapacityGiBMax}`);
 });
+
+it("accepts an optional, strict, duplicate-free channels hello capability", () => {
+  const withChannels = (channels: unknown) => ({
+    ...helloV11,
+    daemon: {
+      ...helloV11.daemon,
+      capabilities: { ...helloV11.daemon.capabilities, channels },
+    },
+  });
+  expect(hostHelloV11Schema.safeParse(helloV11).success).toBe(true);
+  for (const kinds of [["pty", "exec"], ["exec"], ["pty"]])
+    expect(hostHelloV11Schema.safeParse(withChannels({ kinds })).success).toBe(true);
+  for (const bad of [
+    { kinds: [] },
+    { kinds: ["pty", "pty"] },
+    { kinds: ["shell"] },
+    { kinds: ["exec"], extra: 1 },
+    null,
+  ])
+    expect(hostHelloV11Schema.safeParse(withChannels(bad)).success, JSON.stringify(bad)).toBe(
+      false,
+    );
+});

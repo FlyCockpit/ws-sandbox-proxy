@@ -1,0 +1,1238 @@
+{
+  "server": [
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "pty",
+      "login": true,
+      "pty": {
+        "rows": 24,
+        "cols": 80,
+        "term": "xterm-256color"
+      }
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-2",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "pty",
+      "argv": ["/bin/bash", "-l"],
+      "login": false,
+      "cwd": "/srv/app",
+      "env": {
+        "COLORTERM": "truecolor",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8"
+      },
+      "pty": {
+        "rows": 512,
+        "cols": 1024,
+        "term": "xterm"
+      }
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-3",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "exec",
+      "argv": ["git", "upload-pack", "/srv/repo.git"],
+      "login": false
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-4",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "exec",
+      "login": true,
+      "cwd": "/home/guest",
+      "env": {
+        "LANG": "en_US.UTF-8"
+      }
+    },
+    {
+      "type": "channel.ack",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stdout",
+      "seq": 0
+    },
+    {
+      "type": "channel.ack",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stderr",
+      "seq": 9007199254740991
+    },
+    {
+      "type": "channel.eof",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stdin",
+      "frames": 12
+    },
+    {
+      "type": "channel.resize",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "rows": 40,
+      "cols": 120
+    },
+    {
+      "type": "channel.signal",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "signal": "TERM"
+    },
+    {
+      "type": "channel.signal",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "signal": "KILL"
+    },
+    {
+      "type": "channel.close",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "intent": "client"
+    },
+    {
+      "type": "channel.close",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "intent": "protocol_violation"
+    }
+  ],
+  "daemon": [
+    {
+      "type": "channel.ready",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      }
+    },
+    {
+      "type": "channel.ready",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "pty": {
+        "rows": 24,
+        "cols": 80
+      }
+    },
+    {
+      "type": "channel.ack",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stdin",
+      "seq": 3
+    },
+    {
+      "type": "channel.eof",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stdout",
+      "frames": 4
+    },
+    {
+      "type": "channel.eof",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stderr",
+      "frames": 0
+    },
+    {
+      "type": "channel.error",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "code": "unsupported_signal"
+    },
+    {
+      "type": "channel.error",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "code": "state_conflict"
+    },
+    {
+      "type": "channel.exit",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "reaped": true,
+      "frames": {
+        "stdout": 4,
+        "stderr": 0
+      }
+    },
+    {
+      "type": "channel.exit",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "exitCode": 0,
+      "reaped": true,
+      "frames": {
+        "stdout": 4,
+        "stderr": 1
+      }
+    },
+    {
+      "type": "channel.exit",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "signal": 9,
+      "intent": "client",
+      "reaped": false,
+      "frames": {
+        "stdout": 0,
+        "stderr": 0
+      }
+    },
+    {
+      "type": "channel.exit",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "intent": "revoked",
+      "error": {
+        "code": "guest_unavailable",
+        "message": "guest unavailable"
+      },
+      "reaped": true,
+      "frames": {
+        "stdout": 0,
+        "stderr": 0
+      }
+    }
+  ],
+  "rejected": {
+    "server": [
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "extra": 1
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "_bad",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn.1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 0,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 0
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "host"
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "xterm"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "pty",
+        "login": true
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "pty",
+        "login": true,
+        "pty": {
+          "rows": 0,
+          "cols": 80,
+          "term": "xterm"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "pty",
+        "login": true,
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "xterm 256"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "pty",
+        "login": true,
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": ""
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "env": {
+          "TERM": "xterm"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "env": {
+          "PATH": "/bin"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "env": {
+          "LANG": "C\u0000"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "cwd": "srv/app"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "cwd": "/srv\u0000app"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "a\u0000b"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": [],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": null,
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "shell",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"]
+      },
+      {
+        "type": "channel.ack",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdin",
+        "seq": 0
+      },
+      {
+        "type": "channel.ack",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdout",
+        "seq": 9007199254740992
+      },
+      {
+        "type": "channel.eof",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdout",
+        "frames": 12
+      },
+      {
+        "type": "channel.resize",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "rows": 513,
+        "cols": 120
+      },
+      {
+        "type": "channel.signal",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "signal": "term"
+      },
+      {
+        "type": "channel.signal",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "signal": "QUIT"
+      },
+      {
+        "type": "channel.close",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "intent": "normal"
+      }
+    ],
+    "daemon": [
+      {
+        "type": "channel.ready",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "extra": 1
+      },
+      {
+        "type": "channel.ready",
+        "fence": {
+          "channelId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        }
+      },
+      {
+        "type": "channel.ready",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "pty": {
+          "rows": 24,
+          "cols": 1025
+        }
+      },
+      {
+        "type": "channel.ready",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "pty": null
+      },
+      {
+        "type": "channel.ack",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdout",
+        "seq": 3
+      },
+      {
+        "type": "channel.ack",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdin",
+        "seq": 9007199254740992
+      },
+      {
+        "type": "channel.eof",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "stream": "stdin",
+        "frames": 4
+      },
+      {
+        "type": "channel.error",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "code": "fatal"
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "exitCode": 0,
+        "reaped": true,
+        "frames": {
+          "stdout": 4,
+          "stderr": 1
+        },
+        "signal": 9
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "frames": {
+          "stdout": 4,
+          "stderr": 0
+        },
+        "signal": 0
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "frames": {
+          "stdout": 4,
+          "stderr": 0
+        },
+        "signal": 65
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "frames": {
+          "stdout": 4,
+          "stderr": 0
+        },
+        "exitCode": null
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "frames": {
+          "stdout": 4,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "frames": {
+          "stdout": 9007199254740992,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "channel.exit",
+        "fence": {
+          "channelId": "chan-1",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "reaped": true,
+        "frames": {
+          "stdout": 0,
+          "stderr": 0,
+          "stdin": 0
+        }
+      }
+    ]
+  },
+  "dataFrame": {
+    "metadata": {
+      "type": "channel.data",
+      "fence": {
+        "channelId": "chan-1",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "stream": "stdin",
+      "seq": 3
+    },
+    "bodyHex": "6c730d"
+  }
+}

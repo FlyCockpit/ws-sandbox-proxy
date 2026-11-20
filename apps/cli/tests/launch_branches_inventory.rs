@@ -302,6 +302,11 @@ const INVENTORY: &[(&str, &str, Class)] = &[
         Agnostic,
     ),
     (
+        "channel.rs",
+        r#""sandbox.create" | "sandbox.reconnect" if dispatch.generation > generation => {"#,
+        Agnostic,
+    ),
+    (
         "crates/sandbox-protocol/src/build.rs",
         r#"let create = d.kind == "sandbox.create";"#,
         CreateOnly,

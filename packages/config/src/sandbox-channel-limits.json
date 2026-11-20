@@ -1,0 +1,20 @@
+{
+  "bulkDataMaxBytes": 32768,
+  "ptyDataMaxBytes": 16384,
+  "bulkWindowFrames": 32,
+  "ptyWindowFrames": 8,
+  "maxChannelsPerHost": 96,
+  "maxPtyChannelsPerHost": 32,
+  "maxChannelsPerGuestCreator": 48,
+  "opensPerMinutePerHost": 600,
+  "opensPerMinutePerGuestCreator": 300,
+  "maxChannelsPerConnection": 32,
+  "maxPtyChannelsPerConnection": 8,
+  "fenceViolationLimit": 3,
+  "argvMaxBytes": 65536,
+  "argvMaxItems": 4096,
+  "envMaxEntries": 32,
+  "envValueMaxBytes": 4096,
+  "termMaxBytes": 64,
+  "cwdMaxBytes": 4096
+}

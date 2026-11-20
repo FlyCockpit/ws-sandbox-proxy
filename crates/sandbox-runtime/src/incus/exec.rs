@@ -49,7 +49,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 exec python3 -I -c "$@"
 "#;
-const SIGNAL_HELPER: &str = include_str!("signal-helper.py");
+pub(super) const SIGNAL_HELPER: &str = include_str!("signal-helper.py");
 const SIGNAL_HELPER_DEADLINE: Duration = Duration::from_secs(10);
 /// Incus exec accepts only a primary UID/GID. The launcher selects an
 /// optional guest systemd scope (OOMPolicy=continue keeps a workload OOM away

@@ -3,6 +3,7 @@
 pub mod authority;
 mod build;
 mod carry;
+mod channel;
 mod command_retire;
 pub mod connect;
 pub mod credentials;

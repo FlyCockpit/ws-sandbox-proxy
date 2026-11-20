@@ -14,12 +14,16 @@ import { capacityFixture, helloFixture } from "./capacity-fixtures";
 import { sandboxErrorCodeSchema, sandboxLifecycleStateSchema } from "./protocol";
 import {
   ALLOWED_HOST_DISPATCH_KINDS,
+  CHANNEL_LIMITS,
   classifyRelayDispatchKind,
   encodeBinaryFrame,
+  encodeChannelDataFrame,
   encodeServerControlMessage,
   encodeTerminalDataFrame,
   isDeterministicDispatchError,
+  negotiatedCapabilities,
   parseBinaryFrame,
+  parseChannelDataFrame,
   parseDaemonControlFrame,
   parseParsedDaemonControlFrame,
   parseSandboxRelaySubprotocolHeader,
@@ -958,6 +962,104 @@ describe("C52 terminal frame parity", () => {
     ).toThrow();
     expect(() => parseTerminalDataFrame(raw({ ...metadata, extra: 1 }, 1))).toThrow();
     expect(parseTerminalDataFrame(raw(metadata, TERMINAL_LIMITS.dataMaxBytes))).not.toBeNull();
+  });
+});
+
+describe("channel frame parity", () => {
+  const fixture = JSON.parse(readFileSync(join(protocolFixtures, "control_channel.json"), "utf8"));
+
+  it("round-trips every channel control frame exactly like Rust", () => {
+    for (const message of fixture.server as ServerControlMessage[])
+      expect(JSON.parse(encodeServerControlMessage(message, "1.0"))).toEqual(message);
+    for (const message of fixture.daemon)
+      expect(parseDaemonControlFrame(JSON.stringify(message))).toEqual(message);
+  });
+
+  it("refuses the same malformed, wrong-direction and out-of-policy frames as Rust", () => {
+    for (const message of fixture.rejected.server)
+      expect(() => encodeServerControlMessage(message, "1.0"), JSON.stringify(message)).toThrow();
+    for (const message of fixture.rejected.daemon)
+      expect(
+        () => parseDaemonControlFrame(JSON.stringify(message)),
+        JSON.stringify(message),
+      ).toThrow();
+  });
+
+  it("encodes and parses the shared channel data frame byte-exactly", () => {
+    const body = Uint8Array.from(Buffer.from(fixture.dataFrame.bodyHex, "hex"));
+    const frame = encodeChannelDataFrame(fixture.dataFrame.metadata, body);
+    const parsed = parseChannelDataFrame(frame);
+    expect(parsed?.metadata).toEqual(fixture.dataFrame.metadata);
+    expect(Buffer.from(parsed!.body).toString("hex")).toBe(fixture.dataFrame.bodyHex);
+    // Channel, terminal and stream frames never parse as one another.
+    expect(parseTerminalDataFrame(frame)).toBeNull();
+    expect(() => parseBinaryFrame(frame)).toThrow();
+    const stream = encodeBinaryFrame(
+      {
+        type: "stream.chunk",
+        streamId: "s",
+        operationId: "op",
+        generation: 1,
+        attempt: 1,
+        sequence: 0,
+      },
+      new Uint8Array([1]),
+    );
+    expect(parseChannelDataFrame(stream)).toBeNull();
+  });
+
+  it("refuses empty, oversized, unfenced and extended channel data frames", () => {
+    const metadata = fixture.dataFrame.metadata;
+    expect(() => encodeChannelDataFrame(metadata, new Uint8Array())).toThrow();
+    expect(() =>
+      encodeChannelDataFrame(metadata, new Uint8Array(CHANNEL_LIMITS.bulkDataMaxBytes + 1)),
+    ).toThrow();
+    const raw = (meta: unknown, body: number) => {
+      const bytes = new TextEncoder().encode(JSON.stringify(meta));
+      const frame = new Uint8Array(4 + bytes.length + body);
+      new DataView(frame.buffer).setUint32(0, bytes.length, false);
+      frame.set(bytes, 4);
+      return frame.buffer;
+    };
+    expect(() =>
+      parseChannelDataFrame(raw(metadata, CHANNEL_LIMITS.bulkDataMaxBytes + 1)),
+    ).toThrow();
+    expect(() => parseChannelDataFrame(raw(metadata, 0))).toThrow();
+    expect(() =>
+      parseChannelDataFrame(raw({ ...metadata, fence: { ...metadata.fence, epoch: 0 } }, 1)),
+    ).toThrow();
+    expect(() =>
+      parseChannelDataFrame(
+        raw({ ...metadata, fence: { ...metadata.fence, channelId: "a".repeat(65) } }, 1),
+      ),
+    ).toThrow();
+    expect(() => parseChannelDataFrame(raw({ ...metadata, seq: 2 ** 53 }, 1))).toThrow();
+    expect(() => parseChannelDataFrame(raw({ ...metadata, extra: 1 }, 1))).toThrow();
+    expect(parseChannelDataFrame(raw(metadata, CHANNEL_LIMITS.bulkDataMaxBytes))).not.toBeNull();
+  });
+
+  it("accepts the optional channels hello offer and echoes it only when offered", () => {
+    const hello = JSON.parse(
+      readFileSync(join(protocolFixtures, "control_hello_daemon.json"), "utf8"),
+    );
+    const helloOk = JSON.parse(
+      readFileSync(join(protocolFixtures, "control_hello_ok_server.json"), "utf8"),
+    );
+    expect(parseDaemonControlFrame(JSON.stringify(hello))).toMatchObject({ type: "hello" });
+    expect(negotiatedCapabilities("1.0", hello.daemon.capabilities)).not.toHaveProperty("channels");
+    hello.daemon.capabilities.channels = { kinds: ["pty", "exec"] };
+    const parsed = parseDaemonControlFrame(JSON.stringify(hello));
+    if (parsed.type !== "hello") throw new Error("not hello");
+    const capabilities = negotiatedCapabilities("1.0", parsed.daemon.capabilities);
+    expect(capabilities.channels).toEqual({ kinds: ["pty", "exec"] });
+    const encoded = JSON.parse(
+      encodeServerControlMessage({ ...helloOk, capabilities } as ServerControlMessage, "1.0"),
+    );
+    expect(encoded.capabilities.channels).toEqual({ kinds: ["pty", "exec"] });
+    for (const bad of [{ kinds: [] }, { kinds: ["exec", "exec"] }, { kinds: ["shell"] }, null]) {
+      hello.daemon.capabilities.channels = bad;
+      expect(() => parseDaemonControlFrame(JSON.stringify(hello)), JSON.stringify(bad)).toThrow();
+    }
   });
 });
 

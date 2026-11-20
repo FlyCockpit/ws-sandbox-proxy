@@ -366,6 +366,137 @@ fn terminal_frames_round_trip_with_typescript() {
 }
 
 #[test]
+fn channel_frames_round_trip_with_typescript() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(&fixture("control_channel.json")).unwrap();
+    for message in fixture["server"].as_array().unwrap() {
+        let parsed = parse_server_control(&message.to_string()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), *message);
+        let encoded = sandbox_protocol::encode_server_control(&parsed).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&encoded).unwrap(),
+            *message
+        );
+    }
+    for message in fixture["daemon"].as_array().unwrap() {
+        let parsed = parse_daemon_control(&message.to_string()).unwrap();
+        assert_eq!(daemon_value(&parsed), *message);
+    }
+    for message in fixture["rejected"]["server"].as_array().unwrap() {
+        assert!(
+            parse_server_control(&message.to_string()).is_err(),
+            "{message}"
+        );
+    }
+    for message in fixture["rejected"]["daemon"].as_array().unwrap() {
+        assert!(
+            parse_daemon_control(&message.to_string()).is_err(),
+            "{message}"
+        );
+    }
+    // The encoder refuses what the parser refuses (wrong-direction streams).
+    let ack = parse_server_control(&fixture["server"][4].to_string()).unwrap();
+    let ServerControlMessage::ChannelAck { fence, seq, .. } = ack else {
+        panic!("not channel.ack");
+    };
+    assert!(
+        sandbox_protocol::encode_server_control(&ServerControlMessage::ChannelAck {
+            fence,
+            stream: sandbox_protocol::ChannelStream::Stdin,
+            seq,
+        })
+        .is_err()
+    );
+    let metadata: sandbox_protocol::ChannelDataMetadata =
+        serde_json::from_value(fixture["dataFrame"]["metadata"].clone()).unwrap();
+    let body = [0x6c, 0x73, 0x0d];
+    let encoded = sandbox_protocol::encode_channel_frame(&metadata, &body).unwrap();
+    let meta_len = u32::from_be_bytes(encoded[..4].try_into().unwrap()) as usize;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&encoded[4..4 + meta_len]).unwrap(),
+        fixture["dataFrame"]["metadata"]
+    );
+    let hex: String = encoded[4 + meta_len..]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    assert_eq!(hex, fixture["dataFrame"]["bodyHex"].as_str().unwrap());
+    let (parsed, parsed_body) = sandbox_protocol::parse_channel_frame(&encoded)
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed, metadata);
+    assert_eq!(parsed_body, body);
+    assert!(sandbox_protocol::parse_terminal_frame(&encoded).is_none());
+}
+
+/// The optional `channels` hello offer parses on both hello decoders, is
+/// strict, and the `hello.ok` echo is optional (old daemons and old servers).
+#[test]
+fn channels_capability_is_optional_strict_and_echoed() {
+    let hello: serde_json::Value =
+        serde_json::from_str(&fixture("control_hello_daemon.json")).unwrap();
+    let with = |channels: serde_json::Value| {
+        let mut frame = hello.clone();
+        frame["daemon"]["capabilities"]["channels"] = channels;
+        frame.to_string()
+    };
+    let offered = with(serde_json::json!({ "kinds": ["pty", "exec"] }));
+    let DaemonControlMessage::Hello { daemon, .. } = parse_daemon_control(&offered).unwrap() else {
+        panic!("not hello");
+    };
+    assert_eq!(
+        daemon.capabilities.channels,
+        Some(sandbox_protocol::ChannelsCapability {
+            kinds: vec![
+                sandbox_protocol::ChannelKind::Pty,
+                sandbox_protocol::ChannelKind::Exec
+            ]
+        })
+    );
+    let DaemonControlMessage::Hello { daemon, .. } =
+        parse_daemon_control(&hello.to_string()).unwrap()
+    else {
+        panic!("not hello");
+    };
+    assert_eq!(daemon.capabilities.channels, None);
+    for bad in [
+        serde_json::json!({ "kinds": [] }),
+        serde_json::json!({ "kinds": ["pty", "pty"] }),
+        serde_json::json!({ "kinds": ["shell"] }),
+        serde_json::json!({ "kinds": ["exec"], "extra": 1 }),
+        serde_json::json!(null),
+    ] {
+        assert!(parse_daemon_control(&with(bad.clone())).is_err(), "{bad}");
+    }
+    let mut hello_ok: serde_json::Value =
+        serde_json::from_str(&fixture("control_hello_ok_server.json")).unwrap();
+    let ServerControlMessage::HelloOk { capabilities, .. } =
+        parse_server_control(&hello_ok.to_string()).unwrap()
+    else {
+        panic!("not hello.ok");
+    };
+    assert_eq!(capabilities.channels, None);
+    hello_ok["capabilities"]["channels"] = serde_json::json!({ "kinds": ["exec"] });
+    let ServerControlMessage::HelloOk { capabilities, .. } =
+        parse_server_control(&hello_ok.to_string()).unwrap()
+    else {
+        panic!("not hello.ok");
+    };
+    assert_eq!(
+        capabilities.channels.map(|c| c.kinds),
+        Some(vec![sandbox_protocol::ChannelKind::Exec])
+    );
+    // The echo is as strict as the offer (the TS codec refuses these too).
+    for invalid in [
+        serde_json::json!({ "kinds": [] }),
+        serde_json::json!({ "kinds": ["pty", "pty"] }),
+    ] {
+        hello_ok["capabilities"]["channels"] = invalid;
+        assert!(parse_server_control(&hello_ok.to_string()).is_err());
+    }
+}
+
+#[test]
 fn admission_availability_frozen_fixtures_and_bounds() {
     let cases: Vec<serde_json::Value> =
         serde_json::from_str(&fixture("control_admission_availability.json")).expect("fixtures");

@@ -91,6 +91,8 @@ pub enum FrameError {
     MetadataLengthOverflow,
     #[error("terminal frame body is empty or its fence is invalid")]
     InvalidTerminalFrame,
+    #[error("channel frame body is empty or its fence is invalid")]
+    InvalidChannelFrame,
 }
 
 pub fn encode_binary_frame(

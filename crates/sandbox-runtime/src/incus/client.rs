@@ -2385,7 +2385,19 @@ impl IncusClient {
         argv: &[String],
         timeout: Duration,
     ) -> EffectResult<IncusCommandOutput> {
-        self.exec_argv_effect_with_limit(bound, argv, None, Some(timeout), Some(512), true)
+        self.exec_root_helper_bounded_cap(bound, argv, timeout, 512)
+    }
+
+    /// [`Self::exec_root_helper_bounded`] with an explicit output cap (the
+    /// channel kill helper reports one line per scope of its batch).
+    pub(super) fn exec_root_helper_bounded_cap(
+        &self,
+        bound: &BoundInstance,
+        argv: &[String],
+        timeout: Duration,
+        cap: usize,
+    ) -> EffectResult<IncusCommandOutput> {
+        self.exec_argv_effect_with_limit(bound, argv, None, Some(timeout), Some(cap), true)
     }
 
     fn exec_argv_effect_with_limit(

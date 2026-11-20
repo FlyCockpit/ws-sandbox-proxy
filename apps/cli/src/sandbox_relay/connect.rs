@@ -377,6 +377,8 @@ fn daemon_capabilities(
         tunnel: None,
         // Set in the hello literal from the runtime kind.
         tunnel_ports: false,
+        // Interactive channels are not offered yet.
+        channels: None,
     }
 }
 
@@ -764,6 +766,15 @@ fn run_connect_service_with_tls(
     let terminal_slots = Arc::new(super::terminal::TerminalSlots::with_resume_grace(
         super::terminal::resume_grace(config)?,
     ));
+    // CLI channels: capacity survives reconnects like PTY slots; the durable
+    // registry's scopes from a previous process are killed now.
+    let channel_slots = Arc::new(super::channel::ChannelSlots::default());
+    if runtime.channel_capability() {
+        super::channel::sweep_registry(
+            runtime.clone(),
+            Arc::new(super::channel::ChannelRegistry::new(journal.clone())),
+        );
+    }
     let policy_path = match &options.state_dir {
         Some(dir) => Some(dir.join("config.toml")),
         None => Some(crate::paths::config_file()?),
@@ -820,6 +831,7 @@ fn run_connect_service_with_tls(
             &expiry,
             &relay,
             &terminal_slots,
+            &channel_slots,
             &mut host_policy,
             reconnect,
             config,
@@ -929,6 +941,10 @@ fn run_connect_service_with_tls(
     // This runs on EVERY relay exit, including upgrade 401/403 and close 4003:
     // every PTY is closed (on its own threads) before the process ends.
     super::terminal::shutdown_terminals(&runtime, &terminal_slots, Duration::from_secs(20));
+    // Channel pumps kill-close on their own threads (relay loss/shutdown);
+    // wait a bounded time for them to settle. Unsettled scopes stay in the
+    // durable registry for the next start's sweep.
+    channel_slots.wait_idle(Duration::from_secs(20));
     // Preview tunnels never outlive the daemon that supervises them.
     if let Some(tunnels) = super::tunnel::installed() {
         tunnels.stop_all();
@@ -1857,6 +1873,7 @@ fn relay_session(
     expiry: &super::expiry::ExpiryService,
     relay: &RelaySupervisor,
     terminal_slots: &Arc<super::terminal::TerminalSlots>,
+    channel_slots: &Arc<super::channel::ChannelSlots>,
     host_policy: &mut super::host_policy::HostPolicy,
     reconnect: bool,
     config: &crate::config::Config,
@@ -1894,6 +1911,7 @@ fn relay_session(
         expiry,
         relay,
         terminal_slots,
+        channel_slots,
         host_policy,
         &mut socket,
         resolutions,
@@ -2245,6 +2263,7 @@ fn relay_session_active(
     expiry: &super::expiry::ExpiryService,
     relay: &RelaySupervisor,
     terminal_slots: &Arc<super::terminal::TerminalSlots>,
+    channel_slots: &Arc<super::channel::ChannelSlots>,
     host_policy: &mut super::host_policy::HostPolicy,
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     resolutions: &super::resolutions::InFlightResolutions,
@@ -2263,6 +2282,7 @@ fn relay_session_active(
         expiry,
         relay,
         terminal_slots,
+        channel_slots,
         host_policy,
         socket,
         &mut pending_puts,
@@ -2297,6 +2317,7 @@ fn relay_session_loop(
     expiry: &super::expiry::ExpiryService,
     relay: &RelaySupervisor,
     terminal_slots: &Arc<super::terminal::TerminalSlots>,
+    channel_slots: &Arc<super::channel::ChannelSlots>,
     host_policy: &mut super::host_policy::HostPolicy,
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     pending_puts: &mut HashMap<String, PendingFilePut>,
@@ -2399,6 +2420,7 @@ fn relay_session_loop(
                 tunnel: super::tunnel::installed().map(|tunnels| tunnels.capability()),
                 // Every real runtime compiles a launch's `tunnelPorts` into
                 // its recorded plan, whether or not a client is installed.
+                channels: super::channel::capability(&*runtime),
                 tunnel_ports: !matches!(
                     protocol_runtime,
                     sandbox_protocol::RuntimeKind::Unsupported
@@ -2451,6 +2473,17 @@ fn relay_session_loop(
     terminals.set_credentials(relay.credentials().cloned());
     // WP7: new terminal opens are refused once quiescing.
     terminals.set_quiesce(options.shutdown.quiesce_handle());
+    // Dropped on every loop exit: kill-closes every channel of this connection.
+    let mut channels = super::channel::ChannelHost::new(
+        channel_slots.clone(),
+        Arc::new(super::channel::ChannelRegistry::new(journal.clone())),
+        runtime.clone(),
+        journal.clone(),
+        authority.clone(),
+        options.host_id.clone(),
+    );
+    channels.set_credentials(relay.credentials().cloned());
+    channels.set_quiesce(options.shutdown.quiesce_handle());
     let host_opener: Option<Arc<dyn sandbox_runtime::HostPtyOpener>> =
         if matches!(protocol_runtime, sandbox_protocol::RuntimeKind::IncusKvm) {
             Some(Arc::new(sandbox_runtime::LocalHostPtyOpener::default()))
@@ -2704,6 +2737,9 @@ fn relay_session_loop(
             terminals.shutdown(TERMINAL_SHUTDOWN_DRAIN, |frame| {
                 send_terminal_frame(socket, wire, frame)
             })?;
+            channels.shutdown(TERMINAL_SHUTDOWN_DRAIN, |frame| {
+                send_terminal_frame(socket, wire, frame)
+            })?;
             let _ = socket.close(Some(tungstenite::protocol::CloseFrame {
                 code: tungstenite::protocol::frame::coding::CloseCode::Normal,
                 reason: "daemon shutdown".into(),
@@ -2897,6 +2933,7 @@ fn relay_session_loop(
         for frame in terminals.poll()? {
             write_terminal_frame(socket, wire, frame)?;
         }
+        channels.poll_with(&mut |frame| write_terminal_frame(socket, wire, frame))?;
         // One flush for the whole batch above (output, starts, observations,
         // credentials, images, expiry and download frames, terminals).
         socket.flush()?;
@@ -3259,6 +3296,13 @@ fn relay_session_loop(
                         terminals.enable(epoch, binding.clone());
                         // WP8: detach and resume only when the server answered.
                         terminals.negotiate_resume(capabilities.terminal_resume);
+                        // Channels only when this node offered them and the
+                        // server echoed the offer.
+                        channels.enable(
+                            epoch,
+                            binding.clone(),
+                            runtime.channel_capability() && capabilities.channels.is_some(),
+                        );
                         admission_epoch = Some(epoch);
                         socket.send(Message::Text(
                             super::spell(
@@ -3453,6 +3497,7 @@ fn relay_session_loop(
                         )?;
                         // Supersession ends terminals bound to the old state.
                         terminals.on_dispatch(&dispatch);
+                        channels.on_dispatch(&dispatch);
                     }
                     image @ (ServerControlMessage::ImageFetchGrant(_)
                     | ServerControlMessage::ImageFetchRefused(_)
@@ -3506,6 +3551,21 @@ fn relay_session_loop(
                         match relay.credentials() {
                             Some(credentials) => credentials.handle_server(message),
                             None => bail!("unnegotiated credential frame"),
+                        }
+                    }
+                    channel @ (ServerControlMessage::ChannelOpen { .. }
+                    | ServerControlMessage::ChannelAck { .. }
+                    | ServerControlMessage::ChannelEof { .. }
+                    | ServerControlMessage::ChannelResize { .. }
+                    | ServerControlMessage::ChannelSignal { .. }
+                    | ServerControlMessage::ChannelClose { .. }) => {
+                        if !registered {
+                            bail!("channel frame before hello.ok");
+                        }
+                        for frame in channels.handle_control(channel)? {
+                            if let super::terminal::Outgoing::Text(message) = frame {
+                                socket.send(Message::Text(super::spell(wire, &message, None)?.into()))?;
+                            }
                         }
                     }
                     terminal @ (ServerControlMessage::TerminalOpen { .. }
@@ -3809,6 +3869,12 @@ fn relay_session_loop(
                 if let Some(frame) = sandbox_protocol::parse_terminal_frame(&data) {
                     let (metadata, body) = frame?;
                     terminals.handle_input(metadata, body)?;
+                    continue;
+                }
+                // Channel stdin, fenced and windowed in the channel host.
+                if let Some(frame) = sandbox_protocol::parse_channel_frame(&data) {
+                    let (metadata, body) = frame?;
+                    channels.handle_input(metadata, body)?;
                     continue;
                 }
                 // One borrowed parse serves both the stdin and the upload lane.

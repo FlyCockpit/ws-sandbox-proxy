@@ -82,7 +82,7 @@ pub(crate) fn pty_exec_args(
     Ok(args)
 }
 
-fn native_size(size: PtySize) -> portable_pty::PtySize {
+pub(super) fn native_size(size: PtySize) -> portable_pty::PtySize {
     portable_pty::PtySize {
         rows: size.rows(),
         cols: size.cols(),
@@ -160,7 +160,7 @@ pub(crate) fn supervise_child(
 }
 
 /// Both PTY paths cross exactly the same guest-spawn admission boundary.
-fn spawn_admitted(
+pub(super) fn spawn_admitted(
     client: &IncusClient,
     bound: &BoundInstance,
     slave: Box<dyn portable_pty::SlavePty + Send>,
@@ -258,7 +258,7 @@ pub(super) fn open_with_env(
     )
 }
 
-struct IncusPtyChild {
+pub(super) struct IncusPtyChild {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
     tty: Option<PathBuf>,
@@ -309,6 +309,21 @@ fn exit_code(status: &portable_pty::ExitStatus) -> Option<i32> {
 }
 
 impl IncusPtyChild {
+    /// A channel PTY's client (wssp-ssh): the channel's IO owner holds the
+    /// master, so this handle never resizes.
+    pub(super) fn for_channel(
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        tty: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            child,
+            master: None,
+            tty,
+            reaped: None,
+            group_killed: false,
+        }
+    }
+
     /// SIGKILL the child's whole process group (the child is a `setsid`
     /// leader, so pgid == pid), reusing the exec path's group kill. Only
     /// called while the leader is unreaped, so the group id is still pinned

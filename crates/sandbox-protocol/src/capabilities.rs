@@ -111,6 +111,13 @@ pub struct DaemonCapabilities {
     /// client). The control plane sends `tunnelPorts` only to such daemons.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tunnel_ports: bool,
+    /// Optional interactive channels (`channel.*`): the kinds this node opens.
+    #[serde(
+        default,
+        deserialize_with = "crate::egress::present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub channels: Option<crate::ChannelsCapability>,
 }
 
 /// The default finite host lease ceiling.
@@ -166,6 +173,7 @@ impl Default for DaemonCapabilities {
             disk_offload: false,
             tunnel: None,
             tunnel_ports: false,
+            channels: None,
         }
     }
 }
@@ -197,6 +205,13 @@ pub struct NegotiatedCapabilities {
     pub observation_fence: bool,
     /// Required support for retiring unknown commands on host proof.
     pub command_retire: bool,
+    /// Optional interactive channels, echoed only to a daemon that offered them.
+    #[serde(
+        default,
+        deserialize_with = "crate::egress::present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub channels: Option<crate::ChannelsCapability>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

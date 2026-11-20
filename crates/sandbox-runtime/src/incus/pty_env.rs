@@ -115,7 +115,7 @@ pub(crate) fn envelope(frame: &[u8]) -> Result<Vec<u8>, RuntimeError> {
 
 /// Verify effective raw/no-echo state at READY; never infer it from spawn or
 /// from the helper's guest tty. OPOST off disables every output translation.
-fn raw(master: &dyn portable_pty::MasterPty) -> bool {
+pub(in crate::incus) fn raw(master: &dyn portable_pty::MasterPty) -> bool {
     master.get_termios().is_some_and(|mode| {
         mode.local_flags.bits() & (libc::ECHO | libc::ICANON | libc::ISIG) == 0
             && mode.input_flags.bits() & (libc::IXON | libc::ICRNL | libc::INLCR | libc::IGNCR) == 0

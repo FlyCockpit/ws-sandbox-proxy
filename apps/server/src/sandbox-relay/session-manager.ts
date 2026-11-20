@@ -100,6 +100,7 @@ import {
   encodeServerControlMessage,
   negotiatedCapabilities,
   parseBinaryFrame,
+  parseChannelDataFrame,
   parseDaemonControlFrame,
   parseParsedDaemonControlFrame,
   parseTerminalDataFrame,
@@ -456,6 +457,15 @@ function takeOutputBatch(first: OutputWork, work: ReceiveWork[]): OutputWork[] {
     bytes += next.output.body.length;
   }
   return batch;
+}
+
+/** A `channel.data` binary frame, well-formed or not. */
+function isChannelDataFrame(frame: ArrayBuffer): boolean {
+  try {
+    return parseChannelDataFrame(frame) !== null;
+  } catch {
+    return true;
+  }
 }
 
 function isOutputWork(work: ReceiveWork | undefined): work is OutputWork {
@@ -2241,6 +2251,12 @@ export class SandboxRelaySessionManager {
       peeked = undefined;
     }
     const type = (peeked as { type?: unknown } | undefined)?.type;
+    if (typeof type === "string" && type.startsWith("channel.")) {
+      // The server never opens a channel yet: every channel frame is unsolicited.
+      this.closeWithProtocolError(socket, "Channel frame outside an open channel.");
+      this.removeSession(socket, now);
+      return;
+    }
     if (typeof type === "string" && type.startsWith("terminal.")) {
       const session = this.terminalLane(socket, now);
       if (!session) return;
@@ -2898,6 +2914,12 @@ export class SandboxRelaySessionManager {
       parsed = parseBinaryFrame(frame);
     } catch {
       parsed = undefined;
+    }
+    if (!parsed && isChannelDataFrame(frame)) {
+      // The server never opens a channel yet: every channel frame is unsolicited.
+      this.closeWithProtocolError(socket, "Channel frame outside an open channel.");
+      this.removeSession(socket, now);
+      return;
     }
     const output =
       parsed &&
@@ -3737,7 +3759,8 @@ export class SandboxRelaySessionManager {
           id: message.id,
           protocolVersion: session.protocolVersion,
           capabilities: {
-            ...negotiatedCapabilities(session.protocolVersion),
+            // Optional offers (`channels`) are echoed only when offered.
+            ...negotiatedCapabilities(session.protocolVersion, message.daemon.capabilities),
             outputChunkBytes,
             // WP7: echoed only to daemons that offered it (strict parsers).
             ...(session.quiesceCapable ? { quiesce: true as const } : {}),

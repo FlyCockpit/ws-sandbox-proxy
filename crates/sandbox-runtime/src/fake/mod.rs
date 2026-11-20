@@ -1,9 +1,11 @@
 use crate::effect::PositiveEvidence;
+mod channel;
 mod credentials;
 mod offload;
 mod policy;
 pub(crate) mod pty;
 mod storage;
+pub use channel::FakeChannelControl;
 pub use offload::FakePublishCrash;
 pub use policy::FakePolicyDrift;
 pub use pty::FakePtyControl;
@@ -1283,6 +1285,18 @@ fn fake_entry(
     }
 }
 
+#[derive(Debug, Default)]
+struct FakeChannels {
+    controls: HashMap<(String, String, String), FakeChannelControl>,
+    kills: Vec<crate::KillScopesRequest>,
+    present: HashSet<String>,
+    /// The next spawns' launchers fail before the prompt (`true`: refused).
+    fail_setup: Option<bool>,
+    /// The next spawns fail before anything starts.
+    fail_spawn: Option<SandboxErrorCode>,
+    next_pid: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct FakeRuntime {
     policy: std::sync::Arc<std::sync::Mutex<policy::FakePolicy>>,
@@ -1297,6 +1311,9 @@ pub struct FakeRuntime {
     guest_io_hook: GuestIoHook,
     cancelled: Option<std::sync::Arc<crate::RuntimePermit>>,
     ptys: crate::pty::PtyRegistry,
+    /// CLI channels: drivers keyed `(sandbox_id, connection_id, channel_id)`,
+    /// plus every scope-kill request and the scopes a kill cannot prove gone.
+    channels: std::sync::Arc<std::sync::Mutex<FakeChannels>>,
     /// Keyed like the registry: `(sandbox_id, session_id)`.
     pty_controls: std::sync::Arc<std::sync::Mutex<HashMap<(String, String), FakePtyControl>>>,
     /// Opt-in graceful stop (C55): off, the fake behaves like a runtime
@@ -1360,6 +1377,7 @@ impl Default for FakeRuntime {
             guest_io_hook: GuestIoHook::default(),
             cancelled: None,
             ptys: Default::default(),
+            channels: Default::default(),
             pty_controls: Default::default(),
             graceful_stop: false,
             proven_command_cancel: false,
@@ -1859,6 +1877,61 @@ impl FakeRuntime {
             ));
         }
         Ok(())
+    }
+
+    /// Driver handle for a fake channel opened by `open_channel` (tests).
+    pub fn channel_control(
+        &self,
+        sandbox_id: &str,
+        connection_id: &str,
+        channel_id: &str,
+    ) -> Option<FakeChannelControl> {
+        self.channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .controls
+            .get(&(
+                sandbox_id.to_string(),
+                connection_id.to_string(),
+                channel_id.to_string(),
+            ))
+            .cloned()
+    }
+
+    /// Every `kill_channel_scopes` request so far (tests).
+    pub fn channel_scope_kills(&self) -> Vec<crate::KillScopesRequest> {
+        self.channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .kills
+            .clone()
+    }
+
+    /// Kills of `unit` report `Present` until cleared (tests).
+    pub fn set_channel_scope_present(&self, unit: &str, present: bool) {
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        if present {
+            channels.present.insert(unit.to_string());
+        } else {
+            channels.present.remove(unit);
+        }
+    }
+
+    /// The next channel launchers fail before their prompt (`Some(true)`:
+    /// the guest has no usable scope) (tests).
+    pub fn fail_channel_setup(&self, refused: Option<bool>) {
+        self.channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .fail_setup = refused;
+    }
+
+    /// The next channel spawns fail before any process starts (tests).
+    pub fn fail_channel_spawn(&self, code: Option<SandboxErrorCode>) {
+        self.channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .fail_spawn = code;
     }
 
     /// Driver handle for a fake terminal opened by `open_pty` (tests).
@@ -2703,6 +2776,78 @@ impl SandboxRuntime for FakeRuntime {
 
     fn close_pty_sessions(&self, sandbox_id: Option<&str>, intent: crate::PtyCloseIntent) -> usize {
         self.ptys.close_matching(sandbox_id, intent)
+    }
+
+    fn channel_capability(&self) -> bool {
+        true
+    }
+
+    fn spawn_channel(
+        &self,
+        request: &crate::SpawnChannelRequest,
+    ) -> Result<crate::SpawnedChannel, crate::ChannelOpenFailure> {
+        request.validate()?;
+        self.check_cancelled()?;
+        {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.require_live(&request.sandbox_id)?;
+            state.verify_binding(&request.sandbox_id, Some(&request.template_fingerprint))?;
+        }
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(code) = channels.fail_spawn {
+            return Err(RuntimeError::new(code, "channel setup failed").into());
+        }
+        channels.next_pid += 1;
+        let (control, io, custody) = channel::open(channel::FakeOpen {
+            mode: &request.mode,
+            nonce: &request.nonce,
+            argv: request.argv.clone(),
+            login: request.login,
+            cwd: request.cwd.clone(),
+            pid: 2000 + channels.next_pid,
+            fail_setup: channels.fail_setup,
+        });
+        channels.controls.insert(
+            (
+                request.sandbox_id.clone(),
+                request.connection_id.clone(),
+                request.channel_id.clone(),
+            ),
+            control,
+        );
+        // Bounded: drivers of ended channels are dropped beyond a cap.
+        if channels.controls.len() > 4096 {
+            channels
+                .controls
+                .retain(|_, control| control.ended().is_none());
+        }
+        Ok(crate::SpawnedChannel {
+            io: Box::new(io),
+            custody: Box::new(custody),
+        })
+    }
+
+    fn kill_channel_scopes(
+        &self,
+        request: &crate::KillScopesRequest,
+    ) -> Result<Vec<(String, crate::ScopeKill)>, RuntimeError> {
+        for scope in &request.scopes {
+            crate::validate_channel_scope_unit(&scope.unit)?;
+        }
+        let mut channels = self.channels.lock().unwrap_or_else(|e| e.into_inner());
+        channels.kills.push(request.clone());
+        Ok(request
+            .scopes
+            .iter()
+            .map(|scope| {
+                let kill = if channels.present.contains(&scope.unit) {
+                    crate::ScopeKill::Present
+                } else {
+                    crate::ScopeKill::Gone
+                };
+                (scope.unit.clone(), kill)
+            })
+            .collect())
     }
 
     fn read_file(&self, request: &ReadFileRequest) -> Result<ReadFileResponse, RuntimeError> {

@@ -59,6 +59,8 @@ fn asynchronous_cli_children_use_the_shared_guard() {
             "crates/sandbox-runtime/src/incus/exec.rs" => 3,
             // Python fixture processes for FIFO/file lifetime tests.
             "crates/sandbox-runtime/src/incus/files.rs" => 2,
+            // The channel wrapper run directly against a held-full frame pipe, never wssp.
+            "crates/sandbox-runtime/src/incus/channel_shim_tests.rs" => 1,
             // Python credential-helper fixture fed over piped stdin, never wssp.
             "crates/sandbox-runtime/src/credentials_tests.rs" => 1,
             // The credential helper run against a scratch tree (staging scrub), never wssp.
