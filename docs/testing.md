@@ -5,6 +5,54 @@ TCP guard (`scripts/test-io-guard.ts`) that fails any test opening a socket.
 Database race, lock and foreign-key claims cannot be proven there. They belong
 in the real-PostgreSQL layer below.
 
+## Baseline: every default suite is green
+
+On a clean `main`, every suite below passes with zero failures on the
+8-core development host, also while one other heavy job (another suite, a
+release build) runs. A red test is a bug to fix at its root, never a known
+flake to re-run. Apply the standard resource ceilings explicitly (the
+scripts do not): `nice -n 10`, `cargo -j4` (build jobs; test threads keep
+the default), Vitest `--maxWorkers=4` and Turbo `--concurrency=2` for
+`pnpm test`; suites with lower limits keep them (`test:pg` two workers,
+cancel-wire and relay-chaos one).
+
+| Suite                                | Command                                                                                                                                                                                   |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lint, policy and type checks         | the non-test `pnpm verify` steps: `pnpm check:ci`, the `pnpm policy:*` steps, `pnpm check-types`, `pnpm knip`, `pnpm env:check`, `pnpm env:check-entrypoints`, `pnpm docker:check-copy`, `pnpm docs:check-citations`, `pnpm deps:check-excludes` |
+| Hermetic unit tests                  | `pnpm test`                                                                                                                                                                               |
+| Real PostgreSQL                      | `pnpm test:pg` (Docker; see below)                                                                                                                                                        |
+| Cancel wire (real debug daemon)      | `pnpm test:cancel-wire`                                                                                                                                                                   |
+| Relay chaos (real debug daemon)      | `pnpm test:relay-chaos`                                                                                                                                                                   |
+| Script, migration and backup tooling | `pnpm test:setup`, `pnpm db:test-unit`, `pnpm backup:test-unit`, `pnpm db:test-migrations`, `pnpm backup:test`                                                                            |
+| Rust                                 | `cargo test --workspace -j4`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`                                                                          |
+
+`pnpm verify` chains all of the TypeScript rows with `&&`; it stops at the
+first red step, so to see every result run the steps one by one.
+
+Timing rules for these suites: wait for the real event (a barrier, a frame,
+a committed row), not for a sleep or an iteration count; when a product
+deadline is under test, the test controls time (logical permit clocks,
+test-released holds, debug-only timing knobs such as
+`WSSP_TEST_RUNTIME_TIMING` under Relay chaos) instead of racing the wall
+clock; a test-side bound is sized from measured worst cases under load and
+says why in a comment. The hermetic unit default is 15 s (`vitest.config.ts`,
+`apps/web/vite.config.ts`), the PostgreSQL default 30 s
+(`vitest.pg.config.ts`).
+
+Outside the default baseline:
+
+- Environment-bound Rust tests, marked `#[ignore]` with the reason: real
+  Incus KVM VMs (`WSSP_LIVE_INCUS=1 … --ignored`) and delegated cgroup2 user
+  namespaces (`command_scope_real`, `--ignored`); also one slow 31 s relay
+  case and one benchmark, run with `--ignored`.
+- Explicit local suites `pnpm verify` does not chain: `pnpm test:s3`
+  (disposable S3 gateway), `pnpm runtime:test-operations` (operations smoke
+  on disposable services), `pnpm test:relay-chaos:full` (the full chaos
+  matrix, nightly) and `pnpm test:e2e:mcp` (disposable PostgreSQL/Valkey, a
+  local server and two FakeRuntime daemons).
+- Live suites against a real host or deployment: `pnpm test:relay-chaos:live`,
+  `pnpm test:offload:live` and the qualification sections below.
+
 ## Real-PostgreSQL tests
 
 Files named `*.pg.test.ts` run only under `pnpm test:pg`. The default
