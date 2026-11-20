@@ -822,18 +822,29 @@ mod tests {
         name: &str,
         qtype: u16,
     ) -> (std::io::Result<Vec<u8>>, Duration) {
+        const WAIT: Duration = Duration::from_secs(3);
         let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        client
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
         let started = Instant::now();
         client
             .send_to(&query(id, name, qtype), (Ipv4Addr::LOCALHOST, port))
             .unwrap();
         let mut buf = [0u8; 1024];
-        let answer = client
-            .recv_from(&mut buf)
-            .map(|(read, _)| buf[..read].to_vec());
+        // A socket read with a timeout fails with EINTR when the process
+        // takes a signal or is stopped and continued (signal(7)), which the
+        // shared test process does under load (seen: `Interrupted` after
+        // 60 µs): retry within the remaining wait. `took` still measures
+        // from the send, so the at-once bound is unchanged.
+        let answer = loop {
+            let remaining = WAIT.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                break Err(std::io::ErrorKind::TimedOut.into());
+            }
+            client.set_read_timeout(Some(remaining)).unwrap();
+            match client.recv_from(&mut buf) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => break result.map(|(read, _)| buf[..read].to_vec()),
+            }
+        };
         (answer, started.elapsed())
     }
 

@@ -971,17 +971,20 @@ if cmd=='query':
    value=[] if (root/'deleted').exists() else [{'name':'wssp-sbx-sbx','type':'virtual-machine','project':'default','config':{'size':'32GiB'}}]
   else:value={'driver':'dir','status':'Created'}
   print(json.dumps({'type':'sync','metadata':value}));sys.exit(0)
- if path.startswith('/1.0/networks/') or path.startswith('/1.0/network-acls/'):
-  print(json.dumps({'type':'error','error_code':404,'error':'Not Found'}));sys.exit(1)
  if args[-1].startswith('/1.0/projects/'):
   print(json.dumps({'type':'sync','metadata':{'name':'default','config':{}}}))
   sys.exit(0)
  # Egress state of the running guest is unreadable, so the 2 s policy
  # reconciler stays inconclusive and never breach-halts it by force: the
- # stops logged below are the expiry worker's alone (C55 ordering).
+ # stops logged below are the expiry worker's alone (C55 ordering). This
+ # precedes the network 404s: an ABSENT network on a running guest is a
+ # confirmed breach the reconciler halts at once by design (it did, in
+ # 19 of 20 contended runs, and won the race 7 of 24 times).
  if not args[-1].startswith('/1.0/instances/') and not (root/'stopped').exists():
   print('Error: daemon unreachable',file=sys.stderr)
   sys.exit(1)
+ if path.startswith('/1.0/networks/') or path.startswith('/1.0/network-acls/'):
+  print(json.dumps({'type':'error','error_code':404,'error':'Not Found'}));sys.exit(1)
  if (root/'deleted').exists():
   print(json.dumps({'type':'error','error_code':404,'error':'Not Found'}))
  else:

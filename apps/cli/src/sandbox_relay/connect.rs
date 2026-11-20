@@ -1738,11 +1738,6 @@ fn dial_relay(
             let _ = dialed_tx.send(result);
         })
         .map_err(|error| Box::new(tungstenite::Error::Io(error)))?;
-    let unreachable = || {
-        Box::new(tungstenite::Error::Url(
-            tungstenite::error::UrlError::UnableToConnect(uri.to_owned()),
-        ))
-    };
     loop {
         if let Some(cause) = relay_connect_stop(shutdown, deadline) {
             return Err(relay_connect_stopped("connect", cause));
@@ -1752,10 +1747,31 @@ fn dial_relay(
             .min(RELAY_HANDSHAKE_POLL);
         match dialed.recv_timeout(slice) {
             Ok(Ok(Some(tcp))) => return Ok(tcp),
-            Ok(Ok(None)) | Err(mpsc::RecvTimeoutError::Disconnected) => return Err(unreachable()),
+            Ok(Ok(None)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(dial_failure(uri, shutdown, deadline));
+            }
             Ok(Err(error)) => return Err(Box::new(tungstenite::Error::Io(error))),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+    }
+}
+
+/// The error for a dial that produced no socket. The dial caps each connect
+/// at the time remaining, so a connect that hangs to the deadline gives up
+/// at the same instant the waiter's last poll slice ends; whichever thread
+/// runs first must not decide the cause. A dial that ends at or after the
+/// deadline (or after a shutdown request) timed out (or was stopped); only
+/// one that failed before it found the relay unreachable.
+fn dial_failure(
+    uri: &str,
+    shutdown: &ShutdownSignal,
+    deadline: Instant,
+) -> Box<tungstenite::Error> {
+    match relay_connect_stop(shutdown, deadline) {
+        Some(cause) => relay_connect_stopped("connect", cause),
+        None => Box::new(tungstenite::Error::Url(
+            tungstenite::error::UrlError::UnableToConnect(uri.to_owned()),
+        )),
     }
 }
 
@@ -6866,6 +6882,31 @@ mod tests {
             "shutdown at 300 ms, returned after {elapsed:?}"
         );
         drop(queued);
+    }
+
+    /// C55-L11: a dial that gave up at the deadline is a timeout even when
+    /// its empty result reaches the waiter before the waiter's own poll
+    /// slice ends (seen under load: the result arrived 1.8 ms after the
+    /// deadline and was reported as "Unable to connect").
+    #[test]
+    fn c55_l11_a_dial_ending_at_the_deadline_is_a_timeout_not_unreachable() {
+        let uri = "ws://127.0.0.1:9/ws/sandbox-host";
+        let quiet = ShutdownSignal::default();
+        let passed = Instant::now() - Duration::from_millis(2);
+        let error = dial_failure(uri, &quiet, passed).to_string();
+        assert!(error.contains("connect timed out"), "{error}");
+        let stopping = ShutdownSignal::default();
+        stopping.request();
+        let error =
+            dial_failure(uri, &stopping, Instant::now() + Duration::from_secs(30)).to_string();
+        assert!(
+            error.contains("connect stopped by daemon shutdown"),
+            "{error}"
+        );
+        // A dial that failed well before the deadline (every address
+        // refused) really found the relay unreachable.
+        let error = dial_failure(uri, &quiet, Instant::now() + Duration::from_secs(30)).to_string();
+        assert!(error.contains("Unable to connect"), "{error}");
     }
 
     /// C55-L11 (G8-R1): the watchdog never touches a handshake that

@@ -1209,6 +1209,14 @@ fn env_shim(mode: &str) -> (Shim, OpenPtyRequest) {
     req.env = vec![("APP".into(), "synthetic-pty-private\n\r\u{3}é".into())];
     (shim, req)
 }
+/// Overall setup deadline for the tests whose guest must start (and, for
+/// `env-no-done`, print READY) before that deadline fires. The deadline runs
+/// from before the tool probe, so it also pays for two shim `incus exec`
+/// spawns and two Python interpreter starts. A whole successful open took
+/// 0.47-0.80 s at load ~23 here; the former 400 / 450 ms deadlines fired
+/// before the guest even started (6/6 under load). 4 s leaves 5x headroom
+/// over that worst case while keeping the cut far below production's 30 s.
+const SHIM_SETUP_OVERALL: Duration = Duration::from_secs(4);
 fn shortened(overall: Duration, handshake: Duration) {
     super::pty::env::TEST_LIMITS
         .with(|limits| limits.set(super::pty::env::Limits { overall, handshake }));
@@ -1306,14 +1314,20 @@ fn pty_env_handshake_never_echoes_frame() {
 fn pty_env_handshake_guest_silent() {
     let _serial = PTY_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let (shim, req) = env_shim("env-silent");
-    shortened(Duration::from_millis(400), Duration::from_millis(200));
+    shortened(SHIM_SETUP_OVERALL, Duration::from_millis(200));
     let observation = observe_setup();
     let start = Instant::now();
     let failure = shim.runtime.open_pty(&req).unwrap_err();
     assert_eq!(failure.message, "terminal setup failed");
     assert!(failure.cleanup.is_none());
-    assert!(start.elapsed() >= Duration::from_millis(350));
-    assert!(start.elapsed() < Duration::from_secs(3));
+    // Premise: the guest started and then stayed silent; the deadline did
+    // not merely cut the shim's startup.
+    assert!(
+        shim.dir.join("starting").exists(),
+        "the guest started before the overall deadline ({SHIM_SETUP_OVERALL:?})"
+    );
+    assert!(start.elapsed() >= SHIM_SETUP_OVERALL - Duration::from_millis(50));
+    assert!(start.elapsed() < SHIM_SETUP_OVERALL + Duration::from_millis(2600));
     assert!(process_gone(shim.child_pid()));
     assert!(observation.deadline_fired.load(Ordering::Acquire));
     assert!(observation.ready.lock().unwrap().is_none());
@@ -1324,7 +1338,7 @@ fn pty_env_handshake_guest_silent() {
             .unwrap()
             .unwrap()
             .duration_since(start)
-            < Duration::from_millis(1200)
+            < SHIM_SETUP_OVERALL + Duration::from_millis(800)
     );
     assert!(observation.workers_finished.load(Ordering::Acquire));
 }
@@ -1460,14 +1474,29 @@ fn pty_env_handshake_takeover_cancels_opening_session() {
 fn pty_env_handshake_overall_deadline_still_caps_blocked_done_and_stop_revoke() {
     let _serial = PTY_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let (shim, req) = env_shim("env-no-done");
-    shortened(Duration::from_millis(450), Duration::from_secs(2));
+    // READY arrives well inside the overall deadline, and READY plus the
+    // handshake budget lies far beyond it: only the overall deadline can end
+    // this setup.
+    let handshake = Duration::from_secs(30);
+    shortened(SHIM_SETUP_OVERALL, handshake);
     let observation = observe_setup();
     let start = Instant::now();
     let failure = shim.runtime.open_pty(&req).unwrap_err();
     assert_eq!(failure.message, "terminal setup failed");
-    assert!(observation.ready.lock().unwrap().is_some());
+    let ready = observation
+        .ready
+        .lock()
+        .unwrap()
+        .expect("READY arrived before the overall deadline");
+    assert!(ready.duration_since(start) + handshake > SHIM_SETUP_OVERALL * 2);
     assert!(observation.deadline_fired.load(Ordering::Acquire));
-    assert!(start.elapsed() < Duration::from_secs(3));
+    let closed = observation.closed.lock().unwrap().unwrap();
+    assert!(
+        closed.duration_since(start) < SHIM_SETUP_OVERALL + Duration::from_millis(800),
+        "the overall deadline, not the handshake budget, closed setup: {:?}",
+        closed.duration_since(start)
+    );
+    assert!(start.elapsed() < SHIM_SETUP_OVERALL + Duration::from_millis(2600));
     assert!(observation.workers_finished.load(Ordering::Acquire));
     for mode in ["env-silent", "env-never-reads"] {
         for revoke in [false, true] {

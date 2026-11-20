@@ -1450,11 +1450,19 @@ PYRM
             # seconds while the CLI stalls forever — killing the CLI at
             # its deadline does not cancel the daemon-side apply, which
             # lands behind the withdrawal and readback. The detached
-            # applier survives the CLI kill in its own session.
+            # applier survives the CLI kill in its own session. Pin
+            # `queue`: the accepted request is queued (`queued-add-<pid>`)
+            # and lands only when the test applies it, at the point of the
+            # fault history it intends, not after a wall-clock delay.
             if [ -f "$statedir/defer-acl-allow-add" ]; then
               case " $* " in
                 *" action=allow "*)
                   defer_secs=$(cat "$statedir/defer-acl-allow-add")
+                  if [ "$defer_secs" = "queue" ]; then
+                    printf '%s\n' "$statedir/acls/$name.$direction" "$@" > "$statedir/queued-add-$$"
+                    : > "$statedir/defer-acl-allow-add.armed"
+                    sleep 1000
+                  fi
                   # A daemon-side rule-add applies against the ACL ROW by name:
                   # if the ACL was deleted in the window (create rollback),
                   # the update fails and the rule never lands. Model that —
@@ -1480,6 +1488,10 @@ PYRM
                 *" action=allow "*)
                   case " $* " in
                     *"$defer_tag"*)
+                      if [ "$defer_secs" = "queue" ]; then
+                        printf '%s\n' "$statedir/acls/$name.$direction" "$@" > "$statedir/queued-add-$$"
+                        sleep 1000
+                      fi
                       # A daemon-side rule-add applies against the ACL ROW by name:
                   # if the ACL was deleted in the window (create rollback),
                   # the update fails and the rule never lands. Model that —

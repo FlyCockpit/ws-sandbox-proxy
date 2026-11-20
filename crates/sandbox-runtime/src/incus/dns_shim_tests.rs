@@ -131,6 +131,40 @@ fn apply_queued_acl_adds(statedir: &Path) -> usize {
     queued.len()
 }
 
+/// Land accepted, queued daemon-side rule REMOVALS (`defer-acl-rule-remove`
+/// = `queue`) at a controlled point. Like the delayed applier, a removal
+/// whose rule is already gone is a no-op.
+fn apply_queued_acl_removes(statedir: &Path) -> usize {
+    let client = legacy_client(statedir.join("incus").to_str().unwrap(), "default");
+    let queued: Vec<_> = fs::read_dir(statedir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("queued-remove-")
+        })
+        .collect();
+    assert!(!queued.is_empty(), "an accepted removal must be queued");
+    for path in &queued {
+        let body = fs::read_to_string(path).unwrap();
+        let mut lines = body.lines();
+        let target = Path::new(lines.next().expect("queued ACL target"));
+        let acl = target.file_stem().unwrap().to_str().unwrap();
+        let direction = target.extension().unwrap().to_str().unwrap();
+        let mut args = vec!["network", "acl", "rule", "remove", acl, direction];
+        args.extend(lines);
+        let result = client.run(&args, false).expect("land the queued removal");
+        assert!(
+            result.exit_code == 0 || result.stderr.contains("No matching rule(s) found"),
+            "{result:?}"
+        );
+        fs::remove_file(path).unwrap();
+    }
+    queued.len()
+}
+
 /// The DNS publication log line: a stdin-bodied config PATCH (argv could
 /// never carry an in-bound publication past MAX_ARG_STRLEN).
 fn is_dns_publish(line: &str, network: &str) -> bool {
@@ -2615,9 +2649,11 @@ fn a_daemon_side_allow_completing_after_the_cli_stays_fenced_until_reconciled() 
         )])],
     );
     let statedir = log.parent().expect("statedir").to_path_buf();
-    // The daemon accepts the allow and applies it at +45s; the CLI stalls
-    // and is killed at the grant's 40s deadline.
-    fs::write(statedir.join("defer-acl-allow-add"), "45").unwrap();
+    // The daemon accepts the allow (queued; the test lands it after the
+    // pass — a fixed +45 s apply left ~5 s after the 40 s kill for the
+    // withdrawal, readback and commit drain, a race under load); the CLI
+    // stalls and is killed at the grant's 40s deadline.
+    fs::write(statedir.join("defer-acl-allow-add"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("refresh completes with the uncertain grant fenced");
     assert!(
@@ -2639,28 +2675,23 @@ fn a_daemon_side_allow_completing_after_the_cli_stays_fenced_until_reconciled() 
     // The daemon-side apply lands AFTER the CLI died and the commit drain
     // checked: the address is never unprotected — reject companions deny
     // it while the marker fences readiness.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                egress.lines().any(|line| {
-                    line.contains("action=reject")
-                        && line.contains("destination=128.66.0.7/32")
-                        && line.contains("wssp-dns-quarantine-")
-                        && !line.contains("destination_port")
-                }),
-                "a destination-wide quarantine (TCP/443 included) denies the late-applied \
-                 allow — port-scoped companions alone are insufficient: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the daemon-side apply lands behind the killed CLI: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    fs::remove_file(statedir.join("defer-acl-allow-add")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the daemon-side apply lands behind the killed CLI: {egress}"
+    );
+    assert!(
+        egress.lines().any(|line| {
+            line.contains("action=reject")
+                && line.contains("destination=128.66.0.7/32")
+                && line.contains("wssp-dns-quarantine-")
+                && !line.contains("destination_port")
+        }),
+        "a destination-wide quarantine (TCP/443 included) denies the late-applied \
+         allow — port-scoped companions alone are insufficient: {egress}"
+    );
     // A later refresh reconciles: withdraws the late-applied allow,
     // confirms absence, retires the deny companions, clears the marker.
     transport.script("grants.example.com", [FakeDnsOutcome::Rcode(3)]);
@@ -3485,17 +3516,17 @@ fn cancellation_during_an_allow_mutation_preserves_the_pending_journal() {
     let permit = std::sync::Arc::new(crate::RuntimePermit::default());
     client.cancelled = Some(permit.clone());
     let statedir = log.parent().expect("statedir").to_path_buf();
-    // The daemon accepts the allow and applies it at +20s; the CLI stalls
-    // forever and is killed by the cancellation.
-    fs::write(statedir.join("defer-acl-allow-add"), "20").unwrap();
+    // The daemon accepts the allow (queued; the test lands it after the
+    // cancelled pass's error path, which a fixed +20 s apply raced); the
+    // CLI stalls forever and is killed by the cancellation.
+    fs::write(statedir.join("defer-acl-allow-add"), "queue").unwrap();
     std::thread::scope(|scope| {
         let running = scope.spawn(|| refresh(&client, "sbx-1", &policy, &hash, &transport));
         // Cancel while the allow mutation is in flight — but only once the
-        // shim's detached "daemon" applier is ARMED in its own session. The
-        // old fixed 2 s sleep after the CLI's log line raced the shim under
-        // host load: the group kill could land before the applier escaped
-        // the CLI's process group, so the deferred apply never happened
-        // (also flaky before this fix).
+        // shim has ARMED (queued) the accepted request. The old fixed 2 s
+        // sleep after the CLI's log line raced the shim under host load:
+        // the group kill could land before the request was accepted, so
+        // the deferred apply never happened (also flaky before this fix).
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !statedir.join("defer-acl-allow-add.armed").exists() {
             assert!(
@@ -3530,22 +3561,17 @@ fn cancellation_during_an_allow_mutation_preserves_the_pending_journal() {
         "the quarantine is installed even though the issuing permit is revoked: {egress}"
     );
     // The deferred daemon-side apply lands behind the quarantine.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                quarantined(&egress),
-                "the late-applied allow lands behind the quarantine: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred daemon-side apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    fs::remove_file(statedir.join("defer-acl-allow-add")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the deferred daemon-side apply lands: {egress}"
+    );
+    assert!(
+        quarantined(&egress),
+        "the late-applied allow lands behind the quarantine: {egress}"
+    );
     // Reconcile with a fresh permit: the observed rule is withdrawn and the
     // pending entry retires on that definitive evidence.
     client.cancelled = Some(std::sync::Arc::new(crate::RuntimePermit::default()));
@@ -3657,8 +3683,10 @@ fn failure_cleanup_preserves_quarantines_for_pending_mutations() {
         acl_egress(&log, &acl).contains("action=allow destination=128.66.0.8/32"),
         "B installed"
     );
-    // Refresh#0b: A's allow defers daemon-side 90s and is killed at its
-    // 40s deadline (fenced uncertain, quarantine installed, pending entry
+    // Refresh#0b: A's allow is accepted daemon-side (queued; landed by the
+    // test after refresh#1 — a fixed +90 s apply left ~10 s after
+    // refresh#0b's 40 s kill and refresh#1's 35 s publication) and is
+    // killed at its 40s deadline (fenced uncertain, quarantine installed, pending entry
     // journaled); B re-answers unchanged (no rule churn) and publishes
     // cleanly.
     transport.script(
@@ -3675,7 +3703,7 @@ fn failure_cleanup_preserves_quarantines_for_pending_mutations() {
             300,
         )])],
     );
-    fs::write(statedir.join("defer-acl-allow-add"), "90").unwrap();
+    fs::write(statedir.join("defer-acl-allow-add"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("refresh#0 completes with A fenced");
     assert!(
@@ -3733,23 +3761,18 @@ fn failure_cleanup_preserves_quarantines_for_pending_mutations() {
         marker.contains("aaa-pending.example.com") && marker.contains("128.66.0.7/32"),
         "pending mutation recorded: {marker}"
     );
-    // A's deferred apply lands at +90s — behind the preserved quarantine.
-    let deadline = std::time::Instant::now() + Duration::from_secs(80);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                quarantined(&egress),
-                "the deferred allow lands behind the preserved quarantine: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred daemon-side apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    // A's deferred apply lands now — behind the preserved quarantine.
+    fs::remove_file(statedir.join("defer-acl-allow-add")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the deferred daemon-side apply lands: {egress}"
+    );
+    assert!(
+        quarantined(&egress),
+        "the deferred allow lands behind the preserved quarantine: {egress}"
+    );
     // Reconcile: the observed pending rule is withdrawn and retires; the
     // marker clears. Publication recovers once the pins are removed.
     fs::remove_file(statedir.join("fail-raw-dnsmasq")).unwrap();
@@ -3918,7 +3941,8 @@ fn a_nonzero_exit_without_rejection_evidence_stays_uncertain() {
         )])],
     );
     let statedir = log.parent().expect("statedir").to_path_buf();
-    fs::write(statedir.join("defer-acl-allow-add-fail"), "20").unwrap();
+    // The accepted add is queued; the test lands it after the pass.
+    fs::write(statedir.join("defer-acl-allow-add-fail"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("the unacknowledged add is fenced, not fatal");
     assert!(
@@ -3943,23 +3967,19 @@ fn a_nonzero_exit_without_rejection_evidence_stays_uncertain() {
         quarantined(&egress),
         "the destination is quarantined despite the nonzero exit: {egress}"
     );
-    // The accepted daemon-side apply lands at +20s — behind the quarantine.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                quarantined(&egress),
-                "the unacknowledged allow lands behind the quarantine: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred daemon-side apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    // The accepted daemon-side apply lands now, after the pass — behind
+    // the quarantine. (A fixed +20 s delay raced the pass under load.)
+    fs::remove_file(statedir.join("defer-acl-allow-add-fail")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the deferred daemon-side apply lands: {egress}"
+    );
+    assert!(
+        quarantined(&egress),
+        "the unacknowledged allow lands behind the quarantine: {egress}"
+    );
     // Reconcile: the observed rule is withdrawn, the entry retires, the
     // marker clears.
     transport.script("grants.example.com", [FakeDnsOutcome::Rcode(3)]);
@@ -4289,8 +4309,8 @@ fn a_daemon_crash_after_allow_issuance_leaves_the_destination_fenced() {
     // C36 r17 F2 (crash direction): the preventive fence is installed and
     // confirmed BEFORE the broadening allow is issued, so a daemon dying
     // right after issuance (here: the bounded CLI killed mid-flight while
-    // the daemon applies the add 60s later) can never leave an unconfirmed
-    // allow unfenced.
+    // the daemon applies the add later — queued, landed by the test after
+    // the pass) can never leave an unconfirmed allow unfenced.
     let (client, log) = applied_client("running", "sbx-1");
     let (_network, acl) = sandbox_network_names("sbx-1");
     let (policy, hash) = domain_policy(&["grants.example.com"], &[]);
@@ -4304,7 +4324,7 @@ fn a_daemon_crash_after_allow_issuance_leaves_the_destination_fenced() {
         )])],
     );
     let statedir = log.parent().expect("statedir").to_path_buf();
-    fs::write(statedir.join("defer-acl-allow-add"), "60").unwrap();
+    fs::write(statedir.join("defer-acl-allow-add"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("refresh completes with the uncertain grant fenced");
     assert!(
@@ -4344,22 +4364,17 @@ fn a_daemon_crash_after_allow_issuance_leaves_the_destination_fenced() {
         "the fence outlives the killed request: {egress}"
     );
     // The deferred daemon-side apply lands behind the fence.
-    let deadline = std::time::Instant::now() + Duration::from_secs(50);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                fence_present(&egress, "128.66.0.7/32"),
-                "the deferred allow lands fenced: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    fs::remove_file(statedir.join("defer-acl-allow-add")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the deferred apply lands: {egress}"
+    );
+    assert!(
+        fence_present(&egress, "128.66.0.7/32"),
+        "the deferred allow lands fenced: {egress}"
+    );
     // Reconciliation withdraws it and releases the fence once nothing
     // unauthorized remains.
     transport.script("grants.example.com", [FakeDnsOutcome::Rcode(3)]);
@@ -4520,8 +4535,10 @@ fn a_deferred_fence_release_cannot_strike_a_reissued_fence() {
     let statedir = log.parent().expect("statedir").to_path_buf();
     let marker_path = statedir.join("host-state/dns-revocations/sbx-1.json");
     // Refresh 1: the fence release removal is accepted by the daemon but
-    // applied 60s late with a transport-signature failure (uncertain).
-    fs::write(statedir.join("defer-acl-rule-remove"), "60").unwrap();
+    // applied late (queued; the test lands it after refresh 3 — a fixed
+    // +60 s apply raced three refreshes under load) with a
+    // transport-signature failure (uncertain).
+    fs::write(statedir.join("defer-acl-rule-remove"), "queue").unwrap();
     refresh(&client, "sbx-1", &policy, &hash, &transport).expect("grant commits");
     let egress = acl_egress(&log, &acl);
     assert!(
@@ -4586,20 +4603,18 @@ fn a_deferred_fence_release_cannot_strike_a_reissued_fence() {
         unique_epochs.len() >= 2,
         "the fence was re-issued under a FRESH epoch while its release was unresolved: {quarantine_tags:?}"
     );
-    // Both deferred removals land late (+60s from their issuance); they
-    // carry the OLD fence identity and can strike nothing newer: the live
-    // allow is never removed.
-    let appliers_done = std::time::Instant::now() + Duration::from_secs(75);
-    while std::time::Instant::now() < appliers_done {
-        let egress = acl_egress(&log, &acl);
-        assert!(
-            egress.contains(&format!(
-                "action=allow destination=128.66.0.7/32 description={regrant_tag}"
-            )),
-            "the deferred removals never strike the live allow: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(500));
-    }
+    // Both passes' deferred removals (every retried attempt was accepted
+    // daemon-side) land late, after refresh 3; they carry the OLD fence
+    // identity and can strike nothing newer: the live allow is never
+    // removed.
+    assert!(apply_queued_acl_removes(&statedir) >= 2);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains(&format!(
+            "action=allow destination=128.66.0.7/32 description={regrant_tag}"
+        )),
+        "the deferred removals never strike the live allow: {egress}"
+    );
     transport.script(
         "grants.example.com",
         [FakeDnsOutcome::Answer(vec![FakeDnsRecord::A(
@@ -4674,13 +4689,15 @@ fn a_shared_destination_is_not_fenced_while_authorized_by_another_grant() {
     fs::write(&egress_path, kept.join("\n") + "\n").unwrap();
     fs::write(
         statedir.join("defer-acl-allow-add-tag"),
-        format!("70 {a_hex}"),
+        format!("queue {a_hex}"),
     )
     .unwrap();
     // Fake-DNS scripts are consumed per query: re-script both names so the
     // refresh re-resolves (and keeps) the same addresses. A's short TTL
-    // bounds the killed add attempt to ~40s — well BEFORE the deferred
-    // daemon-side apply lands (70s) — so the uncertain-path withdrawal
+    // bounds the killed add attempt to ~40s — BEFORE the deferred
+    // daemon-side apply lands (queued; the test lands it after the next
+    // refresh, which a fixed +70 s apply raced under load) — so the
+    // uncertain-path withdrawal
     // provably misses and the pending entry stays journaled for reconcile
     // (a withdrawal that positively removes the rule retires the entry
     // immediately instead).
@@ -4768,7 +4785,10 @@ fn a_shared_destination_is_not_fenced_while_authorized_by_another_grant() {
             .expect("journaled pending description")
             .to_string()
     };
-    let deferred_window = std::time::Instant::now() + Duration::from_secs(90);
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    // Watch the invariants for a while after the landing: the autonomous
+    // lease owner may still react to it.
+    let deferred_window = std::time::Instant::now() + Duration::from_secs(5);
     while std::time::Instant::now() < deferred_window {
         let egress = acl_egress(&log, &acl);
         assert!(
@@ -4839,7 +4859,9 @@ fn a_covering_static_cidr_suppresses_the_fence() {
         )])],
     );
     let statedir = log.parent().expect("statedir").to_path_buf();
-    fs::write(statedir.join("defer-acl-allow-add"), "70").unwrap();
+    // Accepted daemon-side, queued; the test lands it after the re-refresh
+    // (a fixed +70 s apply raced the 40 s kill plus the re-refresh).
+    fs::write(statedir.join("defer-acl-allow-add"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("refresh completes with the uncertain grant handled");
     assert!(
@@ -4881,27 +4903,20 @@ fn a_covering_static_cidr_suppresses_the_fence() {
     );
     // The deferred apply lands — authorized by the static CIDR, so no
     // fence ever appears — and a final refresh reconciles the duplicate.
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress
             .lines()
             .filter(|line| line.contains("action=allow destination=128.66.0.7/32"))
             .count()
-            > 1
-        {
-            assert!(
-                !egress.contains("wssp-dns-quarantine-"),
-                "still no fence: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred duplicate apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+            > 1,
+        "the deferred duplicate apply lands: {egress}"
+    );
+    assert!(
+        !egress.contains("wssp-dns-quarantine-"),
+        "still no fence: {egress}"
+    );
     refresh(&client, "sbx-1", &policy, &hash, &transport).expect("reconciling refresh");
     let egress = acl_egress(&log, &acl);
     assert!(
@@ -5082,7 +5097,9 @@ fn a_lease_withdrawn_uncertain_allow_retires_on_positive_evidence() {
     let statedir = log.parent().expect("statedir").to_path_buf();
     let marker_path = statedir.join("host-state/dns-revocations/sbx-1.json");
     let start = std::time::Instant::now();
-    fs::write(statedir.join("defer-acl-allow-add-fail"), "20").unwrap();
+    // The accepted add is queued; the test lands it after the pass and
+    // before the grant's 60 s lease fires.
+    fs::write(statedir.join("defer-acl-allow-add-fail"), "queue").unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
         .expect("refresh completes with the uncertain grant denied");
     assert!(
@@ -5104,23 +5121,19 @@ fn a_lease_withdrawn_uncertain_allow_retires_on_positive_evidence() {
         fence_present(&egress, "128.66.0.7/32"),
         "fenced while unresolved: {egress}"
     );
-    // The deferred daemon-side apply lands behind the fence (~20s).
-    let deadline = start + Duration::from_secs(40);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        if egress.contains("action=allow destination=128.66.0.7/32") {
-            assert!(
-                fence_present(&egress, "128.66.0.7/32"),
-                "the deferred allow lands fenced: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the deferred apply lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(200));
-    }
+    // The deferred daemon-side apply lands behind the fence, after the
+    // pass (a fixed +20 s delay raced the pass under load).
+    fs::remove_file(statedir.join("defer-acl-allow-add-fail")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.contains("action=allow destination=128.66.0.7/32"),
+        "the deferred apply lands: {egress}"
+    );
+    assert!(
+        fence_present(&egress, "128.66.0.7/32"),
+        "the deferred allow lands fenced: {egress}"
+    );
     // The grant expires ~60s after resolution: the lease positively
     // withdraws the landed rule with no refresh in flight.
     let deadline = start + Duration::from_secs(80);
@@ -5140,7 +5153,6 @@ fn a_lease_withdrawn_uncertain_allow_retires_on_positive_evidence() {
     }
     // The recorded evidence lets the next refresh retire the entry and
     // release the fence — no livelock.
-    fs::remove_file(statedir.join("defer-acl-allow-add-fail")).unwrap();
     transport.script("grants.example.com", [FakeDnsOutcome::Rcode(3)]);
     refresh(&client, "sbx-1", &policy, &hash, &transport).expect("reconciling refresh");
     let egress = acl_egress(&log, &acl);
@@ -5203,14 +5215,16 @@ fn a_final_authorization_expiry_restores_the_fence_around_an_unresolved_mutation
     let statedir = log.parent().expect("statedir").to_path_buf();
     let start = std::time::Instant::now();
     // The first issuance's allow add hangs at the CLI (killed at the
-    // grant's deadline — uncertain) while the daemon accepts it, applying
-    // it 90s later: unresolved across the re-grant's expiry. The pin is
+    // grant's deadline — uncertain) while the daemon accepts it; the test
+    // lands it only after the lease restored the fence (a fixed +90 s
+    // apply left ~10 s after the re-grant's expiry for the lease to fire):
+    // unresolved across the re-grant's expiry. The pin is
     // scoped to the first issuance's tag (generation 1 — C36 r26 F1) so
     // the RE-GRANT's addition is unaffected.
     let gen0_tag = dns_rule_tag("grants.example.com", 1);
     fs::write(
         statedir.join("defer-acl-allow-add-tag"),
-        format!("90 {gen0_tag}"),
+        format!("queue {gen0_tag}"),
     )
     .unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
@@ -5258,34 +5272,53 @@ fn a_final_authorization_expiry_restores_the_fence_around_an_unresolved_mutation
     );
     // The re-grant expires ~40s after its resolution: the lease withdraws
     // it AND restores the fence around the unresolved generation-0
-    // mutation. The deferred apply lands (~+90) BEHIND the restored fence.
+    // mutation. The deferred apply then lands BEHIND the restored fence.
+    // The settlement installs the fence BEFORE it withdraws the re-grant,
+    // so the fence alone is not the end of it: wait until the re-grant's
+    // allow is gone AND the settlement committed (the persisted plan no
+    // longer allows the destination), then require the fence to still
+    // stand — a settlement that released it after the withdrawal fails.
     let deadline = start + Duration::from_secs(110);
-    let mut fence_seen = false;
     loop {
         let egress = acl_egress(&log, &acl);
-        let fence = fence_present(&egress, "128.66.0.9/32");
-        let gen0_landed = egress.lines().any(|line| {
-            line.contains("action=allow")
-                && line.contains("destination=128.66.0.9/32")
-                && line.contains(&format!("description={gen0_tag}"))
-        });
-        fence_seen |= fence;
-        if gen0_landed {
+        let allowed = egress
+            .lines()
+            .any(|line| line.contains("action=allow destination=128.66.0.9/32"));
+        let committed = client
+            .persisted_plan_rules("sbx-1", &hash)
+            .is_some_and(|rules| {
+                !rules.iter().any(|rule| {
+                    rule.action == super::network::AclAction::Allow
+                        && rule.destination.as_deref() == Some("128.66.0.9/32")
+                })
+            });
+        if !allowed && committed {
             assert!(
-                fence,
-                "the deferred apply must land BEHIND the restored fence: {egress}"
+                fence_present(&egress, "128.66.0.9/32"),
+                "the lease restored the fence and kept it through its settlement: {egress}"
             );
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "the deferred apply lands behind a lease-restored fence: {egress}"
+            "the lease settles the final authorization's expiry: {egress}"
         );
         std::thread::sleep(Duration::from_millis(200));
     }
+    fs::remove_file(statedir.join("defer-acl-allow-add-tag")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
+    let egress = acl_egress(&log, &acl);
     assert!(
-        fence_seen,
-        "the lease restored the fence at the final authorization's expiry"
+        egress.lines().any(|line| {
+            line.contains("action=allow")
+                && line.contains("destination=128.66.0.9/32")
+                && line.contains(&format!("description={gen0_tag}"))
+        }),
+        "the deferred apply lands: {egress}"
+    );
+    assert!(
+        fence_present(&egress, "128.66.0.9/32"),
+        "the deferred apply must land BEHIND the restored fence: {egress}"
     );
 }
 
@@ -5600,7 +5633,8 @@ fn a_renewed_grant_survives_its_original_expiry() {
     let expired_tag = dns_rule_tag("grants.example.com", 1);
     // Renew while the withdrawal is in flight, AND defer the renewal's
     // re-add: the daemon accepts the new identity but applies it only
-    // 45s later while the CLI reports failure, so the pass leaves a
+    // after the retried renewal committed (queued; the test lands it)
+    // while the CLI reports failure, so the pass leaves a
     // journaled uncertain pending entry (C36 r20 F2: evidence scoped to
     // the exact issuance — the OLD identity's withdrawal evidence must
     // NOT retire the NEW issuance's pending entry).
@@ -5612,11 +5646,12 @@ fn a_renewed_grant_survives_its_original_expiry() {
         )])],
     );
     // The daemon "accepts" each add attempt but the CLI reports a
-    // transport failure and applies it only 8s later: the renewal pass
-    // issues the (deferred) add, gets an Uncertain outcome, journals it,
-    // and DENIES the grant for this refresh (an uncertain allow is never
-    // served) — the pending entry stays journaled for reconcile.
-    fs::write(statedir.join("defer-acl-allow-add-fail"), "8").unwrap();
+    // transport failure; the accepted add is queued and lands only when
+    // the test releases it: the renewal pass issues the (deferred) add,
+    // gets an Uncertain outcome, journals it, and DENIES the grant for this
+    // refresh (an uncertain allow is never served) — the pending entry
+    // stays journaled for reconcile.
+    fs::write(statedir.join("defer-acl-allow-add-fail"), "queue").unwrap();
     let outcome = std::thread::scope(|scope| {
         let renewal = scope.spawn(|| {
             std::thread::sleep(Duration::from_secs(2));
@@ -5708,8 +5743,8 @@ fn a_renewed_grant_survives_its_original_expiry() {
     );
     // Retry with a clean daemon: the contested gen-2 identity is never
     // reused — the retry plans ANOTHER fresh issuance, commits, and the
-    // deferred gen-2 apply (landing ~8s after its issuance) is reconciled
-    // under evidence scoped to gen-2 alone.
+    // deferred gen-2 apply (landed below, after the retry committed) is
+    // reconciled under evidence scoped to gen-2 alone.
     transport.script(
         "grants.example.com",
         [FakeDnsOutcome::Answer(vec![FakeDnsRecord::A(
@@ -5726,6 +5761,10 @@ fn a_renewed_grant_survives_its_original_expiry() {
             .any(|name| name == "grants.example.com"),
         "the retried renewal is served: {renewal:?}"
     );
+    // The deferred daemon-side apply lands only now. A fixed +8 s delay
+    // landed it DURING the retry under load, whose verification then
+    // refused the unexpected allow (fail closed, but not this scenario).
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
     // Continuous-denial contract past the ORIGINAL expiry (C36 r20):
     // until the renewal committed, the expired identity was never
     // reachable — an unfenced allow for the ORIGINAL identity must never
@@ -12249,8 +12288,8 @@ fn a_revoked_grants_cached_confirmation_never_releases_the_shared_fence() {
     );
     let statedir = log.parent().expect("statedir").to_path_buf();
     // A's SECOND address AND B's shared allow are both accepted
-    // daemon-side but reported lost (deferred applies at +45s). A's X
-    // add — which must SUCCEED — matches neither pin.
+    // daemon-side but reported lost (queued; the test lands them after
+    // the pass). A's X add — which must SUCCEED — matches neither pin.
     let b_hash = dns_rule_tag("b.example.com", 2)
         .rsplit('-')
         .next()
@@ -12258,7 +12297,7 @@ fn a_revoked_grants_cached_confirmation_never_releases_the_shared_fence() {
         .to_string();
     fs::write(
         statedir.join("defer-acl-allow-add-fail"),
-        format!("45 128.66.0.200\n45 {b_hash}\n"),
+        format!("queue 128.66.0.200\nqueue {b_hash}\n"),
     )
     .unwrap();
     let outcome = refresh(&client, "sbx-1", &policy, &hash, &transport)
@@ -12287,28 +12326,23 @@ fn a_revoked_grants_cached_confirmation_never_releases_the_shared_fence() {
             .any(|line| line.contains("action=allow") && line.contains("128.66.0.7")),
         "the revoked grant's swept allow is gone: {egress}"
     );
-    // The deferred applies land at +45s — B's behind the fence.
-    let deadline = std::time::Instant::now() + Duration::from_secs(70);
-    loop {
-        let egress = acl_egress(&log, &acl);
-        let b_landed = egress.lines().any(|line| {
-            line.contains("action=allow") && line.contains("128.66.0.7") && line.contains(&b_hash)
-        });
-        if b_landed {
-            assert!(
-                fence_present(&egress, "128.66.0.7/32"),
-                "B's deferred allow lands behind the fence, never effective: {egress}"
-            );
-            break;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "B's deferred allow lands: {egress}"
-        );
-        std::thread::sleep(Duration::from_millis(500));
-    }
-    // Cleanup: withdraw everything and retire.
+    // The deferred applies land now, after the pass (a fixed +45 s delay
+    // would land them during a pass slowed past 45 s) — B's behind the
+    // fence.
     fs::remove_file(statedir.join("defer-acl-allow-add-fail")).unwrap();
+    assert_eq!(apply_queued_acl_adds(&statedir), 2);
+    let egress = acl_egress(&log, &acl);
+    assert!(
+        egress.lines().any(|line| {
+            line.contains("action=allow") && line.contains("128.66.0.7") && line.contains(&b_hash)
+        }),
+        "B's deferred allow lands: {egress}"
+    );
+    assert!(
+        fence_present(&egress, "128.66.0.7/32"),
+        "B's deferred allow lands behind the fence, never effective: {egress}"
+    );
+    // Cleanup: withdraw everything and retire.
     transport.script("a.example.com", [FakeDnsOutcome::Rcode(3)]);
     transport.script("b.example.com", [FakeDnsOutcome::Rcode(3)]);
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
@@ -12657,15 +12691,16 @@ fn a_restarted_owner_fences_before_its_first_recovery_probe() {
 fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
     // C36 r28 F3: a pending fence-release retry in reconciliation must go
     // through the same destination-wide release boundary as every other
-    // release path. Grant .7 with an uncertain ALLOW ISSUANCE (deferred
-    // apply at +120) — the unresolved broadening stays pending behind a
-    // preventive fence. A re-grant confirms a fresh allow and its ensured
-    // fence release is made UNCERTAIN (deferred removal at +90): an
+    // release path. Grant .7 with an uncertain ALLOW ISSUANCE (its
+    // daemon-side apply queued, landed last) — the unresolved broadening
+    // stays pending behind a preventive fence. A re-grant confirms a fresh
+    // allow and its ensured fence release is made UNCERTAIN (its
+    // daemon-side removal queued, landed after the denial passes): an
     // unresolved old allow and a pending fence release now coexist. A
     // later DENIAL with fence adds failing must NOT remove the fence
     // first: pre-fix the reconcile retry withdraws the fence on sight,
     // the enforcement's replacement fence fails, and the refresh returns
-    // with the stale apply free to land unfenced at +120. Post-fix the
+    // with the stale apply free to land unfenced. Post-fix the
     // retry is gated — unauthorized, so a RELIABLE replacement must be
     // installed first; that fails too, so the old fence stays.
     let (client, log) = applied_client("running", "sbx-1");
@@ -12675,8 +12710,14 @@ fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
     let transport = FakeDnsTransport::new();
     let statedir = log.parent().expect("statedir").to_path_buf();
     let marker_path = statedir.join("host-state/dns-revocations/sbx-1.json");
-    let started = std::time::Instant::now();
-    fs::write(statedir.join("defer-acl-allow-add-fail"), "120 128.66.0.7").unwrap();
+    // Both daemon-side effects are queued and landed by the test in the
+    // order this race needs (fixed +90 / +120 s delays needed every pass
+    // before them to finish within 60 s, a wall-clock bet under load).
+    fs::write(
+        statedir.join("defer-acl-allow-add-fail"),
+        "queue 128.66.0.7",
+    )
+    .unwrap();
     transport.script(
         "a.example.com",
         [FakeDnsOutcome::Answer(vec![FakeDnsRecord::A(
@@ -12697,9 +12738,9 @@ fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
         "the unresolved broadening is fenced: {egress}"
     );
     // Re-grant: the fresh allow lands and confirms; the ensured fence
-    // release is uncertain (deferred removal at +90).
+    // release is uncertain (deferred removal, queued).
     fs::remove_file(statedir.join("defer-acl-allow-add-fail")).unwrap();
-    fs::write(statedir.join("defer-acl-rule-remove"), "90").unwrap();
+    fs::write(statedir.join("defer-acl-rule-remove"), "queue").unwrap();
     transport.script(
         "a.example.com",
         [FakeDnsOutcome::Answer(vec![FakeDnsRecord::A(
@@ -12713,11 +12754,7 @@ fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
         "the uncertain fence release stays journaled alongside the unresolved allow"
     );
     // Later denial + failed replacement fencing, before the deferred
-    // removal and the stale apply fire.
-    assert!(
-        started.elapsed() < Duration::from_secs(60),
-        "the denial happens inside the race window"
-    );
+    // removal and the stale apply land (both are still queued).
     fs::remove_file(statedir.join("defer-acl-rule-remove")).unwrap();
     fs::write(statedir.join("fail-acl-fence-add"), "1").unwrap();
     transport.script("a.example.com", [FakeDnsOutcome::Rcode(3)]);
@@ -12729,7 +12766,7 @@ fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
     );
     // With fencing working again, the retry installs a RELIABLE
     // replacement (fresh epoch, read back) BEFORE removing the old
-    // identity — the deferred removal at +90 can then only strike the
+    // identity — the deferred removal can then only strike the
     // superseded fence.
     fs::remove_file(statedir.join("fail-acl-fence-add")).unwrap();
     transport.script("a.example.com", [FakeDnsOutcome::Rcode(3)]);
@@ -12739,9 +12776,10 @@ fn a_denied_reconcile_release_never_drops_the_fence_before_its_replacement() {
         fence_present(&egress, "128.66.0.7/32"),
         "the replacement fence is installed before the old identity is released: {egress}"
     );
-    // The stale apply lands at +120 — behind the fence that survived.
-    let wait = Duration::from_secs(125).saturating_sub(started.elapsed());
-    std::thread::sleep(wait);
+    // The deferred removal lands, then the stale apply — behind the fence
+    // that survived.
+    assert!(apply_queued_acl_removes(&statedir) >= 1);
+    assert_eq!(apply_queued_acl_adds(&statedir), 1);
     let egress = acl_egress(&log, &acl);
     assert!(
         egress
@@ -12866,10 +12904,11 @@ fn an_unreadable_release_journal_never_adopts_a_refresh_fence() {
         "a readable marker with an empty journal still adopts the installed refresh fence"
     );
     // Re-grant: the fresh allow lands and confirms; the fence's release
-    // is made UNCERTAIN — the deferred removal fires at +90 while the
+    // is made UNCERTAIN — the daemon-side removal is queued (landed by the
+    // test after the withdrawal boundary ran; a fixed +90 s apply raced
+    // the re-grant plus a 15 s-bounded withdrawal under load) while the
     // fence stays installed.
-    let armed = std::time::Instant::now();
-    fs::write(statedir.join("defer-acl-rule-remove"), "90").unwrap();
+    fs::write(statedir.join("defer-acl-rule-remove"), "queue").unwrap();
     transport.script(
         "a.example.com",
         [FakeDnsOutcome::Answer(vec![FakeDnsRecord::A(
@@ -12917,11 +12956,11 @@ fn an_unreadable_release_journal_never_adopts_a_refresh_fence() {
         }),
         "an unreadable release journal disqualifies adoption: a fresh lease fence is issued: {egress}"
     );
-    // The deferred removal lands at +90: it deletes the release-pending
+    // The deferred removal lands now: it deletes the release-pending
     // REFRESH fence; the fresh lease fence survives, still covering the
     // allow whose withdrawal is stalled.
-    let wait = Duration::from_secs(95).saturating_sub(armed.elapsed());
-    std::thread::sleep(wait);
+    fs::remove_file(statedir.join("defer-acl-rule-remove")).unwrap();
+    assert!(apply_queued_acl_removes(&statedir) >= 1);
     let egress = acl_egress(&log, &acl);
     assert!(
         egress
