@@ -16,15 +16,15 @@ the default), Vitest `--maxWorkers=4` and Turbo `--concurrency=2` for
 `pnpm test`; suites with lower limits keep them (`test:pg` two workers,
 cancel-wire and relay-chaos one).
 
-| Suite                                | Command                                                                                                                                                                                   |
-| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Suite                                | Command                                                                                                                                                                                                                                          |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Lint, policy and type checks         | the non-test `pnpm verify` steps: `pnpm check:ci`, the `pnpm policy:*` steps, `pnpm check-types`, `pnpm knip`, `pnpm env:check`, `pnpm env:check-entrypoints`, `pnpm docker:check-copy`, `pnpm docs:check-citations`, `pnpm deps:check-excludes` |
-| Hermetic unit tests                  | `pnpm test`                                                                                                                                                                               |
-| Real PostgreSQL                      | `pnpm test:pg` (Docker; see below)                                                                                                                                                        |
-| Cancel wire (real debug daemon)      | `pnpm test:cancel-wire`                                                                                                                                                                   |
-| Relay chaos (real debug daemon)      | `pnpm test:relay-chaos`                                                                                                                                                                   |
-| Script, migration and backup tooling | `pnpm test:setup`, `pnpm db:test-unit`, `pnpm backup:test-unit`, `pnpm db:test-migrations`, `pnpm backup:test`                                                                            |
-| Rust                                 | `cargo test --workspace -j4`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`                                                                          |
+| Hermetic unit tests                  | `pnpm test`                                                                                                                                                                                                                                      |
+| Real PostgreSQL                      | `pnpm test:pg` (Docker; see below)                                                                                                                                                                                                               |
+| Cancel wire (real debug daemon)      | `pnpm test:cancel-wire`                                                                                                                                                                                                                          |
+| Relay chaos (real debug daemon)      | `pnpm test:relay-chaos`                                                                                                                                                                                                                          |
+| Script, migration and backup tooling | `pnpm test:setup`, `pnpm db:test-unit`, `pnpm backup:test-unit`, `pnpm db:test-migrations`, `pnpm backup:test`                                                                                                                                   |
+| Rust                                 | `cargo test --workspace -j4`, `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`                                                                                                                                 |
 
 `pnpm verify` chains all of the TypeScript rows with `&&`; it stops at the
 first red step, so to see every result run the steps one by one.
