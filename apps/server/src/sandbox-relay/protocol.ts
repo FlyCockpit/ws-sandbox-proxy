@@ -569,6 +569,7 @@ const channelFenceSchema = z.strictObject({
     generation: admissionEpochSchema,
   }),
 });
+export type ChannelFence = z.infer<typeof channelFenceSchema>;
 const utf8Bytes = (value: string) => Buffer.byteLength(value, "utf8");
 const noNul = (value: string) => !value.includes("\0");
 const channelArgvSchema = z

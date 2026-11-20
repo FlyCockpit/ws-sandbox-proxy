@@ -7,11 +7,13 @@ import { assertUniqueInputMapKeys, JSON_BODY_MAX_BYTES } from "@wssp/sandbox-con
 import { Hono, type MiddlewareHandler } from "hono";
 import { resolveClientIp } from "../client-ip.js";
 import { createPathOnlyRequestLogger } from "../request-logger.js";
+import type { ConnectManager } from "../sandbox-relay/connect-manager.js";
 import { registerDownloadRoutes } from "../sandbox-transfers/download-routes.js";
 import { registerUploadRoutes } from "../sandbox-transfers/upload-routes.js";
 import { registerBuildContextRoutes } from "../template-builds/context-routes.js";
 import { buildContextStore } from "../template-builds/runtime.js";
 import { type SandboxApiEnv, sdkAuthentication } from "./auth.js";
+import { CONNECT_ROUTE, connectPreAuthentication, registerConnectRoute } from "./connect.js";
 import { sdkErrorResponse } from "./errors.js";
 import { serveSdkOpenApiDocument } from "./openapi.js";
 import { createSandboxApiRoutes } from "./routes.js";
@@ -153,7 +155,13 @@ const jsonBodyLimit = createJsonBodyLimit({
   ownerReaders: JSON_BODY_OWNER_READERS,
 });
 
-export function createSandboxApi() {
+export function createSandboxApi(
+  options: {
+    isShuttingDown?: () => boolean;
+    /** CLI shells; absent (tests, tools): every connect upgrade answers 503. */
+    connects?: () => ConnectManager;
+  } = {},
+) {
   const app = new Hono<SandboxApiEnv>();
   const ipBudget = budget("ip", env.RATE_LIMIT_SDK_IP_POINTS);
   const keyBudget = budget("key", env.RATE_LIMIT_SDK_KEY_POINTS);
@@ -172,6 +180,16 @@ export function createSandboxApi() {
   });
   // The static public spec is the only anonymous /v1 route; it is IP-budgeted.
   app.get("/openapi.json", serveSdkOpenApiDocument);
+  // CLI shells: the credential-free refusals (Origin, cookies, subprotocol,
+  // upgrade, shutdown) come before any key is looked up.
+  const connects = options.connects;
+  app.use(
+    CONNECT_ROUTE,
+    connectPreAuthentication({
+      manager: () => connects?.() ?? { shuttingDown: true },
+      ...(options.isShuttingDown ? { isShuttingDown: options.isShuttingDown } : {}),
+    }),
+  );
   app.use("*", sdkAuthentication);
   app.use("*", async (c, next) => {
     await keyBudget(c.var.principal.keyId);
@@ -190,6 +208,8 @@ export function createSandboxApi() {
     await authorizeServiceIntent(principal, "templates.build");
     return principal;
   });
+  // The connect upgrade has no body; it is mounted before the JSON body limit.
+  if (connects) registerConnectRoute(app, { manager: connects });
   app.use("*", jsonBodyLimit);
   app.route("/", createSandboxApiRoutes());
   // Terminal for root, unknown paths and methods: no browser/SSR fallthrough.

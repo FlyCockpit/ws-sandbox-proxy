@@ -68,6 +68,7 @@ vi.mock("./sandbox-relay/websocket.js", () => ({
   createSandboxRelayWebsocketMiddleware: () => async (_c: unknown, next: () => Promise<void>) =>
     next(),
   sandboxRelayUpgradeHandler: () => async (_c: unknown, next: () => Promise<void>) => next(),
+  sandboxConnectManager: vi.fn(),
 }));
 vi.mock("./sandbox-relay/browser-terminal-upgrade.js", () => ({
   BROWSER_TERMINAL_ROUTE: "/api/dashboard/sandboxes/:id/terminal/ws",

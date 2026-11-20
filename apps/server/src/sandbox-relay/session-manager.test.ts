@@ -14,7 +14,8 @@ import { ORPCError } from "@orpc/server";
 import { revalidateSandboxHostIdentity } from "@wssp/api/lib/host-token-access";
 import * as sdkAccess from "@wssp/api/lib/sdk-key-access";
 import { markHostQuiescing, settleHostQuiesce } from "@wssp/api/template-builds/quiesce-hold";
-import { withAuthorityChange } from "@wssp/db/authority";
+import { holdAuthorityChange, withAuthorityChange } from "@wssp/db/authority";
+import { parseConnectDataFrame } from "@wssp/sandbox-contracts";
 
 async function flushCommittedAuthorityListeners() {
   await new Promise<void>((resolve) => queueMicrotask(resolve));
@@ -60,6 +61,7 @@ import {
 } from "./protocol.js";
 import { bindMemoryCaptures } from "./relay-captures-harness.js";
 import {
+  CHANNEL_HOLD_MAX_FRAMES,
   SANDBOX_RECEIVE_HARD_MAX_FRAMES,
   SANDBOX_RECEIVE_MAX_BYTES,
   SANDBOX_RECEIVE_MAX_FRAMES,
@@ -378,7 +380,7 @@ describe("ordered socket authority", () => {
     }
   });
 
-  it("echoes a channels offer and refuses every unsolicited channel frame", async () => {
+  describe("channel lane (wssp-ssh 1b)", () => {
     const fence = {
       channelId: "chan-1",
       connectionId: "conn-1",
@@ -386,26 +388,136 @@ describe("ordered socket authority", () => {
       epoch: 1,
       target: { kind: "sandbox" as const, sandboxId: "sbx-1", generation: 1 },
     };
-    const plain = await registered();
-    const plainAck = JSON.parse(plain.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
-    expect(plainAck.capabilities).not.toHaveProperty("channels");
-    manager.handleTextFrame(
-      plain,
-      JSON.stringify({ type: "channel.ready", fence, pty: { rows: 24, cols: 80 } }),
-    );
-    expect(plain.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+    const holds: ReturnType<typeof holdAuthorityChange>[] = [];
+    afterEach(() => {
+      for (const change of holds.splice(0)) change.settle();
+    });
 
-    const offered = await registered(false, true, { channels: { kinds: ["pty", "exec"] } });
-    const ack = JSON.parse(offered.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
-    expect(ack.capabilities.channels).toEqual({ kinds: ["pty", "exec"] });
-    manager.handleBinaryFrame(
-      offered,
-      encodeChannelDataFrame(
-        { type: "channel.data", fence, stream: "stdout", seq: 0 },
-        new Uint8Array([1]),
-      ),
-    );
-    expect(offered.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+    function cliBinding() {
+      return {
+        ownerId: "user-1",
+        keyId: "key-1",
+        sandboxId: "sbx-1",
+        hostId: "host-1",
+        hostOwnerId: "user-1",
+        generation: 1,
+        epoch: store.hosts.get("host-1")!.connectionEpoch,
+        keyExpiresAt: null,
+        leaseExpiresAt: null,
+      };
+    }
+
+    /** A CLI connection on the registered host (the upgrade's checks already passed). */
+    function cliConnection(host: FakeSocket) {
+      const reserved = manager.connects.reserve(cliBinding());
+      if (!reserved.ok) throw new Error(reserved.reason);
+      const retained = { context: {}, current: () => true, recheck: async () => retained };
+      const connection = manager.connects.attach(
+        reserved.reservation,
+        { kind: "sdkKey", keyId: "key-1", ownerId: "user-1" } as never,
+        retained as never,
+      );
+      const client = {
+        readyState: 1,
+        bufferedAmount: 0,
+        text: [] as Record<string, unknown>[],
+        data: [] as string[],
+        send(data: string | Uint8Array) {
+          if (typeof data === "string") this.text.push(JSON.parse(data));
+          else this.data.push(new TextDecoder().decode(parseConnectDataFrame(data)!.body));
+        },
+        close() {
+          this.readyState = 3;
+        },
+      };
+      connection.opened(client);
+      connection.message(JSON.stringify({ type: "open", channel: 1, kind: "exec", argv: ["cat"] }));
+      const open = host.sends.map((f) => JSON.parse(f)).find((f) => f.type === "channel.open");
+      return { connection, client, open };
+    }
+
+    it("a host without the channels offer gets no channel and any channel frame is a protocol error", async () => {
+      const plain = await registered();
+      const plainAck = JSON.parse(plain.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
+      expect(plainAck.capabilities).not.toHaveProperty("channels");
+      expect(manager.connects.hostAvailability(cliBinding())).toBe("outdated");
+      manager.handleTextFrame(
+        plain,
+        JSON.stringify({ type: "channel.ready", fence, pty: { rows: 24, cols: 80 } }),
+      );
+      expect(plain.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+      const again = await registered();
+      manager.handleBinaryFrame(
+        again,
+        encodeChannelDataFrame(
+          { type: "channel.data", fence, stream: "stdout", seq: 0 },
+          new Uint8Array([1]),
+        ),
+      );
+      expect(again.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+    });
+
+    it("a negotiated host carries a channel synchronously, outside the serialized queue", async () => {
+      const host = await registered(false, true, { channels: { kinds: ["pty", "exec"] } });
+      const ack = JSON.parse(host.sends.find((s) => JSON.parse(s).type === "hello.ok")!);
+      expect(ack.capabilities.channels).toEqual({ kinds: ["pty", "exec"] });
+      // A frame naming no channel of this server is foreign: counted, not fatal.
+      manager.handleTextFrame(host, JSON.stringify({ type: "channel.ready", fence }));
+      expect(host.closes).toEqual([]);
+      const { client, open } = cliConnection(host);
+      expect(open.fence.epoch).toBe(ack.connectionEpoch);
+      manager.handleTextFrame(host, JSON.stringify({ type: "channel.ready", fence: open.fence }));
+      // No drain: the channel lane is synchronous.
+      expect(client.text.map((f) => f.type)).toEqual(["hello", "ready"]);
+      manager.handleBinaryFrame(
+        host,
+        encodeChannelDataFrame(
+          { type: "channel.data", fence: open.fence, stream: "stdout", seq: 0 },
+          new TextEncoder().encode("hi"),
+        ),
+      );
+      expect(client.data).toEqual(["hi"]);
+      expect(host.closes).toEqual([]);
+    });
+
+    it("holds channel frames in order while the host ticket is stale, then delivers them", async () => {
+      const host = await registered(false, true, { channels: { kinds: ["pty", "exec"] } });
+      const { client, open } = cliConnection(host);
+      manager.handleTextFrame(host, JSON.stringify({ type: "channel.ready", fence: open.fence }));
+      const change = holdAuthorityChange({ credentialId: "token-1" });
+      holds.push(change);
+      for (const [seq, text] of ["a", "b"].entries())
+        manager.handleBinaryFrame(
+          host,
+          encodeChannelDataFrame(
+            { type: "channel.data", fence: open.fence, stream: "stdout", seq },
+            new TextEncoder().encode(text),
+          ),
+        );
+      await flushCommittedAuthorityListeners();
+      expect(client.data).toEqual([]);
+      change.settle();
+      await vi.waitFor(() => expect(client.data).toEqual(["a", "b"]));
+      expect(host.closes).toEqual([]);
+    });
+
+    it("a held lane past its bound is a protocol error and delivers nothing", async () => {
+      const host = await registered(false, true, { channels: { kinds: ["pty", "exec"] } });
+      const { client, open } = cliConnection(host);
+      manager.handleTextFrame(host, JSON.stringify({ type: "channel.ready", fence: open.fence }));
+      holds.push(holdAuthorityChange({ credentialId: "token-1" }));
+      const frame = JSON.stringify({
+        type: "channel.error",
+        fence: open.fence,
+        code: "state_conflict",
+      });
+      for (let i = 0; i < CHANNEL_HOLD_MAX_FRAMES; i += 1) manager.handleTextFrame(host, frame);
+      expect(host.closes).toEqual([]);
+      manager.handleTextFrame(host, frame);
+      expect(host.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
+      expect(client.text.filter((f) => f.type === "error")).toEqual([]);
+      expect(client.text.at(-1)).toMatchObject({ type: "end", intent: "host_disconnected" });
+    });
   });
 
   it.each([false, true])(

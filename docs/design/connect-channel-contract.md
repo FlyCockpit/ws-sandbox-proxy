@@ -2,8 +2,8 @@
 
 CLI channels carry the CLI's interactive shells (and later port forwards and SSH) between the server and
 the node daemon. A channel is one guest process (`pty` or `exec`) started in its own guest systemd scope as the
-sandbox's guest user. This note covers the host leg (server ↔ daemon) and the guest side. The client leg
-(`/v1/sandboxes/{id}/connect`) is described in `docs/guide/connect.md` once it ships.
+sandbox's guest user. This note covers the host leg (server ↔ daemon), the guest side and the client leg
+(`/v1/sandboxes/{id}/connect`, [Client wire](#client-wire-wsspconnectv1)).
 
 The browser terminal family (`terminal.*`, `docs/design/terminal-relay-contract.md`) is unchanged and separate.
 
@@ -133,3 +133,94 @@ normal end, a proven kill, or a positively stopped or absent VM. At start the da
 scopes (batched per sandbox) and forgets the proven ones; unregistered `wssp-chan-*` scopes are survivors of a
 normal close and are left alone. A crash between a normal close and the entry's removal kills those survivors
 too, which fails toward cleanup.
+
+## Client wire (`wssp.connect.v1`)
+
+The CLI reaches a sandbox's channels through one WebSocket per connection. The schemas live in
+`packages/sandbox-contracts/src/connect-wire.ts`; `connect-wire-fixtures.json` next to it holds the vectors
+every implementation (the Rust CLI included) must accept or refuse.
+
+### Upgrade
+
+`GET /v1/sandboxes/{id}/connect` with `Upgrade: websocket`, `Sec-WebSocket-Protocol: wssp.connect.v1` (exactly
+that one entry) and `Authorization: Bearer wssp_sdk_…`. Only kind `API` keys holding `sandboxes:connect` connect:
+a dashboard SDK key that was explicitly given the scope, or a `wssp login` with write access. Agent tokens, OAuth
+grants and MCP never hold it. Refusals are HTTP answers in the /v1 error catalog, before any WebSocket exists:
+
+| Refusal                                                                | Answer                                                                                                   |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| server shutting down                                                   | 503 `SERVICE_UNAVAILABLE`                                                                                |
+| no `Upgrade: websocket`                                                | 426                                                                                                      |
+| any `Origin` header, any `Cookie` header                               | 403 `FORBIDDEN`                                                                                          |
+| a subprotocol other than exactly `wssp.connect.v1`                     | 400 `BAD_REQUEST`                                                                                        |
+| a credential in the query; duplicate `Authorization`; a non-`API` kind | 400 / 401 (as every /v1 route)                                                                           |
+| connect budget (30/min per key, 60/min per IP; fail closed)            | 429 `TOO_MANY_REQUESTS` / 503                                                                            |
+| missing `sandboxes:connect`                                            | 403 `FORBIDDEN`                                                                                          |
+| no such sandbox, or another owner's                                    | 404                                                                                                      |
+| a managed sandbox (build, verify, CLI login)                           | 409 `sandbox.managed` (or 400 `UNSUPPORTED_CAPABILITY`, `connect_sandbox_unsupported`)                   |
+| not `READY` on a usable host                                           | 409 `sandbox.state_conflict` (no usable host at all, e.g. offloaded: authorization already refuses, 403) |
+| the node did not negotiate `channels`                                  | 400 `UNSUPPORTED_CAPABILITY`, reason `connect_host_outdated`                                             |
+| the host is not connected                                              | 409 `sandbox.host_unavailable`                                                                           |
+| 8 connections per sandbox, 16 per key or 32 per owner                  | 429 `TOO_MANY_REQUESTS`                                                                                  |
+
+### Frames
+
+Control frames are JSON text (at most 256 KiB). Channel data is binary: a big-endian u32 metadata length, the
+JSON metadata `{type: "data", channel, stream, seq}` (at most 1 KiB) and a body of 1 byte to 16 KiB (pty) or
+32 KiB (exec). Every object is strict: an unknown field ends the connection with `protocol_violation`.
+
+| Frame         | Dir  | Fields                                                                                                                                                                    |
+| ------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`       | S→C  | `connectionId`, `sandboxId`, `limits` (the table below); always the first frame                                                                                           |
+| `open`        | C→S  | `channel`, `kind` (`pty`/`exec`), `argv?` (structural), `login?`, `cwd?` (absolute), `env?` (`COLORTERM`, `LANG`, `LC_*`), `pty?: {rows, cols, term}` (exactly for `pty`) |
+| `ready`       | S→C  | `channel`, `pty?: {rows, cols}` (the applied size)                                                                                                                        |
+| data (binary) | both | `stdin` from the client; `stdout`/`stderr` to it                                                                                                                          |
+| `ack`         | both | `channel`, `stream`, `seq`: cumulative, the highest delivered `seq` (`stdout`/`stderr` from the client, `stdin` from the server)                                          |
+| `eof`         | both | `channel`, `stream`, `frames`: the data frames sent on that stream (`stdin` from the client; `stdout`/`stderr` to it)                                                     |
+| `resize`      | C→S  | `channel`, `rows` 1–512, `cols` 1–1024 (pty)                                                                                                                              |
+| `signal`      | C→S  | `channel`, `TERM`/`INT`/`HUP`/`KILL` (exec; `KILL` kill-closes the scope)                                                                                                 |
+| `close`       | C→S  | `channel` (a normal close: sshd semantics)                                                                                                                                |
+| `exit`        | S→C  | `channel`, `exitCode?` or `signal?`, `intent?`, `error?: {code, message}`, `frames: {stdout, stderr}`; the channel's last frame                                           |
+| `error`       | S→C  | `channel`, `code` (`unsupported_signal`, `state_conflict`); the channel stays open                                                                                        |
+| `end`         | S→C  | `intent`, `error?`; the whole connection ends, then close code 4401                                                                                                       |
+
+`limits` in `hello`: `maxChannels` 32, `maxPtyChannels` 8, `opensPerMinute` 120, `windowFrames` `{pty: 8, exec:
+32}`, `dataMaxBytes` `{pty: 16384, exec: 32768}`, `ackStallMs` 60000, `pingIntervalMs` 20000, `idleTimeoutMs`
+60000, `openTimeoutMs` 30000, `unackedInputBytes` 4194304.
+
+### Rules
+
+- The client sends nothing before `hello`; frames it sends earlier are held and processed after it.
+- Channel ids are client-chosen u32 numbers, strictly increasing per connection and never reused. A frame
+  naming an id that was never opened ends the connection with `protocol_violation`; a frame naming a channel
+  that already ended (acks and input racing its `exit`) is ignored. The server maps each channel to a host
+  `channelId` it mints and to its own `connectionId`; the client never names a host, epoch or generation.
+- A refused open (a cap, a rate, a node refusal) answers with `exit` carrying `error` and no `ready`
+  (server codes `host_capacity`, `rate_limited`, `disconnected`; an open the node does not answer within
+  `openTimeoutMs` exits `expired` with `timeout`).
+- Credit is end to end and counts frames per channel, both output streams together. Output: at most
+  `windowFrames` unacknowledged frames per channel, and 4 MiB per connection. **Acknowledge every delivered output
+  frame promptly, at least every quarter window, and never hold one back**: the node closes a channel whose
+  oldest unacknowledged output frame is `ackStallMs` (60 s) old with `backpressure`. stdin: at most `windowFrames`
+  frames not yet acknowledged by the server per channel, and at most `unackedInputBytes` (4 MiB) of them across
+  the connection's channels, sequences from 0 without gaps; more is a protocol violation. The server
+  acknowledges stdin as the node consumes it.
+- Rate: data bytes are capped per connection in each direction (default 8 MiB/s,
+  `SANDBOX_CONNECT_MAX_BYTES_PER_SECOND`), with up to one second of burst. The cap only delays frames: nothing is
+  dropped, and output waiting for it holds the node's credit like a slow client.
+- `eof` and the natural `exit` follow every data frame of their stream; act on `eof.frames` only after
+  delivering that many frames. An `exit` with an `intent` is a close decision: output not yet delivered may be
+  dropped and the `exit` delivered at once.
+- Liveness: the server pings every 20 s; a client that sends nothing (no frame, no pong) for 60 s is gone and
+  the connection ends `detached` (`timeout`). There is no idle timeout for an answering client.
+- Lifetime: a connection ends `expired` (`timeout`) 12 h after it opened, however active (the node's own
+  per-channel limit is the same 12 h); the key's expiry and the sandbox lease end it earlier.
+- Authority: the server keeps the key's retained `sandboxes.connect` authorization for the connection's life
+  and checks it before every delivery in both directions; it re-reads it every 15 s, on every authority change of
+  the key, its owner, the host, the host owner or the pool owner, on every lifecycle change of the sandbox and at
+  the key's or lease's expiry (5 s deadline, fail closed). The connection ends with `end{intent}` and close 4401:
+  `revoked` (key revoked or expired, owner banned or deleted, grant or custody lost), `sandbox_stopped`,
+  `sandbox_destroyed`, `expired` (lease), `superseded` (new generation, host or host owner),
+  `host_disconnected`, `detached`, `protocol_violation`, `backpressure`, `lifecycle_unconfirmed` or `shutdown`.
+  Every channel of the connection then gets `channel.close{intent}` on the node; nothing is forwarded in
+  either direction after the decision, and there is no resume.

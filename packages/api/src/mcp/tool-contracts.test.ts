@@ -42,9 +42,14 @@ describe("MCP service boundary", () => {
   it("cannot reach person-only operations", () => {
     for (const tool of MCP_TOOLS) {
       expect(tool.actions.join(" ")).not.toMatch(
-        /sdkKeys|agentTokens|mcpGrants|lower|raise|terminal|QueuedHost|queuedCommands\.(?:run|dismiss)/i,
+        /sdkKeys|agentTokens|mcpGrants|lower|raise|terminal|sandboxes\.connect|QueuedHost|queuedCommands\.(?:run|dismiss)/i,
       );
-      expect(tool.name).not.toMatch(/token|grant|terminal|lower|raise|queue_(?:run|dismiss)/);
+      expect(tool.name).not.toMatch(
+        /token|grant|terminal|connect|shell|lower|raise|queue_(?:run|dismiss)/,
+      );
+      // CLI shells are a kind API plane: no tool needs or reaches them.
+      expect(tool.scopes).not.toContain("sandboxes:connect");
+      expect(tool.actions).not.toContain("sandboxes.connect");
     }
   });
   it("lists exactly the tools whose complete scope set is present", () => {

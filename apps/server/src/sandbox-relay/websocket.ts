@@ -158,6 +158,11 @@ function releaseSocket(ws: SandboxRelayWsContext) {
   relaySockets.delete(ws);
 }
 
+/** The relay's CLI connect manager (`/v1/sandboxes/{id}/connect`, wssp-ssh 1b). */
+export function sandboxConnectManager() {
+  return sandboxRelaySessionManager.connects;
+}
+
 export function sandboxRelayUpgradeHandler() {
   return upgradeWebSocket((c: Context<{ Variables: SandboxRelayVariables }>) => {
     const identity = c.get("sandboxRelayIdentity");

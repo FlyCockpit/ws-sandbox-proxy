@@ -80,6 +80,7 @@ export const SDK_SCOPES = [
   "credentials:write",
   "credentials:use",
   "sandboxes:tunnel",
+  "sandboxes:connect",
 ] as const;
 export type SdkScope = (typeof SDK_SCOPES)[number];
 

@@ -86,6 +86,7 @@ import {
 } from "./sandbox-relay/browser-terminal-upgrade.js";
 import {
   createSandboxRelayWebsocketMiddleware,
+  sandboxConnectManager,
   sandboxRelayUpgradeHandler,
 } from "./sandbox-relay/websocket.js";
 import { createDashboardTransferApi } from "./sandbox-transfers/dashboard-routes.js";
@@ -175,7 +176,13 @@ export async function createApp(
   }
 
   // This terminal subapp must precede every browser middleware and catch-all.
-  app.route("/v1", createSandboxApi());
+  app.route(
+    "/v1",
+    createSandboxApi({
+      isShuttingDown: lifecycle.isShuttingDown,
+      connects: sandboxConnectManager,
+    }),
+  );
   app.route("/api/sandbox-host", createHostControlApi());
   // Relayed peer image parts: host credential + one-time link, own 33 MiB
   // body limit and per-host bucket, mounted before the global 10 MB limit.

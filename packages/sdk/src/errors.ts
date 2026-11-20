@@ -76,6 +76,10 @@ export type WsspErrorReason =
   | "tunnel_not_shared"
   /** `UNSUPPORTED_CAPABILITY` (tunnel): the sandbox was created without `network.tunnelPorts`. */
   | "tunnel_not_enabled"
+  /** `UNSUPPORTED_CAPABILITY` (connect): the sandbox's node does not support CLI shells yet. */
+  | "connect_host_outdated"
+  /** `UNSUPPORTED_CAPABILITY` (connect): a build, verify or CLI-login sandbox never gets a shell. */
+  | "connect_sandbox_unsupported"
   /** `packContext` (local): no descriptor-anchored traversal on this platform. */
   | "unanchored_context"
   | "network"

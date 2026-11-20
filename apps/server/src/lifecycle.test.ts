@@ -77,6 +77,7 @@ vi.mock("./sandbox-relay/host-liveness.js", () => ({ sweepConnectedHosts: sweepH
 const relay = vi.hoisted(() => ({
   disposeTerminals: vi.fn(),
   disposeSessions: vi.fn(),
+  disposeConnects: vi.fn(),
 }));
 vi.mock("./sandbox-relay/browser-terminal.js", () => ({
   browserTerminalService: { dispose: relay.disposeTerminals },
@@ -84,6 +85,7 @@ vi.mock("./sandbox-relay/browser-terminal.js", () => ({
 vi.mock("./sandbox-relay/session-manager.js", () => ({
   sandboxRelaySessionManager: {
     dispose: relay.disposeSessions,
+    connects: { dispose: relay.disposeConnects },
     verifyHostImage: vi.fn(),
     probeSandbox: vi.fn(),
   },
@@ -437,6 +439,7 @@ describe("C55-CC-3: terminals get their shutdown close whatever the drains do", 
     state.mode = "external";
     relay.disposeTerminals.mockImplementation(() => state.events.push("terminals-closed"));
     relay.disposeSessions.mockImplementation(() => state.events.push("sockets-closed"));
+    relay.disposeConnects.mockImplementation(() => state.events.push("connects-closed"));
     const { createServerLifecycle } = await import("./lifecycle");
     const lifecycle = createServerLifecycle();
     await lifecycle.start(() => ({ close: (done: () => void) => done() }));
@@ -451,7 +454,12 @@ describe("C55-CC-3: terminals get their shutdown close whatever the drains do", 
     await started();
     listeners.get("SIGTERM")!();
     await vi.advanceTimersByTimeAsync(0);
-    expect(state.events.slice(0, 2)).toEqual(["terminals-closed", "outbox-rejected"]);
+    // CLI shells end `shutdown` with the browser terminals, before any drain.
+    expect(state.events.slice(0, 3)).toEqual([
+      "terminals-closed",
+      "connects-closed",
+      "outbox-rejected",
+    ]);
     await vi.advanceTimersByTimeAsync(5000);
     await vi.waitFor(() => expect(relay.disposeSessions).toHaveBeenCalledOnce());
     expect(relay.disposeTerminals).toHaveBeenCalledOnce();

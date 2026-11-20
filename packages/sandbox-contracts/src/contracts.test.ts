@@ -56,7 +56,7 @@ describe("package boundary", () => {
       const specifiers = [...text.matchAll(/(?:from|import)\s*\(?\s*"([^"]+)"/g)].map((m) => m[1]);
       for (const specifier of specifiers) {
         expect(`${file}:${specifier}`).toMatch(
-          /:(?:zod|\.\/[a-z-]+|\.\/(?:env|vm-size|lease)-limits\.json|\.\.\/\.\.\/config\/src\/(?:sandbox-result|credential-protocol)-limits\.json)$/,
+          /:(?:zod|\.\/[a-z-]+|\.\/(?:env|vm-size|lease)-limits\.json|\.\.\/\.\.\/config\/src\/(?:sandbox-result|sandbox-channel|sandbox-terminal|credential-protocol)-limits\.json)$/,
         );
       }
     }

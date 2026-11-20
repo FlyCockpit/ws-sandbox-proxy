@@ -97,7 +97,8 @@
       "create": "Crear sandboxes.",
       "manage": "Detener, reconectar, renovar, renombrar y capturar sandboxes.",
       "destroy": "Destruir sandboxes.",
-      "tunnel": "Exponer los puertos declarados mediante túneles de vista previa y crear enlaces de acceso."
+      "tunnel": "Exponer los puertos declarados mediante túneles de vista previa y crear enlaces de acceso.",
+      "connect": "Abrir shells interactivos y canales de comandos en sandboxes como el usuario invitado (sin registro en el diario)."
     },
     "commands": {
       "execute": "Ejecutar comandos, escribir en stdin y enviar señales a procesos.",

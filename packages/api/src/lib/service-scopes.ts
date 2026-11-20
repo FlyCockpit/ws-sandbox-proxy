@@ -24,6 +24,7 @@ export const SERVICE_SCOPES = [
   "credentials:write",
   "credentials:use",
   "sandboxes:tunnel",
+  "sandboxes:connect",
 ] as const;
 
 export type ServiceScope = (typeof SERVICE_SCOPES)[number];
@@ -111,6 +112,7 @@ export const SERVICE_ACTIONS = [
   "sandboxes.tunnelLink",
   "sandboxes.tunnelLinkRevoke",
   "sandboxes.tunnelPorts",
+  "sandboxes.connect",
   "operations.get",
   "operations.getFileResult",
   "operations.getFileMutationResult",
@@ -313,6 +315,9 @@ export const SERVICE_ACTION_REQUIREMENTS: Record<ServiceAction, ActionRequiremen
   "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelLinkRevoke": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelPorts": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  // CLI shells (`GET /v1/sandboxes/{id}/connect`): unjournaled interactive
+  // guest access. Sufficient on its own; kind `API` keys only, never MCP.
+  "sandboxes.connect": { scopes: ["sandboxes:connect"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {

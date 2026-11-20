@@ -65,7 +65,11 @@ describe("scope dependencies", () => {
 
   it("every scope is shown once, and each one that can be unusable has a translated hint", () => {
     const shown = SCOPE_GROUPS.flatMap((group) => group.scopes);
-    expect([...shown].sort()).toEqual([...SERVICE_SCOPES].sort());
+    // `sandboxes:connect` (CLI shells) is minted by `wssp login` write; its
+    // opt-in, never-preselected dashboard checkbox is a later increment.
+    expect([...shown].sort()).toEqual(
+      SERVICE_SCOPES.filter((scope) => scope !== "sandboxes:connect").sort(),
+    );
     const aloneUnusable = SERVICE_SCOPES.filter((scope) => unusableScopes([scope]).length > 0);
     for (const bundle of [enSdkKeys, esSdkKeys]) {
       const needs = Object.entries(bundle.scopeNeeds).flatMap(([group, entries]) =>

@@ -1,0 +1,417 @@
+{
+  "comment": "wssp.connect.v1 client wire vectors (docs/design/connect-channel-contract.md#client-wire-wsspconnectv1). The Rust CLI (1c) parses the same file.",
+  "client": {
+    "valid": [
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "pty",
+        "login": true,
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "xterm-256color"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 2,
+        "kind": "pty",
+        "argv": ["vim", "notes with space.txt"],
+        "cwd": "/home/user",
+        "env": {
+          "LANG": "C.UTF-8",
+          "COLORTERM": "truecolor"
+        },
+        "pty": {
+          "rows": 50,
+          "cols": 200,
+          "term": "xterm"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 3,
+        "kind": "exec",
+        "argv": ["sh", "-c", "echo \"$1\"", "--", ""]
+      },
+      {
+        "type": "open",
+        "channel": 4294967295,
+        "kind": "exec"
+      },
+      {
+        "type": "ack",
+        "channel": 2,
+        "stream": "stdout",
+        "seq": 0
+      },
+      {
+        "type": "ack",
+        "channel": 3,
+        "stream": "stderr",
+        "seq": 17
+      },
+      {
+        "type": "eof",
+        "channel": 3,
+        "stream": "stdin",
+        "frames": 0
+      },
+      {
+        "type": "resize",
+        "channel": 1,
+        "rows": 512,
+        "cols": 1024
+      },
+      {
+        "type": "signal",
+        "channel": 3,
+        "signal": "INT"
+      },
+      {
+        "type": "signal",
+        "channel": 3,
+        "signal": "KILL"
+      },
+      {
+        "type": "close",
+        "channel": 1
+      }
+    ],
+    "invalid": [
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "pty",
+        "login": true
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "xterm"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "tcp",
+        "port": 22
+      },
+      {
+        "type": "open",
+        "channel": -1,
+        "kind": "exec"
+      },
+      {
+        "type": "open",
+        "channel": 4294967296,
+        "kind": "exec"
+      },
+      {
+        "type": "open",
+        "channel": 1.5,
+        "kind": "exec"
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "argv": []
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "argv": ["a\u0000b"]
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "cwd": "relative/path"
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "env": {
+          "PATH": "/bin"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "env": {
+          "TERM": "xterm"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "exec",
+        "shell": "bash -c x"
+      },
+      {
+        "type": "open",
+        "channel": 1,
+        "kind": "pty",
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "bad term"
+        }
+      },
+      {
+        "type": "ack",
+        "channel": 1,
+        "stream": "stdin",
+        "seq": 0
+      },
+      {
+        "type": "ack",
+        "channel": 1,
+        "stream": "stdout",
+        "seq": -1
+      },
+      {
+        "type": "eof",
+        "channel": 1,
+        "stream": "stdout",
+        "frames": 0
+      },
+      {
+        "type": "resize",
+        "channel": 1,
+        "rows": 0,
+        "cols": 80
+      },
+      {
+        "type": "resize",
+        "channel": 1,
+        "rows": 24,
+        "cols": 1025
+      },
+      {
+        "type": "signal",
+        "channel": 1,
+        "signal": "USR1"
+      },
+      {
+        "type": "close",
+        "channel": 1,
+        "intent": "revoked"
+      },
+      {
+        "type": "data",
+        "channel": 1,
+        "stream": "stdin",
+        "seq": 0
+      },
+      {
+        "type": "hello"
+      }
+    ]
+  },
+  "server": {
+    "valid": [
+      {
+        "type": "hello",
+        "connectionId": "c0123456789abcdef",
+        "sandboxId": "sbx_1",
+        "limits": {
+          "maxChannels": 32,
+          "maxPtyChannels": 8,
+          "opensPerMinute": 120,
+          "windowFrames": {
+            "pty": 8,
+            "exec": 32
+          },
+          "dataMaxBytes": {
+            "pty": 16384,
+            "exec": 32768
+          },
+          "ackStallMs": 60000,
+          "pingIntervalMs": 20000,
+          "idleTimeoutMs": 60000,
+          "openTimeoutMs": 30000,
+          "unackedInputBytes": 4194304
+        }
+      },
+      {
+        "type": "ready",
+        "channel": 1,
+        "pty": {
+          "rows": 24,
+          "cols": 80
+        }
+      },
+      {
+        "type": "ready",
+        "channel": 3
+      },
+      {
+        "type": "ack",
+        "channel": 3,
+        "stream": "stdin",
+        "seq": 4
+      },
+      {
+        "type": "eof",
+        "channel": 3,
+        "stream": "stdout",
+        "frames": 12
+      },
+      {
+        "type": "exit",
+        "channel": 3,
+        "exitCode": 0,
+        "frames": {
+          "stdout": 12,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "exit",
+        "channel": 1,
+        "signal": 9,
+        "intent": "revoked",
+        "frames": {
+          "stdout": 3,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "exit",
+        "channel": 2,
+        "intent": "expired",
+        "error": {
+          "code": "timeout",
+          "message": "channel open was not answered in time"
+        },
+        "frames": {
+          "stdout": 0,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "error",
+        "channel": 3,
+        "code": "unsupported_signal"
+      },
+      {
+        "type": "end",
+        "intent": "revoked"
+      },
+      {
+        "type": "end",
+        "intent": "detached",
+        "error": {
+          "code": "timeout",
+          "message": "client silent"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "type": "exit",
+        "channel": 3,
+        "exitCode": 0,
+        "signal": 9,
+        "frames": {
+          "stdout": 0,
+          "stderr": 0
+        }
+      },
+      {
+        "type": "exit",
+        "channel": 3,
+        "frames": {
+          "stdout": 0
+        }
+      },
+      {
+        "type": "end",
+        "intent": "replaced"
+      },
+      {
+        "type": "ack",
+        "channel": 3,
+        "stream": "stdout",
+        "seq": 0
+      },
+      {
+        "type": "error",
+        "channel": 3,
+        "code": "anything"
+      },
+      {
+        "type": "error",
+        "channel": 3,
+        "code": "rate_limited"
+      },
+      {
+        "type": "ready",
+        "channel": 1,
+        "pty": {
+          "rows": 24,
+          "cols": 80
+        },
+        "extra": true
+      }
+    ]
+  },
+  "data": {
+    "valid": [
+      {
+        "metadata": {
+          "type": "data",
+          "channel": 1,
+          "stream": "stdin",
+          "seq": 0
+        },
+        "bodyHex": "6c730a"
+      },
+      {
+        "metadata": {
+          "type": "data",
+          "channel": 3,
+          "stream": "stderr",
+          "seq": 9
+        },
+        "bodyHex": "00ff"
+      }
+    ],
+    "invalidMetadata": [
+      {
+        "type": "data",
+        "channel": 1,
+        "stream": "stdin"
+      },
+      {
+        "type": "data",
+        "channel": 1,
+        "stream": "stdin",
+        "seq": 0,
+        "fence": {}
+      },
+      {
+        "type": "channel.data",
+        "channel": 1,
+        "stream": "stdin",
+        "seq": 0
+      },
+      {
+        "type": "data",
+        "channel": 1,
+        "stream": "tty",
+        "seq": 0
+      }
+    ]
+  }
+}

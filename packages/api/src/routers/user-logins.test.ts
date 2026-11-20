@@ -68,3 +68,11 @@ it("refuses an empty or oversized device code before the budget", async () => {
   });
   expect(budget).not.toHaveBeenCalled();
 });
+
+it("a write login holds sandboxes:connect (CLI shells); a read login never does", async () => {
+  const { USER_LOGIN_READ_SCOPES, USER_LOGIN_WRITE_SCOPES } = await import(
+    "@wssp/config/user-device-login"
+  );
+  expect(USER_LOGIN_WRITE_SCOPES).toContain("sandboxes:connect");
+  expect(USER_LOGIN_READ_SCOPES).not.toContain("sandboxes:connect");
+});

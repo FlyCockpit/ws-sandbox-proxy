@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CAPACITY_WAIT_MAX_MS } from "./capacity-wait";
+import { connectRefusalReasonSchema } from "./connect-wire";
 import { LEASE_FINITE_MAX_MS, LEASE_LIMIT_MIN_MS } from "./lease-limits";
 import { tunnelRefusalReasonSchema } from "./tunnels";
 
@@ -605,8 +606,10 @@ export const sdkErrorEnvelopeSchema = z.strictObject({
     z.strictObject({
       code: z.literal("UNSUPPORTED_CAPABILITY"),
       ...errorFields,
-      /** Present only for an egress or tunnel refusal. */
-      reason: z.union([egressRefusalReasonSchema, tunnelRefusalReasonSchema]).optional(),
+      /** Present only for an egress, tunnel or connect refusal. */
+      reason: z
+        .union([egressRefusalReasonSchema, tunnelRefusalReasonSchema, connectRefusalReasonSchema])
+        .optional(),
     }),
     z.strictObject({
       code: z.literal("credential.value_invalid"),

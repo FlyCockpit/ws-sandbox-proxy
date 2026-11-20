@@ -14,6 +14,7 @@ import {
   type sdkKeyListSelect,
   serviceProcedure,
 } from "../../lib/sdk-key-access";
+import { SDK_KEY_UNUSABLE_SCOPES_CODE, scopesUnusableForKind } from "../../lib/sdk-key-rules";
 import { parseServiceScopeSet, SERVICE_SCOPES } from "../../lib/service-scopes";
 import { consumeSandboxWriteBudget } from "../budgets";
 import type { Principal } from "../contracts";
@@ -187,6 +188,12 @@ export const mintCredentialKey = serviceProcedure(
     if (!parsed.success) throw new ORPCError("BAD_REQUEST", { message: "Invalid SDK key input." });
     input = parsed.data;
     const scopes = parseServiceScopeSet(input.scopes);
+    // CLI shells: kind API only (agent tokens never connect).
+    if (scopesUnusableForKind(scopes, kind))
+      throw new ORPCError("BAD_REQUEST", {
+        message: "Every scope must authorize something given the other selected scopes.",
+        data: { code: SDK_KEY_UNUSABLE_SCOPES_CODE },
+      });
     // Agent tokens: the caller chose an expiry (a date, or null = never) and it fits the
     // deployment's mint policy. Re-checked here so no shared-mint caller can skip it.
     if (

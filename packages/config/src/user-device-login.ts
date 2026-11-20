@@ -31,8 +31,8 @@ export const USER_LOGIN_READ_SCOPES = [
 ] as const;
 
 /**
- * `write`: read plus sandbox lifecycle, commands, file writes, cancellation and
- * preview tunnels. Never host access, template writes/builds, webhooks or
+ * `write`: read plus sandbox lifecycle, commands, file writes, cancellation,
+ * preview tunnels and CLI shells (`sandboxes:connect`). Never host access, template writes/builds, webhooks or
  * CLI-login (`credentials:*`) scopes.
  */
 export const USER_LOGIN_WRITE_SCOPES = [
@@ -44,6 +44,7 @@ export const USER_LOGIN_WRITE_SCOPES = [
   "files:write",
   "operations:cancel",
   "sandboxes:tunnel",
+  "sandboxes:connect",
 ] as const;
 
 export type UserLoginAccess = "read" | "write";

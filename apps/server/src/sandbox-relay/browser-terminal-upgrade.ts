@@ -23,6 +23,7 @@ import {
   BROWSER_TERMINAL_TICKET_PROTOCOL_PREFIX,
   HOST_TERMINAL_TICKET_PROTOCOL_PREFIX,
 } from "@wssp/config/browser-terminal";
+import { CONNECT_SUBPROTOCOL } from "@wssp/sandbox-contracts";
 import type { Context, MiddlewareHandler } from "hono";
 import type { WSContext } from "hono/ws";
 import { createRateLimiterMiddleware, terminalUpgradeLimiter } from "../rate-limit.js";
@@ -42,6 +43,8 @@ const BROWSER_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/sandboxes\/[^/]+\/term
 export const HOST_TERMINAL_ROUTE = "/api/dashboard/hosts/:hostId/terminal/ws";
 const HOST_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/hosts\/[^/]+\/terminal\/ws$/;
 const MACHINE_CREDENTIAL = /wssp_(?:sdk|host|device|agent)_/;
+/** CLI shells (wssp-ssh 1b): `GET /v1/sandboxes/{id}/connect`. */
+const CONNECT_PATH_PATTERN = /^\/v1\/sandboxes\/[^/]+\/connect$/;
 
 type BrowserTerminalVariables = {
   browserTerminalBinding: BrowserTerminalBinding;
@@ -54,7 +57,8 @@ type BrowserTerminalVariables = {
  * The one subprotocol selection for the shared WebSocketServer: the relay
  * endpoint selects only the relay subprotocol, the sandbox terminal endpoint
  * `wssp.terminal.v2` (WP8) or `wssp.terminal.v1`, the host terminal endpoint
- * only v1 — never the ticket, never across planes.
+ * only v1, the CLI connect endpoint only `wssp.connect.v1` — never the
+ * ticket, never across planes.
  */
 export function selectWebSocketSubprotocol(
   protocols: ReadonlySet<string>,
@@ -63,6 +67,8 @@ export function selectWebSocketSubprotocol(
   const path = new URL(url ?? "/", "http://localhost").pathname;
   if (path === "/ws/sandbox-host")
     return protocols.has(SANDBOX_RELAY_SUBPROTOCOL) ? SANDBOX_RELAY_SUBPROTOCOL : false;
+  if (CONNECT_PATH_PATTERN.test(path))
+    return protocols.has(CONNECT_SUBPROTOCOL) ? CONNECT_SUBPROTOCOL : false;
   if (BROWSER_TERMINAL_PATH_PATTERN.test(path) && protocols.has(BROWSER_TERMINAL_SUBPROTOCOL_V2))
     return BROWSER_TERMINAL_SUBPROTOCOL_V2;
   if (BROWSER_TERMINAL_PATH_PATTERN.test(path) || HOST_TERMINAL_PATH_PATTERN.test(path))

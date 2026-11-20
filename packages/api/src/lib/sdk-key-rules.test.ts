@@ -97,3 +97,13 @@ it("host execution/file scopes need a directly owned host grant, not only a pool
   }
   expect(hostScopesNeedHostGrant(["hosts:read"], "ALLOWLIST", [])).toBe(false);
 });
+
+it("sandboxes:connect is usable only by kind API keys (never agent tokens or OAuth grants)", async () => {
+  const { scopesUnusableForKind, unusableScopes } = await import("./sdk-key-rules");
+  // Sufficient on its own for a dashboard key or a CLI login.
+  expect(unusableScopes(["sandboxes:connect"])).toEqual([]);
+  expect(scopesUnusableForKind(["sandboxes:connect"], "API")).toBe(false);
+  expect(scopesUnusableForKind(["sandboxes:read", "sandboxes:connect"], "AGENT_TOKEN")).toBe(true);
+  expect(scopesUnusableForKind(["sandboxes:connect"], "OAUTH_GRANT")).toBe(true);
+  expect(scopesUnusableForKind(["sandboxes:read", "commands:execute"], "AGENT_TOKEN")).toBe(false);
+});

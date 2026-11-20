@@ -66,6 +66,7 @@ const { createAgentToken } = await import(
 const { authenticateSdkKeySecret, authenticateAgentTokenSecret, authorizeServiceAction } =
   await import("@wssp/api/lib/sdk-key-access");
 const { SERVICE_SCOPES } = await import("@wssp/api/lib/service-scopes");
+const { API_KEY_ONLY_SCOPES } = await import("@wssp/api/lib/sdk-key-rules");
 const { listSandboxes } = await import("../../../../packages/api/src/sandbox/services/sandboxes");
 const { callMcpTool } = await import("../mcp/tools");
 const { createSandboxApi } = await import("./middleware");
@@ -93,7 +94,8 @@ async function key(owner: Awaited<ReturnType<typeof person>>, ownSandboxesOnly: 
   });
   const agent = await createAgentToken(owner, {
     name: "Matrix agent",
-    scopes: [...SERVICE_SCOPES],
+    // Agent tokens can never hold the API-key-only scopes (CLI connect).
+    scopes: SERVICE_SCOPES.filter((scope) => !API_KEY_ONLY_SCOPES.includes(scope)),
     resourceMode: "ALL_OWNED",
     ownSandboxesOnly,
     expiresAt: new Date(Date.now() + 86400000),

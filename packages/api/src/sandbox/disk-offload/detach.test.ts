@@ -23,6 +23,7 @@ const READS: Record<string, number> = {
   "packages/api/src/sandbox/sharing-access.ts": 2, // SQL `<> 'OFFLOADED'`; reconcile skips it (C7)
   "packages/api/src/sandbox/image-store/captures.ts": 1, // capture refused disk_offloaded (C7)
   "packages/api/src/sandbox/terminal-tickets.ts": 1, // a stopped state for bindings (C7)
+  "packages/api/src/sandbox/connect-binding.ts": 1, // a stopped state for CLI connections
   "packages/api/src/template-builds/cleanup.ts": 1, // `Exclude<…, "OFFLOADED">` (C7)
   "packages/api/src/sandbox/disk-offload/evict.ts": 1, // `where` (already detached)
   "packages/api/src/sandbox/disk-offload/disk-view.ts": 1, // DTO `disk.location: store`

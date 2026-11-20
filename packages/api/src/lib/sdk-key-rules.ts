@@ -76,6 +76,22 @@ export function unusableScopes(selected: readonly ServiceScope[]): ServiceScope[
   );
 }
 
+/**
+ * Scopes only a kind `API` key (dashboard SDK key or CLI login) may hold:
+ * `sandboxes:connect` opens CLI shells, which agent tokens, OAuth grants and
+ * MCP never get. A mint or consent naming one for another kind is refused
+ * as unusable (it could never authorize anything for that kind).
+ */
+export const API_KEY_ONLY_SCOPES: readonly ServiceScope[] = ["sandboxes:connect"];
+
+/** True when `scopes` names an API-key-only scope for a non-API credential kind. */
+export function scopesUnusableForKind(
+  scopes: readonly ServiceScope[],
+  kind: "API" | "AGENT_TOKEN" | "OAUTH_GRANT",
+): boolean {
+  return kind !== "API" && scopes.some((scope) => API_KEY_ONLY_SCOPES.includes(scope));
+}
+
 export type AllowlistTemplate = {
   id: string;
   availability: readonly {

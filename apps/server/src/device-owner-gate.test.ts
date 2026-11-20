@@ -48,6 +48,7 @@ vi.mock("./lifecycle.js", () => ({
 vi.mock("./sandbox-relay/websocket.js", () => ({
   createSandboxRelayWebsocketMiddleware: vi.fn(),
   sandboxRelayUpgradeHandler: vi.fn(),
+  sandboxConnectManager: vi.fn(),
 }));
 vi.mock("./rate-limit.js", () => {
   const limiter = { consume: vi.fn(), reward: vi.fn() };

@@ -426,6 +426,12 @@ type ResultGuard = {
   checks: Map<string, () => Promise<void>>;
   checking: boolean;
   retainedWork: boolean;
+  /**
+   * Retained authorization only (`authorizeRetainedServiceAction`): the
+   * synchronous currency of every bound check (its read ticket and its
+   * host/pool-owner path), kept for the life of a connection.
+   */
+  currents?: (() => boolean)[];
 };
 const resultGuards = new AsyncLocalStorage<ResultGuard>();
 
@@ -515,6 +521,8 @@ const HOST_USABILITY_ACTIONS: ReadonlySet<ServiceAction> = new Set([
   "sandboxes.tunnelExpose",
   "sandboxes.tunnelLink",
   "sandboxes.tunnelPorts",
+  // CLI shells reach the guest like commands do, for the connection's life.
+  "sandboxes.connect",
 ]);
 async function requireGuestAccess(
   client: Prisma.TransactionClient,
@@ -950,6 +958,65 @@ export function authorizeServiceAction(
   return authorizeAction(principal, action, target, client);
 }
 
+/**
+ * An authorization kept for the life of a connection (CLI shells,
+ * `sandboxes.connect`). `current()` is synchronous and does no IO: the
+ * credential, owner and host authority tickets sampled at authorization,
+ * every bound host- and pool-owner usability path, the key's scope/grant
+ * signature and its expiry. It gates every delivery in both directions; a
+ * false answer means "re-check before delivering", never "allowed".
+ * `recheck()` re-runs the complete authorization (key revalidation, scopes,
+ * custody, `ownSandboxesOnly`, usability) and resolves a fresh retained
+ * result, or rejects exactly as `authorizeServiceAction` does.
+ */
+export type RetainedServiceAuthorization = {
+  readonly context: ServiceActionContext;
+  current(): boolean;
+  recheck(): Promise<RetainedServiceAuthorization>;
+};
+
+/**
+ * `authorizeServiceAction` inside a private result guard whose freshness is
+ * returned instead of staying request-local. Kind `API` keys only: agent
+ * tokens and OAuth grants never hold a retained (connection) authorization.
+ */
+export async function authorizeRetainedServiceAction(
+  principal: ServicePrincipal,
+  action: ServiceAction,
+  target: ServiceActionContext,
+): Promise<RetainedServiceAuthorization> {
+  if (principal.credentialKind !== "API") throw forbidden("A kind API key is required.");
+  const guard: ResultGuard = {
+    checks: new Map(),
+    checking: false,
+    retainedWork: false,
+    currents: [],
+  };
+  return resultGuards.run(guard, async () => {
+    const context = await authorizeServiceAction(principal, action, target);
+    const entry = serviceReadTicket(principal, { hostId: context.sandboxHostId ?? undefined });
+    const bound = [...(guard.currents ?? [])];
+    // A retained authorization without a bound guard would have nothing to
+    // stay current against: fail closed.
+    if (bound.length === 0) throw forbidden("Authority changed during authorization.");
+    const current = () => {
+      try {
+        entry();
+      } catch {
+        return false;
+      }
+      // Expiry fires no authority event: a key past it is never current.
+      return bound.every((check) => check()) && !isExpired(principal.expiresAt, new Date());
+    };
+    if (!current()) throw forbidden("Authority changed during authorization.");
+    return {
+      context,
+      current,
+      recheck: () => authorizeRetainedServiceAction(principal, action, target),
+    };
+  });
+}
+
 /** Replay entry checks current credentials and scopes before looking up identity. */
 export function authorizeServiceIntent(
   principal: Principal,
@@ -973,6 +1040,15 @@ function bindResolvedResultGuard(
   const ticket = serviceReadTicket(principal, { hostId: context.sandboxHostId ?? undefined });
   const key = JSON.stringify([action, context]);
   if (guard.checks.has(key)) return;
+  guard.currents?.push(() => {
+    if (!pathCurrent()) return false;
+    try {
+      ticket();
+      return true;
+    } catch {
+      return false;
+    }
+  });
   guard.checks.set(key, async () => {
     if (!pathCurrent()) throw forbidden("Authority changed during request.");
     ticket();
@@ -1651,6 +1727,7 @@ export const SERVICE_ACTION_CUSTODY: Readonly<Record<ServiceAction, "retained" |
   "sandboxes.tunnelLink": "custody",
   "sandboxes.tunnelLinkRevoke": "custody",
   "sandboxes.tunnelPorts": "custody",
+  "sandboxes.connect": "custody",
   "hosts.list": "custody",
   "hosts.get": "custody",
   "hostCommands.run": "custody",
@@ -1819,9 +1896,13 @@ function needsCurrentUsability(action: ServiceAction) {
   return (
     action.startsWith("files.") ||
     action.startsWith("commands.") ||
-    ["processes.list", "processes.signal", "sandboxes.reconnect", "sandboxes.setTimeout"].includes(
-      action,
-    )
+    [
+      "processes.list",
+      "processes.signal",
+      "sandboxes.reconnect",
+      "sandboxes.setTimeout",
+      "sandboxes.connect",
+    ].includes(action)
   );
 }
 

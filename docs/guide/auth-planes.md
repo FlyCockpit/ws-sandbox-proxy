@@ -57,6 +57,12 @@ sandbox, operation and transfer belongs to exactly one user account.
   for every sandbox on the account. An endpoint outlives the key that created
   it: revoking the key does not delete or disable its endpoints. See
   [webhooks](./webhooks.md).
+- `sandboxes:connect` opens CLI shells and command channels in a sandbox as the
+  guest user over `GET /v1/sandboxes/{id}/connect` (a WebSocket; not
+  journaled). Only `SdkKeyKind.API` keys hold it: a `wssp login` with write access,
+  or a dashboard key it was explicitly given (never a default). Agent tokens,
+  OAuth grants and MCP never get it. Revoking the key ends its live shells.
+  Contract: [CLI channel relay contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
 
 ### CLI user logins (`wssp login`)
 
@@ -76,8 +82,8 @@ CLI logins of the credential vault, which are tool sign-ins inside sandboxes.)
   `sandboxes:read`, `commands:read`, `files:read` and `operations:read`. Read
   access still lets that device read files and command output in your
   sandboxes. **write** adds `sandboxes:create`, `sandboxes:manage`,
-  `sandboxes:destroy`, `commands:execute`, `files:write`, `operations:cancel`
-  and `sandboxes:tunnel`. Neither ever holds host access (`hosts:execute`,
+  `sandboxes:destroy`, `commands:execute`, `files:write`, `operations:cancel`,
+  `sandboxes:tunnel` and `sandboxes:connect` (CLI shells). Neither ever holds host access (`hosts:execute`,
   `hosts:files`), template writes or builds, `webhooks:write` or any
   `credentials:*` scope.
 - The exchange (`userLogins.exchangeDeviceCode`) mints an ordinary `wssp_sdk_`

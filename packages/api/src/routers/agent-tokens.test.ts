@@ -221,3 +221,9 @@ it("accepts an explicit custom ISO datetime within the deployment maximum", asyn
     }),
   );
 });
+it("never mints an agent token with sandboxes:connect (CLI shells are kind API only)", async () => {
+  await expect(
+    client().create({ ...input(), scopes: ["sandboxes:read", "sandboxes:connect"] }),
+  ).rejects.toMatchObject({ code: "BAD_REQUEST", data: { code: "sdk_key.unusable_scopes" } });
+  expect(db.sdkKey.create).not.toHaveBeenCalled();
+});

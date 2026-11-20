@@ -5,10 +5,11 @@
  * Every control-plane sandbox write runs inside `sandboxOutboxTransaction`
  * (service and relay transactions alike), which observes the `sandbox`
  * delegate and calls `notifySandboxTerminalLifecycle` only after its commit.
- * The server binds the browser terminal service here; it re-reads each
- * affected binding (`checkTerminalBinding`) and closes terminals of a sandbox
- * that stopped, was destroyed, expired or was superseded. The signal carries
- * no authority, and a missed one only delays closure to the periodic re-read.
+ * Subscribers are additive: the browser terminal service and the CLI connect
+ * manager each subscribe while they hold live attachments, re-read each
+ * affected binding and close what stopped, was destroyed, expired or was
+ * superseded. The signal carries no authority, and a missed one only delays
+ * closure to the periodic re-read.
  */
 
 /** Sandbox ids the commit touched, or "all" when a write was not keyed by id. */
@@ -16,19 +17,30 @@ export type SandboxTerminalLifecycleChange = { sandboxIds: ReadonlySet<string> }
 
 type Listener = (change: SandboxTerminalLifecycleChange) => void;
 
-let listener: Listener | null = null;
+const listeners = new Set<Listener>();
 
-/** Server runtime binds the in-process terminal service (no-op until bound). */
-export function bindSandboxTerminalLifecycle(next: Listener | null): void {
-  listener = next;
+/**
+ * Add one in-process listener; the returned function removes exactly that
+ * subscription (idempotent) and leaves every other subscriber in place.
+ */
+export function subscribeSandboxTerminalLifecycle(listener: Listener): () => void {
+  // A wrapper per call: subscribing the same function twice is two subscriptions.
+  const entry: Listener = (change) => listener(change);
+  listeners.add(entry);
+  return () => {
+    listeners.delete(entry);
+  };
 }
 
 export function notifySandboxTerminalLifecycle(change: SandboxTerminalLifecycleChange): void {
-  try {
-    listener?.(change);
-  } catch {
-    // The write has committed; the periodic terminal re-read still closes.
-    console.error("[sandbox-terminal] lifecycle notification failed; periodic re-read pending");
+  for (const listener of [...listeners]) {
+    try {
+      listener(change);
+    } catch {
+      // The write has committed; the periodic re-read still closes. One
+      // failing subscriber never keeps the others from hearing the change.
+      console.error("[sandbox-terminal] lifecycle notification failed; periodic re-read pending");
+    }
   }
 }
 

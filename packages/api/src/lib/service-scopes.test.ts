@@ -125,6 +125,7 @@ const expected = {
   "sandboxes.tunnelLink": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelLinkRevoke": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
   "sandboxes.tunnelPorts": { scopes: ["sandboxes:tunnel"], requiresSandbox: true },
+  "sandboxes.connect": { scopes: ["sandboxes:connect"], requiresSandbox: true },
   "operations.getReceipt": { scopes: ["operations:read"], requiresHost: true },
   "operations.get": { scopes: ["operations:read"], requiresSandbox: true },
   "operations.getCommandOutput": {
@@ -213,6 +214,7 @@ const allScopes: ServiceScope[] = [
   "credentials:write",
   "credentials:use",
   "sandboxes:tunnel",
+  "sandboxes:connect",
 ];
 const kindScopes: Record<SandboxOperationKind, [ServiceScope, ServiceScope]> = {
   CREATE_SANDBOX: ["sandboxes:create", "sandboxes:read"],
@@ -624,6 +626,8 @@ describe("independent SDK scope and service inventory", () => {
         "sandboxes.tunnelLink",
         "sandboxes.tunnelLinkRevoke",
         "sandboxes.tunnelPorts",
+        // CLI shells: the /v1 connect WebSocket only (kind API, never MCP).
+        "sandboxes.connect",
         // The calling key itself: /v1 only (GET/DELETE /v1/key), never MCP.
         "key.get",
         "key.revokeSelf",

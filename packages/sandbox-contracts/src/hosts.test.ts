@@ -44,6 +44,7 @@ it("keeps the service scope order and splits lifecycle mutation authority", () =
     "credentials:write",
     "credentials:use",
     "sandboxes:tunnel",
+    "sandboxes:connect",
   ]);
   expect(SDK_ROUTES.createSandbox.scopes).toEqual(["sandboxes:create"]);
   expect(SDK_ROUTES.destroySandbox.scopes).toEqual(["sandboxes:destroy"]);

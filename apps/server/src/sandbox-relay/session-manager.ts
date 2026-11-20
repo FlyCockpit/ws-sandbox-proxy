@@ -59,6 +59,7 @@ import { AllocationAttestation } from "./allocation-attestation.js";
 import type { SandboxHostWebsocketIdentity } from "./auth.js";
 import { AvailabilityCensus } from "./availability-census.js";
 import { negotiatedOutputChunkBytes } from "./command-output.js";
+import { ConnectManager, type HostChannelControl } from "./connect-manager.js";
 import { CredentialSessionRelay, offerReturnKey } from "./credential-handlers.js";
 import { deploymentEgressBlocklist, egressBlocklistFrame } from "./egress-blocklist.js";
 import { EgressHintThrottle, handleEgressRefused } from "./egress-hints.js";
@@ -93,6 +94,8 @@ import {
   settleUndeliveredDispatch,
 } from "./operation-handlers.js";
 import {
+  CHANNEL_LIMITS,
+  type ChannelDataMetadata,
   classifyRelayDispatchKind,
   type DaemonControlMessage,
   DISPATCH_AUDIT_PAGE_MAX,
@@ -214,6 +217,28 @@ type HeldTerminalFrame =
   | { kind: "control"; message: HostTerminalControl; bytes: number }
   | { kind: "data"; metadata: TerminalDataMetadata; body: Uint8Array; bytes: number };
 
+/**
+ * Host channel frames held while the socket's cached authority ticket is
+ * revalidated (wssp-ssh 1b, like the terminal hold). A node that honours its
+ * windows has, per counted channel, at most a window of output, a window of
+ * stdin acks, its eofs, ready, error notices and exit in flight; the bound is
+ * twice that over the per-host cap, so overflow means the node ignored its
+ * windows (protocol error). Bytes: twice the node's bulk cap (128 frames of
+ * 32 KiB) plus every pty window (32 channels of 8 frames of 16 KiB).
+ */
+export const CHANNEL_HOLD_MAX_FRAMES =
+  2 * CHANNEL_LIMITS.maxChannelsPerHost * (2 * CHANNEL_LIMITS.bulkWindowFrames + 6);
+export const CHANNEL_HOLD_MAX_BYTES =
+  2 *
+  (128 * CHANNEL_LIMITS.bulkDataMaxBytes +
+    CHANNEL_LIMITS.maxPtyChannelsPerHost *
+      CHANNEL_LIMITS.ptyWindowFrames *
+      CHANNEL_LIMITS.ptyDataMaxBytes);
+
+type HeldChannelFrame =
+  | { kind: "control"; message: HostChannelControl; bytes: number }
+  | { kind: "data"; metadata: ChannelDataMetadata; body: Uint8Array; bytes: number };
+
 type PendingImageVerify = {
   socket: SandboxRelaySocket;
   epoch: number;
@@ -330,6 +355,10 @@ type SessionState = {
   pendingReceiptSweep?: ReturnType<typeof setInterval>;
   /** Ordered host terminal frames awaiting a fresh authority ticket (bounded). */
   terminalHold: { frames: HeldTerminalFrame[]; bytes: number; refreshing: boolean };
+  /** Hello `channels` (wssp-ssh): the negotiated kinds; absent: no channel frames. */
+  channelKinds?: readonly string[];
+  /** Ordered host channel frames awaiting a fresh authority ticket (bounded). */
+  channelHold: { frames: HeldChannelFrame[]; bytes: number };
   unauthenticatedTimer: ReturnType<typeof setTimeout>;
   expiryTimer?: ReturnType<typeof setTimeout>;
   /** Half-open detection (WP4): last frame or pong, the ping cadence and the
@@ -459,13 +488,15 @@ function takeOutputBatch(first: OutputWork, work: ReceiveWork[]): OutputWork[] {
   return batch;
 }
 
-/** A `channel.data` binary frame, well-formed or not. */
-function isChannelDataFrame(frame: ArrayBuffer): boolean {
-  try {
-    return parseChannelDataFrame(frame) !== null;
-  } catch {
-    return true;
-  }
+/** The `channel.*` control frames a node sends (all routed to the connect manager). */
+function isHostChannelControl(message: DaemonControlMessage): message is HostChannelControl {
+  return (
+    message.type === "channel.ready" ||
+    message.type === "channel.ack" ||
+    message.type === "channel.eof" ||
+    message.type === "channel.error" ||
+    message.type === "channel.exit"
+  );
 }
 
 function isOutputWork(work: ReceiveWork | undefined): work is OutputWork {
@@ -815,6 +846,49 @@ export class SandboxRelaySessionManager {
     },
   });
 
+  /**
+   * CLI channels (wssp-ssh 1b): `/v1/sandboxes/{id}/connect` connections ride
+   * a registered, reconciled, non-quiescing host that negotiated `channels`.
+   */
+  readonly connects = new ConnectManager(
+    {
+      connectHost: (hostId) => {
+        const socket = this.socketByHostId.get(hostId);
+        const session = socket && this.sessionsBySocket.get(socket);
+        if (
+          !socket ||
+          !session ||
+          socket.readyState !== WS_READY_STATE_OPEN ||
+          !session.registered ||
+          !session.reconciled ||
+          session.quiescing === true
+        )
+          return { error: { code: "disconnected", message: "host is not connected" } };
+        if (!session.channelKinds)
+          return {
+            error: { code: "unsupported_capability", message: "Unsupported capability: channels" },
+          };
+        return {
+          link: {
+            socket,
+            hostId: session.identity.hostId,
+            ownerId: session.identity.userId,
+            epoch: session.connectionEpoch,
+            protocolVersion: session.protocolVersion,
+            authorized: () => session.authorized() && this.isCurrentRegistered(session, socket),
+          },
+        };
+      },
+      closeHostSocket: (socket, message) => {
+        const relay = socket as SandboxRelaySocket;
+        if (!this.sessionsBySocket.has(relay)) return;
+        this.closeWithProtocolError(relay, message);
+        this.removeSession(relay);
+      },
+    },
+    { maxBytesPerSecond: env.SANDBOX_CONNECT_MAX_BYTES_PER_SECOND },
+  );
+
   private async revalidateAuthorityScope(scope: CommittedAuthorityScope) {
     const sessions = [...this.sessionsBySocket.values()].filter(
       (session) =>
@@ -1060,6 +1134,7 @@ export class SandboxRelaySessionManager {
       protocolVersion: SANDBOX_RELAY_PROTOCOL_VERSION,
       terminalCapable: false,
       terminalHold: { frames: [], bytes: 0, refreshing: false },
+      channelHold: { frames: [], bytes: 0 },
       unauthenticatedTimer,
       liveness: { lastSeenMs: Date.now(), deadlineAtMs: 0 },
       authorized: () => false,
@@ -2238,6 +2313,69 @@ export class SandboxRelaySessionManager {
     this.drainTerminalFrames(session);
     if (session.authorized() && session.terminalHold.frames.length === 0)
       this.terminals.resumeHost(session.socket);
+    this.drainChannelFrames(session);
+    if (session.authorized() && session.channelHold.frames.length === 0)
+      this.connects.resumeHost(session.socket);
+  }
+
+  /**
+   * Channel frames take the terminal lane's path (wssp-ssh 1b): validated and
+   * routed synchronously, bypassing the serialized queue. A host that did not
+   * negotiate `channels` never receives one, so any frame from it is a
+   * protocol error.
+   */
+  private channelLane(socket: SandboxRelaySocket, now: Date): SessionState | null {
+    const session = this.sessionsBySocket.get(socket);
+    if (!session) return null;
+    if (
+      !session.registered ||
+      !session.channelKinds ||
+      this.socketByHostId.get(session.identity.hostId) !== socket
+    ) {
+      this.closeWithProtocolError(socket, "Channel frame outside an open channel.");
+      this.removeSession(socket, now);
+      return null;
+    }
+    return session;
+  }
+
+  /** The host→server channel authority gate: held in order (bounded) while stale. */
+  private admitChannelFrame(session: SessionState, frame: HeldChannelFrame) {
+    const hold = session.channelHold;
+    if (hold.frames.length === 0 && session.authorized()) {
+      this.deliverChannelFrame(session.socket, frame);
+      return;
+    }
+    if (
+      hold.frames.length >= CHANNEL_HOLD_MAX_FRAMES ||
+      hold.bytes + frame.bytes > CHANNEL_HOLD_MAX_BYTES
+    ) {
+      this.closeWithProtocolError(session.socket, "Channel frames exceeded their credit windows.");
+      this.removeSession(session.socket);
+      return;
+    }
+    hold.frames.push(frame);
+    hold.bytes += frame.bytes;
+    this.drainChannelFrames(session);
+  }
+
+  private deliverChannelFrame(socket: SandboxRelaySocket, frame: HeldChannelFrame) {
+    if (frame.kind === "control") this.connects.handleHostControl(socket, frame.message);
+    else this.connects.handleHostData(socket, frame.metadata, frame.body);
+  }
+
+  private drainChannelFrames(session: SessionState) {
+    const hold = session.channelHold;
+    while (hold.frames.length > 0) {
+      if (this.sessionsBySocket.get(session.socket) !== session) return;
+      if (!session.authorized()) {
+        this.refreshTerminalAuthority(session);
+        return;
+      }
+      const frame = hold.frames.shift()!;
+      hold.bytes -= frame.bytes;
+      this.deliverChannelFrame(session.socket, frame);
+    }
   }
 
   handleTextFrame(socket: SandboxRelaySocket, frame: string, now = new Date()) {
@@ -2252,9 +2390,18 @@ export class SandboxRelaySessionManager {
     }
     const type = (peeked as { type?: unknown } | undefined)?.type;
     if (typeof type === "string" && type.startsWith("channel.")) {
-      // The server never opens a channel yet: every channel frame is unsolicited.
-      this.closeWithProtocolError(socket, "Channel frame outside an open channel.");
-      this.removeSession(socket, now);
+      const session = this.channelLane(socket, now);
+      if (!session) return;
+      let message: DaemonControlMessage;
+      try {
+        message = parseParsedDaemonControlFrame(peeked, size, session.protocolVersion);
+      } catch {
+        this.closeWithProtocolError(socket, "Invalid sandbox relay channel frame.");
+        this.removeSession(socket, now);
+        return;
+      }
+      if (isHostChannelControl(message))
+        this.admitChannelFrame(session, { kind: "control", message, bytes: size });
       return;
     }
     if (typeof type === "string" && type.startsWith("terminal.")) {
@@ -2907,6 +3054,28 @@ export class SandboxRelaySessionManager {
         });
       return;
     }
+    let channel: ReturnType<typeof parseChannelDataFrame>;
+    try {
+      channel = parseChannelDataFrame(frame);
+    } catch {
+      // A channel frame that does not parse: never queued, never delivered.
+      if (this.sessionsBySocket.has(socket)) {
+        this.closeWithProtocolError(socket, "Invalid sandbox relay channel frame.");
+        this.removeSession(socket, now);
+      }
+      return;
+    }
+    if (channel) {
+      const session = this.channelLane(socket, now);
+      if (session)
+        this.admitChannelFrame(session, {
+          kind: "data",
+          metadata: channel.metadata,
+          body: channel.body,
+          bytes: frame.byteLength,
+        });
+      return;
+    }
     // Parsed up front only to recognise batchable output; a frame that does
     // not parse is reported by its own queued work, in order, as before.
     let parsed: ReturnType<typeof parseBinaryFrame> | undefined;
@@ -2914,12 +3083,6 @@ export class SandboxRelaySessionManager {
       parsed = parseBinaryFrame(frame);
     } catch {
       parsed = undefined;
-    }
-    if (!parsed && isChannelDataFrame(frame)) {
-      // The server never opens a channel yet: every channel frame is unsolicited.
-      this.closeWithProtocolError(socket, "Channel frame outside an open channel.");
-      this.removeSession(socket, now);
-      return;
     }
     const output =
       parsed &&
@@ -3051,9 +3214,11 @@ export class SandboxRelaySessionManager {
   ) {
     const session = this.sessionsBySocket.get(socket);
     if (!session) return;
-    // Held terminal frames are never delivered once the session is gone.
+    // Held terminal and channel frames are never delivered once the session is gone.
     session.terminalHold.frames.length = 0;
     session.terminalHold.bytes = 0;
+    session.channelHold.frames.length = 0;
+    session.channelHold.bytes = 0;
     for (const [key, ack] of this.fileAcks)
       if (ack.socket === socket) {
         clearTimeout(ack.timer);
@@ -3112,6 +3277,8 @@ export class SandboxRelaySessionManager {
     // No terminal session survives its host socket (no adoption on reconnect);
     // a resumable one (WP8) tells its v2 browser it may reattach.
     this.terminals.removeHostSocket(socket, terminalIntent, false, terminalError);
+    // CLI connections bound to this host connection end; its channels settle.
+    this.connects.removeHostSocket(socket, session.identity.hostId);
     if (socket.readyState === WS_READY_STATE_OPEN) {
       try {
         socket.close(1001, "session_removed");
@@ -3174,6 +3341,9 @@ export class SandboxRelaySessionManager {
 
   dispose() {
     this.unsubscribe();
+    // CLI connections end `shutdown` (their channels are asked to close)
+    // before the host sockets go.
+    this.connects.dispose();
     this.terminals.closeAll("shutdown");
     for (const pending of this.pendingImageVerifies.values()) {
       clearTimeout(pending.timer);
@@ -3685,6 +3855,7 @@ export class SandboxRelaySessionManager {
     session.protocolVersion = SANDBOX_RELAY_PROTOCOL_VERSION;
     session.terminalCapable = message.daemon.capabilities.terminal === true;
     session.terminalResumeGraceMs = message.daemon.capabilities.terminalResume?.graceMs;
+    session.channelKinds = message.daemon.capabilities.channels?.kinds;
     session.imageFeatures = message.daemon.capabilities.image ?? null;
     session.egressRefusedHints = message.daemon.capabilities.egressRefusedHints === true;
     session.templateStartup = message.daemon.capabilities.templateStartup === true;

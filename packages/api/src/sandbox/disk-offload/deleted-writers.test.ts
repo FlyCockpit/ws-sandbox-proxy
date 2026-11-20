@@ -91,6 +91,8 @@ const READS: Record<string, number> = {
   "packages/api/src/sandbox/sharing-access.ts": 2,
   "packages/api/src/sandbox/state-transitions.ts": 13,
   "packages/api/src/sandbox/terminal-tickets.ts": 1,
+  // CLI shells: a destroyed state ends a connection; read.
+  "packages/api/src/sandbox/connect-binding.ts": 1,
   // Preview tunnels: a destroyed sandbox's tunnel is deleted, and port
   // changes skip destroyed sandboxes; reads.
   "packages/api/src/sandbox/tunnels/controller.ts": 2,

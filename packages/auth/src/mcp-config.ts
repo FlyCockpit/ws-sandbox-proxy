@@ -14,11 +14,20 @@ export const MCP_CIMD_REGISTRATION_POLICY = {
   dynamicClientRegistration: true,
 } as const;
 
-export const MCP_SCOPES = [...SDK_SCOPES, "offline_access"] as const;
+/**
+ * `sandboxes:connect` (CLI shells) is never an MCP scope: agent tokens and
+ * OAuth grants cannot hold it, and no tool exposes a shell.
+ */
+type McpSdkScope = Exclude<(typeof SDK_SCOPES)[number], "sandboxes:connect">;
+const MCP_SDK_SCOPES: readonly McpSdkScope[] = SDK_SCOPES.filter(
+  (scope): scope is McpSdkScope => scope !== "sandboxes:connect",
+);
+
+export const MCP_SCOPES = [...MCP_SDK_SCOPES, "offline_access"] as const;
 
 export type McpScope = (typeof MCP_SCOPES)[number];
 
-export const MCP_RESOURCE_SCOPES = SDK_SCOPES;
+export const MCP_RESOURCE_SCOPES = MCP_SDK_SCOPES;
 
 export const MCP_CLIENT_REGISTRATION_DEFAULT_SCOPES = [
   "sandboxes:read",
@@ -26,7 +35,7 @@ export const MCP_CLIENT_REGISTRATION_DEFAULT_SCOPES = [
   "offline_access",
 ] as const;
 
-export const MCP_CLIENT_REGISTRATION_ALLOWED_EXTRA_SCOPES = SDK_SCOPES;
+export const MCP_CLIENT_REGISTRATION_ALLOWED_EXTRA_SCOPES = MCP_SDK_SCOPES;
 
 export function canonicalMcpIssuer(baseUrl: string): string {
   return new URL("/api/auth", baseUrl).toString();

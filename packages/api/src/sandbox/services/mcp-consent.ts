@@ -9,6 +9,7 @@ import {
   credentialsUseNeedsLogins,
   hostScopesNeedHostGrant,
   SDK_KEY_TEMPLATE_NOT_ON_HOST_CODE,
+  scopesUnusableForKind,
   unusableScopes,
   webhooksScopeNeedsAllOwned,
 } from "../../lib/sdk-key-rules";
@@ -163,6 +164,7 @@ export async function recordMcpConsent(input: {
   if (
     choices.scopes.some((scope) => !input.requestedScopes.includes(scope)) ||
     unusableScopes(choices.scopes).length ||
+    scopesUnusableForKind(choices.scopes, "OAUTH_GRANT") ||
     hostScopesNeedHostGrant(choices.scopes, choices.resourceMode, choices.hostIds) ||
     webhooksScopeNeedsAllOwned(choices.scopes, choices.resourceMode, poolMode) ||
     credentialsUseNeedsLogins(choices.scopes, choices.resourceMode, choices.credentialIds) ||

@@ -114,6 +114,14 @@ export const serverVars = {
   TRANSFER_GLOBAL_ACTIVE: z.coerce.number().int().min(1).max(1024).default(16),
   TRANSFER_IDLE_SECONDS: z.coerce.number().int().min(1).max(3600).default(900),
   TRANSFER_ABSOLUTE_SECONDS: z.coerce.number().int().min(1).max(86400).default(3600),
+  // CLI connect (`/v1/sandboxes/{id}/connect`): data bytes per second per
+  // connection, each direction (protects the node owner's link).
+  SANDBOX_CONNECT_MAX_BYTES_PER_SECOND: z.coerce
+    .number()
+    .int()
+    .min(65_536)
+    .max(1_073_741_824)
+    .default(8 * 1024 * 1024),
   // Staged for pools/create: declaration only; no active budget/lease changes.
   SANDBOX_CREATE_CONNECT_BUDGET_POINTS: z.coerce.number().int().min(1).max(10_000).default(300),
   SANDBOX_CREATE_CONNECT_BUDGET_WINDOW_SECONDS: z.coerce

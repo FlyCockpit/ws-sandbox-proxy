@@ -202,6 +202,9 @@
     "./sandbox/terminal-tickets": {
       "default": "./src/sandbox/terminal-tickets.ts"
     },
+    "./sandbox/connect-binding": {
+      "default": "./src/sandbox/connect-binding.ts"
+    },
     "./sandbox/terminal-lifecycle": {
       "default": "./src/sandbox/terminal-lifecycle.ts"
     },

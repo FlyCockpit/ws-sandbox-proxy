@@ -4,8 +4,10 @@ import {
   CAPACITY_QUEUE_SCOPES,
   CAPTURE_UNSUPPORTED_REASONS,
   type CapacityReason,
+  type ConnectRefusalReason,
   capacityReasonSchema,
   capacityWaitMaxSchema,
+  connectRefusalReasonSchema,
   credentialValueInvalidTextSchema,
   type EgressRefusalReason,
   egressRefusalReasonSchema,
@@ -47,7 +49,8 @@ type SandboxApiError = {
       | CapacityReason
       | (typeof CAPTURE_UNSUPPORTED_REASONS)[number]
       | EgressRefusalReason
-      | TunnelRefusalReason;
+      | TunnelRefusalReason
+      | ConnectRefusalReason;
     maxTimeoutMs?: number;
     skipped?: SkippedHostReason[];
     maxWaitMs?: number;
@@ -116,7 +119,10 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
       if (parsed.success) reason = parsed.data;
     }
     if (code === "UNSUPPORTED_CAPABILITY" && data && typeof data === "object" && "reason" in data) {
-      const parsed = egressRefusalReasonSchema.or(tunnelRefusalReasonSchema).safeParse(data.reason);
+      const parsed = egressRefusalReasonSchema
+        .or(tunnelRefusalReasonSchema)
+        .or(connectRefusalReasonSchema)
+        .safeParse(data.reason);
       if (parsed.success) reason = parsed.data;
     }
     if (

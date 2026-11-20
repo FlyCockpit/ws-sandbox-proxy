@@ -8,7 +8,8 @@ vi.mock("@wssp/env/server", () => ({ env: {}, ADMIN_EMAILS: new Set<string>() })
 vi.mock("@wssp/env/shared", () => ({ env: {} }));
 
 const { default: db } = await import("@wssp/db");
-const { bindSandboxTerminalLifecycle, sandboxTerminalWrite } = await import("./terminal-lifecycle");
+const { notifySandboxTerminalLifecycle, subscribeSandboxTerminalLifecycle, sandboxTerminalWrite } =
+  await import("./terminal-lifecycle");
 const { sandboxOutboxTransaction } = await import("./outbox");
 
 describe("sandboxTerminalWrite (which sandbox writes can end a terminal)", () => {
@@ -35,12 +36,47 @@ describe("sandboxTerminalWrite (which sandbox writes can end a terminal)", () =>
   });
 });
 
+describe("lifecycle subscriptions are additive", () => {
+  it("every subscriber hears a change, and disposing one keeps the others", () => {
+    const first: unknown[] = [];
+    const second: unknown[] = [];
+    const offFirst = subscribeSandboxTerminalLifecycle((change) => first.push(change));
+    const offSecond = subscribeSandboxTerminalLifecycle((change) => second.push(change));
+    notifySandboxTerminalLifecycle("all");
+    expect(first).toEqual(["all"]);
+    expect(second).toEqual(["all"]);
+    offFirst();
+    offFirst(); // idempotent: never removes another subscription
+    notifySandboxTerminalLifecycle({ sandboxIds: new Set(["s1"]) });
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(2);
+    offSecond();
+    notifySandboxTerminalLifecycle("all");
+    expect(second).toHaveLength(2);
+  });
+
+  it("a throwing subscriber never keeps the next one from hearing the change", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const heard: unknown[] = [];
+    const offBroken = subscribeSandboxTerminalLifecycle(() => {
+      throw new Error("listener broke");
+    });
+    const offOk = subscribeSandboxTerminalLifecycle((change) => heard.push(change));
+    notifySandboxTerminalLifecycle("all");
+    expect(heard).toEqual(["all"]);
+    offBroken();
+    offOk();
+  });
+});
+
 describe("sandboxOutboxTransaction announces terminal lifecycle only after commit", () => {
   const seen: unknown[] = [];
+  let unsubscribe: (() => void) | undefined;
   beforeEach(() => {
     vi.clearAllMocks();
     seen.length = 0;
-    bindSandboxTerminalLifecycle((change) => {
+    unsubscribe?.();
+    unsubscribe = subscribeSandboxTerminalLifecycle((change) => {
       seen.push(change === "all" ? "all" : [...change.sandboxIds]);
     });
     db.$transaction.mockImplementation((async (work: (tx: typeof db) => Promise<unknown>) =>
@@ -78,7 +114,7 @@ describe("sandboxOutboxTransaction announces terminal lifecycle only after commi
   });
 
   it("a listener failure never fails the committed write", async () => {
-    bindSandboxTerminalLifecycle(() => {
+    const offBroken = subscribeSandboxTerminalLifecycle(() => {
       throw new Error("listener broke");
     });
     vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -88,5 +124,6 @@ describe("sandboxOutboxTransaction announces terminal lifecycle only after commi
         tx.sandbox.updateMany({ where: { id: "s1" }, data: { state: "DELETED" } }),
       ),
     ).resolves.toEqual({ count: 1 });
+    offBroken();
   });
 });

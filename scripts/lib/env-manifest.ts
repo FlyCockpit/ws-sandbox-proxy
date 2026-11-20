@@ -1362,6 +1362,14 @@ export const ENV_VARS: EnvVar[] = [
     ],
   },
   {
+    key: "SANDBOX_CONNECT_MAX_BYTES_PER_SECOND",
+    hidden: true,
+    group: "sandbox-relay",
+    source: "default",
+    default: "8388608",
+    hint: "CLI connect data rate per connection and direction: 65536..1073741824 bytes/s (default 8 MiB/s).",
+  },
+  {
     key: "SANDBOX_CREATE_CONNECT_BUDGET_POINTS",
     group: "sandbox-relay",
     source: "default",

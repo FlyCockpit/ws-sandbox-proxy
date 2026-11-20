@@ -113,6 +113,8 @@ export function createServerLifecycle() {
           // `shutdown` intent with 4401 now, independent of the drains below,
           // so neither a rejected drain nor the watchdog can turn it into 1006.
           browserTerminalService.dispose();
+          // CLI shells likewise: every connection ends `shutdown` + 4401 now.
+          sandboxRelaySessionManager.connects.dispose();
           try {
             if (transferStartup) {
               try {

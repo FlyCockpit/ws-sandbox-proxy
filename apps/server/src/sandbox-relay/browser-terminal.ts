@@ -53,8 +53,8 @@
  */
 
 import {
-  bindSandboxTerminalLifecycle,
   type SandboxTerminalLifecycleChange,
+  subscribeSandboxTerminalLifecycle,
 } from "@wssp/api/sandbox/terminal-lifecycle";
 import {
   closeTerminalSession,
@@ -793,17 +793,18 @@ export class BrowserTerminalService {
           (sessionId === undefined || binding.sessionId === sessionId),
       ),
     );
-    bindSandboxTerminalLifecycle((change: SandboxTerminalLifecycleChange) =>
-      this.revalidateWhere(
-        (binding) =>
-          change === "all" ||
-          (!isHostTerminalBinding(binding) && change.sandboxIds.has(binding.sandboxId)),
-      ),
+    const offLifecycle = subscribeSandboxTerminalLifecycle(
+      (change: SandboxTerminalLifecycleChange) =>
+        this.revalidateWhere(
+          (binding) =>
+            change === "all" ||
+            (!isHostTerminalBinding(binding) && change.sandboxIds.has(binding.sandboxId)),
+        ),
     );
     this.unsubscribe = () => {
       offAuthority();
       offSessions();
-      bindSandboxTerminalLifecycle(null);
+      offLifecycle();
     };
   }
 }

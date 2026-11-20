@@ -1,5 +1,6 @@
 export * from "./build-wire";
 export * from "./capacity-wait";
+export * from "./connect-wire";
 export * from "./credential-wire";
 export * from "./credentials";
 export * from "./dto";

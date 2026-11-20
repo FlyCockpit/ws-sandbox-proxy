@@ -57,6 +57,8 @@ const CLASSIFIED: Record<string, Partial<Record<ReaderClass, number>>> = {
   // Digest snapshot of the acceptance transport (replay never re-derives).
   // A terminal ticket's binding against its placement's host.
   "packages/api/src/sandbox/terminal-tickets.ts": { authorization: 2 },
+  // A CLI connection's binding against its placement's host (like a terminal ticket).
+  "packages/api/src/sandbox/connect-binding.ts": { authorization: 2 },
   // Request transport identity: current placement first.
   "packages/api/src/sandbox/idempotency.ts": { authorization: 4 },
   // Config pin against the current placement's host.
