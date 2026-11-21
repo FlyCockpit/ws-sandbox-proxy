@@ -60,6 +60,7 @@ model User {
   SandboxTransfers              SandboxTransfer[]
   TerminalTickets               SandboxTerminalTicket[]
   TerminalSessions              SandboxTerminalSession[]
+  ConnectSessions               SandboxConnectSession[]       @relation("SandboxConnectSessionOwner")
   ExecutionConfigs              SandboxExecutionConfig[]
   TemplateRevisions             SandboxTemplateRevision[]
   TemplateTags                  SandboxTemplateTag[]

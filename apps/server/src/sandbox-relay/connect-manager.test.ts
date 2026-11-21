@@ -1472,3 +1472,104 @@ describe("connect manager: the one end path and revocation", () => {
     expect(manager.hostAvailability(bindingFor())).toBe("ok");
   });
 });
+
+describe("connect manager: §10 audit hooks", () => {
+  let clock = 0;
+  function auditedManager() {
+    const audit = { opened: vi.fn(), closed: vi.fn() };
+    clock = 1_700_000_000_000;
+    manager.dispose();
+    manager = createManager({ audit, now: () => clock });
+    return audit;
+  }
+
+  it("tells the audit after hello and once at the end, with channel counts and data bytes only", () => {
+    const audit = auditedManager();
+    const { connection, client } = connect();
+    expect(client.text[0]?.type).toBe("hello");
+    expect(audit.opened).toHaveBeenCalledTimes(1);
+    expect(audit.opened).toHaveBeenCalledWith({
+      connectionId: connection.connectionId,
+      ownerId: "owner-1",
+      keyId: "key-1",
+      sandboxId: "sbx-1",
+      hostId: "host-1",
+      // The relay's instants (hooks), never the write's.
+      openedAt: 1_700_000_000_000,
+    });
+    const shell = openPty(connection, 1);
+    ready(shell);
+    const command = openExec(connection, 2);
+    ready(command, "exec");
+    output(shell, 0, "hello");
+    output(command, 0, "abc", "stderr");
+    stdin(connection, 2, 0, "1234567");
+    expect(host.input().map((frame) => frame.metadata.stream)).toEqual(["stdin"]);
+    expect(audit.closed).not.toHaveBeenCalled();
+    clock += 42_000;
+    connection.end("client");
+    connection.end("client");
+    expect(audit.closed).toHaveBeenCalledTimes(1);
+    expect(audit.closed).toHaveBeenCalledWith({
+      connectionId: connection.connectionId,
+      ownerId: "owner-1",
+      keyId: "key-1",
+      sandboxId: "sbx-1",
+      hostId: "host-1",
+      openedAt: 1_700_000_000_000,
+      closedAt: 1_700_000_042_000,
+      intent: "client",
+      ptyChannels: 1,
+      execChannels: 1,
+      bytesIn: 7,
+      bytesOut: 8,
+    });
+    // Ids and counters only: no argv, env, cwd or content reaches the audit.
+    // The random hex connectionId is replaced first: it can contain "abc" by chance.
+    const text = JSON.stringify([audit.opened.mock.calls, audit.closed.mock.calls], (key, value) =>
+      key === "connectionId" ? "<id>" : value,
+    );
+    for (const secret of ["cat", "hello", "abc", "1234567", "xterm"])
+      expect(text).not.toContain(secret);
+  });
+
+  it("a connection that never went live is not audited", async () => {
+    const audit = auditedManager();
+    verdict = "forbidden";
+    const reserved = manager.reserve(bindingFor());
+    if (!reserved.ok) throw new Error(reserved.reason);
+    const connection = manager.attach(reserved.reservation, principal, {
+      ...retainedFor(bindingFor()),
+      current: () => false,
+    } as never);
+    connection.opened(new FakeClient());
+    await settle();
+    expect(connection.ended).toBe(true);
+    expect(audit.opened).not.toHaveBeenCalled();
+    expect(audit.closed).not.toHaveBeenCalled();
+  });
+
+  it("a revocation's end intent reaches the audit, and a throwing audit never breaks the relay", async () => {
+    const audit = {
+      opened: vi.fn(() => {
+        throw new Error("audit down");
+      }),
+      closed: vi.fn(() => {
+        throw new Error("audit down");
+      }),
+    };
+    manager.dispose();
+    manager = createManager({ audit });
+    const { connection, client } = connect();
+    const fence = openPty(connection);
+    ready(fence);
+    output(fence, 0, "ok");
+    expect(client.data).toHaveLength(1);
+    verdict = "forbidden";
+    await withAuthorityChange({ ownerId: "owner-1", credentialId: "key-1" }, async () => {});
+    await settle();
+    expect(client.frames("end")).toEqual([{ type: "end", intent: "revoked" }]);
+    expect(audit.closed).toHaveBeenCalledWith(expect.objectContaining({ intent: "revoked" }));
+    expect(manager.resources().connections).toBe(0);
+  });
+});

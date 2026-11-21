@@ -604,6 +604,44 @@
     "proxyHint": "Proxied logins need the credential proxy, which is turned on only when a sandbox is created with a proxied login. Create a new sandbox that names this login.",
     "ownHostsNote": "Attaching a login keeps this sandbox on your own hosts from now on: its disk never restores onto another user's host."
   },
+  "connections": {
+    "heading": "Recent connections",
+    "description": "CLI shells and command channels opened with an API key (`wssp sandbox shell`). Only who connected, when and how much data moved is kept, for 90 days; never what ran.",
+    "label": "Recent connections",
+    "empty": "No CLI connections in the last 90 days.",
+    "unknownKey": "Deleted key",
+    "origin": {
+      "CLI_LOGIN": "CLI login",
+      "DASHBOARD": "Dashboard key"
+    },
+    "status": {
+      "open": "Open",
+      "closed": "Closed",
+      "unknown": "End not recorded"
+    },
+    "opened": "Opened {{when}}",
+    "closedReason": "Ended: {{reason}}",
+    "shells_one": "{{count}} shell",
+    "shells_other": "{{count}} shells",
+    "commands_one": "{{count}} command",
+    "commands_other": "{{count}} commands",
+    "bytes": "{{sent}} sent, {{received}} received",
+    "intent": {
+      "client": "closed by the client",
+      "detached": "client disconnected",
+      "backpressure": "client too slow",
+      "revoked": "access revoked",
+      "superseded": "superseded",
+      "protocol_violation": "protocol error",
+      "host_disconnected": "host disconnected",
+      "expired": "time limit reached",
+      "sandbox_stopped": "sandbox stopped",
+      "sandbox_destroyed": "sandbox destroyed",
+      "lifecycle_unconfirmed": "state could not be confirmed",
+      "shutdown": "server restarted",
+      "other": "other"
+    }
+  },
   "onboarding": {
     "title": "Get your first sandbox running",
     "description": "Three steps. Each one is done once.",

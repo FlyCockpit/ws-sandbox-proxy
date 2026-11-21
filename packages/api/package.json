@@ -205,6 +205,12 @@
     "./sandbox/connect-binding": {
       "default": "./src/sandbox/connect-binding.ts"
     },
+    "./sandbox/connect-sessions": {
+      "default": "./src/sandbox/connect-sessions.ts"
+    },
+    "./sandbox/connect-session-retention": {
+      "default": "./src/sandbox/connect-session-retention.ts"
+    },
     "./sandbox/terminal-lifecycle": {
       "default": "./src/sandbox/terminal-lifecycle.ts"
     },

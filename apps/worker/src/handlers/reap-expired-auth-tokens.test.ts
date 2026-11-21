@@ -1,6 +1,9 @@
 vi.mock("../../../../packages/api/src/sandbox/host-retention.js", () => ({
   sweepHostAccessRetention: vi.fn(async () => ({ queued: 0, audit: 0 })),
 }));
+vi.mock("@wssp/api/sandbox/connect-session-retention", () => ({
+  purgeConnectSessions: vi.fn(async () => 4),
+}));
 
 import type { ReapExpiredAuthTokensJobData } from "@wssp/queue";
 import type { Job } from "bullmq";
@@ -119,6 +122,13 @@ describe("handleReapExpiredAuthTokensJob", () => {
     expect(db.verification.deleteMany).not.toHaveBeenCalled();
     expect(db.deviceCode.deleteMany).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("0 device code(s)"));
+  });
+
+  it("also purges CLI connection audit rows past retention (wssp-ssh §10)", async () => {
+    const { purgeConnectSessions } = await import("@wssp/api/sandbox/connect-session-retention");
+    await handleReapExpiredAuthTokensJob(job());
+    expect(purgeConnectSessions).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("4 connect session(s)"));
   });
 
   it("rejects a payload the schema does not describe", async () => {

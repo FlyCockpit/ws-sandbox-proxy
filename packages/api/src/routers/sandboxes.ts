@@ -1,6 +1,10 @@
 import { liveOwnerSessionProcedure, protectedProcedure } from "../index";
 import { sessionPrincipal } from "../sandbox";
 import {
+  listSandboxConnectSessions,
+  listSandboxConnectSessionsInput,
+} from "../sandbox/connect-sessions";
+import {
   commandOutputInput,
   connectProcessInput,
   createSandboxInput,
@@ -103,6 +107,12 @@ export const sandboxesRouter = {
     return listSandboxViews(sessionPrincipal(context.session.user.id), input);
   }),
 
+  /** The owner's recent CLI connections to the sandbox (metadata only, wssp-ssh §10). */
+  listConnectSessions: protectedProcedure
+    .input(listSandboxConnectSessionsInput)
+    .handler(({ input, context }) =>
+      listSandboxConnectSessions(sessionPrincipal(context.session.user.id), input),
+    ),
   getSandbox: protectedProcedure.input(sandboxIdInput).handler(async ({ input, context }) => {
     return getSandboxView(sessionPrincipal(context.session.user.id), input);
   }),

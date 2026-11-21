@@ -10,6 +10,7 @@ import {
   hostTokenDraftProblems,
   hostTokenMintInput,
   isTwoFactorRequiredError,
+  offeredScopeGroups,
   SCOPE_GROUPS,
   type SdkKeyDraft,
   SERVICE_SCOPES,
@@ -65,11 +66,7 @@ describe("scope dependencies", () => {
 
   it("every scope is shown once, and each one that can be unusable has a translated hint", () => {
     const shown = SCOPE_GROUPS.flatMap((group) => group.scopes);
-    // `sandboxes:connect` (CLI shells) is minted by `wssp login` write; its
-    // opt-in, never-preselected dashboard checkbox is a later increment.
-    expect([...shown].sort()).toEqual(
-      SERVICE_SCOPES.filter((scope) => scope !== "sandboxes:connect").sort(),
-    );
+    expect([...shown].sort()).toEqual([...SERVICE_SCOPES].sort());
     const aloneUnusable = SERVICE_SCOPES.filter((scope) => unusableScopes([scope]).length > 0);
     for (const bundle of [enSdkKeys, esSdkKeys]) {
       const needs = Object.entries(bundle.scopeNeeds).flatMap(([group, entries]) =>
@@ -308,5 +305,26 @@ it("pool grants are independent, loaded owner choices; pending revision associat
     poolIds: ["pool-a"],
     hostIds: ["h1"],
     templateRevisionIds: ["pending"],
+  });
+});
+
+describe("sandboxes:connect (wssp-ssh owner decision 2)", () => {
+  it("stands alone in its own described group, offered only on the SDK key form", () => {
+    const connect = SCOPE_GROUPS.filter((group) => group.scopes.includes("sandboxes:connect"));
+    expect(connect).toEqual([{ id: "connect", scopes: ["sandboxes:connect"] }]);
+    const scopesOf = (groups: ReturnType<typeof offeredScopeGroups>) =>
+      groups.flatMap((group) => group.scopes);
+    expect(scopesOf(offeredScopeGroups("sdk"))).toContain("sandboxes:connect");
+    for (const form of ["agent", "consent"] as const) {
+      expect(scopesOf(offeredScopeGroups(form))).not.toContain("sandboxes:connect");
+      expect(scopesOf(offeredScopeGroups(form, ["sandboxes:read", "sandboxes:connect"]))).toEqual([
+        "sandboxes:read",
+      ]);
+      expect(offeredScopeGroups(form).some((group) => group.id === "connect")).toBe(false);
+    }
+    for (const bundle of [enSdkKeys, esSdkKeys]) {
+      expect(bundle.scopeGroup.connect).toEqual(expect.any(String));
+      expect(bundle.scopeGroupHint.connect).toEqual(expect.any(String));
+    }
   });
 });

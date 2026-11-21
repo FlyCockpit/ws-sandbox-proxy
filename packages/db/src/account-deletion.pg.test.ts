@@ -654,6 +654,17 @@ async function seedEveryReceipt(userId: string) {
       generation: 1,
     },
   });
+  // wssp-ssh §10: a CLI connect audit row (cascades with the account).
+  await db.inspect.sandboxConnectSession.create({
+    data: {
+      id: `c-${userId}`,
+      userId,
+      sandboxId: sandbox.id,
+      hostId: "host-gone",
+      keyId: "key-gone",
+      origin: "CLI_LOGIN",
+    },
+  });
   // Image store receipts: an artifact, a finished transfer and the policy row.
   await db.inspect.sandboxImageArtifact.create({
     data: {

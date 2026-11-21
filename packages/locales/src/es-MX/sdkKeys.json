@@ -133,7 +133,11 @@
     "operations": "Operaciones",
     "pools": "Grupos",
     "webhooks": "Webhooks",
-    "credentials": "Inicios de sesión de CLI"
+    "credentials": "Inicios de sesión de CLI",
+    "connect": "Conexiones de la CLI"
+  },
+  "scopeGroupHint": {
+    "connect": "Acceso interactivo a shell, exec y reenvío en tus sandboxes como el usuario invitado, sin registro en el diario. No se guarda nada de lo que ejecuta o transfiere, solo cuándo se conectó. Para CI que necesita scp o rsync; si no, déjalo desactivado."
   },
   "scopeNeeds": {
     "operations": {

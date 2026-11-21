@@ -48,7 +48,10 @@ import { sandboxRelaySessionManager as manager } from "./session-manager.js";
 
 vi.mock("@wssp/db", async () => {
   const { mockDeep } = await import("vitest-mock-extended");
-  return { default: mockDeep<typeof import("@wssp/db").default>() };
+  return {
+    default: mockDeep<typeof import("@wssp/db").default>(),
+    disconnectConnectAuditPrisma: async () => {},
+  };
 });
 vi.mock("@wssp/env/server", () => ({
   env: {

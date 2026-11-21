@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
   postgres: vi.fn(),
   redis: vi.fn(),
   disconnectDb: vi.fn(),
+  disconnectAuditDb: vi.fn(),
   disconnectRedis: vi.fn(),
   start: vi.fn(),
   stop: vi.fn(),
@@ -21,6 +22,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@wssp/db", () => ({
   default: { $queryRaw: state.postgres, $disconnect: state.disconnectDb },
+  disconnectConnectAuditPrisma: state.disconnectAuditDb,
 }));
 vi.mock("@wssp/env/server", () => ({
   env: {
@@ -78,6 +80,7 @@ const relay = vi.hoisted(() => ({
   disposeTerminals: vi.fn(),
   disposeSessions: vi.fn(),
   disposeConnects: vi.fn(),
+  drainConnectAudit: vi.fn(),
 }));
 vi.mock("./sandbox-relay/browser-terminal.js", () => ({
   browserTerminalService: { dispose: relay.disposeTerminals },
@@ -86,6 +89,7 @@ vi.mock("./sandbox-relay/session-manager.js", () => ({
   sandboxRelaySessionManager: {
     dispose: relay.disposeSessions,
     connects: { dispose: relay.disposeConnects },
+    connectAudit: { drain: relay.drainConnectAudit },
     verifyHostImage: vi.fn(),
     probeSandbox: vi.fn(),
   },
@@ -102,6 +106,7 @@ beforeEach(() => {
   state.backups = false;
   initializeReservations.mockResolvedValue(undefined);
   sweepHosts.mockResolvedValue({ disconnected: 0 });
+  relay.drainConnectAudit.mockResolvedValue(true);
   startOutbox.mockReturnValue(async () => {});
   startRetention.mockReturnValue(async () => {});
   state.startTransfers.mockResolvedValue({ close: state.closeTransfers });
@@ -123,6 +128,9 @@ beforeEach(() => {
   });
   state.disconnectDb.mockImplementation(async () => {
     state.events.push("db-disconnect");
+  });
+  state.disconnectAuditDb.mockImplementation(async () => {
+    state.events.push("audit-db-disconnect");
   });
   state.start.mockImplementation(async (options) => {
     expect(listeners.has("SIGTERM")).toBe(true);
@@ -364,6 +372,39 @@ it("waits for spool recovery before listening and for spool drain before disconn
   expect(state.disconnectDb).not.toHaveBeenCalled();
   drained();
   await vi.waitFor(() => expect(state.disconnectDb).toHaveBeenCalledOnce());
+});
+
+it("drains the connect audit after the CLI connections end and before disconnecting PostgreSQL", async () => {
+  state.mode = "external";
+  relay.disposeConnects.mockImplementation(() => state.events.push("connects-closed"));
+  let drained!: (value: boolean) => void;
+  relay.drainConnectAudit.mockImplementation(
+    () =>
+      new Promise<boolean>((resolve) => {
+        state.events.push("audit-drain");
+        drained = resolve;
+      }),
+  );
+  const { createServerLifecycle } = await import("./lifecycle");
+  const lifecycle = createServerLifecycle();
+  await lifecycle.start(() => ({ close: (done: () => void) => done() }));
+  listeners.get("SIGTERM")!();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(state.events.indexOf("connects-closed")).toBeLessThan(state.events.indexOf("audit-drain"));
+  // The recorder applies its own few-second bound (CONNECT_AUDIT_DRAIN_MS).
+  expect(relay.drainConnectAudit).toHaveBeenCalledWith();
+  expect(state.disconnectDb).not.toHaveBeenCalled();
+  expect(state.disconnectAuditDb).not.toHaveBeenCalled();
+  drained(false);
+  await vi.waitFor(() => expect(state.disconnectDb).toHaveBeenCalledOnce());
+  // The audit's own pool closes after its drain and before the shared client.
+  expect(state.disconnectAuditDb).toHaveBeenCalledOnce();
+  expect(state.events.indexOf("audit-drain")).toBeLessThan(
+    state.events.indexOf("audit-db-disconnect"),
+  );
+  expect(state.events.indexOf("audit-db-disconnect")).toBeLessThan(
+    state.events.indexOf("db-disconnect"),
+  );
 });
 
 it("finishes build-context recovery before the transfer store starts, and drains both (template-builds §3.7)", async () => {

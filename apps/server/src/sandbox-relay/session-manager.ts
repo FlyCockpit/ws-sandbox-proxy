@@ -59,6 +59,7 @@ import { AllocationAttestation } from "./allocation-attestation.js";
 import type { SandboxHostWebsocketIdentity } from "./auth.js";
 import { AvailabilityCensus } from "./availability-census.js";
 import { negotiatedOutputChunkBytes } from "./command-output.js";
+import { ConnectAuditRecorder } from "./connect-audit.js";
 import { ConnectManager, type HostChannelControl } from "./connect-manager.js";
 import { CredentialSessionRelay, offerReturnKey } from "./credential-handlers.js";
 import { deploymentEgressBlocklist, egressBlocklistFrame } from "./egress-blocklist.js";
@@ -846,6 +847,9 @@ export class SandboxRelaySessionManager {
     },
   });
 
+  /** The process's one connect audit writer (drained by server shutdown). */
+  readonly connectAudit = new ConnectAuditRecorder();
+
   /**
    * CLI channels (wssp-ssh 1b): `/v1/sandboxes/{id}/connect` connections ride
    * a registered, reconciled, non-quiescing host that negotiated `channels`.
@@ -886,7 +890,10 @@ export class SandboxRelaySessionManager {
         this.removeSession(relay);
       },
     },
-    { maxBytesPerSecond: env.SANDBOX_CONNECT_MAX_BYTES_PER_SECOND },
+    {
+      maxBytesPerSecond: env.SANDBOX_CONNECT_MAX_BYTES_PER_SECOND,
+      audit: this.connectAudit,
+    },
   );
 
   private async revalidateAuthorityScope(scope: CommittedAuthorityScope) {

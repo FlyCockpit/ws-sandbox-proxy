@@ -447,6 +447,7 @@ export const ENV_VARS: EnvVar[] = [
       "Default 10 matches the driver default — raise it only against the",
       "database's connection budget, since every server/worker replica holds its own pool.",
       "Every server/worker replica holds its own pool against the same database.",
+      "Each server process also opens at most 2 more, outside this pool, for the CLI connect audit.",
     ],
   },
 

@@ -1,4 +1,5 @@
 import {
+  API_KEY_ONLY_SCOPES,
   credentialsUseNeedsLogins,
   hostScopesNeedHostGrant,
   isTemplateOnSelectedHosts,
@@ -20,9 +21,13 @@ import { TWO_FACTOR_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
  * (`@wssp/api/lib/sdk-key-rules`): the server refuses the same drafts.
  */
 
-export { SERVICE_SCOPES, type ServiceScope, unusableScopes };
+export { API_KEY_ONLY_SCOPES, SERVICE_SCOPES, type ServiceScope, unusableScopes };
 
-/** Scope groups in the order the mint form shows them. */
+/**
+ * Scope groups in the order the mint form shows them. `connect` stands alone
+ * with its own description (wssp-ssh owner decision 2): only the SDK key form
+ * offers it, never preselected; agent tokens and OAuth consent never do.
+ */
 export const SCOPE_GROUPS: readonly { id: string; scopes: readonly ServiceScope[] }[] = [
   { id: "hosts", scopes: ["hosts:read", "hosts:execute", "hosts:files"] },
   { id: "pools", scopes: ["pools:read"] },
@@ -37,12 +42,34 @@ export const SCOPE_GROUPS: readonly { id: string; scopes: readonly ServiceScope[
       "sandboxes:tunnel",
     ],
   },
+  { id: "connect", scopes: ["sandboxes:connect"] },
   { id: "commands", scopes: ["commands:read", "commands:execute"] },
   { id: "files", scopes: ["files:read", "files:write"] },
   { id: "operations", scopes: ["operations:read", "operations:cancel"] },
   { id: "webhooks", scopes: ["webhooks:write"] },
   { id: "credentials", scopes: ["credentials:read", "credentials:write", "credentials:use"] },
 ];
+
+/** Groups shown with a description under their title (`sdkKeys:scopeGroupHint.<id>`). */
+export const DESCRIBED_SCOPE_GROUPS: ReadonlySet<string> = new Set(["connect"]);
+
+/**
+ * The scope groups a mint form offers: `sandboxes:connect` (and any other
+ * API-key-only scope) only on the dashboard SDK key form.
+ */
+export function offeredScopeGroups(
+  form: "sdk" | "agent" | "consent",
+  offered?: readonly ServiceScope[],
+): { id: string; scopes: ServiceScope[] }[] {
+  return SCOPE_GROUPS.map((group) => ({
+    id: group.id,
+    scopes: group.scopes.filter(
+      (scope) =>
+        (form === "sdk" || !API_KEY_ONLY_SCOPES.includes(scope)) &&
+        (!offered || offered.includes(scope)),
+    ),
+  })).filter((group) => group.scopes.length > 0);
+}
 
 /** i18n-safe key for a scope: `commands:read` → `commands.read`. */
 export function scopeKey(scope: ServiceScope): string {

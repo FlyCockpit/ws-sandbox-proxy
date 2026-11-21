@@ -17,6 +17,7 @@ import {
 import { SDK_KEY_UNUSABLE_SCOPES_CODE, scopesUnusableForKind } from "../../lib/sdk-key-rules";
 import { parseServiceScopeSet, SERVICE_SCOPES } from "../../lib/service-scopes";
 import { consumeSandboxWriteBudget } from "../budgets";
+import { lastConnectByKey } from "../connect-sessions";
 import type { Principal } from "../contracts";
 import { poolNotFound } from "../errors";
 import {
@@ -171,8 +172,19 @@ export const listCredentialKeys = serviceProcedure(
       select: ownedSdkKeyListSelect(owner.ownerId),
     });
     const page = cursorPage(rows, input.limit, "createdAt");
+    // CLI connections: kind API keys only (agent tokens never connect).
+    const lastConnect =
+      kind === "API"
+        ? await lastConnectByKey(
+            owner.ownerId,
+            page.items.map((row) => row.id),
+          )
+        : new Map<string, Date>();
     return {
-      items: page.items.map(serializeSdkKey),
+      items: page.items.map((row) => ({
+        ...serializeSdkKey(row),
+        lastConnectAt: lastConnect.get(row.id) ?? null,
+      })),
       nextCursor: page.nextCursor,
     };
   },

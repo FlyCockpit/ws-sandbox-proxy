@@ -63,6 +63,12 @@ sandbox, operation and transfer belongs to exactly one user account.
   or a dashboard key it was explicitly given (never a default). Agent tokens,
   OAuth grants and MCP never get it. Revoking the key ends its live shells.
   Contract: [CLI channel relay contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
+  On the dashboard it is its own "CLI connections" checkbox, never preselected
+  and offered only on the SDK key form. Each connection is audited as metadata
+  only (key, origin, sandbox, host, times, end reason, channel counts, bytes;
+  never what ran) for 90 days: the sandbox detail page lists recent
+  connections and the SDK keys page shows each key's last connect. See
+  [Audit](../design/connect-channel-contract.md#audit).
 
 ### CLI user logins (`wssp login`)
 

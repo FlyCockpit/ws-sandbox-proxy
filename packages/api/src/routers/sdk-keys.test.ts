@@ -118,6 +118,25 @@ describe("sdkKeysRouter", () => {
     );
   });
 
+  it("each listed key carries its last CLI connect from one bounded, owner-scoped aggregate", async () => {
+    const at = new Date("2030-01-01T00:00:00Z");
+    db.sdkKey.findMany.mockResolvedValue([keyRow()]);
+    const id = keyRow().id;
+    (
+      db.sandboxConnectSession.groupBy as unknown as {
+        mockResolvedValueOnce(value: unknown): unknown;
+      }
+    ).mockResolvedValueOnce([{ keyId: id, _max: { openedAt: at } }]);
+    const result = await client().list({ limit: 20 });
+    expect(result.items[0]?.lastConnectAt).toEqual(at);
+    expect(db.sandboxConnectSession.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: "user-a", keyId: { in: [id] } },
+        take: 1,
+      }),
+    );
+  });
+
   it("mints a key with one-time secret reveal", async () => {
     db.sandboxHost.findMany.mockResolvedValue([{ id: "host-1" }]);
     db.sandboxTemplateRevision.findMany.mockResolvedValue([ACTIVE_TPL]);

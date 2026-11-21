@@ -201,6 +201,36 @@ describe("reading a sandbox", () => {
     ).toBeTruthy();
   });
 
+  it("shows this sandbox's recent CLI connections (wssp-ssh §10), one bounded page", async () => {
+    server.current.connectSessions = [
+      {
+        id: "c-1",
+        sandboxId: "sbx-1",
+        keyId: "key-1",
+        keyName: "ci key",
+        hostId: "host-1",
+        origin: "CLI_LOGIN",
+        openedAt: new Date(Date.now() - 60_000),
+        closedAt: null,
+        status: "open",
+        closeIntent: null,
+        ptyChannels: 1,
+        execChannels: 0,
+        bytesIn: "10",
+        bytesOut: "20",
+      },
+      { id: "c-other", sandboxId: "sbx-other", keyName: "elsewhere" },
+    ];
+    mount();
+    const panel = await screen.findByRole("region", { name: enSandboxes.connections.heading });
+    expect(await within(panel).findByText("ci key")).toBeTruthy();
+    expect(within(panel).queryByText("elsewhere")).toBeNull();
+    const input = server.current.calls.find((call) => call.procedure === "listConnectSessions")
+      ?.input as { id: string; limit: number };
+    expect(input.id).toBe("sbx-1");
+    expect(input.limit).toBeLessThanOrEqual(100);
+  });
+
   it.each([401, 403, 404])(
     "hides previously loaded sandbox detail after HTTP %s",
     async (status) => {

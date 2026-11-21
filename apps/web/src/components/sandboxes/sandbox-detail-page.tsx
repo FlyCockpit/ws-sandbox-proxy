@@ -29,6 +29,7 @@ import { CopyableId } from "@/components/copyable-id";
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { PageHeader } from "@/components/page-shell";
+import { SandboxConnections } from "@/components/sandboxes/sandbox-connections";
 import { SandboxCredentials } from "@/components/sandboxes/sandbox-credentials";
 import { DiskCard, OffloadPolicyText } from "@/components/sandboxes/sandbox-disk";
 import { SandboxFiles } from "@/components/sandboxes/sandbox-files";
@@ -699,6 +700,9 @@ function SandboxDetail({
           available={sandbox.state === "READY"}
         />
       )}
+
+      {/* Kept after the sandbox is destroyed: the audit outlives it. */}
+      <SandboxConnections key={`connections-${sandbox.id}`} lang={lang} sandboxId={sandbox.id} />
 
       {actions.has("files") ? (
         <SandboxFiles sandboxId={sandbox.id} lang={lang} />

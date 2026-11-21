@@ -8,7 +8,7 @@ import { releaseAllOperationWaiters } from "@wssp/api/sandbox/operation-waiters"
 import { safeErrnoCode, safeErrorLog } from "@wssp/api/sandbox/sensitive-errors";
 import { markTemplateBuildStorageUnavailable } from "@wssp/api/template-builds/config";
 import { startTemplateBuildOrchestrator } from "@wssp/api/template-builds/orchestrator";
-import prisma from "@wssp/db";
+import prisma, { disconnectConnectAuditPrisma } from "@wssp/db";
 import { type InstanceHeartbeat, startInstanceHeartbeat } from "@wssp/db/instance-heartbeat";
 import { env } from "@wssp/env/server";
 import { redisConnection } from "@wssp/queue";
@@ -133,6 +133,9 @@ export function createServerLifecycle() {
               stopTerminalSessionSweep?.(),
               transfers?.close(),
               contexts?.close(),
+              // The audit closes `connects.dispose()` just queued: bounded by
+              // CONNECT_AUDIT_DRAIN_MS, then given up and logged; never rejects.
+              sandboxRelaySessionManager.connectAudit.drain(),
             ]);
           } finally {
             // Host sockets stay up for the drains' in-flight sends, then close
@@ -193,6 +196,9 @@ export function createServerLifecycle() {
           return;
         }
         await instanceHeartbeat?.stop();
+        // The connect audit's own pool (≤ 2 connections, created on first
+        // write): after its drain above, bounded, never rejects.
+        await disconnectConnectAuditPrisma();
         await prisma.$disconnect();
         redisConnection.disconnect();
         clearTimeout(watchdog);

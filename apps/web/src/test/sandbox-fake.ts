@@ -43,6 +43,8 @@ export type FakeSandboxServer = {
   templates: Row[];
   observationResults?: Row[];
   connections?: Row[];
+  /** `sandboxes.listConnectSessions` rows (wssp-ssh §10), each with its `sandboxId`. */
+  connectSessions?: Row[];
   supportedSignals?: ("SIGKILL" | "SIGTERM" | "SIGINT" | "SIGHUP")[];
   capabilitiesUnavailable?: boolean;
   pickerPageSize?: number;
@@ -630,6 +632,13 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
             if (!row) throw NOT_FOUND();
             return row;
           },
+        ),
+      },
+      listConnectSessions: {
+        infiniteOptions: pagedInfinite(
+          ["sandboxes", "listConnectSessions"],
+          "listConnectSessions",
+          (input) => (server.connectSessions ?? []).filter((row) => row.sandboxId === input.id),
         ),
       },
       listOperations: {

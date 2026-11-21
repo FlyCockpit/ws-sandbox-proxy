@@ -1522,7 +1522,7 @@ describe("sandboxesRouter", () => {
 });
 
 describe("S0 closed browser gate inventory", () => {
-  it("covers all 35 procedures: 18 sensitive and 17 explicit metadata/lifecycle decisions", () => {
+  it("covers all 37 procedures: 18 sensitive and 19 explicit metadata/lifecycle decisions", () => {
     const source = readFileSync(new URL("./sandboxes.ts", import.meta.url), "utf8");
     const entries = [...source.matchAll(/^ {2}(\w+): (\w+Procedure)/gm)].map(([, name, gate]) => [
       name,
@@ -1570,6 +1570,8 @@ describe("S0 closed browser gate inventory", () => {
       "captureSandbox",
       // Offload §8.7 (U10): re-queue a pending restore cleanup (no guest access).
       "retryCleanup",
+      // wssp-ssh §10: the owner's connection audit (metadata only, no guest access).
+      "listConnectSessions",
     ];
     expect(entries.sort()).toEqual(
       [

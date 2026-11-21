@@ -83,7 +83,11 @@
     "operations": "Operations",
     "pools": "Pools",
     "webhooks": "Webhooks",
-    "credentials": "CLI logins"
+    "credentials": "CLI logins",
+    "connect": "CLI connections"
+  },
+  "scopeGroupHint": {
+    "connect": "Unjournaled interactive shell, exec and forward access to your sandboxes as the guest user. Nothing it runs or transfers is recorded, only when it connected. For CI that needs scp or rsync; leave it off otherwise."
   },
   "scope": {
     "hosts": {

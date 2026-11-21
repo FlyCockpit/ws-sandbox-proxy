@@ -64,6 +64,7 @@ import {
   encodeConnectDataFrame,
   parseConnectDataFrame,
 } from "@wssp/sandbox-contracts";
+import type { ConnectAuditClose, ConnectAuditOpen } from "./connect-audit.js";
 import {
   CHANNEL_LIMITS,
   type ChannelDataMetadata,
@@ -251,7 +252,15 @@ export type ConnectManagerOptions = {
   maxLifetimeMs?: number;
   /** Data bytes per second per connection, each direction. */
   maxBytesPerSecond?: number;
+  /** The §10 audit (row + log line per live connection); never throws. */
+  audit?: ConnectAudit;
   now?: () => number;
+};
+
+/** Told when a connection goes live (after `hello`) and when that one ends. */
+export type ConnectAudit = {
+  opened(open: ConnectAuditOpen): void;
+  closed(close: ConnectAuditClose): void;
 };
 
 type OutputStream = "stdout" | "stderr";
@@ -446,6 +455,14 @@ export class ConnectConnection {
   /** Output (host → client) and input (client → host) data byte rates. */
   private readonly outRate: ByteRate;
   private readonly inRate: ByteRate;
+  /** §10 audit counters (metadata only): set once the connection went live. */
+  private audited = false;
+  /** When the connection went live (the audit's `openedAt`, epoch ms). */
+  private liveAt = 0;
+  private ptyOpened = 0;
+  private execOpened = 0;
+  private bytesIn = 0;
+  private bytesOut = 0;
 
   constructor(
     private binding: SandboxConnectBinding,
@@ -595,6 +612,27 @@ export class ConnectConnection {
     this.sendControl({ type: "end", intent, ...(error ? { error } : {}) }, true);
     this.closeSocket();
     this.manager.forget(this);
+    if (this.audited)
+      this.manager.auditClosed({
+        ...this.auditIds(),
+        closedAt: this.manager.now(),
+        intent,
+        ptyChannels: this.ptyOpened,
+        execChannels: this.execOpened,
+        bytesIn: this.bytesIn,
+        bytesOut: this.bytesOut,
+      });
+  }
+
+  private auditIds(): ConnectAuditOpen {
+    return {
+      connectionId: this.connectionId,
+      ownerId: this.binding.ownerId,
+      keyId: this.binding.keyId,
+      sandboxId: this.binding.sandboxId,
+      hostId: this.binding.hostId,
+      openedAt: this.liveAt,
+    };
   }
 
   // -- authority ------------------------------------------------------------
@@ -715,6 +753,9 @@ export class ConnectConnection {
       sandboxId: this.binding.sandboxId,
       limits: CONNECT_LIMITS,
     });
+    this.audited = true;
+    this.liveAt = this.manager.now();
+    this.manager.auditOpened(this.auditIds());
     this.arm();
     this.resume();
   }
@@ -1040,6 +1081,8 @@ export class ConnectConnection {
     }
     this.channels.set(message.channel, chan);
     if (chan.kind === "pty") this.ptyLive += 1;
+    if (chan.kind === "pty") this.ptyOpened += 1;
+    else this.execOpened += 1;
   }
 
   // -- host → client ----------------------------------------------------------
@@ -1191,6 +1234,7 @@ export class ConnectConnection {
         )
           return sent;
         sent += 1;
+        this.bytesOut += item.body.byteLength;
         this.outRate.spend(item.body.byteLength, this.manager.now());
         chan.clientSent[index] += 1;
         chan.inflight[index].push(item.body.byteLength);
@@ -1248,6 +1292,11 @@ export class ConnectConnection {
 
   spendInput(bytes: number) {
     this.inRate.spend(bytes, this.manager.now());
+  }
+
+  /** stdin data bytes handed to the node (the §10 `bytesIn`). */
+  countInput(bytes: number) {
+    this.bytesIn += bytes;
   }
 
   /** Resume output once its byte rate allows a frame again (independent of input). */
@@ -1364,6 +1413,7 @@ export class ConnectManager {
   readonly maxLifetimeMs: number;
   readonly maxBytesPerSecond: number;
   readonly now: () => number;
+  private readonly connectAudit: ConnectAudit | undefined;
 
   constructor(
     private readonly links: ConnectHosts,
@@ -1378,6 +1428,24 @@ export class ConnectManager {
     this.maxLifetimeMs = options.maxLifetimeMs ?? CONNECT_MAX_LIFETIME_MS;
     this.maxBytesPerSecond = options.maxBytesPerSecond ?? CONNECT_DEFAULT_MAX_BYTES_PER_SECOND;
     this.now = options.now ?? Date.now;
+    this.connectAudit = options.audit;
+  }
+
+  /** §10 audit hooks: never throw into the relay. */
+  auditOpened(open: ConnectAuditOpen) {
+    try {
+      this.connectAudit?.opened(open);
+    } catch {
+      /* The audit never breaks the relay. */
+    }
+  }
+
+  auditClosed(close: ConnectAuditClose) {
+    try {
+      this.connectAudit?.closed(close);
+    } catch {
+      /* The audit never breaks the relay. */
+    }
   }
 
   get shuttingDown(): boolean {
@@ -1722,6 +1790,7 @@ export class ConnectManager {
           return moved;
         }
         connection.spendInput(item.body.byteLength);
+        connection.countInput(item.body.byteLength);
         chan.inSent += 1;
         moved += 1;
         continue;

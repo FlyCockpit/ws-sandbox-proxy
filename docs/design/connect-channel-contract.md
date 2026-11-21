@@ -224,3 +224,31 @@ JSON metadata `{type: "data", channel, stream, seq}` (at most 1 KiB) and a body 
   `host_disconnected`, `detached`, `protocol_violation`, `backpressure`, `lifecycle_unconfirmed` or `shutdown`.
   Every channel of the connection then gets `channel.close{intent}` on the node; nothing is forwarded in
   either direction after the decision, and there is no resume.
+
+### Audit
+
+- Each connection that reaches `hello` gets one `SandboxConnectSession` row (`sandbox_connect_session`): the
+  `connectionId`, owner, sandbox, host, key and the key's origin (`CLI_LOGIN` or `DASHBOARD`), `openedAt`, and at
+  its end `closedAt`, the close `intent`, the pty and exec channels it opened and the data bytes in each direction.
+  Never content, commands, argv, env, cwd or paths. A refused upgrade or a connection that ends before `hello`
+  writes no row.
+- `openedAt` and `closedAt` are the relay's own instants (at `hello` and at the end), never the write's.
+- The writes are detached from the relay. One writer per server process runs at most 2 at once, each one short
+  transaction on the audit's own PostgreSQL pool (`CONNECT_AUDIT_POOL` in `packages/db/src/client.ts`, created on
+  the first write): at most 2 connections, outside `DATABASE_POOL_MAX`, so a server process may hold up to
+  `DATABASE_POOL_MAX + 2`. Acquiring or opening a connection fails after 2 s (the waiter is removed), every session
+  starts with a 2 s `statement_timeout` (a startup setting, so BEGIN is covered too), every query has a 3 s
+  client-side bound and the transaction a 5 s timeout. A stalled database therefore holds at most those 2 extra
+  connections and never queues audit work on the shared pool that relay authorization reads use. The pool closes
+  at shutdown after the drain, before the shared client. At most 4096 writes queue; a new
+  open is dropped (and counted) when the queue is full, a close of an admitted open never is. A close whose open is
+  still queued is folded into one insert. Failures are logged rate-capped without request data. Server shutdown
+  drains the queue for at most 3 s, then logs what it gave up. A process exit can leave a row without `closedAt`;
+  the dashboard shows a row open past the 12 h lifetime as "end not recorded", never as live.
+- One structured log line per open (`connect_open`) and per close (`connect_close`) carries the same ids and
+  counters, at most 120 per minute per process.
+- Rows are deleted with the owner (FK cascade). The daily `reap-expired-auth-tokens` sweep deletes rows 90 days
+  after `openedAt`, in id batches of 1000 (at most 100 per run) that recheck the cutoff at delete time.
+- The owner reads them on the dashboard only (cookie plane): the sandbox detail page lists recent connections
+  (`sandboxes.listConnectSessions`, one cursor page at a time) and the SDK keys page shows each key's last
+  connect. No `/v1` route or MCP tool reads them.

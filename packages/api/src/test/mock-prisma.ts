@@ -32,6 +32,11 @@ export async function createMockPrisma() {
   ] as never);
   db.sandboxHostStoragePool.updateMany.mockResolvedValue({ count: 1 });
   db.appSetting.findMany.mockResolvedValue([]);
+  // The SDK key list reads each page's last CLI connect (wssp-ssh §10).
+  // (`groupBy`'s generic overloads defeat the deep-mock typing; the runtime mock is plain.)
+  (
+    db.sandboxConnectSession.groupBy as unknown as { mockResolvedValue(value: unknown): unknown }
+  ).mockResolvedValue([]);
   db.sandboxPool.findMany.mockResolvedValue([]);
   db.sandboxPoolMember.findMany.mockResolvedValue([]);
   db.session.findUnique.mockResolvedValue({ id: "test-session-id" } as never);

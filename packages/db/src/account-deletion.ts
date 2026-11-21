@@ -312,6 +312,14 @@ export const ACCOUNT_DELETION_CLASSIFICATION: readonly AccountDeletionClassifica
     removedBy: "cascade",
   },
   {
+    // wssp-ssh §10: the CLI connect audit; no FK besides its owner.
+    model: "SandboxConnectSession",
+    table: "sandbox_connect_session",
+    column: "userId",
+    class: "receipt",
+    removedBy: "cascade",
+  },
+  {
     model: "OutboxEvent",
     table: "sandbox_dispatch_outbox",
     column: "userId",

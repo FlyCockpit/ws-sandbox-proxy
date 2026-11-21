@@ -965,7 +965,8 @@ it("uses the deployment expiry policy for agent tokens and submits own-only by d
   );
   await user.click(scopeBox("hosts:read"));
   await user.click(within(dialog()).getByLabelText(enCredentials.form.expiry));
-  expect(screen.getByRole("option", { name: enAgents.expiry.never })).toBeTruthy();
+  // The select's popup renders asynchronously: wait for it before asserting its options.
+  expect(await screen.findByRole("option", { name: enAgents.expiry.never })).toBeTruthy();
   expect(screen.queryByRole("option", { name: enCredentials.expiry["365d"] })).toBeNull();
   await user.click(screen.getByRole("option", { name: enCredentials.expiry["30d"] }));
   await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
@@ -1072,10 +1073,12 @@ it("filters presets, hides no expiry when disabled, and submits a bounded custom
   await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
   await user.click(scopeBox("hosts:read"));
   await user.click(within(dialog()).getByLabelText(enCredentials.form.expiry));
+  // Wait for the asynchronously rendered popup, so the absent options are checked on an open list.
+  const custom = await screen.findByRole("option", { name: enAgents.expiry.custom });
   expect(screen.queryByRole("option", { name: enAgents.expiry.never })).toBeNull();
   expect(screen.queryByRole("option", { name: enCredentials.expiry["30d"] })).toBeNull();
   expect(screen.queryByRole("option", { name: enCredentials.expiry["90d"] })).toBeNull();
-  await user.click(screen.getByRole("option", { name: enAgents.expiry.custom }));
+  await user.click(custom);
   const input = within(dialog()).getByLabelText(enAgents.expiry.customDate) as HTMLInputElement;
   expect(input.type).toBe("date");
   const { localDateInputValue, latestAgentTokenCustomDate } = await import(
@@ -1137,4 +1140,113 @@ it("marks an existing no-expiry agent token as blocked by policy, without hiding
   const dated = row("agent-dated");
   expect(dated.getAttribute("data-blocked-by-policy")).toBeNull();
   expect(within(dated).queryByText(enAgents.expiry.blockedByPolicy)).toBeNull();
+});
+
+describe("sandboxes:connect (wssp-ssh owner decision 2)", () => {
+  it("the SDK key form offers it alone in its own described group, never preselected, and mints it only when ticked", async () => {
+    const user = userEvent.setup();
+    mount();
+    await openMint(user);
+    const box = scopeBox("sandboxes:connect");
+    expect(box.getAttribute("aria-checked")).toBe("false");
+    const group = dialog().querySelector<HTMLElement>('[data-scope-group="connect"]')!;
+    expect([...group.querySelectorAll("[role=checkbox]")]).toEqual([box]);
+    expect(within(group).getByText(enSdkKeys.scopeGroup.connect)).toBeTruthy();
+    expect(group.querySelector('[data-scope-group-hint="connect"]')?.textContent).toBe(
+      enSdkKeys.scopeGroupHint.connect,
+    );
+    // Selecting every sandbox scope in its group still leaves connect off.
+    const sandboxes = dialog().querySelector<HTMLElement>('[data-scope-group="sandboxes"]')!;
+    expect(within(sandboxes).queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+    await user.click(scopeBox("sandboxes:read"));
+    await submit(user);
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect((calls("create")[0]?.input as { scopes: string[] } | undefined)?.scopes).not.toContain(
+      "sandboxes:connect",
+    );
+  });
+
+  it("ticking it mints it", async () => {
+    const user = userEvent.setup();
+    mount();
+    await openMint(user);
+    await user.click(scopeBox("sandboxes:connect"));
+    await submit(user);
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect((calls("create")[0]?.input as { scopes: string[] } | undefined)?.scopes).toContain(
+      "sandboxes:connect",
+    );
+  });
+
+  it("the agent-token form and the shared picker's default never offer it", async () => {
+    const user = userEvent.setup();
+    mount(true);
+    await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
+    await within(dialog()).findByLabelText(enCredentials.form.name);
+    expect(within(dialog()).queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+    expect(dialog().querySelector('[data-scope-group="connect"]')).toBeNull();
+    cleanup();
+    render(
+      <I18nextProvider i18n={i18n}>
+        <ScopePicker
+          offered={["sandboxes:read", "sandboxes:connect"]}
+          value={[]}
+          onChange={vi.fn()}
+        />
+      </I18nextProvider>,
+    );
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+  });
+
+  it("a key that can connect shows its last connect; agent tokens and keys without the scope do not", async () => {
+    const now = Date.now();
+    const base = {
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      poolIds: [],
+      lastUsedAt: null,
+      revokedAt: null,
+      expiresAt: null,
+      createdAt: new Date(now - 86_400_000),
+      hostAllowlist: [],
+      revisionAllowlist: [],
+      origin: "DASHBOARD",
+    };
+    server.keys = [
+      {
+        ...base,
+        id: "key-connected",
+        name: "ci",
+        lookupPrefix: "wssp_sdk_connected01",
+        scopes: ["sandboxes:connect"],
+        lastConnectAt: new Date(now - 3 * 3_600_000),
+      },
+      {
+        ...base,
+        id: "key-never",
+        name: "ci 2",
+        lookupPrefix: "wssp_sdk_neverconn01",
+        scopes: ["sandboxes:connect"],
+        lastConnectAt: null,
+      },
+      {
+        ...base,
+        id: "key-plain",
+        name: "reader",
+        lookupPrefix: "wssp_sdk_plainreader",
+        scopes: ["sandboxes:read"],
+        lastConnectAt: null,
+      },
+    ];
+    mount();
+    await screen.findByRole("list", { name: enSdkKeys.title });
+    expect(row("key-connected").querySelector("[data-last-connect]")?.textContent).toBe(
+      "3 hours ago",
+    );
+    expect(row("key-never").querySelector("[data-last-connect]")?.textContent).toBe(
+      enCredentials.dates.noRecentConnect,
+    );
+    expect(row("key-plain").querySelector("[data-last-connect]")).toBeNull();
+  });
 });

@@ -1,4 +1,5 @@
 import { getPoolCapacity } from "../capacity-view";
+import { listSandboxConnectSessions } from "../connect-sessions";
 import { setSandboxOffloadPin as setOffloadPin } from "../disk-offload/pin";
 import { mintHostTerminalTicket, raiseHostTerminalTotp } from "../host-terminal-tickets";
 import { captureSandbox } from "../image-store/captures";
@@ -30,6 +31,7 @@ export const SANDBOX_PROCEDURE_INVENTORY = {
   list: sandboxViewServices.listSandboxViews,
   getSandbox: sandboxViewServices.getSandboxView,
   listOperations: operationViewServices.listOperationViews,
+  listConnectSessions: listSandboxConnectSessions,
   getOperationView: operationViewServices.getOperationView,
   probeSandbox: sandboxServices.probeSandbox,
   getOperation: sandboxServices.getOperation,

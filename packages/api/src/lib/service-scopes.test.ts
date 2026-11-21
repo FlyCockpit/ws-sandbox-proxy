@@ -367,6 +367,8 @@ const surface = [
       // Session-only operation projections (operation-views.ts); /v1 has no list.
       listOperations: null,
       getOperationView: null,
+      // Session-only CLI connection audit (connect-sessions.ts, wssp-ssh §10); no /v1 or MCP read.
+      listConnectSessions: null,
       probeSandbox: "sandboxes.probe",
       createSandbox: "sandboxes.create",
       killSandbox: "sandboxes.kill",
@@ -506,6 +508,8 @@ const SESSION_VIEW_ONLY: ReadonlySet<string> = new Set([
   // Restore pin (disk-offload/pin.ts): dashboard only, no /v1 twin.
   "setOffloadPin",
   "status",
+  // CLI connection audit (connect-sessions.ts): dashboard only, no /v1 twin.
+  "listConnectSessions",
 ]);
 function principal(withScopes: readonly ServiceScope[] = allScopes): ServicePrincipal {
   db.sdkKey.findUnique.mockResolvedValue({
@@ -552,7 +556,7 @@ const context = {
 };
 
 describe("independent SDK scope and service inventory", () => {
-  it("accounts for all 145 real router procedures and every service export", () => {
+  it("accounts for all 146 real router procedures and every service export", () => {
     const actions: string[] = [];
     let count = 0;
     for (const group of surface) {
@@ -579,7 +583,7 @@ describe("independent SDK scope and service inventory", () => {
         );
       expect(Object.keys(group.services).sort()).toEqual(serviceNames.sort());
     }
-    expect(count).toBe(145);
+    expect(count).toBe(146);
     // Owner dashboard reads and qualified usable reads share the same budgets
     // and SDK actions. Only these three explicit aliases may repeat.
     expect(actions.filter((action, index) => actions.indexOf(action) !== index).sort()).toEqual([

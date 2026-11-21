@@ -40,12 +40,14 @@ import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-t
 import { translateText } from "@/i18n/translate-text";
 import { agentTokenExpiry, agentTokenExpiryPresets } from "@/lib/agent-token-expiry";
 import {
+  API_KEY_ONLY_SCOPES,
   CREDENTIAL_NAME_MAX,
   type CredentialProblem,
   credentialProblem,
   credentialsUseRevealsValues,
+  DESCRIBED_SCOPE_GROUPS,
+  offeredScopeGroups,
   type ResourceMode,
-  SCOPE_GROUPS,
   type SdkKeyDraft,
   type ServiceScope,
   scopeKey,
@@ -335,6 +337,12 @@ function SdkKeyRow({
         createdAt={sdkKey.createdAt}
         lastUsedAt={sdkKey.lastUsedAt}
         expiresAt={sdkKey.expiresAt}
+        // CLI connections: dashboard/CLI-login API keys only, once it can or did connect.
+        lastConnectAt={
+          !agent && (sdkKey.lastConnectAt != null || sdkKey.scopes.includes("sandboxes:connect"))
+            ? sdkKey.lastConnectAt
+            : undefined
+        }
         now={now}
         locale={locale}
       />
@@ -480,7 +488,12 @@ function GrantEditor({
     ...DEFAULT_DRAFT,
     name: consentName,
     ownSandboxesOnly: mode !== "sdk",
-    scopes: requestedScopes?.filter((scope) => !scope.startsWith("hosts:")) ?? [],
+    // Never preselected: host scopes, and API-key-only scopes outside the SDK key form.
+    scopes:
+      requestedScopes?.filter(
+        (scope) =>
+          !scope.startsWith("hosts:") && (mode === "sdk" || !API_KEY_ONLY_SCOPES.includes(scope)),
+      ) ?? [],
   };
   const form = useForm({
     defaultValues: initialDraft,
@@ -606,6 +619,7 @@ function GrantEditor({
       <form.Field name="scopes">
         {(field) => (
           <ScopePicker
+            form={mode}
             offered={requestedScopes}
             value={field.state.value}
             onChange={field.handleChange}
@@ -852,7 +866,10 @@ export function ScopePicker({
   value,
   onChange,
   offered,
+  form = "consent",
 }: {
+  /** Which mint form: only `sdk` offers API-key-only scopes (`sandboxes:connect`). */
+  form?: "sdk" | "agent" | "consent";
   offered?: readonly ServiceScope[];
   value: readonly ServiceScope[];
   onChange: (next: ServiceScope[]) => void;
@@ -863,57 +880,57 @@ export function ScopePicker({
     <fieldset className="flex min-w-0 flex-col gap-3">
       <legend className="text-sm font-medium">{t("sdkKeys:form.scopes")}</legend>
       <p className="text-xs text-muted-foreground">{t("sdkKeys:form.scopesHint")}</p>
-      {SCOPE_GROUPS.map((group) => ({
-        ...group,
-        scopes: group.scopes.filter((scope) => !offered || offered.includes(scope)),
-      }))
-        .filter((group) => group.scopes.length > 0)
-        .map((group) => (
-          <div key={group.id} className="flex min-w-0 flex-col gap-1">
-            <p className="text-xs font-medium text-muted-foreground">
-              {t(`sdkKeys:scopeGroup.${group.id}`)}
+      {offeredScopeGroups(form, offered).map((group) => (
+        <div key={group.id} data-scope-group={group.id} className="flex min-w-0 flex-col gap-1">
+          <p className="text-xs font-medium text-muted-foreground">
+            {t(`sdkKeys:scopeGroup.${group.id}`)}
+          </p>
+          {DESCRIBED_SCOPE_GROUPS.has(group.id) ? (
+            <p data-scope-group-hint={group.id} className="text-xs text-muted-foreground">
+              {t(`sdkKeys:scopeGroupHint.${group.id}`)}
             </p>
-            {group.scopes.map((scope) => {
-              const key = scopeKey(scope);
-              const base = `scope-${key.replace(".", "-")}`;
-              return (
-                <div key={scope} className="flex min-w-0 flex-col">
-                  <label className="flex min-h-11 items-start gap-3 text-sm">
-                    <Checkbox
-                      name="scopes"
-                      value={scope}
-                      checked={value.includes(scope)}
-                      aria-labelledby={`${base}-name`}
-                      aria-describedby={
-                        unusable.has(scope) ? `${base}-text ${base}-hint` : `${base}-text`
-                      }
-                      aria-invalid={unusable.has(scope) || undefined}
-                      onCheckedChange={(checked) => onChange(toggle(value, scope, checked))}
-                      className="mt-1"
-                    />
-                    <span className="min-w-0">
-                      <span id={`${base}-name`} className="block font-mono text-xs">
-                        {scope}
-                      </span>
-                      <span id={`${base}-text`} className="block text-xs text-muted-foreground">
-                        {t(`sdkKeys:scope.${key}`)}
-                      </span>
+          ) : null}
+          {group.scopes.map((scope) => {
+            const key = scopeKey(scope);
+            const base = `scope-${key.replace(".", "-")}`;
+            return (
+              <div key={scope} className="flex min-w-0 flex-col">
+                <label className="flex min-h-11 items-start gap-3 text-sm">
+                  <Checkbox
+                    name="scopes"
+                    value={scope}
+                    checked={value.includes(scope)}
+                    aria-labelledby={`${base}-name`}
+                    aria-describedby={
+                      unusable.has(scope) ? `${base}-text ${base}-hint` : `${base}-text`
+                    }
+                    aria-invalid={unusable.has(scope) || undefined}
+                    onCheckedChange={(checked) => onChange(toggle(value, scope, checked))}
+                    className="mt-1"
+                  />
+                  <span className="min-w-0">
+                    <span id={`${base}-name`} className="block font-mono text-xs">
+                      {scope}
                     </span>
-                  </label>
-                  {unusable.has(scope) ? (
-                    <p
-                      id={`${base}-hint`}
-                      data-scope-needs={scope}
-                      className="text-xs text-destructive"
-                    >
-                      {t(`sdkKeys:scopeNeeds.${key}`)}
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                    <span id={`${base}-text`} className="block text-xs text-muted-foreground">
+                      {t(`sdkKeys:scope.${key}`)}
+                    </span>
+                  </span>
+                </label>
+                {unusable.has(scope) ? (
+                  <p
+                    id={`${base}-hint`}
+                    data-scope-needs={scope}
+                    className="text-xs text-destructive"
+                  >
+                    {t(`sdkKeys:scopeNeeds.${key}`)}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </fieldset>
   );
 }

@@ -165,6 +165,44 @@
     "proxyHint": "Los inicios de sesión con proxy necesitan el proxy de credenciales, que solo se activa cuando un sandbox se crea con un inicio de sesión con proxy. Crea un sandbox nuevo que nombre este inicio de sesión.",
     "ownHostsNote": "Adjuntar un inicio de sesión mantiene este sandbox en tus propios hosts a partir de ahora: su disco nunca se restaura en el host de otro usuario."
   },
+  "connections": {
+    "heading": "Conexiones recientes",
+    "description": "Shells y canales de comandos de la CLI abiertos con una clave de API (`wssp sandbox shell`). Solo se guarda quién se conectó, cuándo y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",
+    "label": "Conexiones recientes",
+    "empty": "No hay conexiones de la CLI en los últimos 90 días.",
+    "unknownKey": "Clave eliminada",
+    "origin": {
+      "CLI_LOGIN": "Inicio de sesión de la CLI",
+      "DASHBOARD": "Clave del panel"
+    },
+    "status": {
+      "open": "Abierta",
+      "closed": "Cerrada",
+      "unknown": "Fin no registrado"
+    },
+    "opened": "Abierta {{when}}",
+    "closedReason": "Terminó: {{reason}}",
+    "shells_one": "{{count}} shell",
+    "shells_other": "{{count}} shells",
+    "commands_one": "{{count}} comando",
+    "commands_other": "{{count}} comandos",
+    "bytes": "{{sent}} enviados, {{received}} recibidos",
+    "intent": {
+      "client": "cerrada por el cliente",
+      "detached": "el cliente se desconectó",
+      "backpressure": "el cliente es demasiado lento",
+      "revoked": "acceso revocado",
+      "superseded": "reemplazada",
+      "protocol_violation": "error de protocolo",
+      "host_disconnected": "el host se desconectó",
+      "expired": "se alcanzó el límite de tiempo",
+      "sandbox_stopped": "sandbox detenido",
+      "sandbox_destroyed": "sandbox destruido",
+      "lifecycle_unconfirmed": "no se pudo confirmar el estado",
+      "shutdown": "el servidor se reinició",
+      "other": "otro"
+    }
+  },
   "description": "VM que se ejecutan en tus hosts.",
   "destroy": {
     "recoveryDescription": "Se desconoce el resultado del intento anterior. Reintenta la destrucción para eliminar la máquina virtual y su disco. La capacidad permanece reservada hasta que el host confirme la eliminación.",

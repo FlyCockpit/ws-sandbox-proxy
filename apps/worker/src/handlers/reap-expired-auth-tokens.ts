@@ -1,5 +1,6 @@
 import type { ReapedAuthTokens } from "@wssp/api/lib/auth-token-retention";
 import { reapExpiredAuthTokens } from "@wssp/api/lib/auth-token-retention";
+import { purgeConnectSessions } from "@wssp/api/sandbox/connect-session-retention";
 import type { ReapExpiredAuthTokensJobData } from "@wssp/queue";
 import { reapExpiredAuthTokensJobSchema } from "@wssp/queue";
 import type { Job } from "bullmq";
@@ -12,10 +13,12 @@ export async function handleReapExpiredAuthTokensJob(
   const start = Date.now();
   const { deleted } = await reapExpiredAuthTokens();
   await sweepHostAccessRetention();
+  // CLI connection audit rows past 90 days (wssp-ssh §10), bounded batches.
+  const connectSessions = await purgeConnectSessions();
   console.log(
     `[reap-expired-auth-tokens] Job ${job.id} (${reason}) deleted ` +
-      `${deleted.deviceCodes} device code(s), ${deleted.sessions} session(s), ${deleted.verifications} verification(s) ` +
-      `in ${Date.now() - start}ms`,
+      `${deleted.deviceCodes} device code(s), ${deleted.sessions} session(s), ${deleted.verifications} verification(s), ` +
+      `${connectSessions} connect session(s) in ${Date.now() - start}ms`,
   );
   return { reason, deleted };
 }

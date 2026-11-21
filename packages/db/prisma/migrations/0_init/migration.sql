@@ -1642,6 +1642,25 @@ CREATE TABLE "sandbox_terminal_session" (
 );
 
 -- CreateTable
+CREATE TABLE "sandbox_connect_session" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "sandboxId" TEXT NOT NULL,
+    "hostId" TEXT NOT NULL,
+    "keyId" TEXT NOT NULL,
+    "origin" "SdkKeyOrigin" NOT NULL,
+    "openedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "closedAt" TIMESTAMP(3),
+    "closeIntent" TEXT,
+    "ptyChannels" INTEGER NOT NULL DEFAULT 0,
+    "execChannels" INTEGER NOT NULL DEFAULT 0,
+    "bytesIn" BIGINT NOT NULL DEFAULT 0,
+    "bytesOut" BIGINT NOT NULL DEFAULT 0,
+
+    CONSTRAINT "sandbox_connect_session_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "sandbox_pool" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
@@ -2892,6 +2911,15 @@ CREATE INDEX "sandbox_terminal_session_closedAt_idx" ON "sandbox_terminal_sessio
 CREATE INDEX "sandbox_terminal_session_openedAt_idx" ON "sandbox_terminal_session"("openedAt");
 
 -- CreateIndex
+CREATE INDEX "sandbox_connect_session_userId_sandboxId_openedAt_idx" ON "sandbox_connect_session"("userId", "sandboxId", "openedAt");
+
+-- CreateIndex
+CREATE INDEX "sandbox_connect_session_userId_keyId_openedAt_idx" ON "sandbox_connect_session"("userId", "keyId", "openedAt");
+
+-- CreateIndex
+CREATE INDEX "sandbox_connect_session_openedAt_idx" ON "sandbox_connect_session"("openedAt");
+
+-- CreateIndex
 CREATE INDEX "sandbox_pool_userId_createdAt_idx" ON "sandbox_pool"("userId", "createdAt");
 
 -- CreateIndex
@@ -3571,6 +3599,9 @@ ALTER TABLE "sandbox_terminal_session" ADD CONSTRAINT "sandbox_terminal_session_
 
 -- AddForeignKey
 ALTER TABLE "sandbox_terminal_session" ADD CONSTRAINT "sandbox_terminal_session_sandboxId_userId_fkey" FOREIGN KEY ("sandboxId", "userId") REFERENCES "sandbox_instance"("id", "userId") ON DELETE CASCADE ON UPDATE RESTRICT;
+
+-- AddForeignKey
+ALTER TABLE "sandbox_connect_session" ADD CONSTRAINT "sandbox_connect_session_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE RESTRICT;
 
 -- AddForeignKey
 ALTER TABLE "sandbox_pool" ADD CONSTRAINT "sandbox_pool_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE RESTRICT ON UPDATE RESTRICT;

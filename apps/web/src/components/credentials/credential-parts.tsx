@@ -219,12 +219,15 @@ export function CredentialDates({
   createdAt,
   lastUsedAt,
   expiresAt,
+  lastConnectAt,
   now,
   locale,
 }: {
   createdAt: Timestamp;
   lastUsedAt: Timestamp;
   expiresAt?: Timestamp;
+  /** The newest CLI connection (`sandboxes:connect`); omitted, the row is not shown. */
+  lastConnectAt?: Timestamp;
   now: number;
   locale: string;
 }) {
@@ -232,6 +235,7 @@ export function CredentialDates({
   const created = toMs(createdAt);
   const used = toMs(lastUsedAt);
   const expires = expiresAt === undefined ? undefined : toMs(expiresAt);
+  const connected = lastConnectAt === undefined ? undefined : toMs(lastConnectAt);
   return (
     <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
       <div className="min-w-0">
@@ -255,6 +259,18 @@ export function CredentialDates({
               : expires <= now
                 ? t("credentials:dates.expired")
                 : formatRelativeTime(expires, locale, now)}
+          </dd>
+        </div>
+      )}
+      {connected === undefined ? null : (
+        <div className="min-w-0">
+          <dt className="text-xs text-muted-foreground">{t("credentials:dates.lastConnect")}</dt>
+          <dd data-last-connect="" title={dateTimeTitle(connected, locale)}>
+            {/* No retained record: rows are purged after the server-side
+                CONNECT_SESSION_RETENTION_DAYS (90, literal in the string). */}
+            {connected == null
+              ? t("credentials:dates.noRecentConnect")
+              : formatRelativeTime(connected, locale, now)}
           </dd>
         </div>
       )}
