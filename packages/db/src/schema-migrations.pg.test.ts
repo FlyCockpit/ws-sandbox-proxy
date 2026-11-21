@@ -422,7 +422,8 @@ it("the sftp recipe migration keeps community prep builds recorded with the prev
     );
     expect(beforeNew?.constraint).toMatch(/^template_build_origin_/);
 
-    for (const name of later) cpSync(join(held, name), join(copied, name), { recursive: true });
+    // This migration only: later ones replace its CHECK again (tested below).
+    cpSync(join(held, LATER), join(copied, LATER), { recursive: true });
     migration.apply();
     const live = await inspector.query(
       `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'template_build_origin_%'`,
@@ -442,6 +443,80 @@ it("the sftp recipe migration keeps community prep builds recorded with the prev
     );
     expect(other?.code).toBe("23514");
     expect(other?.constraint).toBe("template_build_origin_ckb5e863b8");
+  } finally {
+    await inspector.end();
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}, 180000);
+
+it("the rsync recipe migration keeps community prep builds recorded with both earlier digests", async () => {
+  const OLDEST = "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
+  const OLD = "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b";
+  const NEW = "28ddd19b6c16efce199908628d342179eb933ccead39625b640d567fd22a98be";
+  const LATER = "20261121000200_community_recipe_rsync";
+  const database = `${db.name}_rsync`;
+  // The harness owns this disposable database and cleans it up after this file.
+  await db.inspect.$executeRawUnsafe(`CREATE DATABASE ${database}`);
+  const url = new URL(db.url);
+  url.pathname = `/${database}`;
+  const scratch = mkdtempSync(join(tmpdir(), "wssp-schema-migrations-rsync-"));
+  const inspector = new Client({ connectionString: url.toString() });
+  await inspector.connect();
+  try {
+    const migration = canonicalApplyFixture(root, scratch, url.toString());
+    const copied = join(migration.prismaCwd, "prisma/migrations");
+    const held = join(scratch, "held");
+    const later = readdirSync(copied, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name >= LATER)
+      .map((entry) => entry.name);
+    expect(later[0]).toBe(LATER);
+    for (const name of later) cpSync(join(copied, name), join(held, name), { recursive: true });
+    for (const name of later) rmSync(join(copied, name), { recursive: true });
+    migration.apply();
+    const prep = (id: string, digest: string) =>
+      buildRow(id, {
+        origin: "'COMMUNITY_PREP'",
+        verifyRequired: "true",
+        noCache: "true",
+        recipeDigest: `'${digest}'`,
+      });
+    await inspector.query(`INSERT INTO "user" (id,name,email) VALUES ('owner','Owner','owner@example.test');
+      INSERT INTO sandbox_logical_template (id,"userId",slug,label,"updatedAt") VALUES ('tpl','owner','tpl','Tpl',now());
+      INSERT INTO sandbox_template_revision (id,"userId","templateId",revision,"incusFingerprint",architecture,"manifestDigest") VALUES ('rev','owner','tpl',1,'${FP}','x86_64','${HEX}');
+      INSERT INTO sandbox_pool (id,"userId",slug,label) VALUES ('pool','owner','pool','Pool');`);
+    await inspector.query(prep("oldest", OLDEST));
+    await inspector.query(prep("before", OLD));
+    const beforeNew = await inspector.query(prep("new-too-early", NEW)).then(
+      () => undefined,
+      (cause: unknown) => cause as PgError,
+    );
+    expect(beforeNew?.constraint).toBe("template_build_origin_ckb5e863b8");
+
+    for (const name of later) cpSync(join(held, name), join(copied, name), { recursive: true });
+    migration.apply();
+    const live = await inspector.query(
+      `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'template_build_origin_%'`,
+    );
+    expect(live.rows).toEqual([
+      { conname: "template_build_origin_ck4c786b2f", convalidated: true },
+    ]);
+    expect(
+      (await inspector.query(`SELECT id, "recipeDigest" FROM sandbox_template_build ORDER BY id`))
+        .rows,
+    ).toEqual([
+      { id: "before", recipeDigest: OLD },
+      { id: "oldest", recipeDigest: OLDEST },
+    ]);
+    // The new release writes the new digest; the release still running writes the previous one.
+    await inspector.query(prep("after", NEW));
+    await inspector.query(prep("old-release", OLD));
+    await inspector.query(prep("oldest-again", OLDEST));
+    const other = await inspector.query(prep("other", HEX)).then(
+      () => undefined,
+      (cause: unknown) => cause as PgError,
+    );
+    expect(other?.code).toBe("23514");
+    expect(other?.constraint).toBe("template_build_origin_ck4c786b2f");
   } finally {
     await inspector.end();
     rmSync(scratch, { recursive: true, force: true });

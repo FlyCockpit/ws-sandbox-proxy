@@ -9,6 +9,9 @@ against these commands and flags.
 
 For behavior (enrollment, state directory, signals, drain semantics), see the
 [CLI README](../README.md) and the [host operations guide](../../../docs/guide/hosts.md).
+For `wssp sandbox shell`, `forward`, `wssp ssh` and `wssp ssh-config`, see
+[shells, port forwards and ssh](../../../docs/guide/connect.md) and the
+[ssh, VS Code, rsync and sftp guides](../../../docs/guide/ssh/README.md).
 
 Capacity is local to the host. Flags override TOML independently; automatic
 vCPU capacity is detected threads × 2 and RAM includes each VM's host overhead.

@@ -260,13 +260,16 @@ fn scope_hint(
     purpose: Purpose,
 ) -> anyhow::Error {
     let forbidden = crate::api::api_error_of(&error).is_some_and(|api| api.status == 403);
-    if !forbidden {
-        return error;
+    match scope_message(credential, purpose) {
+        Some(message) if forbidden => error.context(message),
+        _ => error,
     }
-    let lacks = match (&credential.source, &credential.login) {
-        (CredentialSource::File, Some(login)) => !login.scopes.iter().any(|s| s == CONNECT_SCOPE),
-        _ => false,
-    };
+}
+
+/// How to get the connect scope, for a login known to lack it or an env key
+/// that may; `None` for a saved login that holds it.
+fn scope_message(credential: &UserCredential, purpose: Purpose) -> Option<&'static str> {
+    let lacks = lacks_connect_scope(credential);
     let message = match (purpose, lacks, credential.source == CredentialSource::Env) {
         (Purpose::Shell, true, _) => {
             "this login cannot open shells; log in again (`wssp login`) to get shell access"
@@ -288,9 +291,176 @@ fn scope_hint(
         (Purpose::Ssh, false, true) => {
             "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get shell access"
         }
-        (_, false, false) => return error,
+        (_, false, false) => return None,
+    };
+    Some(message)
+}
+
+/// A refused connect, said with its cause and what to do: from the refusal's
+/// status and catalog code (and, for a sandbox that is not running, its
+/// state as `GET /v1/sandboxes/{id}` reports it), never from message text.
+/// `target` is what the user typed, `id` the sandbox id it resolved to.
+fn refusal_hint(
+    credential: &UserCredential,
+    target: &str,
+    id: &str,
+    error: anyhow::Error,
+    purpose: Purpose,
+) -> anyhow::Error {
+    let Some(api) = crate::api::api_error_of(&error) else {
+        return error;
+    };
+    let reason = api
+        .data
+        .as_ref()
+        .and_then(|data| data.get("reason"))
+        .and_then(Value::as_str);
+    let message = match (api.status, api.code.as_str(), reason) {
+        // A login without the connect scope is told so without another
+        // request. Otherwise a 403 can also be a sandbox without a host
+        // (offloaded, still waiting for one): its state says which.
+        (403, _, _) if lacks_connect_scope(credential) => {
+            return scope_hint(credential, error, purpose);
+        }
+        (403, _, _) => {
+            let hostless = sandbox_info(credential, id)
+                .filter(|sandbox| !sandbox.has_host && sandbox.state != "READY");
+            match (&credential.source, hostless) {
+                // The login holds the scope, and the server refuses a sandbox
+                // without a host at authorization: its state is the cause.
+                (CredentialSource::File, Some(sandbox)) => {
+                    return error
+                        .context(state_message(target, id, Some(&sandbox.state)))
+                        .context(CodedError::new(ExitCode::Conflict));
+                }
+                (CredentialSource::File, None) => format!(
+                    "the server refused access to sandbox `{target}` although this login can open shells; `wssp sandbox get {id}` shows its state"
+                ),
+                // An env key's scopes are unknown here: a missing scope stays
+                // possible, so exit 8 and the scope hint, plus what was seen.
+                (CredentialSource::Env, Some(sandbox)) => match scope_message(credential, purpose) {
+                    Some(hint) => format!(
+                        "{hint}; also, sandbox `{target}` has no host right now (`{}`), which refuses every connect",
+                        sandbox.state
+                    ),
+                    None => return error,
+                },
+                (CredentialSource::Env, None) => return scope_hint(credential, error, purpose),
+            }
+        }
+        (401, _, _) if credential.source == CredentialSource::Env => {
+            "the server refused `WSSP_API_KEY` (revoked, expired or unknown); set a valid key, or unset `WSSP_API_KEY` and `WSSP_SERVER` to use the saved login"
+                .to_owned()
+        }
+        (401, _, _) => {
+            "the server refused this login (revoked or expired); log in again (`wssp login`)"
+                .to_owned()
+        }
+        (404, _, _) => format!(
+            "no sandbox `{target}` among yours (give its id, or the name of a live sandbox); `wssp sandbox list` shows them"
+        ),
+        (409, "sandbox.state_conflict", _) => {
+            state_message(target, id, sandbox_state(credential, id).as_deref())
+        }
+        (409, "sandbox.host_unavailable", _) => {
+            "the sandbox's host is not connected to the server; try again once it is back"
+                .to_owned()
+        }
+        (409, "sandbox.managed", _)
+        | (400, "UNSUPPORTED_CAPABILITY", Some("connect_sandbox_unsupported")) => format!(
+            "sandbox `{target}` is a build, verify or CLI-login sandbox, which has no shell, port-forward or ssh access"
+        ),
+        (400, "UNSUPPORTED_CAPABILITY", Some("connect_host_outdated")) => {
+            "the sandbox's node runs a daemon without shell, port-forward and ssh support; its owner has to update it"
+                .to_owned()
+        }
+        (429, _, _) => match api.retry_after_seconds {
+            Some(seconds) => format!(
+                "too many connections or connection attempts; try again in {seconds} s"
+            ),
+            None => "too many connections or connection attempts; try again shortly".to_owned(),
+        },
+        (503, _, _) => "the server is busy or shutting down; try again shortly".to_owned(),
+        _ => return error,
     };
     error.context(message)
+}
+
+/// Whether a saved login lacks `sandboxes:connect` (an env key's scopes are
+/// unknown here).
+fn lacks_connect_scope(credential: &UserCredential) -> bool {
+    match (&credential.source, &credential.login) {
+        (CredentialSource::File, Some(login)) => !login.scopes.iter().any(|s| s == CONNECT_SCOPE),
+        _ => false,
+    }
+}
+
+/// The sandbox's state as `GET /v1/sandboxes/{id}` reports it (one bounded
+/// read; `None` when it cannot be read).
+fn sandbox_state(credential: &UserCredential, id: &str) -> Option<String> {
+    sandbox_info(credential, id).map(|sandbox| sandbox.state)
+}
+
+/// What one `GET /v1/sandboxes/{id}` says about a refused sandbox.
+struct SandboxInfo {
+    state: String,
+    /// `hostId` is set.
+    has_host: bool,
+}
+
+/// One bounded read of the sandbox; `None` when it cannot be read.
+fn sandbox_info(credential: &UserCredential, id: &str) -> Option<SandboxInfo> {
+    if !is_plain_id(id) {
+        return None;
+    }
+    let client = crate::api::Client::new(credential).ok()?;
+    let sandbox = client
+        .get::<Value>(&format!("/v1/sandboxes/{id}"), &[])
+        .ok()?;
+    Some(SandboxInfo {
+        state: sandbox.get("state").and_then(Value::as_str)?.to_owned(),
+        has_host: sandbox.get("hostId").is_some_and(Value::is_string),
+    })
+}
+
+/// The message for a sandbox in `state` (`None`: the state could not be read).
+fn state_message(target: &str, id: &str, state: Option<&str>) -> String {
+    match state {
+        Some("STOPPED") => {
+            format!("sandbox `{target}` is stopped; start it with `wssp sandbox start {id} --wait`")
+        }
+        Some("OFFLOADED") => format!(
+            "sandbox `{target}` is stopped and its disk is offloaded; start it with `wssp sandbox start {id} --wait`"
+        ),
+        Some("STOPPING") => format!(
+            "sandbox `{target}` is stopping; once it is stopped, start it with `wssp sandbox start {id} --wait`"
+        ),
+        Some(state @ ("REQUESTED" | "SCHEDULED" | "PROVISIONING" | "WAITING_FOR_CAPACITY")) => {
+            format!(
+                "sandbox `{target}` is still starting (`{state}`); connect again once `wssp sandbox get {id}` shows `READY`"
+            )
+        }
+        Some("RECLAIMING") => format!("sandbox `{target}` is being destroyed (`RECLAIMING`)"),
+        Some("DELETED") => format!("sandbox `{target}` is destroyed (`DELETED`)"),
+        Some("READY") => format!(
+            "sandbox `{target}` cannot be connected to right now (its lease may have ended, or its host or access is changing); `wssp sandbox get {id}` shows its state"
+        ),
+        Some(state) => format!(
+            "sandbox `{target}` cannot be connected to right now (`{state}`); `wssp sandbox get {id}` shows its state"
+        ),
+        None => format!(
+            "sandbox `{target}` cannot be connected to right now (it may be stopped or starting, its lease may have ended, or its host or access is changing); `wssp sandbox get {id}` shows its state, and `wssp sandbox start {id} --wait` starts a stopped one"
+        ),
+    }
+}
+
+/// A sandbox id that can go into a path as it is.
+fn is_plain_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Connect to `target` as an id, else as a sandbox name.
@@ -304,12 +474,12 @@ pub(super) fn connect(
         Err(error) if crate::api::api_error_of(&error).is_some_and(|api| api.status == 404) => {
             match resolve_name(credential, target) {
                 Ok(Some(id)) if id != target => Connection::connect(credential, &id)
-                    .map_err(|e| scope_hint(credential, e, purpose)),
+                    .map_err(|e| refusal_hint(credential, target, &id, e, purpose)),
                 // Not a name either (or names cannot be listed): the 404 stands.
-                _ => Err(error),
+                _ => Err(refusal_hint(credential, target, target, error, purpose)),
             }
         }
-        Err(error) => Err(scope_hint(credential, error, purpose)),
+        Err(error) => Err(refusal_hint(credential, target, target, error, purpose)),
     }
 }
 

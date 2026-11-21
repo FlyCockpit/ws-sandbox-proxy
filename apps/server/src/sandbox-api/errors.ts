@@ -319,6 +319,14 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
   if (sentStatus === 401) c.header("WWW-Authenticate", 'Bearer realm="wssp"');
   const sentRetry = body.error.retryAfterSeconds;
   if (sentRetry !== undefined) c.header("Retry-After", String(sentRetry));
+  // A refused WebSocket upgrade (`/v1/sandboxes/{id}/connect`) loses its body:
+  // @hono/node-server answers it with `Content-Length: 0` and the headers only.
+  // The code and reason (catalog constants, never request data) ride headers
+  // too, so the CLI can tell a stopped sandbox from a lost host.
+  if (c.req.header("upgrade")?.toLowerCase() === "websocket") {
+    c.header("X-Wssp-Error-Code", sent);
+    if (body.error.reason) c.header("X-Wssp-Error-Reason", body.error.reason);
+  }
   return c.json(body, sentStatus);
 }
 

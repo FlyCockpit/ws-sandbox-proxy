@@ -936,7 +936,20 @@ fn refusal(response: &tungstenite::http::Response<Option<Vec<u8>>>) -> anyhow::E
         .as_deref()
         .map(|bytes| String::from_utf8_lossy(&bytes[..bytes.len().min(64 * 1024)]).into_owned())
         .unwrap_or_default();
-    let error = crate::api::parse_error(status, &body, retry_after);
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+    };
+    let error = crate::api::parse_refusal(
+        status,
+        &body,
+        retry_after,
+        header("x-wssp-error-code"),
+        header("x-wssp-error-reason"),
+    );
     let code = refusal_exit_code(&error);
     anyhow::Error::new(error).context(CodedError::new(code))
 }

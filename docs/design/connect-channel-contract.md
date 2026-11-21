@@ -234,6 +234,12 @@ grants and MCP never hold it. Refusals are HTTP answers in the /v1 error catalog
 | the host is not connected                                              | 409 `sandbox.host_unavailable`                                                                           |
 | 8 connections per sandbox, 16 per key or 32 per owner                  | 429 `TOO_MANY_REQUESTS`                                                                                  |
 
+The server's Node adapter answers a refused upgrade with its status and headers only (`Content-Length: 0`): the
+JSON body never arrives. So every /v1 error answer to a WebSocket upgrade also carries the envelope's code in
+`X-Wssp-Error-Code` and, when it has one, its reason in `X-Wssp-Error-Reason` (catalog constants, never request
+data), next to `Retry-After`. The CLI reads the body when one comes and these headers otherwise, and says from
+them (plus the sandbox's state, read once for `sandbox.state_conflict`) what the user can do.
+
 ### Frames
 
 Control frames are JSON text (at most 256 KiB). Channel data is binary: a big-endian u32 metadata length, the

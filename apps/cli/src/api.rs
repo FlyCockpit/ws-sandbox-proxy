@@ -104,24 +104,70 @@ fn status_code_name(status: u16) -> &'static str {
     }
 }
 
-/// Parse a `/v1` error body; a body that is not the envelope (a proxy page)
-/// keeps only its status.
-pub fn parse_error(status: u16, body: &str, retry_after: Option<u64>) -> ApiError {
-    let bare = || ApiError {
+/// A `/v1` answer that is not the error envelope (a proxy page, or a refused
+/// upgrade, whose body the server's adapter drops): its status only.
+fn bare_error(status: u16, retry_after: Option<u64>) -> ApiError {
+    ApiError {
         status,
         code: status_code_name(status).to_owned(),
         message: format!("the server answered HTTP {status}"),
         data: None,
         retry_after_seconds: retry_after,
+    }
+}
+
+/// Whether a header value is a catalog code or reason (`sandbox.state_conflict`,
+/// `connect_host_outdated`): at most 64 of `[A-Za-z0-9_.]`.
+fn is_catalog_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'.')
+}
+
+/// The error of a refused WebSocket upgrade: the envelope when a body came,
+/// else the code and reason of its `X-Wssp-Error-Code` / `X-Wssp-Error-Reason`
+/// headers (the server's Node adapter answers a refused upgrade with an empty
+/// body), else its status only.
+pub fn parse_refusal(
+    status: u16,
+    body: &str,
+    retry_after: Option<u64>,
+    code: Option<&str>,
+    reason: Option<&str>,
+) -> ApiError {
+    if let Some(parsed) = parse_envelope(status, body, retry_after) {
+        return parsed;
+    }
+    let Some(code) = code.filter(|code| is_catalog_token(code)) else {
+        return bare_error(status, retry_after);
     };
+    ApiError {
+        code: code.to_owned(),
+        data: reason
+            .filter(|reason| is_catalog_token(reason))
+            .map(|reason| serde_json::json!({ "reason": reason })),
+        ..bare_error(status, retry_after)
+    }
+}
+
+/// Parse a `/v1` error body; a body that is not the envelope (a proxy page)
+/// keeps only its status.
+pub fn parse_error(status: u16, body: &str, retry_after: Option<u64>) -> ApiError {
+    parse_envelope(status, body, retry_after).unwrap_or_else(|| bare_error(status, retry_after))
+}
+
+/// The `/v1` error envelope of a body, if it is one.
+fn parse_envelope(status: u16, body: &str, retry_after: Option<u64>) -> Option<ApiError> {
     let Ok(Value::Object(mut root)) = serde_json::from_str::<Value>(body) else {
-        return bare();
+        return None;
     };
     let Some(Value::Object(mut error)) = root.remove("error") else {
-        return bare();
+        return None;
     };
     let Some(Value::String(code)) = error.remove("code") else {
-        return bare();
+        return None;
     };
     let message = match error.remove("message") {
         Some(Value::String(message)) => message,
@@ -137,13 +183,13 @@ pub fn parse_error(status: u16, body: &str, retry_after: Option<u64>) -> ApiErro
         None if error.is_empty() => None,
         None => Some(Value::Object(error)),
     };
-    ApiError {
+    Some(ApiError {
         status,
         code: crate::output::remote_message(&code),
         message: crate::output::remote_message(&message),
         data,
         retry_after_seconds,
-    }
+    })
 }
 
 /// Wrap an [`ApiError`] with its exit code.
@@ -699,6 +745,39 @@ pub fn retry_transient<T>(deadline: Instant, mut attempt: impl FnMut() -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bodyless_refusal_takes_its_code_and_reason_from_the_headers() {
+        let error = parse_refusal(
+            400,
+            "",
+            None,
+            Some("UNSUPPORTED_CAPABILITY"),
+            Some("connect_host_outdated"),
+        );
+        assert_eq!(error.code, "UNSUPPORTED_CAPABILITY");
+        assert_eq!(error.message, "the server answered HTTP 400");
+        assert_eq!(
+            error.data,
+            Some(serde_json::json!({"reason": "connect_host_outdated"}))
+        );
+        assert_eq!(error.exit_code(), ExitCode::Usage);
+        // An envelope, when one came, wins over the headers.
+        let body = r#"{"error":{"code":"sandbox.host_unavailable","message":"m"}}"#;
+        let error = parse_refusal(409, body, None, Some("sandbox.state_conflict"), None);
+        assert_eq!(error.code, "sandbox.host_unavailable");
+        // Header values that are no catalog token are ignored.
+        for bad in ["", "a b", "x\u{1b}[31m", &"a".repeat(65)] {
+            let error = parse_refusal(409, "", None, Some(bad), Some(bad));
+            assert_eq!(
+                (error.code.as_str(), &error.data),
+                ("CONFLICT", &None),
+                "{bad:?}"
+            );
+        }
+        let error = parse_refusal(409, "", None, Some("sandbox.state_conflict"), Some("a b"));
+        assert_eq!(error.data, None);
+    }
 
     #[test]
     fn maps_statuses_and_codes_to_exit_codes() {

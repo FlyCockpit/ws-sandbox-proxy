@@ -13,6 +13,11 @@ subprotocol `wssp.connect.v1`) with your [CLI login](./cli.md) or SDK key; the
 wire is specified in the
 [channel contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
 
+This page is the reference. For step-by-step guides see
+[ssh, VS Code, rsync and sftp](./ssh/README.md): [plain ssh](./ssh/ssh.md),
+[copying files](./ssh/files.md) with rsync, scp and sftp,
+[VS Code Remote-SSH](./ssh/vscode.md) and [JetBrains Gateway](./ssh/jetbrains.md).
+
 ## Access
 
 The key needs the scope `sandboxes:connect`. A `wssp login` with **write**
@@ -83,18 +88,28 @@ shared node's owner can see them, as for browser terminals.
 
 ## Exit status
 
-| Exit           | When                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------ |
-| the remote one | the guest command or shell exited; a death by signal N exits 128 + N                                         |
-| 2              | a usage error, or the server refused the request as invalid (for example a node that must update its daemon) |
-| 3              | no such sandbox, or not yours                                                                                |
-| 7              | not logged in, or the key was refused (401)                                                                  |
-| 8              | the key lacks `sandboxes:connect` or access to the sandbox (403)                                             |
-| 10             | the sandbox is not `READY` (409)                                                                             |
-| 11             | rate-limited, the host is not connected or full, or the server is busy (429, 503); retry later               |
-| 125            | wssp ended the session, wssp itself failed, or the remote status is unknown                                  |
-| 130            | without a tty: a second Ctrl-C closed the channel (a second SIGTERM or SIGHUP: 143, 129)                     |
-| 141            | stdout closed early                                                                                          |
+| Exit           | When                                                                                                                                                |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the remote one | the guest command or shell exited; a death by signal N exits 128 + N                                                                                |
+| 2              | a usage error, or the server refused the request as invalid (for example a node that must update its daemon)                                        |
+| 3              | no such sandbox, or not yours                                                                                                                       |
+| 7              | not logged in, or the key was refused (401)                                                                                                         |
+| 8              | the key lacks `sandboxes:connect` or access to the sandbox (403)                                                                                    |
+| 10             | the sandbox is not `READY` (409; also a 403 for a sandbox without a host, such as an offloaded one, when the saved login holds `sandboxes:connect`) |
+| 11             | rate-limited, the host is not connected or full, or the server is busy (429, 503); retry later                                                      |
+| 125            | wssp ended the session, wssp itself failed, or the remote status is unknown                                                                         |
+| 130            | without a tty: a second Ctrl-C closed the channel (a second SIGTERM or SIGHUP: 143, 129)                                                            |
+| 141            | stdout closed early                                                                                                                                 |
+
+A refusal before the session starts prints one line naming the cause and what
+to do, built from the server's error code (and, for a sandbox that is not
+running, its state), for example
+``error: sandbox `web` is stopped; start it with `wssp sandbox start <id> --wait`: `sandbox.state_conflict`: the server answered HTTP 409``
+(the explanation, then the server's code). An offloaded sandbox, or one still
+waiting for a host, is refused by authorization (403); when the saved login
+holds `sandboxes:connect`, the CLI reads the sandbox's state and exits 10 with
+the same kind of line. With `WSSP_API_KEY`, whose scopes the CLI cannot see,
+it keeps exit 8 and the scope hint and adds the state it read.
 
 When wssp ends the session it prints one line naming why: `revoked` (the key
 was revoked or expired, or access was withdrawn), `sandbox_stopped`,
@@ -355,8 +370,9 @@ no `sshd` and listens on nothing); it is looked for at
 `/usr/lib/openssh/sftp-server`, `/usr/libexec/openssh/sftp-server`,
 `/usr/lib/ssh/sftp-server` and `/usr/libexec/sftp-server`. Without it, scp and
 sftp fail with a line naming the package, while `scp -O`, `rsync`, shells,
-commands and forwards still work. Community templates include it; see
-[template builds](./template-builds.md) to add it to another template.
+commands and forwards still work. `rsync` likewise needs the guest's `rsync`
+binary. Community templates include both; see
+[template builds](./template-builds.md) to add them to another template.
 
 **VS Code Remote-SSH and JetBrains Gateway.** Pick the host `<sandbox>.wssp`
 after `wssp ssh-config --install`. Both use only what the table above maps:

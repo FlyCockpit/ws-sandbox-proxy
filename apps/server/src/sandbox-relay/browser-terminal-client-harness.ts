@@ -21,7 +21,7 @@ ws.on("open", () => out({ event: "open", protocol: ws.protocol }));
 ws.on("unexpected-response", (_req, res) => {
   let body = "";
   res.on("data", (c) => { body += c; });
-  res.on("end", () => { out({ event: "refused", status: res.statusCode, refusal: res.headers["x-terminal-refusal"] ?? null }); process.exit(0); });
+  res.on("end", () => { out({ event: "refused", status: res.statusCode, refusal: res.headers["x-terminal-refusal"] ?? null, errorCode: res.headers["x-wssp-error-code"] ?? null, errorReason: res.headers["x-wssp-error-reason"] ?? null, bodyLength: body.length }); process.exit(0); });
 });
 ws.on("error", (e) => { if (!String(e).includes("Unexpected server response")) out({ event: "error", message: String(e) }); });
 ws.on("message", (data, binary) => out(binary ? { event: "binary", data: Buffer.from(data).toString("base64") } : { event: "text", data: data.toString() }));
@@ -45,7 +45,16 @@ type BrowserClient = {
 };
 export type Upgrade =
   | ({ kind: "open" } & BrowserClient)
-  | { kind: "refused"; status: number; refusal: string | null };
+  | {
+      kind: "refused";
+      status: number;
+      refusal: string | null;
+      /** `X-Wssp-Error-Code` / `X-Wssp-Error-Reason` (connect-plane refusals). */
+      errorCode: string | null;
+      errorReason: string | null;
+      /** The refusal body as it arrived (the Node adapter sends none). */
+      bodyLength: number;
+    };
 
 const children = new Set<ChildProcess>();
 
@@ -116,7 +125,14 @@ export function upgradeBrowserTerminal(options: {
             close: () => write({ close: true }),
           });
         else if (event.event === "refused")
-          resolve({ kind: "refused", status: event.status, refusal: event.refusal });
+          resolve({
+            kind: "refused",
+            status: event.status,
+            refusal: event.refusal,
+            errorCode: event.errorCode,
+            errorReason: event.errorReason,
+            bodyLength: event.bodyLength,
+          });
         else if (event.event === "text") text.push(JSON.parse(event.data));
         else if (event.event === "binary")
           binary.push(Buffer.from(event.data, "base64").toString());

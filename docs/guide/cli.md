@@ -222,7 +222,8 @@ No SSH key or password is involved: the ProxyCommand `wssp ssh --stdio` uses
 your login, the same scope as `shell`, and serves SSH on its own stdin and
 stdout (it never listens). The SSH session is not end-to-end to the guest; the
 server and the node see the bytes, as for shells. `--rotate-host-key` replaces
-the local host key. See [ssh](./connect.md#ssh).
+the local host key. See [ssh](./connect.md#ssh), and the
+[step-by-step guides](./ssh/README.md) for VS Code, rsync, scp and sftp.
 
 ### Files
 

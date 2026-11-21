@@ -38,10 +38,20 @@ describe("community catalog (community-base S5)", () => {
     const scripts = UBUNTU_CLOUD_PREP_V1.steps.map((step) =>
       step.type === "run" ? step.script : "",
     );
-    expect(scripts[2]).toMatch(/--no-install-recommends [^\n]* openssh-sftp-server\n/);
+    expect(scripts[2]).toMatch(/--no-install-recommends [^\n]* openssh-sftp-server[ \n]/);
     expect(scripts[2]).toContain("test -x /usr/lib/openssh/sftp-server");
     // Binary only: no server package, no unit started or enabled.
     expect(scripts.join("\n")).not.toMatch(/openssh-server|systemctl|\bsshd\b/);
+  });
+
+  it("installs rsync for rsync over wssp ssh", () => {
+    const scripts = UBUNTU_CLOUD_PREP_V1.steps.map((step) =>
+      step.type === "run" ? step.script : "",
+    );
+    expect(scripts[2]).toMatch(/--no-install-recommends [^\n]* rsync\n/);
+    expect(scripts[2]).toContain("command -v rsync >/dev/null");
+    // rsync's own daemon is never started.
+    expect(scripts.join("\n")).not.toMatch(/rsync --daemon|systemctl/);
   });
 
   it("pins the prep recipe digest (the template_build_origin CHECK carries the same literal)", async () => {
@@ -54,7 +64,7 @@ describe("community catalog (community-base S5)", () => {
     );
     expect(schema).toMatch(
       new RegExp(
-        `@check template_build_origin: .*"recipeDigest" IN \\('${UBUNTU_CLOUD_PREP_V1_DIGEST}', '[0-9a-f]{64}'\\)`,
+        `@check template_build_origin: .*"recipeDigest" IN \\('${UBUNTU_CLOUD_PREP_V1_DIGEST}'(, '[0-9a-f]{64}')*\\)`,
       ),
     );
   });

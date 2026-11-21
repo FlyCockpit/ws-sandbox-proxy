@@ -57,6 +57,9 @@ enum Action {
     Reply(u16, Value),
     /// The same, with the head and the body in two writes 300 ms apart.
     SplitReply(u16, Value),
+    /// Refuse the way the server's Node adapter does: an empty body, the
+    /// status and these headers only.
+    Bare(u16, Vec<(&'static str, String)>),
     /// Accept the upgrade and run the session.
     Accept(Session),
 }
@@ -124,6 +127,21 @@ fn reply(mut stream: TcpStream, status: u16, body: &Value, split: bool) {
     }
 }
 
+fn bare_reply(mut stream: TcpStream, status: u16, headers: &[(&str, String)]) {
+    let mut head = [0; 16 * 1024];
+    let _ = stream.read(&mut head);
+    let extra: String = headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}\r\n"))
+        .collect();
+    let _ = stream.write_all(
+        format!(
+            "HTTP/1.1 {status} Fixture\r\nConnection: close\r\nContent-Length: 0\r\n{extra}\r\n"
+        )
+        .as_bytes(),
+    );
+}
+
 #[allow(clippy::result_large_err)] // tungstenite's callback signature
 fn accept_subprotocol(_: &Request, mut response: Response) -> Result<Response, ErrorResponse> {
     response
@@ -161,6 +179,7 @@ impl Fake {
                 match handler(&head) {
                     Action::Reply(status, body) => reply(stream, status, &body, false),
                     Action::SplitReply(status, body) => reply(stream, status, &body, true),
+                    Action::Bare(status, headers) => bare_reply(stream, status, &headers),
                     Action::Accept(session) => {
                         assert!(head.upgrade(), "an accepted request is an upgrade");
                         let ws = tungstenite::accept_hdr(stream, accept_subprotocol).unwrap();
@@ -636,9 +655,351 @@ fn upgrade_refusals_keep_their_v1_exit_codes() {
             text(&output.stderr)
         );
         assert!(output.stdout.is_empty());
-        // No retry, no list, no second upgrade.
-        assert_eq!(fake.heads().len(), 1, "{status} {code}");
+        // No retry, no list, no second upgrade (a stopped sandbox's state is
+        // read once, for its message).
+        let heads = fake.heads();
+        assert_eq!(
+            heads.iter().filter(|h| h.upgrade()).count(),
+            1,
+            "{status} {code}"
+        );
+        assert!(
+            heads
+                .iter()
+                .all(|h| h.upgrade() || h.target == "/v1/sandboxes/sbx_1"),
+            "{status} {code}"
+        );
     }
+}
+
+/// The headers of a refused upgrade as the server sends them.
+fn refusal_headers(code: &str, reason: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut headers = vec![("X-Wssp-Error-Code", code.to_owned())];
+    if let Some(reason) = reason {
+        headers.push(("X-Wssp-Error-Reason", reason.to_owned()));
+    }
+    headers
+}
+
+#[test]
+fn bodyless_refusals_name_the_cause_and_the_fix() {
+    // (status, code, reason, extra header, the sandbox GET's answer, exit, message)
+    type Case = (
+        u16,
+        &'static str,
+        Option<&'static str>,
+        Option<(&'static str, &'static str)>,
+        Option<(u16, Value)>,
+        i32,
+        &'static str,
+    );
+    let cases: Vec<Case> = vec![
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "STOPPED"}))),
+            10,
+            "error: sandbox `sbx_1` is stopped; start it with `wssp sandbox start sbx_1 --wait`",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "OFFLOADED"}))),
+            10,
+            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait`",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "STOPPING"}))),
+            10,
+            "error: sandbox `sbx_1` is stopping; once it is stopped, start it with `wssp sandbox start sbx_1 --wait`",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "PROVISIONING"}))),
+            10,
+            "error: sandbox `sbx_1` is still starting (`PROVISIONING`); connect again once `wssp sandbox get sbx_1` shows `READY`",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "HOST_LOST"}))),
+            10,
+            "error: sandbox `sbx_1` cannot be connected to right now (`HOST_LOST`); `wssp sandbox get sbx_1` shows its state",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((200, json!({"id": "sbx_1", "state": "READY"}))),
+            10,
+            "error: sandbox `sbx_1` cannot be connected to right now (its lease may have ended, or its host or access is changing); `wssp sandbox get sbx_1` shows its state",
+        ),
+        (
+            409,
+            "sandbox.state_conflict",
+            None,
+            None,
+            Some((500, json!({}))),
+            10,
+            "error: sandbox `sbx_1` cannot be connected to right now (it may be stopped or starting, its lease may have ended, or its host or access is changing); `wssp sandbox get sbx_1` shows its state, and `wssp sandbox start sbx_1 --wait` starts a stopped one",
+        ),
+        (
+            409,
+            "sandbox.host_unavailable",
+            None,
+            None,
+            None,
+            11,
+            "error: the sandbox's host is not connected to the server; try again once it is back",
+        ),
+        (
+            409,
+            "sandbox.managed",
+            None,
+            None,
+            None,
+            10,
+            "error: sandbox `sbx_1` is a build, verify or CLI-login sandbox, which has no shell, port-forward or ssh access",
+        ),
+        (
+            400,
+            "UNSUPPORTED_CAPABILITY",
+            Some("connect_sandbox_unsupported"),
+            None,
+            None,
+            2,
+            "error: sandbox `sbx_1` is a build, verify or CLI-login sandbox, which has no shell, port-forward or ssh access",
+        ),
+        (
+            400,
+            "UNSUPPORTED_CAPABILITY",
+            Some("connect_host_outdated"),
+            None,
+            None,
+            2,
+            "error: the sandbox's node runs a daemon without shell, port-forward and ssh support; its owner has to update it",
+        ),
+        (
+            401,
+            "UNAUTHORIZED",
+            None,
+            None,
+            None,
+            7,
+            "error: the server refused `WSSP_API_KEY` (revoked, expired or unknown); set a valid key, or unset `WSSP_API_KEY` and `WSSP_SERVER` to use the saved login",
+        ),
+        (
+            429,
+            "TOO_MANY_REQUESTS",
+            None,
+            Some(("Retry-After", "7")),
+            None,
+            11,
+            "error: too many connections or connection attempts; try again in 7 s",
+        ),
+        (
+            503,
+            "SERVICE_UNAVAILABLE",
+            None,
+            None,
+            None,
+            11,
+            "error: the server is busy or shutting down; try again shortly",
+        ),
+        (
+            404,
+            "NOT_FOUND",
+            None,
+            None,
+            None,
+            3,
+            "error: no sandbox `sbx_1` among yours (give its id, or the name of a live sandbox); `wssp sandbox list` shows them",
+        ),
+    ];
+    for (status, code, reason, extra, sandbox, expected, message) in cases {
+        let root = tempfile::tempdir().unwrap();
+        let fake = Fake::new(move |head| {
+            if head.upgrade() {
+                let mut headers = refusal_headers(code, reason);
+                if let Some((name, value)) = extra {
+                    headers.push((name, value.to_owned()));
+                }
+                return Action::Bare(status, headers);
+            }
+            if head.target.starts_with("/v1/sandboxes?") {
+                return Action::Reply(200, json!({"items": [], "nextCursor": null}));
+            }
+            assert_eq!(head.target, "/v1/sandboxes/sbx_1", "{code}");
+            let (status, body) = sandbox.clone().expect("no sandbox read expected");
+            Action::Reply(status, body)
+        });
+        let output = run(
+            command(
+                root.path(),
+                &fake.url,
+                &["sandbox", "shell", "sbx_1", "--", "true"],
+            ),
+            None,
+        );
+        let stderr = text(&output.stderr);
+        assert_eq!(output.status.code(), Some(expected), "{code}: {stderr}");
+        assert!(stderr.starts_with(message), "{code}: {stderr}");
+        // The catalog code stays visible after the explanation.
+        assert!(stderr.contains(&format!("`{code}`")), "{code}: {stderr}");
+        assert!(output.stdout.is_empty());
+    }
+}
+
+/// A saved login with these scopes, for the fake at `url`.
+fn save_login(root: &std::path::Path, url: &str, scopes: &[&str]) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = root.join("data/user");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let login = json!({"origin": format!("{url}/"),"keyId":"key-1","name":"laptop","secret":SECRET,"scopes":scopes,"poolMode":"ALL_USABLE","poolIds":[],"ownSandboxesOnly":false,"expiresAt":null,"maxLiveSandboxes":null,"userEmail":"person@example.test","createdAt":"2026-11-18T00:00:00Z"});
+    std::fs::write(dir.join("login.json"), login.to_string()).unwrap();
+    std::fs::set_permissions(
+        dir.join("login.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_forbidden_connect_names_a_missing_host_only_when_the_scope_is_known() {
+    // The server refuses a sandbox without a host (offloaded, waiting for
+    // capacity) at authorization, with 403, like a missing scope. Only a saved
+    // login known to hold `sandboxes:connect` turns that into the state line
+    // (exit 10); an env key's scopes are unknown, so it keeps exit 8.
+    const ENV_SCOPE: &str =
+        "error: the key may lack the `sandboxes:connect` scope or access to this sandbox";
+    let cases: [(bool, &str, Option<&str>, i32, &str); 7] = [
+        (
+            true,
+            "OFFLOADED",
+            None,
+            10,
+            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait`",
+        ),
+        (
+            true,
+            "WAITING_FOR_CAPACITY",
+            None,
+            10,
+            "error: sandbox `sbx_1` is still starting (`WAITING_FOR_CAPACITY`); connect again once `wssp sandbox get sbx_1` shows `READY`",
+        ),
+        (
+            true,
+            "STOPPED",
+            Some("host-1"),
+            8,
+            "error: the server refused access to sandbox `sbx_1` although this login can open shells; `wssp sandbox get sbx_1` shows its state",
+        ),
+        (false, "OFFLOADED", None, 8, ENV_SCOPE),
+        // A read-only env key and a stopped sandbox that has a host: the scope.
+        (false, "STOPPED", Some("host-1"), 8, ENV_SCOPE),
+        (false, "READY", Some("host-1"), 8, ENV_SCOPE),
+        (
+            true,
+            "READY",
+            Some("host-1"),
+            8,
+            "error: the server refused access to sandbox `sbx_1` although this login can open shells",
+        ),
+    ];
+    for (saved, state, host, expected, message) in cases {
+        let root = tempfile::tempdir().unwrap();
+        let fake = Fake::new(move |head| {
+            if head.upgrade() {
+                return Action::Bare(403, refusal_headers("FORBIDDEN", None));
+            }
+            assert_eq!(head.target, "/v1/sandboxes/sbx_1");
+            Action::Reply(200, json!({"id": "sbx_1", "state": state, "hostId": host}))
+        });
+        let mut cmd = command(
+            root.path(),
+            &fake.url,
+            &["sandbox", "shell", "sbx_1", "--", "true"],
+        );
+        if saved {
+            save_login(
+                root.path(),
+                &fake.url,
+                &["sandboxes:read", "sandboxes:create", "sandboxes:connect"],
+            );
+            cmd.env_remove("WSSP_API_KEY").env_remove("WSSP_SERVER");
+        }
+        let output = run(cmd, None);
+        let stderr = text(&output.stderr);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{saved} {state}: {stderr}"
+        );
+        assert!(stderr.starts_with(message), "{saved} {state}: {stderr}");
+        assert!(stderr.contains("`FORBIDDEN`"), "{saved} {state}: {stderr}");
+        if !saved && host.is_none() {
+            assert!(
+                stderr.contains("also, sandbox `sbx_1` has no host right now (`OFFLOADED`)"),
+                "{stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_stopped_sandbox_given_by_name_is_named_and_started_by_id() {
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(|head| {
+        if head.upgrade() && head.target == connect_target("web") {
+            return Action::Bare(404, refusal_headers("NOT_FOUND", None));
+        }
+        if head.upgrade() {
+            assert_eq!(head.target, connect_target("sbx_9"));
+            return Action::Bare(409, refusal_headers("sandbox.state_conflict", None));
+        }
+        if head.target.starts_with("/v1/sandboxes?") {
+            return Action::Reply(
+                200,
+                json!({"items": [{"id": "sbx_9", "name": "web", "state": "STOPPED"}], "nextCursor": null}),
+            );
+        }
+        assert_eq!(head.target, "/v1/sandboxes/sbx_9");
+        Action::Reply(
+            200,
+            json!({"id": "sbx_9", "name": "web", "state": "STOPPED"}),
+        )
+    });
+    let output = run(
+        command(
+            root.path(),
+            &fake.url,
+            &["sandbox", "shell", "web", "--", "true"],
+        ),
+        None,
+    );
+    assert_eq!(output.status.code(), Some(10), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).starts_with(
+            "error: sandbox `web` is stopped; start it with `wssp sandbox start sbx_9 --wait`"
+        ),
+        "{}",
+        text(&output.stderr)
+    );
 }
 
 #[test]
@@ -1142,6 +1503,38 @@ fn a_login_without_the_connect_scope_is_told_to_log_in_again() {
     assert_eq!(output.status.code(), Some(8));
     assert!(
         text(&output.stderr).contains("log in again (`wssp login`) to get shell access"),
+        "{}",
+        text(&output.stderr)
+    );
+}
+
+#[test]
+fn a_revoked_saved_login_is_told_to_log_in_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(|_| Action::Bare(401, refusal_headers("UNAUTHORIZED", None)));
+    let dir = root.path().join("data/user");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let login = json!({"origin": format!("{}/", fake.url),"keyId":"key-1","name":"laptop","secret":SECRET,"scopes":["sandboxes:read","sandboxes:create","sandboxes:connect"],"poolMode":"ALL_USABLE","poolIds":[],"ownSandboxesOnly":false,"expiresAt":null,"maxLiveSandboxes":null,"userEmail":"person@example.test","createdAt":"2026-11-18T00:00:00Z"});
+    std::fs::write(dir.join("login.json"), login.to_string()).unwrap();
+    std::fs::set_permissions(
+        dir.join("login.json"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let mut cmd = command(
+        root.path(),
+        &fake.url,
+        &["sandbox", "shell", "sbx_1", "--", "true"],
+    );
+    cmd.env_remove("WSSP_API_KEY").env_remove("WSSP_SERVER");
+    let output = run(cmd, None);
+    assert_eq!(output.status.code(), Some(7), "{}", text(&output.stderr));
+    assert!(
+        text(&output.stderr).starts_with(
+            "error: the server refused this login (revoked or expired); log in again (`wssp login`)"
+        ),
         "{}",
         text(&output.stderr)
     );

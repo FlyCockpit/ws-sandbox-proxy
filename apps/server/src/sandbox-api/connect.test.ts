@@ -149,6 +149,9 @@ function upgrade(
 
 async function refusal(response: Response) {
   const body = (await response.json()) as { error: { code: string; reason?: string } };
+  // The Node adapter drops a refused upgrade's body: the headers carry the same code and reason.
+  expect(response.headers.get("x-wssp-error-code")).toBe(body.error.code);
+  expect(response.headers.get("x-wssp-error-reason")).toBe(body.error.reason ?? null);
   return { status: response.status, code: body.error.code, reason: body.error.reason };
 }
 
@@ -395,6 +398,35 @@ describe("GET /v1/sandboxes/{id}/connect over a real WebSocket", () => {
       authorization: `Bearer ${SECRET}`,
     });
     expect(client).toMatchObject({ kind: "refused", status: 403 });
+    expect(real.resources()).toMatchObject({ connections: 0, reservations: 0 });
+  });
+
+  it("a refused upgrade arrives without its body, with the code and reason in headers", async () => {
+    connect.check.mockResolvedValue({ ok: false, intent: "sandbox_stopped" });
+    const base = await listen();
+    const attempt = () =>
+      upgradeBrowserTerminal({
+        base,
+        path: "/v1/sandboxes/sbx-1/connect",
+        protocols: ["wssp.connect.v1"],
+        origin: null,
+        authorization: `Bearer ${SECRET}`,
+      });
+    expect(await attempt()).toEqual({
+      kind: "refused",
+      status: 409,
+      refusal: null,
+      errorCode: "sandbox.state_conflict",
+      errorReason: null,
+      bodyLength: 0,
+    });
+    connect.check.mockResolvedValue({ ok: false, intent: "unsupported" });
+    expect(await attempt()).toMatchObject({
+      status: 400,
+      errorCode: "UNSUPPORTED_CAPABILITY",
+      errorReason: "connect_sandbox_unsupported",
+      bodyLength: 0,
+    });
     expect(real.resources()).toMatchObject({ connections: 0, reservations: 0 });
   });
 });
