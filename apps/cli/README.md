@@ -23,6 +23,7 @@ wssp whoami                      # the saved login and what its key may do
 wssp sandbox create --template ubuntu --pool <pool-id> --wait
 wssp sandbox list
 wssp sandbox exec <sandbox-id> -- uname -a   # exits with the command's exit code
+wssp sandbox shell <sandbox-id>              # an interactive shell (needs a write login)
 wssp sandbox files read <sandbox-id> /etc/os-release
 wssp sandbox ports link <sandbox-id> 3000
 wssp template list
@@ -242,8 +243,8 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
 | 9    | limit reached: `sandbox.key_limit_reached`, a quota or `sandbox.capacity_queue_full`              |
 | 10   | any other conflict (409)                                                                          |
 | 11   | retryable: the server answered 429, 503 or 504                                                    |
-| 125  | `wssp sandbox exec` only: wssp failed or the command's outcome is unknown                         |
-| 130  | `wssp sandbox exec` interrupted with Ctrl-C (its cancellation was requested)                      |
+| 125  | `wssp sandbox exec`/`shell` only: wssp failed or ended the session, or the outcome is unknown     |
+| 130  | `wssp sandbox exec` interrupted with Ctrl-C; `wssp sandbox shell` without a tty: second Ctrl-C    |
 | 141  | stdout closed early: `wssp sandbox exec` (its cancellation was requested), `logs`, `files read`   |
 
 User commands also map `/v1` 404 to 3 and 400/413/415 to 2. With `--json`, a
@@ -253,6 +254,9 @@ guest command's own exit code once its operation SUCCEEDED (125 for a failed,
 cancelled or unknown operation, or an exit code outside 0–255). A command
 that exits 125 itself is passed through too; a wssp-side 125 is the one that
 prints wssp's error message (with `--json`, the `{"error":…}` line) on stderr.
+`wssp sandbox shell` exits with the remote status (128 + N for a death by
+signal N); refusals before the upgrade keep the codes above, and a session wssp
+ended exits 125 with one line naming why (`--json`: code `connect.<intent>`).
 
 ## Install After Release
 

@@ -19,9 +19,12 @@
 //!  10  conflict: any other 409 (state conflict, name taken, …)
 //!  11  retryable: the server answered 429, 503 or 504; retry later
 //! 130  interrupted (Ctrl-C) while `wssp sandbox exec` followed a command; its
-//!      cancellation was requested
-//! 125  `wssp sandbox exec` only: wssp itself failed or the command's outcome
-//!      is unknown (the guest's own exit code is passed through otherwise)
+//!      cancellation was requested (`wssp sandbox shell` without a tty: a
+//!      second Ctrl-C within 2 s closed the channel)
+//! 125  `wssp sandbox exec` and `wssp sandbox shell` only: wssp itself failed,
+//!      the session was ended on the wssp side, or the command's outcome is
+//!      unknown (the guest's own exit code is passed through otherwise; a
+//!      `shell` death by signal N exits 128 + N)
 //! 141  stdout closed early (128 + SIGPIPE): `wssp sandbox exec` (its
 //!      cancellation was requested), `wssp sandbox logs` and
 //!      `wssp sandbox files read` to stdout
@@ -65,7 +68,8 @@ pub enum ExitCode {
     Conflict = 10,
     /// The server is busy or unavailable (429, 503, 504); retry later.
     Retryable = 11,
-    /// `wssp sandbox exec`: wssp-side failure or unknown command outcome.
+    /// `wssp sandbox exec`/`shell`: wssp-side failure, a session the wssp
+    /// side ended, or an unknown command outcome.
     ExecFailure = 125,
     /// Interrupted by Ctrl-C (the followed command's cancellation was requested).
     Interrupted = 130,
@@ -188,31 +192,52 @@ pub fn message_for(err: &anyhow::Error) -> String {
 /// Print a command failure to stderr (one JSON line with `--json`, else
 /// `error: …`) and return its exit code.
 pub fn report_failure(err: &anyhow::Error) -> ExitCode {
+    if let Some(line) = failure_line(err) {
+        let _ = crate::output::diagnostic(line);
+    }
+    code_for(err)
+}
+
+/// The stderr line [`report_failure`] prints for a failure: one JSON line
+/// with `--json`, else `error: …`; `None` when the JSON cannot be encoded.
+pub fn failure_line(err: &anyhow::Error) -> Option<String> {
     let code = code_for(err);
-    if crate::output::json_errors() {
-        let message = message_for(err);
-        let _ = match crate::api::api_error_of(err) {
-            Some(api) => {
-                crate::output::json_error(&api.code, Some(api.status), &message, api.data.as_ref())
-            }
-            None => match crate::api::operation_error_of(err) {
-                Some(operation) => {
-                    let data = serde_json::json!({
-                        "operationId": operation.operation_id,
-                        "outcome": operation.outcome,
-                        "state": operation.state,
-                    });
-                    crate::output::json_error(&operation.code(), None, &message, Some(&data))
-                }
-                None => crate::output::json_error(code.name(), None, &message, None),
-            },
-        };
-    } else {
+    if !crate::output::json_errors() {
         // Identifiers in error messages are wrapped in `backticks`, never
         // 'single quotes' — see AGENTS.md.
-        let _ = crate::output::diagnostic(format!("error: {}", message_for(err)));
+        return Some(format!("error: {}", message_for(err)));
     }
-    code
+    let message = message_for(err);
+    let line = match crate::api::api_error_of(err) {
+        Some(api) => {
+            crate::output::json_error_line(&api.code, Some(api.status), &message, api.data.as_ref())
+        }
+        None => match crate::api::operation_error_of(err) {
+            Some(operation) => {
+                let data = serde_json::json!({
+                    "operationId": operation.operation_id,
+                    "outcome": operation.outcome,
+                    "state": operation.state,
+                });
+                crate::output::json_error_line(&operation.code(), None, &message, Some(&data))
+            }
+            None => match crate::connect_client::session_ended_of(err) {
+                // `connect.<intent>` (or `connect.lost`) of a shell session.
+                Some(ended) => {
+                    let data = serde_json::json!({
+                        "intent": ended.intent.map(crate::connect_client::wire::Intent::name),
+                        "error": ended.error.as_ref().map(|error| serde_json::json!({
+                            "code": crate::output::remote_message(&error.code),
+                            "message": crate::output::remote_message(&error.message),
+                        })),
+                    });
+                    crate::output::json_error_line(&ended.code(), None, &message, Some(&data))
+                }
+                None => crate::output::json_error_line(code.name(), None, &message, None),
+            },
+        },
+    };
+    line.ok()
 }
 
 #[cfg(test)]

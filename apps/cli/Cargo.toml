@@ -96,13 +96,20 @@ nix = { workspace = true, features = ["process", "signal"] }
 # `peer_cred` is unstable). rustix (>= 1.1.5) is already in Cargo.lock through
 # tempfile; this adds only its `net` feature, no new crate. `wssp host daemon
 # quiesce`: `fs` opens the control file with `O_NOFOLLOW` and `process`
-# sends the reload signal; features of the same crate, no new crate.
-rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process"] }
+# sends the reload signal; `wssp sandbox shell`: `termios` for raw mode and
+# the window size, `pty` for its black-box tests; features of the same crate,
+# no new crate.
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process", "termios", "pty"] }
 
 [dev-dependencies]
 # Black-box CLI testing: run the built binary and assert on stdout/stderr/exit.
 assert_cmd = "2"
 predicates = "3"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# `tests/sandbox_shell.rs` sizes the pipes it fills (`F_SETPIPE_SZ`,
+# `F_GETPIPE_SZ`): the `pipe` feature of the rustix above, no new crate.
+rustix = { version = "1.1.6", default-features = false, features = ["pipe"] }
 
 [lints]
 workspace = true

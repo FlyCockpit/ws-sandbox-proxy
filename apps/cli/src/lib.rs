@@ -9,6 +9,7 @@ pub mod auth;
 pub mod cli;
 pub mod commands;
 pub mod config;
+pub mod connect_client;
 pub mod exit;
 pub mod guard_report;
 mod host_context;

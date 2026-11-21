@@ -146,6 +146,23 @@ fn pass_json_quiet(metadata: &tracing::Metadata<'_>) -> bool {
         || !crate::output::json_errors()
 }
 
+/// Set once a `sandbox shell` session's output writer owns stdout and
+/// stderr, and kept until the process exits: every log event is dropped
+/// then. An event is written on the
+/// thread that emits it, and the session's connection thread (where the
+/// WebSocket and TLS stacks log) must never wait on a stderr the writer is
+/// blocked on.
+static STDERR_HELD: AtomicBool = AtomicBool::new(false);
+
+/// Drop every log event while `held` (see [`STDERR_HELD`]).
+pub fn hold_stderr(held: bool) {
+    STDERR_HELD.store(held, Ordering::SeqCst);
+}
+
+fn pass_stderr_free(_: &tracing::Metadata<'_>) -> bool {
+    !STDERR_HELD.load(Ordering::SeqCst)
+}
+
 /// Build the tracing subscriber used by the binary (and tests). Does not install globally.
 pub(crate) fn build_subscriber_with_filter<Mw, W>(
     format: LogFormat,
@@ -159,7 +176,9 @@ where
 {
     // Dynamic: `--json` is known only once the command runs.
     let ceiling = dynamic_filter_fn(|metadata, _| {
-        pass_confidentiality_ceiling(metadata) && pass_json_quiet(metadata)
+        pass_confidentiality_ceiling(metadata)
+            && pass_json_quiet(metadata)
+            && pass_stderr_free(metadata)
     });
 
     match format {

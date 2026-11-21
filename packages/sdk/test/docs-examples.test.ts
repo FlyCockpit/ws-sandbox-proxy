@@ -120,6 +120,9 @@ function uppercaseAllowlist(): Set<string> {
     "HOME",
     "SHELL",
     "TERM", // reserved guest identity/default names, sandbox-contracts/src/env.ts
+    "COLORTERM",
+    "LANG", // channel env names a CLI shell may pass, sandbox-contracts/src/connect-wire.ts
+    "API", // SdkKeyKind.API, packages/db/prisma/schema/agent.prisma (auth-planes.md, terminal.md)
     "O_NOFOLLOW", // open(2) flag named in the aarch64 release note
     "SO_PEERCRED", // socket(7) option the egress guard authenticates with (hosts.md)
     "INCUS_DIR", // Incus client directory the build resolver's pid file lives under (template-builds.md)

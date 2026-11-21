@@ -3,7 +3,8 @@
 The `wssp` binary has two sides. **Host commands** (`wssp host …`) make a
 Linux machine a wssp host; see the [hosts guide](./hosts.md). **User commands**
 (`login`, `logout`, `whoami`, `sandbox`, `template`) let you, a person or a
-script, work with your sandboxes from a shell through the `/v1` API, with the
+script, work with your sandboxes from a shell through the `/v1` API (and open
+[shells in them](./connect.md)), with the
 same authority as an [SDK key](./auth-planes.md). The two sides keep separate
 state and credentials; a user login never authorizes host commands, and a host
 credential never authorizes user commands.
@@ -165,6 +166,23 @@ likewise). `logs` reads the retained output of any command; `--follow`
 keeps reading until it completes. `logs` and `files read` to stdout exit 141
 when stdout closes early.
 
+### Shells
+
+```sh
+wssp sandbox shell <sandbox>                  # an interactive login shell
+wssp sandbox shell <sandbox> -- htop
+wssp sandbox shell <sandbox> --no-tty -- make test
+```
+
+`shell` opens a shell, or runs a command, over the connect plane: with a
+terminal on stdin and stdout the guest side gets a tty and your terminal is
+raw for the session; otherwise stdout and stderr stay separate and stdin is
+piped. It needs a login with write access (`sandboxes:connect`; a login saved
+before that scope existed exits 8 and asks you to log in again). `<sandbox>` is
+an id or a name. It exits with the remote status (128 + N for a death by
+signal N) and with 125 when wssp ends the session. See
+[shells from the CLI](./connect.md).
+
 ### Files
 
 ```sh
@@ -235,20 +253,20 @@ operator logs at info.
 
 ## Exit codes
 
-| Code | Meaning                                                                                  |
-| ---- | ---------------------------------------------------------------------------------------- |
-| 0    | success                                                                                  |
-| 1    | other failure (transport, an operation that failed, a server error)                      |
-| 2    | usage error, or the server refused the request as invalid (400, 413, 415)                |
-| 3    | not found (404)                                                                          |
-| 7    | not logged in, or the server refused the key (401)                                       |
-| 8    | forbidden: the login's scopes or pools do not allow it (403)                             |
-| 9    | a limit was reached: `sandbox.key_limit_reached`, a quota, `sandbox.capacity_queue_full` |
-| 10   | any other conflict (409)                                                                 |
-| 11   | retryable: the server answered 429, 503 or 504                                           |
-| 125  | `sandbox exec` only: wssp failed or the outcome is unknown (or the command exited 125)   |
-| 130  | `sandbox exec` interrupted with Ctrl-C (cancellation requested)                          |
-| 141  | stdout closed early: `sandbox exec` (cancellation requested), `logs`, `files read`       |
+| Code | Meaning                                                                                                                            |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | success                                                                                                                            |
+| 1    | other failure (transport, an operation that failed, a server error)                                                                |
+| 2    | usage error, or the server refused the request as invalid (400, 413, 415)                                                          |
+| 3    | not found (404)                                                                                                                    |
+| 7    | not logged in, or the server refused the key (401)                                                                                 |
+| 8    | forbidden: the login's scopes or pools do not allow it (403)                                                                       |
+| 9    | a limit was reached: `sandbox.key_limit_reached`, a quota, `sandbox.capacity_queue_full`                                           |
+| 10   | any other conflict (409)                                                                                                           |
+| 11   | retryable: the server answered 429, 503 or 504                                                                                     |
+| 125  | `sandbox exec`/`shell` only: wssp failed or ended the session, or the outcome is unknown (or the command exited 125)               |
+| 130  | `sandbox exec` interrupted with Ctrl-C (cancellation requested); `sandbox shell` without a tty: a second Ctrl-C closed the channel |
+| 141  | stdout closed early: `sandbox exec` (cancellation requested), `logs`, `files read`                                                 |
 
 Codes 4–6 belong to host commands; see the [CLI README](../../apps/cli/README.md#exit-codes).
 

@@ -185,14 +185,7 @@ impl Trust {
         file.read_to_end(&mut bytes).map_err(read_error)?;
         let certificates = parse_certificates(path, &bytes)?;
         let roots = root_store(path, &certificates)?;
-        let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        // The ring provider supports the default protocol versions.
-        .map_err(|_| CaFileError::Configuration)?
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+        let config = ring_client_config(roots)?;
         tracing::info!(path = %ca_file.display(), certificates = certificates.len(), "loaded extra CA certificates");
         Ok(Self {
             ca_file: Some(ca_file),
@@ -202,6 +195,17 @@ impl Trust {
 
     pub(crate) fn client_config(&self) -> Option<Arc<rustls::ClientConfig>> {
         self.config.clone()
+    }
+
+    /// The config of a WSS connection: the extra CA trust, else the webpki
+    /// roots alone (the roots tungstenite's `rustls-tls-webpki-roots` uses).
+    pub(crate) fn wss_client_config(&self) -> Result<Arc<rustls::ClientConfig>, CaFileError> {
+        if let Some(config) = &self.config {
+            return Ok(config.clone());
+        }
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        Ok(Arc::new(ring_client_config(roots)?))
     }
 
     /// An agent for the relay's own TLS trust (connect passes the WSS config).
@@ -308,6 +312,19 @@ fn check_ca_path_permissions(
         });
     }
     Ok(())
+}
+
+/// A client config over `roots` with the ring provider and its safe default
+/// protocol versions.
+fn ring_client_config(roots: RootCertStore) -> Result<rustls::ClientConfig, CaFileError> {
+    Ok(rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    // The ring provider supports the default protocol versions.
+    .map_err(|_| CaFileError::Configuration)?
+    .with_root_certificates(roots)
+    .with_no_client_auth())
 }
 
 fn root_store(

@@ -259,6 +259,9 @@ const reviewed = new Map([
   // User commands (`wssp sandbox …`): typed `/v1` HTTP request bodies sent
   // to the control plane with the user login, never a relay frame.
   ["apps/cli/src/api.rs|to_vec ( body )", 1],
+  // `wssp sandbox shell`: the client wire `wssp.connect.v1` (CLI ↔ server,
+  // typed frames of connect_client/wire.rs), never a host relay frame.
+  ["apps/cli/src/connect_client/wire.rs|to_vec ( value )", 1],
   // Preview tunnels: newline-JSON requests (`expose`/`status`) to the local
   // tunnel client's private socket, never a relay frame.
   ["apps/cli/src/sandbox_relay/tunnel.rs|to_vec ( request )", 1],

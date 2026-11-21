@@ -2,9 +2,12 @@
 
 The sandbox detail page has a browser terminal: an interactive shell **inside
 the sandbox VM**, as the template's guest user. It is never a shell on the
-Incus host. Browser terminals require your session. SDK (`/v1`) and MCP
-(`/mcp`) credentials have no PTY; their separate host command/file tools follow
-[ADR-006](../design/adr-006-agent-host-access.md).
+Incus host. Browser terminals require your session. From your own terminal,
+`wssp sandbox shell` opens a shell over `/v1/sandboxes/{id}/connect`: only
+kind-`API` keys with `sandboxes:connect` (a write `wssp login`, or a dashboard
+key given that scope) get one; see [shells from the CLI](./connect.md). MCP
+(`/mcp`) credentials and agent tokens have no PTY; their separate host
+command/file tools follow [ADR-006](../design/adr-006-agent-host-access.md).
 
 ## Attach model
 

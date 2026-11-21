@@ -37,6 +37,14 @@ pub fn bytes(bytes: &[u8]) -> Result<()> {
     out.write_all(bytes).context("writing to stdout")
 }
 
+/// Write raw bytes to stdout and flush them under one lock, so no other
+/// thread can take the lock while bytes are buffered.
+pub fn bytes_flushed(bytes: &[u8]) -> Result<()> {
+    let mut out = io::stdout().lock();
+    out.write_all(bytes).context("writing to stdout")?;
+    out.flush().context("flushing stdout")
+}
+
 /// Write raw bytes to stderr (a guest command's stderr stream).
 pub fn stderr_bytes(bytes: &[u8]) -> Result<()> {
     let mut err = io::stderr().lock();
@@ -120,13 +128,23 @@ pub fn json_error(
     message: &str,
     data: Option<&serde_json::Value>,
 ) -> Result<()> {
-    let line = encode(&ErrorLine {
+    diagnostic(json_error_line(code, status, message, data)?)
+}
+
+/// The `{"error":{"code","status","message","data"}}` line [`json_error`]
+/// writes.
+pub fn json_error_line(
+    code: &str,
+    status: Option<u16>,
+    message: &str,
+    data: Option<&serde_json::Value>,
+) -> Result<String> {
+    encode(&ErrorLine {
         error: ErrorBody {
             code,
             status,
             message,
             data,
         },
-    })?;
-    diagnostic(line)
+    })
 }

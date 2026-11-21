@@ -39,6 +39,7 @@ here happens with `cargo`, run from the repo root.
 | `src/host_role.rs`   | Local-only enrolled-host detection for role-aware `wssp host` help and exit 6.        |
 | `src/user_state.rs`  | The user login (`login.json`, `WSSP_API_KEY` + `WSSP_SERVER`).                        |
 | `src/api.rs`         | `/v1` client; error envelope → exit codes 7–11.                                       |
+| `src/connect_client` | `wssp.connect.v1` client (codecs, channel credit, socket) for `wssp sandbox shell`.   |
 | `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp host run` (`signal-hook`).                 |
 | `src/sandbox_relay/` | Outbound node daemon.                                                                 |
 | `tests/cli.rs`       | Black-box tests that run the built binary.                                            |

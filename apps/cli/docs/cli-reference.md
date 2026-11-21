@@ -170,6 +170,23 @@ wssp sandbox exec [OPTIONS] <ID> -- <ARGV>...
 | `--json` | Print `{operationId, exitCode, stdout, stderr, truncated, gaps, restarts}` at the end instead of streaming |  |
 | `<ARGV>` | The command and its arguments, after `--` | required |
 
+### `wssp sandbox shell`
+
+Open a shell in a sandbox, or run a command there interactively; exits with the remote status.
+
+```text
+wssp sandbox shell [OPTIONS] <SANDBOX> [-- <ARGV>...]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SANDBOX>` | Sandbox id or name | required |
+| `--cwd <PATH>` | Working directory in the guest (absolute; default: the guest user's home) |  |
+| `--env <K=V>` | `TERM`, `COLORTERM`, `LANG` or `LC_*` for the remote side, `KEY=VALUE` (repeatable) |  |
+| `-T`, `--no-tty` | Never allocate a tty: separate stdout and stderr, piped stdin (the default when stdin or stdout is not a terminal) |  |
+| `--json` | Report a failure as one JSON line on stderr (the session itself is raw bytes) |  |
+| `<ARGV>` | The command and its arguments, after `--` (default: a login shell) |  |
+
 ### `wssp sandbox ps`
 
 List the commands running in a sandbox.

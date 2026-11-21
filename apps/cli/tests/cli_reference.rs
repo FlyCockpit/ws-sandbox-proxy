@@ -320,6 +320,10 @@ fn check_invocation(root: &Command, tokens: &[&str]) -> Vec<String> {
         if token == "\\" || is_placeholder(token) {
             continue;
         }
+        // `--` ends the options: the rest is a guest argv (`sandbox shell`).
+        if token == "--" {
+            break;
+        }
         if let Some(long) = token.strip_prefix("--") {
             let (name, inline_value) = match long.split_once('=') {
                 Some((name, _)) => (name, true),

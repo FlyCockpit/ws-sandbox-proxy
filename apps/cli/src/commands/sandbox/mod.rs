@@ -8,6 +8,7 @@
 mod exec;
 mod files;
 mod ports;
+mod shell;
 
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,8 @@ pub enum SandboxCommand {
     Get(IdArgs),
     /// Run a command in a sandbox and stream its output; exits with the command's exit code.
     Exec(exec::ExecArgs),
+    /// Open a shell in a sandbox, or run a command there interactively; exits with the remote status.
+    Shell(shell::ShellArgs),
     /// List the commands running in a sandbox.
     Ps(exec::PsArgs),
     /// Print a command's retained output by operation id.
@@ -155,6 +158,7 @@ pub fn run(args: &Args) -> Result<()> {
         SandboxCommand::List(args) => list(args),
         SandboxCommand::Get(args) => get(args),
         SandboxCommand::Exec(args) => exec::exec(args),
+        SandboxCommand::Shell(args) => shell::shell(args),
         SandboxCommand::Ps(args) => exec::ps(args),
         SandboxCommand::Logs(args) => exec::logs(args),
         SandboxCommand::Stop(args) => lifecycle(args, Lifecycle::Stop),
