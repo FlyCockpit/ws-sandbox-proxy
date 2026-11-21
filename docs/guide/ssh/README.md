@@ -1,9 +1,9 @@
 # ssh, VS Code, rsync and sftp with `wssp ssh`
 
 > Verified on 2026-11-21 with OpenSSH 10.2p1 (Ubuntu) and rsync 3.4.1 against
-> sandboxes from the community Ubuntu 26.04 template. In that run rsync was
-> installed in the guest by hand; the template's own rsync is new in this
-> release and not yet verified live (see [Copy files](./files.md)).
+> sandboxes from the community Ubuntu 26.04 template, including the
+> template's own rsync (`/usr/bin/rsync`) after the rebuild with this
+> release's recipe.
 
 These pages show how to reach a sandbox with the tools you already use:
 `ssh`, `scp`, `sftp`, `rsync`, VS Code Remote-SSH and JetBrains Gateway. The

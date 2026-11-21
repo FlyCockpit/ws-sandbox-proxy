@@ -3,9 +3,12 @@
 > Verified on 2026-11-21 with OpenSSH 10.2p1 (Ubuntu) and rsync 3.4.1 against
 > sandboxes from the community Ubuntu 26.04 template: scp (both modes) and
 > sftp with 100 MiB files, rsync with a 216-file tree of 64 MiB and of 1 GiB,
-> each byte-exact in both directions. For those rsync runs rsync was installed
-> in the guest by hand; the community template's own rsync is new in this
-> release and not yet verified live.
+> each byte-exact in both directions (rsync installed in the guest by hand).
+> After the community template was rebuilt with this release's recipe, its own
+> rsync was verified the same day: `--checksum`, `--delete`, `--exclude`,
+> `--partial` resuming an interrupted 300 MiB upload, kept modes and guest
+> ownership, plus scp in both modes, an sftp batch (and one that fails), and
+> the stopped-sandbox line quoted below.
 
 After the [one-time setup](./README.md#one-time-setup) every sandbox is an
 ssh host named `<sandbox>.wssp`, so the usual copy tools work unchanged. Paths
