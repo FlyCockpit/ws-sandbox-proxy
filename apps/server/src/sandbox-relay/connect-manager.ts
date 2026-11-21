@@ -30,8 +30,14 @@
  * capacity stays charged until the node's settled `channel.exit`
  * (`reaped: true`) or the host socket's end, even after its connection ended.
  *
- * Flow control (end to end): output windows are the host's (8 pty / 32 exec
- * frames per channel, both output streams together). A host frame is handed
+ * Kinds: `pty` and `exec` run a guest process; `tcp` and `unix` relay one
+ * connection to a guest loopback port or guest Unix socket (stdin and
+ * stdout only, eof both ways, no signals, no terminal). A kind is opened
+ * only when the node's hello offered it. The client names a port or a
+ * path, never a host: the target is always the guest's own loopback.
+ *
+ * Flow control (end to end): output windows are the host's (8 pty / 32
+ * frames for every bulk kind per channel, both output streams together). A host frame is handed
  * to the client only while the client's own window for the channel has room,
  * the connection's unacknowledged output stays under 4 MiB and the client
  * socket's `bufferedAmount` is under its high water; the host is acked when
@@ -49,6 +55,7 @@ import {
   type SandboxConnectBinding,
   type SandboxConnectCheck,
 } from "@wssp/api/sandbox/connect-binding";
+import { CONNECT_AUDIT_FORWARDED_PORTS_MAX } from "@wssp/api/sandbox/connect-sessions";
 import { subscribeSandboxTerminalLifecycle } from "@wssp/api/sandbox/terminal-lifecycle";
 import { authorityTicket, onAuthorityCommitted } from "@wssp/db/authority";
 import {
@@ -90,7 +97,11 @@ const CONNECT_RACED_READS = 5;
 const RACED_RETRY_MS = 250;
 /** An upgrade's reserved slot is released if the socket never opens. */
 const RESERVATION_TTL_MS = 10_000;
-/** Unacknowledged output per connection (bytes, both streams of every channel). */
+/**
+ * Unacknowledged output per connection (bytes, both streams of every channel).
+ * A channel holding none may still send one frame (its reserve, see `pump`),
+ * so this is exceeded by at most one frame per channel (`maxChannels` × 32 KiB).
+ */
 const CONNECT_UNACKED_BYTES_PER_CONNECTION = 4 * 1024 * 1024;
 /** No frame is handed to a client socket holding more than this (bytes). */
 const CLIENT_BUFFER_HIGH_BYTES = 4 * 1024 * 1024;
@@ -209,6 +220,8 @@ export type ConnectHostLink = {
   protocolVersion: string;
   /** The host link's cached authority (no IO): false holds server→host frames. */
   authorized(): boolean;
+  /** The channel kinds the node's hello offered (the negotiated set). */
+  kinds: readonly string[];
 };
 
 export type ConnectHosts = {
@@ -294,9 +307,16 @@ type InItem =
  */
 type ChannelState = "opening" | "open" | "closing" | "unreaped" | "ended";
 
+type ChannelKind = Extract<ConnectClientControl, { type: "open" }>["kind"];
+
+/** A relay channel: one byte stream to a guest socket (stdin and stdout only). */
+function isRelay(kind: ChannelKind): boolean {
+  return kind === "tcp" || kind === "unix";
+}
+
 type Chan = {
   clientId: number;
-  kind: "pty" | "exec";
+  kind: ChannelKind;
   fence: ChannelFence;
   link: ConnectHostLink;
   creatorId: string;
@@ -392,11 +412,11 @@ function sameFence(a: ChannelFence, b: ChannelFence): boolean {
   );
 }
 
-function frameMax(kind: "pty" | "exec"): number {
+function frameMax(kind: ChannelKind): number {
   return kind === "pty" ? CHANNEL_LIMITS.ptyDataMaxBytes : CHANNEL_LIMITS.bulkDataMaxBytes;
 }
 
-function windowOf(kind: "pty" | "exec"): number {
+function windowOf(kind: ChannelKind): number {
   return kind === "pty" ? CHANNEL_LIMITS.ptyWindowFrames : CHANNEL_LIMITS.bulkWindowFrames;
 }
 
@@ -461,6 +481,9 @@ export class ConnectConnection {
   private liveAt = 0;
   private ptyOpened = 0;
   private execOpened = 0;
+  private relayOpened = 0;
+  /** The audit's distinct guest tcp ports (first seen, bounded); never a Unix path. */
+  private readonly forwardedPorts = new Set<number>();
   private bytesIn = 0;
   private bytesOut = 0;
 
@@ -619,6 +642,8 @@ export class ConnectConnection {
         intent,
         ptyChannels: this.ptyOpened,
         execChannels: this.execOpened,
+        relayChannels: this.relayOpened,
+        forwardedPorts: [...this.forwardedPorts],
         bytesIn: this.bytesIn,
         bytesOut: this.bytesOut,
       });
@@ -1062,6 +1087,14 @@ export class ConnectConnection {
       this.end("host_disconnected", { code: "disconnected", message: "host is not connected" });
       return;
     }
+    // A node that did not offer this kind (an older daemon) never sees it.
+    if (!host.kinds.includes(message.kind)) {
+      refuse(
+        "unsupported_capability",
+        `the sandbox's node cannot open ${message.kind} channels; update its daemon`,
+      );
+      return;
+    }
     if (hostBuffered(host.socket) >= HOST_BUFFER_CONTROL_BYTES) {
       refuse("rate_limited", "host is congested");
       return;
@@ -1082,7 +1115,14 @@ export class ConnectConnection {
     this.channels.set(message.channel, chan);
     if (chan.kind === "pty") this.ptyLive += 1;
     if (chan.kind === "pty") this.ptyOpened += 1;
-    else this.execOpened += 1;
+    else if (chan.kind === "exec") this.execOpened += 1;
+    else this.relayOpened += 1;
+    if (
+      chan.kind === "tcp" &&
+      message.port !== undefined &&
+      this.forwardedPorts.size < CONNECT_AUDIT_FORWARDED_PORTS_MAX
+    )
+      this.forwardedPorts.add(message.port);
   }
 
   // -- host → client ----------------------------------------------------------
@@ -1212,7 +1252,14 @@ export class ConnectConnection {
         const unacked =
           chan.clientSent[0] - chan.clientAcked[0] + chan.clientSent[1] - chan.clientAcked[1];
         if (unacked >= windowOf(chan.kind)) break;
-        if (this.unackedBytes + item.body.byteLength > CONNECT_UNACKED_BYTES_PER_CONNECTION) break;
+        // A channel holding nothing unacked may always send one frame (its
+        // reserve): channels whose local readers stopped can fill the
+        // shared budget but never freeze the connection's other channels.
+        if (
+          unacked > 0 &&
+          this.unackedBytes + item.body.byteLength > CONNECT_UNACKED_BYTES_PER_CONNECTION
+        )
+          break;
         if (this.bufferedAmount() >= CLIENT_BUFFER_HIGH_BYTES) {
           blockedOnSocket = true;
           break;
@@ -1643,7 +1690,7 @@ export class ConnectManager {
   admitOpen(
     link: ConnectHostLink,
     creatorId: string,
-    kind: "pty" | "exec",
+    kind: ChannelKind,
   ): { code: SandboxErrorCode; message: string } | null {
     const state = this.hostState(link.socket);
     const now = this.now();
@@ -1726,6 +1773,9 @@ export class ConnectManager {
         ...(open.cwd ? { cwd: open.cwd } : {}),
         ...(open.env ? { env: open.env } : {}),
         ...(open.pty ? { pty: open.pty } : {}),
+        // The relay target: a guest port or socket path, never a host.
+        ...(open.port !== undefined ? { port: open.port } : {}),
+        ...(open.path !== undefined ? { path: open.path } : {}),
       })
     )
       return null;
@@ -1966,6 +2016,10 @@ export class ConnectManager {
         return;
       case "channel.eof": {
         if (chan.state !== "open") return;
+        if (isRelay(chan.kind) && message.stream !== "stdout") {
+          this.violation(chan, "relay eof on a stream it does not have");
+          return;
+        }
         const index = streamIndex(message.stream);
         if (chan.hostEof[index] || message.frames !== chan.hostNext[index]) {
           this.violation(chan, "invalid channel eof");
@@ -2058,7 +2112,11 @@ export class ConnectManager {
       this.violation(chan, "channel output outside an open channel");
       return;
     }
-    if (metadata.stream === "stdin" || body.byteLength > frameMax(chan.kind)) {
+    if (
+      metadata.stream === "stdin" ||
+      (isRelay(chan.kind) && metadata.stream !== "stdout") ||
+      body.byteLength > frameMax(chan.kind)
+    ) {
       this.violation(chan, "invalid channel output frame");
       return;
     }

@@ -1318,24 +1318,30 @@ model SandboxTerminalSession {
 /// host or key row.
 model SandboxConnectSession {
   /// The server-minted client `connectionId` (`c<32 hex>`).
-  id           String       @id
-  userId       String
-  sandboxId    String
-  hostId       String
+  id             String       @id
+  userId         String
+  sandboxId      String
+  hostId         String
   /// The kind `API` SdkKey that connected.
-  keyId        String
+  keyId          String
   /// The key's origin at open (a `wssp login` key or a dashboard key).
-  origin       SdkKeyOrigin
-  openedAt     DateTime     @default(now())
-  closedAt     DateTime?
+  origin         SdkKeyOrigin
+  openedAt       DateTime     @default(now())
+  closedAt       DateTime?
   /// The client-wire close intent (`ConnectCloseIntent`); null while open.
-  closeIntent  String?
-  ptyChannels  Int          @default(0)
-  execChannels Int          @default(0)
+  closeIntent    String?
+  ptyChannels    Int          @default(0)
+  execChannels   Int          @default(0)
+  /// `tcp` and `unix` relay channels (`wssp sandbox forward`).
+  relayChannels  Int          @default(0)
+  /// The distinct guest tcp ports relayed, the first 16 seen
+  /// (`CONNECT_AUDIT_FORWARDED_PORTS_MAX`). Guest Unix socket paths are never
+  /// recorded.
+  forwardedPorts Int[]        @default([])
   /// Data payload bytes client → guest and guest → client.
-  bytesIn      BigInt       @default(0)
-  bytesOut     BigInt       @default(0)
-  User         User         @relation("SandboxConnectSessionOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  bytesIn        BigInt       @default(0)
+  bytesOut       BigInt       @default(0)
+  User           User         @relation("SandboxConnectSessionOwner", fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
   @@index([userId, sandboxId, openedAt])
   @@index([userId, keyId, openedAt])

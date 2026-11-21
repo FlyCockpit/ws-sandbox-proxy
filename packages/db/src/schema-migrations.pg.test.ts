@@ -1,5 +1,5 @@
 /** Apply committed migrations through the relocated production runner, preserving domain invariants. */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -28,6 +28,13 @@ const { canonicalApplyFixture } = (await import(
 )) as {
   canonicalApplyFixture(root: string, temporary: string, databaseUrl: string): { apply(): void };
 };
+/** The committed migration folders, sorted as Prisma applies them. */
+function committedMigrations(): string[] {
+  return readdirSync(join(root, "packages/db/prisma/migrations"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
 const HEX = "a".repeat(64);
 const FP = `sha256:${HEX}`;
 function buildRow(id: string, over: Record<string, string> = {}) {
@@ -80,9 +87,10 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
         "SELECT id, migration_name, checksum, started_at, finished_at, applied_steps_count FROM _prisma_migrations ORDER BY migration_name",
       )
     ).rows;
-    expect(history).toHaveLength(1);
+    // Every committed folder, in order: 0_init first, then the additive ones.
+    expect(history.map((row) => row.migration_name)).toEqual(committedMigrations());
     expect(history[0]).toMatchObject({ migration_name: "0_init", applied_steps_count: 1 });
-    expect(history[0]?.finished_at).toBeInstanceOf(Date);
+    for (const row of history) expect(row.finished_at).toBeInstanceOf(Date);
     await inspector.query(
       `INSERT INTO "user" (id,name,email) VALUES ('repeat-probe','Probe','repeat@example.test')`,
     );

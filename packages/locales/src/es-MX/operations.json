@@ -145,6 +145,7 @@
     "credential_env_pending": "El entorno del inicio de sesión aún se está restaurando",
     "credential_capture_failed": "No se pudo guardar un inicio de sesión antes de detener",
     "disk_stale": "El disco en caché estaba desactualizado; inicia de nuevo para restaurar la copia guardada",
+    "connection_refused": "Nada en el sandbox aceptó la conexión",
     "restore_boot_failed": "El disco restaurado no arrancó; se conserva su copia guardada",
     "restore_cleanup_pending": "La limpieza de una restauración fallida está pendiente; reintenta la limpieza o destruye el sandbox (destruirlo elimina la copia guardada)",
     "capacity_wait_timeout": "Se agotó la espera de capacidad",

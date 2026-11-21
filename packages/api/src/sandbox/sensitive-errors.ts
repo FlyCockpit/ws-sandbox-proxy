@@ -350,6 +350,7 @@ const OPERATION_ERRORS = {
   credential_capture_failed: "A login could not be captured; the sandbox kept running.",
   disk_stale:
     "The host's cached disk no longer matches the stored copy; the next start restores the stored copy.",
+  connection_refused: "Nothing in the sandbox accepted the connection.",
   restore_boot_failed: "The restored disk did not boot; its stored copy is kept.",
   restore_cleanup_pending:
     "Cleanup of a failed restore is pending; retry the cleanup or destroy the sandbox.",

@@ -119,6 +119,7 @@ const FAILED_KIND_BY_OPERATION_CODE = {
   credential_env_pending: "unavailable",
   credential_capture_failed: "unavailable",
   disk_stale: "conflict",
+  connection_refused: "unavailable",
   restore_boot_failed: "unavailable",
   restore_cleanup_pending: "conflict",
   restore_no_allowed_host: "conflict",

@@ -1,7 +1,8 @@
 //! Interactive channels (`channel.*`) on the host relay, relay protocol 1.0.
 //!
 //! A channel is a server-minted, non-durable binding of ONE client
-//! connection's request (a PTY shell or an exec) to ONE guest process in a
+//! connection's request (a PTY shell, an exec, or one byte stream to a guest
+//! loopback TCP port or a guest Unix socket) to ONE guest process in a
 //! sandbox generation. Every frame carries the full [`ChannelFence`]
 //! (channel, connection, host, epoch and sandbox target); a peer delivers
 //! zero bytes for a frame whose fence does not match the live channel it
@@ -45,6 +46,8 @@ pub const CHANNEL_ENV_MAX_ENTRIES: usize = 32;
 pub const CHANNEL_ENV_VALUE_MAX_BYTES: usize = 4096;
 pub const CHANNEL_TERM_MAX_BYTES: usize = 64;
 pub const CHANNEL_CWD_MAX_BYTES: usize = 4096;
+/// A guest Unix socket path: `sun_path` holds 108 bytes with its NUL.
+pub const CHANNEL_UNIX_PATH_MAX_BYTES: usize = 107;
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
@@ -105,6 +108,24 @@ impl ChannelFence {
 pub enum ChannelKind {
     Pty,
     Exec,
+    /// One TCP connection to a port on the guest's loopback (`127.0.0.1`,
+    /// then `[::1]`). There is no host field: the target is always the guest.
+    Tcp,
+    /// One connection to a guest Unix socket (an absolute path).
+    Unix,
+}
+
+impl ChannelKind {
+    /// A byte stream to a guest socket: stdin and stdout only, both
+    /// half-closable, no signals, no terminal, no exit status of its own.
+    pub fn is_relay(self) -> bool {
+        matches!(self, Self::Tcp | Self::Unix)
+    }
+
+    /// Bulk windows and frame sizes (every kind but `pty`).
+    pub fn is_bulk(self) -> bool {
+        self != Self::Pty
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -231,24 +252,52 @@ pub fn valid_channel_cwd(cwd: &str) -> bool {
     cwd.starts_with('/') && cwd.len() <= CHANNEL_CWD_MAX_BYTES && !cwd.contains('\0')
 }
 
-/// The `channel.open` field rules, shared by parse and encode.
-pub fn valid_channel_open(
-    fence: &ChannelFence,
-    kind: ChannelKind,
-    argv: Option<&[String]>,
-    cwd: Option<&str>,
-    env: Option<&BTreeMap<String, String>>,
-    pty: Option<&ChannelPtyParams>,
-) -> bool {
+/// A guest Unix socket path: absolute, at most 107 bytes, no NUL (so never
+/// an abstract socket).
+pub fn valid_channel_unix_path(path: &str) -> bool {
+    path.starts_with('/') && path.len() <= CHANNEL_UNIX_PATH_MAX_BYTES && !path.contains('\0')
+}
+
+/// The fields of a `channel.open` beyond its fence.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelOpenFields<'a> {
+    pub kind: ChannelKind,
+    pub login: bool,
+    pub argv: Option<&'a [String]>,
+    pub cwd: Option<&'a str>,
+    pub env: Option<&'a BTreeMap<String, String>>,
+    pub pty: Option<&'a ChannelPtyParams>,
+    pub port: Option<u16>,
+    pub path: Option<&'a str>,
+}
+
+/// The `channel.open` field rules, shared by parse and encode. A process
+/// channel (`pty` exactly with its `pty` parameters, `exec` without) has no
+/// target; a relay channel has exactly its target (`tcp` a port 1–65535,
+/// `unix` an absolute path) and nothing of a process (no argv, login, cwd,
+/// env or pty).
+pub fn valid_channel_open(fence: &ChannelFence, open: &ChannelOpenFields<'_>) -> bool {
+    let process = open.port.is_none()
+        && open.path.is_none()
+        && open.argv.is_none_or(valid_channel_argv)
+        && open.cwd.is_none_or(valid_channel_cwd)
+        && open.env.is_none_or(valid_channel_env);
+    let relay = !open.login
+        && open.argv.is_none()
+        && open.cwd.is_none()
+        && open.env.is_none()
+        && open.pty.is_none();
     fence.is_valid()
-        && match (kind, pty) {
-            (ChannelKind::Pty, Some(pty)) => pty.is_valid(),
-            (ChannelKind::Exec, None) => true,
-            _ => false,
+        && match open.kind {
+            ChannelKind::Pty => process && open.pty.is_some_and(ChannelPtyParams::is_valid),
+            ChannelKind::Exec => process && open.pty.is_none(),
+            ChannelKind::Tcp => {
+                relay && open.path.is_none() && open.port.is_some_and(|port| port > 0)
+            }
+            ChannelKind::Unix => {
+                relay && open.port.is_none() && open.path.is_some_and(valid_channel_unix_path)
+            }
         }
-        && argv.is_none_or(valid_channel_argv)
-        && cwd.is_none_or(valid_channel_cwd)
-        && env.is_none_or(valid_channel_env)
 }
 
 pub(crate) fn valid_channel_seq(seq: u64) -> bool {
@@ -406,10 +455,11 @@ mod tests {
             ("envValueMaxBytes", CHANNEL_ENV_VALUE_MAX_BYTES as u64),
             ("termMaxBytes", CHANNEL_TERM_MAX_BYTES as u64),
             ("cwdMaxBytes", CHANNEL_CWD_MAX_BYTES as u64),
+            ("unixPathMaxBytes", CHANNEL_UNIX_PATH_MAX_BYTES as u64),
         ] {
             assert_eq!(n(key), expected, "{key}");
         }
-        assert_eq!(json.as_object().unwrap().len(), 18, "unchecked limit key");
+        assert_eq!(json.as_object().unwrap().len(), 19, "unchecked limit key");
     }
 
     #[test]
@@ -489,6 +539,117 @@ mod tests {
     }
 
     #[test]
+    fn relay_opens_carry_exactly_their_target() {
+        let base = ChannelOpenFields {
+            kind: ChannelKind::Tcp,
+            login: false,
+            argv: None,
+            cwd: None,
+            env: None,
+            pty: None,
+            port: Some(5432),
+            path: None,
+        };
+        assert!(valid_channel_open(&fence(), &base));
+        let argv = vec!["sh".to_string()];
+        let env = BTreeMap::from([("LANG".to_string(), "C".to_string())]);
+        let pty = ChannelPtyParams {
+            rows: 24,
+            cols: 80,
+            term: "xterm".into(),
+        };
+        for bad in [
+            ChannelOpenFields {
+                port: Some(0),
+                ..base
+            },
+            ChannelOpenFields { port: None, ..base },
+            ChannelOpenFields {
+                path: Some("/run/x.sock"),
+                ..base
+            },
+            ChannelOpenFields {
+                login: true,
+                ..base
+            },
+            ChannelOpenFields {
+                argv: Some(&argv),
+                ..base
+            },
+            ChannelOpenFields {
+                cwd: Some("/"),
+                ..base
+            },
+            ChannelOpenFields {
+                env: Some(&env),
+                ..base
+            },
+            ChannelOpenFields {
+                pty: Some(&pty),
+                ..base
+            },
+        ] {
+            assert!(!valid_channel_open(&fence(), &bad), "{bad:?}");
+        }
+        let unix = ChannelOpenFields {
+            kind: ChannelKind::Unix,
+            port: None,
+            path: Some("/run/app.sock"),
+            ..base
+        };
+        assert!(valid_channel_open(&fence(), &unix));
+        let long = format!("/{}", "a".repeat(CHANNEL_UNIX_PATH_MAX_BYTES - 1));
+        assert!(valid_channel_open(
+            &fence(),
+            &ChannelOpenFields {
+                path: Some(&long),
+                ..unix
+            }
+        ));
+        let too_long = format!("{long}a");
+        for path in ["run/app.sock", "", "/a\0b", too_long.as_str()] {
+            assert!(
+                !valid_channel_open(
+                    &fence(),
+                    &ChannelOpenFields {
+                        path: Some(path),
+                        ..unix
+                    }
+                ),
+                "{path:?}"
+            );
+        }
+        assert!(!valid_channel_open(
+            &fence(),
+            &ChannelOpenFields {
+                port: Some(22),
+                ..unix
+            }
+        ));
+        // Process kinds never carry a target.
+        let exec = ChannelOpenFields {
+            kind: ChannelKind::Exec,
+            port: None,
+            ..base
+        };
+        assert!(valid_channel_open(&fence(), &exec));
+        assert!(!valid_channel_open(
+            &fence(),
+            &ChannelOpenFields {
+                port: Some(22),
+                ..exec
+            }
+        ));
+        assert!(!valid_channel_open(
+            &fence(),
+            &ChannelOpenFields {
+                path: Some("/x"),
+                ..exec
+            }
+        ));
+    }
+
+    #[test]
     fn ids_env_term_and_capability_follow_the_grammar() {
         assert!(valid_channel_id(&"a".repeat(64)));
         assert!(!valid_channel_id(&"a".repeat(65)));
@@ -507,6 +668,17 @@ mod tests {
         assert!(
             ChannelsCapability {
                 kinds: vec![ChannelKind::Pty, ChannelKind::Exec]
+            }
+            .is_valid()
+        );
+        assert!(
+            ChannelsCapability {
+                kinds: vec![
+                    ChannelKind::Pty,
+                    ChannelKind::Exec,
+                    ChannelKind::Tcp,
+                    ChannelKind::Unix
+                ]
             }
             .is_valid()
         );

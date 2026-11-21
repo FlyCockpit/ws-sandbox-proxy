@@ -58,8 +58,14 @@ export const CONNECT_REFUSAL_REASONS = [
 export const connectRefusalReasonSchema = z.enum(CONNECT_REFUSAL_REASONS);
 export type ConnectRefusalReason = z.infer<typeof connectRefusalReasonSchema>;
 
-/** Kinds of this release (`tcp`/`unix` come later, behind a new hello kind). */
-export const CONNECT_CHANNEL_KINDS = ["pty", "exec"] as const;
+/**
+ * Channel kinds: a PTY shell, an exec, and the relays (`tcp`: one connection
+ * to a guest loopback port; `unix`: one connection to a guest Unix socket).
+ * The node opens a kind only when its hello offered it; `tcp`/`unix` on an
+ * older node exit `unsupported_capability`. Bulk kinds (all but `pty`) use
+ * the `exec` values of `hello.limits`.
+ */
+export const CONNECT_CHANNEL_KINDS = ["pty", "exec", "tcp", "unix"] as const;
 export type ConnectChannelKind = (typeof CONNECT_CHANNEL_KINDS)[number];
 
 export const CONNECT_CLOSE_INTENTS = [
@@ -116,6 +122,14 @@ const envSchema = z
     z.string().refine((value) => noNul(value) && utf8Bytes(value) <= limits.envValueMaxBytes),
   )
   .refine((env) => Object.keys(env).length <= limits.envMaxEntries);
+/** A guest loopback port: the target is always the guest, so no host exists. */
+const portSchema = z.number().int().min(1).max(65_535);
+/** An absolute guest Unix socket path (`sun_path` limit; never abstract). */
+const unixPathSchema = z
+  .string()
+  .refine(
+    (path) => path.startsWith("/") && noNul(path) && utf8Bytes(path) <= limits.unixPathMaxBytes,
+  );
 const ptySchema = z.strictObject({
   rows: rowsSchema,
   cols: colsSchema,
@@ -132,6 +146,8 @@ export const connectClientControlSchema = z.discriminatedUnion("type", [
   /**
    * `argv` is structural (never a shell string); absent: the guest shell, a
    * login shell with `login: true`. `pty` is required exactly for `kind: "pty"`.
+   * A relay carries exactly its target (`tcp`: `port`; `unix`: `path`) and
+   * nothing of a process (no argv, login, cwd, env or pty).
    */
   z
     .strictObject({
@@ -143,10 +159,25 @@ export const connectClientControlSchema = z.discriminatedUnion("type", [
       cwd: cwdSchema.optional(),
       env: envSchema.optional(),
       pty: ptySchema.optional(),
+      port: portSchema.optional(),
+      path: unixPathSchema.optional(),
     })
     .refine((open) => (open.kind === "pty") === (open.pty !== undefined), {
       message: "pty parameters are required exactly for pty channels",
-    }),
+    })
+    .refine(
+      (open) =>
+        open.kind === "tcp" || open.kind === "unix"
+          ? open.argv === undefined &&
+            open.login === undefined &&
+            open.cwd === undefined &&
+            open.env === undefined &&
+            (open.kind === "tcp"
+              ? open.port !== undefined && open.path === undefined
+              : open.path !== undefined && open.port === undefined)
+          : open.port === undefined && open.path === undefined,
+      { message: "a relay carries exactly its target; a process channel carries none" },
+    ),
   /** Cumulative output credit: the highest delivered `seq` of `stream`. */
   z.strictObject({
     type: z.literal("ack"),
@@ -154,7 +185,7 @@ export const connectClientControlSchema = z.discriminatedUnion("type", [
     stream: z.enum(["stdout", "stderr"]),
     seq: seqSchema,
   }),
-  /** stdin is complete after `frames` data frames (exec channels). */
+  /** stdin is complete after `frames` data frames (exec and relay channels). */
   z.strictObject({
     type: z.literal("eof"),
     channel: channelSchema,
@@ -217,7 +248,10 @@ export const connectServerControlSchema = z.discriminatedUnion("type", [
     stream: z.literal("stdin"),
     seq: seqSchema,
   }),
-  /** `stream` ended after `frames` data frames (exec channels). */
+  /**
+   * `stream` ended after `frames` data frames (exec channels; on a relay,
+   * `stdout` when the guest service shut its write side).
+   */
   z.strictObject({
     type: z.literal("eof"),
     channel: channelSchema,
@@ -228,6 +262,8 @@ export const connectServerControlSchema = z.discriminatedUnion("type", [
    * The channel's last frame, after every output frame and eof. At most one
    * of `exitCode` and `signal`; neither is an unknown status. `intent`: the
    * channel was closed (absent: it ended on its own); `error`: why it failed.
+   * A relay's natural exit without a `stdout` eof before it was reset; a
+   * refused relay open exits with `error.code` `connection_refused`.
    */
   z
     .strictObject({

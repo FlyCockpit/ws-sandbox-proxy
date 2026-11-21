@@ -167,7 +167,7 @@
   },
   "connections": {
     "heading": "Conexiones recientes",
-    "description": "Shells y canales de comandos de la CLI abiertos con una clave de API (`wssp sandbox shell`). Solo se guarda quién se conectó, cuándo y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",
+    "description": "Shells, canales de comandos y reenvíos de puertos de la CLI abiertos con una clave de API (`wssp sandbox shell`, `wssp sandbox forward`). Solo se guarda quién se conectó, cuándo, qué puertos del invitado se reenviaron y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",
     "label": "Conexiones recientes",
     "empty": "No hay conexiones de la CLI en los últimos 90 días.",
     "unknownKey": "Clave eliminada",
@@ -186,6 +186,9 @@
     "shells_other": "{{count}} shells",
     "commands_one": "{{count}} comando",
     "commands_other": "{{count}} comandos",
+    "forwards_one": "{{count}} reenvío",
+    "forwards_other": "{{count}} reenvíos",
+    "ports": "Puertos del invitado: {{ports}}",
     "bytes": "{{sent}} enviados, {{received}} recibidos",
     "intent": {
       "client": "cerrada por el cliente",

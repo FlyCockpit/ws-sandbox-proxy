@@ -4,6 +4,14 @@
 //! - `pty` channels run the workload on a guest tty.
 //! - `exec` channels run it with piped stdin/stdout/stderr, stdin EOF,
 //!   signals and an exit status.
+//! - `tcp` and `unix` channels (relay channels) run no workload: the guest
+//!   helper itself, as the guest user, connects to a guest loopback port
+//!   (`127.0.0.1`, then `[::1]`) or a guest Unix socket and relays one byte
+//!   stream each way. Its stdout is framed ([`RelayDecoder`]), so the guest
+//!   service's write shutdown travels as an EOF while the other direction
+//!   stays open; stdin is raw and its EOF becomes `shutdown(SHUT_WR)`. The
+//!   connection goes over `incus exec` (vsock): no guest network path, no
+//!   ACL rule, no listener.
 //!
 //! A spawned channel has two halves with separate owners:
 //!
@@ -128,7 +136,21 @@ pub enum ChannelMode {
     Pty { size: PtySize, term: String },
     /// Piped stdin/stdout/stderr.
     Exec,
+    /// A relay to guest `127.0.0.1:<port>` (then `[::1]:<port>`).
+    Tcp { port: u16 },
+    /// A relay to the guest Unix socket at `path` (absolute).
+    Unix { path: String },
 }
+
+impl ChannelMode {
+    /// A relay channel (`tcp`/`unix`): no workload, framed stdout.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Tcp { .. } | Self::Unix { .. })
+    }
+}
+
+/// Longest guest Unix socket path (`sun_path` holds 108 bytes with its NUL).
+pub const CHANNEL_UNIX_PATH_MAX_BYTES: usize = 107;
 
 /// Spawn one channel process. Like [`crate::OpenPtyRequest`] there is no
 /// instance name: it derives from `sandbox_id` and is positively bound before
@@ -179,10 +201,21 @@ impl SpawnChannelRequest {
                 return Err(invalid("argv"));
             }
         }
-        if let ChannelMode::Pty { term, .. } = &self.mode
-            && !valid_term(term)
-        {
-            return Err(invalid("term"));
+        match &self.mode {
+            ChannelMode::Pty { term, .. } if !valid_term(term) => return Err(invalid("term")),
+            ChannelMode::Tcp { port } if *port == 0 => return Err(invalid("port")),
+            ChannelMode::Unix { path }
+                if !path.starts_with('/')
+                    || path.len() > CHANNEL_UNIX_PATH_MAX_BYTES
+                    || path.contains('\0') =>
+            {
+                return Err(invalid("path"));
+            }
+            _ => {}
+        }
+        // A relay runs no workload: nothing of a process travels with it.
+        if self.mode.is_relay() && (self.argv.is_some() || self.cwd.is_some() || self.login) {
+            return Err(invalid("relay channels carry only their target"));
         }
         if let Some(cwd) = &self.cwd
             && (!cwd.starts_with('/') || cwd.contains('\0') || cwd.len() > 4096)
@@ -453,6 +486,21 @@ pub enum GuestFrame {
     Ready(ChannelBirth),
     /// The workload ended (secret).
     Exit(ChannelExitStatus),
+    /// A relay channel's helper could not connect to its target (secret,
+    /// before READY). The helper exits on its own after it.
+    Failed(RelayFailure),
+}
+
+/// Why a relay helper could not connect (constant labels, never guest data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayFailure {
+    /// Nothing listens there (`ECONNREFUSED`; a Unix path that does not
+    /// exist).
+    Refused,
+    /// The guest user may not connect there (`EACCES`, `EPERM`).
+    Denied,
+    /// Any other failure (a timeout, not a socket, …).
+    Failed,
 }
 
 const FRAME_PREFIX: &[u8] = b"\x1eWSSP_CHAN ";
@@ -570,6 +618,16 @@ impl FrameFilter {
                 self.ready = true;
                 Some(GuestFrame::Ready(birth))
             }
+            ["FAILED", code] if secret && !self.ready && !self.exited => {
+                let failure = match *code {
+                    "refused" => RelayFailure::Refused,
+                    "denied" => RelayFailure::Denied,
+                    "failed" => RelayFailure::Failed,
+                    _ => return None,
+                };
+                self.exited = true;
+                Some(GuestFrame::Failed(failure))
+            }
             ["EXIT", kind, value] if secret && self.ready && !self.exited => {
                 let status = match *kind {
                     "code" => ChannelExitStatus::Code(value.parse().ok()?),
@@ -594,6 +652,161 @@ fn valid_boot(boot: &str) -> Option<String> {
 /// The wrapper's in-band frame (also used by the fake guest and tests).
 pub fn guest_frame_bytes(nonce: &str, fields: &str) -> Vec<u8> {
     format!("\x1eWSSP_CHAN {nonce} {fields}\x1f").into_bytes()
+}
+
+// ------------------------------------------------------- relay framing ----
+
+/// Relay stdout tags: data (`D` + u32 big-endian length + bytes), the guest
+/// service shut its write side (`E`), the connection failed (`R`).
+const RELAY_DATA: u8 = b'D';
+const RELAY_EOF: u8 = b'E';
+const RELAY_RESET: u8 = b'R';
+/// Largest relay data frame the helper writes (and the decoder accepts).
+pub const RELAY_DATA_MAX_BYTES: usize = 64 * 1024;
+
+/// How a relay's guest-to-client stream ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelayEnd {
+    /// The guest service shut its write side (after every byte before it).
+    /// Not final: the connection may still fail while input flows
+    /// ([`RelayEnd::Reset`] after it).
+    Eof,
+    /// The connection failed (or the helper died) before a clean end, or
+    /// after the guest service's write shutdown.
+    Reset,
+    /// The stream broke the framing (a helper that is not the fixed one).
+    Corrupt,
+}
+
+/// Decodes a relay channel's framed stdout, chunk-boundary safe. The data
+/// out of one [`RelayDecoder::feed`] is never longer than its input, so a
+/// read of at most [`CHANNEL_EXEC_READ_BYTES`] fits one data frame. After
+/// the eof only a reset may follow (the connection failed while input still
+/// flowed); after a reset nothing: further bytes are [`RelayEnd::Corrupt`].
+#[derive(Debug, Default)]
+pub struct RelayDecoder {
+    /// A partial data header (at most 5 bytes).
+    header: Vec<u8>,
+    /// Payload bytes still due for the current data frame.
+    remaining: usize,
+    /// The eof tag was decoded (also when a reset followed it).
+    eof: bool,
+    end: Option<RelayEnd>,
+}
+
+impl RelayDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The latest end decoded, if any ([`RelayEnd::Eof`] until a reset or a
+    /// framing error follows it).
+    pub fn end(&self) -> Option<RelayEnd> {
+        self.end
+    }
+
+    /// The guest service's write shutdown was decoded, also when a reset
+    /// followed it (in the same read or later). False once corrupt.
+    pub fn eof_seen(&self) -> bool {
+        self.eof && self.end != Some(RelayEnd::Corrupt)
+    }
+
+    /// Whether the stream ended cleanly so far: the eof and nothing after it.
+    pub fn clean(&self) -> bool {
+        self.end == Some(RelayEnd::Eof)
+    }
+
+    /// Feed stdout bytes: the payload bytes they carry, and the latest end
+    /// when one arrives with them (always after that payload; an eof and a
+    /// reset in the same bytes report the reset, see [`Self::eof_seen`]).
+    pub fn feed(&mut self, mut bytes: &[u8]) -> (Vec<u8>, Option<RelayEnd>) {
+        let mut data = Vec::new();
+        if bytes.is_empty() {
+            return (data, None);
+        }
+        if let Some(end) = self.end {
+            // After the eof only a lone reset; anything else (and anything
+            // after a reset): not the fixed helper.
+            self.end = Some(if end == RelayEnd::Eof && bytes == [RELAY_RESET] {
+                RelayEnd::Reset
+            } else {
+                RelayEnd::Corrupt
+            });
+            return (data, self.end);
+        }
+        while !bytes.is_empty() {
+            if self.remaining > 0 {
+                let take = self.remaining.min(bytes.len());
+                data.extend_from_slice(&bytes[..take]);
+                self.remaining -= take;
+                bytes = &bytes[take..];
+                continue;
+            }
+            if self.header.is_empty() {
+                match bytes[0] {
+                    RELAY_DATA => {}
+                    RELAY_EOF if bytes.len() == 1 || bytes[1..] == [RELAY_RESET] => {
+                        self.eof = true;
+                        self.end = Some(if bytes.len() == 1 {
+                            RelayEnd::Eof
+                        } else {
+                            RelayEnd::Reset
+                        });
+                        return (data, self.end);
+                    }
+                    RELAY_RESET if bytes.len() == 1 => {
+                        self.end = Some(RelayEnd::Reset);
+                        return (data, self.end);
+                    }
+                    // An end tag with bytes after it, or an unknown tag.
+                    _ => {
+                        self.end = Some(RelayEnd::Corrupt);
+                        return (data, self.end);
+                    }
+                }
+            }
+            let need = 5 - self.header.len();
+            let take = need.min(bytes.len());
+            self.header.extend_from_slice(&bytes[..take]);
+            bytes = &bytes[take..];
+            if self.header.len() == 5 {
+                let mut length = [0_u8; 4];
+                length.copy_from_slice(&self.header[1..5]);
+                let length = u32::from_be_bytes(length) as usize;
+                self.header.clear();
+                if length == 0 || length > RELAY_DATA_MAX_BYTES {
+                    self.end = Some(RelayEnd::Corrupt);
+                    return (data, self.end);
+                }
+                self.remaining = length;
+            }
+        }
+        (data, None)
+    }
+
+    /// The stdout pipe ended: without an end frame first (the helper died,
+    /// or was killed) the stream was reset.
+    pub fn finish(&mut self) -> RelayEnd {
+        *self.end.get_or_insert(RelayEnd::Reset)
+    }
+}
+
+/// One relay data frame (the helper's encoding; for the fake guest and
+/// tests).
+pub fn relay_data_frame(bytes: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(5 + bytes.len());
+    frame.push(RELAY_DATA);
+    frame.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    frame.extend_from_slice(bytes);
+    frame
+}
+
+/// The relay end frame for `end` ([`RelayEnd::Eof`] or [`RelayEnd::Reset`]).
+pub fn relay_end_frame(end: RelayEnd) -> Vec<u8> {
+    match end {
+        RelayEnd::Eof => vec![RELAY_EOF],
+        RelayEnd::Reset | RelayEnd::Corrupt => vec![RELAY_RESET],
+    }
 }
 
 // ---------------------------------------------------------- proxy IO ----
@@ -997,6 +1210,193 @@ mod tests {
             frames,
             vec![GuestFrame::Exit(ChannelExitStatus::Signal(15))]
         );
+    }
+
+    #[test]
+    fn relay_failures_need_the_secret_and_come_before_ready() {
+        let mut filter = FrameFilter::new(PUBLIC, SECRET);
+        let (_, frames) = filter.feed(&guest_frame_bytes(PUBLIC, "FAILED refused"));
+        assert!(frames.is_empty(), "the public nonce never makes FAILED");
+        let (_, frames) = filter.feed(&guest_frame_bytes(SECRET, "FAILED bogus"));
+        assert!(frames.is_empty());
+        let (_, frames) = filter.feed(&guest_frame_bytes(SECRET, "FAILED denied"));
+        assert_eq!(frames, vec![GuestFrame::Failed(RelayFailure::Denied)]);
+        let (_, frames) = filter.feed(&guest_frame_bytes(SECRET, "FAILED refused"));
+        assert!(frames.is_empty(), "FAILED latches");
+        let mut filter = FrameFilter::new(PUBLIC, SECRET);
+        let _ = filter.feed(&ready());
+        let (_, frames) = filter.feed(&guest_frame_bytes(SECRET, "FAILED refused"));
+        assert!(frames.is_empty(), "FAILED after READY is data");
+    }
+
+    fn decode(chunks: &[&[u8]]) -> (Vec<u8>, Option<RelayEnd>) {
+        let mut decoder = RelayDecoder::new();
+        let mut data = Vec::new();
+        let mut end = None;
+        for chunk in chunks {
+            let (d, e) = decoder.feed(chunk);
+            data.extend(d);
+            if e.is_some() {
+                end = e;
+            }
+        }
+        (data, end)
+    }
+
+    #[test]
+    fn relay_frames_decode_at_every_split_and_eof_never_overtakes_data() {
+        let mut stream = relay_data_frame(b"hello ");
+        stream.extend(relay_data_frame(b"world"));
+        stream.extend(relay_end_frame(RelayEnd::Eof));
+        for split in 0..stream.len() {
+            let (data, end) = decode(&[&stream[..split], &stream[split..]]);
+            assert_eq!(data, b"hello world", "split {split}");
+            assert_eq!(end, Some(RelayEnd::Eof), "split {split}");
+        }
+        // Byte by byte: the end only after the last payload byte.
+        let mut decoder = RelayDecoder::new();
+        let mut data = Vec::new();
+        for (i, byte) in stream.iter().enumerate() {
+            let (d, end) = decoder.feed(std::slice::from_ref(byte));
+            data.extend(d);
+            assert_eq!(end.is_some(), i + 1 == stream.len());
+        }
+        assert_eq!(data, b"hello world");
+    }
+
+    #[test]
+    fn relay_output_is_never_longer_than_its_input() {
+        let payload = vec![7_u8; RELAY_DATA_MAX_BYTES];
+        let stream = relay_data_frame(&payload);
+        let mut decoder = RelayDecoder::new();
+        for chunk in stream.chunks(CHANNEL_EXEC_READ_BYTES) {
+            let (data, end) = decoder.feed(chunk);
+            assert!(data.len() <= chunk.len());
+            assert!(end.is_none());
+        }
+    }
+
+    #[test]
+    fn broken_relay_streams_are_corrupt_or_reset() {
+        assert_eq!(decode(&[b"X"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"D\0\0\0\0"]).1, Some(RelayEnd::Corrupt));
+        let too_long = ((RELAY_DATA_MAX_BYTES + 1) as u32).to_be_bytes();
+        assert_eq!(
+            decode(&[b"D", &too_long]).1,
+            Some(RelayEnd::Corrupt),
+            "oversized frame"
+        );
+        assert_eq!(decode(&[b"E", b"D"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"ED"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"E", b"E"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"ERR"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"E", b"R", b"R"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"R", b"E"]).1, Some(RelayEnd::Corrupt));
+        assert_eq!(decode(&[b"RE"]).1, Some(RelayEnd::Corrupt));
+        let (data, end) = decode(&[&relay_data_frame(b"ab"), b"R"]);
+        assert_eq!((data.as_slice(), end), (&b"ab"[..], Some(RelayEnd::Reset)));
+        // The pipe ending mid-frame (or with no end frame) is a reset.
+        let mut decoder = RelayDecoder::new();
+        let _ = decoder.feed(&relay_data_frame(b"abc")[..4]);
+        assert_eq!(decoder.finish(), RelayEnd::Reset);
+        let mut decoder = RelayDecoder::new();
+        let _ = decoder.feed(b"E");
+        assert_eq!(decoder.finish(), RelayEnd::Eof);
+        assert!(decoder.eof_seen() && decoder.clean());
+    }
+
+    #[test]
+    fn a_reset_after_the_eof_is_a_reset_at_every_split() {
+        let mut stream = relay_data_frame(b"220 ready");
+        stream.extend(relay_end_frame(RelayEnd::Eof));
+        stream.extend(relay_end_frame(RelayEnd::Reset));
+        for split in 0..=stream.len() {
+            let mut decoder = RelayDecoder::new();
+            let mut data = Vec::new();
+            let mut ends = Vec::new();
+            for chunk in [&stream[..split], &stream[split..]] {
+                let (d, end) = decoder.feed(chunk);
+                data.extend(d);
+                ends.extend(end);
+            }
+            assert_eq!(data, b"220 ready", "split {split}");
+            assert_eq!(ends.last(), Some(&RelayEnd::Reset), "split {split}");
+            assert!(decoder.eof_seen(), "split {split}");
+            assert!(!decoder.clean(), "split {split}");
+            assert_eq!(decoder.finish(), RelayEnd::Reset, "split {split}");
+        }
+        // A reset without an eof is no eof; a corrupt stream is neither.
+        let mut decoder = RelayDecoder::new();
+        let _ = decoder.feed(b"R");
+        assert!(!decoder.eof_seen() && !decoder.clean());
+        let mut decoder = RelayDecoder::new();
+        let _ = decoder.feed(b"ED");
+        assert!(!decoder.eof_seen() && !decoder.clean());
+        let mut decoder = RelayDecoder::new();
+        assert!(!decoder.clean(), "nothing decoded is not clean");
+        assert_eq!(decoder.finish(), RelayEnd::Reset);
+    }
+
+    #[test]
+    fn relay_requests_carry_only_their_target() {
+        let base = SpawnChannelRequest {
+            template_fingerprint: "sha256:x".into(),
+            sandbox_id: "sbx-1".into(),
+            connection_id: "c".into(),
+            channel_id: "h".into(),
+            guest: GuestIdentity {
+                guest_uid: 1000,
+                guest_gid: 1000,
+                guest_home: "/home/user".into(),
+                guest_shell: "/bin/sh".into(),
+            },
+            mode: ChannelMode::Tcp { port: 5432 },
+            argv: None,
+            login: false,
+            cwd: None,
+            nonce: PUBLIC.into(),
+        };
+        base.validate().unwrap();
+        for bad in [
+            SpawnChannelRequest {
+                mode: ChannelMode::Tcp { port: 0 },
+                ..base.clone()
+            },
+            SpawnChannelRequest {
+                argv: Some(vec!["nc".into()]),
+                ..base.clone()
+            },
+            SpawnChannelRequest {
+                login: true,
+                ..base.clone()
+            },
+            SpawnChannelRequest {
+                cwd: Some("/".into()),
+                ..base.clone()
+            },
+            SpawnChannelRequest {
+                mode: ChannelMode::Unix {
+                    path: "run/x.sock".into(),
+                },
+                ..base.clone()
+            },
+            SpawnChannelRequest {
+                mode: ChannelMode::Unix {
+                    path: format!("/{}", "a".repeat(CHANNEL_UNIX_PATH_MAX_BYTES)),
+                },
+                ..base.clone()
+            },
+        ] {
+            assert!(bad.validate().is_err(), "{:?}", bad.mode);
+        }
+        SpawnChannelRequest {
+            mode: ChannelMode::Unix {
+                path: "/run/app.sock".into(),
+            },
+            ..base
+        }
+        .validate()
+        .unwrap();
     }
 
     #[test]

@@ -305,8 +305,11 @@ export const TERMINAL_RESUME_GRACE_MAX_MS = 600_000;
 export const terminalResumeCapabilitySchema = z.strictObject({
   graceMs: z.number().int().min(TERMINAL_RESUME_GRACE_MIN_MS).max(TERMINAL_RESUME_GRACE_MAX_MS),
 });
-/** Interactive channel kinds (`channel.open` `kind`, Rust `ChannelKind`). */
-export const CHANNEL_KINDS = ["pty", "exec"] as const;
+/**
+ * Channel kinds (`channel.open` `kind`, Rust `ChannelKind`): a PTY shell, an
+ * exec, and the relays to a guest loopback TCP port or a guest Unix socket.
+ */
+export const CHANNEL_KINDS = ["pty", "exec", "tcp", "unix"] as const;
 /** Optional hello capability: the channel kinds a node opens (Rust `ChannelsCapability`). */
 export const channelsCapabilitySchema = z.strictObject({
   kinds: z

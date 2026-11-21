@@ -22,7 +22,9 @@ const { sessionPrincipal } = await import("./contracts");
 const {
   CONNECT_AUDIT_MAX_WAIT_MS,
   CONNECT_AUDIT_TRANSACTION_TIMEOUT_MS,
+  CONNECT_AUDIT_FORWARDED_PORTS_MAX,
   CONNECT_SESSION_STALE_MS,
+  forwardedPortsColumn,
   lastConnectByKey,
   listSandboxConnectSessions,
   recordConnectSessionClose,
@@ -70,6 +72,8 @@ describe("recordConnectSessionOpen / Close", () => {
         closeIntent: "revoked",
         ptyChannels: 2,
         execChannels: -1,
+        relayChannels: 3,
+        forwardedPorts: [8080, 0, 8080, 70_000, 1.5, 5432],
         bytesIn: 5,
         bytesOut: Number.NaN,
       }),
@@ -81,6 +85,8 @@ describe("recordConnectSessionOpen / Close", () => {
       closeIntent: "revoked",
       ptyChannels: 2,
       execChannels: 0,
+      relayChannels: 3,
+      forwardedPorts: [8080, 5432],
       bytesIn: 5n,
       bytesOut: 0n,
     });
@@ -104,6 +110,8 @@ describe("recordConnectSessionOpen / Close", () => {
           closeIntent: "client",
           ptyChannels: 1,
           execChannels: 0,
+          relayChannels: 2,
+          forwardedPorts: [3000],
           bytesIn: 3,
           bytesOut: 4,
         },
@@ -114,6 +122,8 @@ describe("recordConnectSessionOpen / Close", () => {
       closedAt,
       closeIntent: "client",
       ptyChannels: 1,
+      relayChannels: 2,
+      forwardedPorts: [3000],
       bytesIn: 3n,
       bytesOut: 4n,
     });
@@ -129,6 +139,8 @@ describe("recordConnectSessionOpen / Close", () => {
       closeIntent: "client",
       ptyChannels: 0,
       execChannels: 0,
+      relayChannels: 0,
+      forwardedPorts: [],
       bytesIn: 0,
       bytesOut: 0,
     });
@@ -185,6 +197,8 @@ describe("listSandboxConnectSessions", () => {
         closeIntent: null,
         ptyChannels: 0,
         execChannels: 0,
+        relayChannels: 2,
+        forwardedPorts: [8080, 5432],
         bytesIn: 0n,
         bytesOut: 0n,
       },
@@ -198,6 +212,8 @@ describe("listSandboxConnectSessions", () => {
         closeIntent: null,
         ptyChannels: 1,
         execChannels: 0,
+        relayChannels: 0,
+        forwardedPorts: [],
         bytesIn: 12n,
         bytesOut: 9_007_199_254_740_993n,
       },
@@ -215,12 +231,14 @@ describe("listSandboxConnectSessions", () => {
         "closeIntent",
         "closedAt",
         "execChannels",
+        "forwardedPorts",
         "hostId",
         "id",
         "keyId",
         "openedAt",
         "origin",
         "ptyChannels",
+        "relayChannels",
       ].sort(),
     );
     expect(shared.sdkKey.findMany).toHaveBeenCalledWith({
@@ -234,6 +252,20 @@ describe("listSandboxConnectSessions", () => {
       ["c1", null, "unknown"],
     ]);
     expect(page.items[1]?.bytesOut).toBe("9007199254740993");
+    expect(page.items[0]).toMatchObject({ relayChannels: 2, forwardedPorts: [8080, 5432] });
+  });
+});
+
+describe("forwardedPortsColumn", () => {
+  it("keeps valid ports, distinct, in first-seen order, the first 16 only", () => {
+    expect(CONNECT_AUDIT_FORWARDED_PORTS_MAX).toBe(16);
+    expect(forwardedPortsColumn([22, 22, -1, 0, 65_536, 65_535, 2.5, Number.NaN, 1])).toEqual([
+      22, 65_535, 1,
+    ]);
+    const many = Array.from({ length: 40 }, (_, index) => 9000 + (index % 20));
+    expect(forwardedPortsColumn(many)).toEqual(
+      Array.from({ length: 16 }, (_, index) => 9000 + index),
+    );
   });
 });
 

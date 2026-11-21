@@ -47,12 +47,13 @@ pub use channel::{
     CHANNEL_MAX_CHANNELS_PER_HOST, CHANNEL_MAX_PTY_CHANNELS_PER_CONNECTION,
     CHANNEL_MAX_PTY_CHANNELS_PER_HOST, CHANNEL_OPENS_PER_MINUTE_PER_GUEST_CREATOR,
     CHANNEL_OPENS_PER_MINUTE_PER_HOST, CHANNEL_PTY_DATA_MAX_BYTES, CHANNEL_PTY_WINDOW_FRAMES,
-    CHANNEL_TERM_MAX_BYTES, ChannelCloseIntent, ChannelDataKind, ChannelDataMetadata,
-    ChannelExitFrames, ChannelFence, ChannelKind, ChannelNotice, ChannelPtyParams, ChannelPtySize,
-    ChannelSignal, ChannelStream, ChannelTarget, ChannelsCapability, encode_channel_frame,
-    parse_channel_frame, valid_channel_argv, valid_channel_cwd, valid_channel_env,
-    valid_channel_env_name, valid_channel_exit, valid_channel_id, valid_channel_open,
-    valid_channel_term,
+    CHANNEL_TERM_MAX_BYTES, CHANNEL_UNIX_PATH_MAX_BYTES, ChannelCloseIntent, ChannelDataKind,
+    ChannelDataMetadata, ChannelExitFrames, ChannelFence, ChannelKind, ChannelNotice,
+    ChannelOpenFields, ChannelPtyParams, ChannelPtySize, ChannelSignal, ChannelStream,
+    ChannelTarget, ChannelsCapability, encode_channel_frame, parse_channel_frame,
+    valid_channel_argv, valid_channel_cwd, valid_channel_env, valid_channel_env_name,
+    valid_channel_exit, valid_channel_id, valid_channel_open, valid_channel_term,
+    valid_channel_unix_path,
 };
 mod tunnel;
 pub use tunnel::{

@@ -77,12 +77,13 @@ mod channel;
 pub use channel::{
     CHANNEL_ARGV_MAX_BYTES, CHANNEL_ARGV_MAX_ITEMS, CHANNEL_EXEC_READ_BYTES,
     CHANNEL_FRAME_MAX_BYTES, CHANNEL_ID_MAX_BYTES, CHANNEL_PREAMBLE_BUDGET, CHANNEL_PTY_READ_BYTES,
-    CHANNEL_READ_AHEAD_CHUNKS, CHANNEL_TERM_MAX_BYTES, ChannelBirth, ChannelClose, ChannelCustody,
-    ChannelEnd, ChannelExitStatus, ChannelIo, ChannelMode, ChannelOpenFailure, ChannelOutput,
-    ChannelRead, ChannelScope, ChannelScopeRef, ChannelSignalOutcome, FrameFilter, GuestFrame,
-    KillScopesRequest, ScopeKill, SpawnChannelRequest, SpawnedChannel, WriteRefused, channel_nonce,
-    channel_preamble, channel_scope_unit, guest_frame_bytes, valid_channel_id, valid_term,
-    validate_channel_scope_unit,
+    CHANNEL_READ_AHEAD_CHUNKS, CHANNEL_TERM_MAX_BYTES, CHANNEL_UNIX_PATH_MAX_BYTES, ChannelBirth,
+    ChannelClose, ChannelCustody, ChannelEnd, ChannelExitStatus, ChannelIo, ChannelMode,
+    ChannelOpenFailure, ChannelOutput, ChannelRead, ChannelScope, ChannelScopeRef,
+    ChannelSignalOutcome, FrameFilter, GuestFrame, KillScopesRequest, RELAY_DATA_MAX_BYTES,
+    RelayDecoder, RelayEnd, RelayFailure, ScopeKill, SpawnChannelRequest, SpawnedChannel,
+    WriteRefused, channel_nonce, channel_preamble, channel_scope_unit, guest_frame_bytes,
+    relay_data_frame, relay_end_frame, valid_channel_id, valid_term, validate_channel_scope_unit,
 };
 mod output;
 mod pty;

@@ -92,6 +92,9 @@ error_codes! {
     // A cached cold reconnect's retained root is not the stored offload it
     // expected; nothing was started.
     DiskStale,
+    // A relay channel's guest target refused the connection (nothing listens
+    // on that guest loopback port or Unix socket).
+    ConnectionRefused,
 
 }
 
@@ -176,6 +179,7 @@ impl SandboxErrorCode {
             Self::CredentialEnvPending => "credential_env_pending",
             Self::CredentialCaptureFailed => "credential_capture_failed",
             Self::DiskStale => "disk_stale",
+            Self::ConnectionRefused => "connection_refused",
         }
     }
 }

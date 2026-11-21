@@ -8557,10 +8557,13 @@ fn build_root_command_runs_incus_exec_as_root_only_when_flagged() {
         request.build_step = root.then_some(crate::BuildStep::Root);
         let response = run_bound!(supervisor, run(&request)).expect("completed");
         assert_eq!(response.command.exit_code, Some(1));
+        // The first matching line: the run's own exec, logged before it
+        // completed. A later exec (cleanup) may still be appending its line
+        // while this reads, so the last line can be partial.
         fs::read_to_string(&log)
             .unwrap()
             .lines()
-            .rfind(|line| line.starts_with("exec ") && line.contains("wssp-run"))
+            .find(|line| line.starts_with("exec ") && line.contains("wssp-run"))
             .expect("exec logged")
             .to_string()
     };

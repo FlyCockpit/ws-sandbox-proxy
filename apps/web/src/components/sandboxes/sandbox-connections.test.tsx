@@ -86,6 +86,8 @@ const row = (overrides: Record<string, unknown> = {}) => ({
   closeIntent: "revoked",
   ptyChannels: 1,
   execChannels: 2,
+  relayChannels: 0,
+  forwardedPorts: [],
   bytesIn: "2048",
   bytesOut: "1048576",
   ...overrides,
@@ -146,6 +148,7 @@ describe("SandboxConnections", () => {
       `Ended: ${enSandboxes.connections.intent.revoked}`,
     );
     expect(first.textContent).toContain("1 shell · 2 commands · 2 KiB sent, 1 MiB received");
+    expect(first.querySelector("[data-forwarded-ports]")).toBeNull();
     const open = list.querySelector<HTMLElement>('[data-connection-id="c0"]')!;
     expect(within(open).getByText(enSandboxes.connections.unknownKey)).toBeTruthy();
     expect(within(open).getByText(enSandboxes.connections.status.open)).toBeTruthy();
@@ -160,6 +163,32 @@ describe("SandboxConnections", () => {
         ?.getAttribute("data-connection-status"),
     ).toBe("unknown");
     expect(server.inputs.at(-1)).toMatchObject({ id: "sbx_1", cursor: "1" });
+  });
+
+  it("shows the relay count and the forwarded guest ports, bounded to 16", async () => {
+    const ports = Array.from({ length: 20 }, (_, index) => 9000 + index);
+    server.pages = [
+      {
+        items: [
+          row({ id: "c-fwd", ptyChannels: 0, relayChannels: 3, forwardedPorts: [8080, 5432] }),
+          row({ id: "c-many", ptyChannels: 0, relayChannels: 1, forwardedPorts: ports }),
+        ],
+        nextCursor: null,
+      },
+    ];
+    renderPanel();
+    const list = await screen.findByRole("list", { name: enSandboxes.connections.label });
+    const forward = list.querySelector<HTMLElement>('[data-connection-id="c-fwd"]')!;
+    expect(forward.textContent).toContain("0 shells · 2 commands · 3 forwards · 2 KiB sent");
+    expect(forward.querySelector("[data-forwarded-ports]")?.textContent).toBe(
+      "Guest ports: 8080, 5432",
+    );
+    const many = list.querySelector<HTMLElement>('[data-connection-id="c-many"]')!;
+    expect(many.textContent).toContain("1 forward ·");
+    const shown = many.querySelector("[data-forwarded-ports]")?.textContent ?? "";
+    expect(shown).toContain("9015");
+    expect(shown).not.toContain("9016");
+    expect(shown.match(/\d{4}/g)).toHaveLength(16);
   });
 
   it("a failed load offers a retry that recovers", async () => {

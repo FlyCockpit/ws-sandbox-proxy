@@ -1,6 +1,21 @@
 //! CLI channels on the node (wssp-ssh): `channel.*` frames from the server
-//! drive one guest process each (`pty` or `exec`), started by the runtime in
-//! its own guest scope as the sandbox's guest user.
+//! drive one guest process each (`pty` or `exec`, or a `tcp`/`unix` relay to
+//! a guest loopback port or guest Unix socket), started by the runtime in its
+//! own guest scope as the sandbox's guest user.
+//!
+//! Relay channels carry stdin and stdout only. Their stdout is the relay's
+//! framed stream ([`RelayDecoder`]): its data becomes `stdout` frames, the
+//! guest service's write shutdown a `channel.eof`, and a reset ends the
+//! stream with no eof, or after it with exit code 1 (either way the client
+//! resets its local socket; only exit 0 after the eof is clean). Their stdin
+//! is framed the same way (data frames, then an `E` for the client's eof
+//! before the close), so a stdin that ends without its `E` (this daemon or
+//! the host client died) resets the guest connection. They get no
+//! environment, no signals and no terminal, and every close of one is a
+//! kill close (a reset, never a hang-up), so nothing of it outlives the
+//! channel. A connect the guest refused ends the channel before `ready` with
+//! `connection_refused` (or `guest_permission_denied`,
+//! `guest_operation_failed`).
 //!
 //! One decider. [`ChannelHost`] lives on the socket thread and owns every
 //! wire-visible fact of every channel (phase, sequence numbers, credit,
@@ -55,7 +70,8 @@ use sandbox_runtime::{
     ChannelBirth, ChannelClose, ChannelCustody, ChannelEnd, ChannelExitStatus, ChannelIo,
     ChannelMode, ChannelOutput, ChannelRead, ChannelScope, ChannelScopeRef, ChannelSignalOutcome,
     FrameFilter, GuestFrame, GuestIdentity, KillScopesRequest, ProcessSignal, PtySize,
-    SandboxRuntime, ScopeKill, SpawnChannelRequest,
+    RelayDecoder, RelayEnd, RelayFailure, SandboxRuntime, ScopeKill, SpawnChannelRequest,
+    relay_data_frame, relay_end_frame,
 };
 
 use super::authority::HostAuthority;
@@ -93,6 +109,9 @@ const ENDED_TOMBSTONES: usize = 256;
 const TICK_DATA_FRAMES: usize = 16;
 /// Unacknowledged output frames across the host (4 MiB of bulk frames): half
 /// the relay's serialized-queue high water, so bulk alone never pauses it.
+/// A bulk channel holding none may still send one (its reserve, see
+/// [`BulkCredit::allows`]), so the cap is exceeded by at most one frame per
+/// live bulk channel.
 const HOST_UNACKED_FRAMES: u64 = 128;
 /// One sandbox owner's share of the host cap, so no single tenant can hold
 /// all of it.
@@ -103,7 +122,12 @@ const SIGNALS_IN_FLIGHT: usize = 4;
 const REGISTRY_PREFIX: &str = "channel-scope-";
 const REGISTRY_VERSION: &str = "wssp-channel-scope-v1";
 /// The node offers these kinds when its runtime implements channels.
-pub(super) const OFFERED_KINDS: [ChannelKind; 2] = [ChannelKind::Pty, ChannelKind::Exec];
+pub(super) const OFFERED_KINDS: [ChannelKind; 4] = [
+    ChannelKind::Pty,
+    ChannelKind::Exec,
+    ChannelKind::Tcp,
+    ChannelKind::Unix,
+];
 
 /// The hello's `channels` offer.
 pub(super) fn capability(runtime: &dyn SandboxRuntime) -> Option<ChannelsCapability> {
@@ -113,17 +137,38 @@ pub(super) fn capability(runtime: &dyn SandboxRuntime) -> Option<ChannelsCapabil
 }
 
 fn window(kind: ChannelKind) -> u64 {
-    match kind {
-        ChannelKind::Pty => CHANNEL_PTY_WINDOW_FRAMES,
-        ChannelKind::Exec => CHANNEL_BULK_WINDOW_FRAMES,
+    if kind.is_bulk() {
+        CHANNEL_BULK_WINDOW_FRAMES
+    } else {
+        CHANNEL_PTY_WINDOW_FRAMES
     }
 }
 
 fn frame_bytes(kind: ChannelKind) -> usize {
-    match kind {
-        ChannelKind::Pty => CHANNEL_PTY_DATA_MAX_BYTES,
-        ChannelKind::Exec => CHANNEL_BULK_DATA_MAX_BYTES,
+    if kind.is_bulk() {
+        CHANNEL_BULK_DATA_MAX_BYTES
+    } else {
+        CHANNEL_PTY_DATA_MAX_BYTES
     }
+}
+
+/// The channel error of a relay whose connect failed (constant messages).
+fn relay_error(failure: RelayFailure) -> (SandboxErrorCode, String) {
+    let (code, message) = match failure {
+        RelayFailure::Refused => (
+            SandboxErrorCode::ConnectionRefused,
+            "nothing in the sandbox accepted the connection",
+        ),
+        RelayFailure::Denied => (
+            SandboxErrorCode::GuestPermissionDenied,
+            "the sandbox's user may not connect there",
+        ),
+        RelayFailure::Failed => (
+            SandboxErrorCode::GuestOperationFailed,
+            "connecting inside the sandbox failed",
+        ),
+    };
+    (code, message.to_string())
 }
 
 // ------------------------------------------------------------ capacity ----
@@ -766,12 +811,16 @@ struct OutStream {
 ///   available found nothing for [`IDLE_PROOF`] (a survivor holding the
 ///   pipes silent);
 /// - or 60 s after EXIT in any case (a survivor that keeps writing, or a
-///   client too slow for the contract's cap).
+///   client too slow for the contract's cap), except while `held`: a relay
+///   whose stream has not reached its end and whose last read waited for
+///   credit (a slow local reader). Its helper is gone, so nothing keeps
+///   writing; the per-frame stall rule and the channel deadline bound it.
 fn end_due(
     phase: Phase,
     streams: &[ChannelOutput],
     eof: [bool; 2],
     idle_since: [Option<Instant>; 2],
+    held: bool,
     now: Instant,
 ) -> bool {
     if streams.iter().all(|s| eof[*s as usize]) {
@@ -781,7 +830,7 @@ fn end_due(
         return false;
     };
     let since = now.saturating_duration_since(exit_at);
-    since >= EXIT_DRAIN_MAX
+    (since >= EXIT_DRAIN_MAX && !held)
         || (since >= EXIT_DRAIN
             && streams.iter().all(|s| {
                 eof[*s as usize]
@@ -799,9 +848,15 @@ struct BulkCredit {
 }
 
 impl BulkCredit {
-    fn allows(&self, creator: &str) -> bool {
-        self.host < HOST_UNACKED_FRAMES
-            && self.by_creator.get(creator).copied().unwrap_or(0) < CREATOR_UNACKED_FRAMES
+    /// One more frame for a bulk channel of `creator` holding `held`
+    /// unacknowledged frames. A channel holding none always may (one frame
+    /// of every cap is its reserve): channels whose clients stopped reading
+    /// can fill the caps, but never freeze the other channels of the host
+    /// or the owner until the stall rule closes them.
+    fn allows(&self, creator: &str, held: u64) -> bool {
+        held == 0
+            || (self.host < HOST_UNACKED_FRAMES
+                && self.by_creator.get(creator).copied().unwrap_or(0) < CREATOR_UNACKED_FRAMES)
     }
 
     fn charge(&mut self, creator: &str, frames: u64) {
@@ -826,6 +881,10 @@ struct Chan {
     orders: mpsc::SyncSender<Order>,
     signals: mpsc::SyncSender<(ChannelBirth, ProcessSignal)>,
     filter: FrameFilter,
+    /// A relay channel's stdout framing (`None` for pty and exec).
+    relay: Option<RelayDecoder>,
+    /// A relay's helper reported a failed connect (before READY).
+    relay_failed: Option<RelayFailure>,
     /// The env + secret preamble, until it is handed over (the go).
     preamble: Option<Vec<u8>>,
     /// A pty's current size.
@@ -838,6 +897,9 @@ struct Chan {
     eof: [bool; 2],
     eof_sent: [bool; 2],
     idle_since: [Option<Instant>; 2],
+    /// The last output read stopped for credit (or the tick's budget), not
+    /// because the streams were empty.
+    credit_held: bool,
     /// Round-robin cursor over the streams.
     next_stream: usize,
     /// Admitted stdin frames not yet handed to the guest, in order.
@@ -848,6 +910,8 @@ struct Chan {
     acks_due: Vec<u64>,
     /// `channel.eof` for stdin arrived; its frame count.
     stdin_eof: Option<u64>,
+    /// A relay's stdin `E` frame was handed over (before its close).
+    stdin_eof_framed: bool,
     stdin_closed: bool,
     violations: u32,
     credential_leases: BTreeSet<String>,
@@ -942,27 +1006,29 @@ fn text(message: DaemonControlMessage) -> Outgoing {
 }
 
 impl Chan {
+    /// Exec and relay channels read stderr for the helper's frames (a
+    /// relay's stderr carries nothing else) and stdout for the output.
     fn streams(&self) -> &'static [ChannelOutput] {
         match (self.kind, self.phase) {
             (ChannelKind::Pty, _) => &[ChannelOutput::Stdout],
             // Before READY only the frame stream is read: the workload's
             // stdout (and its EOF) stays in the pipe until READY.
-            (ChannelKind::Exec, Phase::Opening | Phase::Starting) => &[ChannelOutput::Stderr],
-            (ChannelKind::Exec, _) => &[ChannelOutput::Stdout, ChannelOutput::Stderr],
+            (_, Phase::Opening | Phase::Starting) => &[ChannelOutput::Stderr],
+            (_, _) => &[ChannelOutput::Stdout, ChannelOutput::Stderr],
         }
     }
 
     fn all_streams(&self) -> &'static [ChannelOutput] {
         match self.kind {
             ChannelKind::Pty => &[ChannelOutput::Stdout],
-            ChannelKind::Exec => &[ChannelOutput::Stdout, ChannelOutput::Stderr],
+            _ => &[ChannelOutput::Stdout, ChannelOutput::Stderr],
         }
     }
 
     fn frame_stream(&self) -> ChannelOutput {
         match self.kind {
             ChannelKind::Pty => ChannelOutput::Stdout,
-            ChannelKind::Exec => ChannelOutput::Stderr,
+            _ => ChannelOutput::Stderr,
         }
     }
 
@@ -993,7 +1059,9 @@ impl Chan {
     ) {
         match self.phase {
             Phase::Opening | Phase::Starting | Phase::Running | Phase::Draining { .. } => {
-                let how = if kill || self.birth.is_none() {
+                // A relay's every close is a reset: its helper holds nothing
+                // that should outlive the channel.
+                let how = if kill || self.birth.is_none() || self.kind.is_relay() {
                     ChannelClose::Kill {
                         forget: self.birth.is_some(),
                     }
@@ -1088,6 +1156,15 @@ impl Chan {
                 (Some(status), _) => status,
                 (None, ChannelScope::Killed) if self.kill_ordered => ChannelExitStatus::Signal(9),
                 _ => ChannelExitStatus::Unknown,
+            };
+            // A relay's exit 0 is its clean end only with the stdout eof
+            // and no reset after it (the helper exits 1 then; this holds
+            // even for one that does not).
+            let status = match (&self.relay, status) {
+                (Some(relay), ChannelExitStatus::Code(0)) if !relay.clean() => {
+                    ChannelExitStatus::Code(1)
+                }
+                _ => status,
             };
             let error = self
                 .error
@@ -1277,9 +1354,18 @@ impl Chan {
         if self.pending_in.is_empty()
             && self.stdin_eof == Some(self.input_next)
             && !self.stdin_closed
-            && io.close_stdin()
         {
-            self.stdin_closed = true;
+            // A relay's clean eof is its `E` frame, written before the close.
+            if self.kind.is_relay() && !self.stdin_eof_framed {
+                match io.try_write(relay_end_frame(RelayEnd::Eof)) {
+                    Err(refused) if !refused.closed => return,
+                    // Written, or stdin is gone (the helper's exit follows).
+                    _ => self.stdin_eof_framed = true,
+                }
+            }
+            if io.close_stdin() {
+                self.stdin_closed = true;
+            }
         }
     }
 
@@ -1287,14 +1373,15 @@ impl Chan {
     /// channels are exempt from the host cap and the per-owner share; so is
     /// a starting channel's frame stream (its PROMPT/READY reads carry at
     /// most one data frame, so the cap is exceeded by at most one frame per
-    /// starting channel and a full cap never stalls setups).
+    /// starting channel and a full cap never stalls setups), and a bulk
+    /// channel's first unacknowledged frame ([`BulkCredit::allows`]).
     fn can_send(&self, budget: usize, credit: &BulkCredit) -> bool {
         budget > 0
             && self.io.is_some()
             && self.unacked() < window(self.kind)
             && (self.kind == ChannelKind::Pty
                 || self.phase == Phase::Starting
-                || credit.allows(&self.creator))
+                || credit.allows(&self.creator, self.unacked()))
     }
 
     /// Guest output, read only when its frame can be sent at once.
@@ -1311,6 +1398,7 @@ impl Chan {
         if !self.can_send(*budget, credit) {
             // Unread bytes may be waiting: nothing is proven idle.
             self.idle_since = [None, None];
+            self.credit_held = true;
             return Ok(());
         }
         let mut quiet = 0;
@@ -1357,6 +1445,8 @@ impl Chan {
                 self.idle_since[stream as usize] = None;
             }
         }
+        // Stopped by credit (or the tick's budget), not by empty streams.
+        self.credit_held = self.live() && !self.can_send(*budget, credit);
         Ok(())
     }
 
@@ -1368,11 +1458,21 @@ impl Chan {
         credit: &mut BulkCredit,
         outbox: Outbox<'_>,
     ) -> Result<()> {
+        let mut end = None;
         let data = if stream == self.frame_stream() {
             let (data, frames) = self.filter.feed(bytes);
             for frame in frames {
                 self.on_frame(frame, now, outbox);
             }
+            // A relay's stderr carries only its frames: nothing else travels.
+            if self.kind.is_relay() {
+                Vec::new()
+            } else {
+                data
+            }
+        } else if let Some(relay) = &mut self.relay {
+            let (data, relay_end) = relay.feed(bytes);
+            end = relay_end;
             data
         } else {
             bytes.to_vec()
@@ -1380,7 +1480,44 @@ impl Chan {
         if self.live() && !data.is_empty() {
             self.data_frame(stream, &data, now, credit, outbox)?;
         }
+        if let Some(end) = end {
+            self.on_relay_end(end, outbox);
+        }
         Ok(())
+    }
+
+    /// A relay's guest-to-client stream reached an end (after its data).
+    /// The eof is not final: stdout stays read until the helper's pipe
+    /// ends, so a reset after it (the connection failed while input still
+    /// flowed) is seen and the exit reports it ([`Self::finish`]).
+    fn on_relay_end(&mut self, end: RelayEnd, outbox: Outbox<'_>) {
+        let index = ChannelOutput::Stdout as usize;
+        if self.eof[index] || !self.live() {
+            return;
+        }
+        if end == RelayEnd::Corrupt {
+            self.decide(
+                None,
+                Some((SandboxErrorCode::Internal, "channel relay failed".into())),
+                true,
+            );
+            return;
+        }
+        let eof_seen = self.relay.as_ref().is_some_and(RelayDecoder::eof_seen);
+        if eof_seen && !self.eof_sent[index] {
+            self.eof_sent[index] = true;
+            outbox.push(text(DaemonControlMessage::ChannelEof {
+                fence: self.fence.clone(),
+                stream: ChannelStream::Stdout,
+                frames: self.out[index].sent,
+            }));
+        }
+        // A reset ends the stream: nothing may follow it. Without an eof
+        // before it the exit tells the client to reset; after one, the
+        // exit's non-zero code does.
+        if end == RelayEnd::Reset {
+            self.eof[index] = true;
+        }
     }
 
     fn on_frame(&mut self, frame: GuestFrame, now: Instant, outbox: Outbox<'_>) {
@@ -1399,6 +1536,11 @@ impl Chan {
                             cols: size.cols(),
                         }),
                     }));
+                }
+            }
+            GuestFrame::Failed(failure) => {
+                if self.phase == Phase::Starting && self.kind.is_relay() {
+                    self.relay_failed = Some(failure);
                 }
             }
             GuestFrame::Exit(status) => {
@@ -1436,7 +1578,7 @@ impl Chan {
         self.out[index].sent += 1;
         // Stamped with the tick's clock (read after its lookups).
         self.out[index].unacked_since.push_back(now);
-        if self.kind == ChannelKind::Exec {
+        if self.kind.is_bulk() {
             credit.charge(&self.creator, 1);
         }
         outbox.push(Outgoing::Binary(frame));
@@ -1453,12 +1595,28 @@ impl Chan {
         let index = stream as usize;
         if stream == self.frame_stream() {
             let rest = self.filter.finish();
-            if self.birth.is_some() && !rest.is_empty() {
+            if self.birth.is_some() && !rest.is_empty() && !self.kind.is_relay() {
                 self.data_frame(stream, &rest, now, credit, outbox)?;
             }
         }
+        if stream == ChannelOutput::Stdout
+            && let Some(relay) = &mut self.relay
+        {
+            // A relay's stdout ending without its end frame was reset.
+            let end = relay.finish();
+            self.on_relay_end(end, outbox);
+        }
         self.eof[index] = true;
         if self.phase == Phase::Starting {
+            if let Some(failure) = self.relay_failed {
+                // The relay could not connect and exited on its own. Its
+                // secret-bound FAILED proves the wrapper passed the cancel
+                // fence inside its scope, as READY does: a normal finish.
+                self.error = Some(relay_error(failure));
+                self.decided = true;
+                self.cut(ChannelClose::Finish);
+                return Ok(());
+            }
             // The launcher or wrapper ended before READY.
             self.setup_failed();
             return Ok(());
@@ -1560,6 +1718,18 @@ fn exit_frame(
         reaped,
         frames,
     }))
+}
+
+/// The fields of a `channel.open` beyond its fence (wire-validated).
+struct OpenRequest {
+    kind: ChannelKind,
+    argv: Option<Vec<String>>,
+    login: bool,
+    cwd: Option<String>,
+    env: Option<std::collections::BTreeMap<String, String>>,
+    pty: Option<ChannelPtyParams>,
+    port: Option<u16>,
+    path: Option<String>,
 }
 
 /// Per-connection channel dispatch (lives on the socket-loop thread).
@@ -1755,7 +1925,21 @@ impl ChannelHost {
                 cwd,
                 env,
                 pty,
-            } => self.open(fence, kind, argv, login, cwd, env, pty),
+                port,
+                path,
+            } => self.open(
+                fence,
+                OpenRequest {
+                    kind,
+                    argv,
+                    login,
+                    cwd,
+                    env,
+                    pty,
+                    port,
+                    path,
+                },
+            ),
             ServerControlMessage::ChannelAck { fence, stream, seq } => {
                 let Some(chan) = self.channel_for(&fence)? else {
                     return Ok(Vec::new());
@@ -1910,6 +2094,15 @@ impl ChannelHost {
                     chan.violation("channel input beyond its window");
                     return Ok(());
                 }
+                // A relay's stdin is framed like its stdout, so its helper
+                // tells the client's eof (the `E` before the close) from a
+                // stdin that just ends (an abort: a reset of the guest
+                // connection).
+                let body = if chan.kind.is_relay() && !body.is_empty() {
+                    relay_data_frame(&body)
+                } else {
+                    body
+                };
                 chan.pending_in.push_back((metadata.seq, body));
             }
             // The workload is gone: dropped, its credit returned.
@@ -1923,17 +2116,17 @@ impl ChannelHost {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn open(
-        &mut self,
-        fence: ChannelFence,
-        kind: ChannelKind,
-        argv: Option<Vec<String>>,
-        login: bool,
-        cwd: Option<String>,
-        env: Option<std::collections::BTreeMap<String, String>>,
-        pty: Option<ChannelPtyParams>,
-    ) -> Result<Vec<Outgoing>> {
+    fn open(&mut self, fence: ChannelFence, request: OpenRequest) -> Result<Vec<Outgoing>> {
+        let OpenRequest {
+            kind,
+            argv,
+            login,
+            cwd,
+            env,
+            pty,
+            port,
+            path,
+        } = request;
         let key = key(&fence);
         if !self.connection_matches(&fence)? {
             self.audit("foreign channel open");
@@ -1975,8 +2168,8 @@ impl ChannelHost {
             // A reused id would collide with a scope still being cleaned up.
             return refuse(SandboxErrorCode::StateConflict, "channel id is in use");
         }
-        let (mode, size) = match (kind, pty) {
-            (ChannelKind::Pty, Some(pty)) => match PtySize::new(pty.rows, pty.cols) {
+        let (mode, size) = match (kind, pty, port, path) {
+            (ChannelKind::Pty, Some(pty), None, None) => match PtySize::new(pty.rows, pty.cols) {
                 Ok(size) => (
                     ChannelMode::Pty {
                         size,
@@ -1986,9 +2179,14 @@ impl ChannelHost {
                 ),
                 Err(_) => return refuse(SandboxErrorCode::ProtocolError, "invalid channel size"),
             },
-            (ChannelKind::Exec, None) => (ChannelMode::Exec, None),
+            (ChannelKind::Exec, None, None, None) => (ChannelMode::Exec, None),
+            // The target is always the guest's own loopback or socket path:
+            // no host travels, so none can be chosen.
+            (ChannelKind::Tcp, None, Some(port), None) => (ChannelMode::Tcp { port }, None),
+            (ChannelKind::Unix, None, None, Some(path)) => (ChannelMode::Unix { path }, None),
             _ => return refuse(SandboxErrorCode::ProtocolError, "invalid channel kind"),
         };
+        let relay = kind.is_relay();
         // The journal binding is the only identity source.
         let Some(record) = self.journal.lease(sandbox_id) else {
             return refuse(
@@ -2030,16 +2228,21 @@ impl ChannelHost {
                 "Unsupported capability: channels",
             );
         }
-        let mut process_env =
+        // A relay starts no workload: it gets no environment at all (no
+        // private defaults, no login values), so none can leak through it.
+        let mut process_env = if relay {
+            Vec::new()
+        } else {
             match self
                 .journal
                 .execution_env(sandbox_id, generation, record.private_config.as_ref())
             {
                 Ok(env) => env,
                 Err(_) => return refuse(SandboxErrorCode::ProtocolError, "channel setup failed"),
-            };
+            }
+        };
         let mut credential_leases = BTreeSet::new();
-        if let Some(service) = &self.credentials {
+        if let Some(service) = self.credentials.as_ref().filter(|_| !relay) {
             match service.env_with_leases(sandbox_id) {
                 Ok((extra, leases)) => {
                     for (name, value) in extra {
@@ -2166,6 +2369,8 @@ impl ChannelHost {
             key,
             Chan {
                 filter: FrameFilter::new(&nonce, &secret),
+                relay: relay.then(RelayDecoder::new),
+                relay_failed: None,
                 fence,
                 kind,
                 phase: Phase::Opening,
@@ -2182,12 +2387,14 @@ impl ChannelHost {
                 eof: [false; 2],
                 eof_sent: [false; 2],
                 idle_since: [None; 2],
+                credit_held: false,
                 next_stream: 0,
                 pending_in: VecDeque::new(),
                 input_next: 0,
                 input_acked: 0,
                 acks_due: Vec::new(),
                 stdin_eof: None,
+                stdin_eof_framed: false,
                 stdin_closed: false,
                 violations: 0,
                 credential_leases,
@@ -2445,14 +2652,19 @@ fn step(
                 }
             }
         }
+        // A relay's stream still short of its end, held only by credit:
+        // a slow reader is not cut at the drain cap (end_due).
+        let held =
+            chan.kind.is_relay() && !chan.eof[ChannelOutput::Stdout as usize] && chan.credit_held;
         if end_due(
             chan.phase,
             chan.all_streams(),
             chan.eof,
             chan.idle_since,
+            held,
             now,
         ) {
-            if chan.kind == ChannelKind::Exec {
+            if chan.kind.is_bulk() {
                 credit.refund(&chan.creator, chan.unacked());
             }
             chan.end_naturally();
@@ -2465,7 +2677,7 @@ fn step(
 fn bulk_credit(channels: &HashMap<(String, String), Chan>) -> BulkCredit {
     let mut credit = BulkCredit::default();
     for chan in channels.values() {
-        if chan.kind == ChannelKind::Exec && chan.live() {
+        if chan.kind.is_bulk() && chan.live() {
             credit.charge(&chan.creator, chan.unacked());
         }
     }

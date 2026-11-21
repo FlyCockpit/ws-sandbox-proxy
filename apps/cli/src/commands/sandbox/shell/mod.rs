@@ -236,7 +236,7 @@ pub fn shell(args: &ShellArgs) -> Result<()> {
 }
 
 /// From the connect on every uncoded failure is wssp-side: exit 125.
-fn wssp_side(error: anyhow::Error) -> anyhow::Error {
+pub(super) fn wssp_side(error: anyhow::Error) -> anyhow::Error {
     if crate::exit::code_for(&error) == ExitCode::Failure {
         error.context(CodedError::new(ExitCode::ExecFailure))
     } else {
@@ -244,8 +244,19 @@ fn wssp_side(error: anyhow::Error) -> anyhow::Error {
     }
 }
 
+/// What a connect is for, in the missing-scope hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Purpose {
+    Shell,
+    Forward,
+}
+
 /// A 403 on a login without the connect scope: say how to get it.
-fn scope_hint(credential: &UserCredential, error: anyhow::Error) -> anyhow::Error {
+fn scope_hint(
+    credential: &UserCredential,
+    error: anyhow::Error,
+    purpose: Purpose,
+) -> anyhow::Error {
     let forbidden = crate::api::api_error_of(&error).is_some_and(|api| api.status == 403);
     if !forbidden {
         return error;
@@ -254,30 +265,41 @@ fn scope_hint(credential: &UserCredential, error: anyhow::Error) -> anyhow::Erro
         (CredentialSource::File, Some(login)) => !login.scopes.iter().any(|s| s == CONNECT_SCOPE),
         _ => false,
     };
-    let message = if lacks {
-        "this login cannot open shells; log in again (`wssp login`) to get shell access"
-    } else if credential.source == CredentialSource::Env {
-        "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get shell access"
-    } else {
-        return error;
+    let message = match (purpose, lacks, credential.source == CredentialSource::Env) {
+        (Purpose::Shell, true, _) => {
+            "this login cannot open shells; log in again (`wssp login`) to get shell access"
+        }
+        (Purpose::Forward, true, _) => {
+            "this login cannot forward ports; log in again (`wssp login`) to get port forwarding"
+        }
+        (Purpose::Shell, false, true) => {
+            "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get shell access"
+        }
+        (Purpose::Forward, false, true) => {
+            "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get port forwarding"
+        }
+        (_, false, false) => return error,
     };
     error.context(message)
 }
 
 /// Connect to `target` as an id, else as a sandbox name.
-fn connect(credential: &UserCredential, target: &str) -> Result<Connection> {
+pub(super) fn connect(
+    credential: &UserCredential,
+    target: &str,
+    purpose: Purpose,
+) -> Result<Connection> {
     match Connection::connect(credential, target) {
         Ok(connection) => Ok(connection),
         Err(error) if crate::api::api_error_of(&error).is_some_and(|api| api.status == 404) => {
             match resolve_name(credential, target) {
-                Ok(Some(id)) if id != target => {
-                    Connection::connect(credential, &id).map_err(|e| scope_hint(credential, e))
-                }
+                Ok(Some(id)) if id != target => Connection::connect(credential, &id)
+                    .map_err(|e| scope_hint(credential, e, purpose)),
                 // Not a name either (or names cannot be listed): the 404 stands.
                 _ => Err(error),
             }
         }
-        Err(error) => Err(scope_hint(credential, error)),
+        Err(error) => Err(scope_hint(credential, error, purpose)),
     }
 }
 
@@ -533,7 +555,7 @@ fn spawn_signals(_events: mpsc::Sender<Local>) -> Result<()> {
 }
 
 #[cfg(unix)]
-mod signals {
+pub(super) mod signals {
     pub const INT: i32 = signal_hook::consts::SIGINT;
     pub const TERM: i32 = signal_hook::consts::SIGTERM;
     pub const HUP: i32 = signal_hook::consts::SIGHUP;
@@ -541,7 +563,7 @@ mod signals {
 }
 
 #[cfg(not(unix))]
-mod signals {
+pub(super) mod signals {
     pub const INT: i32 = 2;
     pub const TERM: i32 = 15;
     pub const HUP: i32 = 1;
@@ -563,7 +585,7 @@ fn notice_line(code: Notice, raw: bool) -> String {
 
 /// One shell session: connect, open, pump, and the exit status.
 fn session(credential: &UserCredential, target: &str, request: &Request) -> Result<i32> {
-    let mut connection = connect(credential, target)?;
+    let mut connection = connect(credential, target, Purpose::Shell)?;
     let (events_tx, events) = mpsc::channel::<Local>();
     // Signals are ours before the terminal goes raw, so none kills the
     // process with the terminal still raw (until then a Ctrl-C closes the

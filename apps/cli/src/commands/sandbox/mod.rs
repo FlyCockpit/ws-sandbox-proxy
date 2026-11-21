@@ -7,6 +7,7 @@
 
 mod exec;
 mod files;
+mod forward;
 mod ports;
 mod shell;
 
@@ -41,6 +42,8 @@ pub enum SandboxCommand {
     Exec(exec::ExecArgs),
     /// Open a shell in a sandbox, or run a command there interactively; exits with the remote status.
     Shell(shell::ShellArgs),
+    /// Forward local ports (or a local Unix socket) to ports on a sandbox's loopback.
+    Forward(forward::ForwardArgs),
     /// List the commands running in a sandbox.
     Ps(exec::PsArgs),
     /// Print a command's retained output by operation id.
@@ -159,6 +162,7 @@ pub fn run(args: &Args) -> Result<()> {
         SandboxCommand::Get(args) => get(args),
         SandboxCommand::Exec(args) => exec::exec(args),
         SandboxCommand::Shell(args) => shell::shell(args),
+        SandboxCommand::Forward(args) => forward::forward(args),
         SandboxCommand::Ps(args) => exec::ps(args),
         SandboxCommand::Logs(args) => exec::logs(args),
         SandboxCommand::Stop(args) => lifecycle(args, Lifecycle::Stop),

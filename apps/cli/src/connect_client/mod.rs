@@ -694,6 +694,21 @@ impl Connection {
         Ok(channel)
     }
 
+    /// Open a relay channel to guest loopback `port` (`tcp`) or the guest
+    /// Unix socket `path` (`unix`); queued until the next flush. Its `ready`
+    /// (or a refusal `exit`) arrives as an event.
+    pub fn open_relay(&mut self, port: Option<u16>, path: Option<String>) -> Result<u32> {
+        let (channel, frame) = self.mux.open_relay(port, path)?;
+        self.control(&frame)?;
+        Ok(channel)
+    }
+
+    /// Drop an ended channel's state once its owed acks were queued
+    /// ([`mux::Mux::forget`]).
+    pub fn forget(&mut self, channel: u32) {
+        self.mux.forget(channel);
+    }
+
     /// Wait up to [`POLL_SLICE`] for frames and return their events in
     /// delivery order.
     pub fn poll(&mut self) -> Result<Vec<Event>> {
@@ -812,6 +827,16 @@ impl Connection {
             return Ok(());
         }
         self.control(&ClientControl::Close { channel })
+    }
+
+    /// Give a channel up from this side (its local end failed or a
+    /// teardown): its output is discarded and acknowledged
+    /// ([`mux::Mux::discard`]), and a `close` is sent unless that released
+    /// its exit already. Returns the events released (a held eof or exit).
+    pub fn abort_channel(&mut self, channel: u32) -> Result<Vec<Event>> {
+        let released = self.mux.discard(channel);
+        self.close_channel(channel)?;
+        Ok(released)
     }
 
     /// Queue the owed acks (they leave with the next write or flush), so

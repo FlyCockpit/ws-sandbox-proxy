@@ -28,12 +28,22 @@ pub const DATA_MAX_BYTES: usize = sandbox_protocol::CHANNEL_BULK_DATA_MAX_BYTES;
 /// JavaScript's largest exact integer: every sequence and count stays below it.
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-/// A channel kind of this release (`tcp`/`unix` come with a new hello kind).
+/// A channel kind: a guest process (`pty`, `exec`) or a relay to a guest
+/// loopback TCP port (`tcp`) or guest Unix socket (`unix`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Pty,
     Exec,
+    Tcp,
+    Unix,
+}
+
+impl Kind {
+    /// A relay: stdin and stdout only, no signals, no terminal.
+    pub fn is_relay(self) -> bool {
+        matches!(self, Self::Tcp | Self::Unix)
+    }
 }
 
 /// A guest output stream.
@@ -234,10 +244,11 @@ pub struct PerKind {
 }
 
 impl PerKind {
+    /// The value for `kind`: every bulk kind (all but `pty`) uses `exec`'s.
     pub fn of(self, kind: Kind) -> u64 {
         match kind {
             Kind::Pty => self.pty,
-            Kind::Exec => self.exec,
+            Kind::Exec | Kind::Tcp | Kind::Unix => self.exec,
         }
     }
 
@@ -300,7 +311,9 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 )]
 pub enum ClientControl {
     /// `argv` is structural (never a shell string); absent: the guest shell,
-    /// a login shell with `login: true`. `pty` exactly for `kind: "pty"`.
+    /// a login shell with `login: true`. `pty` exactly for `kind: "pty"`. A
+    /// relay carries exactly its target (`tcp`: `port`; `unix`: `path`) and
+    /// nothing else: there is no host, the target is the guest's own.
     Open {
         channel: u32,
         kind: Kind,
@@ -334,6 +347,18 @@ pub enum ClientControl {
             skip_serializing_if = "Option::is_none"
         )]
         pty: Option<PtyParams>,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        port: Option<u16>,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        path: Option<String>,
     },
     /// Cumulative output credit: the highest delivered `seq` of `stream`.
     Ack {
@@ -369,11 +394,31 @@ impl ClientControl {
             Self::Open {
                 kind,
                 argv,
+                login,
                 cwd,
                 env,
                 pty,
+                port,
+                path,
                 ..
             } => {
+                if kind.is_relay() {
+                    let target = match kind {
+                        Kind::Tcp => port.is_some_and(|port| port > 0) && path.is_none(),
+                        _ => {
+                            port.is_none()
+                                && path
+                                    .as_deref()
+                                    .is_some_and(sandbox_protocol::valid_channel_unix_path)
+                        }
+                    };
+                    return target
+                        && argv.is_none()
+                        && login.is_none()
+                        && cwd.is_none()
+                        && env.is_none()
+                        && pty.is_none();
+                }
                 let pty_ok = match (kind, pty) {
                     (Kind::Pty, Some(pty)) => {
                         sandbox_protocol::valid_terminal_size(pty.rows, pty.cols)
@@ -383,6 +428,8 @@ impl ClientControl {
                     _ => false,
                 };
                 pty_ok
+                    && port.is_none()
+                    && path.is_none()
                     && argv
                         .as_deref()
                         .is_none_or(sandbox_protocol::valid_channel_argv)

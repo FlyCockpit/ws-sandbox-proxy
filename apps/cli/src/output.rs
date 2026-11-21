@@ -61,6 +61,12 @@ pub fn json<T: Serialize>(value: &T) -> Result<()> {
     writeln!(out).context("writing to stdout")
 }
 
+/// One JSON object as a stdout line [`json`] would write (for a writer of
+/// its own, such as `sandbox forward`'s line writer).
+pub fn json_line<T: Serialize>(value: &T) -> Result<String> {
+    Ok(crate::logging::redact_product_credentials(&encode(value)?))
+}
+
 /// The one JSON encoder of command output (stdout documents, stderr error lines).
 fn encode<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).context("serializing JSON output")

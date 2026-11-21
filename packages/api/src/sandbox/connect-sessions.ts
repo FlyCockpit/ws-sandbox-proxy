@@ -36,6 +36,10 @@ export type ConnectSessionEnd = {
   closeIntent: string;
   ptyChannels: number;
   execChannels: number;
+  /** `tcp` and `unix` relay channels. */
+  relayChannels: number;
+  /** Distinct guest tcp ports relayed (the first `CONNECT_AUDIT_FORWARDED_PORTS_MAX`). */
+  forwardedPorts: readonly number[];
   bytesIn: number;
   bytesOut: number;
 };
@@ -83,11 +87,30 @@ function auditWrite<T>(write: (tx: Prisma.TransactionClient) => Promise<T>): Pro
 
 const counter = (value: number) => (Number.isSafeInteger(value) && value > 0 ? value : 0);
 
+/** At most this many distinct forwarded guest ports are kept per connection. */
+export const CONNECT_AUDIT_FORWARDED_PORTS_MAX = 16;
+
+/**
+ * The audit's port list: valid tcp ports, distinct, in first-seen order, the
+ * first `CONNECT_AUDIT_FORWARDED_PORTS_MAX` only.
+ */
+export function forwardedPortsColumn(ports: readonly number[]): number[] {
+  const kept: number[] = [];
+  for (const port of ports) {
+    if (kept.length >= CONNECT_AUDIT_FORWARDED_PORTS_MAX) break;
+    if (Number.isInteger(port) && port >= 1 && port <= 65_535 && !kept.includes(port))
+      kept.push(port);
+  }
+  return kept;
+}
+
 const endColumns = (end: ConnectSessionEnd) => ({
   closedAt: end.closedAt,
   closeIntent: end.closeIntent.slice(0, 64),
   ptyChannels: counter(end.ptyChannels),
   execChannels: counter(end.execChannels),
+  relayChannels: counter(end.relayChannels),
+  forwardedPorts: forwardedPortsColumn(end.forwardedPorts),
   bytesIn: BigInt(counter(end.bytesIn)),
   bytesOut: BigInt(counter(end.bytesOut)),
 });
@@ -146,6 +169,8 @@ const connectSessionSelect = {
   closeIntent: true,
   ptyChannels: true,
   execChannels: true,
+  relayChannels: true,
+  forwardedPorts: true,
   bytesIn: true,
   bytesOut: true,
 } satisfies Prisma.SandboxConnectSessionSelect;
@@ -164,6 +189,9 @@ export type SandboxConnectSessionDto = {
   closeIntent: string | null;
   ptyChannels: number;
   execChannels: number;
+  relayChannels: number;
+  /** Distinct guest tcp ports relayed (at most 16); never Unix socket paths. */
+  forwardedPorts: number[];
   /** Decimal strings (the counters are 64-bit). */
   bytesIn: string;
   bytesOut: string;
@@ -225,6 +253,8 @@ export const listSandboxConnectSessions = serviceProcedure(
         closeIntent: row.closeIntent,
         ptyChannels: row.ptyChannels,
         execChannels: row.execChannels,
+        relayChannels: row.relayChannels,
+        forwardedPorts: forwardedPortsColumn(row.forwardedPorts ?? []),
         bytesIn: row.bytesIn.toString(),
         bytesOut: row.bytesOut.toString(),
       })),

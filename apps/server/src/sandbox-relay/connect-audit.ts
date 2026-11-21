@@ -23,6 +23,7 @@ import {
   type ConnectSessionClose,
   type ConnectSessionEnd,
   type ConnectSessionOpen,
+  forwardedPortsColumn,
   recordConnectSessionClose,
   recordConnectSessionOpen,
 } from "@wssp/api/sandbox/connect-sessions";
@@ -44,6 +45,13 @@ export type ConnectAuditClose = ConnectAuditOpen & {
   intent: string;
   ptyChannels: number;
   execChannels: number;
+  /** `tcp` and `unix` relay channels (never counted in `execChannels`). */
+  relayChannels: number;
+  /**
+   * The guest tcp ports relayed. Kept distinct, the first 16 seen; a guest
+   * Unix socket path is never passed here.
+   */
+  forwardedPorts: readonly number[];
   bytesIn: number;
   bytesOut: number;
 };
@@ -199,9 +207,12 @@ export class ConnectAuditRecorder {
         intent: close.intent,
         ptyChannels: close.ptyChannels,
         execChannels: close.execChannels,
+        relayChannels: close.relayChannels,
+        forwardedPorts: forwardedPortsColumn(close.forwardedPorts).join(","),
         bytesIn: close.bytesIn,
         bytesOut: close.bytesOut,
       });
+      const forwardedPorts = forwardedPortsColumn(close.forwardedPorts);
       const entry = this.tracked.get(close.connectionId);
       // Not admitted, or its open was refused/failed: no row to complete.
       if (!entry || entry.end) return;
@@ -210,6 +221,8 @@ export class ConnectAuditRecorder {
         closeIntent: close.intent,
         ptyChannels: close.ptyChannels,
         execChannels: close.execChannels,
+        relayChannels: close.relayChannels,
+        forwardedPorts,
         bytesIn: close.bytesIn,
         bytesOut: close.bytesOut,
       };

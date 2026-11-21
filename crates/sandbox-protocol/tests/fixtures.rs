@@ -459,10 +459,26 @@ fn channels_capability_is_optional_strict_and_echoed() {
         panic!("not hello");
     };
     assert_eq!(daemon.capabilities.channels, None);
+    // Increment 2's relay kinds ride the same offer.
+    let relays = with(serde_json::json!({ "kinds": ["pty", "exec", "tcp", "unix"] }));
+    let DaemonControlMessage::Hello { daemon, .. } = parse_daemon_control(&relays).unwrap() else {
+        panic!("not hello");
+    };
+    assert_eq!(
+        daemon.capabilities.channels.map(|c| c.kinds),
+        Some(vec![
+            sandbox_protocol::ChannelKind::Pty,
+            sandbox_protocol::ChannelKind::Exec,
+            sandbox_protocol::ChannelKind::Tcp,
+            sandbox_protocol::ChannelKind::Unix
+        ])
+    );
     for bad in [
         serde_json::json!({ "kinds": [] }),
         serde_json::json!({ "kinds": ["pty", "pty"] }),
         serde_json::json!({ "kinds": ["shell"] }),
+        serde_json::json!({ "kinds": ["udp"] }),
+        serde_json::json!({ "kinds": ["tcp", "tcp"] }),
         serde_json::json!({ "kinds": ["exec"], "extra": 1 }),
         serde_json::json!(null),
     ] {

@@ -187,6 +187,22 @@ wssp sandbox shell [OPTIONS] <SANDBOX> [-- <ARGV>...]
 | `--json` | Report a failure as one JSON line on stderr (the session itself is raw bytes) |  |
 | `<ARGV>` | The command and its arguments, after `--` (default: a login shell) |  |
 
+### `wssp sandbox forward`
+
+Forward local ports (or a local Unix socket) to ports on a sandbox's loopback.
+
+```text
+wssp sandbox forward [OPTIONS] <SANDBOX> <PORTS>...
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `<SANDBOX>` | Sandbox id or name | required |
+| `<PORTS>` | `<guestPort>[:<localPort>]` (repeatable; the local port defaults to the guest port, `0` picks a free one) | required |
+| `--address <ADDR>` | Local address to listen on (an IP address; default `127.0.0.1`; anything but loopback warns) |  |
+| `--unix <PATH>` | Listen on a Unix socket at PATH (mode 0600) instead of a TCP port; one guest port only |  |
+| `--json` | Print the listening addresses as JSON lines; report a failure as one JSON line on stderr |  |
+
 ### `wssp sandbox ps`
 
 List the commands running in a sandbox.

@@ -209,6 +209,57 @@
         }
       },
       "intent": "protocol_violation"
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-5",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "tcp",
+      "login": false,
+      "port": 5432
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-6",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "unix",
+      "login": false,
+      "path": "/run/postgresql/.s.PGSQL.5432"
+    },
+    {
+      "type": "channel.open",
+      "fence": {
+        "channelId": "chan-7",
+        "connectionId": "conn-1",
+        "hostId": "host-1",
+        "epoch": 7,
+        "target": {
+          "kind": "sandbox",
+          "sandboxId": "sbx-1",
+          "generation": 2
+        }
+      },
+      "kind": "tcp",
+      "login": false,
+      "port": 65535
     }
   ],
   "daemon": [
@@ -933,6 +984,318 @@
           }
         },
         "intent": "normal"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 0
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 65536
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": "5432"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "path": "/run/x.sock"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": true,
+        "port": 5432
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 5432,
+        "argv": ["nc", "127.0.0.1", "5432"]
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 5432,
+        "cwd": "/"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 5432,
+        "env": {
+          "LANG": "C"
+        }
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "tcp",
+        "login": false,
+        "port": 5432,
+        "host": "10.0.0.1"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "login": false,
+        "path": "run/x.sock"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "login": false,
+        "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "login": false,
+        "path": "/a\u0000b"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "login": false,
+        "port": 5432,
+        "path": "/run/x.sock"
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "login": false
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-5",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "unix",
+        "path": null
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "port": 22
+      },
+      {
+        "type": "channel.open",
+        "fence": {
+          "channelId": "chan-3",
+          "connectionId": "conn-1",
+          "hostId": "host-1",
+          "epoch": 7,
+          "target": {
+            "kind": "sandbox",
+            "sandboxId": "sbx-1",
+            "generation": 2
+          }
+        },
+        "kind": "exec",
+        "argv": ["git", "upload-pack", "/srv/repo.git"],
+        "login": false,
+        "path": "/run/x.sock"
       }
     ],
     "daemon": [

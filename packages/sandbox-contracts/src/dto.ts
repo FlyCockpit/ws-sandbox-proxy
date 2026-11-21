@@ -317,6 +317,8 @@ export const OPERATION_ERROR_CODES = [
   "credential_capture_failed",
   // Disk offload: a cached copy no longer matches.
   "disk_stale",
+  // A forwarded connection (a `tcp`/`unix` channel) found nothing listening.
+  "connection_refused",
   // Disk offload (§8.7): a restore did not boot; its cleanup is pending.
   "restore_boot_failed",
   "restore_cleanup_pending",

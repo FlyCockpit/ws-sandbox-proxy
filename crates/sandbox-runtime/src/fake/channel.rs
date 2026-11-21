@@ -8,6 +8,13 @@
 //! - `exec` is `cat`: stdin bytes come back on stdout; stdin EOF ends both
 //!   streams and the process exits 0.
 //! - `pty` echoes input; a `^D` byte exits 0.
+//! - `tcp`/`unix` relay to an echo service: stdin is framed like the real
+//!   helper's (data frames, then `E`); its bytes come back as relay data
+//!   frames on stdout; the `E` and the stdin close make the service close
+//!   too (the relay EOF frame), and the relay exits 0. A stdin close without
+//!   the `E`, or a framing error, is an abort: a reset, exit 1. A refused connect
+//!   ([`super::FakeRuntime::refuse_channel_connect`]) reports `FAILED` and
+//!   exits before READY.
 //!
 //! [`FakeChannelControl`] scripts everything else (output, exits, signal
 //! support, uncertain kills) and observes stdin, sizes, signals and closes.
@@ -22,7 +29,8 @@ use sandbox_protocol::SandboxErrorCode;
 use crate::channel::{
     CHANNEL_EXEC_READ_BYTES, CHANNEL_PTY_READ_BYTES, ChannelBirth, ChannelClose, ChannelCustody,
     ChannelEnd, ChannelExitStatus, ChannelIo, ChannelMode, ChannelOutput, ChannelRead,
-    ChannelScope, ChannelSignalOutcome, WriteRefused, guest_frame_bytes,
+    ChannelScope, ChannelSignalOutcome, RelayDecoder, RelayEnd, RelayFailure, WriteRefused,
+    guest_frame_bytes, relay_data_frame, relay_end_frame,
 };
 use crate::error::RuntimeError;
 use crate::{ProcessSignal, PtySize};
@@ -33,6 +41,10 @@ const FAKE_STDIN_CAPACITY: usize = 32;
 #[derive(Debug)]
 struct State {
     pty: bool,
+    /// A relay channel (`tcp`/`unix`): framed stdout, no workload.
+    relay: bool,
+    /// The relay's connect fails this way (after the preamble).
+    refuse: Option<RelayFailure>,
     nonce: String,
     argv: Option<Vec<String>>,
     login: bool,
@@ -49,6 +61,8 @@ struct State {
     secret: Option<String>,
     stdin: Vec<u8>,
     pending_stdin: VecDeque<Vec<u8>>,
+    /// A relay's stdin framing (the host's `D` frames and `E`).
+    relay_stdin: RelayDecoder,
     stdin_closed: bool,
     hold_stdin: bool,
     input_ready: bool,
@@ -107,6 +121,14 @@ impl State {
         }
     }
 
+    /// The relay helper's end: its end frame (if any), EXIT and both streams.
+    fn relay_exit(&mut self, end: Option<RelayEnd>, code: i32) {
+        if let Some(end) = end {
+            self.push(0, &relay_end_frame(end));
+        }
+        self.exit_with(ChannelExitStatus::Code(code), true);
+    }
+
     /// The fake workload reads its stdin (unless held): `cat` echo, `^D` on
     /// a pty.
     fn consume(&mut self) {
@@ -114,13 +136,29 @@ impl State {
             return;
         }
         while let Some(bytes) = self.pending_stdin.pop_front() {
+            let bytes = if self.relay {
+                let (data, end) = self.relay_stdin.feed(&bytes);
+                if matches!(end, Some(RelayEnd::Reset | RelayEnd::Corrupt)) {
+                    // Not the host's framing: the helper aborts.
+                    self.pending_stdin.clear();
+                    self.relay_exit(Some(RelayEnd::Reset), 1);
+                    return;
+                }
+                data
+            } else {
+                bytes
+            };
             self.stdin.extend_from_slice(&bytes);
             if self.pty && bytes.contains(&0x04) {
                 self.pending_stdin.clear();
                 self.exit_with(ChannelExitStatus::Code(0), true);
                 return;
             }
-            if self.echo {
+            if self.echo && self.relay {
+                if !bytes.is_empty() {
+                    self.push(0, &relay_data_frame(&bytes));
+                }
+            } else if self.echo {
                 self.push(0, &bytes);
             }
         }
@@ -136,6 +174,16 @@ impl State {
         self.preamble.clear();
         self.env = Some(env);
         self.secret = Some(secret);
+        if let Some(failure) = self.refuse.filter(|_| self.relay) {
+            let code = match failure {
+                RelayFailure::Refused => "refused",
+                RelayFailure::Denied => "denied",
+                RelayFailure::Failed => "failed",
+            };
+            self.frame(&format!("FAILED {code}"));
+            self.closed = [true, true];
+            return;
+        }
         let pid = self.pid;
         self.frame(&format!(
             "READY {pid} {} {} 1000",
@@ -323,6 +371,23 @@ impl FakeChannelControl {
     pub fn exit_holding(&self, status: ChannelExitStatus) {
         self.lock().exit_with(status, false);
     }
+    /// Relay: the guest service sends `bytes` (one relay data frame).
+    pub fn relay_emit(&self, bytes: &[u8]) {
+        self.lock().push(0, &relay_data_frame(bytes));
+    }
+    /// Relay: the guest service shuts its write side (it keeps reading).
+    pub fn relay_eof(&self) {
+        self.lock().push(0, &relay_end_frame(RelayEnd::Eof));
+    }
+    /// Relay: the connection resets; the helper exits 1.
+    pub fn relay_reset(&self) {
+        self.lock().relay_exit(Some(RelayEnd::Reset), 1);
+    }
+    /// Relay: both directions ended; the helper exits 0 (after a
+    /// [`Self::relay_eof`] and the client's stdin EOF).
+    pub fn relay_done(&self) {
+        self.lock().relay_exit(None, 0);
+    }
     /// The launcher dies before the prompt: the frame stream ends (with a
     /// `REFUSED` frame when `refused`).
     pub fn fail_setup(&self, refused: bool) {
@@ -349,6 +414,8 @@ pub(super) struct FakeChannelCustody {
 
 pub(super) struct FakeOpen<'a> {
     pub mode: &'a ChannelMode,
+    /// A relay's connect fails this way.
+    pub refuse: Option<RelayFailure>,
     pub nonce: &'a str,
     pub argv: Option<Vec<String>>,
     pub login: bool,
@@ -361,11 +428,15 @@ pub(super) struct FakeOpen<'a> {
 pub(super) fn open(open: FakeOpen<'_>) -> (FakeChannelControl, FakeChannelIo, FakeChannelCustody) {
     let (pty, sizes) = match open.mode {
         ChannelMode::Pty { size, .. } => (true, vec![*size]),
-        ChannelMode::Exec => (false, Vec::new()),
+        ChannelMode::Exec | ChannelMode::Tcp { .. } | ChannelMode::Unix { .. } => {
+            (false, Vec::new())
+        }
     };
     let control = FakeChannelControl {
         state: Arc::new(Mutex::new(State {
             pty,
+            relay: open.mode.is_relay(),
+            refuse: open.refuse,
             nonce: open.nonce.to_string(),
             argv: open.argv,
             login: open.login,
@@ -379,6 +450,7 @@ pub(super) fn open(open: FakeOpen<'_>) -> (FakeChannelControl, FakeChannelIo, Fa
             secret: None,
             stdin: Vec::new(),
             pending_stdin: VecDeque::new(),
+            relay_stdin: RelayDecoder::new(),
             stdin_closed: false,
             hold_stdin: false,
             input_ready: true,
@@ -476,8 +548,22 @@ impl ChannelIo for FakeChannelIo {
         }
         state.stdin_closed = true;
         state.consume();
+        if state.relay
+            && state.pending_stdin.is_empty()
+            && state.exit.is_none()
+            && !state.relay_stdin.clean()
+        {
+            // Stdin ended without the host's `E`: the helper aborts.
+            state.relay_exit(Some(RelayEnd::Reset), 1);
+            return true;
+        }
         if state.echo && state.pending_stdin.is_empty() {
-            state.exit_with(ChannelExitStatus::Code(0), true);
+            if state.relay {
+                // The echo service closes its side too, then the relay ends.
+                state.relay_exit(Some(RelayEnd::Eof), 0);
+            } else {
+                state.exit_with(ChannelExitStatus::Code(0), true);
+            }
         }
         true
     }

@@ -16,8 +16,9 @@ use super::kvm::IncusKvmRuntime;
 use crate::{
     ChannelBirth, ChannelClose, ChannelExitStatus, ChannelMode, ChannelOutput, ChannelRead,
     ChannelScope, ChannelScopeRef, ChannelSignalOutcome, FrameFilter, GuestFrame, GuestIdentity,
-    KillScopesRequest, ProcessSignal, PtySize, SandboxRuntime, ScopeKill, SpawnChannelRequest,
-    SpawnedChannel, channel_nonce, channel_preamble, guest_frame_bytes,
+    KillScopesRequest, ProcessSignal, PtySize, RelayDecoder, RelayEnd, RelayFailure,
+    SandboxRuntime, ScopeKill, SpawnChannelRequest, SpawnedChannel, channel_nonce,
+    channel_preamble, guest_frame_bytes, relay_data_frame, relay_end_frame,
 };
 
 const FP: &str = "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
@@ -230,6 +231,10 @@ struct Driver {
     eof: [bool; 2],
     status: Option<ChannelExitStatus>,
     refused: bool,
+    failed: Option<RelayFailure>,
+    /// A relay channel: stdout is framed.
+    relay: Option<RelayDecoder>,
+    relay_end: Option<RelayEnd>,
 }
 
 impl Driver {
@@ -253,6 +258,9 @@ impl Driver {
             eof: [false, false],
             status: None,
             refused: false,
+            failed: None,
+            relay: request.mode.is_relay().then(RelayDecoder::new),
+            relay_end: None,
         }
     }
 
@@ -261,7 +269,21 @@ impl Driver {
     }
 
     fn input(mut self, chunks: &[&[u8]], close: bool) -> Self {
-        self.input = chunks.iter().map(|c| c.to_vec()).collect();
+        // A relay's stdin is framed as the daemon frames it: data frames,
+        // then the client's eof (`E`) before the close.
+        self.input = if self.relay.is_some() {
+            let mut framed: Vec<Vec<u8>> = chunks
+                .iter()
+                .flat_map(|c| c.chunks(32 * 1024))
+                .map(relay_data_frame)
+                .collect();
+            if close {
+                framed.push(relay_end_frame(RelayEnd::Eof));
+            }
+            framed
+        } else {
+            chunks.iter().map(|c| c.to_vec()).collect()
+        };
         self.input.reverse();
         self.close_stdin = close;
         self
@@ -326,7 +348,14 @@ impl Driver {
                                 GuestFrame::Refused => self.refused = true,
                                 GuestFrame::Ready(birth) => self.birth = Some(birth),
                                 GuestFrame::Exit(status) => self.status = Some(status),
+                                GuestFrame::Failed(failure) => self.failed = Some(failure),
                             }
+                        }
+                        data
+                    } else if let Some(relay) = &mut self.relay {
+                        let (data, end) = relay.feed(&bytes);
+                        if end.is_some() {
+                            self.relay_end = end;
                         }
                         data
                     } else {
@@ -345,6 +374,11 @@ impl Driver {
                             ChannelOutput::Stdout => self.stdout.extend(rest),
                             ChannelOutput::Stderr => self.stderr.extend(rest),
                         }
+                    }
+                    if stream == ChannelOutput::Stdout
+                        && let Some(relay) = &mut self.relay
+                    {
+                        self.relay_end = Some(relay.finish());
                     }
                     self.eof[stream as usize] = true;
                 }
@@ -945,4 +979,520 @@ fn default_dispositions(pid: u32) -> bool {
             .find_map(|line| line.strip_prefix(key))
             .is_some_and(|mask| mask.trim().bytes().all(|b| b == b'0'))
     })
+}
+
+// ---------------------------------------------------------------- relay ----
+
+/// A one-connection guest service on this host's loopback (the shim's
+/// "guest"): `serve` runs on the accepted socket; the bytes it read come
+/// back through the handle.
+fn tcp_service(
+    serve: impl FnOnce(&mut std::net::TcpStream) + Send + 'static,
+) -> (u16, std::thread::JoinHandle<Vec<u8>>) {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .unwrap();
+        serve(&mut stream);
+        let mut rest = Vec::new();
+        let _ = stream.read_to_end(&mut rest);
+        rest
+    });
+    (port, handle)
+}
+
+fn relay_request(mode: ChannelMode) -> SpawnChannelRequest {
+    request(mode, &[])
+}
+
+#[test]
+fn a_tcp_relay_runs_the_real_helper_as_the_guest_user_and_round_trips() {
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    // An echo service: everything back, then its own close.
+    let (port, service) = tcp_service(|stream| {
+        let mut all = Vec::new();
+        stream.read_to_end(&mut all).unwrap();
+        stream.write_all(&all).unwrap();
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let big: Vec<u8> = (0..300_000_u32).map(|i| (i % 251) as u8).collect();
+    let out = Driver::spawn(&shim, &req, &[])
+        .input(&[b"hello ", &big], true)
+        .finish(Duration::from_secs(20));
+    let mut expected = b"hello ".to_vec();
+    expected.extend(&big);
+    assert!(out.stdout == expected, "the relayed bytes differ");
+    assert!(out.stderr.is_empty(), "frames never leak: {:?}", out.stderr);
+    assert_eq!(out.relay_end, Some(RelayEnd::Eof));
+    assert_eq!(out.status, Some(ChannelExitStatus::Code(0)));
+    assert!(service.join().unwrap().is_empty());
+    let exec = &shim.execs()[0];
+    let tail = exec.iter().position(|a| a == "--").unwrap();
+    assert_eq!(&exec[4..8], ["--user", "0", "--group", "0"]);
+    assert_eq!(exec[tail - 2], "-T");
+    assert_eq!(exec[tail + 6], "launch");
+    let wrap = exec.iter().position(|a| a == "wrap").unwrap();
+    assert_eq!(
+        &exec[wrap + 1..wrap + 5],
+        ["WSSP_PID", &req.nonce, "tcp", "0"]
+    );
+    // The target is the only argument: a port, never a host.
+    let dashes = exec[wrap..].iter().position(|a| a == "--").unwrap() + wrap;
+    assert_eq!(&exec[dashes + 1..], [port.to_string()]);
+}
+
+#[test]
+fn a_guest_service_that_shuts_its_write_side_still_gets_later_input() {
+    use std::io::Write;
+    let shim = Shim::new();
+    // Greets, shuts its write side, then waits for (and records) more input.
+    let (port, service) = tcp_service(|stream| {
+        stream.write_all(b"220 ready\r\n").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]);
+    driver.run_until(Duration::from_secs(10), |d| d.relay_end.is_some());
+    assert_eq!(driver.stdout, b"220 ready\r\n");
+    assert_eq!(
+        driver.relay_end,
+        Some(RelayEnd::Eof),
+        "the EOF travelled first"
+    );
+    assert!(driver.status.is_none(), "the relay still runs");
+    // The client keeps talking after the guest's EOF.
+    let driver = driver
+        .input(&[b"late ", b"input"], true)
+        .finish(Duration::from_secs(10));
+    assert_eq!(service.join().unwrap(), b"late input");
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(0)));
+}
+
+#[test]
+fn a_client_half_close_reaches_the_service_before_its_reply() {
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    let (port, service) = tcp_service(|stream| {
+        let mut request = Vec::new();
+        // Only the client's write shutdown ends this read.
+        stream.read_to_end(&mut request).unwrap();
+        let mut reply = b"got ".to_vec();
+        reply.extend(&request);
+        stream.write_all(&reply).unwrap();
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let out = Driver::spawn(&shim, &req, &[])
+        .input(&[b"query"], true)
+        .finish(Duration::from_secs(10));
+    assert_eq!(out.stdout, b"got query");
+    assert_eq!(out.relay_end, Some(RelayEnd::Eof));
+    assert!(service.join().unwrap().is_empty());
+}
+
+#[test]
+fn a_reset_by_the_service_ends_the_relay_with_a_reset() {
+    use std::io::Read;
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut one = [0_u8; 1];
+        stream.read_exact(&mut one).unwrap();
+        // Closing with unread bytes in the receive queue is a reset (RST).
+        std::thread::sleep(Duration::from_millis(300));
+        drop(stream);
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"x", b"more bytes"], false);
+    driver.run_until(Duration::from_secs(10), |d| {
+        d.eof == [true, true] && d.relay_end.is_some()
+    });
+    service.join().unwrap();
+    assert_eq!(driver.relay_end, Some(RelayEnd::Reset));
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(1)));
+}
+
+#[test]
+fn a_reset_after_the_guest_write_shutdown_is_a_reset_not_a_clean_end() {
+    // The review's case: the service greets, shuts its write side, then
+    // resets while it receives more input. `E` travels first; the reset
+    // after it is an `R` and exit 1, never the clean exit 0.
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.write_all(b"220 ready\r\n").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        let mut one = [0_u8; 1];
+        stream.read_exact(&mut one).unwrap();
+        // Closing with unread input is a reset (RST).
+        std::thread::sleep(Duration::from_millis(300));
+        drop(stream);
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]);
+    driver.run_until(Duration::from_secs(10), |d| d.relay_end.is_some());
+    assert_eq!(driver.relay_end, Some(RelayEnd::Eof));
+    let mut driver = driver.input(&[b"x", b"more bytes"], false);
+    driver.run_until(Duration::from_secs(10), |d| {
+        d.eof == [true, true] && d.status.is_some()
+    });
+    service.join().unwrap();
+    assert_eq!(driver.stdout, b"220 ready\r\n");
+    assert_eq!(driver.relay_end, Some(RelayEnd::Reset), "R after E");
+    assert!(driver.relay.as_ref().unwrap().eof_seen());
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(1)));
+}
+
+#[test]
+fn a_reset_after_the_guest_write_shutdown_is_seen_while_the_client_is_idle() {
+    // Nothing more to send either way: the helper still watches the socket
+    // for an error, so the reset arrives without waiting for client bytes.
+    use std::io::Write;
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // The client's first bytes stay unread, so the close below resets.
+        let mut one = [0_u8; 1];
+        stream.peek(&mut one).unwrap();
+        stream.write_all(b"bye").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        wait.recv().unwrap();
+        drop(stream);
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"hello"], false);
+    driver.run_until(Duration::from_secs(10), |d| d.relay_end.is_some());
+    assert_eq!(driver.relay_end, Some(RelayEnd::Eof));
+    std::thread::sleep(Duration::from_millis(200));
+    driver.tick();
+    assert!(driver.status.is_none(), "the relay waits for the client");
+    go.send(()).unwrap();
+    driver.run_until(Duration::from_secs(10), |d| {
+        d.eof == [true, true] && d.status.is_some()
+    });
+    service.join().unwrap();
+    assert_eq!(driver.relay_end, Some(RelayEnd::Reset));
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(1)));
+}
+
+#[test]
+fn a_reset_after_the_client_half_close_is_a_reset_without_an_eof() {
+    // The client already sent its eof (the helper shut the socket's write
+    // side); the service then closes with that input unread: a Unix reset
+    // (ECONNRESET after its data), so `R` with no `E` and exit 1.
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    let path = shim.dir.join("reset.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // Wait (blocking) for the request, then leave the rest of it
+        // unread: the close below is a reset whenever the helper runs.
+        let mut one = [0_u8; 1];
+        stream.read_exact(&mut one).unwrap();
+        stream.write_all(b"partial").unwrap();
+    });
+    let req = relay_request(ChannelMode::Unix {
+        path: path.to_string_lossy().into_owned(),
+    });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"request"], true);
+    driver.run_until(Duration::from_secs(10), |d| {
+        d.eof == [true, true] && d.status.is_some()
+    });
+    service.join().unwrap();
+    assert_eq!(driver.stdout, b"partial");
+    assert_eq!(driver.relay_end, Some(RelayEnd::Reset));
+    assert!(!driver.relay.as_ref().unwrap().eof_seen());
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(1)));
+}
+
+#[test]
+fn a_unix_service_that_closes_after_its_reply_still_ends_cleanly() {
+    // A Unix peer's full close is a hang-up, not an error: the relay keeps
+    // waiting for the client's end and exits 0.
+    use std::io::Write;
+    let shim = Shim::new();
+    let path = shim.dir.join("close.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.write_all(b"reply").unwrap();
+    });
+    let req = relay_request(ChannelMode::Unix {
+        path: path.to_string_lossy().into_owned(),
+    });
+    let mut driver = Driver::spawn(&shim, &req, &[]);
+    driver.run_until(Duration::from_secs(10), |d| d.relay_end.is_some());
+    service.join().unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    driver.tick();
+    assert!(driver.status.is_none(), "the relay waits for the client");
+    let out = driver.input(&[], true).finish(Duration::from_secs(10));
+    assert_eq!(out.stdout, b"reply");
+    assert_eq!(out.relay_end, Some(RelayEnd::Eof));
+    assert_eq!(out.status, Some(ChannelExitStatus::Code(0)));
+}
+
+/// A loopback port nothing listens on, reserved while the guard lives: the
+/// local end of a connected socket (bound, never listening), so a connect
+/// to it is refused and no other test's listener can take it meanwhile.
+fn refused_port() -> (u16, (std::net::TcpStream, std::net::TcpStream)) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    (client.local_addr().unwrap().port(), (client, server))
+}
+
+#[test]
+fn a_refused_port_reports_failed_before_ready_and_starts_nothing() {
+    let shim = Shim::new();
+    let (port, _reserved) = refused_port();
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]);
+    driver.run_until(Duration::from_secs(10), |d| d.eof[1]);
+    assert_eq!(driver.failed, Some(RelayFailure::Refused));
+    assert!(driver.birth.is_none(), "no READY for a refused connect");
+    assert!(driver.stderr.is_empty(), "{:?}", driver.stderr);
+}
+
+#[test]
+fn a_unix_relay_reaches_the_socket_path() {
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    let path = shim.dir.join("app.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut all = Vec::new();
+        stream.read_to_end(&mut all).unwrap();
+        stream.write_all(&all).unwrap();
+    });
+    let req = relay_request(ChannelMode::Unix {
+        path: path.to_string_lossy().into_owned(),
+    });
+    let out = Driver::spawn(&shim, &req, &[])
+        .input(&[b"over a socket"], true)
+        .finish(Duration::from_secs(10));
+    service.join().unwrap();
+    assert_eq!(out.stdout, b"over a socket");
+    assert_eq!(out.status, Some(ChannelExitStatus::Code(0)));
+    // A missing path is a refusal.
+    let req = relay_request(ChannelMode::Unix {
+        path: shim.dir.join("missing.sock").to_string_lossy().into_owned(),
+    });
+    let mut driver = Driver::spawn(&shim, &req, &[]);
+    driver.run_until(Duration::from_secs(10), |d| d.eof[1]);
+    assert_eq!(driver.failed, Some(RelayFailure::Refused));
+}
+
+#[test]
+fn a_refused_ipv4_loopback_falls_back_to_ipv6() {
+    use std::io::{Read, Write};
+    // The IPv4 port stays reserved and refused for the whole test.
+    let (port, _reserved) = refused_port();
+    let Ok(listener) = std::net::TcpListener::bind(("::1", port)) else {
+        return; // No IPv6 loopback on this host.
+    };
+    let shim = Shim::new();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut all = Vec::new();
+        stream.read_to_end(&mut all).unwrap();
+        stream.write_all(b"v6").unwrap();
+    });
+    let req = relay_request(ChannelMode::Tcp { port });
+    let out = Driver::spawn(&shim, &req, &[])
+        .input(&[b"hi"], true)
+        .finish(Duration::from_secs(10));
+    service.join().unwrap();
+    assert_eq!(out.stdout, b"v6");
+}
+
+/// What a partial-request service saw: the request head, the outcome of
+/// the read after it (EOF or the error), and its socket.
+type PartialRequest<S> = (Vec<u8>, std::io::Result<Vec<u8>>, S);
+
+/// A guest service that records the first `want` request bytes, reports
+/// them, and then reads on.
+fn partial_request_service<S: std::io::Read + Send + 'static>(
+    accept: impl FnOnce() -> S + Send + 'static,
+    want: usize,
+) -> (
+    std::sync::mpsc::Receiver<()>,
+    std::thread::JoinHandle<PartialRequest<S>>,
+) {
+    let (got, seen) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        let mut stream = accept();
+        let mut head = vec![0_u8; want];
+        stream.read_exact(&mut head).unwrap();
+        got.send(()).unwrap();
+        let mut rest = Vec::new();
+        let outcome = stream.read_to_end(&mut rest).map(|_| rest);
+        (head, outcome, stream)
+    });
+    (seen, handle)
+}
+
+#[test]
+fn a_killed_tcp_relay_resets_the_guest_service_mid_request() {
+    // A kill close (local reset, Ctrl-C, revocation, deadline, ...) SIGKILLs
+    // the helper: the service must see a reset, never a clean EOF that would
+    // make the partial request look complete.
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (seen, service) = partial_request_service(
+        move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            stream
+        },
+        b"POST /half".len(),
+    );
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"POST /half"], false);
+    driver.run_until(Duration::from_secs(10), |_| seen.try_recv().is_ok());
+    let end = driver
+        .spawned
+        .custody
+        .close(ChannelClose::Kill { forget: true });
+    assert!(end.reaped);
+    let (head, outcome, _stream) = service.join().unwrap();
+    assert_eq!(head, b"POST /half");
+    assert_eq!(
+        outcome.map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::ConnectionReset),
+        "an aborted relay must reset the service, not end its request"
+    );
+}
+
+#[test]
+fn a_relay_stdin_that_ends_without_its_eof_frame_resets_the_guest_service() {
+    // The host client or the daemon died: stdin just ends, with no `E`. That
+    // is an abort (a reset, exit 1), never the client's clean half-close.
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (seen, service) = partial_request_service(
+        move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            stream
+        },
+        b"PUT /half".len(),
+    );
+    let req = relay_request(ChannelMode::Tcp { port });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"PUT /half"], false);
+    driver.run_until(Duration::from_secs(10), |_| seen.try_recv().is_ok());
+    // A raw stdin close: no `E` frame before it.
+    driver.close_stdin = true;
+    driver.run_until(Duration::from_secs(10), |d| {
+        d.eof == [true, true] && d.status.is_some()
+    });
+    let (head, outcome, _stream) = service.join().unwrap();
+    assert_eq!(head, b"PUT /half");
+    assert_eq!(
+        outcome.map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::ConnectionReset)
+    );
+    assert_eq!(driver.relay_end, Some(RelayEnd::Reset));
+    assert_eq!(driver.status, Some(ChannelExitStatus::Code(1)));
+}
+
+#[test]
+fn a_clean_tcp_relay_end_closes_the_service_orderly_with_every_byte() {
+    // The service answers and shuts its write side first, and reads the
+    // upload only after the relay ended cleanly: part of it then still waits
+    // in the helper's socket send queue (more than the service's receive
+    // window), so only an orderly close delivers every byte and the EOF; an
+    // abortive close would drop that queue.
+    use std::io::{Read, Write};
+    let shim = Shim::new();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (go, wait) = std::sync::mpsc::channel::<()>();
+    let service = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(15)))
+            .unwrap();
+        stream.write_all(b"send it").unwrap();
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+        wait.recv().unwrap();
+        let mut all = Vec::new();
+        stream
+            .read_to_end(&mut all)
+            .map(|_| all)
+            .map_err(|e| e.kind())
+    });
+    let upload: Vec<u8> = (0..256 * 1024_u32).map(|i| (i % 253) as u8).collect();
+    let req = relay_request(ChannelMode::Tcp { port });
+    let out = Driver::spawn(&shim, &req, &[])
+        .input(&[&upload], true)
+        .finish(Duration::from_secs(20));
+    assert_eq!(out.stdout, b"send it");
+    assert_eq!(out.relay_end, Some(RelayEnd::Eof));
+    assert_eq!(out.status, Some(ChannelExitStatus::Code(0)));
+    go.send(()).unwrap();
+    let received = service.join().unwrap();
+    assert!(
+        received.as_deref() == Ok(&upload[..]),
+        "the clean end lost bytes or reset: {:?}",
+        received.map(|r| r.len())
+    );
+}
+
+#[test]
+fn an_aborted_unix_relay_is_a_full_close_the_service_can_tell_from_a_half_close() {
+    // No reset exists for a Unix socket: an abort is a full close, so after
+    // the EOF the service's write fails (EPIPE), while a client half-close
+    // (`a_unix_relay_reaches_the_socket_path`) still takes its reply.
+    use std::io::Write;
+    let shim = Shim::new();
+    let path = shim.dir.join("abort.sock");
+    let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    let (seen, service) = partial_request_service(
+        move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            stream
+        },
+        b"half".len(),
+    );
+    let req = relay_request(ChannelMode::Unix {
+        path: path.to_string_lossy().into_owned(),
+    });
+    let mut driver = Driver::spawn(&shim, &req, &[]).input(&[b"half"], false);
+    driver.run_until(Duration::from_secs(10), |_| seen.try_recv().is_ok());
+    let end = driver
+        .spawned
+        .custody
+        .close(ChannelClose::Kill { forget: true });
+    assert!(end.reaped);
+    let (head, outcome, mut stream) = service.join().unwrap();
+    assert_eq!(head, b"half");
+    assert_eq!(outcome.map(|rest| rest.len()).ok(), Some(0));
+    assert_eq!(
+        stream.write_all(b"reply").map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::BrokenPipe)
+    );
 }

@@ -14,9 +14,12 @@ import { formatRelativeTime } from "@/utils/relative-time";
 /**
  * The sandbox detail "Recent connections" panel (wssp-ssh §10): the owner's
  * CLI connections to this sandbox, newest first, one bounded page at a time.
- * Metadata only (key, origin, times, end reason, channel counts, bytes):
- * the server never records what ran.
+ * Metadata only (key, origin, times, end reason, channel counts, forwarded
+ * guest ports, bytes): the server never records what ran.
  */
+
+/** The server keeps at most 16 forwarded ports per connection; never show more. */
+const FORWARDED_PORTS_SHOWN = 16;
 
 const KNOWN_INTENTS = new Set([
   "client",
@@ -37,6 +40,11 @@ const KNOWN_INTENTS = new Set([
 export function connectionIntentKey(intent: string | null): string | null {
   if (intent === null) return null;
   return `sandboxes:connections.intent.${KNOWN_INTENTS.has(intent) ? intent : "other"}`;
+}
+
+function portList(ports: readonly number[], locale: string): string {
+  const shown = ports.slice(0, FORWARDED_PORTS_SHOWN).map((port) => String(port));
+  return new Intl.ListFormat(locale, { type: "unit", style: "short" }).format(shown);
 }
 
 function bytes(value: string, locale: string): string {
@@ -137,12 +145,22 @@ export function SandboxConnections({ lang, sandboxId }: { lang: string; sandboxI
                       {[
                         t("sandboxes:connections.shells", { count: row.ptyChannels }),
                         t("sandboxes:connections.commands", { count: row.execChannels }),
+                        ...(row.relayChannels > 0
+                          ? [t("sandboxes:connections.forwards", { count: row.relayChannels })]
+                          : []),
                         t("sandboxes:connections.bytes", {
                           sent: bytes(row.bytesIn, locale),
                           received: bytes(row.bytesOut, locale),
                         }),
                       ].join(" · ")}
                     </span>
+                    {row.forwardedPorts.length > 0 ? (
+                      <span data-forwarded-ports="" className="break-words text-muted-foreground">
+                        {t("sandboxes:connections.ports", {
+                          ports: portList(row.forwardedPorts, locale),
+                        })}
+                      </span>
+                    ) : null}
                   </li>
                 );
               })}

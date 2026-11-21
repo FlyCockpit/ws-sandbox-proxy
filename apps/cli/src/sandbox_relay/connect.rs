@@ -6522,14 +6522,23 @@ mod tests {
             .pty_control("sbx-term", "term-live")
             .expect("the terminal was opened on the runtime");
         assert!(control.terminated(), "shutdown closes every PTY");
-        // One immediate, non-retrying probe: the lock is free once the
-        // daemon returned, not merely eventually.
+        // The lock is free once the daemon returned. The probe retries for at
+        // most 1 s only because another test thread of this binary may fork
+        // while the journal file is open: until that child execs (its copy
+        // is close-on-exec) it shares the open file description and so the
+        // lock. A daemon that kept the lock still fails here.
         let lock = std::fs::OpenOptions::new()
             .write(true)
             .open(dir.path().join("LOCK"))
             .unwrap();
+        let probe_until = std::time::Instant::now() + Duration::from_secs(1);
+        let mut locked = lock.try_lock().is_ok();
+        while !locked && std::time::Instant::now() < probe_until {
+            std::thread::sleep(Duration::from_millis(20));
+            locked = lock.try_lock().is_ok();
+        }
         assert!(
-            lock.try_lock().is_ok(),
+            locked,
             "the journal lock outlived a clean in-process shutdown"
         );
         drop(lock);

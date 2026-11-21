@@ -77,6 +77,30 @@
       {
         "type": "close",
         "channel": 1
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 5432
+      },
+      {
+        "type": "open",
+        "channel": 21,
+        "kind": "tcp",
+        "port": 65535
+      },
+      {
+        "type": "open",
+        "channel": 22,
+        "kind": "unix",
+        "path": "/run/postgresql/.s.PGSQL.5432"
+      },
+      {
+        "type": "eof",
+        "channel": 20,
+        "stream": "stdin",
+        "frames": 3
       }
     ],
     "invalid": [
@@ -95,12 +119,6 @@
           "cols": 80,
           "term": "xterm"
         }
-      },
-      {
-        "type": "open",
-        "channel": 1,
-        "kind": "tcp",
-        "port": 22
       },
       {
         "type": "open",
@@ -215,6 +233,138 @@
       },
       {
         "type": "hello"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 0
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 65536
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22.5
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": "22"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "host": "10.0.0.1"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "path": "/run/x.sock"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "argv": ["nc"]
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "login": false
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "cwd": "/"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "env": {
+          "LANG": "C"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "tcp",
+        "port": 22,
+        "pty": {
+          "rows": 24,
+          "cols": 80,
+          "term": "xterm"
+        }
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "unix"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "unix",
+        "path": "run/x.sock"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "unix",
+        "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "unix",
+        "path": "/a\u0000b"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "unix",
+        "path": "/run/x.sock",
+        "port": 22
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "exec",
+        "port": 22
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "exec",
+        "path": "/run/x.sock"
+      },
+      {
+        "type": "open",
+        "channel": 20,
+        "kind": "udp",
+        "port": 53
       }
     ]
   },
@@ -314,6 +464,28 @@
         "error": {
           "code": "timeout",
           "message": "client silent"
+        }
+      },
+      {
+        "type": "ready",
+        "channel": 20
+      },
+      {
+        "type": "eof",
+        "channel": 20,
+        "stream": "stdout",
+        "frames": 4
+      },
+      {
+        "type": "exit",
+        "channel": 21,
+        "error": {
+          "code": "connection_refused",
+          "message": "nothing in the sandbox accepted the connection"
+        },
+        "frames": {
+          "stdout": 0,
+          "stderr": 0
         }
       }
     ],

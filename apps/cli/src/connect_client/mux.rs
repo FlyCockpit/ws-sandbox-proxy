@@ -11,8 +11,9 @@
 //!
 //! stdin is credited the same way: at most `windowFrames` frames not yet
 //! acknowledged by the server, sequences from 0, nothing before `ready`.
-//! Several channels share one mux, so later commands (port forwards, the SSH
-//! endpoint) reuse it unchanged.
+//! Several channels share one mux (a port forward opens one relay channel per
+//! local connection); [`Mux::forget`] drops an ended channel's state, so a
+//! long-lived connection keeps none for its ended channels.
 
 use std::collections::BTreeMap;
 
@@ -111,6 +112,9 @@ struct Chan {
     /// Sizes of the stdin frames sent and not yet acknowledged, oldest first.
     stdin_unacked: std::collections::VecDeque<u64>,
     stdin_eof: bool,
+    /// The caller gave the channel up ([`Mux::discard`]): its output counts
+    /// as delivered (and is acknowledged) without reaching the caller.
+    discarding: bool,
 }
 
 impl Chan {
@@ -190,7 +194,48 @@ impl Mux {
             cwd,
             env,
             pty,
+            port: None,
+            path: None,
         };
+        self.register(channel, kind, frame)
+    }
+
+    /// Register a relay channel to guest loopback `port` (`tcp`) or the guest
+    /// Unix socket `path` (`unix`) and return its `open` frame.
+    pub fn open_relay(
+        &mut self,
+        port: Option<u16>,
+        path: Option<String>,
+    ) -> anyhow::Result<(u32, ClientControl)> {
+        let channel = self
+            .last_channel
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("no channel ids left on this connection"))?;
+        let kind = if path.is_some() {
+            Kind::Unix
+        } else {
+            Kind::Tcp
+        };
+        let frame = ClientControl::Open {
+            channel,
+            kind,
+            argv: None,
+            login: None,
+            cwd: None,
+            env: None,
+            pty: None,
+            port,
+            path,
+        };
+        self.register(channel, kind, frame)
+    }
+
+    fn register(
+        &mut self,
+        channel: u32,
+        kind: Kind,
+        frame: ClientControl,
+    ) -> anyhow::Result<(u32, ClientControl)> {
         anyhow::ensure!(frame.is_valid(), "invalid channel open parameters");
         self.last_channel = channel;
         self.channels.insert(
@@ -208,6 +253,7 @@ impl Mux {
                 stdin_acked: 0,
                 stdin_unacked: std::collections::VecDeque::new(),
                 stdin_eof: false,
+                discarding: false,
             },
         );
         Ok((channel, frame))
@@ -224,8 +270,28 @@ impl Mux {
             .is_none_or(|chan| chan.state == State::Done)
     }
 
+    /// Drop the state of a channel whose exit was released (its owed acks
+    /// were taken). Later frames for it are ignored like those racing an
+    /// exit; an id never opened stays a violation.
+    pub fn forget(&mut self, channel: u32) {
+        if self
+            .channels
+            .get(&channel)
+            .is_some_and(|chan| chan.state == State::Done && chan.delivered == chan.acked)
+        {
+            self.channels.remove(&channel);
+        }
+    }
+
+    /// Channels whose state is kept (tests).
+    pub fn tracked(&self) -> usize {
+        self.channels.len()
+    }
+
     fn chan(&mut self, channel: u32) -> Result<Option<&mut Chan>, Violation> {
         match self.channels.get_mut(&channel) {
+            // Opened, ended and forgotten: like a frame racing its exit.
+            None if channel != 0 && channel <= self.last_channel => Ok(None),
             None => Err(Violation("a frame for a channel this client never opened")),
             // Frames racing a released exit are ignored.
             Some(chan) if chan.state == State::Done => Ok(None),
@@ -346,7 +412,7 @@ impl Mux {
         let index = stream.index();
         let (max, window) = match chan.kind {
             Kind::Pty => (max_pty, window_pty),
-            Kind::Exec => (max_exec, window_exec),
+            Kind::Exec | Kind::Tcp | Kind::Unix => (max_exec, window_exec),
         };
         if chan.state != State::Open {
             return Err(Violation("output before ready"));
@@ -369,6 +435,12 @@ impl Mux {
             return Err(Violation("output beyond the credit window"));
         }
         chan.received[index] += 1;
+        if chan.discarding {
+            // Checked like any frame, then dropped and acknowledged, so the
+            // server's credit (and its stall rule) never waits on it.
+            chan.delivered[index] = chan.received[index];
+            return Ok(Vec::new());
+        }
         Ok(vec![Event::Output {
             channel,
             stream,
@@ -387,6 +459,25 @@ impl Mux {
         if seq < chan.received[index] {
             chan.delivered[index] = chan.delivered[index].max(seq + 1);
         }
+        if chan.state == State::Done {
+            return Vec::new();
+        }
+        self.release(channel)
+    }
+
+    /// The caller gave the channel up (its local end is gone): every frame
+    /// received so far, including those released and not yet delivered,
+    /// and every later one counts as delivered, so their acks are owed and a
+    /// held eof or natural exit is released now (returned) instead of
+    /// waiting for a delivery that never comes. Without this, a natural
+    /// exit that raced a local failure would hold the channel forever (the
+    /// server ignores a `close` of a channel it already ended).
+    pub fn discard(&mut self, channel: u32) -> Vec<Event> {
+        let Some(chan) = self.channels.get_mut(&channel) else {
+            return Vec::new();
+        };
+        chan.discarding = true;
+        chan.delivered = chan.received;
         if chan.state == State::Done {
             return Vec::new();
         }
@@ -441,26 +532,56 @@ impl Mux {
         acks
     }
 
-    /// Whether one more stdin frame may be sent now: within the channel's
-    /// window, and with room for a full frame in the connection's
-    /// `unackedInputBytes` (every channel the client has not seen end).
+    /// Whether one more stdin frame (a full one of the channel's kind) may
+    /// be sent now: within the channel's window, within the connection's
+    /// `unackedInputBytes` (every channel the client has not seen end), and
+    /// within the channel's share of that budget ([`Mux::stdin_share_allows`]).
     pub fn stdin_credit(&self, channel: u32) -> bool {
         self.channels.get(&channel).is_some_and(|chan| {
             chan.state == State::Open
                 && !chan.stdin_eof
                 && chan.stdin_sent - chan.stdin_acked < self.window(chan.kind)
-                && self.unacked_input_bytes() + self.data_max(chan.kind) as u64
-                    <= self.limits.unacked_input_bytes
+                && self.stdin_share_allows(channel, self.data_max(chan.kind) as u64)
         })
     }
 
-    /// stdin bytes sent and not yet acknowledged, across live channels.
-    fn unacked_input_bytes(&self) -> u64 {
-        self.channels
-            .values()
-            .filter(|chan| chan.state != State::Done)
-            .flat_map(|chan| chan.stdin_unacked.iter())
-            .sum()
+    /// The shared stdin budget, fairly: every channel slot of the
+    /// connection (`maxChannels`, or more while more channels are live)
+    /// keeps one full bulk frame of `unackedInputBytes` for itself. A
+    /// channel holding nothing can therefore always send a frame, so
+    /// channels whose guest services stopped reading can never take the
+    /// whole budget from the others; beyond its first frame a channel takes
+    /// only what no other slot's reserve needs. One busy channel keeps its
+    /// whole window (4 MiB less 31 reserved frames is more than the 1 MiB
+    /// window). The server checks only the total, which this never exceeds.
+    /// See `docs/design/connect-channel-contract.md` (Client rules).
+    fn stdin_share_allows(&self, channel: u32, len: u64) -> bool {
+        let budget = self.limits.unacked_input_bytes;
+        let unit = self.data_max(Kind::Exec) as u64;
+        let mut own = 0;
+        let mut total = 0;
+        let mut live = 0_u64;
+        let mut others_excess = 0;
+        for (id, chan) in &self.channels {
+            if chan.state == State::Done {
+                continue;
+            }
+            live += 1;
+            let held: u64 = chan.stdin_unacked.iter().sum();
+            total += held;
+            if *id == channel {
+                own = held;
+            } else {
+                others_excess += held.saturating_sub(unit);
+            }
+        }
+        // A budget too small for every slot's frame (not the contract's
+        // values) still lets a lone channel send.
+        let reserve = unit
+            .saturating_mul(live.max(self.limits.max_channels))
+            .min(budget.saturating_sub(unit));
+        total + len <= budget
+            && reserve + others_excess + (own + len).saturating_sub(unit) <= budget
     }
 
     /// Take the `seq` of the next stdin frame (only with credit).
@@ -795,20 +916,39 @@ mod tests {
             .unwrap();
             open.push(ch);
         }
-        // 4 MiB of full frames across channels: 128 frames, then no credit.
-        let mut sent = 0;
-        'fill: for &ch in &open {
-            while mux.stdin_credit(ch) {
+        // Fill in channel order, as stalled uploads would: three whole
+        // windows, then the fourth takes only what the 32 slots' reserved
+        // frames leave (4 MiB = 128 frames, 32 reserved, 3 × 31 beyond the
+        // first frame), and the fifth still gets its reserved frame.
+        let mut per_channel = Vec::new();
+        for &ch in &open {
+            let mut sent = 0;
+            while mux.stdin_credit(ch) && sent <= 40 {
                 mux.stdin_frame(ch, full).unwrap();
                 sent += 1;
-                if sent > 200 {
-                    break 'fill;
-                }
             }
+            per_channel.push(sent);
         }
-        assert_eq!(sent, 128);
+        assert_eq!(per_channel, vec![32, 32, 32, 4, 1]);
         assert!(open.iter().all(|&ch| !mux.stdin_credit(ch)));
-        // A server ack on one channel frees room on every channel.
+        let held: u64 = mux
+            .channels
+            .values()
+            .flat_map(|chan| chan.stdin_unacked.iter())
+            .sum();
+        assert!(held <= 4 * 1024 * 1024);
+        // A channel opened while the others hold everything they may still
+        // gets a frame: the budget never freezes a newcomer.
+        let (late, _) = mux.open(Kind::Exec, None, None, None, None, None).unwrap();
+        mux.on_control(ServerControl::Ready {
+            channel: late,
+            pty: None,
+        })
+        .unwrap();
+        assert!(mux.stdin_credit(late));
+        mux.stdin_frame(late, full).unwrap();
+        assert!(!mux.stdin_credit(late));
+        // A server ack on one channel frees room for another.
         mux.on_control(ServerControl::Ack {
             channel: open[0],
             stream: StdinStream::Stdin,
@@ -816,6 +956,29 @@ mod tests {
         })
         .unwrap();
         assert!(mux.stdin_credit(open[4]));
+    }
+
+    #[test]
+    fn a_lone_channel_keeps_its_whole_stdin_window() {
+        let mut mux = Mux::new(limits());
+        let ch = exec(&mut mux);
+        for _ in 0..32 {
+            mux.stdin_frame(ch, 32 * 1024).unwrap();
+        }
+        assert!(!mux.stdin_credit(ch), "the window, not the budget, binds");
+        // A budget below every slot's frame (not the contract's values)
+        // still lets a lone channel send, never beyond the budget.
+        let mut mux = Mux::new(Limits {
+            unacked_input_bytes: 256 * 1024,
+            ..limits()
+        });
+        let ch = exec(&mut mux);
+        let mut sent = 0;
+        while mux.stdin_credit(ch) {
+            mux.stdin_frame(ch, 32 * 1024).unwrap();
+            sent += 1;
+        }
+        assert!((1..=8).contains(&sent), "{sent}");
     }
 
     #[test]
@@ -876,5 +1039,262 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn relay_opens_carry_only_their_target_and_use_the_bulk_window() {
+        let mut mux = Mux::new(limits());
+        let (ch, frame) = mux.open_relay(Some(5432), None).unwrap();
+        assert_eq!(
+            frame,
+            ClientControl::Open {
+                channel: ch,
+                kind: Kind::Tcp,
+                argv: None,
+                login: None,
+                cwd: None,
+                env: None,
+                pty: None,
+                port: Some(5432),
+                path: None,
+            }
+        );
+        assert!(mux.open_relay(Some(0), None).is_err(), "port 0 burns no id");
+        let (unix, frame) = mux.open_relay(None, Some("/run/a.sock".into())).unwrap();
+        assert_eq!(unix, ch + 1);
+        assert!(matches!(
+            frame,
+            ClientControl::Open {
+                kind: Kind::Unix,
+                ..
+            }
+        ));
+        assert!(mux.open_relay(None, Some("rel.sock".into())).is_err());
+        assert!(
+            mux.on_control(ServerControl::Ready {
+                channel: ch,
+                pty: Some(PtySize { rows: 1, cols: 1 })
+            })
+            .is_err(),
+            "a relay's ready has no size"
+        );
+        let mut mux = Mux::new(limits());
+        let (ch, _) = mux.open_relay(Some(80), None).unwrap();
+        mux.on_control(ServerControl::Ready {
+            channel: ch,
+            pty: None,
+        })
+        .unwrap();
+        for seq in 0..32 {
+            mux.on_data(ch, OutputStream::Stdout, seq, &[0; 32768])
+                .unwrap();
+        }
+        assert!(mux.on_data(ch, OutputStream::Stdout, 32, b"x").is_err());
+    }
+
+    fn relay(mux: &mut Mux) -> u32 {
+        let (channel, _) = mux.open_relay(Some(80), None).unwrap();
+        mux.on_control(ServerControl::Ready { channel, pty: None })
+            .unwrap();
+        channel
+    }
+
+    fn acks(mux: &mut Mux) -> Vec<(u32, OutputStream, u64)> {
+        mux.take_acks()
+            .into_iter()
+            .map(|ack| match ack {
+                ClientControl::Ack {
+                    channel,
+                    stream,
+                    seq,
+                } => (channel, stream, seq),
+                other => panic!("not an ack: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_discard_releases_a_natural_exit_held_for_undelivered_output() {
+        // The review's case: DATA then a natural EXIT, then the local end
+        // resets before the output was written.
+        let mut mux = Mux::new(limits());
+        let ch = relay(&mut mux);
+        assert_eq!(
+            mux.on_data(ch, OutputStream::Stdout, 0, b"a")
+                .unwrap()
+                .len(),
+            1
+        );
+        mux.on_data(ch, OutputStream::Stdout, 1, b"b").unwrap();
+        // The first frame was written, the second was not.
+        assert!(mux.delivered(ch, OutputStream::Stdout, 0).is_empty());
+        assert!(mux.on_control(exit(ch, Some(1), 2, 0)).unwrap().is_empty());
+        assert!(!mux.is_done(ch), "held for the second frame");
+        assert_eq!(
+            mux.discard(ch),
+            vec![Event::Exit {
+                channel: ch,
+                outcome: Outcome::Code(1)
+            }]
+        );
+        assert!(mux.is_done(ch));
+        // Every frame received is acknowledged, then the state goes.
+        assert_eq!(acks(&mut mux), vec![(ch, OutputStream::Stdout, 1)]);
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 0);
+        // A second discard (or one of a forgotten id) is a no-op.
+        assert!(mux.discard(ch).is_empty());
+    }
+
+    #[test]
+    fn a_discard_releases_a_held_eof_and_exit_together() {
+        let mut mux = Mux::new(limits());
+        let ch = relay(&mut mux);
+        mux.on_data(ch, OutputStream::Stdout, 0, b"a").unwrap();
+        mux.on_control(ServerControl::Eof {
+            channel: ch,
+            stream: OutputStream::Stdout,
+            frames: 1,
+        })
+        .unwrap();
+        mux.on_control(exit(ch, Some(0), 1, 0)).unwrap();
+        assert_eq!(
+            mux.discard(ch),
+            vec![
+                Event::Eof {
+                    channel: ch,
+                    stream: OutputStream::Stdout
+                },
+                Event::Exit {
+                    channel: ch,
+                    outcome: Outcome::Code(0)
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn frames_after_a_discard_are_checked_acknowledged_and_never_released() {
+        let mut mux = Mux::new(limits());
+        let ch = relay(&mut mux);
+        mux.on_data(ch, OutputStream::Stdout, 0, b"a").unwrap();
+        // Given up before the server saw the close: nothing is held yet.
+        assert!(mux.discard(ch).is_empty());
+        assert!(!mux.is_done(ch));
+        // Frames racing the close: still checked, never handed out, acked.
+        for seq in 1..40 {
+            assert!(
+                mux.on_data(ch, OutputStream::Stdout, seq, b"x")
+                    .unwrap()
+                    .is_empty()
+            );
+            if seq % 8 == 0 {
+                assert_eq!(acks(&mut mux), vec![(ch, OutputStream::Stdout, seq)]);
+            }
+        }
+        assert!(
+            mux.on_data(ch, OutputStream::Stdout, 41, b"x").is_err(),
+            "a gap is still a violation"
+        );
+        assert_eq!(acks(&mut mux), vec![(ch, OutputStream::Stdout, 39)]);
+        // A natural exit after them is released at once ...
+        assert_eq!(
+            mux.on_control(exit(ch, Some(1), 40, 0)).unwrap(),
+            vec![Event::Exit {
+                channel: ch,
+                outcome: Outcome::Code(1)
+            }]
+        );
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 0);
+
+        // ... and so is the kill exit answering the close.
+        let ch = relay(&mut mux);
+        mux.on_data(ch, OutputStream::Stdout, 0, b"a").unwrap();
+        assert!(mux.discard(ch).is_empty());
+        let close = ServerControl::Exit {
+            channel: ch,
+            exit_code: None,
+            signal: None,
+            intent: Some(Intent::Client),
+            error: None,
+            frames: ExitFrames {
+                stdout: 1,
+                stderr: 0,
+            },
+        };
+        assert!(matches!(
+            mux.on_control(close).unwrap()[..],
+            [Event::Exit { .. }]
+        ));
+        assert_eq!(acks(&mut mux), vec![(ch, OutputStream::Stdout, 0)]);
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 0);
+    }
+
+    #[test]
+    fn a_discard_before_ready_waits_for_the_answer_to_the_open() {
+        let mut mux = Mux::new(limits());
+        let (ch, _) = mux.open_relay(Some(80), None).unwrap();
+        assert!(mux.discard(ch).is_empty());
+        mux.on_control(ServerControl::Ready {
+            channel: ch,
+            pty: None,
+        })
+        .unwrap();
+        assert!(
+            mux.on_data(ch, OutputStream::Stdout, 0, b"a")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            mux.on_control(exit(ch, Some(1), 1, 0)).unwrap(),
+            vec![Event::Exit {
+                channel: ch,
+                outcome: Outcome::Code(1)
+            }]
+        );
+        assert_eq!(acks(&mut mux), vec![(ch, OutputStream::Stdout, 0)]);
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 0);
+    }
+
+    #[test]
+    fn forgotten_channels_keep_no_state_and_late_frames_are_ignored() {
+        let mut mux = Mux::new(limits());
+        let ch = exec(&mut mux);
+        mux.on_data(ch, OutputStream::Stdout, 0, b"a").unwrap();
+        assert_eq!(mux.on_control(exit(ch, Some(0), 1, 0)).unwrap(), vec![]);
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 1, "an exit still held is not forgotten");
+        let released = mux.delivered(ch, OutputStream::Stdout, 0);
+        assert!(matches!(released[..], [Event::Exit { .. }]));
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 1, "owed acks are taken first");
+        assert_eq!(mux.take_acks().len(), 1);
+        mux.forget(ch);
+        assert_eq!(mux.tracked(), 0);
+        // A late ack or notice for it is ignored; an id never opened is not.
+        assert!(
+            mux.on_control(ServerControl::Error {
+                channel: ch,
+                code: Notice::StateConflict
+            })
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            mux.on_data(ch, OutputStream::Stdout, 1, b"x")
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            mux.on_control(ServerControl::Error {
+                channel: ch + 1,
+                code: Notice::StateConflict
+            })
+            .is_err()
+        );
+        assert!(!mux.stdin_credit(ch));
     }
 }

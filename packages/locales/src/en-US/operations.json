@@ -154,6 +154,7 @@
     "credential_env_pending": "Login environment still restoring",
     "credential_capture_failed": "A login could not be saved before stopping",
     "disk_stale": "The cached disk was out of date; start again to restore the stored copy",
+    "connection_refused": "Nothing in the sandbox accepted the connection",
     "restore_boot_failed": "The restored disk did not boot; its stored copy is kept",
     "restore_cleanup_pending": "Cleanup of a failed restore is pending; retry the cleanup or destroy the sandbox (destroy deletes the stored copy)",
     "capacity_wait_timeout": "Timed out waiting for capacity",

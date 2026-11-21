@@ -16,5 +16,6 @@
   "envMaxEntries": 32,
   "envValueMaxBytes": 4096,
   "termMaxBytes": 64,
-  "cwdMaxBytes": 4096
+  "cwdMaxBytes": 4096,
+  "unixPathMaxBytes": 107
 }

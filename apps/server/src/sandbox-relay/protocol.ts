@@ -203,6 +203,7 @@ export const sandboxErrorCodeSchema = z.enum([
   "credential_env_pending",
   "credential_capture_failed",
   "disk_stale",
+  "connection_refused",
 ]);
 export type SandboxErrorCode = z.infer<typeof sandboxErrorCodeSchema>;
 
@@ -602,6 +603,15 @@ const channelPtyParamsSchema = z.strictObject({
     .max(CHANNEL_LIMITS.termMaxBytes)
     .regex(/^[A-Za-z0-9._+-]+$/),
 });
+/** A guest loopback TCP port (`tcp` channels); never a host. */
+const channelPortSchema = z.number().int().min(1).max(65_535);
+/** An absolute guest Unix socket path (`unix` channels), never abstract. */
+const channelUnixPathSchema = z
+  .string()
+  .refine(
+    (path) =>
+      path.startsWith("/") && noNul(path) && utf8Bytes(path) <= CHANNEL_LIMITS.unixPathMaxBytes,
+  );
 const channelOutputStreamSchema = z.enum(["stdout", "stderr"]);
 const channelStreamSchema = z.enum(["stdin", "stdout", "stderr"]);
 
@@ -616,8 +626,23 @@ const serverChannelMessageSchema = z.discriminatedUnion("type", [
       cwd: channelCwdSchema.optional(),
       env: channelEnvSchema.optional(),
       pty: channelPtyParamsSchema.optional(),
+      port: channelPortSchema.optional(),
+      path: channelUnixPathSchema.optional(),
     })
-    .refine((v) => (v.kind === "pty") === (v.pty !== undefined)),
+    .refine((v) => (v.kind === "pty") === (v.pty !== undefined))
+    // A relay (tcp/unix) carries exactly its target and nothing of a
+    // process; a process channel never carries a target.
+    .refine((v) =>
+      v.kind === "tcp" || v.kind === "unix"
+        ? !v.login &&
+          v.argv === undefined &&
+          v.cwd === undefined &&
+          v.env === undefined &&
+          (v.kind === "tcp"
+            ? v.port !== undefined && v.path === undefined
+            : v.path !== undefined && v.port === undefined)
+        : v.port === undefined && v.path === undefined,
+    ),
   /** Cumulative credit: the highest delivered output `seq` of `stream`. */
   z.strictObject({
     type: z.literal("channel.ack"),

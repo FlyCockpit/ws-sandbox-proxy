@@ -198,6 +198,8 @@ fn open_message(fence: &ChannelFence, kind: ChannelKind) -> ServerControlMessage
             cols: 80,
             term: "xterm-256color".into(),
         }),
+        port: None,
+        path: None,
     }
 }
 
@@ -481,6 +483,8 @@ fn pty_open_echo_ack_and_ctrl_d_exit() {
                 cols: 100,
                 term: "xterm-256color".into(),
             }),
+            port: None,
+            path: None,
         },
     );
     assert!(out.is_empty(), "{out:?}");
@@ -595,6 +599,8 @@ fn client_env_never_overrides_sandbox_env_and_a_freed_login_revokes() {
             cwd: None,
             env: Some(env),
             pty: None,
+            port: None,
+            path: None,
         },
     );
     assert!(out.is_empty(), "{out:?}");
@@ -1207,6 +1213,8 @@ fn invalid_kind_and_pty_combinations_are_refused() {
             cwd: None,
             env: None,
             pty: None,
+            port: None,
+            path: None,
         },
     );
     assert_eq!(refusal(&out), code(SandboxErrorCode::ProtocolError));
@@ -1776,7 +1784,12 @@ fn kill_closes_never_wedge_behind_the_host_cap() {
     }
     let mut out = drive(&mut rig, |o| data(o).len() as u64 >= CREATOR_UNACKED_FRAMES);
     out.extend(settle(&mut rig, Duration::from_millis(100)));
-    assert_eq!(data(&out).len() as u64, CREATOR_UNACKED_FRAMES);
+    // The owner's share, plus at most each channel's reserved frame.
+    let sent = data(&out).len() as u64;
+    assert!(
+        (CREATOR_UNACKED_FRAMES..=CREATOR_UNACKED_FRAMES + 5).contains(&sent),
+        "{sent}"
+    );
     // Kill closes of every channel while the host cap holds output back.
     for (fence, _) in &opened_channels {
         signal(&mut rig, fence, ChannelSignal::Kill);
@@ -2108,9 +2121,22 @@ fn part_filled_windows_never_pin_the_host_cap() {
     out.extend(settle(&mut rig, Duration::from_millis(50)));
     assert_eq!(data(&out).len() as u64, HOST_UNACKED_FRAMES);
     let (fence, healthy) = opened(&mut rig, "healthy", ChannelKind::Exec);
-    emit_n(&healthy, ChannelOutput::Stdout, 2);
-    assert!(data(&settle(&mut rig, Duration::from_millis(50))).is_empty());
+    emit_n(&healthy, ChannelOutput::Stdout, 3);
+    // The full cap still leaves the newcomer its reserved frame: one at a
+    // time, each after the previous one's ack (audit M1).
+    for seq in 0..2 {
+        let early = settle(&mut rig, Duration::from_millis(50));
+        assert_eq!(data(&early).len(), 1, "{early:?}");
+        assert_eq!(data(&early)[0].1, seq);
+        ack(&mut rig, &fence, ChannelStream::Stdout, seq);
+    }
+    // Its third frame went out at once after the second ack: acknowledge
+    // it too, so only the holders are 60 s unacknowledged.
+    let early = drive(&mut rig, |o| !data(o).is_empty());
+    assert_eq!(data(&early)[0].1, 2);
+    ack(&mut rig, &fence, ChannelStream::Stdout, 2);
     rig.host.advance(STALL_TIMEOUT);
+    emit_n(&healthy, ChannelOutput::Stdout, 2);
     let out = drive(&mut rig, |o| exits(o).len() >= 8 && !data(o).is_empty());
     assert!(
         exits(&out)
@@ -2226,12 +2252,20 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
     let exec = [ChannelOutput::Stdout, ChannelOutput::Stderr];
     let draining = Phase::Draining { exit_at: t0 };
     // Both eofs end at once (also while running: the wrapper died).
-    assert!(end_due(draining, &exec, [true, true], [None, None], t0));
+    assert!(end_due(
+        draining,
+        &exec,
+        [true, true],
+        [None, None],
+        false,
+        t0
+    ));
     assert!(end_due(
         Phase::Running,
         &exec,
         [true, true],
         [None, None],
+        false,
         t0
     ));
     assert!(!end_due(
@@ -2239,6 +2273,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [true, true],
         [None, None],
+        false,
         t0
     ));
     // Idle-proven streams end 2 s after EXIT, not before.
@@ -2248,6 +2283,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, false],
         idle,
+        false,
         t0 + Duration::from_millis(1900)
     ));
     assert!(end_due(
@@ -2255,6 +2291,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, false],
         idle,
+        false,
         t0 + EXIT_DRAIN
     ));
     // Not proven idle: only the cap ends it.
@@ -2264,6 +2301,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, false],
         busy,
+        false,
         t0 + Duration::from_secs(59)
     ));
     assert!(end_due(
@@ -2271,6 +2309,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, false],
         busy,
+        false,
         t0 + EXIT_DRAIN_MAX
     ));
     // Idle too recently.
@@ -2280,6 +2319,7 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, false],
         recent,
+        false,
         t0 + Duration::from_secs(3)
     ));
     assert!(!end_due(
@@ -2287,7 +2327,35 @@ fn end_due_is_a_pure_function_of_the_drain_state() {
         &exec,
         [false, true],
         idle,
+        false,
         t0 + EXIT_DRAIN_MAX
+    ));
+    // A relay held by credit is not cut at the cap; once reads happen
+    // again (not held) the cap applies, and an eof always ends it.
+    let relay = [ChannelOutput::Stdout, ChannelOutput::Stderr];
+    assert!(!end_due(
+        draining,
+        &relay,
+        [false, false],
+        [None, None],
+        true,
+        t0 + EXIT_DRAIN_MAX * 10
+    ));
+    assert!(end_due(
+        draining,
+        &relay,
+        [false, false],
+        [None, None],
+        false,
+        t0 + EXIT_DRAIN_MAX
+    ));
+    assert!(end_due(
+        draining,
+        &relay,
+        [true, true],
+        [None, None],
+        true,
+        t0
     ));
 }
 
@@ -3416,4 +3484,417 @@ fn a_setup_deadline_crossed_during_a_lookup_wait_refuses_ready() {
         exit.error.map(|e| e.code),
         Some(code(SandboxErrorCode::Timeout))
     );
+}
+
+// ---------------------------------------------------------------- relay ----
+
+fn relay_message(
+    fence: &ChannelFence,
+    port: Option<u16>,
+    path: Option<&str>,
+) -> ServerControlMessage {
+    ServerControlMessage::ChannelOpen {
+        fence: fence.clone(),
+        kind: if path.is_some() {
+            ChannelKind::Unix
+        } else {
+            ChannelKind::Tcp
+        },
+        argv: None,
+        login: false,
+        cwd: None,
+        env: None,
+        pty: None,
+        port,
+        path: path.map(str::to_string),
+    }
+}
+
+/// Open a tcp relay to guest port 5432 and wait for `channel.ready`.
+fn relay(rig: &mut Rig, channel: &str) -> (ChannelFence, FakeChannelControl) {
+    let fence = fence(channel);
+    assert!(send(rig, relay_message(&fence, Some(5432), None)).is_empty());
+    let out = drive(rig, |o| ready(o).is_some());
+    assert_eq!(ready(&out), Some(None), "a relay's ready has no size");
+    (fence, control(rig, channel))
+}
+
+#[test]
+fn the_node_offers_the_relay_kinds() {
+    let rig = rig();
+    assert_eq!(
+        capability(rig.host.runtime.as_ref()).unwrap().kinds,
+        vec![
+            ChannelKind::Pty,
+            ChannelKind::Exec,
+            ChannelKind::Tcp,
+            ChannelKind::Unix
+        ]
+    );
+}
+
+#[test]
+fn a_tcp_relay_round_trips_and_half_closes_into_a_natural_end() {
+    let mut rig = rig();
+    // Login values are installed for the sandbox: a relay never gets them.
+    let dir = tempfile::tempdir().unwrap();
+    let credentials =
+        crate::sandbox_relay::credentials::service::CredentialService::start(dir.path(), "host-1")
+            .unwrap();
+    credentials.install_test_env("sbx-1", "lease-1", "TOKEN", b"secret-value");
+    rig.host.set_credentials(Some(credentials.clone()));
+    let (fence, control) = relay(&mut rig, "ch-1");
+    assert_eq!(
+        control.env(),
+        Some(Vec::new()),
+        "a relay gets no environment"
+    );
+    input(&mut rig, &fence, 0, b"hello ");
+    input(&mut rig, &fence, 1, b"guest");
+    let out = drive(&mut rig, |o| data(o).len() == 2 && stdin_acks(o).len() == 2);
+    assert_eq!(
+        data(&out),
+        vec![
+            (ChannelStream::Stdout, 0, b"hello ".to_vec()),
+            (ChannelStream::Stdout, 1, b"guest".to_vec()),
+        ]
+    );
+    assert_eq!(control.stdin(), b"hello guest");
+    stdin_eof(&mut rig, &fence, 2);
+    let out = drive(&mut rig, has_exit);
+    // The echo service closed too: its eof first, then the natural exit.
+    assert_eq!(eofs(&out), vec![(ChannelStream::Stdout, 2)]);
+    assert_eq!(exit_index(&out), out.len() - 1);
+    let exit = exit(&out).unwrap();
+    assert_eq!(
+        (exit.exit_code, exit.intent, exit.error, exit.frames),
+        (Some(0), None, None, (2, 0))
+    );
+    assert!(exit.reaped);
+    assert_eq!(closes(&control), vec!["finish"]);
+    // A revoked login never touches a relay that carries none.
+    credentials.revoke_lease("lease-1");
+    assert!(rig.slots.wait_idle(Duration::from_secs(2)));
+}
+
+#[test]
+fn a_guest_write_shutdown_travels_while_input_still_flows() {
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_emit(b"220 ready\r\n");
+    control.relay_eof();
+    let out = drive(&mut rig, |o| !eofs(o).is_empty());
+    assert_eq!(
+        data(&out),
+        vec![(ChannelStream::Stdout, 0, b"220 ready\r\n".to_vec())]
+    );
+    assert_eq!(eofs(&out), vec![(ChannelStream::Stdout, 1)]);
+    // The other direction is still open.
+    input(&mut rig, &fence, 0, b"QUIT\r\n");
+    let out = drive(&mut rig, |o| stdin_acks(o) == vec![0]);
+    assert!(!has_exit(&out));
+    assert_eq!(control.stdin(), b"QUIT\r\n");
+    stdin_eof(&mut rig, &fence, 1);
+    drive(&mut rig, |_| control.stdin_closed());
+    control.relay_done();
+    let out = drive(&mut rig, has_exit);
+    assert!(eofs(&out).is_empty(), "one stdout eof only");
+    assert_eq!(exit(&out).unwrap().exit_code, Some(0));
+}
+
+#[test]
+fn a_relay_reset_ends_without_an_eof() {
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_emit(b"partial");
+    control.relay_reset();
+    let out = drive(&mut rig, has_exit);
+    assert_eq!(
+        data(&out),
+        vec![(ChannelStream::Stdout, 0, b"partial".to_vec())]
+    );
+    assert!(eofs(&out).is_empty(), "a reset sends no eof: {out:?}");
+    let exit = exit(&out).unwrap();
+    assert_eq!(exit.fence, fence);
+    assert_eq!((exit.exit_code, exit.intent), (Some(1), None));
+    assert_eq!(exit.frames, (1, 0));
+}
+
+#[test]
+fn a_relay_reset_after_the_guest_eof_is_reported_in_the_exit() {
+    // The guest service shut its write side, then reset while input still
+    // flowed: the helper's `R` after its `E` is read and the exit says 1.
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_emit(b"220 bye\r\n");
+    control.relay_eof();
+    let out = drive(&mut rig, |o| !eofs(o).is_empty());
+    assert_eq!(eofs(&out), vec![(ChannelStream::Stdout, 1)]);
+    input(&mut rig, &fence, 0, b"MAIL FROM");
+    let out = drive(&mut rig, |o| stdin_acks(o) == vec![0]);
+    assert!(!has_exit(&out));
+    control.relay_reset();
+    let out = drive(&mut rig, has_exit);
+    assert!(eofs(&out).is_empty(), "one stdout eof only: {out:?}");
+    let exit = exit(&out).unwrap();
+    assert_eq!(
+        (exit.exit_code, exit.intent, exit.error, exit.frames),
+        (Some(1), None, None, (1, 0)),
+        "a reset, not a framing error and not a clean end"
+    );
+    assert_eq!(closes(&control), vec!["finish"]);
+}
+
+#[test]
+fn an_eof_and_a_reset_in_one_read_send_the_eof_then_a_failed_exit() {
+    let mut rig = rig();
+    let (_fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_emit(b"bye");
+    control.emit(ChannelOutput::Stdout, b"ER");
+    control.coalesce(ChannelOutput::Stdout);
+    // A helper that claims a clean end after its reset is still a reset.
+    control.exit(ChannelExitStatus::Code(0));
+    let out = drive(&mut rig, has_exit);
+    assert_eq!(
+        data(&out),
+        vec![(ChannelStream::Stdout, 0, b"bye".to_vec())]
+    );
+    assert_eq!(eofs(&out), vec![(ChannelStream::Stdout, 1)]);
+    let exit = exit(&out).unwrap();
+    assert_eq!((exit.exit_code, exit.error), (Some(1), None));
+}
+
+#[test]
+fn a_reset_read_after_the_eof_overrides_a_clean_exit_code() {
+    // The `R` arrives in a later read than the `E`: stdout is still read
+    // after the eof, so even a helper claiming exit 0 is reported as 1.
+    let mut rig = rig();
+    let (_fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_eof();
+    let out = drive(&mut rig, |o| !eofs(o).is_empty());
+    assert!(!has_exit(&out));
+    control.emit(ChannelOutput::Stdout, b"R");
+    control.exit(ChannelExitStatus::Code(0));
+    let out = drive(&mut rig, has_exit);
+    let exit = exit(&out).unwrap();
+    assert_eq!((exit.exit_code, exit.error), (Some(1), None));
+}
+
+#[test]
+fn a_relay_exit_zero_without_the_guest_eof_is_not_clean() {
+    let mut rig = rig();
+    let (_fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    control.relay_emit(b"half");
+    control.exit(ChannelExitStatus::Code(0));
+    let out = drive(&mut rig, has_exit);
+    assert!(eofs(&out).is_empty());
+    assert_eq!(exit(&out).unwrap().exit_code, Some(1));
+}
+
+#[test]
+fn a_refused_connect_exits_before_ready_without_a_kill() {
+    for (failure, expected) in [
+        (
+            sandbox_runtime::RelayFailure::Refused,
+            SandboxErrorCode::ConnectionRefused,
+        ),
+        (
+            sandbox_runtime::RelayFailure::Denied,
+            SandboxErrorCode::GuestPermissionDenied,
+        ),
+        (
+            sandbox_runtime::RelayFailure::Failed,
+            SandboxErrorCode::GuestOperationFailed,
+        ),
+    ] {
+        let mut rig = rig();
+        rig.fake.refuse_channel_connect(Some(failure));
+        let fence = fence("ch-1");
+        assert!(send(&mut rig, relay_message(&fence, Some(6000), None)).is_empty());
+        let out = drive(&mut rig, has_exit);
+        assert!(ready(&out).is_none(), "{out:?}");
+        assert_eq!(refusal(&out), code(expected));
+        // The secret-bound FAILED proves the helper ran inside its scope: a
+        // normal finish, no scope kill and no tombstone left behind.
+        let control = control(&rig, "ch-1");
+        assert_eq!(closes(&control), vec!["finish"]);
+        assert!(rig.fake.channel_scope_kills().is_empty());
+        assert!(rig.slots.wait_idle(Duration::from_secs(2)));
+        assert!(!registry_file(&rig, "ch-1").exists());
+    }
+}
+
+#[test]
+fn every_relay_close_is_a_kill_and_signals_and_resizes_are_refused() {
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    assert_eq!(
+        notices(&signal(&mut rig, &fence, ChannelSignal::Term)),
+        vec![ChannelNotice::UnsupportedSignal]
+    );
+    let out = send(
+        &mut rig,
+        ServerControlMessage::ChannelResize {
+            fence: fence.clone(),
+            rows: 10,
+            cols: 10,
+        },
+    );
+    assert_eq!(notices(&out), vec![ChannelNotice::StateConflict]);
+    // A client close is a reset: the relay's scope is killed, not hung up.
+    close(&mut rig, &fence, ChannelCloseIntent::Client);
+    let out = drive(&mut rig, has_exit);
+    let exit = exit(&out).unwrap();
+    assert_eq!(exit.intent, Some(ChannelCloseIntent::Client));
+    assert_eq!(closes(&control), vec!["kill"]);
+    assert!(rig.slots.wait_idle(Duration::from_secs(2)));
+}
+
+#[test]
+fn a_unix_relay_reaches_its_path_and_the_target_is_the_only_parameter() {
+    let mut rig = rig();
+    let first = fence("ch-1");
+    assert!(send(&mut rig, relay_message(&first, None, Some("/run/app.sock"))).is_empty());
+    drive(&mut rig, |o| ready(o).is_some());
+    let control = control(&rig, "ch-1");
+    assert_eq!(control.argv(), None);
+    assert!(!control.login());
+    assert_eq!(control.cwd(), None);
+    // Process fields on a relay (the wire refuses them too) never spawn.
+    let bad = fence("ch-2");
+    let out = send(
+        &mut rig,
+        ServerControlMessage::ChannelOpen {
+            fence: bad.clone(),
+            kind: ChannelKind::Tcp,
+            argv: None,
+            login: false,
+            cwd: None,
+            env: None,
+            pty: None,
+            port: None,
+            path: Some("/run/app.sock".into()),
+        },
+    );
+    assert_eq!(refusal(&out), code(SandboxErrorCode::ProtocolError));
+    assert!(rig.fake.channel_control("sbx-1", CONN, "ch-2").is_none());
+}
+
+#[test]
+fn relay_output_waits_for_credit_and_counts_against_the_bulk_caps() {
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    for i in 0..40 {
+        control.relay_emit(format!("frame {i}").as_bytes());
+    }
+    let out = drive(&mut rig, |o| data(o).len() == 32);
+    assert_eq!(data(&settle(&mut rig, Duration::from_millis(50))).len(), 0);
+    assert_eq!(data(&out).len(), 32, "one bulk window");
+    ack(&mut rig, &fence, ChannelStream::Stdout, 31);
+    let out = drive(&mut rig, |o| data(o).len() == 8);
+    assert_eq!(data(&out)[0].1, 32);
+}
+
+/// Audit M2: a completed relay stream (the helper exited) read by a slow
+/// client is never cut at the 60 s drain cap while it waits only for
+/// credit; every byte arrives, then the clean end.
+#[test]
+fn a_slow_reader_gets_a_completed_relay_stream_past_the_drain_cap() {
+    let mut rig = rig();
+    let (fence, control) = relay(&mut rig, "ch-1");
+    control.set_echo(false);
+    let mut expected = Vec::new();
+    for i in 0..200 {
+        let chunk = format!("frame {i};");
+        expected.extend_from_slice(chunk.as_bytes());
+        control.relay_emit(chunk.as_bytes());
+    }
+    control.relay_eof();
+    control.relay_done();
+    let mut all = drive(&mut rig, |o| data(o).len() >= 16);
+    // A window per 20 s of node time: about 140 s after the EXIT, and no
+    // frame is ever 60 s unacknowledged.
+    let mut steps = 0;
+    while !has_exit(&all) {
+        steps += 1;
+        assert!(steps < 200, "the stream never completed");
+        rig.host.advance(Duration::from_secs(20));
+        if let Some(last) = data(&all).last() {
+            ack(&mut rig, &fence, ChannelStream::Stdout, last.1);
+        }
+        all.extend(drive(&mut rig, |o| !data(o).is_empty() || has_exit(o)));
+    }
+    assert!(steps >= 4, "the client was slower than the cap: {steps}");
+    let got: Vec<u8> = data(&all)
+        .into_iter()
+        .flat_map(|(_, _, body)| body)
+        .collect();
+    assert_eq!(got, expected, "every byte, in order");
+    assert_eq!(eofs(&all).len(), 1);
+    let exit = exit(&all).unwrap();
+    assert_eq!(
+        (exit.exit_code, exit.intent, exit.error),
+        (Some(0), None, None),
+        "a clean end, not a cut stream"
+    );
+}
+
+/// Audit M1 (node): relay channels whose clients stopped reading fill the
+/// owner's share and the host cap; every other bulk channel still gets a
+/// frame at a time (its reserve) instead of freezing until the stall rule.
+#[test]
+fn stalled_relays_never_freeze_the_other_bulk_channels() {
+    let mut rig = rig();
+    let mut stalled = Vec::new();
+    for n in 0..2 {
+        let (fence, control) = relay(&mut rig, &format!("stalled-{n}"));
+        control.set_echo(false);
+        stalled.push((fence, control));
+    }
+    for (n, (_, control)) in stalled.iter().enumerate() {
+        for i in 0..40 {
+            control.relay_emit(format!("{n}:{i}").as_bytes());
+        }
+    }
+    let out = drive(&mut rig, |o| data(o).len() as u64 >= CREATOR_UNACKED_FRAMES);
+    assert_eq!(data(&out).len() as u64, CREATOR_UNACKED_FRAMES);
+    // The owner's share is full and nobody acknowledges it.
+    let (fence, healthy) = relay(&mut rig, "healthy");
+    healthy.set_echo(false);
+    for i in 0..3 {
+        healthy.relay_emit(format!("h{i}").as_bytes());
+    }
+    let senders = |out: &[Out]| -> Vec<(ChannelFence, u64)> {
+        out.iter()
+            .filter_map(|o| match o {
+                Out::Binary(frame) => {
+                    let (metadata, _) = parse_channel_frame(frame).unwrap().unwrap();
+                    Some((metadata.fence, metadata.seq))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    // One frame at a time, each after the previous one's ack.
+    for seq in 0..3 {
+        let mut out = drive(&mut rig, |o| !data(o).is_empty());
+        out.extend(settle(&mut rig, Duration::from_millis(30)));
+        assert_eq!(senders(&out), vec![(fence.clone(), seq)], "{out:?}");
+        ack(&mut rig, &fence, ChannelStream::Stdout, seq);
+    }
+    // The stalled ones got nothing more meanwhile.
+    for (fence, _) in &stalled {
+        assert!(
+            senders(&settle(&mut rig, Duration::from_millis(30)))
+                .iter()
+                .all(|(f, _)| f != fence)
+        );
+    }
 }

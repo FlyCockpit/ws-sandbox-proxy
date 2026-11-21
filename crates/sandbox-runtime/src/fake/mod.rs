@@ -1294,6 +1294,8 @@ struct FakeChannels {
     fail_setup: Option<bool>,
     /// The next spawns fail before anything starts.
     fail_spawn: Option<SandboxErrorCode>,
+    /// The next relay channels fail to connect this way.
+    refuse_connect: Option<crate::RelayFailure>,
     next_pid: u32,
 }
 
@@ -1924,6 +1926,14 @@ impl FakeRuntime {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .fail_setup = refused;
+    }
+
+    /// The next relay channels (`tcp`/`unix`) fail to connect this way.
+    pub fn refuse_channel_connect(&self, failure: Option<crate::RelayFailure>) {
+        self.channels
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .refuse_connect = failure;
     }
 
     /// The next channel spawns fail before any process starts (tests).
@@ -2806,6 +2816,7 @@ impl SandboxRuntime for FakeRuntime {
             cwd: request.cwd.clone(),
             pid: 2000 + channels.next_pid,
             fail_setup: channels.fail_setup,
+            refuse: channels.refuse_connect,
         });
         channels.controls.insert(
             (

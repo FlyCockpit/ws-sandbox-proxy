@@ -152,6 +152,7 @@ async function settle() {
 let host: FakeHost;
 let linkAuthorized: boolean;
 let linkError: { code: "disconnected" | "unsupported_capability"; message: string } | null;
+let linkKinds: string[];
 let verdict: Verdict;
 let checks: number;
 let closedSockets: string[];
@@ -165,6 +166,7 @@ function link(): ConnectHostLink {
     epoch: 7,
     protocolVersion: "1.0",
     authorized: () => linkAuthorized,
+    kinds: linkKinds,
   };
 }
 
@@ -261,6 +263,7 @@ beforeEach(() => {
   host = new FakeHost();
   linkAuthorized = true;
   linkError = null;
+  linkKinds = ["pty", "exec", "tcp", "unix"];
   verdict = "ok";
   checks = 0;
   closedSockets = [];
@@ -1521,6 +1524,8 @@ describe("connect manager: §10 audit hooks", () => {
       intent: "client",
       ptyChannels: 1,
       execChannels: 1,
+      relayChannels: 0,
+      forwardedPorts: [],
       bytesIn: 7,
       bytesOut: 8,
     });
@@ -1531,6 +1536,31 @@ describe("connect manager: §10 audit hooks", () => {
     );
     for (const secret of ["cat", "hello", "abc", "1234567", "xterm"])
       expect(text).not.toContain(secret);
+  });
+
+  it("counts relays apart from exec and keeps the first 16 distinct tcp ports, never a unix path", () => {
+    const audit = auditedManager();
+    const { connection } = connect();
+    openPty(connection, 1);
+    openExec(connection, 2);
+    send(connection, { type: "open", channel: 3, kind: "unix", path: "/run/secret-app.sock" });
+    // 8080 twice, then 20 more distinct ports: 22 tcp relays, 17 distinct.
+    const ports = [8080, 8080, ...Array.from({ length: 20 }, (_, index) => 9000 + index)];
+    ports.forEach((port, index) => {
+      send(connection, { type: "open", channel: 10 + index, kind: "tcp", port });
+    });
+    expect(host.frames("channel.open")).toHaveLength(3 + ports.length);
+    connection.end("client");
+    expect(audit.closed).toHaveBeenCalledTimes(1);
+    expect(audit.closed.mock.calls[0]?.[0]).toMatchObject({
+      ptyChannels: 1,
+      execChannels: 1,
+      relayChannels: 23,
+      forwardedPorts: [8080, ...Array.from({ length: 15 }, (_, index) => 9000 + index)],
+    });
+    const text = JSON.stringify(audit.closed.mock.calls);
+    expect(text).not.toContain("secret-app");
+    expect(text).not.toContain("/run");
   });
 
   it("a connection that never went live is not audited", async () => {
@@ -1571,5 +1601,178 @@ describe("connect manager: §10 audit hooks", () => {
     expect(client.frames("end")).toEqual([{ type: "end", intent: "revoked" }]);
     expect(audit.closed).toHaveBeenCalledWith(expect.objectContaining({ intent: "revoked" }));
     expect(manager.resources().connections).toBe(0);
+  });
+});
+
+describe("connect manager: tcp and unix relay channels", () => {
+  function openTcp(connection: ReturnType<typeof connect>["connection"], channel = 1, port = 5432) {
+    send(connection, { type: "open", channel, kind: "tcp", port });
+    return host.frames("channel.open").at(-1)!.fence as ChannelFence;
+  }
+
+  it("forwards only the guest target: a port or a path, never a host or process field", () => {
+    const { connection } = connect();
+    const fence = openTcp(connection, 1, 15432);
+    expect(host.frames("channel.open")[0]).toEqual({
+      type: "channel.open",
+      fence,
+      kind: "tcp",
+      login: false,
+      port: 15432,
+    });
+    send(connection, { type: "open", channel: 2, kind: "unix", path: "/run/app.sock" });
+    expect(host.frames("channel.open")[1]).toEqual({
+      type: "channel.open",
+      fence: expect.objectContaining({ connectionId: connection.connectionId }),
+      kind: "unix",
+      login: false,
+      path: "/run/app.sock",
+    });
+  });
+
+  it.each([
+    { type: "open", channel: 1, kind: "tcp", port: 22, host: "10.0.0.1" },
+    { type: "open", channel: 1, kind: "tcp", port: 0 },
+    { type: "open", channel: 1, kind: "tcp", port: 65_536 },
+    { type: "open", channel: 1, kind: "tcp" },
+    { type: "open", channel: 1, kind: "tcp", port: 22, argv: ["nc"] },
+    { type: "open", channel: 1, kind: "unix", path: "relative.sock" },
+    { type: "open", channel: 1, kind: "unix", path: `/${"a".repeat(107)}` },
+    { type: "open", channel: 1, kind: "exec", argv: ["cat"], port: 22 },
+  ])("refuses the malformed relay open %j as a protocol violation", (frame) => {
+    const { connection, client } = connect();
+    send(connection, frame);
+    expect(host.frames("channel.open")).toEqual([]);
+    expect(client.frames("end")).toEqual([
+      expect.objectContaining({ type: "end", intent: "protocol_violation" }),
+    ]);
+  });
+
+  it("a node that did not offer the kind never sees the open (an older daemon)", () => {
+    linkKinds = ["pty", "exec"];
+    const { connection, client } = connect();
+    send(connection, { type: "open", channel: 1, kind: "tcp", port: 5432 });
+    expect(host.frames("channel.open")).toEqual([]);
+    expect(client.frames("exit")).toEqual([
+      {
+        type: "exit",
+        channel: 1,
+        error: { code: "unsupported_capability", message: expect.stringContaining("tcp") },
+        frames: { stdout: 0, stderr: 0 },
+      },
+    ]);
+    // The connection stays usable for the kinds the node has.
+    openExec(connection, 2);
+    expect(host.frames("channel.open")).toHaveLength(1);
+  });
+
+  it("relays both half-closes and passes a refusal through as connection_refused", () => {
+    const { connection, client } = connect();
+    const fence = openTcp(connection);
+    ready(fence, "exec");
+    expect(client.frames("ready")).toEqual([{ type: "ready", channel: 1 }]);
+    stdin(connection, 1, 0, "GET /");
+    send(connection, { type: "eof", channel: 1, stream: "stdin", frames: 1 });
+    expect(host.frames("channel.eof")).toEqual([
+      { type: "channel.eof", fence, stream: "stdin", frames: 1 },
+    ]);
+    output(fence, 0, "200 OK");
+    hostControl({ type: "channel.eof", fence, stream: "stdout", frames: 1 });
+    exit(fence, { exitCode: 0, frames: { stdout: 1, stderr: 0 } });
+    expect(client.order).toEqual(["hello", "ready", "data:stdout:0", "eof", "exit"]);
+    const refused = openTcp(connection, 2, 6000);
+    exit(refused, {
+      error: {
+        code: "connection_refused",
+        message: "nothing in the sandbox accepted the connection",
+        sandboxId: "sbx-1",
+      },
+    });
+    expect(client.frames("exit").at(-1)).toEqual({
+      type: "exit",
+      channel: 2,
+      error: {
+        code: "connection_refused",
+        message: "nothing in the sandbox accepted the connection",
+      },
+      frames: { stdout: 0, stderr: 0 },
+    });
+  });
+
+  it("stderr on a relay is a node violation; signals and resizes are refused notices", () => {
+    const { connection, client } = connect();
+    const fence = openTcp(connection);
+    ready(fence, "exec");
+    send(connection, { type: "signal", channel: 1, signal: "TERM" });
+    send(connection, { type: "resize", channel: 1, rows: 10, cols: 10 });
+    expect(client.frames("error")).toEqual([
+      { type: "error", channel: 1, code: "unsupported_signal" },
+      { type: "error", channel: 1, code: "state_conflict" },
+    ]);
+    expect(host.frames("channel.signal")).toEqual([]);
+    for (let i = 0; i < CHANNEL_LIMITS.fenceViolationLimit - 1; i += 1)
+      output(fence, i, "x", "stderr");
+    hostControl({ type: "channel.eof", fence, stream: "stderr", frames: 0 });
+    expect(client.data).toEqual([]);
+    expect(client.frames("exit")).toEqual([
+      expect.objectContaining({ channel: 1, intent: "protocol_violation" }),
+    ]);
+    expect(host.frames("channel.close")).toEqual([
+      { type: "channel.close", fence, intent: "protocol_violation" },
+    ]);
+  });
+
+  it("a slow client holds relay credit: at most one window queued, the node acked only as frames leave", () => {
+    const { connection, client } = connect();
+    const fence = openTcp(connection);
+    ready(fence, "exec");
+    const window = CHANNEL_LIMITS.bulkWindowFrames;
+    for (let seq = 0; seq < window; seq += 1) output(fence, seq, `f${seq}`);
+    // The client's own window is full: nothing more leaves until it acks.
+    expect(client.data).toHaveLength(window);
+    expect(host.frames("channel.ack").at(-1)).toEqual({
+      type: "channel.ack",
+      fence,
+      stream: "stdout",
+      seq: window - 1,
+    });
+    for (let seq = window; seq < 2 * window; seq += 1) output(fence, seq, `f${seq}`);
+    expect(client.data).toHaveLength(window);
+    expect(host.frames("channel.ack").at(-1)?.seq).toBe(window - 1);
+    // Beyond the second window the node broke its credit.
+    output(fence, 2 * window, "over");
+    expect(client.frames("exit")).toEqual([
+      expect.objectContaining({ channel: 1, intent: "protocol_violation" }),
+    ]);
+  });
+});
+
+describe("connect manager: shared budgets keep a reserve per channel (audit M1)", () => {
+  it("channels whose client stopped reading never freeze another channel's output", async () => {
+    const { connection, client } = connect();
+    await settle();
+    const big = "x".repeat(CHANNEL_LIMITS.bulkDataMaxBytes);
+    // Four channels each hold a full unacked window: the 4 MiB budget.
+    for (let channel = 1; channel <= 4; channel += 1) {
+      const fence = openExec(connection, channel);
+      ready(fence, "exec");
+      for (let seq = 0; seq < CHANNEL_LIMITS.bulkWindowFrames; seq += 1) output(fence, seq, big);
+    }
+    await settle();
+    expect(client.data).toHaveLength(4 * CHANNEL_LIMITS.bulkWindowFrames);
+    const stalled = client.data.length;
+    // A fifth channel still moves, one frame per ack, and nothing else does.
+    const fence = openExec(connection, 5);
+    ready(fence, "exec");
+    for (let seq = 0; seq < 3; seq += 1) output(fence, seq, big);
+    await settle();
+    for (let seq = 0; seq < 3; seq += 1) {
+      const fifth = client.data.filter((frame) => frame.channel === 5);
+      expect(fifth.map((frame) => frame.seq)).toEqual([...Array(seq + 1).keys()]);
+      send(connection, { type: "ack", channel: 5, stream: "stdout", seq });
+      await settle();
+    }
+    expect(client.data).toHaveLength(stalled + 3);
+    expect(client.frames("end")).toEqual([]);
   });
 });

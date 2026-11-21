@@ -1137,9 +1137,10 @@ pub enum ServerControlMessage {
     /// Credit: every host→server output frame up to `sequence` was delivered.
     #[serde(rename = "terminal.ack")]
     TerminalAck { fence: TerminalFence, sequence: u64 },
-    /// Open an interactive channel (a PTY shell or an exec) in the fenced
-    /// sandbox generation. The host takes the guest identity from its own
-    /// journal, never the frame. Answered by `channel.ready` or `channel.exit`.
+    /// Open a channel (a PTY shell, an exec, or a byte stream to a guest
+    /// loopback TCP `port` or guest Unix socket `path`) in the fenced sandbox
+    /// generation. The host takes the guest identity from its own journal,
+    /// never the frame. Answered by `channel.ready` or `channel.exit`.
     #[serde(rename = "channel.open")]
     ChannelOpen {
         fence: crate::ChannelFence,
@@ -1169,6 +1170,20 @@ pub enum ServerControlMessage {
             deserialize_with = "crate::terminal::present_terminal_field"
         )]
         pty: Option<crate::ChannelPtyParams>,
+        /// `tcp` only: the guest loopback port (never a host).
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        port: Option<u16>,
+        /// `unix` only: the absolute guest socket path.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::terminal::present_terminal_field"
+        )]
+        path: Option<String>,
     },
     /// Cumulative credit: the highest delivered output `seq` of `stream`
     /// (`stdout` or `stderr`).
@@ -1791,17 +1806,24 @@ fn validate_server_channel(message: &ServerControlMessage) -> Result<(), Control
             fence,
             kind,
             argv,
+            login,
             cwd,
             env,
             pty,
-            ..
+            port,
+            path,
         } => crate::valid_channel_open(
             fence,
-            *kind,
-            argv.as_deref(),
-            cwd.as_deref(),
-            env.as_ref(),
-            pty.as_ref(),
+            &crate::ChannelOpenFields {
+                kind: *kind,
+                login: *login,
+                argv: argv.as_deref(),
+                cwd: cwd.as_deref(),
+                env: env.as_ref(),
+                pty: pty.as_ref(),
+                port: *port,
+                path: path.as_deref(),
+            },
         ),
         ServerControlMessage::ChannelAck { fence, stream, seq } => {
             fence.is_valid() && stream.is_output() && crate::channel::valid_channel_seq(*seq)

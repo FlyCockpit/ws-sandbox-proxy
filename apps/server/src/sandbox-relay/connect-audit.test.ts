@@ -23,13 +23,22 @@ const openOf = (overrides: Partial<{ connectionId: string }> = {}) => ({
   openedAt: OPENED_AT,
   ...overrides,
 });
-const closeOf = (overrides: Partial<{ connectionId: string; intent: string }> = {}) => ({
+const closeOf = (
+  overrides: Partial<{
+    connectionId: string;
+    intent: string;
+    relayChannels: number;
+    forwardedPorts: readonly number[];
+  }> = {},
+) => ({
   ...ids,
   openedAt: OPENED_AT,
   closedAt: CLOSED_AT,
   intent: "client",
   ptyChannels: 1,
   execChannels: 2,
+  relayChannels: 3,
+  forwardedPorts: [8080, 5432] as readonly number[],
   bytesIn: 10,
   bytesOut: 20,
   ...overrides,
@@ -51,6 +60,8 @@ const endRow = {
   closeIntent: "client",
   ptyChannels: 1,
   execChannels: 2,
+  relayChannels: 3,
+  forwardedPorts: [8080, 5432],
   bytesIn: 10,
   bytesOut: 20,
 };
@@ -106,6 +117,62 @@ describe("ConnectAuditRecorder", () => {
     expect(info.mock.calls[0]?.[1]).toEqual({ code: "connect_open", ...ids });
     expect(info.mock.calls[1]?.[1]).toMatchObject({ code: "connect_close", intent: "client" });
     expect(recorder.pendingWrites).toBe(0);
+  });
+
+  it("records relays apart from exec and the distinct forwarded ports, at most the first 16", async () => {
+    const sink: Sink = { open: vi.fn(async () => true), close: vi.fn(async () => true) };
+    const recorder = new ConnectAuditRecorder({ sink });
+    const many = [22, 22, ...Array.from({ length: 30 }, (_, index) => 9000 + index), 0, 70_000];
+    recorder.opened(openOf());
+    await recorder.drain();
+    recorder.closed(closeOf({ relayChannels: 33, forwardedPorts: many }));
+    await recorder.drain();
+    // A second connection that forwarded one port twice.
+    recorder.opened(openOf({ connectionId: "second" }));
+    recorder.closed(
+      closeOf({ connectionId: "second", relayChannels: 1, forwardedPorts: [443, 443] }),
+    );
+    await recorder.drain();
+    const first16 = [22, ...Array.from({ length: 15 }, (_, index) => 9000 + index)];
+    expect(sink.close).toHaveBeenNthCalledWith(1, {
+      id: ids.connectionId,
+      ownerId: "owner-1",
+      ...endRow,
+      relayChannels: 33,
+      execChannels: 2,
+      forwardedPorts: first16,
+    });
+    expect(sink.close).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ id: "second", relayChannels: 1, forwardedPorts: [443] }),
+    );
+    expect(info.mock.calls[1]?.[1]).toMatchObject({
+      code: "connect_close",
+      relayChannels: 33,
+      execChannels: 2,
+      forwardedPorts: first16.join(","),
+    });
+  });
+
+  it("a coalesced insert carries the relay count and the ports", async () => {
+    const gate = deferred<boolean>();
+    const sink: Sink = {
+      open: vi.fn((row) => (row.id === "busy" ? gate.promise : Promise.resolve(true))),
+      close: vi.fn(async () => true),
+    };
+    const recorder = new ConnectAuditRecorder({ sink, concurrency: 1 });
+    recorder.opened(openOf({ connectionId: "busy" }));
+    recorder.opened(openOf());
+    recorder.closed(closeOf({ relayChannels: 2, forwardedPorts: [3000, 3000, 3001] }));
+    gate.resolve(true);
+    await recorder.drain();
+    expect(sink.open).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        id: ids.connectionId,
+        end: expect.objectContaining({ relayChannels: 2, forwardedPorts: [3000, 3001] }),
+      }),
+    );
+    expect(sink.close).not.toHaveBeenCalled();
   });
 
   it("a close whose open is still queued coalesces into one insert", async () => {

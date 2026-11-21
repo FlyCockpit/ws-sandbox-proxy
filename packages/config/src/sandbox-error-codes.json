@@ -70,5 +70,6 @@
   "credential_spec_invalid",
   "credential_env_pending",
   "credential_capture_failed",
-  "disk_stale"
+  "disk_stale",
+  "connection_refused"
 ]

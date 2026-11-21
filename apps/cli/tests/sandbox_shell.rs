@@ -468,6 +468,8 @@ fn exec_channel_streams_output_and_passes_the_exit_code_through() {
                     cwd: Some("/tmp".into()),
                     env: Some([("LANG".to_owned(), "C.UTF-8".to_owned())].into()),
                     pty: None,
+                    port: None,
+                    path: None,
                 }
             );
             peer.send(&ServerControl::Ready {
@@ -1558,6 +1560,8 @@ fn pty_shell_is_raw_echoes_resizes_and_restores_the_terminal() {
                 cols: 100,
                 term: "vt100".into()
             }),
+            port: None,
+            path: None,
         })
     );
     // The open went out, `ready` has not come: the terminal stays cooked

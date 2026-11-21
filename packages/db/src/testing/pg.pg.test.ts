@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { afterAll, describe, expect, inject, it } from "vitest";
 
@@ -22,7 +24,11 @@ describe("pg test harness", () => {
     const migrations = await db.inspect.$queryRawUnsafe<{ count: bigint }[]>(
       "SELECT count(*) AS count FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL",
     );
-    expect(Number(migrations[0]?.count)).toBe(1);
+    // Every committed migration folder (0_init and the additive ones after it).
+    const committed = readdirSync(resolve(import.meta.dirname, "../../prisma/migrations"), {
+      withFileTypes: true,
+    }).filter((entry) => entry.isDirectory()).length;
+    expect(Number(migrations[0]?.count)).toBe(committed);
   });
 
   it("forces A-then-B and observes B blocked on A's real row lock", async () => {

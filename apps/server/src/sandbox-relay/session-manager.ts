@@ -880,6 +880,7 @@ export class SandboxRelaySessionManager {
             epoch: session.connectionEpoch,
             protocolVersion: session.protocolVersion,
             authorized: () => session.authorized() && this.isCurrentRegistered(session, socket),
+            kinds: session.channelKinds,
           },
         };
       },

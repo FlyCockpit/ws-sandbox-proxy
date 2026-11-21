@@ -57,12 +57,13 @@ sandbox, operation and transfer belongs to exactly one user account.
   for every sandbox on the account. An endpoint outlives the key that created
   it: revoking the key does not delete or disable its endpoints. See
   [webhooks](./webhooks.md).
-- `sandboxes:connect` opens CLI shells and command channels in a sandbox as the
-  guest user over `GET /v1/sandboxes/{id}/connect` (a WebSocket; not
-  journaled). Only `SdkKeyKind.API` keys hold it: a `wssp login` with write access,
+- `sandboxes:connect` opens CLI shells, command channels and port forwards (to
+  the sandbox's own loopback, never another host) in a sandbox as the guest
+  user over `GET /v1/sandboxes/{id}/connect` (a WebSocket; not journaled). Only `SdkKeyKind.API` keys hold it: a `wssp login` with write access,
   or a dashboard key it was explicitly given (never a default). Agent tokens,
-  OAuth grants and MCP never get it. Revoking the key ends its live shells.
-  The CLI command is `wssp sandbox shell` ([shells from the CLI](./connect.md)).
+  OAuth grants and MCP never get it. Revoking the key ends its live shells and
+  forwards. The CLI commands are `wssp sandbox shell` and `wssp sandbox forward`
+  ([shells and port forwards from the CLI](./connect.md)).
   Contract: [CLI channel relay contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
   On the dashboard it is its own "CLI connections" checkbox, never preselected
   and offered only on the SDK key form. Each connection is audited as metadata

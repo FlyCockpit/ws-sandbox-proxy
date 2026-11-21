@@ -334,6 +334,7 @@ describe("GET /v1/sandboxes/{id}/connect over a real WebSocket", () => {
             epoch: 2,
             protocolVersion: "1.0",
             authorized: () => true,
+            kinds: ["pty", "exec"],
           },
         }),
         closeHostSocket: () => undefined,

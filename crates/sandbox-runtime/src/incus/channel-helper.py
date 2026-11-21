@@ -1,4 +1,4 @@
-# Guest channel helper (wssp-ssh increment 1). Run as `python3 -I -S -c <this> <phase> ...`.
+# Guest channel helper (wssp-ssh increments 1 and 2). Run as `python3 -I -S -c <this> <phase> ...`.
 #
 # Phases (argv after the source):
 #   launch <scope> <nonce> <uid> <gid> -- <tail...>   guest root: create the channel's own systemd scope
@@ -6,6 +6,10 @@
 #   wrap   WSSP_PID <nonce> <pty|exec> <0|1> <budget ms> <entries> <key> <value> <json> -- <argv...>
 #                                                     guest user: prompt for the preamble (env + frame
 #                                                     secret), start the workload, report its outcome
+#   wrap   WSSP_PID <nonce> <tcp|unix> 0 <budget ms> <entries> <key> <value> <json> -- <port|path>
+#                                                     guest user: prompt for the preamble (frame secret),
+#                                                     connect to guest 127.0.0.1/[::1]:<port> or the Unix
+#                                                     socket <path> and relay (no workload, no env)
 #   kill   <nonce> <scope>:<0|1> ...                  guest root: tombstone, kill and prove each scope gone
 #
 # There is no unscoped fallback: a channel without its scope never runs. Frames are
@@ -13,6 +17,23 @@
 # PROMPT and REFUSED carry the public argv nonce; READY and EXIT carry the secret that
 # arrives in the preamble on stdin, so the workload can never forge them.
 # Nothing here ever prints workload data, argv or environment values.
+#
+# Relay mode: stdout is framed (`D` + u32 big-endian length + bytes; `E` once the guest service
+# shut its write side; `R` once the connection failed), so an EOF from the service never
+# overtakes its data and travels while the other direction stays open. stdin (after the
+# preamble) is framed the same way by the host: `D` frames, then `E` for the client's EOF,
+# which becomes shutdown(SHUT_WR). A stdin that ends without its `E` (the host client or the
+# daemon died), or breaks the framing, is an abort. The relay exits once both directions
+# reached EOF (exit 0), or on a reset or an abort (exit 1), also one after `E`: then `R`
+# follows the `E` (the only byte that may), the socket is watched for an error while nothing
+# else is due, and the host must not read the earlier `E` as a clean end.
+# Abort is RST: a TCP socket carries SO_LINGER {1, 0} from before its connect, so every end
+# but the clean one (exit 0, both directions done) resets the guest service, also a SIGKILL
+# of the helper at any time (a kill close). A Unix socket has no reset: an aborted relay is a
+# full close there (the service reads EOF and its next write fails with EPIPE, or it sees
+# ECONNRESET if its output was still unread), while a client EOF is only a write shutdown.
+# A failed connect is a secret-bound `FAILED <refused|denied|failed>` frame on stderr before
+# READY. The only host the relay ever connects to is the guest's own loopback.
 import os
 import re
 import signal
@@ -27,6 +48,13 @@ CGROUP_ROOT = "/sys/fs/cgroup/wssp.slice/"
 EXIT_REFUSED = 120
 EXIT_CANCELLED = 121
 EXIT_FENCE_UNKNOWN = 122
+RELAY_CHUNK = 32 * 1024
+RELAY_CONNECT_TIMEOUT = 10
+RELAY_DATA_MAX = 64 * 1024
+# struct linger {l_onoff, l_linger} as two native ints.
+LINGER_ABORT = (1).to_bytes(4, sys.byteorder) + (0).to_bytes(4, sys.byteorder)
+LINGER_ORDERLY = bytes(8)
+UNIX_PATH_MAX = 107
 
 
 def frame(nonce, *fields):
@@ -234,13 +262,19 @@ def wrap(argv):
     if len(argv) < 10 or argv[0] != "WSSP_PID" or argv[9] != "--":
         os._exit(1)
     nonce, mode, login = argv[1], argv[2], argv[3] == "1"
-    if (re.fullmatch(NONCE_RE, nonce) is None or mode not in ("pty", "exec")
+    if (re.fullmatch(NONCE_RE, nonce) is None or mode not in ("pty", "exec", "tcp", "unix")
             or not all(a.isdigit() for a in argv[4:9])):
         os._exit(1)
     budget, limits = int(argv[4]), [int(a) for a in argv[5:9]]
     workload = argv[10:]
+    relay = mode in ("tcp", "unix")
+    if relay and (login or relay_target(mode, workload) is None):
+        os._exit(1)
     frame_fd = 1 if mode == "pty" else 2
     env, secret = read_preamble(nonce, mode == "pty", frame_fd, budget, limits)
+    if relay:
+        # A relay starts nothing: the environment is never applied.
+        wrap_relay(secret, mode, relay_target(mode, workload))
     os.environ.update(env)
     if mode == "pty":
         wrap_pty(secret, login, workload)
@@ -427,6 +461,243 @@ def wrap_exec(nonce, login, workload):
             select.select([], [], [], 0.1)
     kind, value, code = outcome(status)
     write_all(2, frame(nonce, "EXIT", kind, str(value)))
+    os._exit(code)
+
+
+def relay_target(mode, workload):
+    # Exactly one argument: a port 1-65535 (tcp) or an absolute path (unix).
+    if len(workload) != 1:
+        return None
+    target = workload[0]
+    if mode == "tcp":
+        if not target.isdigit() or len(target) > 5 or not 1 <= int(target) <= 65535:
+            return None
+        return int(target)
+    raw = target.encode("utf-8", "surrogateescape")
+    if not target.startswith("/") or "\0" in target or len(raw) > UNIX_PATH_MAX:
+        return None
+    return target
+
+
+def connect_failure(error):
+    import errno
+
+    if isinstance(error, OSError) and error.errno in (errno.ECONNREFUSED, errno.ENOENT):
+        return "refused"
+    if isinstance(error, OSError) and error.errno in (errno.EACCES, errno.EPERM):
+        return "denied"
+    return "failed"
+
+
+def relay_connect(mode, target):
+    # Guest loopback only: the address is fixed here, never taken from the host. A refusal on
+    # 127.0.0.1 tries [::1] (a service bound to `localhost` may listen on either); the answer
+    # reported is the first one.
+    import errno
+    import socket
+
+    if mode == "unix":
+        candidates = [(socket.AF_UNIX, target)]
+    else:
+        candidates = [(socket.AF_INET, ("127.0.0.1", target)),
+                      (socket.AF_INET6, ("::1", target, 0, 0))]
+    first = None
+    for family, address in candidates:
+        sock = None
+        try:
+            sock = socket.socket(family, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
+            if family != socket.AF_UNIX:
+                # Abortive close from the start: a SIGKILL at any time, and every end but
+                # the clean one, resets the service (cleared only on the clean path).
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, LINGER_ABORT)
+            sock.settimeout(RELAY_CONNECT_TIMEOUT)
+            sock.connect(address)
+            return sock, None
+        except OSError as error:
+            if sock is not None:
+                sock.close()
+            if first is None:
+                first = error
+            if first.errno != errno.ECONNREFUSED:
+                break
+    return None, connect_failure(first)
+
+
+def relay_input(state, chunk):
+    # Decode one stdin chunk of the host's framing (`D` + u32 big-endian length + bytes, then
+    # `E`): its payload (never longer than the chunk) and "eof" once `E` arrived, or "abort"
+    # for anything that is not the host's framing (also any byte after `E`).
+    out = []
+    pos = 0
+    while pos < len(chunk):
+        if state[2]:
+            return b"".join(out), "abort"
+        if state[0]:
+            take = min(state[0], len(chunk) - pos)
+            out.append(chunk[pos:pos + take])
+            state[0] -= take
+            pos += take
+            continue
+        head = state[1]
+        if not head:
+            tag = chunk[pos:pos + 1]
+            if tag == b"E":
+                state[2] = True
+                pos += 1
+                continue
+            if tag != b"D":
+                return b"".join(out), "abort"
+        take = min(5 - len(head), len(chunk) - pos)
+        head += chunk[pos:pos + take]
+        pos += take
+        state[1] = head
+        if len(head) == 5:
+            length = int.from_bytes(head[1:5], "big")
+            state[1] = b""
+            if length == 0 or length > RELAY_DATA_MAX:
+                return b"".join(out), "abort"
+            state[0] = length
+    return b"".join(out), ("eof" if state[2] else None)
+
+
+def wrap_relay(secret, mode, target):
+    import fcntl
+    import select
+    import socket
+    import struct
+
+    sock, failure = relay_connect(mode, target)
+    if sock is None:
+        write_all(2, frame(secret, "FAILED", failure))
+        os._exit(1)
+    try:
+        ready = birth(secret)
+    except Exception:
+        os._exit(1)
+    write_all(2, ready)
+    sock.setblocking(False)
+    for fd in (0, 1):
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+    to_sock = b""
+    to_out = b""
+    # stdin framing: [payload bytes still due, partial header, `E` seen].
+    framing = [0, b"", False]
+    in_eof = False
+    shut = False
+    sock_eof = False
+    reset = False
+    # The service closed both of its sides (a Unix peer's close): no reset to
+    # watch for any more.
+    hup = False
+    # The socket reported an error while unread data may precede it: the
+    # next recv returns that data first, then the error.
+    sock_err = False
+    sock_fd = sock.fileno()
+    while True:
+        if in_eof and not to_sock and not shut and not reset:
+            try:
+                sock.shutdown(socket.SHUT_WR)
+            except OSError:
+                reset = True
+                to_out += b"R"
+            shut = True
+        if not to_out and (reset or (shut and sock_eof)):
+            break
+        watch = {}
+        if not reset:
+            if not in_eof and not to_sock:
+                watch[0] = select.POLLIN
+            mask = 0
+            if not sock_eof and not to_out:
+                mask |= select.POLLIN
+            if to_sock:
+                mask |= select.POLLOUT
+            # Also with nothing to read or write (the service shut its write
+            # side, the client is idle): a reset then is POLLERR, reported
+            # now and not only at the client's next byte. Not once our side
+            # is shut too (POLLHUP would then report the clean end forever),
+            # nor while a seen error waits for the recv (stdout is due then).
+            if mask or not (shut or hup or sock_err):
+                watch[sock_fd] = mask
+        if to_out:
+            watch[1] = select.POLLOUT
+        poller = select.poll()
+        for fd, mask in watch.items():
+            poller.register(fd, mask)
+        try:
+            ready = dict(poller.poll())
+        except InterruptedError:
+            continue
+        if ready.get(1):
+            try:
+                to_out = to_out[os.write(1, to_out):]
+            except BlockingIOError:
+                pass
+            except OSError:
+                # The host side is gone: nobody to report to.
+                os._exit(1)
+        sock_ready = ready.get(sock_fd, 0)
+        if sock_ready & select.POLLERR and not reset:
+            if sock_eof:
+                # Nothing can precede it any more: a reset after `E`.
+                reset = True
+                to_sock = b""
+                to_out += b"R"
+            else:
+                sock_err = True
+        elif sock_ready & select.POLLHUP and not watch.get(sock_fd):
+            hup = True
+        if sock_ready & select.POLLOUT and to_sock and not reset:
+            try:
+                to_sock = to_sock[sock.send(to_sock):]
+            except BlockingIOError:
+                pass
+            except OSError:
+                reset = True
+                to_sock = b""
+                to_out += b"R"
+        if ready.get(0) and not reset:
+            try:
+                chunk = os.read(0, RELAY_CHUNK)
+            except BlockingIOError:
+                chunk = None
+            except OSError:
+                chunk = b""
+            if chunk is not None:
+                # A raw EOF before the host's `E` is an abort (the host is gone).
+                data, end = relay_input(framing, chunk) if chunk else (b"", "abort")
+                to_sock = data
+                if end == "eof":
+                    in_eof = True
+                elif end == "abort":
+                    reset = True
+                    to_sock = b""
+                    to_out += b"R"
+        if sock_ready & (select.POLLIN | select.POLLHUP | select.POLLERR) \
+                and watch.get(sock_fd, 0) & select.POLLIN \
+                and not reset:
+            try:
+                chunk = sock.recv(RELAY_CHUNK)
+                if chunk:
+                    to_out = b"D" + struct.pack(">I", len(chunk)) + chunk
+                else:
+                    sock_eof = True
+                    to_out = b"E"
+            except BlockingIOError:
+                pass
+            except OSError:
+                reset = True
+                to_out += b"R"
+    code = 1 if reset else 0
+    try:
+        if code == 0 and mode == "tcp":
+            # The clean end only: an orderly close (both directions are done).
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, LINGER_ORDERLY)
+        sock.close()
+    except OSError:
+        pass
+    write_all(2, frame(secret, "EXIT", "code", str(code)))
     os._exit(code)
 
 

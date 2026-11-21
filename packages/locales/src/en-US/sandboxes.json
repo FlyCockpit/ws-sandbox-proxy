@@ -606,7 +606,7 @@
   },
   "connections": {
     "heading": "Recent connections",
-    "description": "CLI shells and command channels opened with an API key (`wssp sandbox shell`). Only who connected, when and how much data moved is kept, for 90 days; never what ran.",
+    "description": "CLI shells, command channels and port forwards opened with an API key (`wssp sandbox shell`, `wssp sandbox forward`). Only who connected, when, which guest ports were forwarded and how much data moved is kept, for 90 days; never what ran.",
     "label": "Recent connections",
     "empty": "No CLI connections in the last 90 days.",
     "unknownKey": "Deleted key",
@@ -625,6 +625,9 @@
     "shells_other": "{{count}} shells",
     "commands_one": "{{count}} command",
     "commands_other": "{{count}} commands",
+    "forwards_one": "{{count}} forward",
+    "forwards_other": "{{count}} forwards",
+    "ports": "Guest ports: {{ports}}",
     "bytes": "{{sent}} sent, {{received}} received",
     "intent": {
       "client": "closed by the client",

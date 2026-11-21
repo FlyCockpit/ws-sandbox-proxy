@@ -1,13 +1,15 @@
-# Shells from the CLI
+# Shells and port forwards from the CLI
 
 `wssp sandbox shell` opens a shell, or runs a command, inside a sandbox from
-your own terminal, as the template's guest user. Like the
+your own terminal, as the template's guest user. `wssp sandbox forward`
+forwards local ports to ports on the sandbox's own loopback
+([Port forwards](#port-forwards)). Like the
 [browser terminal](./terminal.md) it is never a shell on the Incus host. It
 talks to the server over one WebSocket (`GET /v1/sandboxes/{id}/connect`,
 subprotocol `wssp.connect.v1`) with your [CLI login](./cli.md) or SDK key; the
 wire is specified in the
 [channel contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
-Port forwarding and SSH come later and get their own sections here.
+SSH comes later and gets its own section here.
 
 ## Access
 
@@ -16,7 +18,7 @@ access holds it; a read-only login does not. A dashboard SDK key holds it only
 when it was explicitly given the scope. Agent tokens, OAuth grants and MCP
 never hold it (see [authentication planes](./auth-planes.md)). A login saved
 before the scope existed is refused (exit 8): log in again (`wssp login`) to
-get shell access.
+get shell access (or port forwarding).
 
 The sandbox must be `READY` on a connected host whose node daemon supports
 channels. Build, verify and CLI-login sandboxes never get a shell.
@@ -116,3 +118,79 @@ Output is acknowledged only once it is written, so a consumer that stops
 reading (a pager such as `| less` left paused, a suspended terminal) stops the
 acknowledgements: after 60 seconds without one the sandbox closes the channel
 with `backpressure` and the CLI exits 125.
+
+## Port forwards
+
+```sh
+wssp sandbox forward <sandbox> 5432                 # local 127.0.0.1:5432 → the sandbox's port 5432
+wssp sandbox forward <sandbox> 5432:15432 8080:0    # local 15432 → 5432; a free local port → 8080
+wssp sandbox forward <sandbox> 5432 --unix ./pg.sock
+psql -h 127.0.0.1 -p 15432 app
+```
+
+Each `<guestPort>[:<localPort>]` makes the CLI listen locally (on `127.0.0.1`
+unless `--address` says otherwise; the local port defaults to the guest port,
+and `0` picks a free one) and print `Forwarding <local> -> sandbox port
+<guest>` (one JSON line `{"local", "guestPort"}` each with `--json`). Every
+connection you make to it becomes one connection to `127.0.0.1:<guestPort>`
+**inside the sandbox**, made as the guest user (if nothing answers on IPv4
+loopback, `[::1]` is tried, so a service bound to `localhost` works either
+way). There is no host in the request: a forward reaches only the sandbox's
+own loopback, never another machine. It opens no network path to the sandbox
+either (no firewall rule, no listener on the node): the bytes travel over the
+same WebSocket as shells, so a service that listens only on the sandbox's
+loopback is reachable this way and nowhere else. Many connections at once
+share that one WebSocket, up to 32 at a time; more wait in a queue of 32, and
+beyond that a connection is refused (reset).
+
+- **Who can connect.** A loopback TCP port is reachable by every user of your
+  machine, as with `kubectl port-forward` or `ssh -L`: anyone else logged in
+  can use the forward while it runs. `--unix PATH` listens on a Unix socket
+  instead, created with mode 0600 so only you can connect (one guest port; the
+  path must not exist yet, and the socket is removed when the forward ends).
+  `--address` with anything but a loopback address prints a warning: then
+  anyone who can reach that address can use the sandbox's port.
+- **Both directions close separately.** When your client closes its sending
+  side, the guest service sees the end of its input while its replies keep
+  coming; when the guest service closes its sending side, your client sees the
+  end while it can still send. A connection the guest side resets is reset
+  locally too, also after the guest service already closed its sending side;
+  only a connection both sides ended cleanly closes normally. When your client
+  resets its connection the CLI closes the channel at once, even while it is
+  waiting for the guest service to read earlier input. The same holds towards
+  the guest: a connection that ends any other way than cleanly (your client
+  resets it, Ctrl-C, a revoked login, a stopped sandbox, a lost connection,
+  the node daemon dying) reaches a guest TCP service as a reset, never as the
+  end of its input, so it never takes a cut request for a whole one. A
+  `--unix` socket has no reset: a connection the guest side reset just
+  closes, so a client of a protocol that ends at the close cannot tell a cut
+  reply from a whole one there (a TCP listener resets it). Towards a guest
+  Unix socket an aborted connection is a full close: the service reads the
+  end of its input and its next write fails (a broken pipe), while your client
+  closing only its sending side lets the reply through.
+- **Refusals.** When nothing listens on the guest port the local connection is
+  reset and the CLI logs one line (`sandbox port 5432 refused a connection`,
+  `connection_refused`), at most one per second; a connection that fails later
+  logs `a connection to sandbox port 5432 failed`. An open refused only for
+  the open rate waits in the queue and is tried once more. A sandbox whose
+  node daemon cannot forward ports yet ends the forward (exit 125); update
+  the node.
+- **Flow control.** The sandbox reads from the guest service only as fast as
+  your local client reads, and the CLI reads your client only as fast as the
+  guest service reads: nothing is buffered without bound. A local client that
+  stops reading for 60 seconds gets its connection closed (`backpressure`). A
+  connection whose guest service stops reading stays open (as any idle
+  connection would). Connections that stall either way slow the others but
+  never stop them: every connection keeps a share of each buffer it passes
+  through, at least one 32 KiB piece in flight each way. A reply the guest
+  service already finished is never cut while your client is still reading
+  it.
+- **Ending.** Ctrl-C (or SIGTERM, SIGHUP) stops listening, closes every
+  connection and exits 130 (143, 129); a second one exits at once. When wssp
+  ends the session (a revoked login, a stopped or destroyed sandbox, a lost
+  connection) every local connection is reset, one line names why, and the
+  CLI exits 125, exactly as for a shell. There is no reconnect: start the
+  forward again.
+
+The forwarded bytes are not journaled; as for shells, a shared node's owner
+can see them. Only TCP is forwarded (no UDP).

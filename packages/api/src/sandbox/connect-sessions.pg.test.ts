@@ -163,6 +163,9 @@ describe("SandboxConnectSession writes and reads", () => {
       closeIntent: "client",
       ptyChannels: 1,
       execChannels: 3,
+      relayChannels: 20,
+      // Duplicates and more than 16: the row keeps the first 16 distinct.
+      forwardedPorts: [8080, 8080, ...Array.from({ length: 20 }, (_, index) => 9000 + index)],
       bytesIn: 4096,
       bytesOut: 2 ** 40,
     };
@@ -201,10 +204,24 @@ describe("SandboxConnectSession writes and reads", () => {
       closeIntent: "client",
       ptyChannels: 1,
       execChannels: 3,
+      relayChannels: 20,
+      forwardedPorts: [8080, ...Array.from({ length: 15 }, (_, index) => 9000 + index)],
       bytesIn: "4096",
       bytesOut: String(2 ** 40),
     });
-    expect(rows.find((row) => row.id === second)?.status).toBe("open");
+    expect(rows.find((row) => row.id === second)).toMatchObject({
+      status: "open",
+      relayChannels: 0,
+      forwardedPorts: [],
+    });
+    expect(
+      await db.inspect.sandboxConnectSession.findUniqueOrThrow({
+        where: { id: first },
+        select: { forwardedPorts: true },
+      }),
+    ).toEqual({
+      forwardedPorts: [8080, ...Array.from({ length: 15 }, (_, index) => 9000 + index)],
+    });
     // Another owner sees nothing of this sandbox.
     await expect(
       listSandboxConnectSessions(sessionPrincipal(stranger), { id: sandboxId }),
@@ -234,6 +251,8 @@ describe("SandboxConnectSession writes and reads", () => {
           closeIntent: "shutdown",
           ptyChannels: 1,
           execChannels: 2,
+          relayChannels: 1,
+          forwardedPorts: [5432],
           bytesIn: 3,
           bytesOut: 4,
         },
@@ -242,9 +261,23 @@ describe("SandboxConnectSession writes and reads", () => {
     expect(
       await db.inspect.sandboxConnectSession.findUniqueOrThrow({
         where: { id },
-        select: { openedAt: true, closedAt: true, closeIntent: true, bytesOut: true },
+        select: {
+          openedAt: true,
+          closedAt: true,
+          closeIntent: true,
+          relayChannels: true,
+          forwardedPorts: true,
+          bytesOut: true,
+        },
       }),
-    ).toEqual({ openedAt, closedAt, closeIntent: "shutdown", bytesOut: 4n });
+    ).toEqual({
+      openedAt,
+      closedAt,
+      closeIntent: "shutdown",
+      relayChannels: 1,
+      forwardedPorts: [5432],
+      bytesOut: 4n,
+    });
 
     // A row lock held elsewhere: the close waits at most the audit pool's
     // session statement timeout (a startup setting, not SET LOCAL), then
@@ -287,6 +320,8 @@ describe("SandboxConnectSession writes and reads", () => {
       closeIntent: "client",
       ptyChannels: 0,
       execChannels: 0,
+      relayChannels: 0,
+      forwardedPorts: [],
       bytesIn: 0,
       bytesOut: 0,
     }).then(
@@ -347,6 +382,8 @@ describe("SandboxConnectSession writes and reads", () => {
         closeIntent: "client",
         ptyChannels: 0,
         execChannels: 0,
+        relayChannels: 0,
+        forwardedPorts: [],
         bytesIn: 0,
         bytesOut: 0,
       };
@@ -388,6 +425,8 @@ describe("SandboxConnectSession writes and reads", () => {
         closeIntent: "client",
         ptyChannels: 0,
         execChannels: 0,
+        relayChannels: 0,
+        forwardedPorts: [],
         bytesIn: 0,
         bytesOut: 0,
       }),

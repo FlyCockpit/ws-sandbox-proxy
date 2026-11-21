@@ -183,6 +183,8 @@ fn model_chan(
     let deadline = now + lifetime;
     let chan = Chan {
         filter: FrameFilter::new(&nonce, &secret),
+        relay: None,
+        relay_failed: None,
         fence: fence.clone(),
         kind,
         phase: Phase::Opening,
@@ -199,12 +201,14 @@ fn model_chan(
         eof: [false; 2],
         eof_sent: [false; 2],
         idle_since: [None; 2],
+        credit_held: false,
         next_stream: 0,
         pending_in: VecDeque::new(),
         input_next: 0,
         input_acked: 0,
         acks_due: Vec::new(),
         stdin_eof: None,
+        stdin_eof_framed: false,
         stdin_closed: false,
         violations: 0,
         credential_leases: BTreeSet::new(),
@@ -338,7 +342,7 @@ impl Model {
         }
         let frame_stream = match self.kind {
             ChannelKind::Pty => 0,
-            ChannelKind::Exec => 1,
+            _ => 1,
         };
         if !self.preamble_seen && pipes.written.first().is_some_and(|p| p == b"PREAMBLE") {
             self.preamble_seen = true;

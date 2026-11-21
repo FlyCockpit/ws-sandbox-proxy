@@ -5,6 +5,11 @@
 //! [--env TERM=<term>] (-t|-T) <wssp-sbx-<id>> -- python3 -I -S -c <channel-helper> launch
 //! <scope> <nonce> <uid> <gid> -- python3 -I -S -c <channel-helper> wrap WSSP_PID <nonce> …`.
 //!
+//! A relay channel (`tcp`/`unix`) is the same client with `-T` and the
+//! wrapper in its relay mode (`wrap WSSP_PID <nonce> tcp 0 … -- <port>`, or
+//! `unix … -- <path>`): the wrapper connects as the guest user and relays;
+//! nothing else runs.
+//!
 //! Only the fixed helper runs as guest root: it creates the channel's scope,
 //! checks the cancel tombstone inside it and drops to the declared guest
 //! identity before it touches the workload's argv or stdin. The wrapper then
@@ -86,7 +91,9 @@ fn launcher_args(
         ChannelMode::Pty { term, .. } => {
             args.extend(["--env".into(), format!("TERM={term}"), "-t".into()]);
         }
-        ChannelMode::Exec => args.push("-T".into()),
+        ChannelMode::Exec | ChannelMode::Tcp { .. } | ChannelMode::Unix { .. } => {
+            args.push("-T".into());
+        }
     }
     args.extend([name.to_string(), "--".into()]);
     args.extend(["python3", "-I", "-S", "-c", CHANNEL_HELPER].map(String::from));
@@ -107,6 +114,8 @@ fn wrap_args(request: &SpawnChannelRequest) -> Vec<String> {
     let mode = match request.mode {
         ChannelMode::Pty { .. } => "pty",
         ChannelMode::Exec => "exec",
+        ChannelMode::Tcp { .. } => "tcp",
+        ChannelMode::Unix { .. } => "unix",
     };
     let limits = sandbox_protocol::env_limits();
     let mut args: Vec<String> = [
@@ -131,7 +140,14 @@ fn wrap_args(request: &SpawnChannelRequest) -> Vec<String> {
         limits.json_bytes.to_string(),
         "--".into(),
     ]);
-    args.extend(request.argv.iter().flatten().cloned());
+    match &request.mode {
+        // A relay's only argument is its target (validated with the request).
+        ChannelMode::Tcp { port } => args.push(port.to_string()),
+        ChannelMode::Unix { path } => args.push(path.clone()),
+        ChannelMode::Pty { .. } | ChannelMode::Exec => {
+            args.extend(request.argv.iter().flatten().cloned());
+        }
+    }
     args
 }
 
@@ -270,7 +286,10 @@ pub(super) fn spawn(
         unit: scope,
     };
     match &request.mode {
-        ChannelMode::Exec => spawn_exec(&client, bound, request, args, killer),
+        // A relay is an exec-shaped client: piped stdin/stdout/stderr.
+        ChannelMode::Exec | ChannelMode::Tcp { .. } | ChannelMode::Unix { .. } => {
+            spawn_exec(&client, bound, request, args, killer)
+        }
         ChannelMode::Pty { size, .. } => spawn_pty(&client, &bound, *size, args, killer),
     }
 }

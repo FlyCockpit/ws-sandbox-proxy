@@ -216,6 +216,8 @@ describe("reading a sandbox", () => {
         closeIntent: null,
         ptyChannels: 1,
         execChannels: 0,
+        relayChannels: 0,
+        forwardedPorts: [],
         bytesIn: "10",
         bytesOut: "20",
       },

@@ -1,8 +1,9 @@
 # CLI channel relay contract (`channel.*`)
 
-CLI channels carry the CLI's interactive shells (and later port forwards and SSH) between the server and
-the node daemon. A channel is one guest process (`pty` or `exec`) started in its own guest systemd scope as the
-sandbox's guest user. This note covers the host leg (server ↔ daemon), the guest side and the client leg
+CLI channels carry the CLI's interactive shells and port forwards (and later SSH) between the server and
+the node daemon. A channel is one guest process started in its own guest systemd scope as the sandbox's guest
+user: a workload (`pty` or `exec`), or the channel helper relaying one connection to a guest loopback TCP port
+(`tcp`) or a guest Unix socket (`unix`) ([Relay channels](#relay-channels)). This note covers the host leg (server ↔ daemon), the guest side and the client leg
 (`/v1/sandboxes/{id}/connect`, [Client wire](#client-wire-wsspconnectv1)).
 
 The browser terminal family (`terminal.*`, `docs/design/terminal-relay-contract.md`) is unchanged and separate.
@@ -13,8 +14,10 @@ stall rule is per frame age; each sandbox owner gets at most half of the host's 
 
 ## Capability and rollout
 
-- The daemon offers `channels: {kinds: ["pty", "exec"]}` in `hello.daemon.capabilities` when its runtime implements
-  channels. The server echoes the offer in `hello.ok.capabilities.channels`.
+- The daemon offers `channels: {kinds: ["pty", "exec", "tcp", "unix"]}` in `hello.daemon.capabilities` when its
+  runtime implements channels. The server echoes the offer in `hello.ok.capabilities.channels` and never opens a
+  kind the node did not offer: a client open of such a kind exits `unsupported_capability` without reaching the
+  node (an older node during a rollout).
 - The server never sends a `channel.*` frame to a host that did not negotiate channels. A daemon that receives one
   without the echo closes the connection (protocol error), and the server treats an unsolicited daemon `channel.*`
   frame the same way.
@@ -30,20 +33,21 @@ match the live channel delivers nothing and counts as a violation; the third clo
 
 ## Frames
 
-| Frame                   | Direction     | Fields                                                                                                                                                    |
-| ----------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `channel.open`          | server → host | `kind` (`pty`/`exec`), `argv?` (structural, never a shell string), `login`, `cwd?`, `env?` (`COLORTERM`, `LANG`, `LC_*` only), `pty?: {rows, cols, term}` |
-| `channel.ready`         | host → server | `pty?: {rows, cols}` (the applied size)                                                                                                                   |
-| `channel.data` (binary) | both          | `{type, fence, stream, seq}` + body; `stdin` to the host, `stdout`/`stderr` from it; ≤ 16 KiB (pty) or 32 KiB (exec)                                      |
-| `channel.ack`           | both          | `stream`, `seq` (cumulative: the highest delivered `seq`)                                                                                                 |
-| `channel.eof`           | both          | `stream`, `frames` (data frames sent on that stream; act after delivering all of them)                                                                    |
-| `channel.resize`        | server → host | `rows`, `cols` (pty only)                                                                                                                                 |
-| `channel.signal`        | server → host | `TERM`/`INT`/`HUP`/`KILL` (exec only)                                                                                                                     |
-| `channel.close`         | server → host | `intent`: `client` is a normal close, any other intent a kill close                                                                                       |
-| `channel.error`         | host → server | `unsupported_signal` or `state_conflict`; the channel stays open                                                                                          |
-| `channel.exit`          | host → server | `exitCode?` or `signal?`, `intent?`, `error?`, `reaped`, `frames: {stdout, stderr}`; the last frame, after every output frame and eof                     |
+| Frame                   | Direction     | Fields                                                                                                                                                                                                                                                                          |
+| ----------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `channel.open`          | server → host | `kind` (`pty`/`exec`/`tcp`/`unix`), `argv?` (structural, never a shell string), `login`, `cwd?`, `env?` (`COLORTERM`, `LANG`, `LC_*` only), `pty?: {rows, cols, term}`; `tcp`: `port` (1–65535), `unix`: `path` (absolute, ≤ 107 bytes), and then nothing else (`login: false`) |
+| `channel.ready`         | host → server | `pty?: {rows, cols}` (the applied size)                                                                                                                                                                                                                                         |
+| `channel.data` (binary) | both          | `{type, fence, stream, seq}` + body; `stdin` to the host, `stdout`/`stderr` from it (a relay: `stdout` only); ≤ 16 KiB (pty) or 32 KiB (every bulk kind)                                                                                                                        |
+| `channel.ack`           | both          | `stream`, `seq` (cumulative: the highest delivered `seq`)                                                                                                                                                                                                                       |
+| `channel.eof`           | both          | `stream`, `frames` (data frames sent on that stream; act after delivering all of them)                                                                                                                                                                                          |
+| `channel.resize`        | server → host | `rows`, `cols` (pty only)                                                                                                                                                                                                                                                       |
+| `channel.signal`        | server → host | `TERM`/`INT`/`HUP`/`KILL` (exec only)                                                                                                                                                                                                                                           |
+| `channel.close`         | server → host | `intent`: `client` is a normal close, any other intent a kill close                                                                                                                                                                                                             |
+| `channel.error`         | host → server | `unsupported_signal` or `state_conflict`; the channel stays open                                                                                                                                                                                                                |
+| `channel.exit`          | host → server | `exitCode?` or `signal?`, `intent?`, `error?`, `reaped`, `frames: {stdout, stderr}`; the last frame, after every output frame and eof                                                                                                                                           |
 
-Windows count frames per channel: 8 for pty channels and 32 for exec channels, in each direction. Guest output is
+Windows count frames per channel: 8 for pty channels and 32 for the bulk kinds (exec, tcp, unix), in each
+direction. Guest output is
 read only when its frame can be sent at once, so a slow client stops guest reads. Read-ahead stays bounded (at most 8
 chunks per stream, dropped unread at a close decision like bytes still in the pipe). Clients acknowledge
 delivered output promptly: at least every quarter window, and without holding a delivered frame back. A channel whose
@@ -55,7 +59,10 @@ The node forwards at most 16 data frames per socket-loop tick (pty channels firs
 keeps at most 128 bulk frames (4 MiB) unacknowledged across the host, and at most half of that per sandbox owner, so
 bulk output never delays acknowledgements, heartbeats or closes, and no single tenant can hold the whole cap. Pty
 frames are exempt from both caps. So are a starting channel's setup reads: they carry at most one data frame, so
-the cap is exceeded by at most one frame per starting channel.
+the cap is exceeded by at most one frame per starting channel. So is a bulk channel's first unacknowledged frame
+(its reserve): channels whose clients stopped reading can fill both caps, but every other bulk channel of the host
+and the owner still moves a frame at a time until the stall rule closes them; the caps are exceeded by at most one
+frame per live bulk channel.
 
 The node's socket thread is the only decider. It owns every channel's state and byte IO and makes every close
 decision, so no output frame and no stdin byte is handed over after a channel's close decision. A chunk handed to the
@@ -126,6 +133,54 @@ With `guestSudo` the guest user can leave the scope as root, and processes start
 `systemd --user` manager are outside it. Scope kills are then best effort inside the guest, as for tracked
 commands.
 
+## Relay channels
+
+A `tcp` or `unix` channel runs no workload. The open names only its target: a port, always on the guest's own
+loopback, or an absolute guest socket path. No host field exists in either wire, so no other machine can be
+named. The node opens no network path for it (no ACL rule, no listener): the connection is made inside the guest
+and its bytes travel over `incus exec`.
+
+- **Launch.** The same launcher, scope, cancel fence, registry entry and kill rules as every channel. The wrapper
+  (`wrap … tcp|unix … -- <port|path>`) reads its preamble (it carries no environment: a relay gets neither the
+  private defaults nor login values), then connects as the guest user: `127.0.0.1:<port>`, and on a refusal
+  `[::1]:<port>` (10 s connect bound), or the Unix path. It then reports `READY`, so `channel.ready` means
+  connected.
+- **Refused.** A failed connect is the secret-bound frame `FAILED refused|denied|failed` before `READY`, and the
+  helper exits. The channel then exits without `ready` with `connection_refused` (nothing listens: `ECONNREFUSED`,
+  a missing socket path), `guest_permission_denied` (`EACCES`/`EPERM`) or `guest_operation_failed`. `FAILED`
+  proves, like `READY`, that the wrapper passed the cancel fence inside its scope, so the end is a normal finish
+  with no scope kill and no tombstone left behind.
+- **Streams.** stdin (after the preamble) is framed by the daemon like the helper's stdout: each input frame is a
+  `D` frame, and the client's eof is an `E` written before the daemon closes the helper's stdin; the helper turns
+  that `E` into `shutdown(SHUT_WR)` on the guest socket. A stdin that ends without its `E` (the host client or
+  the daemon died), or anything that is not the daemon's framing, is an abort, not an eof (below). The helper's stdout is
+  framed (`D` + u32 big-endian length + bytes; `E` when the guest service shut its write side; `R` when the
+  connection failed), so the service's EOF is a `channel.eof{stdout}` after every frame before it while the other
+  direction stays open, and stderr carries only the helper's frames (nothing else of it is forwarded). The helper
+  reads the guest socket only when its stdout has room, so credit reaches the guest service.
+- **End.** The relay exits once both directions reached EOF (`channel.exit{exitCode: 0}` after the stdout eof),
+  or on a reset (`exitCode: 1`), with **no** stdout eof when the connection failed first, or after it when the
+  guest service shut its write side and then failed (for instance while it still received input). `E` is
+  therefore not final: the daemon keeps reading the helper's stdout until it ends, the only byte allowed after
+  `E` is `R`, and a relay's exit 0 is reported only when the stream ended with `E` and nothing after it (anything
+  else is reported as 1). The helper also watches the guest socket for an error while nothing else is due, so a
+  reset after `E` arrives while the client is idle. After the helper's `EXIT` the 60 s drain cap does not cut a
+  relay whose stream has not reached its end while its last read waited for credit (a slow client still reading
+  a finished reply): its helper is gone, so nothing keeps writing, and the per-frame stall rule and the channel's
+  deadline bound it. A client closes its local socket normally only for
+  `exitCode: 0` after the stdout eof; every other end resets it. A framing error is a kill close with
+  `internal`. Every close of a relay channel is a kill close:
+  `client` too (a reset, not a hang-up), since nothing of a relay should outlive it. No signals (`channel.signal`
+  is refused `unsupported_signal`), no resize, no exit signal of its own.
+- **Abort reaches the guest as a reset.** A TCP relay's socket carries `SO_LINGER {1, 0}` from before its connect,
+  so the kernel resets the guest connection on every end but the clean one: a kill close (the scope's SIGKILL at
+  any time, also mid-request), a reset, a stdin that ended without its `E`, a framing error, a lost host side.
+  Only exit 0 (both directions done) clears it first and closes orderly, so queued bytes still reach the service.
+  The kill close keeps the helper's stdin open until the scope is gone, so no eof overtakes the kill. A Unix
+  socket has no reset: an aborted relay is a full close (the service reads EOF and its next write fails with
+  `EPIPE`, or it sees `ECONNRESET` when its own output was still unread), while the client's eof is only a write
+  shutdown.
+
 ## Durable registry
 
 Before a launch the daemon writes `channel-scope-<unit>` into its journal directory. The entry is removed after a
@@ -169,24 +224,25 @@ Control frames are JSON text (at most 256 KiB). Channel data is binary: a big-en
 JSON metadata `{type: "data", channel, stream, seq}` (at most 1 KiB) and a body of 1 byte to 16 KiB (pty) or
 32 KiB (exec). Every object is strict: an unknown field ends the connection with `protocol_violation`.
 
-| Frame         | Dir  | Fields                                                                                                                                                                    |
-| ------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hello`       | S→C  | `connectionId`, `sandboxId`, `limits` (the table below); always the first frame                                                                                           |
-| `open`        | C→S  | `channel`, `kind` (`pty`/`exec`), `argv?` (structural), `login?`, `cwd?` (absolute), `env?` (`COLORTERM`, `LANG`, `LC_*`), `pty?: {rows, cols, term}` (exactly for `pty`) |
-| `ready`       | S→C  | `channel`, `pty?: {rows, cols}` (the applied size)                                                                                                                        |
-| data (binary) | both | `stdin` from the client; `stdout`/`stderr` to it                                                                                                                          |
-| `ack`         | both | `channel`, `stream`, `seq`: cumulative, the highest delivered `seq` (`stdout`/`stderr` from the client, `stdin` from the server)                                          |
-| `eof`         | both | `channel`, `stream`, `frames`: the data frames sent on that stream (`stdin` from the client; `stdout`/`stderr` to it)                                                     |
-| `resize`      | C→S  | `channel`, `rows` 1–512, `cols` 1–1024 (pty)                                                                                                                              |
-| `signal`      | C→S  | `channel`, `TERM`/`INT`/`HUP`/`KILL` (exec; `KILL` kill-closes the scope)                                                                                                 |
-| `close`       | C→S  | `channel` (a normal close: sshd semantics)                                                                                                                                |
-| `exit`        | S→C  | `channel`, `exitCode?` or `signal?`, `intent?`, `error?: {code, message}`, `frames: {stdout, stderr}`; the channel's last frame                                           |
-| `error`       | S→C  | `channel`, `code` (`unsupported_signal`, `state_conflict`); the channel stays open                                                                                        |
-| `end`         | S→C  | `intent`, `error?`; the whole connection ends, then close code 4401                                                                                                       |
+| Frame         | Dir  | Fields                                                                                                                                                                                                                                                                  |
+| ------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hello`       | S→C  | `connectionId`, `sandboxId`, `limits` (the table below); always the first frame                                                                                                                                                                                         |
+| `open`        | C→S  | `channel`, `kind` (`pty`/`exec`/`tcp`/`unix`), `argv?` (structural), `login?`, `cwd?` (absolute), `env?` (`COLORTERM`, `LANG`, `LC_*`), `pty?: {rows, cols, term}` (exactly for `pty`); `tcp`: exactly `port` (1–65535), `unix`: exactly `path` (absolute, ≤ 107 bytes) |
+| `ready`       | S→C  | `channel`, `pty?: {rows, cols}` (the applied size)                                                                                                                                                                                                                      |
+| data (binary) | both | `stdin` from the client; `stdout`/`stderr` to it                                                                                                                                                                                                                        |
+| `ack`         | both | `channel`, `stream`, `seq`: cumulative, the highest delivered `seq` (`stdout`/`stderr` from the client, `stdin` from the server)                                                                                                                                        |
+| `eof`         | both | `channel`, `stream`, `frames`: the data frames sent on that stream (`stdin` from the client; `stdout`/`stderr` to it)                                                                                                                                                   |
+| `resize`      | C→S  | `channel`, `rows` 1–512, `cols` 1–1024 (pty)                                                                                                                                                                                                                            |
+| `signal`      | C→S  | `channel`, `TERM`/`INT`/`HUP`/`KILL` (exec; `KILL` kill-closes the scope)                                                                                                                                                                                               |
+| `close`       | C→S  | `channel` (a normal close: sshd semantics)                                                                                                                                                                                                                              |
+| `exit`        | S→C  | `channel`, `exitCode?` or `signal?`, `intent?`, `error?: {code, message}`, `frames: {stdout, stderr}`; the channel's last frame                                                                                                                                         |
+| `error`       | S→C  | `channel`, `code` (`unsupported_signal`, `state_conflict`); the channel stays open                                                                                                                                                                                      |
+| `end`         | S→C  | `intent`, `error?`; the whole connection ends, then close code 4401                                                                                                                                                                                                     |
 
 `limits` in `hello`: `maxChannels` 32, `maxPtyChannels` 8, `opensPerMinute` 120, `windowFrames` `{pty: 8, exec:
 32}`, `dataMaxBytes` `{pty: 16384, exec: 32768}`, `ackStallMs` 60000, `pingIntervalMs` 20000, `idleTimeoutMs`
-60000, `openTimeoutMs` 30000, `unackedInputBytes` 4194304.
+60000, `openTimeoutMs` 30000, `unackedInputBytes` 4194304. The `exec` values apply to every bulk kind (`exec`,
+`tcp`, `unix`).
 
 ### Rules
 
@@ -196,15 +252,26 @@ JSON metadata `{type: "data", channel, stream, seq}` (at most 1 KiB) and a body 
   that already ended (acks and input racing its `exit`) is ignored. The server maps each channel to a host
   `channelId` it mints and to its own `connectionId`; the client never names a host, epoch or generation.
 - A refused open (a cap, a rate, a node refusal) answers with `exit` carrying `error` and no `ready`
-  (server codes `host_capacity`, `rate_limited`, `disconnected`; an open the node does not answer within
+  (server codes `host_capacity`, `rate_limited`, `disconnected`, `unsupported_capability` for a kind the node did
+  not offer; a relay whose guest target refused: `connection_refused`; an open the node does not answer within
   `openTimeoutMs` exits `expired` with `timeout`).
+- Relay channels (`tcp`, `unix`) carry `stdin` and `stdout` only. Each direction closes on its own: the client's
+  `eof{stdin}` shuts the guest socket's write side, and `eof{stdout}` says the guest service shut its own. A
+  natural `exit` is a clean end only with `exitCode: 0` after an `eof{stdout}`; any other end (no eof, or
+  `exitCode: 1` after one) means the connection was reset. A client `close` resets the connection.
 - Credit is end to end and counts frames per channel, both output streams together. Output: at most
-  `windowFrames` unacknowledged frames per channel, and 4 MiB per connection. **Acknowledge every delivered output
+  `windowFrames` unacknowledged frames per channel, and 4 MiB per connection, except that a channel holding no
+  unacknowledged output may always receive one frame (so the connection's cap is exceeded by at most one frame per
+  channel, and channels whose readers stopped never freeze the others). **Acknowledge every delivered output
   frame promptly, at least every quarter window, and never hold one back**: the node closes a channel whose
   oldest unacknowledged output frame is `ackStallMs` (60 s) old with `backpressure`. stdin: at most `windowFrames`
   frames not yet acknowledged by the server per channel, and at most `unackedInputBytes` (4 MiB) of them across
   the connection's channels, sequences from 0 without gaps; more is a protocol violation. The server
-  acknowledges stdin as the node consumes it.
+  acknowledges stdin as the node consumes it. Nothing times out stdin a guest service does not read, so a client
+  sharing `unackedInputBytes` among channels should keep a reserve per channel: the CLI keeps one full bulk frame
+  of the budget for every channel slot (`maxChannels`), so a channel holding nothing can always send, and takes
+  frames beyond a channel's first only from what those reserves leave (one busy channel still gets its whole
+  window). It serves its channels' input round robin, and sends a local EOF without credit (an `eof` costs none).
 - Rate: data bytes are capped per connection in each direction (default 8 MiB/s,
   `SANDBOX_CONNECT_MAX_BYTES_PER_SECOND`), with up to one second of burst. The cap only delays frames: nothing is
   dropped, and output waiting for it holds the node's credit like a slow client.
@@ -229,8 +296,9 @@ JSON metadata `{type: "data", channel, stream, seq}` (at most 1 KiB) and a body 
 
 - Each connection that reaches `hello` gets one `SandboxConnectSession` row (`sandbox_connect_session`): the
   `connectionId`, owner, sandbox, host, key and the key's origin (`CLI_LOGIN` or `DASHBOARD`), `openedAt`, and at
-  its end `closedAt`, the close `intent`, the pty and exec channels it opened and the data bytes in each direction.
-  Never content, commands, argv, env, cwd or paths. A refused upgrade or a connection that ends before `hello`
+  its end `closedAt`, the close `intent`, the pty, exec and relay (`tcp`/`unix`) channels it opened, the distinct
+  guest tcp ports it relayed (the first 16 seen) and the data bytes in each direction.
+  Never content, commands, argv, env, cwd or paths (a guest Unix socket path is never recorded). A refused upgrade or a connection that ends before `hello`
   writes no row.
 - `openedAt` and `closedAt` are the relay's own instants (at `hello` and at the end), never the write's.
 - The writes are detached from the relay. One writer per server process runs at most 2 at once, each one short
