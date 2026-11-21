@@ -275,6 +275,26 @@ jobs:
       - run: cargo xtask vendored-russh --check
         working-directory: apps/cli
 
+  # ── Unit tests of the vendored russh patch ──────────────────────────────────
+  # `third_party/russh-0.65.2` is not a workspace member, so `test` never runs
+  # its own tests of the patch (grants to unconfirmed or closing channels, the
+  # rekey bound). Run them from a copy outside the workspace, with the crate's
+  # lockfile.
+  vendored-russh-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - run: |
+          cp -r third_party/russh-0.65.2 "$RUNNER_TEMP/russh"
+          rm "$RUNNER_TEMP/russh/NOTICE-wssp.md"
+          cargo test --manifest-path "$RUNNER_TEMP/russh/Cargo.toml" --lib --locked -- \
+            consume_window grant_window receive_window_total pending_cost rekey_pending \
+            a_peer_that_sends_past_the_rekey_bound
+
   # ── Spell check (scoped to apps/cli by its typos.toml) ──────────────────────
   typos:
     runs-on: ubuntu-latest

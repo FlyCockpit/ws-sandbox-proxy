@@ -111,7 +111,17 @@ cd apps/cli && cargo deny check && cd ../..
 `grant_window`, and grows by exactly the grant; without it russh refills it (the
 control that proves the test can see a refill). It fails if a rebase loses the
 data-arm hunk in `src/server/encrypted.rs` or the grant in
-`src/server/session.rs`. In `tests/ssh_stdio.rs`,
+`src/server/session.rs`. The other five are the upstream branch's: data uses up the
+window (a grant of `u32::MAX` fits only then), and a server-initiated key
+exchange with granted data in flight, large or in one-byte packets, for an
+open channel or one the server has just closed, does not end the session
+(fails if the rekey bound ignores grants, counts whole messages or charges
+data it drops). The vendored crate's own unit tests cover grants to unconfirmed or
+closing channels (`src/session.rs`) and the rekey bound's cost per message
+type, its saturation and the cut-off of a flooding peer
+(`src/server/session.rs`). The crate is not a workspace member, so CI's
+`vendored-russh-tests` job runs them from a copy outside the workspace
+(`cargo test --manifest-path <copy>/Cargo.toml --lib --locked`). In `tests/ssh_stdio.rs`,
 `a_jammed_forward_stops_only_its_own_client`,
 `a_command_or_a_forward_gets_one_wssp_window`,
 `a_client_that_sends_past_the_window_has_its_channel_reset` and
@@ -122,7 +132,9 @@ endpoint.
 
 As soon as a russh release offers the same thing (a server option under which
 received data does not refill the window, plus a non-blocking way to grant
-window to a channel; proposed upstream with this patch):
+window to a channel; proposed upstream with this patch, which is the
+`server-manual-window` branch of `christopher-kapic/russh` with only
+`#![allow(warnings)]` added):
 
 1. switch `apps/cli/src/commands/sandbox/ssh/` to the upstream API;
 2. delete `third_party/russh-*` and its patch, the `[patch.crates-io]` entry,

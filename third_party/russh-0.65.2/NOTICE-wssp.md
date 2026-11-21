@@ -12,12 +12,18 @@ The wssp project changed these files (Apache-2.0 §4(b)); every change is in
 `../russh-0.65.2.patch`, and `cargo xtask vendored-russh --check` proves that the
 published crate plus that patch is exactly this directory:
 
-- `src/server/mod.rs`: a `Config::manual_window` flag (default off).
-- `src/session.rs`: `Encrypted::consume_window` and `Encrypted::grant_window`.
+- `src/server/mod.rs`: a `Config::manual_window` flag (default off), and the
+  key-exchange bound below applied to what the client sends.
+- `src/session.rs`: `Encrypted::consume_window`, `Encrypted::grant_window` (not
+  for a channel that is unconfirmed or closing) and
+  `Encrypted::receive_window_total`, with unit tests.
 - `src/server/encrypted.rs`: with `manual_window`, received data only uses up the
   channel's receive window instead of refilling it.
 - `src/server/session.rs`: `Msg::WindowGrant` and `Handle::grant_window`, sent on
-  the session's priority queue.
+  the session's priority queue; with `manual_window`, the bound on what the
+  client may send during a server-initiated key exchange covers the window
+  granted across channels (saturating) and counts channel data by payload
+  (nothing for a channel that is not open), with unit tests.
 - `src/lib.rs`: `#![allow(warnings)]`, so the crate builds under the workspace's
   `-D warnings`.
 

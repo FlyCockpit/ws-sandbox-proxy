@@ -4,6 +4,10 @@
 //! process over a duplex pipe. A rebase that loses the patch's effect makes
 //! the first test fail; the second is the control (without the flag, russh
 //! refills the window itself), which proves the first test can see a refill.
+//! The rest are the upstream branch's tests of the same patch: received data
+//! uses up the window, and a server-initiated key exchange accepts granted
+//! data in flight (large grants, one-byte packets, and both for a channel
+//! the server has just closed).
 //!
 //! Ordering, not time: the server answers each full window with an `ack`
 //! data message, and russh writes any window adjust it makes for a packet
@@ -11,15 +15,18 @@
 //! client before the `ack` (third_party/README.md lists this test).
 
 #![cfg(feature = "ssh")]
-
+use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use russh::keys::PrivateKey;
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
-use russh::{Channel, ChannelId, ChannelMsg, MethodKind, MethodSet};
-use tokio::sync::mpsc;
+use russh::{Channel, ChannelId, ChannelMsg, Limits, MethodKind, MethodSet};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{Notify, mpsc};
 
 /// The initial window, two packets.
 const WINDOW: u32 = 64 * 1024;
@@ -29,6 +36,12 @@ const LIVENESS: Duration = Duration::from_secs(30);
 
 struct Server {
     opened: mpsc::UnboundedSender<ChannelId>,
+    grant_on_open: u32,
+    /// If set, the first `data` call waits for it, so the server reads
+    /// nothing more until then.
+    gate: Option<Arc<Notify>>,
+    /// If set, the gated `data` call closes its channel when it resumes.
+    close_at_gate: bool,
     received: u64,
     next_ack: u64,
 }
@@ -44,10 +57,16 @@ impl russh::server::Handler for Server {
         &mut self,
         channel: Channel<Msg>,
         reply: ChannelOpenHandle,
-        _session: &mut Session,
+        session: &mut Session,
     ) -> Result<(), Self::Error> {
         let _ = self.opened.send(channel.id());
         reply.accept().await;
+        if self.grant_on_open > 0 {
+            session
+                .handle()
+                .grant_window(channel.id(), self.grant_on_open)
+                .expect("the session is running");
+        }
         Ok(())
     }
 
@@ -57,6 +76,12 @@ impl russh::server::Handler for Server {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if let Some(gate) = self.gate.take() {
+            gate.notified().await;
+            if self.close_at_gate {
+                return session.close(channel);
+            }
+        }
         self.received += data.len() as u64;
         while self.received >= self.next_ack {
             session.data(channel, &b"ack"[..])?;
@@ -84,9 +109,76 @@ struct Pair {
     server_channel: ChannelId,
     channel: Channel<russh::client::Msg>,
     _client: russh::client::Handle<Client>,
+    /// Bytes the client has written into the pipe so far (packets, so with
+    /// framing, padding and MACs on top of the channel data).
+    written: Arc<AtomicUsize>,
+    /// Opens `Options::gate_first_data`.
+    gate: Arc<Notify>,
+}
+
+/// The client's end of the pipe, counting what the client writes.
+struct Counted<S> {
+    inner: S,
+    written: Arc<AtomicUsize>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Counted<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Counted<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let poll = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let Poll::Ready(Ok(n)) = poll {
+            self.written.fetch_add(n, Ordering::SeqCst);
+        }
+        poll
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[derive(Default)]
+struct Options {
+    manual_window: bool,
+    /// Granted as soon as the channel is accepted.
+    grant_on_open: u32,
+    limits: Option<Limits>,
+    gate_first_data: bool,
+    close_at_gate: bool,
 }
 
 async fn connect(manual_window: bool) -> Pair {
+    connect_with(Options {
+        manual_window,
+        ..Default::default()
+    })
+    .await
+}
+
+async fn connect_with(options: Options) -> Pair {
+    tokio::time::timeout(LIVENESS, setup(options))
+        .await
+        .expect("setup finished in time")
+}
+
+async fn setup(options: Options) -> Pair {
     let key = PrivateKey::from(Ed25519Keypair::from_seed(&[7; 32]));
     let config = russh::server::Config {
         methods: MethodSet::from(&[MethodKind::None][..]),
@@ -95,13 +187,23 @@ async fn connect(manual_window: bool) -> Pair {
         keys: vec![key],
         window_size: WINDOW,
         maximum_packet_size: PACKET,
-        manual_window,
+        manual_window: options.manual_window,
+        limits: options.limits.unwrap_or_default(),
         ..Default::default()
     };
-    let (client_io, server_io) = tokio::io::duplex(1 << 20);
+    let (client_io, server_io) = tokio::io::duplex(8 << 20);
+    let written = Arc::new(AtomicUsize::new(0));
+    let client_io = Counted {
+        inner: client_io,
+        written: written.clone(),
+    };
+    let gate = Arc::new(Notify::new());
     let (opened, mut open) = mpsc::unbounded_channel();
     let handler = Server {
         opened,
+        grant_on_open: options.grant_on_open,
+        gate: options.gate_first_data.then(|| gate.clone()),
+        close_at_gate: options.close_at_gate,
         received: 0,
         next_ack: u64::from(WINDOW),
     };
@@ -119,15 +221,14 @@ async fn connect(manual_window: bool) -> Pair {
     let auth = client.authenticate_none("anyone").await.unwrap();
     assert!(auth.success(), "{auth:?}");
     let channel = client.channel_open_session().await.unwrap();
-    let server_channel = tokio::time::timeout(LIVENESS, open.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let server_channel = open.recv().await.unwrap();
     Pair {
         server,
         server_channel,
         channel,
         _client: client,
+        written,
+        gate,
     }
 }
 
@@ -195,4 +296,104 @@ async fn without_manual_window_russh_refills_the_window_on_receipt() {
         refills += 1;
     }
     assert!(refills > 0, "russh's own refill came before the ack");
+}
+
+#[tokio::test]
+async fn with_manual_window_received_data_uses_up_the_window() {
+    let mut pair = connect(true).await;
+    send_window(&pair.channel, WINDOW).await;
+    assert_eq!(next(&mut pair.channel).await, None);
+    // The server's window is now empty, so the largest possible grant fits.
+    // Had the data not been counted, this grant would pass `u32::MAX` and be
+    // dropped.
+    pair.server
+        .grant_window(pair.server_channel, u32::MAX)
+        .unwrap();
+    assert_eq!(next(&mut pair.channel).await, Some(u32::MAX));
+}
+
+/// A server-initiated key exchange starts while the client still has data in
+/// flight inside its grant, which is legitimate and must not end the session.
+///
+/// The server stops reading at the first data packet until the client has
+/// written at least as many bytes as the upload into the pipe (counting packet
+/// overhead, so part of the upload may still wait in the client). Then it
+/// reads again and starts a key exchange after every 256 KiB, with the rest of
+/// the upload in flight.
+async fn upload_in_flight(upload: u32, chunk: usize, close_at_gate: bool) -> Pair {
+    let mut pair = connect_with(Options {
+        manual_window: true,
+        grant_on_open: upload - WINDOW,
+        limits: Some(Limits::new(1 << 30, 256 << 10, Duration::from_secs(3600))),
+        gate_first_data: true,
+        close_at_gate,
+    })
+    .await;
+    if upload > WINDOW {
+        assert_eq!(next(&mut pair.channel).await, Some(upload));
+    }
+    let before = pair.written.load(Ordering::SeqCst);
+    let data = vec![b'x'; upload as usize];
+    tokio::time::timeout(LIVENESS, async {
+        for piece in data.chunks(chunk) {
+            pair.channel.data(piece).await.unwrap();
+        }
+        while pair.written.load(Ordering::SeqCst) < before + upload as usize {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the client wrote the upload's size into the pipe");
+    pair.gate.notify_one();
+    pair
+}
+
+async fn rekey_with_upload_in_flight(upload: u32, chunk: usize) {
+    let mut pair = upload_in_flight(upload, chunk, false).await;
+    for _ in 0..upload / WINDOW {
+        assert_eq!(next(&mut pair.channel).await, None, "no refill on receipt");
+    }
+}
+
+/// The grant is much larger than `window_size`. At most one `ack` per window,
+/// fewer than the client's channel buffer holds, since nothing reads them
+/// until the upload is done.
+#[tokio::test]
+async fn with_manual_window_a_server_rekey_accepts_granted_data_in_flight() {
+    rekey_with_upload_in_flight(4 << 20, PACKET as usize).await;
+}
+
+/// One-byte packets: the bound counts channel data by payload, as grants do,
+/// not by message size.
+#[tokio::test]
+async fn with_manual_window_a_server_rekey_accepts_small_packets_in_flight() {
+    rekey_with_upload_in_flight(WINDOW, 1).await;
+}
+
+/// The server closes the channel with most of its grant unused, while that
+/// data is in flight, and then rekeys. The data for the closed channel is
+/// dropped on arrival and must not end the session: a channel opened after it
+/// still works.
+async fn rekey_with_upload_in_flight_for_a_closed_channel(upload: u32, chunk: usize) {
+    let pair = upload_in_flight(upload, chunk, true).await;
+    let mut channel = tokio::time::timeout(LIVENESS, pair._client.channel_open_session())
+        .await
+        .expect("the channel opened in time")
+        .expect("the session survived the key exchange");
+    // It gets the same grant on open.
+    assert_eq!(next(&mut channel).await, Some(upload));
+    send_window(&channel, WINDOW).await;
+    assert_eq!(next(&mut channel).await, None);
+}
+
+#[tokio::test]
+async fn with_manual_window_a_server_rekey_accepts_data_in_flight_for_a_closed_channel() {
+    rekey_with_upload_in_flight_for_a_closed_channel(4 << 20, PACKET as usize).await;
+}
+
+/// One-byte packets for a closed channel, more of them than twice
+/// `window_size`: dropped data counts nothing, not a byte per message.
+#[tokio::test]
+async fn with_manual_window_a_server_rekey_accepts_small_packets_in_flight_for_a_closed_channel() {
+    rekey_with_upload_in_flight_for_a_closed_channel(5 * WINDOW / 2, 1).await;
 }
