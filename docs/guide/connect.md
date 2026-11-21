@@ -1,15 +1,17 @@
-# Shells and port forwards from the CLI
+# Shells, port forwards and ssh from the CLI
 
 `wssp sandbox shell` opens a shell, or runs a command, inside a sandbox from
 your own terminal, as the template's guest user. `wssp sandbox forward`
 forwards local ports to ports on the sandbox's own loopback
-([Port forwards](#port-forwards)). Like the
+([Port forwards](#port-forwards)). `ssh <name>.wssp` (and `scp`, `sftp`,
+`rsync`, VS Code Remote-SSH and, expected but not yet verified, JetBrains
+Gateway) works too, without SSH keys
+([ssh](#ssh)). Like the
 [browser terminal](./terminal.md) it is never a shell on the Incus host. It
 talks to the server over one WebSocket (`GET /v1/sandboxes/{id}/connect`,
 subprotocol `wssp.connect.v1`) with your [CLI login](./cli.md) or SDK key; the
 wire is specified in the
 [channel contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
-SSH comes later and gets its own section here.
 
 ## Access
 
@@ -18,7 +20,7 @@ access holds it; a read-only login does not. A dashboard SDK key holds it only
 when it was explicitly given the scope. Agent tokens, OAuth grants and MCP
 never hold it (see [authentication planes](./auth-planes.md)). A login saved
 before the scope existed is refused (exit 8): log in again (`wssp login`) to
-get shell access (or port forwarding).
+get shell access (or port forwarding, or ssh).
 
 The sandbox must be `READY` on a connected host whose node daemon supports
 channels. Build, verify and CLI-login sandboxes never get a shell.
@@ -194,3 +196,251 @@ beyond that a connection is refused (reset).
 
 The forwarded bytes are not journaled; as for shells, a shared node's owner
 can see them. Only TCP is forwarded (no UDP).
+
+## ssh
+
+```sh
+wssp ssh-config --install            # once: writes ~/.ssh/config.d/wssp, asks to include it
+ssh <sandbox>.wssp                   # a login shell
+ssh <sandbox>.wssp 'uname -a'        # a command, through the guest user's shell
+scp ./data.tar <sandbox>.wssp:/home/user/
+rsync -a ./src/ <sandbox>.wssp:src/
+ssh -L 8080:localhost:8080 <sandbox>.wssp
+wssp ssh <sandbox> -- -t htop        # the same without any ssh config
+```
+
+`<sandbox>` is a sandbox id or name, as for `wssp sandbox shell`. There are no
+SSH keys or passwords to manage: your [CLI login](./cli.md) (or `WSSP_API_KEY`
+with `WSSP_SERVER`) is the only credential, with the same
+[access](#access) rules as a shell.
+
+**How it works.** `wssp ssh-config` generates this block (`--install` writes
+it to `~/.ssh/config.d/wssp` and, after asking, adds one `Include
+config.d/wssp` line at the top of `~/.ssh/config`; `--yes` skips the question,
+and nothing else in your ssh config is touched):
+
+```
+# Managed by wssp. Regenerate with `wssp ssh-config --install`.
+Host *.wssp "!*'*" "!*\*"
+  ProxyCommand "/abs/path/to/wssp" ssh --stdio '%n'
+  User wssp
+  HostKeyAlias wssp
+  UserKnownHostsFile "/home/u/.local/share/wssp/user/ssh/known_hosts"
+  GlobalKnownHostsFile /dev/null
+  StrictHostKeyChecking yes
+  HostKeyAlgorithms ssh-ed25519
+  CanonicalizeHostname no
+  IdentitiesOnly yes
+  IdentityFile none
+  ForwardAgent no
+  ForwardX11 no
+  ServerAliveInterval 30
+```
+
+`~` here is your account's home directory, the one OpenSSH reads (not
+`$HOME`): with a different `$HOME` (`sudo -E`, some containers) `--install`
+refuses and names both. It also refuses a symlinked `~/.ssh` or
+`~/.ssh/config.d`, a symlinked or hard-linked `~/.ssh/config` that does not
+already include the block, and a `config.d/wssp` that wssp did not write; in
+those cases save the output of `wssp ssh-config` and add the line yourself.
+An existing `Include` of `config.d/wssp` (also spelled `~/.ssh/config.d/wssp`
+or with the absolute path) counts only when it is the first line of
+`~/.ssh/config` that is not a comment or blank, with `config.d/wssp` as its
+first file. Because ssh keeps the first value it reads for each setting,
+anything earlier could win over the block: an option, any `Host` or `Match`
+section (even `Host *`), or another `Include`, whose file may set options. In
+every such case wssp adds its line at the very top (a glob such as
+`config.d/*` is not recognized either; the extra explicit line is harmless),
+and the block at the top then wins over everything further down. `--install`
+holds a lock in the wssp user directory, so two runs never interleave. After
+you answer, it checks that `~/.ssh/config` and `config.d/wssp` are still the
+files it asked about (same file, owner, mode and content), writes the new
+version next to each (flushed, with the old file's mode and owner), checks
+again, and swaps the two atomically (`RENAME_EXCHANGE`). wssp never deletes
+the file it replaced: when it is still exactly the one it planned against,
+wssp keeps the previous file as `~/.ssh/config.wssp-backup-<time>` (or
+`config.d-wssp.wssp-backup-<time>`, 0600, outside `config.d/`) and names it;
+delete it when you no longer need it. An editor that had the file open and
+saves afterwards writes into that backup, so the save is not lost. If an
+editor or another program changed either file meanwhile, wssp leaves it as
+it is (an edit that landed in the last moment is swapped back into place)
+and asks you to run the command again; in the rare case that a second edit arrives during
+that swap back, the first stays in place and the second is kept as
+`~/.ssh/config.wssp-conflict-<time>` (or `config.d-wssp.wssp-conflict-<time>`,
+0600), which the error names, so you can merge it. Nothing you wrote is ever
+discarded. On a filesystem without `RENAME_EXCHANGE`, `--install` replaces no
+existing file and tells you to add the line (or save the block) yourself.
+
+The ProxyCommand names the `wssp` you ran, as you ran it: the absolute path
+you typed, or the `wssp` that `PATH` found, as long as it is still this
+binary (a symlink from a version manager therefore keeps working after an
+upgrade); otherwise the binary's resolved path. After moving or reinstalling
+`wssp` to another place, run `wssp ssh-config --install` again.
+
+ssh pastes the host name into the ProxyCommand and runs it with your shell,
+so the block passes it as `'%n'`, in single quotes, and `wssp ssh --stdio`
+accepts only `<name-or-id>.wssp` (or the bare id) with the characters of a
+sandbox id before it does anything. A name holding `'` or `\`, the only
+characters single quotes do not neutralize in every shell, never matches the
+`Host` line. So a hostile `ssh://` URL (for example in a Git submodule) cannot
+run a command through the block, whatever your OpenSSH version (OpenSSH 9.6
+and later refuse such names on their own).
+
+The block is meant to hold whatever else your ssh config says:
+`GlobalKnownHostsFile /dev/null` and `HostKeyAlgorithms ssh-ed25519` keep the
+check to wssp's own key, and `CanonicalizeHostname no` keeps a
+`CanonicalizeHostname always` elsewhere from sending sandbox names to DNS.
+Settings the block does not name (`Ciphers`, `KexAlgorithms`, a system crypto
+policy or FIPS mode) still apply; one that leaves no algorithm in common with
+the endpoint makes the connection fail, it never weakens it.
+
+Your ssh runs `wssp ssh --stdio <sandbox>.wssp` as its ProxyCommand. That
+process opens one connection to the server with your login and speaks SSH on
+its own stdin and stdout: the SSH server is your own local `wssp` process, and
+nothing listens anywhere (not on your machine, not on the server, the node or
+in the guest). It accepts any SSH authentication (`none` first, so there is no
+prompt; the user name is ignored), because only your own ssh can reach it;
+every session runs as the sandbox's guest user. `IdentitiesOnly yes` with
+`IdentityFile none` keeps your own keys from being offered. `wssp ssh <sandbox>
+[-- SSH-ARGS…]` runs the system `ssh` with the same options on its command
+line, so it needs no config (it fails clearly when no `ssh` is installed).
+
+**Host key.** OpenSSH checks a host key even over a pipe, so this install keeps
+one ed25519 key at `<user dir>/ssh/host_key` (0600, made on first use) and a
+wssp-managed `known_hosts` next to it that holds only that key, under the alias
+`wssp`. The key opens nothing and grants nothing; the server is authenticated
+by TLS and every channel by your login. `wssp logout` keeps both files;
+`wssp ssh-config --rotate-host-key` replaces them (sessions already running
+keep the old key until they end). The block names the `known_hosts` of the
+wssp user directory it was generated in. A ProxyCommand that runs with
+another one (a different `WSSP_USER_DIR` or XDG data directory in ssh's
+environment) has to make a new key there, says so on stderr, and ssh then
+fails with "Host key verification failed": run `wssp ssh-config --install`
+again in the environment ssh runs in. In the same way, `WSSP_API_KEY` and
+`WSSP_SERVER` in ssh's environment take the place of your saved login for
+`ssh <sandbox>.wssp`.
+
+**Not end-to-end.** This is not SSH to the guest: the SSH session ends in your
+local `wssp` process, and from there the bytes travel over TLS to the server
+and on to the node and the guest, exactly like the browser terminal and
+`wssp sandbox shell`. The wssp server and the node (and so a shared node's
+owner) can see them in plaintext. If you need end-to-end OpenSSH (your own
+keys, agent forwarding, `-R`), run `sshd` inside the sandbox and reach it with
+`wssp sandbox forward <sandbox> 22`; you then manage its keys yourself.
+
+**What maps to what.**
+
+| ssh                                                | in the sandbox                                                                                        |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `ssh host` (a terminal)                            | the guest user's login shell on a tty; TERM from your ssh                                             |
+| `ssh host 'cmd'`, `ssh -t host 'cmd'`              | the guest user's shell runs `cmd` (`$SHELL -c 'cmd'`, as sshd does), on a tty with `-t`               |
+| `ssh -T host` (no command)                         | the login shell reading your stdin                                                                    |
+| exit status, death by signal                       | `exit-status`, `exit-signal` (ssh exits 255 for a signal, as with sshd)                               |
+| SendEnv / SetEnv                                   | only `COLORTERM`, `LANG` and `LC_*` travel (sshd's default AcceptEnv); others are ignored             |
+| a window resize; a `signal` request (some clients) | resizes reach a tty; INT, TERM, HUP and KILL reach a command without a tty; other signals are ignored |
+| `scp`, `sftp`, JetBrains (the `sftp` subsystem)    | the guest's `sftp-server` (see below)                                                                 |
+| `scp -O`, `rsync`                                  | the guest's `scp` and `rsync` binaries, as commands                                                   |
+| `-L`, `-D`, VS Code port forwards (`direct-tcpip`) | a connection to the guest's own loopback (`localhost`, `127.0.0.1`, `::1`); any other host is refused |
+| `-L local:/guest/path.sock` (`direct-streamlocal`) | a connection to that guest Unix socket (absolute path, as the guest user)                             |
+| `-R`, `-A`, `-X`, remote Unix forwards             | refused in this release                                                                               |
+
+A forward to another host is refused (`administratively prohibited`) because
+it would turn the guest into a proxy outside the sandbox's own
+[egress policy](./network.md).
+
+**sftp and scp.** OpenSSH's `scp` uses the sftp protocol by default, and
+JetBrains Gateway does too. The sandbox needs OpenSSH's `sftp-server` binary
+for that (Debian and Ubuntu: the `openssh-sftp-server` package, which installs
+no `sshd` and listens on nothing); it is looked for at
+`/usr/lib/openssh/sftp-server`, `/usr/libexec/openssh/sftp-server`,
+`/usr/lib/ssh/sftp-server` and `/usr/libexec/sftp-server`. Without it, scp and
+sftp fail with a line naming the package, while `scp -O`, `rsync`, shells,
+commands and forwards still work. Community templates include it; see
+[template builds](./template-builds.md) to add it to another template.
+
+**VS Code Remote-SSH and JetBrains Gateway.** Pick the host `<sandbox>.wssp`
+after `wssp ssh-config --install`. Both use only what the table above maps:
+a command to install and start their server in the guest, sftp (Gateway) to
+upload it, and local forwards to reach it. The server they install runs as the
+guest user and keeps running after a disconnect, like any process a normal
+close leaves behind. Both sequences are covered by the automated tests (VS
+Code's `ssh -T -D … bash` with a bootstrap script on stdin that starts a
+service it then reaches through the same connection; Gateway's command, sftp
+upload, then `-L` to the uploaded server); JetBrains Gateway itself is not yet
+verified in the JetBrains Gateway app.
+
+**Trust toward your machine.** The SSH layer gives the guest nothing on your
+side: no agent, no X11, no reverse forwards and no way to open a channel
+toward you. The tools on top of it are another matter. To them the sandbox is
+an SSH server they trust: VS Code Remote-SSH and JetBrains Gateway run code
+from the remote side and act on what it sends (a compromised remote can run
+code on your workstation through them, as their vendors document), `scp`,
+`sftp` and `rsync` take file names and contents from the guest's tools, and a
+terminal shows whatever escape sequences the guest prints. Guest code with
+guest sudo can replace any of those tools. Use the editor integrations only
+with sandboxes whose contents you trust, and check what you copy out of a
+sandbox that runs untrusted code.
+
+**ControlMaster.** With `ControlMaster`/`ControlPersist` in your ssh config,
+later sessions to the same sandbox reuse the first one's connection. Any
+process of your local user can then use that control socket while it lives,
+which is the same trust as reading your stored login. The shared connection
+holds the login it started with: a server-side revoke (`wssp logout`, a
+dashboard revoke, the key's expiry) ends it, but `wssp logout --local` or a
+`wssp login` as another account does not, and until the master exits, new
+sessions to that host name keep reaching the old login's sandbox. Stop it
+with `ssh -O exit <sandbox>.wssp` after switching accounts.
+
+**Your ssh's own listeners.** `-L` and `-D` listen on your machine, not in the
+sandbox. With the default bind address that is loopback only; `-L
+0.0.0.0:8080:localhost:8080`, `-D 0.0.0.0:1080` or `GatewayPorts yes` make your
+ssh accept connections from your network into the sandbox, as with any ssh.
+
+**Ending and revocation.** Closing a session hangs it up, as for a shell.
+Revoking the login (`wssp logout`, a dashboard revoke, the key's expiry), a
+stopped or destroyed sandbox or a lost connection ends the connection: the
+`wssp` process prints one line naming why (your ssh shows it) and exits, and
+ssh exits 255 as its ProxyCommand's stdio closes. Every channel of every
+session on that connection ends with it. Once the session runs it writes no
+log lines (`WSSP_LOG` applies only up to the start of the session).
+Connecting to a sandbox that is not `READY`, or with a login that lacks
+`sandboxes:connect`, fails the same way before any SSH starts.
+
+Whatever ends the session (ssh's disconnect, its side of the pipe closing, a
+wssp end, or a session that took none of a channel's last messages, such as
+its exit status, for two seconds), the `wssp` process has exited within five
+seconds of that end. The five seconds cover everything that follows: up to two
+for ssh's last messages, then closing the channels at the sandbox, then the
+final line. They hold even when your ssh stopped reading the process's output
+or keeps the pipe open: the process reads its input whatever its output does,
+and never waits on a blocked stdout or stderr past that deadline.
+
+A channel the sandbox side aborts (a guest service reset its connection, the
+server closed the channel) closes without an exit
+status, so `ssh host cmd` exits 255 and a terminal shows a `wssp: …` line when
+the client's window still takes it. SSH has no reset, though: a forwarded
+(`-L`, `-D`) connection that the guest service resets reaches your local
+client as a plain close, exactly as with OpenSSH's own sshd. A reset before
+the guest service finished its reply arrives without the end of the stream,
+but a reset after the service already closed its sending side cannot be told
+from a clean end. A protocol that ends at the close cannot tell a cut reply
+from a whole one there; `wssp sandbox forward` keeps the reset for TCP
+listeners.
+
+**Flow control.** Output is acknowledged to the sandbox only once your ssh
+client's window took it. Input has its own SSH window per channel, one wssp
+window (1 MiB for commands and forwards, 128 KiB for a terminal), and `wssp
+ssh --stdio` grants a channel's ssh client more window only as the bytes leave
+for the sandbox, which they do only as fast as the guest reads them. So at most
+one window waits at the sandbox and one here per channel. A channel whose guest
+stops reading (a guest program paused in a debugger, a command that never reads
+stdin while you keep sending) stops only its own sender at its SSH window: the
+terminal, every other forward and new channels of the same ssh connection,
+ControlMaster sessions included, keep flowing for as long as it stays stuck,
+and the stuck channel is never reset for it. Once its guest reads again, it
+goes on where it stopped and loses nothing. A client that sends past a
+channel's window (a protocol violation OpenSSH never commits) has that channel
+reset (`wssp: the channel was reset: …` on a session's stderr).
+
+The bytes are not journaled, and a shared node's owner can see them, as for
+shells.

@@ -122,8 +122,10 @@ function uppercaseAllowlist(): Set<string> {
     "TERM", // reserved guest identity/default names, sandbox-contracts/src/env.ts
     "COLORTERM",
     "LANG", // channel env names a CLI shell may pass, sandbox-contracts/src/connect-wire.ts
+    "PATH", // the local command search path `wssp ssh-config` resolves the binary on (connect.md, cli.md)
     "API", // SdkKeyKind.API, packages/db/prisma/schema/agent.prisma (auth-planes.md, terminal.md)
     "O_NOFOLLOW", // open(2) flag named in the aarch64 release note
+    "RENAME_EXCHANGE", // renameat2(2) flag `wssp ssh-config --install` publishes with (connect.md)
     "SO_PEERCRED", // socket(7) option the egress guard authenticates with (hosts.md)
     "INCUS_DIR", // Incus client directory the build resolver's pid file lives under (template-builds.md)
     "XDG_RUNTIME_DIR", // the node's tmpfs runtime directory preview-tunnel clients keep state in (tunnels.md)

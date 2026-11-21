@@ -34,6 +34,16 @@ describe("community catalog (community-base S5)", () => {
     expect(scripts[2]).toContain("command -v resize2fs >/dev/null");
   });
 
+  it("installs the sftp-server binary for wssp ssh, and nothing that listens", () => {
+    const scripts = UBUNTU_CLOUD_PREP_V1.steps.map((step) =>
+      step.type === "run" ? step.script : "",
+    );
+    expect(scripts[2]).toMatch(/--no-install-recommends [^\n]* openssh-sftp-server\n/);
+    expect(scripts[2]).toContain("test -x /usr/lib/openssh/sftp-server");
+    // Binary only: no server package, no unit started or enabled.
+    expect(scripts.join("\n")).not.toMatch(/openssh-server|systemctl|\bsshd\b/);
+  });
+
   it("pins the prep recipe digest (the template_build_origin CHECK carries the same literal)", async () => {
     const parsed = parseRecipe(UBUNTU_CLOUD_PREP_V1, {});
     expect(await sha256Hex(parsed.canonical)).toBe(UBUNTU_CLOUD_PREP_V1_DIGEST);
@@ -42,7 +52,11 @@ describe("community catalog (community-base S5)", () => {
       new URL("../../../../db/prisma/schema/build.prisma", import.meta.url),
       "utf8",
     );
-    expect(schema).toContain(`"recipeDigest" = '${UBUNTU_CLOUD_PREP_V1_DIGEST}'`);
+    expect(schema).toMatch(
+      new RegExp(
+        `@check template_build_origin: .*"recipeDigest" IN \\('${UBUNTU_CLOUD_PREP_V1_DIGEST}', '[0-9a-f]{64}'\\)`,
+      ),
+    );
   });
 
   it("runs steps 1–4 as root and the fast-fail asserts as the guest user", () => {

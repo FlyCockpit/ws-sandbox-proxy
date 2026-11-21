@@ -110,6 +110,15 @@ The canonical recipe is JSON:
 | `scrubPaths` | Up to 16 extra absolute guest paths removed at capture, on top of the mandatory scrub list                                                         |
 | `start`      | `{command, ready?, readyTimeoutMs?}`: run at every boot of a sandbox from the revision (see [Start and ready commands](#start-and-ready-commands)) |
 
+**For `scp`, `sftp` and JetBrains Gateway** over [`ssh <name>.wssp`](./connect.md#ssh),
+the template needs OpenSSH's sftp server binary. Community bases prepared
+by this release or later include it (`openssh-sftp-server`; a community
+template prepared earlier gets it with its next refresh to a newer upstream
+image); on another base add it, for example
+`{ "type": "run", "script": "apt-get update && apt-get install -y --no-install-recommends openssh-sftp-server", "user": "root" }`
+(Debian and Ubuntu; it installs no `sshd` and listens on nothing). Shells,
+commands, `scp -O`, `rsync` and forwards work without it.
+
 ### Steps
 
 | Step      | Effect                                                                                                                                                                                                                             |

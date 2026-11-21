@@ -37,6 +37,15 @@ dist = true
 name = "wssp"
 path = "src/main.rs"
 
+[features]
+# `ssh` builds `wssp ssh` (the SSH endpoint over a ProxyCommand's stdio) and
+# with it russh and tokio. On by default, so release and `dist` builds carry
+# it; `--no-default-features` builds a CLI without them. Only `wssp ssh
+# --stdio` ever starts the tokio runtime or the SSH server; the node daemon
+# and every other command never construct either.
+default = ["ssh"]
+ssh = ["dep:russh", "dep:tokio"]
+
 [dependencies]
 sandbox-protocol = { path = "../../crates/sandbox-protocol" }
 sandbox-runtime = { path = "../../crates/sandbox-runtime" }
@@ -78,6 +87,16 @@ webpki-roots = "=1.0.12"
 # credential proxy (already locked through tungstenite). Pinned: the proxy's
 # smuggling table depends on its exact acceptance rules.
 httparse = "=1.10.1"
+# `wssp ssh --stdio` (feature `ssh`): the SSH server side only, on its own
+# stdin/stdout. Exact pin; `ring` (already locked through rustls) is the
+# crypto backend, so no aws-lc-rs and no C toolchain; no `rsa`/`flate2`
+# (the endpoint offers one ed25519 host key and no compression). The root
+# `[patch.crates-io]` swaps in `third_party/russh-0.65.2`, the published crate
+# plus a small patch for per-channel receive windows (`manual_window`).
+russh = { version = "=0.65.2", default-features = false, features = ["ring"], optional = true }
+# The current-thread runtime under russh, alive only inside `wssp ssh
+# --stdio`; the WebSocket stays on tungstenite threads (bounded bridges).
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "io-std", "io-util", "sync", "time", "macros"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 # SIGTERM/SIGINT binding for `wssp host run` without
@@ -97,9 +116,10 @@ nix = { workspace = true, features = ["process", "signal"] }
 # tempfile; this adds only its `net` feature, no new crate. `wssp host daemon
 # quiesce`: `fs` opens the control file with `O_NOFOLLOW` and `process`
 # sends the reload signal; `wssp sandbox shell`: `termios` for raw mode and
-# the window size, `pty` for its black-box tests; features of the same crate,
-# no new crate.
-rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process", "termios", "pty"] }
+# the window size, `pty` for its black-box tests; `wssp ssh --stdio`: `event`
+# polls stdin for its writer's hang-up; features of the same crate, no new
+# crate.
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net", "fs", "process", "termios", "pty", "event"] }
 
 [dev-dependencies]
 # Black-box CLI testing: run the built binary and assert on stdout/stderr/exit.

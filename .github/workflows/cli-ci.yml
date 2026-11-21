@@ -15,7 +15,9 @@ on:
       - "packages/config/src/*.json"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "third_party/**"
       - "THIRD-PARTY-LICENSES.md"
+      - "licenses/**"
       - ".github/workflows/release.yml"
       - ".github/workflows/cli-ci.yml"
       # apps/cli/tests/cli_reference.rs checks the `wssp` invocations in these docs.
@@ -33,7 +35,9 @@ on:
       - "packages/config/src/*.json"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "third_party/**"
       - "THIRD-PARTY-LICENSES.md"
+      - "licenses/**"
       - ".github/workflows/release.yml"
       - ".github/workflows/cli-ci.yml"
       # apps/cli/tests/cli_reference.rs checks the `wssp` invocations in these docs.
@@ -81,7 +85,18 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: . -> target
+      # The `wssp ssh` black-box tests (`tests/ssh_stdio.rs`,
+      # `tests/ssh_config.rs`) drive the real OpenSSH client, sftp-server
+      # (standing in for the guest's) and rsync; with
+      # `WSSP_REQUIRE_SSH_TOOLS=1` a missing tool fails them instead of
+      # skipping them.
+      - name: Install the OpenSSH client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openssh-client openssh-sftp-server rsync
       - run: cargo test --workspace --all-targets --locked
+        env:
+          WSSP_REQUIRE_SSH_TOOLS: "1"
       # `--all-targets` skips doctests; run them explicitly.
       - run: cargo test --workspace --doc --locked
       # Slow tests are `#[ignore]`d so local runs stay fast; CI still runs them.
@@ -103,6 +118,13 @@ jobs:
             echo "release wssp references WSSP_TEST_RUNTIME_TIMING" >&2
             exit 1
           fi
+          # `wssp ssh --stdio` note-log and uncounted-window test hooks: debug builds only.
+          for knob in WSSP_TEST_SSH_NOTE_LOG WSSP_TEST_SSH_UNCOUNTED_WINDOW; do
+            if grep -q "$knob" target/release/wssp; then
+              echo "release wssp references $knob" >&2
+              exit 1
+            fi
+          done
           # One-daemon-per-Incus-server test override: debug builds only.
           if grep -q WSSP_TEST_SHARED_INCUS target/release/wssp; then
             echo "release wssp references WSSP_TEST_SHARED_INCUS" >&2
@@ -182,7 +204,58 @@ jobs:
           command-arguments: --config apps/cli/deny.toml
           manifest-path: Cargo.toml
 
-  # ── Agent docs are in sync with apps/cli/AGENTS.md ──────────────────────────
+  # ── RustSec advisories and yanks for the vendored russh ────────────────────
+  # cargo-deny matches advisories only to registry crates, so the vendored
+  # russh (a path crate) gets its own live check (third_party/README.md). Its
+  # own job, needing no other, so a cargo-deny finding never skips it. It runs
+  # on schedule and on demand, and on a push or PR only when an input of the
+  # check changed (the workflow `paths` above admit the run; this job narrows
+  # it), so a new disclosure does not break unrelated PRs.
+  vendored-advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Did an input of the vendored russh check change?
+        id: inputs
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          # Schedule, manual runs, a new branch or tag, or a base that is
+          # not in the clone: run the check (never skip on doubt).
+          if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] ||
+            ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$(git diff --name-only "$base" HEAD -- \
+            Cargo.lock Cargo.toml apps/cli/Cargo.toml apps/cli/deny.toml \
+            third_party apps/cli/xtask)" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "no vendored-russh input changed; the scheduled run covers new advisories"
+          fi
+      - if: steps.inputs.outputs.run == 'true'
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - if: steps.inputs.outputs.run == 'true'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: . -> target
+      - if: steps.inputs.outputs.run == 'true'
+        run: cargo xtask vendored-russh --advisories
+        working-directory: apps/cli
+
+  # ── Agent docs in sync with apps/cli/AGENTS.md; vendored russh unaltered ────
   docs-drift:
     runs-on: ubuntu-latest
     if: github.event_name != 'schedule'
@@ -195,6 +268,11 @@ jobs:
         with:
           workspaces: . -> target
       - run: cargo xtask sync-docs --check
+        working-directory: apps/cli
+      # `third_party/russh-0.65.2` is the published crate (checksum pinned)
+      # plus `third_party/russh-0.65.2.patch`, byte for byte, and Cargo.lock
+      # takes russh from it (no registry source, no `[[patch.unused]]`).
+      - run: cargo xtask vendored-russh --check
         working-directory: apps/cli
 
   # ── Spell check (scoped to apps/cli by its typos.toml) ──────────────────────

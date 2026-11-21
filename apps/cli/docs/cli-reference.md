@@ -509,6 +509,35 @@ wssp template get [OPTIONS] <ID>
 | `--cursor <C>` | Continue the revision list after a previous page (`revisionsNextCursor`) |  |
 | `--json` | Emit JSON instead of human-readable text |  |
 
+### `wssp ssh`
+
+Open an ssh session to a sandbox with the system `ssh` (no keys); `--stdio` is the ProxyCommand endpoint.
+
+```text
+wssp ssh [OPTIONS] <SANDBOX> [-- <SSH-ARGS>...]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--stdio` | Speak SSH on stdin and stdout (the `ProxyCommand` of the generated config) |  |
+| `<SANDBOX>` | Sandbox id or name (with `--stdio` also `<name-or-id>.wssp`) | required |
+| `<SSH-ARGS>` | Arguments for `ssh` after `--` (options, then the remote command) |  |
+
+### `wssp ssh-config`
+
+Print or install the ssh config for `ssh <name>.wssp`, `scp` and `rsync`, and keep its local host key.
+
+```text
+wssp ssh-config [OPTIONS]
+```
+
+| Argument | Description | Notes |
+| --- | --- | --- |
+| `--install` | Write `~/.ssh/config.d/wssp` and add `Include config.d/wssp` at the top of `~/.ssh/config` (asks first) |  |
+| `--yes` | With `--install`: edit `~/.ssh/config` without asking |  |
+| `--rotate-host-key` | Replace the local ssh host key and its known_hosts entry |  |
+| `--json` | Emit JSON instead of human-readable text |  |
+
 ### `wssp host`
 
 Run this machine as a wssp host: enroll, run the node daemon, manage node settings.

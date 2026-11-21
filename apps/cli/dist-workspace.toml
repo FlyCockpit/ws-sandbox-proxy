@@ -9,8 +9,10 @@ cargo-dist-version = "0.34.0"
 ci = "github"
 # The installers to generate for each app.
 installers = ["shell"]
-# Ship notices for the statically linked libc and other bundled dependencies.
-include = ["../../THIRD-PARTY-LICENSES.md"]
+# Ship notices for the statically linked libc and other bundled dependencies,
+# and the full Apache-2.0 text the (modified) russh notice refers to.
+# apps/cli/tests/dist_notices.rs checks that every file named here exists.
+include = ["../../THIRD-PARTY-LICENSES.md", "../../licenses/Apache-2.0.txt"]
 # Target platforms to build apps for (Rust target-triple syntax). The CLI and
 # node daemon are Linux-only.
 targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]

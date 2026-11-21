@@ -7,15 +7,39 @@ import {
   INITIAL_PATH,
   initialSql,
 } from "./generate-initial-migration.mjs";
-import { SCHEMA_DIR } from "./lib/prisma.mjs";
+import { readMigrationsFolder } from "./lib/migration-state.mjs";
+import { MIGRATIONS_DIR, SCHEMA_DIR } from "./lib/prisma.mjs";
 import { schemaCheckConstraints } from "./lib/schema-checks.mjs";
 import { checkWrapper, splitStatements } from "./lib/sql.mjs";
 
-test("all 154 documentary CHECKs match 0_init names, mapped tables and exact expressions", () => {
+/**
+ * The CHECK statements 0_init's frozen section holds after every later committed
+ * migration's `DROP CONSTRAINT` / `ADD CONSTRAINT … CHECK` (in folder order).
+ */
+function checksAfterLaterMigrations(initial) {
+  const statements = new Map(
+    initial.split("\n").map((line) => [/ADD CONSTRAINT "([^"]+)"/.exec(line)?.[1], line]),
+  );
+  for (const { name, sql } of readMigrationsFolder(MIGRATIONS_DIR)) {
+    if (name === "0_init") continue;
+    for (const { text } of splitStatements(sql)) {
+      const dropped = /^ALTER TABLE "[^"]+" DROP CONSTRAINT "([^"]+)";?$/s.exec(text);
+      if (dropped) statements.delete(dropped[1]);
+      const added = /^ALTER TABLE "[^"]+" ADD CONSTRAINT "([^"]+)" CHECK \(/s.exec(text);
+      if (added) statements.set(added[1], `${text.trim().replace(/;?$/, ";")}`);
+    }
+  }
+  return [...statements.values()];
+}
+
+test("all 154 documentary CHECKs match 0_init plus later migrations: names, mapped tables and exact expressions", () => {
   const checks = schemaCheckConstraints(SCHEMA_DIR);
   assert.equal(checks.length, 154);
   const sql = readFileSync(INITIAL_PATH, "utf8");
-  assert.equal(frozenSection(sql, "checks"), checkStatements(checks));
+  assert.deepEqual(
+    checksAfterLaterMigrations(frozenSection(sql, "checks")).sort(),
+    checkStatements(checks).split("\n").sort(),
+  );
   const materialized = splitStatements(sql).filter(({ text }) =>
     /^ALTER TABLE .* ADD CONSTRAINT .* CHECK \(/s.test(text),
   );

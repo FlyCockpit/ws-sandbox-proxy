@@ -17,7 +17,7 @@ use crate::workspace_root;
 pub struct Args {
     /// Verify mirrors are up to date without writing. Exit non-zero on drift.
     #[arg(long)]
-    check: bool,
+    pub check: bool,
 }
 
 /// The canonical source file.

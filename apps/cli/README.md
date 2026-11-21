@@ -25,6 +25,7 @@ wssp sandbox list
 wssp sandbox exec <sandbox-id> -- uname -a   # exits with the command's exit code
 wssp sandbox shell <sandbox-id>              # an interactive shell (needs a write login)
 wssp sandbox forward <sandbox-id> 5432:15432 # local port 15432 → the sandbox's loopback port 5432
+wssp ssh-config --install && ssh <name>.wssp # plain ssh/scp/rsync without keys (once, then any time)
 wssp sandbox files read <sandbox-id> /etc/os-release
 wssp sandbox ports link <sandbox-id> 3000
 wssp template list
@@ -259,7 +260,9 @@ prints wssp's error message (with `--json`, the `{"error":…}` line) on stderr.
 signal N); refusals before the upgrade keep the codes above, and a session wssp
 ended exits 125 with one line naming why (`--json`: code `connect.<intent>`).
 `wssp sandbox forward` runs until Ctrl-C (130; SIGTERM 143, SIGHUP 129) or
-until wssp ends the session (125, the same line).
+until wssp ends the session (125, the same line). `wssp ssh --stdio` (the
+ProxyCommand) exits 0 when the ssh client disconnects and 125 with that line
+when wssp ends the session (ssh itself then exits 255).
 
 ## Install After Release
 

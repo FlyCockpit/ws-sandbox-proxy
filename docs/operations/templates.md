@@ -367,8 +367,11 @@ it (`fromTemplate("ubuntu-26-04")`) like any other base.
   and stops cloud-init from recreating a default user. It installs the polkit
   rule that refuses linger to everyone but root (see
   [Deny self-linger](#deny-self-linger)), then `python3`, `util-linux`, `git`,
-  `tar`, `ca-certificates`, `cloud-guest-utils` and `e2fsprogs` (asserting
-  `growpart` and `resize2fs`). It turns cloud-init's own root growth off
+  `tar`, `ca-certificates`, `cloud-guest-utils`, `e2fsprogs` and
+  `openssh-sftp-server` (asserting `growpart`, `resize2fs` and
+  `/usr/lib/openssh/sftp-server`; the sftp server is a binary for
+  [`wssp ssh`](../guide/connect.md#ssh), it starts no service and listens on
+  nothing). It turns cloud-init's own root growth off
   (`growpart: off`, `resize_rootfs: false`): the node daemon grows and checks
   the root at every create instead. Finally it runs `cloud-init clean --logs --seed`,
   empties `/etc/machine-id` and checks that no passwordless grant remains. Its

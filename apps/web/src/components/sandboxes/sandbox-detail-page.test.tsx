@@ -233,6 +233,16 @@ describe("reading a sandbox", () => {
     expect(input.limit).toBeLessThanOrEqual(100);
   });
 
+  it("shows the commands that connect to this sandbox (wssp-ssh increment 3)", async () => {
+    mount();
+    const panel = await screen.findByRole("region", { name: enSandboxes.connect.heading });
+    const commands = within(panel).getByRole("list", { name: enSandboxes.connect.label });
+    expect(within(commands).getByText("wssp sandbox shell quiet-otter")).toBeTruthy();
+    expect(within(commands).getByText("ssh quiet-otter.wssp")).toBeTruthy();
+    expect(within(panel).getByText(enSandboxes.connect.sshSetup)).toBeTruthy();
+    expect(esSandboxes.connect.sshCommand).toBe(enSandboxes.connect.sshCommand);
+  });
+
   it.each([401, 403, 404])(
     "hides previously loaded sandbox detail after HTTP %s",
     async (status) => {

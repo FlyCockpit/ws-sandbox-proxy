@@ -147,9 +147,10 @@ chmod 0644 /etc/polkit-1/rules.d/10-wssp-no-linger.rules`,
       script: `set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends python3 util-linux git tar ca-certificates cloud-guest-utils e2fsprogs
+apt-get install -y --no-install-recommends python3 util-linux git tar ca-certificates cloud-guest-utils e2fsprogs openssh-sftp-server
 command -v growpart >/dev/null
-command -v resize2fs >/dev/null`,
+command -v resize2fs >/dev/null
+test -x /usr/lib/openssh/sftp-server`,
     },
     {
       type: "run",
@@ -183,7 +184,7 @@ ${LINGER_ASSERT}`,
  * `template_build_origin` CHECK; `catalog.test.ts` recomputes it.
  */
 export const UBUNTU_CLOUD_PREP_V1_DIGEST =
-  "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
+  "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b";
 
 /**
  * `UBUNTU_CLOUD_SMOKE_V1`: run as the guest user in the verify VM (`guestSudo`

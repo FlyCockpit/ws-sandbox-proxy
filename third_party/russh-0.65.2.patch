@@ -1,0 +1,144 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e7667e5..a4f14c0 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,8 @@
+ )]
+ #![allow(clippy::single_match, clippy::upper_case_acronyms)]
+ #![allow(macro_expanded_macro_exports_accessed_by_absolute_paths)]
++// wssp vendoring: third-party code, built under the workspace's `-D warnings`.
++#![allow(warnings)]
+ // length checked
+ // Copyright 2016 Pierre-Étienne Meunier
+ //
+diff --git a/src/server/encrypted.rs b/src/server/encrypted.rs
+index c4daede..3270361 100644
+--- a/src/server/encrypted.rs
++++ b/src/server/encrypted.rs
+@@ -1491,7 +1491,9 @@ impl Session {
+ 
+                 #[allow(clippy::collapsible_if)]
+                 if let Some(ref mut enc) = self.common.encrypted {
+-                    if enc.adjust_window_size(channel_num, &data, target)? {
++                    if self.common.config.manual_window {
++                        enc.consume_window(channel_num, data.len());
++                    } else if enc.adjust_window_size(channel_num, &data, target)? {
+                         let window = handler.adjust_window(channel_num, self.target_window_size);
+                         if window > 0 {
+                             self.target_window_size = window
+diff --git a/src/server/mod.rs b/src/server/mod.rs
+index 1a6279d..432f4ad 100644
+--- a/src/server/mod.rs
++++ b/src/server/mod.rs
+@@ -99,6 +99,10 @@ pub struct Config {
+     pub keepalive_max: usize,
+     /// If active, invoke `set_nodelay(true)` on client sockets; disabled by default (i.e. Nagle's algorithm is active).
+     pub nodelay: bool,
++    /// If active, received channel data only consumes the channel's receive
++    /// window, and the window grows only through [`Handle::grant_window`];
++    /// disabled by default (the window is refilled on receipt).
++    pub manual_window: bool,
+ }
+ 
+ impl Default for Config {
+@@ -126,6 +130,7 @@ impl Default for Config {
+             keepalive_interval: None,
+             keepalive_max: 3,
+             nodelay: false,
++            manual_window: false,
+         }
+     }
+ }
+@@ -153,6 +158,7 @@ impl Debug for Config {
+             .field("inactivity_timeout", &self.inactivity_timeout)
+             .field("keepalive_interval", &self.keepalive_interval)
+             .field("keepalive_max", &self.keepalive_max)
++            .field("manual_window", &self.manual_window)
+             .finish()
+     }
+ }
+diff --git a/src/server/session.rs b/src/server/session.rs
+index 423e64d..33ac7c7 100644
+--- a/src/server/session.rs
++++ b/src/server/session.rs
+@@ -88,6 +88,11 @@ pub enum Msg {
+         pending: PendingChannelOpen,
+         result: Result<(), ChannelOpenFailure>,
+     },
++    /// Grow a channel's receive window (see [`Config::manual_window`]).
++    WindowGrant {
++        id: ChannelId,
++        bytes: u32,
++    },
+ }
+ 
+ impl From<(ChannelId, ChannelMsg)> for Msg {
+@@ -157,6 +162,15 @@ impl Handle {
+             .map_err(|_| ())
+     }
+ 
++    /// Grow a channel's receive window by `bytes` (see
++    /// [`Config::manual_window`]). Never waits: the grant goes on the
++    /// unbounded priority queue and is sent after any key exchange.
++    pub fn grant_window(&self, id: ChannelId, bytes: u32) -> Result<(), ()> {
++        self.priority_sender
++            .send(Msg::WindowGrant { id, bytes })
++            .map_err(|_| ())
++    }
++
+     /// Send success to the session referenced by this handler.
+     pub async fn channel_success(&self, id: ChannelId) -> Result<(), ()> {
+         self.sender
+@@ -620,6 +634,11 @@ impl Session {
+             Msg::ChannelOpenReply { pending, result } => {
+                 self.finalize_channel_open_reply(pending, result)?;
+             }
++            Msg::WindowGrant { id, bytes } => {
++                if let Some(ref mut enc) = self.common.encrypted {
++                    enc.grant_window(id, bytes)?;
++                }
++            }
+             other => {
+                 // should be unreachable, since the receiver only gets
+                 // messages from methods implemented within russh
+diff --git a/src/session.rs b/src/session.rs
+index df11ef4..7931573 100644
+--- a/src/session.rs
++++ b/src/session.rs
+@@ -335,6 +335,36 @@ impl Encrypted {
+         Ok(false)
+     }
+ 
++    /// Account for `len` received bytes on `channel` without refilling its
++    /// receive window (see [`crate::server::Config::manual_window`]).
++    pub fn consume_window(&mut self, channel: ChannelId, len: usize) {
++        if let Some(channel) = self.channels.get_mut(&channel) {
++            let len = u32::try_from(len).unwrap_or(u32::MAX);
++            channel.sender_window_size = channel.sender_window_size.saturating_sub(len);
++        }
++    }
++
++    /// Grow `channel`'s receive window by `add` bytes with a
++    /// `CHANNEL_WINDOW_ADJUST`; nothing for an unknown channel, an empty
++    /// grant or one that would pass the protocol's maximum.
++    pub fn grant_window(&mut self, channel: ChannelId, add: u32) -> Result<(), crate::Error> {
++        if let Some(channel) = self.channels.get_mut(&channel) {
++            let Some(size) = channel.sender_window_size.checked_add(add) else {
++                return Ok(());
++            };
++            if size == channel.sender_window_size {
++                return Ok(());
++            }
++            push_packet!(self.write, {
++                self.write.push(msg::CHANNEL_WINDOW_ADJUST);
++                channel.recipient_channel.encode(&mut self.write)?;
++                add.encode(&mut self.write)?;
++            });
++            channel.sender_window_size = size;
++        }
++        Ok(())
++    }
++
+     fn flush_channel(
+         write: &mut Vec<u8>,
+         channel: &mut ChannelParams,

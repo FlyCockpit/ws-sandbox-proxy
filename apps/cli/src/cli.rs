@@ -62,6 +62,14 @@ pub enum Command {
     /// List templates and their revisions.
     Template(crate::commands::template::Args),
 
+    /// Open an ssh session to a sandbox with the system `ssh` (no keys); `--stdio` is the ProxyCommand endpoint.
+    #[cfg(feature = "ssh")]
+    Ssh(crate::commands::sandbox::ssh::SshArgs),
+
+    /// Print or install the ssh config for `ssh <name>.wssp`, `scp` and `rsync`, and keep its local host key.
+    #[cfg(feature = "ssh")]
+    SshConfig(crate::commands::sandbox::ssh::SshConfigArgs),
+
     /// Run this machine as a wssp host: enroll, run the node daemon, manage node settings.
     Host(crate::commands::host::Args),
 

@@ -249,6 +249,8 @@ pub(super) fn wssp_side(error: anyhow::Error) -> anyhow::Error {
 pub(super) enum Purpose {
     Shell,
     Forward,
+    #[cfg(feature = "ssh")]
+    Ssh,
 }
 
 /// A 403 on a login without the connect scope: say how to get it.
@@ -272,11 +274,19 @@ fn scope_hint(
         (Purpose::Forward, true, _) => {
             "this login cannot forward ports; log in again (`wssp login`) to get port forwarding"
         }
+        #[cfg(feature = "ssh")]
+        (Purpose::Ssh, true, _) => {
+            "this login cannot open ssh sessions; log in again (`wssp login`) to get shell access"
+        }
         (Purpose::Shell, false, true) => {
             "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get shell access"
         }
         (Purpose::Forward, false, true) => {
             "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get port forwarding"
+        }
+        #[cfg(feature = "ssh")]
+        (Purpose::Ssh, false, true) => {
+            "the key may lack the `sandboxes:connect` scope or access to this sandbox; a dashboard SDK key needs that scope, or log in again (`wssp login`) to get shell access"
         }
         (_, false, false) => return error,
     };
@@ -680,7 +690,13 @@ fn session(credential: &UserCredential, target: &str, request: &Request) -> Resu
 /// process exits, so the at-exit stdout cleanup (`try_lock`, see
 /// [`session`]) skips stdout instead of retrying bytes a failed write left
 /// buffered.
-fn final_report(line: Option<String>, status: i32) -> ! {
+pub(super) fn final_report(line: Option<String>, status: i32) -> ! {
+    final_report_by(line, status, Instant::now() + WRITER_SETTLE)
+}
+
+/// [`final_report`], waiting for the stdout flush and the line only until
+/// `deadline` (`wssp ssh --stdio`'s one teardown deadline).
+pub(super) fn final_report_by(line: Option<String>, status: i32, deadline: Instant) -> ! {
     let (done_tx, done) = mpsc::channel::<()>();
     let spawned = std::thread::Builder::new()
         .name("wssp-shell-final".into())
@@ -697,7 +713,7 @@ fn final_report(line: Option<String>, status: i32) -> ! {
             }
         });
     if spawned.is_ok() {
-        let _ = done.recv_timeout(WRITER_SETTLE);
+        let _ = done.recv_timeout(deadline.saturating_duration_since(Instant::now()));
     }
     std::process::exit(status);
 }

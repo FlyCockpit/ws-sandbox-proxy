@@ -52,6 +52,41 @@ function bytes(value: string, locale: string): string {
   return formatBytes(Number.isFinite(parsed) && parsed >= 0 ? parsed : 0, locale);
 }
 
+/**
+ * The sandbox detail "Connect" hint (wssp-ssh §11, increment 3): the CLI
+ * commands that reach this sandbox, a shell and plain ssh. Commands only;
+ * nothing here talks to the sandbox.
+ */
+export function SandboxConnectHint({ target }: { target: string }) {
+  const { t } = useTranslation(["sandboxes"]);
+  const commands = [
+    t("sandboxes:connect.shellCommand", { target }),
+    t("sandboxes:connect.sshCommand", { target }),
+  ];
+  return (
+    <section
+      aria-labelledby="sandbox-connect"
+      data-sandbox-connect=""
+      className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-4 text-card-foreground"
+    >
+      <h2 id="sandbox-connect" className="text-sm font-medium">
+        {t("sandboxes:connect.heading")}
+      </h2>
+      <p className="text-sm text-muted-foreground">{t("sandboxes:connect.description")}</p>
+      <ul aria-label={t("sandboxes:connect.label")} className="flex min-w-0 flex-col gap-1">
+        {commands.map((command) => (
+          <li key={command} className="min-w-0">
+            <code className="block min-w-0 break-all rounded-md bg-muted px-2 py-1 font-mono text-xs">
+              {command}
+            </code>
+          </li>
+        ))}
+      </ul>
+      <p className="text-sm text-muted-foreground">{t("sandboxes:connect.sshSetup")}</p>
+    </section>
+  );
+}
+
 export function SandboxConnections({ lang, sandboxId }: { lang: string; sandboxId: string }) {
   const { t, i18n } = useTranslation(["sandboxes", "dashboard"]);
   const locale = i18n.language;

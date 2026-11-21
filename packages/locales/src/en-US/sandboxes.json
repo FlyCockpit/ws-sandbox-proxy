@@ -604,6 +604,14 @@
     "proxyHint": "Proxied logins need the credential proxy, which is turned on only when a sandbox is created with a proxied login. Create a new sandbox that names this login.",
     "ownHostsNote": "Attaching a login keeps this sandbox on your own hosts from now on: its disk never restores onto another user's host."
   },
+  "connect": {
+    "heading": "Connect",
+    "description": "From a terminal where the wssp CLI is logged in with shell access:",
+    "label": "Connect commands",
+    "shellCommand": "wssp sandbox shell {{target}}",
+    "sshCommand": "ssh {{target}}.wssp",
+    "sshSetup": "For ssh, scp, rsync and editors such as VS Code, run `wssp ssh-config --install` once. No SSH keys are needed."
+  },
   "connections": {
     "heading": "Recent connections",
     "description": "CLI shells, command channels and port forwards opened with an API key (`wssp sandbox shell`, `wssp sandbox forward`). Only who connected, when, which guest ports were forwarded and how much data moved is kept, for 90 days; never what ran.",

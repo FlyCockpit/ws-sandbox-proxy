@@ -228,6 +228,23 @@ fn typescript_wire_gate_overrides_incus_with_the_executable_fixture() {
 
 // All raw production builders belong to one audited construction boundary.
 // Test modules/files are inventoried separately; no executable or kill exemption.
+// The only other production sites are the two user-facing CLI programs below,
+// pinned by exact line. They run for the person at their own terminal, never
+// inside the daemon (`sandbox_relay`) or the runtime: `wssp ssh` `exec`s the
+// user's own ssh, which needs the user's environment (SSH_AUTH_SOCK, TERM,
+// HOME, ...), and `wssp ssh-config --install` asks `getent` for the passwd
+// home, keeping only PATH. Do not add a daemon or runtime child here.
+const USER_PROGRAMS: [(&str, &str); 2] = [
+    (
+        "apps/cli/src/commands/sandbox/ssh/config.rs",
+        "let getent = std::process::Command::new(\"getent\")",
+    ),
+    (
+        "apps/cli/src/commands/sandbox/ssh/mod.rs",
+        "let mut command = std::process::Command::new(&ssh);",
+    ),
+];
+
 #[test]
 fn host_child_constructors_are_scrubbed() {
     let root = repo();
@@ -238,6 +255,7 @@ fn host_child_constructors_are_scrubbed() {
     let constructors = ["Command", "CommandBuilder"].map(|name| format!("{name}::new("));
     let mut production = Vec::new();
     let mut test_only = Vec::new();
+    let mut user_programs = Vec::new();
     for path in sources {
         let relative = path.strip_prefix(&root).unwrap();
         let source = fs::read_to_string(&path).unwrap();
@@ -273,6 +291,14 @@ fn host_child_constructors_are_scrubbed() {
             );
             if test_file || offset >= test_start {
                 test_only.push(site);
+            } else if USER_PROGRAMS
+                .iter()
+                .any(|&(file, text)| relative == Path::new(file) && line.trim() == text)
+            {
+                user_programs.push((
+                    relative.to_str().unwrap().to_owned(),
+                    line.trim().to_owned(),
+                ));
             } else {
                 assert_eq!(
                     relative,
@@ -294,6 +320,17 @@ fn host_child_constructors_are_scrubbed() {
         "only the three audited environment constructors may spawn host children"
     );
     assert!(!test_only.is_empty());
+    user_programs.sort();
+    assert_eq!(
+        user_programs,
+        USER_PROGRAMS.map(|(file, text)| (file.to_owned(), text.to_owned())),
+        "each user-facing CLI program is pinned exactly once"
+    );
+    let getent = fs::read_to_string(root.join(USER_PROGRAMS[0].0)).unwrap();
+    let getent = &getent[getent.find(USER_PROGRAMS[0].1).unwrap()..];
+    let getent = &getent[..getent.find(".output()").unwrap()];
+    assert!(getent.contains(".env_clear()"), "getent keeps only PATH");
+    assert!(getent.contains(".envs(std::env::var_os(\"PATH\").map(|path| (\"PATH\", path)))"));
     let helper = fs::read_to_string(root.join("crates/sandbox-runtime/src/host_child.rs")).unwrap();
     assert!(helper.contains("command.env_clear().envs(inherited(policy))"));
     assert!(helper.contains("builder.env_clear()"));

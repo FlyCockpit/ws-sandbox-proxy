@@ -10,6 +10,8 @@ mod files;
 mod forward;
 mod ports;
 mod shell;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 
 use std::time::{Duration, Instant};
 

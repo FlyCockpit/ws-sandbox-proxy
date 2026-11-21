@@ -26,25 +26,25 @@ here happens with `cargo`, run from the repo root.
 
 ## Orientation
 
-| Path                 | What's there                                                                          |
-| -------------------- | ------------------------------------------------------------------------------------- |
-| `src/lib.rs`         | Shared implementation modules used by the binary and tests.                           |
-| `src/main.rs`        | Entry point: parse arguments, initialize logging, dispatch, map errors to exit codes. |
-| `src/cli.rs`         | Clap argument definitions. Keep CLI shape here and command logic elsewhere.           |
-| `src/commands/`      | One file per subcommand, each exposing `Args` and `run(&Args)`.                       |
-| `src/config.rs`      | Local TOML config structs, load/save.                                                 |
-| `src/paths.rs`       | Cross-platform config/data directories via `dirs`.                                    |
-| `src/logging.rs`     | Tracing setup. Logs go to stderr.                                                     |
-| `src/exit.rs`        | Stable process exit codes.                                                            |
-| `src/host_role.rs`   | Local-only enrolled-host detection for role-aware `wssp host` help and exit 6.        |
-| `src/user_state.rs`  | The user login (`login.json`, `WSSP_API_KEY` + `WSSP_SERVER`).                        |
-| `src/api.rs`         | `/v1` client; error envelope → exit codes 7–11.                                       |
-| `src/connect_client` | `wssp.connect.v1` client (codecs, channel credit, socket): `sandbox shell`/`forward`. |
-| `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp host run` (`signal-hook`).                 |
-| `src/sandbox_relay/` | Outbound node daemon.                                                                 |
-| `tests/cli.rs`       | Black-box tests that run the built binary.                                            |
-| `xtask/`             | CLI workspace automation: `sync-docs`.                                                |
-| `docs/`              | Error handling and release notes.                                                     |
+| Path                 | What's there                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------- |
+| `src/lib.rs`         | Shared implementation modules used by the binary and tests.                                 |
+| `src/main.rs`        | Entry point: parse arguments, initialize logging, dispatch, map errors to exit codes.       |
+| `src/cli.rs`         | Clap argument definitions. Keep CLI shape here and command logic elsewhere.                 |
+| `src/commands/`      | One file per subcommand, each exposing `Args` and `run(&Args)`.                             |
+| `src/config.rs`      | Local TOML config structs, load/save.                                                       |
+| `src/paths.rs`       | Cross-platform config/data directories via `dirs`.                                          |
+| `src/logging.rs`     | Tracing setup. Logs go to stderr.                                                           |
+| `src/exit.rs`        | Stable process exit codes.                                                                  |
+| `src/host_role.rs`   | Local-only enrolled-host detection for role-aware `wssp host` help and exit 6.              |
+| `src/user_state.rs`  | The user login (`login.json`, `WSSP_API_KEY` + `WSSP_SERVER`).                              |
+| `src/api.rs`         | `/v1` client; error envelope → exit codes 7–11.                                             |
+| `src/connect_client` | `wssp.connect.v1` client (codecs, channel credit, socket): `sandbox shell`/`forward`/`ssh`. |
+| `src/shutdown.rs`    | SIGTERM/SIGINT graceful shutdown for `wssp host run` (`signal-hook`).                       |
+| `src/sandbox_relay/` | Outbound node daemon.                                                                       |
+| `tests/cli.rs`       | Black-box tests that run the built binary.                                                  |
+| `xtask/`             | CLI workspace automation: `sync-docs`.                                                      |
+| `docs/`              | Error handling and release notes.                                                           |
 
 ## Everyday Commands
 
@@ -98,6 +98,41 @@ cargo xtask sync-docs --check
 - Use `src/output.rs` for stdout writes so output behavior stays deliberate.
 - Pure logic tests can live next to code under `#[cfg(test)]`; CLI behavior tests belong in `tests/`.
 - Host tokens are `wssp_host_…`. Config stores env-var _names_ for secrets, not values.
+
+## The `ssh` feature
+
+`wssp ssh` / `wssp ssh-config` (`src/commands/sandbox/ssh/`) sit behind the
+default Cargo feature `ssh`, which adds russh (server side, `ring` backend)
+and tokio. Only `wssp ssh --stdio` builds a (current-thread) tokio runtime
+and an SSH server, on its own stdin/stdout; it never binds a socket. Never
+use russh or tokio from the node daemon or any other command.
+
+russh is vendored: `third_party/russh-0.65.2` (root `[patch.crates-io]`) is
+the published crate plus `third_party/russh-0.65.2.patch` (per-channel
+receive windows, `manual_window`). Change it only by editing that tree and
+regenerating the patch; `cargo xtask vendored-russh --check` (CI) proves the
+two match the checksum-pinned crate and that `Cargo.lock` uses the copy.
+
+### Upgrading vendored russh
+
+Never bump russh's `=` pin alone (Dependabot ignores russh), and do not
+trust cargo-deny for it: advisories are not matched to a path crate, so
+`cargo xtask vendored-russh --advisories` checks RustSec and yanks. CI runs
+it in its own `vendored-advisories` job weekly, on manual runs, and on
+pushes/PRs that change `Cargo.lock`, `Cargo.toml`, `apps/cli/Cargo.toml`,
+`apps/cli/deny.toml`, `third_party/**` or `apps/cli/xtask/**`.
+Upgrade (stable releases only) with
+`cargo xtask vendored-russh --update <version>`: it re-applies the patch
+(stops if a context line changed) and computes every rewrite (pin,
+`[patch.crates-io]`, xtask constants, notices, docs) in memory, writes the
+new tree, patch and rewrites, runs `cargo update -p russh`, the wiring check
+and `sync-docs`, and deletes the old tree only after all succeed; any
+failure restores the files and removes the new tree. A failure deleting the
+old tree after that is a warning listing what is left (remove it by hand),
+not a failed update. Then run the checks in
+`third_party/README.md`, above all `tests/russh_manual_window.rs` (fails if
+`manual_window` stopped having effect). The manual fallback and when to drop
+the vendored copy (upstream ships manual windows) are there too.
 
 ## Adding a Command
 

@@ -1893,16 +1893,11 @@ fn help_lists_user_commands_first_whether_or_not_this_is_a_host() {
     let host = tempfile::tempdir().unwrap();
     fs::create_dir_all(host.path().join("data")).unwrap();
     fs::write(host.path().join("data/device-auth.json"), "{}").unwrap();
-    let order = [
-        "login",
-        "logout",
-        "whoami",
-        "sandbox",
-        "template",
-        "host",
-        "completions",
-        "help",
-    ];
+    let mut order = vec!["login", "logout", "whoami", "sandbox", "template"];
+    if cfg!(feature = "ssh") {
+        order.extend(["ssh", "ssh-config"]);
+    }
+    order.extend(["host", "completions", "help"]);
     for root in [plain.path(), host.path()] {
         let top = help(root, &["--help"]);
         assert_eq!(top_level_commands(&top), order, "{top}");

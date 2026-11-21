@@ -144,7 +144,7 @@ fn help_all_in(args: &[std::ffi::OsString]) -> bool {
 }
 
 /// Whether argv names a user command (`login`, `logout`, `whoami`,
-/// `sandbox`, `template`) as its subcommand and carries `--json` before any
+/// `sandbox`, `template`, `ssh-config`) as its subcommand and carries `--json` before any
 /// `--` (after it the words are the guest argv of `sandbox exec`).
 fn user_json_in(args: &[std::ffi::OsString]) -> bool {
     let mut rest = args.iter();
@@ -160,9 +160,16 @@ fn user_json_in(args: &[std::ffi::OsString]) -> bool {
             Some(arg) => break arg,
         }
     };
-    if !["login", "logout", "whoami", "sandbox", "template"]
-        .iter()
-        .any(|name| command == name)
+    if ![
+        "login",
+        "logout",
+        "whoami",
+        "sandbox",
+        "template",
+        "ssh-config",
+    ]
+    .iter()
+    .any(|name| command == name)
     {
         return false;
     }
@@ -182,6 +189,10 @@ fn run(cli: &Cli, role: HostRole) -> anyhow::Result<()> {
         Command::Whoami(args) => commands::whoami::run(args),
         Command::Sandbox(args) => commands::sandbox::run(args),
         Command::Template(args) => commands::template::run(args),
+        #[cfg(feature = "ssh")]
+        Command::Ssh(args) => commands::sandbox::ssh::ssh(args),
+        #[cfg(feature = "ssh")]
+        Command::SshConfig(args) => commands::sandbox::ssh::ssh_config(args),
         Command::Completions(args) => commands::completions::run(args),
         Command::Host(args) => {
             // Fail fast, before any network call or auth store.

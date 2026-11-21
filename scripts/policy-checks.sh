@@ -472,6 +472,16 @@ destructive_candidate_identity() {
       # Locale JSON is user-facing copy, never executed as SQL or Prisma.
       return 1
       ;;
+    third_party/*.rs)
+      # Library source of a vendored crate, proven byte-identical to its
+      # published crate plus its reviewed patch by
+      # `cargo xtask vendored-russh --check`. Its leading `#!` is a Rust inner
+      # attribute (`#![...]`), not a shebang; an executable one still counts.
+      if ((executable)); then
+        return 0
+      fi
+      return 1
+      ;;
     *.sh|*.bash|*.zsh|*.ts|*.tsx|*.mts|*.cts|*.js|*.jsx|*.mjs|*.cjs|*.json|*.jsonl|*.yml|*.yaml|*.sql|Dockerfile*|*/Dockerfile*)
       return 0
       ;;

@@ -165,6 +165,14 @@
     "proxyHint": "Los inicios de sesión con proxy necesitan el proxy de credenciales, que solo se activa cuando un sandbox se crea con un inicio de sesión con proxy. Crea un sandbox nuevo que nombre este inicio de sesión.",
     "ownHostsNote": "Adjuntar un inicio de sesión mantiene este sandbox en tus propios hosts a partir de ahora: su disco nunca se restaura en el host de otro usuario."
   },
+  "connect": {
+    "heading": "Conectar",
+    "description": "Desde una terminal donde la CLI de wssp tenga una sesión iniciada con acceso a shell:",
+    "label": "Comandos para conectarse",
+    "shellCommand": "wssp sandbox shell {{target}}",
+    "sshCommand": "ssh {{target}}.wssp",
+    "sshSetup": "Para ssh, scp, rsync y editores como VS Code, ejecuta `wssp ssh-config --install` una vez. No se necesitan llaves SSH."
+  },
   "connections": {
     "heading": "Conexiones recientes",
     "description": "Shells, canales de comandos y reenvíos de puertos de la CLI abiertos con una clave de API (`wssp sandbox shell`, `wssp sandbox forward`). Solo se guarda quién se conectó, cuándo, qué puertos del invitado se reenviaron y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",

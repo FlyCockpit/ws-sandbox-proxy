@@ -55,6 +55,13 @@ updates:
     groups:
       cargo-minor:
         update-types: ["minor", "patch"]
+    ignore:
+      # russh is vendored with a patch (third_party/russh-*): a version bump
+      # alone would leave the `=` pin and the `[patch.crates-io]` path apart.
+      # Upgrade with `cargo xtask vendored-russh --update <version>`
+      # (third_party/README.md); `vendored-russh --advisories` reports its
+      # RustSec advisories, which cargo-deny does not match to a path crate.
+      - dependency-name: "russh"
 
   # npm — covers package.json files across the pnpm workspace.
   - package-ecosystem: npm

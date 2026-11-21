@@ -62,8 +62,9 @@ sandbox, operation and transfer belongs to exactly one user account.
   user over `GET /v1/sandboxes/{id}/connect` (a WebSocket; not journaled). Only `SdkKeyKind.API` keys hold it: a `wssp login` with write access,
   or a dashboard key it was explicitly given (never a default). Agent tokens,
   OAuth grants and MCP never get it. Revoking the key ends its live shells and
-  forwards. The CLI commands are `wssp sandbox shell` and `wssp sandbox forward`
-  ([shells and port forwards from the CLI](./connect.md)).
+  forwards. The CLI commands are `wssp sandbox shell`, `wssp sandbox forward`
+  and `wssp ssh` (plain `ssh <name>.wssp` through a local ProxyCommand that
+  never listens; [shells, port forwards and ssh from the CLI](./connect.md)).
   Contract: [CLI channel relay contract](../design/connect-channel-contract.md#client-wire-wsspconnectv1).
   On the dashboard it is its own "CLI connections" checkbox, never preselected
   and offered only on the SDK key form. Each connection is audited as metadata

@@ -1,5 +1,5 @@
 /** Apply committed migrations through the relocated production runner, preserving domain invariants. */
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -26,7 +26,11 @@ const { Client } = createRequire(import.meta.url)("pg") as {
 const { canonicalApplyFixture } = (await import(
   new URL("../../../scripts/lib/disposable-postgres.mjs", import.meta.url).href
 )) as {
-  canonicalApplyFixture(root: string, temporary: string, databaseUrl: string): { apply(): void };
+  canonicalApplyFixture(
+    root: string,
+    temporary: string,
+    databaseUrl: string,
+  ): { apply(): void; prismaCwd: string };
 };
 /** The committed migration folders, sorted as Prisma applies them. */
 function committedMigrations(): string[] {
@@ -373,5 +377,73 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
     }
   } finally {
     await inspector.end();
+  }
+}, 180000);
+
+it("the sftp recipe migration keeps community prep builds recorded with the previous digest", async () => {
+  const OLD = "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
+  const NEW = "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b";
+  const LATER = "20261121000100_community_recipe_sftp";
+  const database = `${db.name}_sftp`;
+  // The harness owns this disposable database and cleans it up after this file.
+  await db.inspect.$executeRawUnsafe(`CREATE DATABASE ${database}`);
+  const url = new URL(db.url);
+  url.pathname = `/${database}`;
+  const scratch = mkdtempSync(join(tmpdir(), "wssp-schema-migrations-sftp-"));
+  const inspector = new Client({ connectionString: url.toString() });
+  await inspector.connect();
+  try {
+    const migration = canonicalApplyFixture(root, scratch, url.toString());
+    // Apply the history before this migration only, as a deployed database has it.
+    const copied = join(migration.prismaCwd, "prisma/migrations");
+    const held = join(scratch, "held");
+    const later = readdirSync(copied, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name >= LATER)
+      .map((entry) => entry.name);
+    expect(later[0]).toBe(LATER);
+    for (const name of later) cpSync(join(copied, name), join(held, name), { recursive: true });
+    for (const name of later) rmSync(join(copied, name), { recursive: true });
+    migration.apply();
+    const prep = (id: string, digest: string) =>
+      buildRow(id, {
+        origin: "'COMMUNITY_PREP'",
+        verifyRequired: "true",
+        noCache: "true",
+        recipeDigest: `'${digest}'`,
+      });
+    await inspector.query(`INSERT INTO "user" (id,name,email) VALUES ('owner','Owner','owner@example.test');
+      INSERT INTO sandbox_logical_template (id,"userId",slug,label,"updatedAt") VALUES ('tpl','owner','tpl','Tpl',now());
+      INSERT INTO sandbox_template_revision (id,"userId","templateId",revision,"incusFingerprint",architecture,"manifestDigest") VALUES ('rev','owner','tpl',1,'${FP}','x86_64','${HEX}');
+      INSERT INTO sandbox_pool (id,"userId",slug,label) VALUES ('pool','owner','pool','Pool');`);
+    await inspector.query(prep("before", OLD));
+    const beforeNew = await inspector.query(prep("new-too-early", NEW)).then(
+      () => undefined,
+      (cause: unknown) => cause as PgError,
+    );
+    expect(beforeNew?.constraint).toMatch(/^template_build_origin_/);
+
+    for (const name of later) cpSync(join(held, name), join(copied, name), { recursive: true });
+    migration.apply();
+    const live = await inspector.query(
+      `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'template_build_origin_%'`,
+    );
+    expect(live.rows).toEqual([
+      { conname: "template_build_origin_ckb5e863b8", convalidated: true },
+    ]);
+    expect(
+      (await inspector.query(`SELECT id, "recipeDigest" FROM sandbox_template_build`)).rows,
+    ).toEqual([{ id: "before", recipeDigest: OLD }]);
+    // The new release writes the new digest; the release still running writes the old one.
+    await inspector.query(prep("after", NEW));
+    await inspector.query(prep("old-release", OLD));
+    const other = await inspector.query(prep("other", HEX)).then(
+      () => undefined,
+      (cause: unknown) => cause as PgError,
+    );
+    expect(other?.code).toBe("23514");
+    expect(other?.constraint).toBe("template_build_origin_ckb5e863b8");
+  } finally {
+    await inspector.end();
+    rmSync(scratch, { recursive: true, force: true });
   }
 }, 180000);

@@ -5,6 +5,8 @@ extend-exclude = [
   "packages/locales/src/*", "!packages/locales/src/en-US",
   "packages/mailer/src/locales/*", "!packages/mailer/src/locales/en-US",
   "**/fixtures/**", "**/testdata/**",
+  # Vendored third-party source, byte-identical to its published crate.
+  "third_party/**",
   "**/*.gen.*", "**/generated/**", "**/.env.example", "pnpm-lock.yaml", "Cargo.lock",
   "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
   "**/*.png", "**/*.ico", "**/*.svg", "**/*.woff*", "**/*.webp",

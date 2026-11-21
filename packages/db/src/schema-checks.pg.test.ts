@@ -1,6 +1,6 @@
 /** Committed migration CHECKs and triggers, exercised on an isolated real PostgreSQL clone. */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -55,10 +55,14 @@ async function failure(sql: string): Promise<PgError> {
 
 describe("committed CHECK declarations (real PostgreSQL)", () => {
   it("freezes every model declaration's mapped table, deterministic name and exact expression", async () => {
-    const sql = readFileSync(
-      new URL("../prisma/migrations/0_init/migration.sql", import.meta.url),
-      "utf8",
-    );
+    // 0_init, then every later committed migration (a later folder may replace a CHECK).
+    const migrations = new URL("../prisma/migrations/", import.meta.url);
+    const sql = readdirSync(migrations, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .map((name) => readFileSync(new URL(`${name}/migration.sql`, migrations), "utf8"))
+      .join("\n");
     expect(repoChecks).toHaveLength(154);
     const live = (
       await client.query<{ table: string; name: string; valid: boolean }>(

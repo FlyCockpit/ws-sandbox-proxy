@@ -703,6 +703,11 @@ impl Connection {
         Ok(channel)
     }
 
+    /// Whether the channel's exit was released (or it is unknown).
+    pub fn is_done(&self, channel: u32) -> bool {
+        self.mux.is_done(channel)
+    }
+
     /// Drop an ended channel's state once its owed acks were queued
     /// ([`mux::Mux::forget`]).
     pub fn forget(&mut self, channel: u32) {

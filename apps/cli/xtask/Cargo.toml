@@ -16,6 +16,19 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+# `vendored-russh --check`: the published crate's checksum, its gzip and
+# its download. All three are already locked through the CLI (ssh-key,
+# ureq); same versions and features, so the lockfile gains no package.
+flate2 = "1.1.11"
+sha2 = "0.11.1"
+ureq = "=3.5.1"
+# `vendored-russh --check`/`--advisories`/`--update`: Cargo.lock, the
+# manifests and RustSec front matter (toml), advisory version ranges with
+# cargo-deny's semantics (semver), the crates.io index (serde_json). All
+# already locked through the CLI; the lockfile gains no package.
+semver = "1.0.28"
+serde_json = { workspace = true }
+toml = "1"
 
 # Never distribute the dev tool as a release artifact.
 [package.metadata.dist]

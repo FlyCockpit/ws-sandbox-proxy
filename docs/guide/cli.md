@@ -2,9 +2,10 @@
 
 The `wssp` binary has two sides. **Host commands** (`wssp host …`) make a
 Linux machine a wssp host; see the [hosts guide](./hosts.md). **User commands**
-(`login`, `logout`, `whoami`, `sandbox`, `template`) let you, a person or a
-script, work with your sandboxes from a shell through the `/v1` API (and open
-[shells in them and forward ports to them](./connect.md)), with the
+(`login`, `logout`, `whoami`, `sandbox`, `template`, `ssh`, `ssh-config`) let
+you, a person or a script, work with your sandboxes from a shell through the
+`/v1` API (and open [shells in them, forward ports to them and reach them with
+plain ssh](./connect.md)), with the
 same authority as an [SDK key](./auth-planes.md). The two sides keep separate
 state and credentials; a user login never authorizes host commands, and a host
 credential never authorizes user commands.
@@ -199,6 +200,30 @@ socket instead, and `--address` with a non-loopback address warns. Ctrl-C
 closes every connection and exits 130; when wssp ends the session it exits
 125. See [port forwards](./connect.md#port-forwards).
 
+### ssh
+
+```sh
+wssp ssh-config --install     # once; `--yes` for scripts, `--json` for the details
+ssh <sandbox>.wssp            # then plain ssh, scp, sftp, rsync, VS Code, Gateway
+wssp ssh <sandbox> -- -t htop # or the system ssh without any config
+```
+
+`ssh-config` prints the `Host *.wssp` block (its ProxyCommand is the `wssp`
+you ran, by its absolute path or the one `PATH` found; run `--install` again
+after moving it), and `--install` writes it to `~/.ssh/config.d/wssp` and adds
+`Include config.d/wssp` at the top of `~/.ssh/config` after asking, unless
+`~/.ssh/config` already starts with that `Include`. `~` is your account's
+home directory, which OpenSSH reads; a different `$HOME` is refused. An edit
+made to either file while the question is open is never overwritten: wssp
+checks both again and asks you to rerun. wssp keeps the previous file as
+`~/.ssh/config.wssp-backup-<time>` (or `config.d-wssp.wssp-backup-<time>`)
+and names it; delete it when you no longer need it.
+No SSH key or password is involved: the ProxyCommand `wssp ssh --stdio` uses
+your login, the same scope as `shell`, and serves SSH on its own stdin and
+stdout (it never listens). The SSH session is not end-to-end to the guest; the
+server and the node see the bytes, as for shells. `--rotate-host-key` replaces
+the local host key. See [ssh](./connect.md#ssh).
+
 ### Files
 
 ```sh
@@ -280,7 +305,7 @@ operator logs at info.
 | 9    | a limit was reached: `sandbox.key_limit_reached`, a quota, `sandbox.capacity_queue_full`                                                                                  |
 | 10   | any other conflict (409)                                                                                                                                                  |
 | 11   | retryable: the server answered 429, 503 or 504                                                                                                                            |
-| 125  | `sandbox exec`/`shell`/`forward` only: wssp failed or ended the session, or the outcome is unknown (or the command exited 125)                                            |
+| 125  | `sandbox exec`/`shell`/`forward` and `ssh --stdio` only: wssp failed or ended the session, or the outcome is unknown (or the command exited 125)                          |
 | 130  | `sandbox exec` interrupted with Ctrl-C (cancellation requested); `sandbox shell` without a tty: a second Ctrl-C closed the channel; `sandbox forward` stopped with Ctrl-C |
 | 141  | stdout closed early: `sandbox exec` (cancellation requested), `logs`, `files read`                                                                                        |
 
@@ -307,6 +332,7 @@ login only and never revokes an environment key.
 | user login             | `~/.local/share/wssp/user/login.json` (0600, directory 0700) |
 | host device credential | `~/.local/share/wssp/device-auth.json`                       |
 | host configuration     | `~/.config/wssp/config.toml`                                 |
+| ssh host key           | `~/.local/share/wssp/user/ssh/host_key` and `known_hosts`    |
 
 `WSSP_USER_DIR` moves the user login directory; it may not be, contain or lie
 inside the host data or config directory (exit 2). The default

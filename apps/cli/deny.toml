@@ -2,6 +2,22 @@
 # Run locally with: cargo deny check
 # Docs: https://embarkstudios.github.io/cargo-deny/
 
+[graph]
+# Check only the targets this repo ships or builds, so a dependency that is
+# compiled for no wssp build (for example a wasm32-only one) is out of scope.
+# Sources:
+#   x86_64-unknown-linux-musl, aarch64-unknown-linux-musl:
+#     `targets` in apps/cli/dist-workspace.toml (the released binaries).
+#   x86_64-unknown-linux-gnu:
+#     the ubuntu-latest host of every cargo job in .github/workflows
+#     (cli-ci.yml, release-preflight.yml, nightly-tooling.yml).
+# Add a triple here whenever a workflow or the dist config gains one.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+]
+
 [advisories]
 # Fail on any crate with a known RUSTSEC security advisory.
 version = 2
