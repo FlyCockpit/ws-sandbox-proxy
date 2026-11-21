@@ -9,7 +9,8 @@ minimumReleaseAgeIgnoreMissingTime: false
 # audited on 2026-05-27, the brace-expansion carve-out for GHSA-mh99-v99m-4gvg
 # aged out on 2026-07-30, and the better-auth 1.7.18 family (GHSA-fvxx-76fc-893x,
 # GHSA-9hm7-xhfp-cx58; with @better-auth/mcp, cimd and oauth-provider) aged out
-# on 2026-11-12. Prefer an exact `<pkg>@<version>` entry so a newer,
+# on 2026-11-12, and the ws 8.23.0 carve-out (Ping-flood DoS fix) aged out on
+# 2026-11-20. Prefer an exact `<pkg>@<version>` entry so a newer,
 # unvetted release stays gated; delete the key once the last entry ages out, and
 # add it back (with the publish date) if a future re-resolution flags a package
 # as too young.
@@ -24,12 +25,6 @@ minimumReleaseAgeIgnoreMissingTime: false
 #     # version that clears the advisory and is <7 days old.
 #     # drop-after: YYYY-MM-DD
 #     - <pkg>
-minimumReleaseAgeExclude:
-  # ws 8.23.0 (released 2026-11-12) fixes a remote memory-exhaustion DoS: a peer
-  # floods Ping frames while not reading, so automatic Pongs pile up in memory.
-  # It is <7 days old; owner-approved security carve-out (2026-11-16).
-  # drop-after: 2026-11-20
-  - ws@8.23.0
 # Each selector lifts a transitive out of its vulnerable range. All target
 # versions pass the 7-day minimumReleaseAge gate; selectors are scoped tight so
 # unrelated majors are untouched.
