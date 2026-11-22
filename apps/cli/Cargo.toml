@@ -91,9 +91,9 @@ httparse = "=1.10.1"
 # stdin/stdout. Exact pin; `ring` (already locked through rustls) is the
 # crypto backend, so no aws-lc-rs and no C toolchain; no `rsa`/`flate2`
 # (the endpoint offers one ed25519 host key and no compression). The root
-# `[patch.crates-io]` swaps in `third_party/russh-0.65.2`, the published crate
+# `[patch.crates-io]` swaps in `third_party/russh-0.65.4`, the published crate
 # plus a small patch for per-channel receive windows (`manual_window`).
-russh = { version = "=0.65.2", default-features = false, features = ["ring"], optional = true }
+russh = { version = "=0.65.4", default-features = false, features = ["ring"], optional = true }
 # The current-thread runtime under russh, alive only inside `wssp ssh
 # --stdio`; the WebSocket stays on tungstenite threads (bounded bridges).
 tokio = { version = "=1.54.1", default-features = false, features = ["rt", "io-std", "io-util", "sync", "time", "macros"], optional = true }

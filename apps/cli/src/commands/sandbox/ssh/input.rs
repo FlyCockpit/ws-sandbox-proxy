@@ -2,7 +2,7 @@
 //! channel that grows only as the channel's guest consumes.
 //!
 //! The endpoint runs russh with `manual_window` (the vendored patch,
-//! `third_party/russh-0.65.2.patch`): a received data packet only uses up
+//! `third_party/russh-0.65.4.patch`): a received data packet only uses up
 //! its channel's window, and the window grows only through
 //! `Handle::grant_window`. Each channel's [`Budget`] keeps
 //! - the window the client may still use (russh does not enforce it, so the

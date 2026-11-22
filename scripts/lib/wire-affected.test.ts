@@ -166,7 +166,7 @@ describe("selection", () => {
       "Cargo.toml",
       "crates/sandbox-runtime/src/lib.rs",
       "apps/cli/src/main.rs",
-      "third_party/russh-0.65.2.patch",
+      "third_party/russh-key-fixtures.sha256",
       ".cargo/config.toml",
       "rust-toolchain.toml",
       "package.json",

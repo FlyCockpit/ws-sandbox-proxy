@@ -1,15 +1,15 @@
 # Notice of modification (wssp)
 
-This directory is russh 0.65.2 as published on crates.io
-(`russh-0.65.2.crate`, SHA-256
-`78229f06e4d96d83bea5f5133ad3b6e4b5f0ce22d8e31c1ff7243ec8e18d5ba1`; upstream
-commit `56a999871aa134072e4f2a7395fe2de313870e21` of
+This directory is russh 0.65.4 as published on crates.io
+(`russh-0.65.4.crate`, SHA-256
+`569d8c45e20c123af2fc5ecb4803fde0a98572449ba4c24ed97741d7b02fedf7`; upstream
+commit `4977b1afba8802137ac93f3e2c8bf916c35f437c` of
 <https://github.com/warp-tech/russh>, see `.cargo_vcs_info.json`), licensed under
 the Apache License, Version 2.0 (<https://www.apache.org/licenses/LICENSE-2.0>).
 Copyright Pierre-Étienne Meunier and the russh contributors.
 
 The wssp project changed these files (Apache-2.0 §4(b)); every change is in
-`../russh-0.65.2.patch`, and `cargo xtask vendored-russh --check` proves that the
+`../russh-0.65.4.patch`, and `cargo xtask vendored-russh --check` proves that the
 published crate plus that patch is exactly this directory:
 
 - `src/server/mod.rs`: a `Config::manual_window` flag (default off), and the

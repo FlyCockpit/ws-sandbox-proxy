@@ -31,11 +31,11 @@ version = "0.31.3"
 default-features = false
 features = ["user"]
 
-# russh 0.65.2 with one small patch (consumption-driven per-channel receive
-# windows for `wssp ssh --stdio`): `third_party/russh-0.65.2.patch`, checked
+# russh 0.65.4 with one small patch (consumption-driven per-channel receive
+# windows for `wssp ssh --stdio`): `third_party/russh-0.65.4.patch`, checked
 # against the published crate by `cargo xtask vendored-russh --check`.
 [patch.crates-io]
-russh = { path = "third_party/russh-0.65.2" }
+russh = { path = "third_party/russh-0.65.4" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

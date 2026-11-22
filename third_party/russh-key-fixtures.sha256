@@ -1,4 +1,4 @@
-dba6a5572aad18e881a094267210e8393d7eaad26520ec811e877bb83c93c297  third_party/russh-0.65.2/src/helpers.rs
-fc1afb28803e09a736c871971c43584ef4d313192379adcc7d89ec98ec5e796a  third_party/russh-0.65.2/src/keys/format/mod.rs
-977939953f4ad8db5b86d7b539f0f63bfbc6d2a2de0d1307ca3e9707b3fc7d19  third_party/russh-0.65.2/src/keys/format/tests.rs
-2d17da5dbc5338d4a6f1288dfd41c013374749cbe0ac68b2bc8dcc5bdb08320e  third_party/russh-0.65.2/src/keys/mod.rs
+dba6a5572aad18e881a094267210e8393d7eaad26520ec811e877bb83c93c297  third_party/russh-0.65.4/src/helpers.rs
+fc1afb28803e09a736c871971c43584ef4d313192379adcc7d89ec98ec5e796a  third_party/russh-0.65.4/src/keys/format/mod.rs
+977939953f4ad8db5b86d7b539f0f63bfbc6d2a2de0d1307ca3e9707b3fc7d19  third_party/russh-0.65.4/src/keys/format/tests.rs
+2d17da5dbc5338d4a6f1288dfd41c013374749cbe0ac68b2bc8dcc5bdb08320e  third_party/russh-0.65.4/src/keys/mod.rs

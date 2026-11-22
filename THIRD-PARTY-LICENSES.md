@@ -88,14 +88,14 @@ caniuse-lite data notice above also applies to copies retained with tooling.
 
 ## russh — Apache License 2.0, modified
 
-The Linux CLI (`wssp ssh --stdio`) links russh 0.65.2
+The Linux CLI (`wssp ssh --stdio`) links russh 0.65.4
 (<https://github.com/warp-tech/russh>), Copyright Pierre-Étienne Meunier and the
 russh contributors, licensed under
 the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 The complete licence text is bundled: `licenses/Apache-2.0.txt` in the source tree,
 and `Apache-2.0.txt` next to this file in the CLI release archives.
-This project ships a modified copy: `third_party/russh-0.65.2` is the published
-crate plus `third_party/russh-0.65.2.patch` (`NOTICE-wssp.md` there lists the changed
+This project ships a modified copy: `third_party/russh-0.65.4` is the published
+crate plus `third_party/russh-0.65.4.patch` (`NOTICE-wssp.md` there lists the changed
 files). The change adds a server option under which a channel's receive window grows
 only when the application grants it; nothing else in the library changes.
 

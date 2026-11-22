@@ -2,8 +2,8 @@
 
 ## russh
 
-`third_party/russh-0.65.2` is russh 0.65.2 from crates.io plus
-`third_party/russh-0.65.2.patch`, and nothing else except `NOTICE-wssp.md`
+`third_party/russh-0.65.4` is russh 0.65.4 from crates.io plus
+`third_party/russh-0.65.4.patch`, and nothing else except `NOTICE-wssp.md`
 (Apache-2.0 §4(b)). The patch adds `server::Config::manual_window` and
 `server::Handle::grant_window`: a channel's receive window then grows only when
 `wssp ssh --stdio` grants it, so a stuck channel holds back only its own sender
@@ -12,7 +12,7 @@
 How it is wired:
 
 - the root `Cargo.toml` `[patch.crates-io]` points `russh` at the directory;
-- `apps/cli/Cargo.toml` pins `russh = "=0.65.2"`, so the patch is always used;
+- `apps/cli/Cargo.toml` pins `russh = "=0.65.4"`, so the patch is always used;
 - `cargo xtask vendored-russh --check` (CI, `docs-drift`) proves the directory is
   the checksum-pinned crate plus the patch, byte for byte, and that `Cargo.lock`
   takes russh from the path (no registry source, no `[[patch.unused]]`);
@@ -98,15 +98,18 @@ When `--advisories` fails, or a russh release is wanted:
 
 `--update` stops on the first hunk whose context changed. Rebase by hand:
 
-1. Unpack the new crate somewhere outside the repository and copy it to
-   `third_party/russh-<version>` (no `.cargo-ok`).
+1. Unpack the new crate somewhere outside the repository, drop its execute
+   bits (`find <dir> -type f -exec chmod 644 {} +`: the vendored tree keeps no
+   file modes, `--check` compares contents, and its patch parser refuses mode
+   headers) and copy it to `third_party/russh-<version>` (no `.cargo-ok`).
 2. Re-make each change of the old patch there (the old patch and `NOTICE-wssp.md`
    say what each one is for); copy `NOTICE-wssp.md` over and update its version,
    checksum and commit.
 3. Write `third_party/russh-<version>.patch`: in an empty scratch directory, put
    the unpacked crate as `a` and a copy of the edited tree without
-   `NOTICE-wssp.md` as `b`, then `git diff --no-index --no-prefix a b > patch`
-   (paths `a/…`/`b/…` relative to the crate root, in-place edits only).
+   `NOTICE-wssp.md` as `b`, both without execute bits (step 1), then
+   `git diff --no-index --no-prefix a b > patch` (paths `a/…`/`b/…` relative
+   to the crate root, in-place edits only).
 4. Update by hand what `--update` rewrites: `VERSION` and `CHECKSUM` in
    `apps/cli/xtask/src/vendored.rs` (the checksum is the crates.io index `cksum`,
    which `cargo` records in `Cargo.lock` for a registry crate), the `=` pin in
@@ -145,14 +148,26 @@ open channel or one the server has just closed, does not end the session
 data it drops). The vendored crate's own unit tests cover grants to unconfirmed or
 closing channels (`src/session.rs`) and the rekey bound's cost per message
 type, its saturation and the cut-off of a flooding peer
-(`src/server/session.rs`). The crate is not a workspace member, so CI's
+(`src/server/session.rs`); two of upstream's own tests pin what wssp relies on
+from upstream's 951bfb5 and 0e033c0: a peer's close drops the channel with its
+queued output (`peer_close_with_queued_output_ends_channel`) and a stray open
+reply for an open channel never changes it
+(`open_replies_for_established_channel_are_rejected`).
+The crate is not a workspace member, so CI's
 `vendored-russh-tests` job runs them from a copy outside the workspace
-(`cargo test --manifest-path <copy>/Cargo.toml --lib --locked`). In `tests/ssh_stdio.rs`,
+(`cargo test --manifest-path <copy>/Cargo.toml --lib --locked`, filtered by
+name, and it fails unless exactly the expected number ran: update that count
+with the filter). In `tests/ssh_stdio.rs`,
 `a_jammed_forward_stops_only_its_own_client`,
 `a_command_or_a_forward_gets_one_wssp_window`,
 `a_client_that_sends_past_the_window_has_its_channel_reset` and
 `window_grants_survive_frequent_rekeys` prove the same through OpenSSH and the
-endpoint.
+endpoint; `a_stray_open_failure_for_an_open_channel_changes_nothing` and
+`a_stray_open_confirmation_ends_the_session_cleanly` prove 0e033c0 through the
+endpoint with a raw SSH client (no real client sends those messages), and fail
+on a release without it (0.65.2). The endpoint leaves no output queued in russh
+outside a key exchange (`a_refusal_the_window_cannot_take_holds_back_no_other_channel`),
+so 951bfb5 is a second line of defence there.
 
 ### When to drop the vendored copy
 

@@ -2369,6 +2369,646 @@ mod direct {
     }
 }
 
+// ------------------------------------------------------------ a raw SSH client
+
+/// A minimal SSH client for messages no real client sends (a stray open
+/// reply, a channel with a window of 0): curve25519-sha256,
+/// chacha20-poly1305@openssh.com, no compression, no `ext-info-c` and no
+/// strict kex (sequence numbers run on from the cleartext packets), the
+/// server's host key signature unchecked (as `direct::Accept`). It speaks
+/// to the endpoint over its stdin and stdout.
+///
+/// Out of scope: a WINDOW_ADJUST past 2^32 - 1 (russh and the write half
+/// saturate separately; a protocol violation only the client suffers).
+mod raw {
+    use super::*;
+    use ring::aead::chacha20_poly1305_openssh::{KEY_LEN, OpeningKey, SealingKey, TAG_LEN};
+    use ring::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey, X25519};
+    use ring::digest::{Context, SHA256};
+    use ring::rand::SystemRandom;
+
+    pub const DISCONNECT: u8 = 1;
+    const IGNORE: u8 = 2;
+    const DEBUG: u8 = 4;
+    const KEXINIT: u8 = 20;
+    const NEWKEYS: u8 = 21;
+    const GLOBAL_REQUEST: u8 = 80;
+    pub const OPEN: u8 = 90;
+    pub const OPEN_CONFIRMATION: u8 = 91;
+    pub const OPEN_FAILURE: u8 = 92;
+    pub const WINDOW_ADJUST: u8 = 93;
+    pub const DATA: u8 = 94;
+    pub const EXTENDED_DATA: u8 = 95;
+    pub const EOF: u8 = 96;
+    pub const CLOSE: u8 = 97;
+    pub const REQUEST: u8 = 98;
+    pub const SUCCESS: u8 = 99;
+    pub const FAILURE: u8 = 100;
+
+    /// An SSH message under construction.
+    #[derive(Default)]
+    pub struct Msg(pub Vec<u8>);
+
+    impl Msg {
+        pub fn new(kind: u8) -> Self {
+            Self(vec![kind])
+        }
+        pub fn u8(mut self, v: u8) -> Self {
+            self.0.push(v);
+            self
+        }
+        pub fn u32(mut self, v: u32) -> Self {
+            self.0.extend_from_slice(&v.to_be_bytes());
+            self
+        }
+        pub fn bytes(mut self, v: &[u8]) -> Self {
+            self = self.u32(v.len() as u32);
+            self.0.extend_from_slice(v);
+            self
+        }
+        pub fn str(self, v: &str) -> Self {
+            self.bytes(v.as_bytes())
+        }
+        /// A positive mpint from big-endian bytes.
+        fn mpint(self, v: &[u8]) -> Self {
+            let v = &v[v.iter().take_while(|b| **b == 0).count()..];
+            if v.first().is_some_and(|b| b & 0x80 != 0) {
+                self.bytes(&[&[0][..], v].concat())
+            } else {
+                self.bytes(v)
+            }
+        }
+    }
+
+    /// Reads the fields of a received message.
+    pub struct Fields<'a>(pub &'a [u8]);
+
+    impl<'a> Fields<'a> {
+        pub fn u8(&mut self) -> u8 {
+            let (v, rest) = self.0.split_first().expect("a byte");
+            self.0 = rest;
+            *v
+        }
+        pub fn u32(&mut self) -> u32 {
+            let (v, rest) = self.0.split_at(4);
+            self.0 = rest;
+            u32::from_be_bytes(v.try_into().unwrap())
+        }
+        pub fn bytes(&mut self) -> &'a [u8] {
+            let n = self.u32() as usize;
+            let (v, rest) = self.0.split_at(n);
+            self.0 = rest;
+            v
+        }
+    }
+
+    pub struct Raw {
+        pub child: ManagedChild,
+        stdin: std::process::ChildStdin,
+        /// The endpoint's stdout, as it arrives (`None`: it ended).
+        out: mpsc::Receiver<Option<Vec<u8>>>,
+        buffer: VecDeque<u8>,
+        ended: bool,
+        seq_out: u32,
+        seq_in: u32,
+        seal: Option<SealingKey>,
+        open: Option<OpeningKey>,
+    }
+
+    fn sha256(parts: &[&[u8]]) -> Vec<u8> {
+        let mut context = Context::new(&SHA256);
+        for part in parts {
+            context.update(part);
+        }
+        context.finish().as_ref().to_vec()
+    }
+
+    /// RFC 4253 7.2: a 64-byte key for `letter`.
+    fn derive(k: &[u8], h: &[u8], letter: u8, session_id: &[u8]) -> [u8; KEY_LEN] {
+        let k1 = sha256(&[k, h, &[letter], session_id]);
+        let k2 = sha256(&[k, h, &k1]);
+        [k1, k2].concat().try_into().unwrap()
+    }
+
+    impl Raw {
+        /// Spawn the endpoint for `sbx_1.wssp`, exchange keys and log in.
+        pub fn connect(world: &World) -> Raw {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_wssp"));
+            wssp_env(&mut command, world.root.path(), &world.fake.url);
+            command.env("WSSP_TEST_SSH_NOTE_LOG", world.note_log());
+            command
+                .args(["ssh", "--stdio", "sbx_1.wssp"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            let mut child = ManagedChild::spawn(&mut command).unwrap();
+            let mut stdout = child.stdout.take().unwrap();
+            let stdin = child.stdin.take().unwrap();
+            let (send, out) = mpsc::channel();
+            thread::spawn(move || {
+                let mut buffer = vec![0_u8; 64 * 1024];
+                loop {
+                    match stdout.read(&mut buffer) {
+                        Ok(0) | Err(_) => {
+                            let _ = send.send(None);
+                            return;
+                        }
+                        Ok(n) => {
+                            if send.send(Some(buffer[..n].to_vec())).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+            let mut raw = Raw {
+                child,
+                stdin,
+                out,
+                buffer: VecDeque::new(),
+                ended: false,
+                seq_out: 0,
+                seq_in: 0,
+                seal: None,
+                open: None,
+            };
+            raw.handshake();
+            raw
+        }
+
+        /// Wait until `n` bytes are buffered, at the latest until
+        /// `deadline`; `false` once the endpoint's stdout ended.
+        fn fill(&mut self, n: usize, deadline: Instant) -> bool {
+            while self.buffer.len() < n {
+                if self.ended {
+                    return false;
+                }
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.out.recv_timeout(left) {
+                    Ok(Some(bytes)) => self.buffer.extend(bytes),
+                    Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => self.ended = true,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        panic!("the endpoint sent nothing more by the deadline")
+                    }
+                }
+            }
+            true
+        }
+
+        fn take(&mut self, n: usize) -> Vec<u8> {
+            self.buffer.drain(..n).collect()
+        }
+
+        fn write(&mut self, bytes: &[u8]) {
+            self.stdin.write_all(bytes).unwrap();
+            self.stdin.flush().unwrap();
+        }
+
+        /// Send one message.
+        pub fn send(&mut self, msg: Msg) {
+            let payload = msg.0;
+            // Cleartext packets align with the length field, chacha's without.
+            let aligned = if self.seal.is_some() { 1 } else { 5 };
+            let mut padding = 8 - (aligned + payload.len()) % 8;
+            if padding < 4 {
+                padding += 8;
+            }
+            let length = 1 + payload.len() + padding;
+            let mut packet = Vec::with_capacity(4 + length + TAG_LEN);
+            packet.extend_from_slice(&(length as u32).to_be_bytes());
+            packet.push(padding as u8);
+            packet.extend_from_slice(&payload);
+            packet.extend(std::iter::repeat_n(0, padding));
+            if let Some(seal) = &self.seal {
+                let mut tag = [0; TAG_LEN];
+                seal.seal_in_place(self.seq_out, &mut packet, &mut tag);
+                packet.extend_from_slice(&tag);
+            }
+            self.seq_out = self.seq_out.wrapping_add(1);
+            self.write(&packet);
+        }
+
+        /// The next message, by `deadline`; `None` once the endpoint's
+        /// stdout ended.
+        pub fn recv_until(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+            if !self.fill(4, deadline) {
+                return None;
+            }
+            let head: [u8; 4] = self.take(4).try_into().unwrap();
+            let seq = self.seq_in;
+            self.seq_in = self.seq_in.wrapping_add(1);
+            let (length, mut body) = match &self.open {
+                None => (u32::from_be_bytes(head) as usize, Vec::new()),
+                Some(open) => {
+                    let length = u32::from_be_bytes(open.decrypt_packet_length(seq, head)) as usize;
+                    (length, head.to_vec())
+                }
+            };
+            let tag_len = if self.open.is_some() { TAG_LEN } else { 0 };
+            assert!(self.fill(length + tag_len, deadline), "a cut packet");
+            body.extend(self.take(length));
+            let tag = self.take(tag_len);
+            let plain = match &self.open {
+                None => body,
+                Some(open) => {
+                    let tag: [u8; TAG_LEN] = tag.try_into().unwrap();
+                    open.open_in_place(seq, &mut body, &tag)
+                        .expect("a packet that authenticates")
+                        .to_vec()
+                }
+            };
+            let padding = plain[0] as usize;
+            Some(plain[1..plain.len() - padding].to_vec())
+        }
+
+        /// The next message that is not transport chatter or a window
+        /// adjust, by `deadline`; `None` once the endpoint's stdout ended.
+        pub fn next_until(&mut self, deadline: Instant) -> Option<Vec<u8>> {
+            loop {
+                let msg = self.recv_until(deadline)?;
+                if ![IGNORE, DEBUG, GLOBAL_REQUEST, WINDOW_ADJUST].contains(&msg[0]) {
+                    return Some(msg);
+                }
+            }
+        }
+
+        pub fn next(&mut self) -> Vec<u8> {
+            self.next_until(Instant::now() + Duration::from_secs(10))
+                .expect("the endpoint ended the session")
+        }
+
+        fn kexinit() -> Msg {
+            let mut cookie = [0_u8; 16];
+            ring::rand::SecureRandom::fill(&SystemRandom::new(), &mut cookie).unwrap();
+            let mut msg = Msg::new(KEXINIT);
+            msg.0.extend_from_slice(&cookie);
+            msg.str("curve25519-sha256")
+                .str("ssh-ed25519")
+                .str("chacha20-poly1305@openssh.com")
+                .str("chacha20-poly1305@openssh.com")
+                .str("hmac-sha2-256-etm@openssh.com")
+                .str("hmac-sha2-256-etm@openssh.com")
+                .str("none")
+                .str("none")
+                .str("")
+                .str("")
+                .u8(0)
+                .u32(0)
+        }
+
+        fn handshake(&mut self) {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let v_c = b"SSH-2.0-wssp_raw_test";
+            self.write(&[&v_c[..], b"\r\n"].concat());
+            let v_s = loop {
+                let mut line = Vec::new();
+                loop {
+                    assert!(self.fill(1, deadline), "no version line");
+                    let byte = self.take(1)[0];
+                    line.push(byte);
+                    if byte == b'\n' {
+                        break;
+                    }
+                }
+                if line.starts_with(b"SSH-") {
+                    let end = line.len() - if line.ends_with(b"\r\n") { 2 } else { 1 };
+                    break line[..end].to_vec();
+                }
+            };
+            let i_c = Self::kexinit().0;
+            self.send(Msg(i_c.clone()));
+            let i_s = self.recv_until(deadline).expect("KEXINIT");
+            assert_eq!(i_s[0], KEXINIT);
+            let rng = SystemRandom::new();
+            let private = EphemeralPrivateKey::generate(&X25519, &rng).unwrap();
+            let q_c = private.compute_public_key().unwrap().as_ref().to_vec();
+            self.send(Msg::new(30).bytes(&q_c));
+            let reply = self.recv_until(deadline).expect("ECDH reply");
+            assert_eq!(reply[0], 31, "KEX_ECDH_REPLY");
+            let mut fields = Fields(&reply[1..]);
+            let k_s = fields.bytes().to_vec();
+            let q_s = fields.bytes().to_vec();
+            let shared =
+                agreement::agree_ephemeral(private, &UnparsedPublicKey::new(&X25519, &q_s), |k| {
+                    k.to_vec()
+                })
+                .unwrap();
+            let k = Msg::default().mpint(&shared).0;
+            let hashed = Msg::default()
+                .bytes(v_c)
+                .bytes(&v_s)
+                .bytes(&i_c)
+                .bytes(&i_s)
+                .bytes(&k_s)
+                .bytes(&q_c)
+                .bytes(&q_s)
+                .0;
+            let h = sha256(&[&hashed, &k]);
+            self.send(Msg::new(NEWKEYS));
+            self.seal = Some(SealingKey::new(&derive(&k, &h, b'C', &h)));
+            let newkeys = self.recv_until(deadline).expect("NEWKEYS");
+            assert_eq!(newkeys, [NEWKEYS]);
+            self.open = Some(OpeningKey::new(&derive(&k, &h, b'D', &h)));
+            self.send(Msg::new(5).str("ssh-userauth"));
+            let accept = self.next_until(deadline).expect("SERVICE_ACCEPT");
+            assert_eq!(accept[0], 6, "SERVICE_ACCEPT");
+            self.send(Msg::new(50).str("anyone").str("ssh-connection").str("none"));
+            loop {
+                match self.next_until(deadline).expect("USERAUTH_SUCCESS")[0] {
+                    52 => break,
+                    53 => {}
+                    other => panic!("message {other} instead of USERAUTH_SUCCESS"),
+                }
+            }
+        }
+
+        /// Open a session channel (our id `ours`) with `window`; returns the
+        /// endpoint's id for it.
+        pub fn open_session(&mut self, ours: u32, window: u32) -> u32 {
+            self.send(
+                Msg::new(OPEN)
+                    .str("session")
+                    .u32(ours)
+                    .u32(window)
+                    .u32(32 * 1024),
+            );
+            let reply = self.next();
+            assert_eq!(reply[0], OPEN_CONFIRMATION, "{reply:?}");
+            let mut fields = Fields(&reply[1..]);
+            assert_eq!(fields.u32(), ours);
+            fields.u32()
+        }
+
+        /// A want-reply request on the endpoint's channel `theirs`: its
+        /// reply (stderr before it is skipped).
+        pub fn request(&mut self, theirs: u32, kind: &str, args: Msg) -> Vec<u8> {
+            let mut msg = Msg::new(REQUEST).u32(theirs).str(kind).u8(1);
+            msg.0.extend_from_slice(&args.0);
+            self.send(msg);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let reply = self.next_until(deadline).expect("a reply");
+                if reply[0] != EXTENDED_DATA {
+                    return reply;
+                }
+            }
+        }
+
+        /// Run `command` on the endpoint's channel `theirs` (our id `ours`):
+        /// its stdout and exit status, in the order the endpoint keeps for a
+        /// natural end (exit status, then EOF, then CLOSE; stderr anywhere).
+        pub fn exec(&mut self, ours: u32, theirs: u32, command: &str) -> (Vec<u8>, u32) {
+            let reply = self.request(theirs, "exec", Msg::default().str(command));
+            assert_eq!(reply[0], SUCCESS, "{reply:?}");
+            let (mut out, mut status, mut eof) = (Vec::new(), None, false);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                let msg = self.next_until(deadline).expect("the command's end");
+                // Stderr of any channel (a refusal's line comes on its own).
+                if msg[0] == EXTENDED_DATA {
+                    continue;
+                }
+                let mut fields = Fields(&msg[1..]);
+                if msg[0] != DISCONNECT {
+                    assert_eq!(fields.u32(), ours, "{msg:?}");
+                }
+                match msg[0] {
+                    DATA => out.extend_from_slice(fields.bytes()),
+                    REQUEST if fields.bytes() == b"exit-status" => {
+                        fields.u8();
+                        status = Some(fields.u32());
+                    }
+                    EOF => {
+                        assert!(status.is_some(), "EOF before the exit status");
+                        eof = true;
+                    }
+                    CLOSE => {
+                        assert!(eof, "CLOSE before EOF");
+                        self.send(Msg::new(CLOSE).u32(theirs));
+                        return (out, status.expect("an exit status"));
+                    }
+                    other => panic!("message {other} on the channel"),
+                }
+            }
+        }
+    }
+}
+
+/// The endpoint's test notes so far.
+fn notes(world: &World) -> String {
+    std::fs::read_to_string(world.note_log()).unwrap_or_default()
+}
+
+/// A refusal on a channel whose window cannot take its stderr line (here a
+/// window of 0) leaves nothing queued in russh, where it would hold back
+/// every channel's output (russh sends none while any channel has output
+/// queued; with 0.65.2 even past the client's close, 951bfb5): the line
+/// waits for the window in the endpoint, the session's other channels keep
+/// running, and the client's close is answered at once.
+#[test]
+fn a_refusal_the_window_cannot_take_holds_back_no_other_channel() {
+    let world = World::new();
+    let mut raw = raw::Raw::connect(&world);
+    let theirs = raw.open_session(0, 0);
+    let reply = raw.request(theirs, "subsystem", raw::Msg::default().str("nope"));
+    assert_eq!(reply, raw::Msg::new(raw::FAILURE).u32(0).0);
+    let other = raw.open_session(1, 1 << 20);
+    assert_eq!(raw.exec(1, other, "echo fine"), (b"fine\n".to_vec(), 0));
+    raw.send(raw::Msg::new(raw::CLOSE).u32(theirs));
+    assert_eq!(
+        raw.next(),
+        raw::Msg::new(raw::CLOSE).u32(0).0,
+        "the close was not answered"
+    );
+    wait_until(
+        Duration::from_secs(10),
+        "the endpoint kept the channel",
+        || notes(&world).lines().any(|line| line == "forgot 1"),
+    );
+}
+
+/// A request the endpoint refuses (it writes why to the channel's stderr)
+/// ends the channel's chance to start: a later request on it is refused
+/// too and starts nothing, so the line russh sent past the channel's write
+/// half can never hold back that write half's output. Sending past its
+/// window still resets it, and the endpoint forgets it (its slot comes
+/// back). Other channels work.
+#[test]
+fn a_refused_request_ends_the_channels_chance_to_start() {
+    let world = World::new();
+    let mut raw = raw::Raw::connect(&world);
+    let theirs = raw.open_session(0, 1 << 20);
+    let reply = raw.request(theirs, "subsystem", raw::Msg::default().str("nope"));
+    assert_eq!(reply, raw::Msg::new(raw::FAILURE).u32(0).0);
+    // The why comes right after the failure, within the window.
+    let why = raw.next();
+    let mut fields = raw::Fields(&why[1..]);
+    assert_eq!(
+        (why[0], fields.u32(), fields.u32()),
+        (raw::EXTENDED_DATA, 0, 1)
+    );
+    assert_eq!(
+        fields.bytes(),
+        b"wssp: only the sftp subsystem is available\r\n"
+    );
+    let reply = raw.request(theirs, "exec", raw::Msg::default().str("echo started"));
+    assert_eq!(reply, raw::Msg::new(raw::FAILURE).u32(0).0);
+    assert!(world.fake.opens().is_empty(), "the refused channel started");
+    // 160 KiB past the 128 KiB the open granted.
+    for _ in 0..5 {
+        raw.send(raw::Msg::new(raw::DATA).u32(theirs).bytes(&[7; 32 * 1024]));
+    }
+    assert_eq!(
+        raw.next(),
+        raw::Msg::new(raw::CLOSE).u32(0).0,
+        "the overrun channel stayed open"
+    );
+    raw.send(raw::Msg::new(raw::CLOSE).u32(theirs));
+    wait_until(
+        Duration::from_secs(10),
+        "the endpoint kept the overrun channel",
+        || notes(&world).lines().any(|line| line == "forgot 1"),
+    );
+    let other = raw.open_session(1, 1 << 20);
+    assert_eq!(raw.exec(1, other, "echo fine"), (b"fine\n".to_vec(), 0));
+    assert_eq!(world.fake.opens().len(), 1);
+}
+
+/// A CHANNEL_OPEN_FAILURE for a channel that is open (no reply to an open
+/// of the endpoint's, which opens none) is ignored: the channel keeps
+/// working on both sides (russh 0.65.4, 0e033c0; 0.65.2 dropped it from its
+/// table behind the endpoint's back and then ended the session).
+#[test]
+fn a_stray_open_failure_for_an_open_channel_changes_nothing() {
+    let world = World::new();
+    let mut raw = raw::Raw::connect(&world);
+    let theirs = raw.open_session(0, 1 << 20);
+    raw.send(
+        raw::Msg::new(raw::OPEN_FAILURE)
+            .u32(theirs)
+            .u32(2)
+            .str("")
+            .str(""),
+    );
+    assert_eq!(raw.exec(0, theirs, "echo fine"), (b"fine\n".to_vec(), 0));
+    let other = raw.open_session(1, 1 << 20);
+    assert_eq!(raw.exec(1, other, "echo again"), (b"again\n".to_vec(), 0));
+}
+
+/// A CHANNEL_OPEN_CONFIRMATION for a channel that is open would rewrite
+/// its window and packet size: russh ends the session instead (0.65.4,
+/// 0e033c0), and the endpoint ends cleanly with it, its guest command too.
+#[test]
+fn a_stray_open_confirmation_ends_the_session_cleanly() {
+    let world = World::new();
+    let mut raw = raw::Raw::connect(&world);
+    let theirs = raw.open_session(0, 1 << 20);
+    let reply = raw.request(theirs, "exec", raw::Msg::default().str("sleep 86400"));
+    assert_eq!(reply, raw::Msg::new(raw::SUCCESS).u32(0).0);
+    let guest = world.guest();
+    wait_until(
+        Duration::from_secs(20),
+        "the guest command never ran",
+        || guest_program_running(&guest, &["sleep", "86400"]),
+    );
+    let ClientControl::Open { channel, .. } = world.fake.opens()[0].clone() else {
+        unreachable!()
+    };
+    raw.send(
+        raw::Msg::new(raw::OPEN_CONFIRMATION)
+            .u32(theirs)
+            .u32(7)
+            .u32(0)
+            .u32(32 * 1024),
+    );
+    // One bound for the end of the session and of the endpoint.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        match raw.next_until(deadline) {
+            None => break,
+            Some(msg) if msg[0] == raw::DISCONNECT => break,
+            Some(_) => {}
+        }
+    }
+    exit_within(
+        &mut raw.child,
+        deadline.saturating_duration_since(Instant::now()),
+        "the endpoint after the stray confirmation",
+    );
+    assert!(
+        client_closed(&world.fake, channel),
+        "the wssp channel stayed"
+    );
+}
+
+/// A client that stops reading a forward until its window is used up and
+/// then closes it (the user gives up on it): ssh sends EOF and CLOSE at
+/// once (its write to the reset socket fails), the endpoint answers the
+/// close at once and closes the wssp channel, and forgets the channel; the
+/// connection's other forward keeps working.
+#[test]
+fn a_client_closing_a_jammed_forward_frees_it_on_both_sides() {
+    require!("ssh");
+    let world = World::new();
+    let flood_port = flooding_service(256 * 1024 * 1024);
+    let (echo_port, _echo) = echo_service();
+    let (_session, stderr, ports) = forwarding(&world, 2, &[], |ports| {
+        vec![
+            "-vv".into(),
+            "-N".into(),
+            "-L".into(),
+            format!("127.0.0.1:{}:localhost:{flood_port}", ports[0]),
+            "-L".into(),
+            format!("127.0.0.1:{}:localhost:{echo_port}", ports[1]),
+            "sbx_1.wssp".into(),
+        ]
+    });
+    let client = connect_to(ports[0]);
+    wait_until(
+        Duration::from_secs(30),
+        "the forward's writer never waited for window",
+        || {
+            world.writer_blocked() && world.fake.knobs.out_full.load(Ordering::SeqCst) > 0 && {
+                thread::sleep(Duration::from_millis(300));
+                world.writer_blocked()
+            }
+        },
+    );
+    let flood_channel = channel_to(&world.fake, flood_port).expect("the forward opened");
+    let text = stderr.text();
+    let (closes, frees) = (
+        text.matches("rcvd close").count(),
+        text.matches(": free:").count(),
+    );
+    // Unread data in the socket's receive queue: closing it sends a reset.
+    drop(client);
+    wait_until(
+        Duration::from_secs(10),
+        "the endpoint never answered the close",
+        || {
+            let text = stderr.text();
+            text.matches("rcvd close").count() > closes && text.matches(": free:").count() > frees
+        },
+    );
+    wait_until(
+        Duration::from_secs(10),
+        "the wssp channel stayed open",
+        || client_closed(&world.fake, flood_channel),
+    );
+    let mut echo = connect_to(ports[1]);
+    let bytes = payload(256 * 1024, 77);
+    assert!(
+        round_trip(&mut echo, &bytes) == bytes,
+        "the other forward changed bytes"
+    );
+    // The forward's open reaps an entry its writer retired first.
+    assert!(
+        notes(&world).lines().any(|line| line == "forgot 1"),
+        "{}",
+        notes(&world)
+    );
+}
+
 // ------------------------------------------------------------ jams, aborts, ends
 
 /// The bytes a [`Jam`] writes, over and over.
@@ -2785,9 +3425,19 @@ fn a_client_that_sends_past_the_window_has_its_channel_reset() {
     world.fake.knobs.hold_stdin.store(true, Ordering::SeqCst);
     let direct = direct::connect(&world, &[("WSSP_TEST_SSH_UNCOUNTED_WINDOW", "65536")]);
     let handle = &direct.handle;
-    direct.runtime.block_on(async {
+    let channel = direct.runtime.block_on(async {
         let channel = handle.channel_open_session().await.unwrap();
         channel.exec(true, "cat > /dev/null").await.unwrap();
+        channel
+    });
+    // The overrun has to find the wssp channel open: an abort that comes
+    // first cancels the open itself.
+    wait_until(
+        Duration::from_secs(10),
+        "the wssp channel never opened",
+        || !world.fake.opens().is_empty(),
+    );
+    direct.runtime.block_on(async move {
         let (mut read, write) = channel.split();
         let writer = tokio::spawn(async move {
             let chunk = vec![5_u8; 32 * 1024];

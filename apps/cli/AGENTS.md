@@ -107,8 +107,8 @@ and tokio. Only `wssp ssh --stdio` builds a (current-thread) tokio runtime
 and an SSH server, on its own stdin/stdout; it never binds a socket. Never
 use russh or tokio from the node daemon or any other command.
 
-russh is vendored: `third_party/russh-0.65.2` (root `[patch.crates-io]`) is
-the published crate plus `third_party/russh-0.65.2.patch` (per-channel
+russh is vendored: `third_party/russh-0.65.4` (root `[patch.crates-io]`) is
+the published crate plus `third_party/russh-0.65.4.patch` (per-channel
 receive windows, `manual_window`). Change it only by editing that tree and
 regenerating the patch; `cargo xtask vendored-russh --check` (CI) proves the
 two match the checksum-pinned crate and that `Cargo.lock` uses the copy.

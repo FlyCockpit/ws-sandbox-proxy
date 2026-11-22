@@ -187,8 +187,8 @@ and its bytes travel over `incus exec`.
   sshd. A session channel that is aborted (any close decision but the client's own, a failure, or an ssh client
   that sent past the channel's window) gets no `exit-status`, so the user's ssh exits 255; only a natural `exit`
   sends one. Towards the guest every abort stays a reset (the endpoint's `close` of a relay is a kill close, above).
-- **SSH windows follow consumption (`wssp ssh --stdio`).** The endpoint runs a vendored russh 0.65.2 with one patch
-  (`third_party/russh-0.65.2.patch`, `manual_window`): received data only uses up its channel's receive window, and
+- **SSH windows follow consumption (`wssp ssh --stdio`).** The endpoint runs a vendored russh 0.65.4 with one patch
+  (`third_party/russh-0.65.4.patch`, `manual_window`): received data only uses up its channel's receive window, and
   the window grows only when the endpoint grants it. A channel's window is one wssp window of its kind (128 KiB at
   the open, the rest once the kind is known); the endpoint grants back exactly the bytes that left as stdin frames,
   one coalesced grant per channel and connection-thread turn, never after the channel ended. So a channel holds at

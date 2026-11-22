@@ -248,6 +248,7 @@ impl Endpoint {
             {
                 chan.stdin.close();
                 let _ = chan.closed.send(true);
+                super::input::test_note(&format!("forgot {local}"));
             }
         }
     }
@@ -354,7 +355,9 @@ impl Endpoint {
     /// The client sent past a channel's window (a protocol violation; OpenSSH
     /// never does): that channel alone is reset. A started channel aborts
     /// through its writer (closed without eof or exit status) and its wssp
-    /// channel gets a kill close; one not started yet is closed here.
+    /// channel gets a kill close; one not started yet (or refused) is closed
+    /// here, and its entry goes with it: russh drops the channel and calls no
+    /// handler for the client's answering close, so nothing would reap it.
     fn overrun(&mut self, id: ChannelId, session: &mut Session) {
         let Some(chan) = self.channels.get_mut(&id) else {
             return;
@@ -366,9 +369,13 @@ impl Endpoint {
                 route.abort.send_replace(Some(Abort::Overrun));
             }
             self.command(Cmd::Close { local });
-        } else if chan.write.take().is_some() {
-            let _ = session.close(id);
+            return;
         }
+        if let Some(chan) = self.channels.remove(&id) {
+            let _ = chan.closed.send(true);
+            super::input::test_note(&format!("forgot {}", chan.local));
+        }
+        let _ = session.close(id);
     }
 
     fn open_relay(
@@ -411,7 +418,25 @@ impl Endpoint {
         let plan = match mapping::plan(channel.pty.as_ref(), request) {
             Ok(plan) => plan,
             Err(mapping::Refusal(line)) => {
-                session.extended_data(id, 1, format!("{line}\r\n").into_bytes())?;
+                // The channel never starts after a refusal (later requests
+                // get a failure). Its line goes through the write half, so
+                // within the client's window, from a task that gives up when
+                // the channel ends: written past the write half, a line the
+                // window cannot take would wait in russh, and while any
+                // channel has output waiting there russh sends no channel's
+                // output.
+                if let Some(channel) = self.channels.get_mut(&id)
+                    && let Some(write) = channel.write.take()
+                {
+                    let mut closed = channel.closed.subscribe();
+                    let line = format!("{line}\r\n").into_bytes();
+                    tokio::spawn(async move {
+                        tokio::select! {
+                            _ = write.extended_data_bytes(1, line) => {}
+                            _ = closed.wait_for(|closed| *closed) => {}
+                        }
+                    });
+                }
                 session.channel_failure(id)?;
                 return Ok(());
             }
@@ -745,6 +770,7 @@ impl Handler for Endpoint {
             if chan.started.is_some() {
                 self.command(Cmd::Close { local: chan.local });
             }
+            super::input::test_note(&format!("forgot {}", chan.local));
         }
         Ok(())
     }

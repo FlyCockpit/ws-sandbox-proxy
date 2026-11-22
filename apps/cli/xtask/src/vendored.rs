@@ -1,8 +1,8 @@
-//! `cargo xtask vendored-russh` — keep `third_party/russh-0.65.2` honest and
+//! `cargo xtask vendored-russh` — keep `third_party/russh-0.65.4` honest and
 //! upgradable (procedure: `third_party/README.md`).
 //!
-//! - `--check` proves the tree is the published russh 0.65.2 crate plus
-//!   `third_party/russh-0.65.2.patch` and nothing else, and that the build
+//! - `--check` proves the tree is the published russh 0.65.4 crate plus
+//!   `third_party/russh-0.65.4.patch` and nothing else, and that the build
 //!   really uses it. It takes the published `.crate` (cargo's registry cache
 //!   when present, else <https://static.crates.io>), checks its SHA-256
 //!   against the checksum the lockfile recorded for the registry crate
@@ -40,9 +40,9 @@ use anyhow::{Context, Result, bail, ensure};
 use sha2::{Digest, Sha256};
 
 const NAME: &str = "russh";
-const VERSION: &str = "0.65.2";
-/// The checksum `Cargo.lock` recorded for `russh 0.65.2` from crates.io.
-const CHECKSUM: &str = "78229f06e4d96d83bea5f5133ad3b6e4b5f0ce22d8e31c1ff7243ec8e18d5ba1";
+const VERSION: &str = "0.65.4";
+/// The checksum `Cargo.lock` recorded for `russh 0.65.4` from crates.io.
+const CHECKSUM: &str = "569d8c45e20c123af2fc5ecb4803fde0a98572449ba4c24ed97741d7b02fedf7";
 /// The one file the vendored tree adds: the Apache-2.0 §4(b) notice.
 const NOTICE: &str = "NOTICE-wssp.md";
 /// RustSec's advisory database, as GitHub serves its default branch.
@@ -1592,7 +1592,7 @@ mod tests {
     #[test]
     fn the_vendored_patch_restates_itself_against_its_own_crate_lines() {
         // Every hunk of the real patch parses and keeps its body.
-        let patch = include_str!("../../../../third_party/russh-0.65.2.patch");
+        let patch = include_str!("../../../../third_party/russh-0.65.4.patch");
         let parsed = parse_patch(patch).unwrap();
         assert!(
             parsed
@@ -1798,7 +1798,7 @@ mod tests {
         .unwrap();
         // Empty is valid too: an upgrade may leave no file that needs a pin.
         let patch =
-            parse_patch(include_str!("../../../../third_party/russh-0.65.2.patch")).unwrap();
+            parse_patch(include_str!("../../../../third_party/russh-0.65.4.patch")).unwrap();
         let dir = repo_root().join(format!("third_party/{NAME}-{VERSION}"));
         for (file, digest) in pins {
             let bytes = fs::read(dir.join(&file)).unwrap();
@@ -2051,7 +2051,7 @@ mod tests {
         assert!(licences.contains("russh 9.8.7"));
         assert!(licences.contains("`third_party/russh-9.8.7.patch`"));
         let notice = edit.apply(include_str!(
-            "../../../../third_party/russh-0.65.2/NOTICE-wssp.md"
+            "../../../../third_party/russh-0.65.4/NOTICE-wssp.md"
         ));
         assert!(notice.contains("russh 9.8.7 as published"));
         assert!(notice.contains(&"c".repeat(64)));

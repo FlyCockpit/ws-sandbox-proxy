@@ -4,7 +4,7 @@
 //!
 //!   cargo xtask sync-docs         # regenerate harness mirrors
 //!   cargo xtask sync-docs --check # CI: fail on drift
-//!   cargo xtask vendored-russh --check # CI: third_party/russh-0.65.2 is the crate plus its patch, in use
+//!   cargo xtask vendored-russh --check # CI: third_party/russh-0.65.4 is the crate plus its patch, in use
 //!   cargo xtask vendored-russh --advisories # CI: RustSec advisories cargo-deny cannot see
 //!   cargo xtask vendored-russh --update <version> # move the vendored copy (third_party/README.md)
 //!
@@ -28,7 +28,7 @@ struct Cli {
 enum Command {
     /// Regenerate harness-specific docs (CLAUDE.md, .cursorrules) from AGENTS.md.
     SyncDocs(sync::Args),
-    /// Check, audit or upgrade the vendored `third_party/russh-0.65.2`.
+    /// Check, audit or upgrade the vendored `third_party/russh-0.65.4`.
     VendoredRussh(vendored::Args),
 }
 

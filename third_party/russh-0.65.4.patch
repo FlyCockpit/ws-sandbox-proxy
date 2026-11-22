@@ -12,10 +12,10 @@ index e7667e5..a4f14c0 100644
  // Copyright 2016 Pierre-Étienne Meunier
  //
 diff --git a/src/server/encrypted.rs b/src/server/encrypted.rs
-index c4daede..2b1b155 100644
+index 559771e..84fb07f 100644
 --- a/src/server/encrypted.rs
 +++ b/src/server/encrypted.rs
-@@ -858,6 +858,7 @@ mod tests {
+@@ -929,6 +929,7 @@ mod tests {
              sender: handle,
              pending_reads: Vec::new(),
              pending_len: 0,
@@ -23,7 +23,7 @@ index c4daede..2b1b155 100644
              channels: std::collections::HashMap::new(),
              open_global_requests: std::collections::VecDeque::new(),
              kex: SessionKexState::Idle,
-@@ -1491,7 +1492,9 @@ impl Session {
+@@ -1568,7 +1569,9 @@ impl Session {
  
                  #[allow(clippy::collapsible_if)]
                  if let Some(ref mut enc) = self.common.encrypted {
@@ -110,7 +110,7 @@ index 1a6279d..74cf212 100644
                  }
              }
 diff --git a/src/server/session.rs b/src/server/session.rs
-index 423e64d..3653d84 100644
+index 423e64d..d071677 100644
 --- a/src/server/session.rs
 +++ b/src/server/session.rs
 @@ -25,7 +25,10 @@ pub struct Session {
@@ -196,8 +196,8 @@ index 423e64d..3653d84 100644
 +    /// one byte), which is what the grants in `pending_limit` measure. Data
 +    /// for a channel that is not open, such as one we closed while the peer's
 +    /// data was in flight, counts nothing: it is dropped on arrival without
-+    /// keeping anything, and that channel's credit is no longer in
-+    /// `pending_limit`.
++    /// keeping anything. (If the channel closed after `begin_rekey`, its
++    /// credit is still in `pending_limit`; that only makes the bound looser.)
 +    pub(crate) fn pending_cost(&self, packet: &[u8]) -> u64 {
 +        let header = match packet.first() {
 +            Some(&msg::CHANNEL_DATA) => 9,
@@ -405,10 +405,10 @@ index 423e64d..3653d84 100644
 +    }
  }
 diff --git a/src/session.rs b/src/session.rs
-index df11ef4..465c005 100644
+index 882bb36..e4bf5c7 100644
 --- a/src/session.rs
 +++ b/src/session.rs
-@@ -335,6 +335,48 @@ impl Encrypted {
+@@ -351,6 +351,48 @@ impl Encrypted {
          Ok(false)
      }
  
@@ -457,7 +457,7 @@ index df11ef4..465c005 100644
      fn flush_channel(
          write: &mut Vec<u8>,
          channel: &mut ChannelParams,
-@@ -1559,4 +1601,92 @@ mod tests {
+@@ -1575,4 +1617,92 @@ mod tests {
          assert!(encrypted.write.is_empty());
          assert!(writer.buffer().buffer.is_empty());
      }
