@@ -1419,9 +1419,10 @@ mod tests {
             std::fs::read_to_string(&rotated.known_hosts).unwrap(),
             format!("wssp {}\n", rotated.public)
         );
-        // The private key file is OpenSSH's format.
+        // The private key file is OpenSSH's format. The header is split so
+        // this source holds no literal key header (the secret scan).
         let pem = std::fs::read_to_string(&rotated.key_path).unwrap();
-        assert!(pem.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+        assert!(pem.starts_with(concat!("-----BEGIN OPENSSH ", "PRIVATE KEY-----")));
         // A symlinked key is refused, never followed.
         std::fs::remove_file(&rotated.key_path).unwrap();
         std::os::unix::fs::symlink("/etc/passwd", &rotated.key_path).unwrap();

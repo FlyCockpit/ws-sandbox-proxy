@@ -155,7 +155,152 @@ fn verify(root: &Path, release: &Release) -> Result<()> {
         "{} has no {NOTICE}",
         vendored.display()
     );
-    compare(&expected, &actual)
+    compare(&expected, &actual)?;
+    let pins_path = root.join(KEY_FIXTURES);
+    let pins = fs::read_to_string(&pins_path)
+        .with_context(|| format!("reading {}", pins_path.display()))?;
+    check_pins(&pins, &release.version, &expected, &patch)
+        .with_context(|| format!("{KEY_FIXTURES} does not pin the published crate's files"))
+}
+
+// ------------------------------------------------------- key-fixture pins
+
+/// The one exception `pnpm policy:template-secrets`
+/// (`scripts/check-template-secret-patterns.mjs`) makes to "never a private
+/// key in git": a vendored upstream file holding russh's own test keys, while
+/// its bytes hash to the pin here. Each line is `<sha256>  <repository path>`
+/// (`sha256sum` format) of a file of the vendored tree; `--check` proves each
+/// pin is the published crate's own bytes of that file, that the patch does
+/// not touch it, and that it does hold a private-key header (a pin is never
+/// spent on a file that needs none). `--update` re-pins the same files of the
+/// new crate and drops (and names) any that moved, became patched or no
+/// longer hold a key; a new pin is a hand edit that `--check` then proves.
+const KEY_FIXTURES: &str = "third_party/russh-key-fixtures.sha256";
+
+/// The pins of [`KEY_FIXTURES`], as paths below the vendored tree with their
+/// SHA-256. Anything but sorted, unique, well-formed lines naming a file of
+/// `third_party/russh-<version>/` is an error.
+fn parse_pins(text: &str, version: &str) -> Result<Vec<(String, String)>> {
+    let prefix = format!("third_party/{NAME}-{version}/");
+    ensure!(
+        text.is_empty() || text.ends_with('\n'),
+        "the last line has no newline"
+    );
+    let mut pins: Vec<(String, String)> = Vec::new();
+    for (number, line) in text.split_terminator('\n').enumerate() {
+        let number = number + 1;
+        let (digest, path) = line
+            .split_once("  ")
+            .with_context(|| format!("line {number} is not `<sha256>  <path>`"))?;
+        ensure!(
+            digest.len() == 64
+                && digest
+                    .bytes()
+                    .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')),
+            "line {number}: `{digest}` is not a lowercase SHA-256"
+        );
+        let file = path
+            .strip_prefix(&prefix)
+            .with_context(|| format!("line {number}: `{path}` is not below `{prefix}`"))?;
+        // Plain path characters only, as the scanner demands: nothing a
+        // tool could read as a delimiter, URL syntax or an escape.
+        ensure!(
+            file.split('/').all(|part| {
+                !part.is_empty()
+                    && part != "."
+                    && part != ".."
+                    && part
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            }),
+            "line {number}: `{path}` is not a plain relative path"
+        );
+        if let Some((previous, _)) = pins.last() {
+            ensure!(
+                previous.as_str() < file,
+                "line {number}: `{path}` is out of order or repeated"
+            );
+        }
+        pins.push((file.to_owned(), digest.to_owned()));
+    }
+    Ok(pins)
+}
+
+/// Every pin names an unpatched file of `crate_files` (the published crate,
+/// after the patch) with exactly the pinned SHA-256 and a private-key header.
+fn check_pins(
+    text: &str,
+    version: &str,
+    crate_files: &BTreeMap<String, Vec<u8>>,
+    patch: &str,
+) -> Result<()> {
+    let patched = parse_patch(patch)?;
+    for (file, digest) in parse_pins(text, version)? {
+        // Any patch line naming the file (a hunk, mode, rename or copy
+        // header) fails closed, as in the scanner.
+        ensure!(
+            !patched.iter().any(|edit| edit.path == file)
+                && !patch.lines().any(|line| line.contains(file.as_str())),
+            "`{file}` is changed by the patch, so it is not upstream content"
+        );
+        let bytes = crate_files
+            .get(&file)
+            .with_context(|| format!("`{file}` is not in {NAME} {version}"))?;
+        let actual = hex(&Sha256::digest(bytes));
+        ensure!(
+            actual == digest,
+            "`{file}` is pinned as {digest}, but {NAME} {version} has {actual}"
+        );
+        ensure!(
+            has_private_key_header(bytes),
+            "`{file}` has no private-key header, so it needs no pin"
+        );
+    }
+    Ok(())
+}
+
+/// [`KEY_FIXTURES`] for `version`: the files of `old` that are still in
+/// `crate_files`, unpatched and holding a key, with their new SHA-256; and
+/// the files dropped.
+fn repin(
+    old: &[(String, String)],
+    version: &str,
+    crate_files: &BTreeMap<String, Vec<u8>>,
+    patched: &[FilePatch],
+) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut dropped = Vec::new();
+    for (file, _) in old {
+        match crate_files.get(file) {
+            Some(bytes)
+                if has_private_key_header(bytes)
+                    && !patched.iter().any(|edit| &edit.path == file) =>
+            {
+                let digest = hex(&Sha256::digest(bytes));
+                text.push_str(&format!("{digest}  third_party/{NAME}-{version}/{file}\n"));
+            }
+            _ => dropped.push(file.clone()),
+        }
+    }
+    (text, dropped)
+}
+
+/// The scanner's private-key pattern, `-----BEGIN [A-Z ]*PRIVATE KEY-----`.
+fn has_private_key_header(bytes: &[u8]) -> bool {
+    const BEGIN: &[u8] = b"-----BEGIN ";
+    const KEY: &[u8] = b"PRIVATE KEY";
+    (0..bytes.len()).any(|start| {
+        let Some(rest) = bytes[start..].strip_prefix(BEGIN) else {
+            return false;
+        };
+        // `-` is outside `[A-Z ]`, so a match's `PRIVATE KEY` ends the run
+        // of `[A-Z ]` after `BEGIN ` and `-----` follows it.
+        let run = rest
+            .iter()
+            .take_while(|byte| byte.is_ascii_uppercase() || **byte == b' ')
+            .count();
+        rest[..run].ends_with(KEY) && rest[run..].starts_with(b"-----")
+    })
 }
 
 fn verify_wiring(root: &Path, version: &str) -> Result<()> {
@@ -748,6 +893,12 @@ fn update(root: &Path, current: &Release, version: &str) -> Result<()> {
         ],
     };
     let notice = String::from_utf8_lossy(old_tree.get(NOTICE).context("no NOTICE")?).into_owned();
+    let old_pins = parse_pins(
+        &fs::read_to_string(root.join(KEY_FIXTURES))
+            .with_context(|| format!("reading {KEY_FIXTURES}"))?,
+        &current.version,
+    )?;
+    let (pins, unpinned) = repin(&old_pins, &version, &files, &parse_patch(&rebased)?);
 
     // Everything is computed and validated in memory before the first write.
     // The restated patch applies strictly to the pristine crate and yields
@@ -766,6 +917,7 @@ fn update(root: &Path, current: &Release, version: &str) -> Result<()> {
             rewrites.push(((*path).to_owned(), rewritten));
         }
     }
+    rewrites.push((KEY_FIXTURES.to_owned(), pins));
     let after = |path: &str| -> Result<String> {
         match rewrites.iter().find(|(rewritten, _)| rewritten == path) {
             Some((_, text)) => Ok(text.clone()),
@@ -812,6 +964,12 @@ fn update(root: &Path, current: &Release, version: &str) -> Result<()> {
             println!("vendored {NAME} {version} ({})", next.checksum);
             eprintln!("{warning}");
         }
+    }
+    for file in &unpinned {
+        eprintln!(
+            "note: {KEY_FIXTURES} no longer pins `{file}` (gone, patched or without a key); \
+             `pnpm policy:template-secrets` names any key it still finds"
+        );
     }
     println!(
         "next: review `git diff`, `git grep -n '{NAME}.{}'`, the new crate's dependencies \
@@ -1156,13 +1314,24 @@ fn parse_patch(patch: &str) -> Result<Vec<FilePatch>> {
     let mut patch_lines = patch.split_inclusive('\n').peekable();
     let mut files = Vec::new();
     let mut diff_line = None;
+    // Only `diff --git`, `index`, `---`/`+++` and hunks: any other line (a
+    // mode, rename, copy or binary header, or stray text) is refused, so
+    // every change the patch makes is one this parser applies and checks.
     while let Some(line) = patch_lines.next() {
         if line.starts_with("diff --git ") {
+            ensure!(
+                diff_line.is_none(),
+                "a `diff --git` block without `---`/`+++`: {}",
+                line.trim_end()
+            );
             diff_line = Some(line.to_owned());
             continue;
         }
-        let Some(old_path) = line.strip_prefix("--- ") else {
+        if diff_line.is_some() && line.starts_with("index ") {
             continue;
+        }
+        let Some(old_path) = line.strip_prefix("--- ") else {
+            bail!("an unsupported patch line: {}", line.trim_end());
         };
         let new_line = patch_lines.next().context("a `---` without `+++`")?;
         let new_path = new_line
@@ -1176,6 +1345,13 @@ fn parse_patch(patch: &str) -> Result<Vec<FilePatch>> {
             old_path.strip_prefix("a/") == Some(path),
             "only in-place edits are supported ({old_path} → {new_path})"
         );
+        if let Some(diff) = &diff_line {
+            ensure!(
+                diff.trim_end() == format!("diff --git a/{path} b/{path}"),
+                "`{}` does not name `{path}`",
+                diff.trim_end()
+            );
+        }
         let mut hunks = Vec::new();
         while let Some(header) = patch_lines.next_if(|next| next.starts_with("@@ ")) {
             let (old_start, tail) = hunk_header(header)?;
@@ -1200,6 +1376,10 @@ fn parse_patch(patch: &str) -> Result<Vec<FilePatch>> {
             hunks,
         });
     }
+    ensure!(
+        diff_line.is_none(),
+        "a `diff --git` block without `---`/`+++` at the end"
+    );
     ensure!(!files.is_empty(), "the patch edits no file");
     Ok(files)
 }
@@ -1421,6 +1601,211 @@ mod tests {
         );
         let hunks: usize = parsed.iter().map(|file| file.hunks.len()).sum();
         assert_eq!(hunks, patch.matches("\n@@ -").count());
+    }
+
+    // ------------------------------------------------------ key-fixture pins
+
+    /// A key header built at run time, so this file needs no pin itself.
+    fn key_text(kind: &str) -> String {
+        format!(
+            "let k = \"{}BEGIN {kind}PRIVATE KEY-----\";\n",
+            "-".repeat(5)
+        )
+    }
+
+    fn pin_line(file: &str, bytes: &[u8]) -> String {
+        format!(
+            "{}  third_party/russh-1.2.3/{file}\n",
+            hex(&Sha256::digest(bytes))
+        )
+    }
+
+    const OTHER_PATCH: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,1 +1,1 @@\n-a\n+b\n";
+
+    #[test]
+    fn only_the_scanners_pattern_counts_as_a_key_header() {
+        for kind in ["", "OPENSSH ", "RSA ", "EC ", "ENCRYPTED "] {
+            assert!(has_private_key_header(key_text(kind).as_bytes()), "{kind}");
+        }
+        let dashes = "-".repeat(5);
+        for text in [
+            format!("{dashes}BEGIN PUBLIC KEY{dashes}"),
+            format!("{dashes}BEGIN rsa PRIVATE KEY{dashes}"),
+            format!("{dashes}BEGIN PRIVATE KEY{}", "-".repeat(4)),
+            format!("{dashes}BEGIN\nPRIVATE KEY{dashes}"),
+            format!("{dashes}BEGIN-PRIVATE KEY{dashes}"),
+            String::new(),
+        ] {
+            assert!(!has_private_key_header(text.as_bytes()), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_pins_of_the_published_files_pass_and_any_other_pin_fails() {
+        let key = key_text("OPENSSH ");
+        let files = tree(&[
+            ("src/keys.rs", &key),
+            ("src/lib.rs", "b\n"),
+            ("src/plain.rs", "x\n"),
+        ]);
+        let pins = pin_line("src/keys.rs", key.as_bytes());
+        check_pins(&pins, "1.2.3", &files, OTHER_PATCH).unwrap();
+        // A wrong digest (one byte of the file changed upstream or locally).
+        let wrong = pin_line("src/keys.rs", format!("{key} ").as_bytes());
+        let error = check_pins(&wrong, "1.2.3", &files, OTHER_PATCH).unwrap_err();
+        assert!(format!("{error:#}").contains("is pinned as"), "{error:#}");
+        // A file the patch touches is not upstream content, whatever its hash.
+        let patched = format!(
+            "{}{}",
+            OTHER_PATCH,
+            OTHER_PATCH.replace("src/lib.rs", "src/keys.rs")
+        );
+        let error = check_pins(&pins, "1.2.3", &files, &patched).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("changed by the patch"),
+            "{error:#}"
+        );
+        // A file the crate does not have, or one with no key.
+        let missing = pin_line("src/gone.rs", key.as_bytes());
+        assert!(check_pins(&missing, "1.2.3", &files, OTHER_PATCH).is_err());
+        let plain = pin_line("src/plain.rs", b"x\n");
+        let error = check_pins(&plain, "1.2.3", &files, OTHER_PATCH).unwrap_err();
+        assert!(format!("{error:#}").contains("needs no pin"), "{error:#}");
+        // Pins of another version's tree.
+        assert!(check_pins(&pins, "1.2.4", &files, OTHER_PATCH).is_err());
+    }
+
+    #[test]
+    fn a_patch_with_a_header_it_does_not_apply_is_refused() {
+        let mode = "diff --git a/src/keys.rs b/src/keys.rs\nold mode 100644\nnew mode 100755\n";
+        let rename = "diff --git a/x.rs b/src/keys.rs\nsimilarity index 100%\nrename from x.rs\nrename to src/keys.rs\n";
+        let mismatched = OTHER_PATCH.replacen(
+            "a/src/lib.rs b/src/lib.rs",
+            "a/src/keys.rs b/src/keys.rs",
+            1,
+        );
+        for extra in [
+            mode,
+            rename,
+            mismatched.as_str(),
+            "stray text\n",
+            "diff --git a/a b/a\n",
+        ] {
+            let patch = format!("{OTHER_PATCH}{extra}");
+            assert!(parse_patch(&patch).is_err(), "{extra:?}");
+            let key = key_text("");
+            let files = tree(&[("src/keys.rs", &key), ("src/lib.rs", "b\n")]);
+            let pins = pin_line("src/keys.rs", key.as_bytes());
+            assert!(
+                check_pins(&pins, "1.2.3", &files, &patch).is_err(),
+                "{extra:?}"
+            );
+        }
+        // A patch that only names the pinned file (say in a hunk line) fails too.
+        let named = OTHER_PATCH.replace("+b", "+b // see src/keys.rs");
+        let key = key_text("");
+        let files = tree(&[("src/keys.rs", &key)]);
+        let pins = pin_line("src/keys.rs", key.as_bytes());
+        assert!(check_pins(&pins, "1.2.3", &files, &named).is_err());
+        assert!(check_pins(&pins, "1.2.3", &files, OTHER_PATCH).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_pin_file_is_an_error() {
+        let digest = "a".repeat(64);
+        let line = |path: &str| format!("{digest}  third_party/russh-1.2.3/{path}\n");
+        assert_eq!(
+            parse_pins("", "1.2.3").unwrap(),
+            Vec::<(String, String)>::new()
+        );
+        assert_eq!(
+            parse_pins(&format!("{}{}", line("a.rs"), line("b/c.rs")), "1.2.3").unwrap(),
+            vec![
+                ("a.rs".to_owned(), digest.clone()),
+                ("b/c.rs".to_owned(), digest.clone())
+            ]
+        );
+        for bad in [
+            line("a.rs").trim_end().to_owned(),
+            line("a.rs").replacen("  ", " ", 1),
+            line("a.rs").replacen(&digest, &"A".repeat(64), 1),
+            line("a.rs").replacen(&digest, &"a".repeat(63), 1),
+            line("a.rs").replacen(&digest, &"g".repeat(64), 1),
+            line("a.rs").replace("russh-1.2.3", "russh-1.2.4"),
+            format!("{digest}  apps/cli/a.rs\n"),
+            line("../a.rs"),
+            line("src//a.rs"),
+            line("src/./a.rs"),
+            line(""),
+            line("a.rs\r"),
+            line("a:1:b.rs"),
+            line("a#b.rs"),
+            line("a?b.rs"),
+            line("a%2fb.rs"),
+            format!("{}{}", line("b.rs"), line("a.rs")),
+            format!("{}{}", line("a.rs"), line("a.rs")),
+            format!("\n{}", line("a.rs")),
+            format!("# pins\n{}", line("a.rs")),
+        ] {
+            assert!(parse_pins(&bad, "1.2.3").is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_update_repins_the_same_files_and_drops_any_that_moved_or_changed() {
+        let key = key_text("");
+        let old = parse_pins(
+            &[
+                pin_line("src/gone.rs", b"old"),
+                pin_line("src/keys.rs", b"old"),
+                pin_line("src/lib.rs", b"old"),
+                pin_line("src/nokey.rs", b"old"),
+            ]
+            .concat(),
+            "1.2.3",
+        )
+        .unwrap();
+        let new_key = format!("{key}// new upstream line\n");
+        let files = tree(&[
+            ("src/keys.rs", &new_key),
+            ("src/lib.rs", &key),
+            ("src/nokey.rs", "x\n"),
+            ("src/new.rs", &key),
+        ]);
+        let patched = parse_patch(OTHER_PATCH).unwrap();
+        let (text, dropped) = repin(&old, "1.2.4", &files, &patched);
+        assert_eq!(
+            text,
+            pin_line("src/keys.rs", new_key.as_bytes()).replace("1.2.3", "1.2.4")
+        );
+        assert_eq!(dropped, ["src/gone.rs", "src/lib.rs", "src/nokey.rs"]);
+        // What it writes is what `--check` then accepts.
+        check_pins(&text, "1.2.4", &files, OTHER_PATCH).unwrap();
+        // A release without any key leaves an empty, valid pin file.
+        let keyless = tree(&[("src/keys.rs", "x\n"), ("src/lib.rs", "b\n")]);
+        let (text, dropped) = repin(&old, "1.2.4", &keyless, &patched);
+        assert_eq!(text, "");
+        assert_eq!(dropped.len(), 4);
+        check_pins(&text, "1.2.4", &keyless, OTHER_PATCH).unwrap();
+    }
+
+    #[test]
+    fn the_repositorys_own_pins_name_key_files_of_the_vendored_tree() {
+        let pins = parse_pins(
+            include_str!("../../../../third_party/russh-key-fixtures.sha256"),
+            VERSION,
+        )
+        .unwrap();
+        // Empty is valid too: an upgrade may leave no file that needs a pin.
+        let patch =
+            parse_patch(include_str!("../../../../third_party/russh-0.65.2.patch")).unwrap();
+        let dir = repo_root().join(format!("third_party/{NAME}-{VERSION}"));
+        for (file, digest) in pins {
+            let bytes = fs::read(dir.join(&file)).unwrap();
+            assert_eq!(hex(&Sha256::digest(&bytes)), digest, "{file}");
+            assert!(has_private_key_header(&bytes), "{file}");
+            assert!(!patch.iter().any(|edit| edit.path == file), "{file}");
+        }
     }
 
     #[test]

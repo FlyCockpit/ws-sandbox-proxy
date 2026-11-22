@@ -27,6 +27,27 @@ How it is wired:
   refuses a prerelease vendored version;
 - Dependabot ignores russh (`.github/dependabot.yml`): an upgrade goes through
   the steps below, never through a version bump in `Cargo.toml` alone.
+- `third_party/russh-key-fixtures.sha256` is the only exception
+  `pnpm policy:template-secrets` makes to "no private key in git". russh's own
+  sources hold upstream test keys and PEM header constants (`src/helpers.rs`,
+  `src/keys/mod.rs`, `src/keys/format/mod.rs`, `src/keys/format/tests.rs`).
+  Each line pins one of those files as `<sha256>  <path>` (plain path
+  characters only). The scanner accepts a private-key match only at exactly a
+  pinned path (`git grep -z`, so a path is never split at a `:`), and only
+  while that literal file (no symlinked component) hashes to its pin and no
+  line of `russh-<version>.patch` names it. Any edit to the file, the same keys
+  at any other path, a missing or malformed pin file, or a patch line naming
+  the file (a hunk, mode, rename or copy header) fails the scan. `--check`
+  proves every pin is the published crate's own bytes of that file, unpatched,
+  and holding a key header, so the exception only ever covers byte-identical
+  upstream content; its patch parser refuses any header it does not apply
+  (mode, rename, copy, binary, quoted paths), and the scanner grants no
+  exception at all for a patch outside that form or for a pin of a copy the
+  root `Cargo.toml` does not patch in. The scanner trusts the hashes only as
+  far as `--check` proves them: CI runs `--check` on every change under
+  `third_party/**`, but `pnpm verify` does not, so run it after editing a
+  pin. There is no path or glob exemption, and nothing changes what counts as
+  a key.
 
 Change the vendored code only by editing the tree and regenerating the patch
 (step 3 of "When the patch does not apply").
@@ -45,7 +66,10 @@ When `--advisories` fails, or a russh release is wanted:
    - computes, in memory and before writing anything, the new tree, its
      restated patch (checked to rebuild the tree strictly) and the rewrites of
      the version, checksum and upstream commit in the files listed in
-     `REWRITTEN` (`apps/cli/xtask/src/vendored.rs`): both manifests (checked to
+     `REWRITTEN` (`apps/cli/xtask/src/vendored.rs`), and the key-fixture pins
+     re-pinned to the new crate's files (a file that is gone, now patched or
+     without a key is dropped and named; add a new pin by hand, and `--check`
+     then proves it): both manifests (checked to
      pin and patch the new version), the xtask constants,
      `THIRD-PARTY-LICENSES.md`, this file, the CI comments and the docs that
      name the copy;
@@ -87,7 +111,9 @@ When `--advisories` fails, or a russh release is wanted:
    `apps/cli/xtask/src/vendored.rs` (the checksum is the crates.io index `cksum`,
    which `cargo` records in `Cargo.lock` for a registry crate), the `=` pin in
    `apps/cli/Cargo.toml`, the `[patch.crates-io]` path in `Cargo.toml`,
-   `THIRD-PARTY-LICENSES.md`, the other files in `REWRITTEN`; delete the old
+   `THIRD-PARTY-LICENSES.md`, the other files in `REWRITTEN`, the paths and
+   hashes in `russh-key-fixtures.sha256` (`sha256sum` of each unpatched pinned
+   file, sorted by path; drop any file the patch now edits); delete the old
    directory and patch; `cargo update -p russh`; `cargo xtask sync-docs`.
 5. Run the checks below.
 
@@ -137,7 +163,9 @@ window to a channel; proposed upstream with this patch, which is the
 `#![allow(warnings)]` added):
 
 1. switch `apps/cli/src/commands/sandbox/ssh/` to the upstream API;
-2. delete `third_party/russh-*` and its patch, the `[patch.crates-io]` entry,
+2. delete `third_party/russh-*` and its patch (with
+   `russh-key-fixtures.sha256` and the scanner's `KEY_FIXTURE_PINS` support in
+   `scripts/check-template-secret-patterns.mjs`), the `[patch.crates-io]` entry,
    the russh section's "modified" paragraph in `THIRD-PARTY-LICENSES.md`, the
    `vendored-russh` xtask and its CI steps, and the russh `ignore` in
    `.github/dependabot.yml`;
