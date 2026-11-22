@@ -640,9 +640,10 @@ validate_bridged_nic_spec() {{
 }}
 if [ -n "$logfile" ]; then
   # ONE append per invocation (C36 r32): concurrent shim processes (the
-  # refresh pass and the autonomous lease watcher) must never interleave
-  # their partial writes — a single short O_APPEND write is atomic, so
-  # the log stays line-oriented under concurrency.
+  # refresh pass, the autonomous lease watcher, an exec's cleanup) must
+  # never interleave their partial writes. Only a short O_APPEND write is
+  # atomic, and sh's printf splits a long line (an exec carrying an inlined
+  # identity script) into several writes, so appends hold the log's lock.
   logline="$cmd"
   for arg in "$@"; do
     # Escape embedded newlines (raw.dnsmasq values) so the log stays
@@ -650,7 +651,7 @@ if [ -n "$logfile" ]; then
     escaped=$(printf '%s' "$arg" | awk 'BEGIN{{ORS=""}} NR>1{{printf "\\n"}} {{printf "%s",$0}}')
     logline="$logline $escaped"
   done
-  printf '%s\n' "$logline" >> "$logfile"
+  {{ flock -w 120 9 || exit 1; printf '%s\n' "$logline" >> "$logfile"; }} 9>> "$logfile.lock"
 fi
 case "$cmd" in
   version)

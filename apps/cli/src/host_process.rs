@@ -319,19 +319,41 @@ pub(crate) fn command(report: &Path, argv: &[String]) -> io::Result<Command> {
     #[cfg(not(test))]
     let exe = Path::new("/proc/self/exe");
     #[cfg(test)]
-    let exe = std::env::current_exe()?;
-    #[cfg(test)]
-    let exe = std::env::var_os("NEXTEST_BIN_EXE_wssp")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            exe.parent()
-                .and_then(Path::parent)
-                .unwrap_or(Path::new("."))
-                .join("wssp")
-        });
+    let exe = test_wssp_binary()?;
     let mut cmd = sandbox_runtime::host_agent_command(exe);
     cmd.arg(ENTRY).arg(report).args(argv);
     Ok(cmd)
+}
+
+/// The `wssp` binary for lib unit tests, which get no `CARGO_BIN_EXE_wssp`.
+/// Nextest names it; under `cargo test` the package's integration tests make
+/// Cargo build it into the artifact dir (`<target-dir>/<profile>/wssp`). That
+/// dir is an ancestor of the test binary in every build-dir layout (Cargo
+/// before 1.100: `<profile>/deps/`; 1.100: `<profile>/build/wssp/<hash>/out/`),
+/// so search the ancestors instead of assuming either layout's depth, but
+/// never above the target dir (the one Cargo marks with `CACHEDIR.TAG`).
+#[cfg(test)]
+fn test_wssp_binary() -> io::Result<std::path::PathBuf> {
+    if let Some(exe) = std::env::var_os("NEXTEST_BIN_EXE_wssp") {
+        return Ok(exe.into());
+    }
+    let test_binary = std::env::current_exe()?;
+    for dir in test_binary.ancestors().skip(1) {
+        let candidate = dir.join("wssp");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+        if dir.join("CACHEDIR.TAG").is_file() {
+            break;
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "no `wssp` binary in the target dir above `{}`: build it (`cargo build -p wssp`) or run the package's tests",
+            test_binary.display()
+        ),
+    ))
 }
 
 pub(crate) fn exit_status(report: &Path) -> Option<ExitStatus> {

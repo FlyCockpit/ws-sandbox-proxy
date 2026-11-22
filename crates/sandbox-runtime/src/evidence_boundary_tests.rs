@@ -48,9 +48,138 @@ fn compile(
     command.output().unwrap()
 }
 
+/// Where Cargo put the units of THIS build: the artifact directories holding
+/// dependency rlibs, each unit's fingerprint directory keyed by unit hash, and
+/// this test binary's own fingerprint. Cargo's build directory is private, so
+/// both layouts are recognised from the test binary's own position and
+/// anything else fails loudly instead of resolving the wrong graph:
+/// - before Cargo 1.100: `<profile>/deps/<crate>-<hash>` and
+///   `<profile>/.fingerprint/<package>-<hash>/`;
+/// - Cargo 1.100 and later: `<profile>/build/<package>/<hash>/out/<crate>-<hash>`
+///   and `<profile>/build/<package>/<hash>/fingerprint/`.
+///
+/// With an explicit `--target`, `<profile>` is `<target-dir>/<triple>/<name>`
+/// and host units (proc-macros) live in `<target-dir>/<name>` in the same
+/// layout, so that directory is searched too. Extra candidates are harmless:
+/// only an artifact whose fingerprint equals this binary's record is used.
+struct CargoUnits {
+    artifact_dirs: Vec<PathBuf>,
+    fingerprints: HashMap<String, Vec<PathBuf>>,
+    binary_fingerprint: PathBuf,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Layout {
+    Units,
+    Legacy,
+}
+
+fn read_dirs(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name().unwrap().to_str().unwrap().to_owned()
+}
+
+fn has_layout(profile: &Path, layout: Layout) -> bool {
+    match layout {
+        Layout::Units => profile.join("build").is_dir(),
+        Layout::Legacy => profile.join("deps").is_dir() && profile.join(".fingerprint").is_dir(),
+    }
+}
+
+fn collect_units(profile: &Path, layout: Layout, units: &mut CargoUnits) {
+    match layout {
+        Layout::Units => {
+            for package in read_dirs(&profile.join("build")) {
+                for unit in read_dirs(&package) {
+                    units.artifact_dirs.push(unit.join("out"));
+                    units
+                        .fingerprints
+                        .entry(file_name(&unit))
+                        .or_default()
+                        .push(unit.join("fingerprint"));
+                }
+            }
+        }
+        Layout::Legacy => {
+            units.artifact_dirs.push(profile.join("deps"));
+            for directory in read_dirs(&profile.join(".fingerprint")) {
+                let hash = file_name(&directory).rsplit_once('-').unwrap().1.to_owned();
+                units.fingerprints.entry(hash).or_default().push(directory);
+            }
+        }
+    }
+}
+
+fn is_target_triple(name: &str) -> bool {
+    let targets = Command::new("rustc")
+        .args(["--print", "target-list"])
+        .output()
+        .unwrap();
+    assert!(targets.status.success(), "rustc --print target-list");
+    String::from_utf8(targets.stdout)
+        .unwrap()
+        .lines()
+        .any(|target| target == name)
+}
+
+fn cargo_units(binary: &Path) -> CargoUnits {
+    let binary_hash = file_name(binary).rsplit_once('-').unwrap().1.to_owned();
+    let parent = binary.parent().unwrap();
+    let unit = parent.parent().unwrap();
+    let (layout, profile, binary_fingerprint) = if file_name(parent) == "out"
+        && file_name(unit) == binary_hash
+        && unit.join("fingerprint").is_dir()
+    {
+        (
+            Layout::Units,
+            unit.parent().unwrap().parent().unwrap().parent().unwrap(),
+            unit.join("fingerprint/test-lib-sandbox_runtime.json"),
+        )
+    } else {
+        assert!(
+            file_name(parent) == "deps" && has_layout(unit, Layout::Legacy),
+            "unrecognised Cargo build-dir layout around `{}`",
+            binary.display()
+        );
+        (
+            Layout::Legacy,
+            unit,
+            unit.join(format!(
+                ".fingerprint/sandbox-runtime-{binary_hash}/test-lib-sandbox_runtime.json"
+            )),
+        )
+    };
+    let mut units = CargoUnits {
+        artifact_dirs: Vec::new(),
+        fingerprints: HashMap::new(),
+        binary_fingerprint,
+    };
+    collect_units(profile, layout, &mut units);
+    // Only `<target-dir>/<triple>/<name>` has a separate host profile; a native
+    // profile's grandparent may hold an unrelated build (`--target-dir
+    // target/review` next to `target/debug`), so it is never searched.
+    let triple = profile.parent().unwrap();
+    if is_target_triple(&file_name(triple)) {
+        let host = triple.parent().unwrap().join(file_name(profile));
+        if has_layout(&host, layout) {
+            collect_units(&host, layout, &mut units);
+        }
+    }
+    units.artifact_dirs.retain(|dir| dir.is_dir());
+    units.artifact_dirs.sort();
+    units
+}
+
 fn resolve_dependencies(
     deps: &Path,
-    fingerprints: &Path,
+    fingerprints: &HashMap<String, Vec<PathBuf>>,
     binary_fingerprint: &serde_json::Value,
     dir: &Path,
     root: &str,
@@ -60,10 +189,6 @@ fn resolve_dependencies(
     // a newly added production dependency is missing from a handwritten list.
     // Cargo's fingerprint evidence is test tooling only; still compile the
     // complete production module graph before any privacy probes below.
-    let fingerprint_dirs: Vec<_> = std::fs::read_dir(fingerprints)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect();
     let mut externs = HashMap::new();
     for dependency in binary_fingerprint["deps"].as_array().unwrap() {
         let name = dependency[1].as_str().unwrap();
@@ -73,26 +198,22 @@ fn resolve_dependencies(
             .filter(|artifact| {
                 let file = artifact.file_stem().unwrap().to_str().unwrap();
                 let hash = file.rsplit_once('-').unwrap().1;
-                fingerprint_dirs.iter().any(|directory| {
-                    if !directory
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap()
-                        .ends_with(&format!("-{hash}"))
-                    {
-                        return false;
-                    }
-                    let Ok(record) = std::fs::read_to_string(directory.join(format!("lib-{name}")))
-                    else {
-                        return false;
-                    };
-                    // Cargo serializes the u64 fingerprint as little-endian hex.
-                    u64::from_str_radix(record.trim(), 16)
-                        .map(u64::swap_bytes)
-                        .ok()
-                        == Some(expected)
-                })
+                fingerprints
+                    .get(hash)
+                    .into_iter()
+                    .flatten()
+                    .any(|directory| {
+                        let Ok(record) =
+                            std::fs::read_to_string(directory.join(format!("lib-{name}")))
+                        else {
+                            return false;
+                        };
+                        // Cargo serializes the u64 fingerprint as little-endian hex.
+                        u64::from_str_radix(record.trim(), 16)
+                            .map(u64::swap_bytes)
+                            .ok()
+                            == Some(expected)
+                    })
             })
             .collect();
         assert_eq!(candidates.len(), 1, "exact Cargo artifact for {name}");
@@ -112,28 +233,37 @@ fn resolve_dependencies(
 #[test]
 fn sibling_modules_cannot_forge_evidence_or_reuse_the_pre_issue_phase() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let deps = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let units = cargo_units(&std::env::current_exe().unwrap());
     let dir = std::env::temp_dir().join(format!("wssp-evidence-probes-{}", std::process::id()));
+    // A failed earlier run with a reused pid may have left this directory.
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     std::fs::create_dir_all(&dir).unwrap();
     // Reproduce the reviewer experiment on every run: isolated exact dependency
     // files plus a lexically first synthetic incompatible getrandom API.
     // Never modify timestamps or artifacts in Cargo's shared target directory.
     let isolated = dir.join("deps");
     std::fs::create_dir_all(&isolated).unwrap();
-    for entry in std::fs::read_dir(&deps).unwrap() {
-        let path = entry.unwrap().path();
+    let artifacts = units
+        .artifact_dirs
+        .iter()
+        .flat_map(|deps| std::fs::read_dir(deps).unwrap())
+        .map(|entry| entry.unwrap().path());
+    for path in artifacts {
         if matches!(
             path.extension().and_then(|e| e.to_str()),
             Some("rlib" | "so")
         ) {
+            // Two artifact dirs holding the same file name would make the
+            // first one shadow the other: refuse instead of guessing.
             let link = isolated.join(path.file_name().unwrap());
-            if !link.exists() {
-                std::os::unix::fs::symlink(&path, link).unwrap();
-            }
+            assert!(
+                !link.exists(),
+                "ambiguous Cargo artifact `{}`",
+                path.display()
+            );
+            std::os::unix::fs::symlink(&path, link).unwrap();
         }
     }
     // Build the incompatible artifact ourselves: a crate-scoped clean build only
@@ -194,29 +324,10 @@ fn sibling_modules_cannot_forge_evidence_or_reuse_the_pre_issue_phase() {
             }
         })
         .collect::<String>();
-    let binary = std::env::current_exe().unwrap();
-    let binary_hash = binary
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .rsplit_once('-')
-        .unwrap()
-        .1;
-    let fingerprints = binary
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join(".fingerprint");
-    let binary_fingerprint: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(fingerprints.join(format!(
-            "sandbox-runtime-{binary_hash}/test-lib-sandbox_runtime.json"
-        )))
-        .unwrap(),
-    )
-    .unwrap();
-    let externs = resolve_dependencies(&deps, &fingerprints, &binary_fingerprint, &dir, &root);
+    let binary_fingerprint: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&units.binary_fingerprint).unwrap()).unwrap();
+    let externs =
+        resolve_dependencies(&deps, &units.fingerprints, &binary_fingerprint, &dir, &root);
     assert_ne!(
         externs["getrandom"], stale,
         "newer incompatible API must be rejected"
