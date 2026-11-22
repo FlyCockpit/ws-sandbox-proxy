@@ -3363,7 +3363,7 @@ fn a_control_master_serves_more_than_128_completed_and_refused_channels() {
     let world = World::new();
     let control = world.path("cm");
     let closed_port = free_port();
-    let (mut master, _stderr, ports) = forwarding(&world, 1, &[], |ports| {
+    let (mut master, stderr, ports) = forwarding(&world, 1, &[], |ports| {
         vec![
             "-o".into(),
             "ControlMaster=yes".into(),
@@ -3375,9 +3375,16 @@ fn a_control_master_serves_more_than_128_completed_and_refused_channels() {
             "sbx_1.wssp".into(),
         ]
     });
-    wait_until(Duration::from_secs(20), "the master never listened", || {
-        control.exists()
-    });
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !control.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the master never listened: {:?} {}",
+            master.try_wait().unwrap(),
+            stderr.text()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     for round in 0..70 {
         let mut ssh = world.ssh();
         ssh.arg("-o")

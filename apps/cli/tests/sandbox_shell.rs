@@ -361,6 +361,16 @@ impl Peer {
         }
     }
 
+    /// The first frame already read that matches `want`, else read until one
+    /// arrives. An earlier `expect` may have read past it: the CLI may send a
+    /// resize before the ack it owes for output it just wrote to the terminal.
+    fn seen_or_expect(&mut self, what: &str, want: impl Fn(&In) -> bool) -> In {
+        if let Some(seen) = self.log.iter().find(|frame| want(frame)) {
+            return seen.clone();
+        }
+        self.expect(what, want)
+    }
+
     fn acked(&mut self, stream: wire::OutputStream, seq: u64) {
         self.expect("ack", |f| {
             *f == In::Control(ClientControl::Ack {
@@ -1891,7 +1901,7 @@ fn pty_shell_is_raw_echoes_resizes_and_restores_the_terminal() {
             peer.data(1, DataStream::Stdout, 0, b"echo:x\r\n");
             peer.acked(wire::OutputStream::Stdout, 0);
             assert_eq!(from_test.recv().unwrap(), "resized");
-            let resize = peer.expect("resize", |f| {
+            let resize = peer.seen_or_expect("resize", |f| {
                 matches!(f, In::Control(ClientControl::Resize { .. }))
             });
             to_test.send(resize).unwrap();
