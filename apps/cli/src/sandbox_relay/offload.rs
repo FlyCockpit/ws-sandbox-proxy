@@ -1262,8 +1262,9 @@ impl OffloadService {
                     Some(record_key),
                     self.inner.upload_limit.as_deref(),
                     &stop,
+                    None,
                 )
-                .map_err(failure_of)?;
+                .map_err(|failure| failure_of(failure.code))?;
             for (part, url) in parts.iter().zip(&grant.parts) {
                 done.insert(part.n, url.size_bytes);
             }

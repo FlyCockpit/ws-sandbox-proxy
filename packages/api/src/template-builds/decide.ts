@@ -1,5 +1,6 @@
 import { ORPCError } from "@orpc/server";
 import type { OperationState, TemplateBuildState, TemplateCaptureState } from "@wssp/db";
+import type { TemplateBuildCaptureDetailErrorCode } from "@wssp/sandbox-contracts";
 import { CAPTURE_STORING, isBuildAuthorityLost } from "./build-authority";
 import { BuildContextPortError } from "./context-port";
 
@@ -90,6 +91,47 @@ const CAPTURE_RESULT_RECORDED: readonly TemplateCaptureState[] = [
   "STORING",
   "FINALIZED",
 ];
+
+/** The host result was recorded, including a capture that then failed
+ * storing (its `capturedAt`, or `capture_store_failed`). */
+function captureResultRecorded(capture: NonNullable<Observed["capture"]>): boolean {
+  return (
+    CAPTURE_RESULT_RECORDED.includes(capture.state) ||
+    (capture.capturedAt !== undefined && capture.capturedAt !== null) ||
+    capture.errorCode === "capture_store_failed"
+  );
+}
+/** Capture failure details recorded on the capture side (the export ran
+ * before any upload); every other recorded detail is a store failure. */
+const CAPTURE_SIDE_DETAILS: ReadonlySet<string> = new Set(["upload_export"]);
+
+/**
+ * A generic capture failure (`capture_deadline`, an expired lease) never
+ * replaces failure evidence the capture already carries (I4): the detail is
+ * kept and store evidence makes it `build_store_failed`. Without evidence the
+ * generic failure stands.
+ */
+function withCaptureEvidence(
+  generic: { errorCode: TemplateBuildCaptureDetailErrorCode; errorDetail?: string },
+  capture: Observed["capture"],
+): BuildFailure {
+  const detail = errorDetailOf(capture?.errorDetail);
+  if (!detail) return generic;
+  return captureFailure(
+    CAPTURE_SIDE_DETAILS.has(detail) ? generic.errorCode : "build_store_failed",
+    detail,
+  );
+}
+
+/** Every build failure whose detail comes from the capture row: its code is
+ * one the dashboard explains capture details for (the shared list). */
+function captureFailure(
+  errorCode: TemplateBuildCaptureDetailErrorCode,
+  errorDetail: string | null,
+): BuildFailure {
+  return { errorCode, errorDetail };
+}
+
 /**
  * Capture rows after which the build VM is no longer needed (§3.10): only a
  * FINALIZED one. While CAPTURED/STORING the host still uploads the image to
@@ -180,6 +222,11 @@ export type Observed = {
   capture: {
     state: TemplateCaptureState;
     errorCode: string | null;
+    /** Why storing failed (`capture_store_failed`), or a storage cause the
+     * host reported before its result (export), code-shaped. */
+    errorDetail?: string | null;
+    /** When the host result was recorded (null before it). */
+    capturedAt?: Date | null;
     opState: OperationState;
     /** The capture row's immutable `buildAttempt`. */
     attempt: number;
@@ -328,13 +375,18 @@ export function deadlineFailure(
     if (bound !== null && bound <= now)
       return { errorCode: "build_internal", errorDetail: "stop_timeout" };
   }
+  // A capture whose host result was recorded is past this window: its
+  // storage outcome (success or `build_store_failed` with its cause) wins.
   if (
     build.state === "CAPTURING" &&
     build.captureDeadlineAt &&
     build.captureDeadlineAt.getTime() <= now &&
-    !(obs.capture && CAPTURE_RESULT_RECORDED.includes(obs.capture.state))
+    !(obs.capture && captureResultRecorded(obs.capture))
   )
-    return { errorCode: "build_capture_failed", errorDetail: "capture_deadline" };
+    return withCaptureEvidence(
+      { errorCode: "build_capture_failed", errorDetail: "capture_deadline" },
+      obs.capture,
+    );
   // The verify window bounds the verify VM, its smoke and any stuck call,
   // unless the smoke result is already recorded (it still settles).
   if (
@@ -612,16 +664,23 @@ function decideCapturing(build: BuildView, obs: Observed, limits: DecideLimits):
       if (capture.opState === "UNKNOWN_OUTCOME" && attempt < CAPTURE_UNKNOWN_RETRIES)
         return { kind: "claim", action: "capture", n: 0, attempt: attempt + 1, phase: "capturing" };
       if (capture.errorCode === "capture_store_failed")
-        return { kind: "fail", failure: { errorCode: "build_store_failed" } };
+        return {
+          kind: "fail",
+          failure: captureFailure("build_store_failed", errorDetailOf(capture.errorDetail)),
+        };
       const lease = obs.sandbox?.leaseExpiresAt;
       if (lease && lease.getTime() <= limits.now.getTime())
-        return { kind: "fail", failure: { errorCode: "build_capture_lease_expired" } };
+        return {
+          kind: "fail",
+          failure: withCaptureEvidence({ errorCode: "build_capture_lease_expired" }, capture),
+        };
+      // A storage cause the host reported (an export failure) names it.
       return {
         kind: "fail",
-        failure: {
-          errorCode: "build_capture_failed",
-          errorDetail: errorDetailOf(capture.errorCode),
-        },
+        failure: captureFailure(
+          "build_capture_failed",
+          errorDetailOf(capture.errorDetail ?? capture.errorCode),
+        ),
       };
     }
     default:

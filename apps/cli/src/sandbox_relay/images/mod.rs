@@ -10,13 +10,14 @@
 //! carry a presigned URL).
 
 pub mod crypto;
+mod failure;
 pub mod journal;
 
 use anyhow::Result;
 use sandbox_protocol::{
     DaemonControlMessage, ImageAdmissionV11, ImageCacheCensusV11, ImageCachedV11,
-    ImageCapabilitiesV11, ImageCensusEntryV11, ImageEvictReason, ImageEvictedV11, ImageFailureCode,
-    ImageFetchFailedV11, ImageFetchRequestV11, ImageJobFailedV11, ImageLinkRole,
+    ImageCapabilitiesV11, ImageCensusEntryV11, ImageEvictReason, ImageEvictedV11,
+    ImageFailureCause, ImageFailureCode, ImageFetchFailedV11, ImageFetchRequestV11, ImageLinkRole,
     ImageLinksRequestV11, ImagePartAckV11, ImageRelayLinkV11, ImageReleaseReason,
     ImageTransferMode, ImageTransferRefV11, ImageUploadBeginV11, ImageUploadPartsV11,
     ImageUploadedPartV11, OperationDispatch, OperationProgressV11, OperationState, ProgressPhase,
@@ -30,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub(crate) use failure::{UploadEnd, UploadFailure};
 use journal::{CacheEntry, CacheJournal, Origin};
 
 const OUTBOX_MAX: usize = 512;
@@ -47,9 +49,20 @@ const PROGRESS_EVERY: u64 = 32 * 1024 * 1024;
 /// response headers until the part is spooled, and an equal bound would race
 /// the server's own wait.
 pub const HTTP_HEADERS_TIMEOUT: Duration = Duration::from_secs(90);
-/// Agent-wide per-read idle bound: a transfer (notably the streaming storage
-/// fetch, which has no total budget) fails once no byte arrives for this long.
-pub const HTTP_IDLE_READ: Duration = Duration::from_secs(120);
+/// Agent-wide per-I/O idle bound: a transfer (notably the streaming storage
+/// fetch and the image-store part upload, which have no total budget) fails
+/// (`stalled`) once no byte moves, in either direction, for this long. A slow
+/// transfer that keeps moving never fails for slowness.
+pub const HTTP_IDLE: Duration = Duration::from_secs(120);
+/// Wait for an image-store part PUT's response after its body: the last
+/// writes only fill the kernel send buffer, and draining it on a slow uplink
+/// (45 KB/s) takes longer than `HTTP_HEADERS_TIMEOUT`.
+const PUT_RESPONSE_WAIT: Duration = Duration::from_secs(300);
+/// How long an upload waits for the server's next grant (or refusal).
+const UPLOAD_GRANT_WAIT: Duration = Duration::from_secs(300);
+/// At most one `image.upload.progress` heartbeat per upload this often, and
+/// only while bytes moved.
+const UPLOAD_HEARTBEAT_EVERY: Duration = Duration::from_secs(30);
 /// Floor of the relay upload budget for one part.
 const RELAY_PART_SEND_MIN: Duration = Duration::from_secs(120);
 /// Lowest sustained upload rate a relay part must keep (64 KiB/s); a slower
@@ -58,9 +71,9 @@ const RELAY_PART_SEND_FLOOR_BYTES_PER_SEC: u64 = 64 * 1024;
 
 /// Total send budget for one relay part of `part_len` bytes: the larger of
 /// `RELAY_PART_SEND_MIN` and the time the part takes at the floor rate.
-/// Writes have no idle bound (`HTTP_IDLE_READ` clamps reads only), so the
-/// upload keeps a total budget, scaled so slow links still finish. Downloads
-/// need none: the per-read idle bound already fails a stalled part.
+/// A relay part keeps this total budget on top of the idle bound, scaled so
+/// slow links still finish. Downloads need none: the idle bound already fails
+/// a stalled part.
 fn relay_part_send_budget(part_len: usize) -> Duration {
     let len = u64::try_from(part_len).unwrap_or(u64::MAX);
     let at_floor = Duration::from_secs(len.div_ceil(RELAY_PART_SEND_FLOOR_BYTES_PER_SEC));
@@ -166,6 +179,15 @@ struct Inner {
     /// Tests only: the total budget of one upstream fetch.
     #[cfg(test)]
     upstream_budget_override: Mutex<Option<Duration>>,
+    /// Tests only: the upload heartbeat interval.
+    #[cfg(test)]
+    heartbeat_override: Mutex<Option<Duration>>,
+    /// Tests only: how long an upload waits for each grant.
+    #[cfg(test)]
+    grant_wait_override: Mutex<Option<Duration>>,
+    /// Tests only: upload jobs that have returned (frames all pushed).
+    #[cfg(test)]
+    uploads_finished: AtomicU64,
 }
 
 /// The agent config for upstream image downloads: never a redirect (the
@@ -356,7 +378,7 @@ impl ImageService {
                         crate::tls::Trust::http_agent_from(
                             Some(Arc::new(tls)),
                             upstream_agent_config(),
-                            HTTP_IDLE_READ,
+                            HTTP_IDLE,
                         )
                     },
                 ),
@@ -364,6 +386,12 @@ impl ImageService {
                 upstream_override: Mutex::new(None),
                 #[cfg(test)]
                 upstream_budget_override: Mutex::new(None),
+                #[cfg(test)]
+                heartbeat_override: Mutex::new(None),
+                #[cfg(test)]
+                grant_wait_override: Mutex::new(None),
+                #[cfg(test)]
+                uploads_finished: AtomicU64::new(0),
             }),
         }))
     }
@@ -386,6 +414,68 @@ impl ImageService {
             .upstream_budget_override
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(budget);
+    }
+
+    /// Tests only: send upload heartbeats this often.
+    #[cfg(test)]
+    pub(crate) fn set_heartbeat_for_test(&self, every: Duration) {
+        *self
+            .inner
+            .heartbeat_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(every);
+    }
+
+    /// Tests only: wait at most `wait` for each upload grant.
+    #[cfg(test)]
+    pub(crate) fn set_grant_wait_for_test(&self, wait: Duration) {
+        *self
+            .inner
+            .grant_wait_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(wait);
+    }
+
+    /// Tests only: how many upload jobs have returned.
+    #[cfg(test)]
+    pub(crate) fn uploads_finished(&self) -> u64 {
+        self.inner.uploads_finished.load(Ordering::SeqCst)
+    }
+
+    /// How long an upload waits for each grant.
+    fn grant_wait(&self) -> Duration {
+        #[cfg(test)]
+        if let Some(wait) = *self
+            .inner
+            .grant_wait_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            return wait;
+        }
+        UPLOAD_GRANT_WAIT
+    }
+
+    /// The heartbeat of one upload of `transfer`.
+    fn heartbeat(&self, transfer: &str) -> UploadHeartbeat<'_> {
+        #[allow(unused_mut)]
+        let mut every = UPLOAD_HEARTBEAT_EVERY;
+        #[cfg(test)]
+        if let Some(test) = *self
+            .inner
+            .heartbeat_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            every = test;
+        }
+        UploadHeartbeat {
+            service: self,
+            transfer_id: transfer.to_owned(),
+            every,
+            reached: std::cell::Cell::new(0),
+            reported: std::cell::Cell::new((Instant::now(), 0)),
+        }
     }
 
     /// The total budget of one upstream fetch (both files).
@@ -1973,7 +2063,7 @@ impl ImageService {
         Ok((bytes, sha))
     }
 
-    fn relay_put(&self, link: &ImageRelayLinkV11, bytes: Vec<u8>) -> Result<(), ImageError> {
+    fn relay_put(&self, link: &ImageRelayLinkV11, bytes: Vec<u8>) -> Result<(), UploadFailure> {
         let url = format!("{}{}", self.inner.relay_base, link.link_id);
         let response = self
             .inner
@@ -1989,12 +2079,10 @@ impl ImageService {
             .timeout_send_body(Some(relay_part_send_budget(bytes.len())))
             .build()
             .send(&bytes[..])
-            .map_err(|_| ImageError::new(SandboxErrorCode::Transport, "relay upload failed"))?;
-        if response.status().as_u16() != 204 {
-            return Err(ImageError::new(
-                SandboxErrorCode::Transport,
-                "relay upload refused",
-            ));
+            .map_err(|e| UploadFailure::transport(&e).at_part(link.part))?;
+        let status = response.status().as_u16();
+        if status != 204 {
+            return Err(UploadFailure::status(status, None, 0).at_part(link.part));
         }
         Ok(())
     }
@@ -2185,11 +2273,11 @@ impl ImageService {
     /// grants within the destination's ACK window).
     fn serve(&self, request: sandbox_protocol::ImageServeRequestV11) {
         let transfer = request.transfer_id.clone();
-        let fail = |code| {
-            self.push(DaemonControlMessage::ImageJobFailed(ImageJobFailedV11 {
-                transfer_id: transfer.clone(),
-                code,
-            }))
+        let fail = |failure: UploadFailure| {
+            failure.log("image serve ended", Some(&transfer));
+            if let Some(frame) = failure.frame(Some(&transfer), None) {
+                self.push(DaemonControlMessage::ImageJobFailed(frame));
+            }
         };
         self.mark_in_use(&request.fingerprint, 1);
         let exported = self.export_unified(&request.fingerprint);
@@ -2197,33 +2285,36 @@ impl ImageService {
             Ok(found) => found,
             Err(code) => {
                 self.mark_in_use(&request.fingerprint, -1);
-                return fail(code);
+                return fail(UploadFailure::new(code, ImageFailureCause::Export));
             }
         };
         let part_size = request.part_size;
         let mut links: VecDeque<ImageRelayLinkV11> = request.links.into_iter().collect();
         let mut next = links.iter().map(|l| l.part).min().unwrap_or(1);
         let keep_going = || !self.cancelled(&transfer);
-        let outcome = (|| -> Result<(), ImageFailureCode> {
+        let no_grant = || UploadFailure::new(ImageFailureCode::Timeout, ImageFailureCause::NoGrant);
+        let outcome = (|| -> Result<(), UploadFailure> {
             // A count past u32 cannot be addressed by relay parts: fail rather
             // than serve a truncated range and report success.
-            let total =
-                u32::try_from(size.div_ceil(part_size).max(1)).map_err(|_| ImageFailureCode::Io)?;
-            let mut file = std::fs::File::open(&path).map_err(|_| ImageFailureCode::Io)?;
+            let total = u32::try_from(size.div_ceil(part_size).max(1)).map_err(|_| {
+                UploadFailure::new(ImageFailureCode::Io, ImageFailureCause::Protocol)
+            })?;
+            let mut file =
+                std::fs::File::open(&path).map_err(|e| UploadFailure::local_io(e.kind()))?;
             let mut idle = 0;
             while next <= total {
                 if self.cancelled(&transfer) {
-                    return Err(ImageFailureCode::Cancelled);
+                    return Err(UploadFailure::refused("cancelled"));
                 }
                 let Some(i) = links.iter().position(|l| l.part == next) else {
                     let wanted: Vec<u32> = (next..=total.min(next + 3)).collect();
                     let granted = self
                         .more_links(&transfer, ImageLinkRole::Source, wanted, &keep_going)
-                        .ok_or(ImageFailureCode::Timeout)?;
+                        .ok_or_else(no_grant)?;
                     if granted.is_empty() {
                         idle += 1;
                         if idle > 600 {
-                            return Err(ImageFailureCode::Timeout);
+                            return Err(no_grant());
                         }
                         std::thread::sleep(Duration::from_millis(500));
                     } else {
@@ -2239,7 +2330,7 @@ impl ImageService {
                 let mut bytes = vec![0u8; len];
                 file.seek(std::io::SeekFrom::Start(u64::from(next - 1) * part_size))
                     .and_then(|_| file.read_exact(&mut bytes))
-                    .map_err(|_| ImageFailureCode::Io)?;
+                    .map_err(|e| UploadFailure::local_io(e.kind()).at_part(next))?;
                 let mut tries = 0;
                 loop {
                     match self.relay_put(&link, bytes.clone()) {
@@ -2248,7 +2339,7 @@ impl ImageService {
                             tries += 1;
                             std::thread::sleep(Duration::from_secs(1));
                         }
-                        Err(_) => return Err(ImageFailureCode::Io),
+                        Err(failure) => return Err(failure),
                     }
                 }
                 next += 1;
@@ -2257,15 +2348,19 @@ impl ImageService {
         })();
         // The export directory goes with its reservation (`_reservation`).
         self.mark_in_use(&request.fingerprint, -1);
-        if let Err(code) = outcome
-            && code != ImageFailureCode::Cancelled
+        // A server cancel is the server's own end: nothing to report.
+        if let Err(failure) = outcome
+            && failure.code != ImageFailureCode::Cancelled
         {
-            fail(code);
+            fail(failure);
         }
     }
 
     /// Multipart upload to the image store: a publish job (`transfer`) or a
     /// capture (`operation`). Encrypts records when the grant carries a key.
+    /// Every end other than success is reported (`image.job.failed`, by
+    /// transfer, else by the capture's operation and attempt) unless the
+    /// server said another upload stores the image.
     pub fn upload(&self, fingerprint: &str, owner: &str, job: UploadJob) {
         let (transfer, capture) = match job {
             UploadJob::Publish(transfer) => (Some(transfer), None),
@@ -2274,39 +2369,66 @@ impl ImageService {
                 attempt,
             } => (None, Some((operation_id, attempt))),
         };
-        let fail = |transfer: &str, code| {
-            self.push(DaemonControlMessage::ImageJobFailed(ImageJobFailedV11 {
-                transfer_id: transfer.to_owned(),
-                code,
-            }))
-        };
+        let _ = owner;
         self.mark_in_use(fingerprint, 1);
-        let exported = self.export_unified(fingerprint);
-        let (path, size, _reservation) = match exported {
-            Ok(found) => found,
-            Err(code) => {
-                self.mark_in_use(fingerprint, -1);
-                if let Some(t) = &transfer {
-                    fail(t, code);
-                }
-                return;
+        let mut transfer_id = transfer.clone();
+        let mut waiters = Vec::new();
+        let outcome = self.upload_job(
+            fingerprint,
+            transfer.as_deref(),
+            capture.as_ref(),
+            &mut transfer_id,
+            &mut waiters,
+        );
+        for key in waiters {
+            self.unregister(&key);
+        }
+        // The export directory went with its reservation (inside the job).
+        self.mark_in_use(fingerprint, -1);
+        if let Err(UploadEnd::Failed(failure)) = outcome {
+            failure.log("image upload ended", transfer_id.as_deref());
+            let capture = capture
+                .as_ref()
+                .map(|(op, attempt)| (op.as_str(), *attempt));
+            if let Some(frame) = failure.frame(transfer_id.as_deref(), capture) {
+                self.push(DaemonControlMessage::ImageJobFailed(frame));
             }
-        };
+        }
+        #[cfg(test)]
+        self.inner.uploads_finished.fetch_add(1, Ordering::SeqCst);
+    }
+
+    /// One upload: export, begin, then each grant's parts. `transfer_id`
+    /// holds the transfer once known; `waiters` collects the keys to drop.
+    fn upload_job(
+        &self,
+        fingerprint: &str,
+        transfer: Option<&str>,
+        capture: Option<&(String, u64)>,
+        transfer_id: &mut Option<String>,
+        waiters: &mut Vec<String>,
+    ) -> Result<(), UploadEnd> {
+        let (path, size, _reservation) = self
+            .export_unified(fingerprint)
+            .map_err(|code| UploadFailure::new(code, ImageFailureCause::Export))?;
+        let protocol =
+            || UploadFailure::new(ImageFailureCode::Rejected, ImageFailureCause::Protocol);
         // A capture waits under its own request id until the server names
         // the transfer in the grant that echoes it (round-3 P2-4).
-        let request_id = capture.as_ref().map(|_| self.next_id("upload"));
-        let key = match (&transfer, &request_id) {
+        let request_id = capture.map(|_| self.next_id("upload"));
+        let key = match (transfer, &request_id) {
             (Some(t), _) => format!("upload:{t}"),
             (None, Some(request)) => format!("upload-req:{request}"),
-            (None, None) => return,
+            (None, None) => return Err(UploadEnd::Silent),
         };
         let mut rx = self.register(&key);
+        waiters.push(key);
         self.push(DaemonControlMessage::ImageUploadBegin(
             ImageUploadBeginV11 {
-                transfer_id: transfer.clone(),
-                operation_id: capture.as_ref().map(|(op, _)| op.clone()),
+                transfer_id: transfer.map(str::to_owned),
+                operation_id: capture.map(|(op, _)| op.clone()),
                 request_id: request_id.clone(),
-                attempt: capture.as_ref().map(|(_, attempt)| *attempt),
+                attempt: capture.map(|(_, attempt)| *attempt),
                 fingerprint: fingerprint.to_owned(),
                 size_bytes: size,
                 unpacked_bytes: None,
@@ -2314,79 +2436,92 @@ impl ImageService {
             },
         ));
         let always = || true;
-        let mut transfer_id = transfer.clone();
-        let outcome = (|| -> Result<(), ImageFailureCode> {
-            let mut file = std::fs::File::open(&path).map_err(|_| ImageFailureCode::Io)?;
-            let mut record_key: Option<crypto::RecordKey> = None;
-            let mut sent_total = 0u64;
-            loop {
-                let mut grant = match wait_for(&rx, Duration::from_secs(300), &always) {
-                    Some(ServerControlMessage::ImageUploadGrant(grant)) => grant,
-                    Some(ServerControlMessage::ImageJobCancel(_)) => {
-                        return Err(ImageFailureCode::Cancelled);
-                    }
-                    _ => return Err(ImageFailureCode::Timeout),
-                };
-                if transfer_id.is_none() {
-                    if grant.request_id != request_id {
-                        return Err(ImageFailureCode::Rejected);
-                    }
-                    // Capture: re-key the waiter by the transfer the server opened.
-                    self.unregister(&key);
-                    rx = self.register(&format!("upload:{}", grant.transfer_id));
-                    transfer_id = Some(grant.transfer_id.clone());
+        let mut file = std::fs::File::open(&path).map_err(|e| UploadFailure::local_io(e.kind()))?;
+        let mut record_key: Option<crypto::RecordKey> = None;
+        let mut heartbeat = transfer.map(|t| self.heartbeat(t));
+        let mut sent_total = 0u64;
+        loop {
+            let mut grant = match wait_for(&rx, self.grant_wait(), &always) {
+                Some(ServerControlMessage::ImageUploadGrant(grant)) => grant,
+                Some(ServerControlMessage::ImageJobCancel(cancel)) => {
+                    return Err(UploadEnd::cancelled(&cancel.reason));
                 }
-                if let Some(e) = grant.encryption.as_mut() {
-                    // The data key leaves the frame at once (wiped on drop).
-                    let text = crypto::take_grant_key(e);
-                    record_key = Some(
-                        crypto::RecordKey::from_base64(&text)
-                            .map_err(|_| ImageFailureCode::Rejected)?,
-                    );
+                _ => {
+                    return Err(UploadFailure::new(
+                        ImageFailureCode::Timeout,
+                        ImageFailureCause::NoGrant,
+                    )
+                    .into());
                 }
-                let (reported, sent) = self.put_parts(
+            };
+            if transfer_id.is_none() {
+                if grant.request_id != request_id {
+                    return Err(protocol().into());
+                }
+                // Capture: re-key the waiter by the transfer the server opened.
+                let key = format!("upload:{}", grant.transfer_id);
+                rx = self.register(&key);
+                waiters.push(key);
+                *transfer_id = Some(grant.transfer_id.clone());
+                heartbeat = Some(self.heartbeat(&grant.transfer_id));
+            }
+            let tid = transfer_id.clone().ok_or_else(protocol)?;
+            if let Some(e) = grant.encryption.as_mut() {
+                // The data key leaves the frame at once (wiped on drop).
+                let text = crypto::take_grant_key(e);
+                record_key = Some(crypto::RecordKey::from_base64(&text).map_err(|_| protocol())?);
+            }
+            let stop = || self.cancelled(&tid);
+            let (reported, sent) = self
+                .put_parts(
                     &mut file,
                     size,
                     grant.part_size,
                     &grant.parts,
                     record_key.as_ref(),
                     None,
-                    &|| false,
-                )?;
-                sent_total += sent;
-                let stored_size = if record_key.is_some() {
-                    sandbox_protocol::encrypted_image_len(size)
-                } else {
-                    size
-                };
-                let tid = transfer_id.clone().ok_or(ImageFailureCode::Io)?;
-                for chunk in reported.chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX) {
-                    self.push(DaemonControlMessage::ImageUploadParts(
-                        ImageUploadPartsV11 {
-                            transfer_id: tid.clone(),
-                            parts: chunk.to_vec(),
+                    &stop,
+                    heartbeat.as_ref(),
+                )
+                .map_err(|failure| {
+                    if failure.code == ImageFailureCode::Cancelled {
+                        // The server cancelled the transfer: its reason is
+                        // waiting on this transfer's receiver.
+                        let reason = rx.try_iter().find_map(|frame| match frame {
+                            ServerControlMessage::ImageJobCancel(cancel) => Some(cancel.reason),
+                            _ => None,
+                        });
+                        return UploadEnd::cancelled(reason.as_deref().unwrap_or("cancelled"));
+                    }
+                    let failure = match failure.http_status {
+                        Some(403) => UploadFailure {
+                            part: failure.part,
+                            ..UploadFailure::status(403, Some(grant.expires_at_unix_ms), now_ms())
                         },
-                    ));
-                }
-                if sent_total >= stored_size {
-                    self.push(DaemonControlMessage::ImageUploadComplete(
-                        ImageTransferRefV11 { transfer_id: tid },
-                    ));
-                    return Ok(());
-                }
+                        _ => failure,
+                    };
+                    failure.into()
+                })?;
+            sent_total += sent;
+            let stored_size = if record_key.is_some() {
+                sandbox_protocol::encrypted_image_len(size)
+            } else {
+                size
+            };
+            for chunk in reported.chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX) {
+                self.push(DaemonControlMessage::ImageUploadParts(
+                    ImageUploadPartsV11 {
+                        transfer_id: tid.clone(),
+                        parts: chunk.to_vec(),
+                    },
+                ));
             }
-        })();
-        if let Some(t) = &transfer_id {
-            self.unregister(&format!("upload:{t}"));
-        }
-        self.unregister(&key);
-        // The export directory goes with its reservation (`_reservation`).
-        self.mark_in_use(fingerprint, -1);
-        let _ = owner;
-        if let (Err(code), Some(t)) = (outcome, transfer_id)
-            && code != ImageFailureCode::Cancelled
-        {
-            fail(&t, code);
+            if sent_total >= stored_size {
+                self.push(DaemonControlMessage::ImageUploadComplete(
+                    ImageTransferRefV11 { transfer_id: tid },
+                ));
+                return Ok(());
+            }
         }
     }
 
@@ -2394,8 +2529,9 @@ impl ImageService {
     /// offloads: read each granted part (whole sealed
     /// records when keyed), pace it through `limit`, PUT it to its presigned
     /// URL and collect its ETag. `stop` is checked before every part (kill
-    /// and reconnect preempt a disk upload). Returns the parts and the bytes
-    /// sent.
+    /// and reconnect preempt a disk upload); a stop ends with code
+    /// `Cancelled`. Bytes are counted through the request body into
+    /// `heartbeat`. Returns the parts and the bytes sent.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn put_parts(
         &self,
@@ -2406,43 +2542,89 @@ impl ImageService {
         key: Option<&crypto::RecordKey>,
         limit: Option<&super::offload::Bandwidth>,
         stop: &dyn Fn() -> bool,
-    ) -> Result<(Vec<ImageUploadedPartV11>, u64), ImageFailureCode> {
+        heartbeat: Option<&UploadHeartbeat<'_>>,
+    ) -> Result<(Vec<ImageUploadedPartV11>, u64), UploadFailure> {
         let mut reported = Vec::new();
         let mut sent = 0u64;
         for part in parts {
             if stop() {
-                return Err(ImageFailureCode::Cancelled);
+                return Err(UploadFailure::refused("cancelled"));
             }
-            let body = read_stored_part(file, size, part_size, part.n, key)
-                .map_err(|_| ImageFailureCode::Io)?;
-            if body.len() as u64 != part.size_bytes {
-                return Err(ImageFailureCode::Rejected);
+            let result = self.put_part(file, size, part_size, part, key, limit, stop, heartbeat);
+            match result {
+                Ok(etag) => {
+                    sent += part.size_bytes;
+                    reported.push(ImageUploadedPartV11 { n: part.n, etag });
+                }
+                Err(failure) => {
+                    let failure = failure.at_part(part.n);
+                    if failure.code != ImageFailureCode::Cancelled {
+                        failure.log(
+                            "image store part upload failed",
+                            heartbeat.map(|h| h.transfer_id.as_str()),
+                        );
+                    }
+                    return Err(failure);
+                }
             }
-            if let Some(limit) = limit
-                && !limit.pace(body.len() as u64, stop)
-            {
-                return Err(ImageFailureCode::Cancelled);
-            }
-            let response = self
-                .inner
-                .http
-                .put(&part.url)
-                .header("Content-Type", "application/octet-stream")
-                .send(&body[..])
-                .map_err(|_| ImageFailureCode::Io)?;
-            if response.status().as_u16() != 200 {
-                return Err(ImageFailureCode::Io);
-            }
-            let etag = response
-                .headers()
-                .get("etag")
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned)
-                .ok_or(ImageFailureCode::Io)?;
-            reported.push(ImageUploadedPartV11 { n: part.n, etag });
-            sent += body.len() as u64;
         }
         Ok((reported, sent))
+    }
+
+    /// PUT one part; its ETag.
+    #[allow(clippy::too_many_arguments)]
+    fn put_part(
+        &self,
+        file: &mut std::fs::File,
+        size: u64,
+        part_size: u64,
+        part: &sandbox_protocol::ImageUploadPartUrlV11,
+        key: Option<&crypto::RecordKey>,
+        limit: Option<&super::offload::Bandwidth>,
+        stop: &dyn Fn() -> bool,
+        heartbeat: Option<&UploadHeartbeat<'_>>,
+    ) -> Result<String, UploadFailure> {
+        let body = read_stored_part(file, size, part_size, part.n, key)
+            .map_err(|e| UploadFailure::local_io(e.kind()))?;
+        if body.len() as u64 != part.size_bytes {
+            return Err(UploadFailure::new(
+                ImageFailureCode::Rejected,
+                ImageFailureCause::Protocol,
+            ));
+        }
+        if let Some(limit) = limit
+            && !limit.pace(body.len() as u64, stop)
+        {
+            return Err(UploadFailure::refused("cancelled"));
+        }
+        let mut reader = CountingBody {
+            bytes: &body,
+            pos: 0,
+            // Where this part starts in the stored object.
+            base: u64::from(part.n - 1).saturating_mul(part_size),
+            heartbeat,
+        };
+        let response = self
+            .inner
+            .http
+            .put(&part.url)
+            .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", body.len().to_string())
+            .config()
+            .timeout_recv_response(Some(PUT_RESPONSE_WAIT))
+            .build()
+            .send(ureq::SendBody::from_reader(&mut reader))
+            .map_err(|e| UploadFailure::transport(&e))?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(UploadFailure::status(status, None, 0));
+        }
+        response
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .ok_or_else(|| UploadFailure::new(ImageFailureCode::Io, ImageFailureCause::Protocol))
     }
 
     /// Queue a frame for the server (disk offload frames share the image
@@ -2714,6 +2896,60 @@ impl ImageService {
 pub enum UploadJob {
     Publish(String),
     Capture { operation_id: String, attempt: u64 },
+}
+
+/// Liveness of one upload: the byte offset reached in the stored object
+/// (monotonic within the transfer: a part sent again never moves it back),
+/// counted through the request bodies and sent as `image.upload.progress` at
+/// most every `every` and only when it advanced.
+pub(crate) struct UploadHeartbeat<'a> {
+    service: &'a ImageService,
+    transfer_id: String,
+    every: Duration,
+    reached: std::cell::Cell<u64>,
+    /// When the last heartbeat went, and the offset it carried.
+    reported: std::cell::Cell<(Instant, u64)>,
+}
+
+impl UploadHeartbeat<'_> {
+    fn reach(&self, offset: u64) {
+        let reached = self.reached.get().max(offset);
+        self.reached.set(reached);
+        let (at, last) = self.reported.get();
+        if reached > last && at.elapsed() >= self.every {
+            self.reported.set((Instant::now(), reached));
+            self.service.push(DaemonControlMessage::ImageUploadProgress(
+                sandbox_protocol::ImageUploadProgressV11 {
+                    transfer_id: self.transfer_id.clone(),
+                    bytes_sent: reached,
+                },
+            ));
+        }
+    }
+}
+
+/// A part body that reports the stored-object offset the transport has
+/// taken from it.
+struct CountingBody<'a, 'h> {
+    bytes: &'a [u8],
+    pos: usize,
+    base: u64,
+    heartbeat: Option<&'a UploadHeartbeat<'h>>,
+}
+
+impl std::io::Read for CountingBody<'_, '_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let rest = self.bytes.get(self.pos..).unwrap_or_default();
+        let n = rest.len().min(buf.len());
+        buf[..n].copy_from_slice(&rest[..n]);
+        self.pos += n;
+        if let Some(heartbeat) = self.heartbeat
+            && n > 0
+        {
+            heartbeat.reach(self.base.saturating_add(self.pos as u64));
+        }
+        Ok(n)
+    }
 }
 
 /// On-disk bytes of a staging file or directory (one level of files).

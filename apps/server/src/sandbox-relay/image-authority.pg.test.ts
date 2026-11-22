@@ -12,7 +12,11 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 
 import { randomBytes, randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
-import { encryptedImageLength } from "@wssp/sandbox-contracts";
+import {
+  encryptedImageLength,
+  IMAGE_S3_PART_BYTES,
+  IMAGE_UPLOAD_PARTS_MAX,
+} from "@wssp/sandbox-contracts";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@wssp/db", async () => ({
@@ -54,6 +58,12 @@ const fakeS3 = vi.hoisted(() => ({
   listed: [] as Array<{ n: number; size: number; etag: string }>,
   /** Thrown by the next Complete (then cleared). */
   completeError: null as unknown,
+  /** Thrown by the next ListParts / UploadPart presign (then cleared). */
+  listError: null as unknown,
+  presignError: null as unknown,
+  /** Runs inside the next ListParts (then cleared): a test acts while the
+   * server waits on S3. */
+  onList: null as (() => void) | null,
 }));
 vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
   const real = await importOriginal<typeof import("@wssp/api/sandbox/image-store/s3")>();
@@ -63,10 +73,20 @@ vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
       fakeS3.calls.push("create");
       return (await fakeS3.created.shift()) ?? "upload-1";
     },
-    presignUploadPart: async (_key: string, upload: string, n: number) =>
-      `https://s3.example.test/part?upload=${upload}&n=${n}`,
+    presignUploadPart: async (_key: string, upload: string, n: number) => {
+      const error = fakeS3.presignError;
+      fakeS3.presignError = null;
+      if (error) throw error;
+      return `https://s3.example.test/part?upload=${upload}&n=${n}`;
+    },
     listParts: async (_key: string, upload: string) => {
       fakeS3.calls.push(`list:${upload}`);
+      const during = fakeS3.onList;
+      fakeS3.onList = null;
+      during?.();
+      const error = fakeS3.listError;
+      fakeS3.listError = null;
+      if (error) throw error;
       return fakeS3.listed;
     },
     completeMultipart: async (_key: string, upload: string) => {
@@ -109,7 +129,9 @@ const {
   handleImageUploadBegin,
   handleImageUploadComplete,
   handleImageUploadParts,
+  handleImageUploadProgress,
 } = await import("./image-handlers");
+const { finalizeCapture } = await import("@wssp/api/sandbox/image-store/captures");
 const { unwrapDataKey } = await import("@wssp/api/sandbox/image-store/s3");
 
 const FEATURES = {
@@ -125,6 +147,8 @@ const FEATURES = {
     captureStorageMarkers: [],
   },
 };
+const range = (first: number, last: number) =>
+  Array.from({ length: last - first + 1 }, (_, i) => first + i);
 const fpOf = () => `sha256:${(randomUUID() + randomUUID()).replaceAll("-", "").slice(0, 64)}`;
 
 async function launchHost(userId: string, slug: string) {
@@ -622,6 +646,8 @@ describe("each upload owns an immutable session (round-5 P2-2)", () => {
       calls: [],
       listed: [],
       completeError: null,
+      listError: null,
+      presignError: null,
     });
   });
   function encrypted() {
@@ -801,9 +827,657 @@ describe("each upload owns an immutable session (round-5 P2-2)", () => {
           { type: "image.job.cancel", transferId: grant.transferId, reason: "store_unavailable" },
         ]);
         expect(done.verified).toEqual([]);
-        expect(artifact.state).toBe("FAILED");
+        expect(artifact).toMatchObject({
+          state: "FAILED",
+          failureDetail: "store_complete_failed",
+        });
         expect(fakeS3.calls).toContain("abort:upload-outage");
+        // The whole upload ends with the cause: never COMPLETE beside a
+        // FAILED artifact, and the waiting capture records it.
+        expect(
+          await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+            where: { id: grant.transferId },
+          }),
+        ).toMatchObject({ state: "FAILED", endReason: "store_complete_failed" });
+        expect(
+          await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+            where: { transferId: grant.transferId },
+          }),
+        ).toMatchObject({ state: "ABORTED", endReason: "store_complete_failed" });
+        expect(
+          await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+            where: { operationId: op.id },
+          }),
+        ).toMatchObject({ errorDetail: "store_complete_failed" });
       }
     }
+  });
+});
+
+describe("capture upload failures end with their cause (I1-I4)", () => {
+  afterEach(() => {
+    Object.assign(fakeS3, {
+      on: false,
+      master: null,
+      created: [],
+      calls: [],
+      listed: [],
+      completeError: null,
+      listError: null,
+      presignError: null,
+      onList: null,
+    });
+  });
+
+  /** A recorded capture (STORING) whose begin was granted: its transfer. */
+  async function begun(f: F) {
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    const frame = begin(op.id, 1);
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: {
+        fingerprint: frame.fingerprint,
+        sizeBytes: 4096n,
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    const { ctx, replies } = frameCtx(f);
+    await handleImageUploadBegin(ctx, frame);
+    const grant = replies.at(-1) as { type: string; transferId: string };
+    expect(grant.type).toBe("image.upload.grant");
+    return { op, fingerprint: frame.fingerprint, transferId: grant.transferId };
+  }
+  const captureOf = (operationId: string) =>
+    db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } });
+
+  it("image.job.failed on a capture upload ends session, artifact, multipart and capture with the cause", async () => {
+    const f = await fixture();
+    const { op, fingerprint, transferId } = await begun(f);
+    const { ctx, replies } = frameCtx(f);
+    await handleImageFailure(ctx, {
+      type: "image.job.failed",
+      transferId,
+      code: "timeout",
+      cause: "stalled",
+      part: 1,
+    });
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    expect(session).toMatchObject({
+      state: "ABORTED",
+      liveArtifactId: null,
+      endReason: "upload_stalled",
+      uploadId: null,
+    });
+    expect(fakeS3.calls).toContain("abort:upload-1");
+    expect(
+      await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+        where: { id: session.artifactId! },
+      }),
+    ).toMatchObject({ state: "FAILED", failureDetail: "upload_stalled" });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+    ).toMatchObject({ state: "FAILED", endReason: "upload_stalled" });
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: "upload_stalled",
+    });
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: op.id } }),
+    ).toMatchObject({ state: "FAILED", errorCode: "capture_store_failed" });
+    // The failed capture's origin pin is released at once.
+    expect(replies).toContainEqual({
+      type: "image.release",
+      fingerprint,
+      imageOwnerId: f.ownerId,
+      reason: "gc",
+    });
+  });
+
+  it("a store error at completion (ListParts) or presigning ends the upload with its cause, then the capture", async () => {
+    const f = await fixture();
+    for (const stage of ["list", "presign"] as const) {
+      fakeS3.on = true;
+      const op = await capture(f, 1);
+      const frame = begin(op.id, 1);
+      await db.inspect.sandboxTemplateCapture.update({
+        where: { operationId: op.id },
+        data: {
+          fingerprint: frame.fingerprint,
+          sizeBytes: 4096n,
+          capturedAt: new Date(),
+          state: "STORING",
+        },
+      });
+      const { ctx, replies } = frameCtx(f);
+      const upload = `upload-${stage}`;
+      fakeS3.created.push(upload);
+      let transferId: string;
+      const detail = stage === "list" ? "store_list_failed" : "store_unavailable";
+      if (stage === "presign") {
+        // The first grant's presign throws: no grant, the begin is refused.
+        fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
+          name: "CredentialsProviderError",
+        });
+        await handleImageUploadBegin(ctx, frame);
+        transferId = (
+          await db.inspect.sandboxImageTransfer.findFirstOrThrow({
+            where: { operationId: op.id },
+          })
+        ).id;
+        expect(replies).toEqual([
+          {
+            type: "image.job.cancel",
+            transferId,
+            reason: "store_unavailable",
+            requestId: frame.requestId,
+          },
+        ]);
+      } else {
+        await handleImageUploadBegin(ctx, frame);
+        transferId = (replies.at(-1) as { transferId: string }).transferId;
+        fakeS3.listError = Object.assign(new Error("SlowDown"), { name: "SlowDown" });
+        const verified: string[] = [];
+        await handleImageUploadComplete(
+          ctx,
+          { type: "image.upload.complete", transferId },
+          async (id) => {
+            verified.push(id);
+          },
+        );
+        expect(verified).toEqual([]);
+        expect(replies.at(-1)).toEqual({
+          type: "image.job.cancel",
+          transferId,
+          reason: "store_list_failed",
+        });
+      }
+      const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+        where: { transferId },
+      });
+      expect(session).toMatchObject({ state: "ABORTED", endReason: detail, uploadId: null });
+      expect(fakeS3.calls).toContain(`abort:${upload}`);
+      expect(
+        await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+          where: { id: session.artifactId! },
+        }),
+      ).toMatchObject({ state: "FAILED", failureDetail: detail });
+      expect(
+        await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+      ).toMatchObject({ state: "FAILED", endReason: detail });
+      // The capture records the cause at once and fails with it on the
+      // next finalize; the build then reads it (decide: build_store_failed).
+      expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: detail });
+      expect(await finalizeCapture(op.id)).toMatchObject({ kind: "failed" });
+      expect(await captureOf(op.id)).toMatchObject({
+        state: "FAILED",
+        errorCode: "capture_store_failed",
+        errorDetail: detail,
+      });
+    }
+  });
+
+  it("a store error presigning the next window ends the upload with its cause, then the capture", async () => {
+    const f = await fixture();
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    // 65 parts: the first grant covers 64, the continuation the last one.
+    const sizeBytes = IMAGE_UPLOAD_PARTS_MAX * IMAGE_S3_PART_BYTES + 4096;
+    const frame = { ...begin(op.id, 1), sizeBytes };
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: {
+        fingerprint: frame.fingerprint,
+        sizeBytes: BigInt(sizeBytes),
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    const { ctx, replies } = frameCtx(f);
+    await handleImageUploadBegin(ctx, frame);
+    const grant = replies[0] as { type: string; transferId: string; parts: { n: number }[] };
+    expect(grant).toMatchObject({ type: "image.upload.grant", requestId: frame.requestId });
+    expect(grant.parts.map((p) => p.n)).toEqual(range(1, IMAGE_UPLOAD_PARTS_MAX));
+    const { transferId } = grant;
+    fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
+      name: "CredentialsProviderError",
+    });
+    await handleImageUploadParts(ctx, {
+      type: "image.upload.parts",
+      transferId,
+      parts: range(1, IMAGE_UPLOAD_PARTS_MAX).map((n) => ({ n, etag: `"e${n}"` })),
+    });
+    expect(replies).toEqual([
+      grant,
+      { type: "image.job.cancel", transferId, reason: "store_unavailable" },
+    ]);
+    expect(await uploadRows(op.id, transferId)).toEqual({
+      transfer: ["FAILED", "store_unavailable"],
+      session: ["ABORTED", "store_unavailable", null],
+      artifact: { state: "FAILED", failureDetail: "store_unavailable" },
+      capture: { state: "STORING", errorCode: null, errorDetail: "store_unavailable" },
+    });
+    expect(fakeS3.calls).toEqual(["create", "abort:upload-1"]);
+    expect(await finalizeCapture(op.id)).toMatchObject({ kind: "failed" });
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: "store_unavailable",
+    });
+  });
+
+  it("a completion whose connection is superseded during ListParts changes nothing", async () => {
+    const f = await fixture();
+    // Valid parts, invalid parts and a ListParts error: each would end or
+    // claim the upload from the current connection.
+    for (const outcome of ["valid", "invalid", "error"] as const) {
+      const { op, transferId } = await begun(f);
+      const before = await uploadRows(op.id, transferId);
+      expect(before.transfer).toEqual(["OPEN", null]);
+      let current = true;
+      const { ctx, replies } = frameCtx(f);
+      const sender = { ...ctx.sender, isCurrent: () => current };
+      fakeS3.listed = outcome === "invalid" ? [] : [{ n: 1, size: 4096, etag: '"e1"' }];
+      if (outcome === "error")
+        fakeS3.listError = Object.assign(new Error("SlowDown"), { name: "SlowDown" });
+      fakeS3.onList = () => {
+        current = false;
+      };
+      fakeS3.calls = [];
+      const verified: string[] = [];
+      await handleImageUploadComplete(
+        { ...ctx, sender },
+        { type: "image.upload.complete", transferId },
+        async (id) => {
+          verified.push(id);
+        },
+      );
+      expect(replies).toEqual([{ type: "image.job.cancel", transferId, reason: "stale_transfer" }]);
+      expect(verified).toEqual([]);
+      expect(fakeS3.calls).toEqual(["list:upload-1"]);
+      expect(await uploadRows(op.id, transferId)).toEqual(before);
+    }
+  });
+
+  it("an operation-ref failure counts only from the capture's host, epoch and attempt", async () => {
+    const f = await fixture();
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: { fingerprint: fpOf(), sizeBytes: 4096n, capturedAt: new Date(), state: "STORING" },
+    });
+    const refused = {
+      type: "image.job.failed" as const,
+      operationId: op.id,
+      attempt: 1,
+      code: "cancelled" as const,
+      cause: "refused" as const,
+      refusal: "image_quota_exceeded",
+    };
+    const base = frameCtx(f).ctx;
+    for (const ctx of [
+      { ...base, sender: { ...base.sender, hostId: f.source.id } },
+      { ...base, sender: { ...base.sender, connectionEpoch: 2 } },
+    ]) {
+      await handleImageFailure(ctx, refused);
+      expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
+    }
+    await handleImageFailure(base, { ...refused, attempt: 2 });
+    expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
+    await handleImageFailure(base, refused);
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: "upload_refused.image_quota_exceeded",
+    });
+  });
+
+  /** Every row of one capture upload, for "nothing changed" checks. */
+  async function uploadRows(operationId: string, transferId: string) {
+    const transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    return {
+      transfer: [transfer.state, transfer.endReason],
+      session: [session.state, session.endReason, session.uploadId],
+      artifact: await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+        where: { id: session.artifactId! },
+        select: { state: true, failureDetail: true },
+      }),
+      capture: await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+        where: { operationId },
+        select: { state: true, errorCode: true, errorDetail: true },
+      }),
+    };
+  }
+
+  it("a stale transfer report (another host, an old epoch, a superseded attempt) changes nothing", async () => {
+    const f = await fixture();
+    const { op, fingerprint, transferId } = await begun(f);
+    // The capture host's availability of this image: a stale split-export
+    // report must not touch it either.
+    const probe = await seedTemplateRevision(db.inspect, {
+      data: {
+        userId: f.ownerId,
+        sandboxHostId: f.dest.id,
+        slug: "split-probe",
+        label: "Split probe",
+        incusFingerprint: fingerprint,
+      },
+    });
+    await db.inspect.sandboxTemplateAvailability.updateMany({
+      where: { revisionId: probe.id, hostId: f.dest.id },
+      data: { imageFormat: "unified" },
+    });
+    const formats = () =>
+      db.inspect.sandboxTemplateAvailability
+        .findMany({
+          where: { userId: f.ownerId, localFingerprint: fingerprint },
+          select: { hostId: true, imageFormat: true },
+        })
+        .then((rows) => rows.map((r) => [r.hostId, r.imageFormat]));
+    expect(await formats()).toEqual([[f.dest.id, "unified"]]);
+    const before = await uploadRows(op.id, transferId);
+    expect(before.transfer).toEqual(["OPEN", null]);
+    const failed = {
+      type: "image.job.failed" as const,
+      transferId,
+      code: "io" as const,
+      cause: "reset" as const,
+    };
+    const split = { ...failed, code: "format_unsupported" as const, cause: "export" as const };
+    // A destination's report: an S3 upload has none, so it never counts,
+    // from the current connection either.
+    const fetchFailed = (code: "io" | "format_unsupported") => ({
+      type: "image.fetch.failed" as const,
+      transferId,
+      fingerprint,
+      code,
+    });
+    const base = frameCtx(f).ctx;
+    for (const ctx of [
+      { ...base, sender: { ...base.sender, hostId: f.source.id } },
+      { ...base, sender: { ...base.sender, connectionEpoch: 2 } },
+      { ...base, sender: { ...base.sender, isCurrent: () => false } },
+      base,
+    ]) {
+      if (ctx !== base) {
+        await handleImageFailure(ctx, failed);
+        await handleImageFailure(ctx, split);
+      }
+      await handleImageFailure(ctx, fetchFailed("io"));
+      await handleImageFailure(ctx, fetchFailed("format_unsupported"));
+      expect(await uploadRows(op.id, transferId)).toEqual(before);
+      expect(await formats()).toEqual([[f.dest.id, "unified"]]);
+    }
+    // The host reconnected (epoch 2): a report on the new connection about
+    // the old connection's transfer is stale too.
+    await db.inspect.sandboxHost.update({
+      where: { id: f.dest.id },
+      data: { connectionEpoch: 2, imageCacheEpoch: 2 },
+    });
+    for (const frame of [failed, split, fetchFailed("io"), fetchFailed("format_unsupported")])
+      await handleImageFailure({ ...base, sender: { ...base.sender, connectionEpoch: 2 } }, frame);
+    expect(await uploadRows(op.id, transferId)).toEqual(before);
+    expect(await formats()).toEqual([[f.dest.id, "unified"]]);
+    await db.inspect.sandboxHost.update({
+      where: { id: f.dest.id },
+      data: { connectionEpoch: 1, imageCacheEpoch: 1 },
+    });
+    // The capture moved on to attempt 2: attempt 1's upload report is stale.
+    await db.inspect.sandboxOperation.update({
+      where: { id: op.id },
+      data: { dispatchAttempt: 2 },
+    });
+    for (const frame of [failed, split, fetchFailed("io"), fetchFailed("format_unsupported")])
+      await handleImageFailure(base, frame);
+    expect(await uploadRows(op.id, transferId)).toEqual(before);
+    expect(await formats()).toEqual([[f.dest.id, "unified"]]);
+    expect(fakeS3.calls.filter((c) => c.startsWith("abort:"))).toEqual([]);
+    // From the current connection and attempt it counts.
+    await db.inspect.sandboxOperation.update({
+      where: { id: op.id },
+      data: { dispatchAttempt: 1 },
+    });
+    await handleImageFailure(base, failed);
+    expect(await uploadRows(op.id, transferId)).toMatchObject({
+      transfer: ["FAILED", "upload_reset"],
+      artifact: { state: "FAILED", failureDetail: "upload_reset" },
+      capture: { state: "FAILED", errorDetail: "upload_reset" },
+    });
+    expect(fakeS3.calls).toContain("abort:upload-1");
+  });
+
+  it("an operation-ref failure ends the upload the server already opened for that attempt", async () => {
+    const f = await fixture();
+    const { op, transferId } = await begun(f);
+    const { ctx } = frameCtx(f);
+    // The grant never reached the daemon: it reports by operation.
+    await handleImageFailure(ctx, {
+      type: "image.job.failed",
+      operationId: op.id,
+      attempt: 1,
+      code: "timeout",
+      cause: "no_grant",
+    });
+    expect(await uploadRows(op.id, transferId)).toEqual({
+      transfer: ["FAILED", "upload_no_grant"],
+      session: ["ABORTED", "upload_no_grant", null],
+      artifact: { state: "FAILED", failureDetail: "upload_no_grant" },
+      capture: {
+        state: "FAILED",
+        errorCode: "capture_store_failed",
+        errorDetail: "upload_no_grant",
+      },
+    });
+    expect(fakeS3.calls).toContain("abort:upload-1");
+  });
+
+  it("a finalize driven by a report tells hosts to stop the uploads it ends", async () => {
+    const f = await fixture();
+    const { op, fingerprint, transferId } = await begun(f);
+    // A second OPEN upload of the same attempt (no session), as a race leaves it.
+    const other = await db.inspect.sandboxImageTransfer.create({
+      data: {
+        userId: f.ownerId,
+        fingerprint,
+        purpose: "CAPTURE_UPLOAD",
+        mode: "S3",
+        sourceHostId: f.dest.id,
+        sourceHostOwnerId: f.ownerId,
+        sourceEpoch: 1,
+        operationId: op.id,
+        dispatchAttempt: 1,
+        sizeBytes: 4096n,
+        partSize: 4096,
+        partCount: 1,
+        expiresAt: new Date(Date.now() + 3_600_000),
+      },
+    });
+    const sent: Array<{ hostId: string; epoch: number; frame: unknown }> = [];
+    const base = frameCtx(f).ctx;
+    const ctx = {
+      ...base,
+      sendTo: (hostId: string, epoch: number, frame: unknown) => {
+        sent.push({ hostId, epoch, frame });
+        return true;
+      },
+    };
+    await handleImageFailure(ctx, {
+      type: "image.job.failed",
+      transferId,
+      code: "io",
+      cause: "http_status",
+      httpStatus: 503,
+      part: 1,
+    });
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
+      errorDetail: "upload_http_503",
+    });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: other.id } }),
+    ).toMatchObject({ state: "FAILED", endReason: "upload_http_503" });
+    expect(sent).toEqual([
+      {
+        hostId: f.dest.id,
+        epoch: 1,
+        frame: { type: "image.job.cancel", transferId: other.id, reason: "upload_http____" },
+      },
+    ]);
+  });
+
+  it("a failed publish upload ends its session, artifact and multipart with the cause and touches no capture; a split export is recorded with it", async () => {
+    const f = await fixture();
+    fakeS3.on = true;
+    const bystander = await capture(f, 1);
+    const publish = async () => {
+      const transfer = await db.inspect.sandboxImageTransfer.create({
+        data: {
+          userId: f.ownerId,
+          fingerprint: f.fingerprint,
+          purpose: "PUBLISH",
+          mode: "S3",
+          sourceHostId: f.source.id,
+          sourceHostOwnerId: f.ownerId,
+          sourceEpoch: 1,
+          sizeBytes: 4096n,
+          partSize: 4096,
+          partCount: 1,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+      const { ctx, replies } = frameCtx(f);
+      const source = { ...ctx, sender: { ...ctx.sender, hostId: f.source.id } };
+      await handleImageUploadBegin(source, {
+        type: "image.upload.begin",
+        transferId: transfer.id,
+        fingerprint: f.fingerprint,
+        sizeBytes: 4096,
+        format: "unified",
+      });
+      expect(replies.at(-1)).toMatchObject({ type: "image.upload.grant" });
+      return { transferId: transfer.id, source };
+    };
+    const first = await publish();
+    await handleImageFailure(first.source, {
+      type: "image.job.failed",
+      transferId: first.transferId,
+      code: "io",
+      cause: "http_status",
+      httpStatus: 503,
+      part: 1,
+    });
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId: first.transferId },
+    });
+    expect(session).toMatchObject({
+      state: "ABORTED",
+      endReason: "upload_http_503",
+      uploadId: null,
+    });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+        where: { id: first.transferId },
+      }),
+    ).toMatchObject({ state: "FAILED", endReason: "upload_http_503" });
+    expect(
+      await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+        where: { id: session.artifactId! },
+      }),
+    ).toMatchObject({ state: "FAILED", failureDetail: "upload_http_503" });
+    expect(fakeS3.calls).toContain("abort:upload-1");
+    expect(await captureOf(bystander.id)).toMatchObject({
+      state: "CAPTURED",
+      errorDetail: null,
+    });
+    // A split image found by the export: never picked as a peer source again.
+    const second = await publish();
+    await handleImageFailure(second.source, {
+      type: "image.job.failed",
+      transferId: second.transferId,
+      code: "format_unsupported",
+      cause: "export",
+    });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+        where: { id: second.transferId },
+      }),
+    ).toMatchObject({ state: "FAILED", endReason: "upload_export" });
+    expect(
+      await db.inspect.sandboxTemplateAvailability.findFirstOrThrow({
+        where: { hostId: f.source.id, localFingerprint: f.fingerprint },
+      }),
+    ).toMatchObject({ imageFormat: "split" });
+  });
+
+  it("heartbeats refresh liveness only when bytes advance, at most every 10 s; silence past 10 min stalls the upload", async () => {
+    const f = await fixture();
+    const { op, transferId } = await begun(f);
+    const { ctx } = frameCtx(f);
+    const row = () =>
+      db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } });
+    // The handler's clock is pinned relative to the recorded progress, so
+    // both sides of the 10 s throttle are exact and no assertion depends on
+    // how fast this test or the database runs (a recent base: the stall
+    // rule below runs on the real clock).
+    const at = new Date();
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transferId },
+      data: { lastProgressAt: at },
+    });
+    const beat = (bytesSent: number, afterMs: number) =>
+      handleImageUploadProgress(
+        ctx,
+        { type: "image.upload.progress", transferId, bytesSent },
+        new Date(at.getTime() + afterMs),
+      );
+    // 9.9 s after the last progress: inside the throttle, nothing is written.
+    await beat(1000, 9_900);
+    expect(await row()).toMatchObject({ lastProgressAt: at, bytesDone: 0n });
+    // 10.1 s after: an advance moves the transfer and its artifact.
+    await beat(1000, 10_100);
+    let moved = await row();
+    expect(moved).toMatchObject({
+      lastProgressAt: new Date(at.getTime() + 10_100),
+      bytesDone: 1000n,
+    });
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    expect(
+      (
+        await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+          where: { id: session.artifactId! },
+        })
+      ).lastProgressAt,
+    ).toEqual(new Date(at.getTime() + 10_100));
+    // A repeated or lower count is no progress, past the throttle or not.
+    for (const bytes of [1000, 500, 0]) await beat(bytes, 60_000);
+    expect(await row()).toMatchObject({
+      lastProgressAt: new Date(at.getTime() + 10_100),
+      bytesDone: 1000n,
+    });
+    // An advance past the object is held to its stored size.
+    await beat(1_000_000, 60_000);
+    moved = await row();
+    expect(moved.bytesDone).toBe(4096n);
+    expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+    // No further progress: ten minutes later it is stalled and ended.
+    const later = new Date(moved.lastProgressAt.getTime() + 11 * 60_000);
+    expect(await finalizeCapture(op.id, later)).toMatchObject({
+      kind: "failed",
+      cancels: [{ transferId, hostId: f.dest.id, epoch: 1, reason: "upload_stalled" }],
+    });
+    expect(await captureOf(op.id)).toMatchObject({ errorDetail: "upload_stalled" });
+    expect(fakeS3.calls).toContain("abort:upload-1");
   });
 });

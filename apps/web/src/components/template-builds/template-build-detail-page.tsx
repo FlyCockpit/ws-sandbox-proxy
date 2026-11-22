@@ -30,6 +30,7 @@ import {
 } from "@/lib/template-build-rules";
 import { orpc } from "@/utils/orpc";
 import {
+  BuildErrorDetailText,
   BuildErrorText,
   BuildPhaseText,
   BuildStatePill,
@@ -322,8 +323,8 @@ function BuildDetail({
             </p>
           ) : null}
           {build.errorDetail ? (
-            <p className="break-all font-mono text-xs text-muted-foreground">
-              {t("templates:builds.errorDetail", { detail: build.errorDetail })}
+            <p className="text-xs text-muted-foreground">
+              <BuildErrorDetailText build={build} />
             </p>
           ) : null}
           {failed && tail.isError ? (

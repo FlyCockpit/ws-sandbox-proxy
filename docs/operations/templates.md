@@ -706,6 +706,57 @@ sandbox into a new revision of its template (or another template you own).
   daemon's cache census reports it) and the daemon deletes the image. An image
   the daemon never recorded is not removed automatically. Run the capture
   again for a revision.
+- **Storing a capture (S3 mode).** After the host result, the capture is
+  **Storing** until its image is **Stored**; the host exports and uploads
+  it. Every upload end the host sees is reported (`image.job.failed`, by
+  transfer, or by operation and attempt when no transfer exists yet: export
+  failure, no grant, a refused begin) with a cause, and the server ends the
+  upload at once, in one transaction under the host's relay fence (a report
+  from another host, an older connection or a superseded attempt changes
+  nothing; an `image.fetch.failed` naming an upload is a destination's report
+  and never counts): session aborted, image **Failed** with that detail, the
+  capture records it; then the multipart upload is aborted and the capture
+  failed. A failure the server sees while serving the host's upload frame
+  (ListParts, invalid parts, a next-window presign) and a completion's claim
+  re-check that same fence first.
+  Every server-side end of an upload (an S3 refusal at begin or a failed
+  presign `store_unavailable`, a failed ListParts `store_list_failed`,
+  invalid parts `upload_invalid`, a failed Complete
+  `store_complete_failed`, the hourly sweep `upload_stale`, the finalizer's
+  own rules below) goes the same way, and the finalizer ends any upload of
+  the capture still open when it fails it, telling the host to stop. The
+  finalizer (every 15 s) fails a waiting capture, first rule wins, all with
+  `capture_store_failed` and a detail:
+  - the host's report: `upload_<cause>` (`upload_stalled`,
+    `upload_timeout`, `upload_reset`, `upload_connect`, `upload_tls`,
+    `upload_url_expired`, `upload_local_io`, `upload_export`,
+    `upload_no_grant`, `upload_protocol`), `upload_http_<status>`, or
+    `upload_refused.<server reason>` (for example
+    `upload_refused.image_quota_exceeded`);
+  - the image failed or was deleted: the image's own failure detail (for
+    example the other upload's cause when this capture's begin was refused
+    `upload_in_progress`), else `store_verify_failed` for a corrupt image,
+    else `store_failed`;
+  - this attempt's upload ended other than complete: `upload_<end reason>`;
+  - no upload of its own (nor another job's live upload of the same image)
+    15 minutes plus 2 minutes per GiB after the result (export and hashing
+    come before any upload): `upload_lost` (a
+    daemon restart mid-upload ends here; the upload is not resumed);
+  - an open upload with no progress for 10 minutes: `upload_stalled` (the
+    server ends it and tells the host to stop; a completion that claimed the
+    upload first wins, and the capture keeps waiting);
+  - the absolute bound: 24 hours after acceptance, the build VM's lease, or
+    the build VM gone: `store_deadline`.
+- **Upload liveness.** A slow upload never fails for slowness: the host
+  sends a heartbeat (`image.upload.progress`, the offset reached in the
+  stored object) at most every 30 s while bytes move, and fails a part only
+  when no byte moves on its socket for 120 s. The server counts a heartbeat
+  only when the offset advanced, at most every 10 s. A capture whose result
+  was recorded is never failed by the build's capture window: its storage
+  outcome decides. A storage cause the host reported before its result (an
+  export failure) also names a `build_capture_failed`. A build that
+  stored nothing ends `build_store_failed` with the capture's detail, shown
+  as a sentence on the build page (an unknown detail is shown raw).
 - Snapshot restore and fork stay unsupported (`UNSUPPORTED_CAPABILITY`).
 
 ## Image store
@@ -748,9 +799,9 @@ session, so two uploads never write the same key.
 - **GC.** An image no live revision, open transfer or in-flight create uses
   is deleted after `IMAGE_GC_GRACE_DAYS` (default 7). A sweeper removes
   objects with no row and multipart uploads older than a day, fails uploads
-  with no progress for a day, and aborts the multipart uploads of ended
-  sessions. Set the bucket lifecycle rule "abort
-  incomplete multipart uploads after 1 day" as well.
+  with no progress for a day (and the image of every live session it ends),
+  and aborts the multipart uploads of ended sessions. Set the bucket
+  lifecycle rule "abort incomplete multipart uploads after 1 day" as well.
 - **Quotas.** `IMAGE_STORE_MAX_GIB_PER_ACCOUNT` (default 50) and
   `IMAGE_DOWNLOADS_PER_HOUR_MAX` (default 120); an administrator can lower
   either per account (**Admin → Users → Image quotas**). **Settings →

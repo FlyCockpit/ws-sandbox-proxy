@@ -48,6 +48,7 @@ import { recordCaptureResult } from "../sandbox/image-store/capture-result";
 import { finalizeCapture } from "../sandbox/image-store/captures";
 import { originImagesToRelease } from "../sandbox/image-store/jobs";
 import { droppedCaptureImageToRelease } from "../sandbox/image-store/references";
+import { endTemplateUpload } from "../sandbox/image-store/store-failure";
 import { lockHostByEpoch } from "../sandbox/relay-fence";
 import { sdkListHosts } from "../sandbox/sdk-reads";
 import { SandboxIntegrityError } from "../sandbox/sensitive-errors";
@@ -476,28 +477,200 @@ describe("S3 storage after a recorded capture (VM lifetime and authority)", () =
     const lease = vm.leaseExpiresAt!;
     expect(lease.getTime()).toBeGreaterThan(Date.now() + 130 * 60_000);
     await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
-    // Before the lease (and within the 2 h store bound): it keeps waiting.
+    // Before the lease (and within the store bound), its upload moving: it
+    // keeps waiting.
     const created = (
       await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: operationId } })
     ).createdAt;
-    expect(
-      await finalizeCapture(operationId, new Date(created.getTime() + 60 * 60_000)),
-    ).toMatchObject({ kind: "waiting" });
-    // A host lease shortened to 30 min after the capture bounds storage there.
+    const at = (minutes: number) => new Date(created.getTime() + minutes * 60_000);
+    const transfer = await liveUpload(f, operationId, at(55));
+    expect(await finalizeCapture(operationId, at(60))).toMatchObject({ kind: "waiting" });
+    // A host lease shortened to 30 min after the capture bounds storage
+    // there, ahead of the 24 h bound and of a still-moving upload.
     await db.inspect.sandbox.update({
       where: { id: sandbox.id },
-      data: { leaseExpiresAtEffective: new Date(created.getTime() + 30 * 60_000) },
+      data: { leaseExpiresAtEffective: at(30) },
     });
-    expect(
-      await finalizeCapture(operationId, new Date(created.getTime() + 31 * 60_000)),
-    ).toMatchObject({ kind: "failed" });
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transfer },
+      data: { lastProgressAt: at(25) },
+    });
+    expect(await finalizeCapture(operationId, at(31))).toMatchObject({ kind: "failed" });
     expect(
       await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } }),
-    ).toMatchObject({ state: "FAILED", errorCode: "capture_store_failed" });
+    ).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: "store_deadline",
+    });
     await advance(f, buildId);
-    expect(await row(buildId)).toMatchObject({ state: "FAILED", errorCode: "build_store_failed" });
+    expect(await row(buildId)).toMatchObject({
+      state: "FAILED",
+      errorCode: "build_store_failed",
+      errorDetail: "store_deadline",
+    });
+  });
+
+  it("a stalled upload fails the capture and, after one advance, the build with its cause", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    const t0 = new Date();
+    const transfer = await liveUpload(f, operationId, t0);
+    expect(await finalizeCapture(operationId, new Date(t0.getTime() + 11 * 60_000))).toMatchObject({
+      kind: "failed",
+      cancels: [{ transferId: transfer, reason: "upload_stalled" }],
+    });
+    // The capture window passed while it was storing: the recorded result's
+    // store failure, not `capture_deadline`, ends the build (S4).
+    await db.inspect.sandboxTemplateBuild.update({
+      where: { id: buildId },
+      data: { captureDeadlineAt: new Date(Date.now() - 60_000) },
+    });
+    await advance(f, buildId);
+    expect(await row(buildId)).toMatchObject({
+      state: "FAILED",
+      errorCode: "build_store_failed",
+      errorDetail: "upload_stalled",
+    });
+  });
+
+  it("a build VM that is gone (deleted or its row missing) ends storage at once with store_deadline", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    const transfer = await liveUpload(f, operationId, new Date());
+    expect(await finalizeCapture(operationId)).toMatchObject({ kind: "waiting" });
+    await db.inspect.sandbox.update({ where: { id: sandbox.id }, data: { state: "DELETED" } });
+    expect(await finalizeCapture(operationId)).toMatchObject({
+      kind: "failed",
+      cancels: [{ transferId: transfer, reason: "store_deadline" }],
+    });
+    expect(
+      await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } }),
+    ).toMatchObject({ errorCode: "capture_store_failed", errorDetail: "store_deadline" });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transfer } }),
+    ).toMatchObject({ state: "FAILED", endReason: "store_deadline" });
+  });
+
+  it("a server-side cause committed while the finalizer decides keeps its detail on the capture and the build (I4)", async () => {
+    imageMode.value = "s3";
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    await daemon.captured(operationId, f.host.id, f.host.connectionEpoch);
+    const transfer = await liveUpload(f, operationId, new Date());
+    expect(await finalizeCapture(operationId)).toMatchObject({ kind: "waiting" });
+    // The VM is gone: the finalizer picks `store_deadline` from the null
+    // detail it read. A server-side end (`upload_invalid`, as
+    // `endServerUpload`) holds the transfer and the capture's evidence,
+    // uncommitted, so the finalizer has read before it commits.
+    await db.inspect.sandbox.update({ where: { id: sandbox.id }, data: { state: "DELETED" } });
+    const serverCommit = db.pauseAt("server", { before: "$transaction.commit" });
+    const server = db.run("server", () =>
+      db.prisma.$transaction((tx) =>
+        endTemplateUpload(tx, { transferId: transfer }, { detail: "upload_invalid" }),
+      ),
+    );
+    await serverCommit.waitReached();
+    const finalizing = db.run("finalizer", () => finalizeCapture(operationId));
+    // The finalizer, past its read, waits on the transfer the server holds.
+    const blocked = await db.waitUntilBlocked("finalizer", { by: "server" });
+    expect(blocked.query).toContain("sandbox_image_transfer");
+    serverCommit.release();
+    expect((await server).ended).toEqual([transfer]);
+    expect(await finalizing).toMatchObject({ kind: "failed" });
+    expect(
+      await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } }),
+    ).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: "upload_invalid",
+    });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transfer } }),
+    ).toMatchObject({ state: "FAILED", endReason: "upload_invalid" });
+    await advance(f, buildId);
+    expect(await row(buildId)).toMatchObject({
+      state: "FAILED",
+      errorCode: "build_store_failed",
+      errorDetail: "upload_invalid",
+    });
+  });
+
+  it("evidence committed while the build settles a capture_deadline failure is the build's detail (I4)", async () => {
+    const f = await buildOwnerFixture(db);
+    const { buildId, sandbox } = await running(f);
+    const operationId = (await toCapture(f, buildId, sandbox.id)).captureOperationId!;
+    const op = await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: operationId } });
+    expect(
+      await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } }),
+    ).toMatchObject({ state: "PENDING", errorDetail: null });
+    // The capture window passed before any host result.
+    await db.inspect.sandboxTemplateBuild.update({
+      where: { id: buildId },
+      data: { captureDeadlineAt: new Date(Date.now() - 60_000) },
+    });
+    // The host's export-failure report holds the capture's evidence,
+    // uncommitted, when the orchestrator reads the capture.
+    const relayCommit = db.pauseAt("relay", { before: "$transaction.commit" });
+    const relay = db.run("relay", () =>
+      db.prisma.$transaction((tx) =>
+        endTemplateUpload(
+          tx,
+          { operationId, attempt: op.dispatchAttempt },
+          { detail: "upload_export" },
+        ),
+      ),
+    );
+    await relayCommit.waitReached();
+    const advancing = db.run("orch", () => advance(f, buildId));
+    // The orchestrator, under the build lock, waits for the capture row.
+    const blocked = await db.waitUntilBlocked("orch", { by: "relay" });
+    expect(blocked.query).toContain("sandbox_template_capture");
+    relayCommit.release();
+    await relay;
+    await advancing;
+    expect(await row(buildId)).toMatchObject({
+      state: "FAILED",
+      errorCode: "build_capture_failed",
+      errorDetail: "upload_export",
+    });
   });
 });
+
+/** The capture's own OPEN upload transfer, last moving at `lastProgressAt`. */
+async function liveUpload(
+  f: Awaited<ReturnType<typeof buildOwnerFixture>>,
+  operationId: string,
+  lastProgressAt: Date,
+) {
+  const op = await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: operationId } });
+  const transfer = await db.inspect.sandboxImageTransfer.create({
+    data: {
+      userId: f.id,
+      fingerprint: `sha256:${"f".repeat(64)}`,
+      purpose: "CAPTURE_UPLOAD",
+      mode: "S3",
+      sourceHostId: f.host.id,
+      sourceHostOwnerId: f.id,
+      sourceEpoch: f.host.connectionEpoch,
+      operationId,
+      dispatchAttempt: op.dispatchAttempt,
+      sizeBytes: 1024n,
+      partSize: 1024,
+      partCount: 1,
+      expiresAt: new Date(Date.now() + 24 * 3_600_000),
+      lastProgressAt,
+    },
+  });
+  return transfer.id;
+}
 
 describe("cancel vs finalizer (pg 4, r3 N22)", () => {
   it("host CAPTURED recorded before the cancel: published, tag moved, SUCCEEDED with cancelRequestedAt kept", async () => {

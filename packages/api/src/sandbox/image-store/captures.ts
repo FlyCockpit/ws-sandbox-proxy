@@ -67,6 +67,14 @@ import {
   hostImageFeatures,
   imageDistributionMode,
 } from "./config";
+import { imageStore } from "./s3";
+import {
+  abortEndedUploads,
+  endTemplateUpload,
+  transferEndDetail,
+  type UploadCancel,
+  type UploadEnd,
+} from "./store-failure";
 
 export { recordCaptureResult } from "./capture-result";
 
@@ -93,10 +101,23 @@ export type CaptureSandboxInput = {
 const ACTIVE_CAPTURE_STATES = ["PENDING", "CAPTURED", "STORING"] as const;
 const CAPTURE_MEMORY_MIB = 1024;
 const TAG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
-const STORE_TIMEOUT_MS = 2 * 3_600_000;
+/** Absolute storage bound: the capture upload transfer's own `expiresAt`. */
+const STORE_TIMEOUT_MS = 24 * 3_600_000;
+/** An upload transfer that reports no progress this long is stalled (I5). */
+export const UPLOAD_STALL_MS = 10 * 60_000;
 
 /**
- * When a capture's storage gives up (`capture_store_failed`): two hours after
+ * How long a recorded capture may go without any upload of its own (export,
+ * hashing, begin and grant included: no liveness exists before begin) before
+ * it is lost (I1): 15 minutes plus two minutes per GiB of image.
+ */
+export function uploadLostAfterMs(sizeBytes: bigint): number {
+  const gib = Number((sizeBytes + 1_073_741_823n) / 1_073_741_824n);
+  return 15 * 60_000 + gib * 2 * 60_000;
+}
+
+/**
+ * When a capture's storage gives up (`capture_store_failed`): 24 hours after
  * the capture was accepted, and for a template build's capture never later
  * than its build VM's lease (server or host-acknowledged deadline, whichever
  * is earlier), and at once when that VM is gone. The upload re-checks the
@@ -469,12 +490,18 @@ async function failCapture(
   tx: Prisma.TransactionClient,
   operationId: string,
   code: "capture_failed" | "capture_store_failed",
+  errorDetail?: string,
 ) {
   await releaseCaptureHold(tx, operationId);
-  await tx.sandboxTemplateCapture.update({
-    where: { operationId },
-    data: { state: "FAILED", errorCode: code, finalizedAt: new Date() },
-  });
+  // Known evidence is never replaced (I4): the detail is coalesced at the
+  // row, so a cause another transaction committed after this finalizer read
+  // the capture (`upload_invalid`, `store_complete_failed`) wins over the
+  // generic one chosen here. The build reads the stored detail.
+  const now = new Date();
+  await tx.$executeRaw`UPDATE sandbox_template_capture SET
+    state = 'FAILED'::"TemplateCaptureState", "errorCode" = ${code}, "finalizedAt" = ${now},
+    "updatedAt" = ${now}, "errorDetail" = COALESCE("errorDetail", ${errorDetail ?? null})
+    WHERE "operationId" = ${operationId}`;
   await tx.sandboxOperation.updateMany({
     where: { id: operationId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
     data: { state: "FAILED", errorCode: code, completedAt: new Date(), progressPhase: null },
@@ -504,8 +531,104 @@ export async function applyCaptureRetention(
 export type FinalizeOutcome =
   | { kind: "finalized"; revisionId: string }
   | { kind: "waiting" }
-  | { kind: "failed"; fingerprint: string | null; hostId: string; ownerId: string }
+  | {
+      kind: "failed";
+      fingerprint: string | null;
+      hostId: string;
+      ownerId: string;
+      /** Uploads the server ended: tell their hosts to stop (I3). */
+      cancels?: UploadCancel[];
+    }
   | { kind: "skipped" };
+
+type StoringCapture = {
+  operationId: string;
+  errorDetail: string | null;
+  capturedAt: Date | null;
+  sizeBytes: bigint | null;
+};
+
+type StoringFailure = {
+  detail: string;
+  /** The OPEN upload transfer this rule ends (`upload_stalled`). */
+  stalled?: string;
+};
+
+/** Artifact states whose upload will never store (the capture fails). */
+const ARTIFACT_ENDED = ["CORRUPT", "FAILED", "DELETED"];
+
+/**
+ * The storage wait's failure rules (I1), first match wins; null while the
+ * capture may keep waiting. The upload-liveness rules apply only where the
+ * host uploads (S3 mode): a recorded cause (host report or server end of
+ * this capture's own upload), an ended artifact (its own failure detail,
+ * else CORRUPT → `store_verify_failed`, else `store_failed`), an ended
+ * upload of this attempt, no upload at all past `uploadLostAfterMs`, an
+ * upload silent past `UPLOAD_STALL_MS`, then the absolute deadline.
+ */
+async function storingFailure(
+  tx: Prisma.TransactionClient,
+  input: {
+    capture: StoringCapture;
+    op: { createdAt: Date; dispatchAttempt: number };
+    artifact: { id: string; state: string; failureDetail: string | null } | null;
+    s3: boolean;
+    deadline: number;
+    now: Date;
+  },
+): Promise<StoringFailure | null> {
+  const { capture, artifact, now } = input;
+  if (capture.errorDetail) return { detail: capture.errorDetail };
+  // Never inferred from a transfer this capture does not own: a capture
+  // refused `upload_in_progress` reads the other upload's recorded cause.
+  if (artifact && ARTIFACT_ENDED.includes(artifact.state))
+    return {
+      detail:
+        artifact.failureDetail ??
+        (artifact.state === "CORRUPT" ? "store_verify_failed" : "store_failed"),
+    };
+  const own = input.s3
+    ? await tx.sandboxImageTransfer.findMany({
+        where: {
+          operationId: capture.operationId,
+          purpose: "CAPTURE_UPLOAD",
+          dispatchAttempt: input.op.dispatchAttempt,
+        },
+        select: {
+          id: true,
+          state: true,
+          endReason: true,
+          lastProgressAt: true,
+        },
+        orderBy: { createdAt: "desc" },
+        take: 8,
+      })
+    : [];
+  const ended = own.find((t) => t.state !== "OPEN" && t.state !== "COMPLETE");
+  if (input.s3) {
+    const open = own.find((t) => t.state === "OPEN");
+    const completed = own.some((t) => t.state === "COMPLETE") || artifact?.state === "VERIFYING";
+    if (open) {
+      if (open.lastProgressAt.getTime() < now.getTime() - UPLOAD_STALL_MS)
+        return { detail: "upload_stalled", stalled: open.id };
+    } else if (!completed) {
+      if (ended) return { detail: transferEndDetail(ended.endReason) };
+      // Another job's live upload of the same image (the begin was refused
+      // `upload_in_progress`) is the one this capture waits for.
+      const other = artifact
+        ? await tx.sandboxImageTransfer.findFirst({
+            where: { artifactId: artifact.id, state: "OPEN" },
+            select: { id: true },
+          })
+        : null;
+      const since = (capture.capturedAt ?? input.op.createdAt).getTime();
+      if (!other && now.getTime() - since > uploadLostAfterMs(capture.sizeBytes ?? 0n))
+        return { detail: "upload_lost" };
+    }
+  }
+  if (now.getTime() > input.deadline) return { detail: "store_deadline" };
+  return null;
+}
 
 /**
  * Finalizer (scheduler + 15 s sweep): owner admission → owner placement →
@@ -530,7 +653,10 @@ export async function finalizeCapture(
   if (!head || !["CAPTURED", "STORING", "PENDING"].includes(head.state)) return { kind: "skipped" };
   // The build id is immutable: read before any lock, so the build row is
   // locked at its place (owner → placement → template → build → H, §3.4).
+  const ends: UploadEnd[] = [];
   const outcome = await sandboxOutboxTransaction(async (tx) => {
+    // Only the committed attempt's ended uploads are aborted after commit.
+    ends.length = 0;
     await lockOwnerForAdmission(tx, head.userId);
     await lockOwnerPlacement(tx, head.userId);
     const [template] = await tx.$queryRaw<
@@ -545,14 +671,35 @@ export async function finalizeCapture(
     const build = head.buildId ? await lockFinalizingBuild(tx, head.buildId, head.userId) : null;
     await tx.$queryRaw`SELECT id FROM sandbox_host WHERE id = ${head.hostId} FOR UPDATE`;
     await tx.$queryRaw`SELECT id FROM sandbox_instance WHERE id = ${head.sandboxId} FOR NO KEY UPDATE`;
-    const [op] = await tx.$queryRaw<{ state: string; createdAt: Date }[]>`
-      SELECT state::text AS state, "createdAt" FROM sandbox_mutation_operation
+    const [op] = await tx.$queryRaw<{ state: string; createdAt: Date; dispatchAttempt: number }[]>`
+      SELECT state::text AS state, "createdAt", "dispatchAttempt" FROM sandbox_mutation_operation
       WHERE id = ${operationId} FOR UPDATE`;
     const capture = await tx.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } });
     if (!op) return { kind: "skipped" } as const;
+    // Re-checked under the locks: a concurrent finalize already settled it.
+    if (!(ACTIVE_CAPTURE_STATES as readonly string[]).includes(capture.state))
+      return { kind: "skipped" } as const;
+    // Any OPEN upload of this attempt ends with the capture (I3); the
+    // capture's own cause is written by `failCapture`, not as evidence.
+    const endUploads = async (detail: string, target?: { transferId: string }) => {
+      const end = await endTemplateUpload(
+        tx,
+        target ?? { operationId, attempt: op.dispatchAttempt },
+        { detail, evidence: false, notifyHost: true },
+      );
+      ends.push(end);
+      return end;
+    };
+    const cancelsOf = () => {
+      const cancels = ends.flatMap((end) => end.cancels);
+      return cancels.length > 0 ? { cancels } : {};
+    };
     // A host that failed or lost the capture: release the hold, nothing else.
+    // A storage cause the host already reported (an export failure that
+    // drained before its result) stays on the row for the build.
     if (capture.state === "PENDING") {
       if (["FAILED", "CANCELLED", "UNKNOWN_OUTCOME"].includes(op.state)) {
+        await endUploads("operation_ended");
         await releaseCaptureHold(tx, operationId);
         await tx.sandboxTemplateCapture.update({
           where: { operationId },
@@ -563,8 +710,11 @@ export async function finalizeCapture(
           fingerprint: null,
           hostId: capture.hostId,
           ownerId: capture.userId,
+          ...cancelsOf(),
         } as const;
       }
+      // Rotate: the sweep's oldest-first page never starves on waiters.
+      await tx.sandboxTemplateCapture.update({ where: { operationId }, data: { updatedAt: now } });
       return { kind: "waiting" } as const;
     }
     const fingerprint = capture.fingerprint;
@@ -575,12 +725,14 @@ export async function finalizeCapture(
       !capture.sizeBytes ||
       !capture.architecture
     ) {
+      await endUploads("operation_ended");
       await failCapture(tx, operationId, "capture_failed");
       return {
         kind: "failed",
         fingerprint,
         hostId: capture.hostId,
         ownerId: capture.userId,
+        ...cancelsOf(),
       } as const;
     }
     // A build that already ended never gets a revision. CANCELLING does
@@ -602,12 +754,14 @@ export async function finalizeCapture(
         capture.buildCancelledAt !== null ||
         capture.buildAttempt !== build.captureAttempt)
     ) {
+      await endUploads("operation_ended");
       await failCapture(tx, operationId, "capture_failed");
       return {
         kind: "failed",
         fingerprint,
         hostId: capture.hostId,
         ownerId: capture.userId,
+        ...cancelsOf(),
       } as const;
     }
     const mode = imageDistributionMode();
@@ -615,10 +769,9 @@ export async function finalizeCapture(
     if (mode === "s3" || foreign) {
       const artifact = await tx.sandboxImageArtifact.findUnique({
         where: { userId_fingerprint: { userId: capture.userId, fingerprint } },
-        select: { state: true },
+        select: { id: true, state: true, failureDetail: true },
       });
       if (artifact?.state !== "STORED") {
-        const failedStore = artifact && ["CORRUPT", "FAILED", "DELETED"].includes(artifact.state);
         // A build capture's VM (locked above); a missing row counts as gone.
         const buildVm = capture.buildId
           ? ((await tx.sandbox.findFirst({
@@ -626,22 +779,40 @@ export async function finalizeCapture(
               select: { state: true, leaseExpiresAt: true, leaseExpiresAtEffective: true },
             })) ?? "missing")
           : null;
-        if (failedStore || now.getTime() > captureStoreDeadline(op.createdAt, buildVm)) {
-          await failCapture(tx, operationId, "capture_store_failed");
+        const failure = await storingFailure(tx, {
+          capture,
+          op,
+          artifact,
+          s3: mode === "s3",
+          deadline: captureStoreDeadline(op.createdAt, buildVm),
+          now,
+        });
+        // Only an upload this call actually ends is stalled: a completion
+        // that claimed its session first wins, and the capture waits.
+        const stalledEnded = failure?.stalled
+          ? (await endUploads(failure.detail, { transferId: failure.stalled })).ended.includes(
+              failure.stalled,
+            )
+          : true;
+        if (failure && stalledEnded) {
+          await endUploads(failure.detail);
+          await failCapture(tx, operationId, "capture_store_failed", failure.detail);
           return {
             kind: "failed",
             fingerprint,
             hostId: capture.hostId,
             ownerId: capture.userId,
+            ...cancelsOf(),
           } as const;
         }
         // A foreign capture must be durable before it becomes a revision (I9).
         if (foreign || mode === "s3") {
-          if (capture.state !== "STORING")
-            await tx.sandboxTemplateCapture.update({
-              where: { operationId },
-              data: { state: "STORING" },
-            });
+          // Rotated on every wait (updatedAt): the sweep's oldest-first page
+          // never starves on more than one page of waiters.
+          await tx.sandboxTemplateCapture.update({
+            where: { operationId },
+            data: { state: "STORING", updatedAt: now },
+          });
           await tx.sandboxOperation.update({
             where: { id: operationId },
             data: { progressPhase: "uploading", progressAt: now },
@@ -850,6 +1021,10 @@ export async function finalizeCapture(
     }
     return { kind: "finalized", revisionId: revision.id } as const;
   });
+  if (ends.length > 0) {
+    const store = imageStore();
+    for (const end of ends) await abortEndedUploads(store, end);
+  }
   if (head.buildId) {
     notifyTemplateBuildsChanged();
     notifyTemplateBuildProgress(head.buildId);
@@ -954,12 +1129,30 @@ export async function sweepCaptures(now = new Date()) {
     take: 50,
   });
   const outcomes: { operationId: string; outcome: FinalizeOutcome }[] = [];
-  for (const capture of pending)
-    outcomes.push({
-      operationId: capture.operationId,
-      outcome: await finalizeCapture(capture.operationId, now).catch(
-        () => ({ kind: "skipped" }) as const,
-      ),
+  for (const capture of pending) {
+    const outcome = await finalizeCapture(capture.operationId, now).catch((error: unknown) => {
+      // One failing capture must not stop the page; the class is logged
+      // (never a message: it may quote row data).
+      console.error(
+        JSON.stringify({
+          event: "capture_finalize_failed",
+          operationId: capture.operationId,
+          error: error instanceof Error ? error.constructor.name : typeof error,
+          code: (error as { code?: unknown } | null)?.code ?? null,
+        }),
+      );
+      return { kind: "skipped" } as const;
     });
+    // Every visited row rotates (a waiter rotated itself): a skipped or
+    // throwing one must not hold the head of the oldest-first page.
+    if (outcome.kind === "skipped")
+      await prisma.sandboxTemplateCapture
+        .updateMany({
+          where: { operationId: capture.operationId, state: { in: [...ACTIVE_CAPTURE_STATES] } },
+          data: { updatedAt: now },
+        })
+        .catch(() => {});
+    outcomes.push({ operationId: capture.operationId, outcome });
+  }
   return outcomes;
 }

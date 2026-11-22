@@ -1196,6 +1196,648 @@ fn relay_part_send_budget_scales_with_the_part_above_a_floor() {
     assert!(relay_part_send_budget(usize::MAX) > RELAY_PART_SEND_MIN);
 }
 
+/// The idle bound of tests about frames and heartbeats, not stalls: far
+/// above any plausible scheduling pause, so only a real defect fails them.
+const FRAME_TEST_IDLE: Duration = Duration::from_secs(30);
+
+/// A service whose image-store agent has the production idle bound shape
+/// (`HTTP_IDLE`) but its own `idle` (short for a stall test, so it stays
+/// fast; `FRAME_TEST_IDLE` otherwise).
+fn idle_service(runtime: &FakeRuntime, dir: &Path, base: &str, idle: Duration) -> ImageService {
+    let service = ImageService::start(
+        Arc::new(runtime.clone()),
+        dir,
+        ImageSettings {
+            size: crate::config::ImageCacheSize::Gib(1),
+            accept_foreign: false,
+            foreign_grace: Duration::from_secs(600),
+            builder: true,
+            accept_foreign_builds: false,
+        },
+        crate::tls::Trust::http_agent_from(None, upstream_agent_config(), idle),
+        base,
+        "wssp_host_test-secret",
+    )
+    .expect("start")
+    .expect("enabled");
+    service.on_registered("host-owner");
+    service
+}
+
+/// One fake S3 connection handled by `handle` (after the request head was
+/// read); returns the base URL.
+fn fake_s3(handle: impl FnOnce(BufReader<std::net::TcpStream>) + Send + 'static) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        let mut reader = BufReader::new(stream);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                break;
+            }
+        }
+        handle(reader);
+    });
+    base
+}
+
+/// Start one capture upload of `bytes` (attempt 4); its begin request id.
+fn start_capture_upload(images: &ImageService, runtime: &FakeRuntime, bytes: &[u8]) -> String {
+    let fp = runtime.seed_image_bytes(bytes, "x86_64", true);
+    let mut d = dispatch(&fp, bytes.len() as u64, "owner-a");
+    d.operation_id = "op-up".into();
+    d.attempt = 4;
+    images
+        .captured(&d, &fp, bytes.len() as u64, true)
+        .expect("captured");
+    let DaemonControlMessage::ImageUploadBegin(begin) = wait_frame(images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    }) else {
+        unreachable!()
+    };
+    begin.request_id.expect("capture request id")
+}
+
+/// A grant of `parts` (`(n, url, size)`) answering capture begin `request`.
+fn parts_grant(
+    request: &str,
+    transfer: &str,
+    part_size: u64,
+    parts: Vec<(u32, String, u64)>,
+) -> ServerControlMessage {
+    ServerControlMessage::ImageUploadGrant(sandbox_protocol::ImageUploadGrantV11 {
+        transfer_id: transfer.into(),
+        request_id: Some(request.into()),
+        part_size,
+        parts: parts
+            .into_iter()
+            .map(
+                |(n, url, size_bytes)| sandbox_protocol::ImageUploadPartUrlV11 {
+                    n,
+                    url,
+                    size_bytes,
+                },
+            )
+            .collect(),
+        expires_at_unix_ms: 1,
+        encryption: None,
+    })
+}
+
+/// Waits until `n` upload jobs of `images` have returned (a watchdog well
+/// past `FRAME_TEST_IDLE`, so a stall still ends as its own frame).
+fn wait_uploads_finished(images: &ImageService, n: u64) {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while images.uploads_finished() < n {
+        assert!(Instant::now() < deadline, "upload job never returned");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Every frame the upload sends until its job has returned (the begin, if
+/// already drained by `start_capture_upload`, excluded).
+fn upload_frames(images: &ImageService) -> Vec<DaemonControlMessage> {
+    wait_uploads_finished(images, 1);
+    images.drain()
+}
+
+/// The frame kinds that matter to an upload's end, in order.
+fn upload_kinds(frames: &[DaemonControlMessage]) -> Vec<&'static str> {
+    frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadBegin(_) => Some("begin"),
+            DaemonControlMessage::ImageUploadParts(_) => Some("parts"),
+            DaemonControlMessage::ImageUploadComplete(_) => Some("complete"),
+            DaemonControlMessage::ImageJobFailed(_) => Some("failed"),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one `image.job.failed` among `frames` (asserted valid).
+fn the_failure(frames: &[DaemonControlMessage]) -> sandbox_protocol::ImageJobFailedV11 {
+    let failed: Vec<_> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageJobFailed(failed) => Some(failed.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failed.len(), 1, "{frames:?}");
+    assert!(failed[0].is_valid(), "{:?}", failed[0]);
+    failed[0].clone()
+}
+
+/// A store that accepts the PUT and then stops reading: the write stalls
+/// and the upload ends `stalled` after the idle bound, by its transfer. The
+/// store holds the socket until the client has failed (never a reset race).
+#[test]
+fn a_stalled_part_upload_ends_stalled_after_the_idle_bound() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (failed, held) = mpsc::channel::<()>();
+    let base = fake_s3(move |reader| {
+        // Watchdog only: released once the client reported its failure.
+        let _ = held.recv_timeout(Duration::from_secs(60));
+        drop(reader);
+    });
+    let images = idle_service(&runtime, dir.path(), &base, Duration::from_millis(300));
+    let bytes = vec![5u8; 32 << 20];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(capture_grant(
+        &request,
+        "tr-stall",
+        format!("{base}/p1"),
+        bytes.len() as u64,
+    ));
+    let frames = upload_frames(&images);
+    let _ = failed.send(());
+    assert_eq!(upload_kinds(&frames), ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-stall"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Stalled);
+    assert_eq!(failed.code, ImageFailureCode::Timeout);
+    assert_eq!(failed.part, Some(1));
+}
+
+/// A store answering 503 ends the upload `http_status` with the status.
+#[test]
+fn a_store_error_status_is_reported_with_its_status() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, server) = responder(vec![(503, Vec::new(), Vec::new())]);
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = b"captured image bytes".to_vec();
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(capture_grant(
+        &request,
+        "tr-503",
+        format!("{base}/p1"),
+        bytes.len() as u64,
+    ));
+    let frames = upload_frames(&images);
+    assert_eq!(upload_kinds(&frames), ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-503"));
+    assert_eq!(
+        failed.cause,
+        sandbox_protocol::ImageFailureCause::HttpStatus
+    );
+    assert_eq!(failed.http_status, Some(503));
+    assert_eq!(failed.part, Some(1));
+    server.join().unwrap();
+}
+
+/// A connection closed mid-body ends the upload `reset`.
+#[test]
+fn a_connection_closed_mid_body_is_a_reset() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let base = fake_s3(|mut reader| {
+        let mut some = vec![0u8; 1 << 20];
+        let _ = reader.read_exact(&mut some);
+        // Unread data in the receive buffer: the close is an RST.
+        drop(reader);
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = vec![9u8; 32 << 20];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(capture_grant(
+        &request,
+        "tr-reset",
+        format!("{base}/p1"),
+        bytes.len() as u64,
+    ));
+    let frames = upload_frames(&images);
+    assert_eq!(upload_kinds(&frames), ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-reset"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Reset);
+    assert_eq!(failed.part, Some(1));
+}
+
+/// A capture whose image cannot be exported reports it by its operation
+/// and attempt (there is no transfer yet), cause `export`, and never begins.
+#[test]
+fn a_capture_export_failure_is_reported_by_operation() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    // Never seeded: the runtime cannot export it.
+    let fp = format!("sha256:{}", "b".repeat(64));
+    let mut d = dispatch(&fp, 10, "owner-a");
+    d.operation_id = "op-export".into();
+    d.attempt = 2;
+    images.captured(&d, &fp, 10, true).expect("captured");
+    let frames = upload_frames(&images);
+    assert_eq!(
+        upload_kinds(&frames),
+        ["failed"],
+        "nothing to upload, no begin"
+    );
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id, None);
+    assert_eq!(failed.operation_id.as_deref(), Some("op-export"));
+    assert_eq!(failed.attempt, Some(2));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Export);
+}
+
+/// A begin the server refuses is reported by operation, cause `refused`
+/// with the server's reason; `already_stored` is not a failure.
+#[test]
+fn a_refused_capture_begin_is_reported_with_the_refusal() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    let request = start_capture_upload(&images, &runtime, b"quota image");
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "none".into(),
+            reason: "image_quota_exceeded".into(),
+            request_id: Some(request),
+        },
+    ));
+    let frames = upload_frames(&images);
+    assert_eq!(upload_kinds(&frames), ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.operation_id.as_deref(), Some("op-up"));
+    assert_eq!(failed.attempt, Some(4));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+    assert_eq!(failed.refusal.as_deref(), Some("image_quota_exceeded"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    let request = start_capture_upload(&images, &runtime, b"stored image");
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "none".into(),
+            reason: "already_stored".into(),
+            request_id: Some(request),
+        },
+    ));
+    // The job has returned: whatever it sent is in the outbox.
+    let frames = upload_frames(&images);
+    assert!(
+        upload_kinds(&frames).is_empty(),
+        "an already stored image is not a failure: {frames:?}"
+    );
+}
+
+/// The server cancels the transfer while part 1 of 2 is in flight: the
+/// upload stops before part 2 (no second PUT, no parts report, no
+/// complete) and reports `refused` with the server's reason.
+#[test]
+fn a_server_cancel_between_parts_stops_before_the_next_part() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let (got_part, part_seen) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let (finished, done) = mpsc::channel::<()>();
+    let store = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept");
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("line");
+            if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = v.trim().parse().unwrap_or(0);
+            }
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+        }
+        let mut body = vec![0u8; length];
+        reader.read_exact(&mut body).expect("part 1 body");
+        got_part.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(60));
+        let mut stream = stream;
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nETag: \"e1\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("respond");
+        // After the job returned: was a second part ever attempted?
+        let _ = done.recv_timeout(Duration::from_secs(60));
+        listener.set_nonblocking(true).expect("nonblocking");
+        listener.accept().is_ok()
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let part = 1u64 << 20;
+    let bytes = vec![4u8; 2 << 20];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(parts_grant(
+        &request,
+        "tr-cut",
+        part,
+        vec![
+            (1, format!("{base}/p1"), part),
+            (2, format!("{base}/p2"), part),
+        ],
+    ));
+    part_seen
+        .recv_timeout(Duration::from_secs(30))
+        .expect("part 1 reached the store");
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "tr-cut".into(),
+            reason: "upload_stalled".into(),
+            request_id: None,
+        },
+    ));
+    release.send(()).unwrap();
+    let frames = upload_frames(&images);
+    finished.send(()).unwrap();
+    assert!(!store.join().unwrap(), "a second part was sent");
+    assert_eq!(upload_kinds(&frames), ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-cut"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+    assert_eq!(failed.code, ImageFailureCode::Cancelled);
+    assert_eq!(failed.refusal.as_deref(), Some("upload_stalled"));
+}
+
+/// No grant answers the begin: `no_grant`, by operation and attempt.
+#[test]
+fn a_capture_without_a_first_grant_reports_no_grant_by_operation() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    images.set_grant_wait_for_test(Duration::from_millis(200));
+    // Started directly (not via `start_capture_upload`, whose begin wait
+    // drains the outbox): the begin and the failure can be queued together,
+    // so the whole sequence is collected once the job has returned.
+    let bytes = b"never granted";
+    let fp = runtime.seed_image_bytes(bytes, "x86_64", true);
+    let mut d = dispatch(&fp, bytes.len() as u64, "owner-a");
+    d.operation_id = "op-up".into();
+    d.attempt = 4;
+    images
+        .captured(&d, &fp, bytes.len() as u64, true)
+        .expect("captured");
+    let frames = upload_frames(&images);
+    assert_eq!(upload_kinds(&frames), ["begin", "failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id, None);
+    assert_eq!(
+        (failed.operation_id.as_deref(), failed.attempt),
+        (Some("op-up"), Some(4))
+    );
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+    assert_eq!(failed.code, ImageFailureCode::Timeout);
+}
+
+/// The next grant never arrives after part 1 of 2: its parts are reported,
+/// then `no_grant` by the transfer the first grant named. The first grant
+/// has a generous wait; only the continuation wait is short, set while the
+/// store holds part 1's response, so no scheduling delay can end the first
+/// wait before the test sends its grant.
+#[test]
+fn a_missing_next_grant_reports_no_grant_by_transfer() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let part = 1u64 << 20;
+    let (got_part, part_seen) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let base = fake_s3(move |mut reader| {
+        let mut body = vec![0u8; part as usize];
+        reader.read_exact(&mut body).expect("part 1 body");
+        got_part.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(60));
+        let mut stream = reader.into_inner();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nETag: \"e1\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("respond");
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_grant_wait_for_test(Duration::from_secs(30));
+    let bytes = vec![6u8; 2 << 20];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(parts_grant(
+        &request,
+        "tr-ng",
+        part,
+        vec![(1, format!("{base}/p1"), part)],
+    ));
+    part_seen
+        .recv_timeout(Duration::from_secs(30))
+        .expect("part 1 reached the store");
+    // Read per grant wait, so this governs only the continuation.
+    images.set_grant_wait_for_test(Duration::from_millis(300));
+    release.send(()).unwrap();
+    let frames = upload_frames(&images);
+    assert_eq!(upload_kinds(&frames), ["parts", "failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-ng"));
+    assert_eq!(failed.operation_id, None);
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+}
+
+/// A moving upload completes and sends progress heartbeats with growing
+/// offsets while it moves. The heartbeat interval is zero, so every advance
+/// of the body sends one and the count depends on neither socket buffering
+/// nor timing (throttling is covered by
+/// `heartbeats_carry_the_offset_reached_and_only_when_it_moved`). Its idle
+/// bound is `FRAME_TEST_IDLE`, so scheduler load cannot fake a stall; that
+/// moving bytes never trip the bound however long the body takes is proven
+/// on a fake clock in `tls::http`
+/// (`idle_bound_below_tls_is_per_socket_write_not_an_aggregate`,
+/// `idle_bound_wraps_only_the_raw_socket_under_proxy_tls`,
+/// `idle_bound_never_fails_a_moving_body_read_and_fails_a_stopped_one`).
+#[test]
+fn a_moving_upload_sends_heartbeats_and_completes() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    // Eight of the agent's 128 KiB body buffers: a handful of advances,
+    // well inside the outbox.
+    let bytes = vec![3u8; 1 << 20];
+    let len = bytes.len();
+    let base = fake_s3(move |mut reader| {
+        let mut chunk = vec![0u8; 1 << 20];
+        let mut read = 0;
+        while read < len {
+            reader.read_exact(&mut chunk).expect("body");
+            read += chunk.len();
+        }
+        let mut stream = reader.into_inner();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .expect("respond");
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_heartbeat_for_test(Duration::ZERO);
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(capture_grant(
+        &request,
+        "tr-slow",
+        format!("{base}/p1"),
+        len as u64,
+    ));
+    wait_uploads_finished(&images, 1);
+    let mut frames = Vec::new();
+    loop {
+        let batch = images.drain();
+        if batch.is_empty() {
+            break;
+        }
+        frames.extend(batch);
+    }
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+    let beats: Vec<u64> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadProgress(p) => {
+                assert_eq!(p.transfer_id, "tr-slow");
+                assert!(p.is_valid());
+                Some(p.bytes_sent)
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(beats.len() >= 2, "{beats:?}");
+    assert!(beats.windows(2).all(|w| w[0] < w[1]), "{beats:?}");
+    assert!(beats.iter().all(|b| *b <= len as u64));
+}
+
+/// A heartbeat carries the stored-object offset reached, only when it moved
+/// past the last one sent, and at most every interval (no clock involved:
+/// a zero interval sends on every advance, an hour never twice).
+#[test]
+fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    let beats = |images: &ImageService| -> Vec<u64> {
+        images
+            .drain()
+            .into_iter()
+            .filter_map(|f| match f {
+                DaemonControlMessage::ImageUploadProgress(p) => Some(p.bytes_sent),
+                _ => None,
+            })
+            .collect()
+    };
+    images.drain();
+    images.set_heartbeat_for_test(Duration::ZERO);
+    let heartbeat = images.heartbeat("tr-hb");
+    heartbeat.reach(10);
+    heartbeat.reach(10);
+    heartbeat.reach(5);
+    heartbeat.reach(20);
+    assert_eq!(beats(&images), [10, 20]);
+    // A part body reports its offset in the stored object.
+    let body = [1u8; 8];
+    let mut reader = CountingBody {
+        bytes: &body,
+        pos: 0,
+        base: 1000,
+        heartbeat: Some(&heartbeat),
+    };
+    let mut buf = [0u8; 3];
+    std::io::Read::read(&mut reader, &mut buf).unwrap();
+    assert_eq!(beats(&images), [1003]);
+    images.set_heartbeat_for_test(Duration::from_secs(3600));
+    let throttled = images.heartbeat("tr-hb2");
+    throttled.reach(10);
+    throttled.reach(20);
+    assert!(beats(&images).is_empty());
+}
+
+/// Real failures logged through the production subscriber carry their
+/// structured fields and never a presigned URL, credential or token.
+#[test]
+fn upload_failure_logs_carry_fields_and_never_a_url_or_secret() {
+    const SIG: &str = "SENTINELSIGNATURE";
+    const KEY: &str = "SENTINELACCESSKEY";
+    for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+        let ((), logs) = crate::logging::with_subscriber(
+            format,
+            tracing_subscriber::EnvFilter::new("info"),
+            || {
+                let runtime = FakeRuntime::default();
+                let dir = tempfile::tempdir().unwrap();
+                let (base, server) = responder(vec![(503, Vec::new(), Vec::new())]);
+                let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+                let path = dir.path().join("staged");
+                std::fs::write(&path, b"sixteen bytes!!!").unwrap();
+                let mut file = std::fs::File::open(&path).unwrap();
+                let query = format!("X-Amz-Credential={KEY}&X-Amz-Signature={SIG}");
+                let heartbeat = images.heartbeat("tr-log");
+                for url in [
+                    format!("{base}/obj?{query}"),
+                    format!("http://127.0.0.1:9/obj?{query}"),
+                ] {
+                    let parts = [sandbox_protocol::ImageUploadPartUrlV11 {
+                        n: 1,
+                        url,
+                        size_bytes: 16,
+                    }];
+                    let failure = images
+                        .put_parts(
+                            &mut file,
+                            16,
+                            16,
+                            &parts,
+                            None,
+                            None,
+                            &|| false,
+                            Some(&heartbeat),
+                        )
+                        .unwrap_err();
+                    failure.log("image upload ended", Some("tr-log"));
+                }
+                server.join().unwrap();
+                UploadFailure::refused(&format!("{KEY} {SIG}")).log("image upload ended", None);
+                UploadFailure::transport(&ureq::Error::Io(std::io::Error::other(format!(
+                    "https://bucket.example/obj?{query}"
+                ))))
+                .log("image upload ended", Some("tr-log"));
+            },
+        );
+        let logs = String::from_utf8_lossy(&logs);
+        for field in ["http_status", "503", "connect", "part", "tr-log", "io_kind"] {
+            assert!(logs.contains(field), "{field} missing: {logs}");
+        }
+        for secret in [SIG, KEY, "X-Amz", "bucket.example"] {
+            assert!(!logs.contains(secret), "{secret} leaked: {logs}");
+        }
+    }
+}
+
 #[path = "upstream_tests.rs"]
 mod upstream;
 

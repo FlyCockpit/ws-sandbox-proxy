@@ -2914,7 +2914,8 @@ export class SandboxRelaySessionManager {
         case "image.upload.parts":
         case "image.upload.complete":
         case "image.job.resume":
-        case "image.job.failed": {
+        case "image.job.failed":
+        case "image.upload.progress": {
           // Image requests and replies require image-cache runtime support.
           if (!session.imageFeatures) throw new Error("unnegotiated image frame");
           if (!session.reconciled) throw new Error("image frame before reconciliation");
@@ -3578,6 +3579,8 @@ export class SandboxRelaySessionManager {
         return images.handleImageUploadBegin(ctx, message);
       case "image.upload.parts":
         return images.handleImageUploadParts(ctx, message);
+      case "image.upload.progress":
+        return images.handleImageUploadProgress(ctx, message);
       case "image.upload.complete": {
         const { enqueueImageVerify } = await import("@wssp/api/sandbox/image-store/jobs");
         return images.handleImageUploadComplete(ctx, message, enqueueImageVerify);

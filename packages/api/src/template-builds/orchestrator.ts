@@ -226,12 +226,24 @@ async function observe(tx: Prisma.TransactionClient, build: BuildRow) {
         select: { state: true, leaseExpiresAt: true, sandboxHostId: true, hostOwnerId: true },
       })
     : null;
+  // Failure evidence is written to an active capture by relay and server
+  // transactions (`recordCaptureEvidence`, `failCapture`) that never lock the
+  // build. Under the build row lock the capture row is share-locked before it
+  // is read (build → capture, the finalizer's order): a writer committing
+  // meanwhile is waited for and seen, so a failure this advance settles
+  // (`capture_deadline`, the lease) carries the evidence (I4), never a
+  // snapshot older than it.
+  if (build.captureOperationId)
+    await tx.$queryRaw`SELECT 1 FROM sandbox_template_capture
+      WHERE "operationId" = ${build.captureOperationId} AND "userId" = ${build.userId} FOR SHARE`;
   const capture = build.captureOperationId
     ? await tx.sandboxTemplateCapture.findFirst({
         where: { operationId: build.captureOperationId, userId: build.userId },
         select: {
           state: true,
           errorCode: true,
+          errorDetail: true,
+          capturedAt: true,
           revisionId: true,
           buildAttempt: true,
           Operation: { select: { state: true } },
@@ -266,6 +278,8 @@ async function observe(tx: Prisma.TransactionClient, build: BuildRow) {
       ? {
           state: current.state,
           errorCode: current.errorCode,
+          errorDetail: current.errorDetail,
+          capturedAt: current.capturedAt,
           revisionId: current.revisionId,
           opState: current.Operation.state,
           attempt: current.buildAttempt,

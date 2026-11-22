@@ -65,6 +65,17 @@ export const TEMPLATE_BUILD_ERROR_CODES = [
   "build_upstream_unavailable",
 ] as const;
 export type TemplateBuildErrorCode = (typeof TEMPLATE_BUILD_ERROR_CODES)[number];
+/** The build failures whose `errorDetail` can be a capture's failure
+ * evidence (a storage or export cause): every such failure in the
+ * orchestrator's decision table is built from one of these, and the
+ * dashboard explains their known details as sentences. */
+export const TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES = [
+  "build_capture_failed",
+  "build_capture_lease_expired",
+  "build_store_failed",
+] as const satisfies readonly TemplateBuildErrorCode[];
+export type TemplateBuildCaptureDetailErrorCode =
+  (typeof TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES)[number];
 
 const buildIdSchema = resourceIdSchema;
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/);

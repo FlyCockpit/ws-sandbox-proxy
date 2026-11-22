@@ -35,6 +35,7 @@ export async function recordCaptureResult(
       architecture,
       resultEpoch: input.epoch,
       symlinkedPaths: symlinked,
+      capturedAt: new Date(),
     },
   });
   await tx.sandboxOperation.updateMany({

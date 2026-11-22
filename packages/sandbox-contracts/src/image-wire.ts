@@ -241,6 +241,22 @@ const failureCodeSchema = z.enum([
   "cancelled",
 ]);
 export type ImageFailureCode = z.infer<typeof failureCodeSchema>;
+/** Why a host-side upload or export ended (Rust `ImageFailureCause`). */
+export const IMAGE_FAILURE_CAUSES = [
+  "timeout",
+  "stalled",
+  "reset",
+  "connect",
+  "tls",
+  "http_status",
+  "url_expired",
+  "local_io",
+  "export",
+  "no_grant",
+  "refused",
+  "protocol",
+] as const;
+export type ImageFailureCause = (typeof IMAGE_FAILURE_CAUSES)[number];
 const roleSchema = z.enum(["SOURCE", "DEST"]);
 const totalsSchema = z
   .strictObject({ usedBytes: totalBytesSchema, foreignBytes: totalBytesSchema })
@@ -360,10 +376,39 @@ export const daemonImageMessageSchemas = [
     role: roleSchema,
     bytesDone: z.number().int().min(0).max(IMAGE_SIZE_MAX),
   }),
+  // Exactly one reference: the transfer, or (a capture upload that never got
+  // one) its operation and dispatch attempt. `httpStatus` exactly for
+  // `http_status` / `url_expired`, `refusal` exactly for `refused`.
+  z
+    .strictObject({
+      type: z.literal("image.job.failed"),
+      transferId: idSchema.optional(),
+      operationId: idSchema.optional(),
+      attempt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+      code: failureCodeSchema,
+      cause: z.enum(IMAGE_FAILURE_CAUSES),
+      httpStatus: z.number().int().min(100).max(599).optional(),
+      part: partNumberSchema.optional(),
+      refusal: codeSchema.optional(),
+    })
+    .refine(
+      (frame) =>
+        (frame.transferId !== undefined
+          ? frame.operationId === undefined && frame.attempt === undefined
+          : frame.operationId !== undefined && frame.attempt !== undefined) &&
+        (frame.httpStatus !== undefined) ===
+          (frame.cause === "http_status" || frame.cause === "url_expired") &&
+        (frame.refusal !== undefined) === (frame.cause === "refused"),
+    ),
+  /** Upload liveness heartbeat: bytes of this transfer sent so far. */
   z.strictObject({
-    type: z.literal("image.job.failed"),
+    type: z.literal("image.upload.progress"),
     transferId: idSchema,
-    code: failureCodeSchema,
+    bytesSent: z
+      .number()
+      .int()
+      .min(0)
+      .max(IMAGE_SIZE_MAX * 2),
   }),
 ] as const;
 export type DaemonImageMessage = z.infer<(typeof daemonImageMessageSchemas)[number]>;

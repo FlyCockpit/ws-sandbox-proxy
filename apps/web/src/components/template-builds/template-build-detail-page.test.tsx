@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, configure, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES } from "@wssp/api/sandbox/contracts";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enTemplates from "@wssp/locales/src/en-US/templates.json";
 import { createInstance, type i18n as I18n } from "i18next";
@@ -287,6 +288,60 @@ describe("TemplateBuildDetailPage", () => {
     });
     expect(tail.textContent).toBe("[31mE: Unable to locate package nope[0m\n");
     expect(screen.queryByRole("button", { name: "Cancel build" })).toBeNull();
+  });
+
+  it.each([
+    ["upload_stalled", "The image upload stalled: no data reached the image store for too long."],
+    ["upload_http_503", "The image store refused the upload (HTTP 503)."],
+    ["upload_refused.image_quota_exceeded", "The account's stored-image quota is full."],
+    ["upload_refused.rate_limited", "The server refused the upload (rate_limited)."],
+    ["store_complete_failed", "The image store could not complete the upload."],
+    ["store_list_failed", "The image store could not list the uploaded parts."],
+  ])("explains a known storage detail %s as a sentence", async (detail, sentence) => {
+    server.build = build({
+      state: "FAILED",
+      phase: null,
+      errorCode: "build_store_failed",
+      errorDetail: detail,
+      cleanupState: "DONE",
+      completedAt: "2026-11-03T10:02:00.000Z",
+    });
+    renderPage();
+    expect(await screen.findByText("Storing the image failed.")).toBeTruthy();
+    expect(screen.getByText(sentence)).toBeTruthy();
+    expect(screen.queryByText(`Detail: ${detail}`)).toBeNull();
+  });
+
+  it.each(TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES)(
+    "explains a host-reported export failure on %s",
+    async (errorCode) => {
+      server.build = build({
+        state: "FAILED",
+        phase: null,
+        errorCode,
+        errorDetail: "upload_export",
+        cleanupState: "DONE",
+        completedAt: "2026-11-03T10:02:00.000Z",
+      });
+      renderPage();
+      expect(
+        await screen.findByText("The builder host could not export the captured image."),
+      ).toBeTruthy();
+      expect(screen.queryByText("Detail: upload_export")).toBeNull();
+    },
+  );
+
+  it("shows an unknown storage detail raw", async () => {
+    server.build = build({
+      state: "FAILED",
+      phase: null,
+      errorCode: "build_store_failed",
+      errorDetail: "upload_something_new",
+      cleanupState: "DONE",
+      completedAt: "2026-11-03T10:02:00.000Z",
+    });
+    renderPage();
+    expect(await screen.findByText("Detail: upload_something_new")).toBeTruthy();
   });
 
   it("says when the build VM ran with the allowlist under node policy (§6.3)", async () => {

@@ -637,11 +637,144 @@ pub struct ImageJobResumeV11 {
     pub bytes_done: u64,
 }
 
+/// Why a host-side upload or export ended (`image.job.failed`). The server
+/// maps it to a code-shaped detail; the daemon never sends free text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFailureCause {
+    /// A bounded wait (connect excluded) ran out: request headers, response.
+    Timeout,
+    /// No byte moved, in either direction, for the idle bound.
+    Stalled,
+    /// The peer reset or closed the connection mid-request.
+    Reset,
+    /// The store could not be reached (DNS, refused, unreachable).
+    Connect,
+    Tls,
+    /// The store answered with a status other than success (`httpStatus`).
+    HttpStatus,
+    /// A 403 at or after the grant's expiry (`httpStatus`).
+    UrlExpired,
+    /// Reading or sealing the staged image failed.
+    LocalIo,
+    /// The image could not be exported from the host image store.
+    Export,
+    /// No grant arrived in time after `image.upload.begin`.
+    NoGrant,
+    /// The server refused the job (`image.job.cancel`; its reason is `refusal`).
+    Refused,
+    /// A malformed or mismatched answer (grant, key, response).
+    Protocol,
+}
+
+impl ImageFailureCause {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::Stalled => "stalled",
+            Self::Reset => "reset",
+            Self::Connect => "connect",
+            Self::Tls => "tls",
+            Self::HttpStatus => "http_status",
+            Self::UrlExpired => "url_expired",
+            Self::LocalIo => "local_io",
+            Self::Export => "export",
+            Self::NoGrant => "no_grant",
+            Self::Refused => "refused",
+            Self::Protocol => "protocol",
+        }
+    }
+}
+
+/// A host-side image job ended. It names its transfer, or (a capture upload
+/// that never got one: export failure, no grant, refused begin) its
+/// operation and dispatch attempt; exactly one of the two.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageJobFailedV11 {
-    pub transfer_id: String,
+    // Optional fields refuse an explicit `null` (zod `.optional()`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub transfer_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub operation_id: Option<String>,
+    /// At most `Number.MAX_SAFE_INTEGER`, like every integer the server reads.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub attempt: Option<u64>,
     pub code: ImageFailureCode,
+    pub cause: ImageFailureCause,
+    /// The store's status: present exactly for `http_status` / `url_expired`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub http_status: Option<u16>,
+    /// The part being sent when the job ended.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub part: Option<u32>,
+    /// The server's own cancel reason, echoed: present exactly for `refused`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub refusal: Option<String>,
+}
+
+/// The largest integer a JSON number carries exactly (the server's bound).
+const JS_SAFE_MAX: u64 = 9_007_199_254_740_991;
+
+impl ImageJobFailedV11 {
+    pub fn is_valid(&self) -> bool {
+        let reference = match (&self.transfer_id, &self.operation_id) {
+            (Some(transfer), None) => valid_id(transfer) && self.attempt.is_none(),
+            (None, Some(operation)) => {
+                valid_id(operation) && self.attempt.is_some_and(|a| a <= JS_SAFE_MAX)
+            }
+            _ => false,
+        };
+        let with_status = matches!(
+            self.cause,
+            ImageFailureCause::HttpStatus | ImageFailureCause::UrlExpired
+        );
+        reference
+            && self.http_status.is_some() == with_status
+            && self.http_status.is_none_or(|s| (100..=599).contains(&s))
+            && self.part.is_none_or(|p| (1..=10_000).contains(&p))
+            && self.refusal.is_some() == (self.cause == ImageFailureCause::Refused)
+            && self.refusal.as_deref().is_none_or(valid_code)
+    }
+}
+
+/// Upload liveness heartbeat: bytes of this transfer sent so far, at most
+/// every 30 s and only while the count advanced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageUploadProgressV11 {
+    pub transfer_id: String,
+    pub bytes_sent: u64,
+}
+
+impl ImageUploadProgressV11 {
+    pub fn is_valid(&self) -> bool {
+        valid_id(&self.transfer_id) && self.bytes_sent <= IMAGE_SIZE_MAX * 2
+    }
 }
 
 // ---------------------------------------------------------------- server → daemon
@@ -1003,7 +1136,8 @@ pub(crate) fn valid_daemon_image(message: &crate::DaemonControlMessage) -> bool 
         M::ImageUploadParts(r) => r.is_valid(),
         M::ImageUploadComplete(r) => valid_id(&r.transfer_id),
         M::ImageJobResume(r) => valid_id(&r.transfer_id) && r.bytes_done <= IMAGE_SIZE_MAX,
-        M::ImageJobFailed(r) => valid_id(&r.transfer_id),
+        M::ImageJobFailed(r) => r.is_valid(),
+        M::ImageUploadProgress(r) => r.is_valid(),
         M::OperationProgress {
             progress: Some(p), ..
         } => {

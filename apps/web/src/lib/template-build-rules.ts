@@ -3,6 +3,7 @@ import {
   parseRecipe,
   RECIPE_ERROR_CODES,
   RecipeError,
+  TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES,
   TEMPLATE_BUILD_ERROR_CODES,
   TEMPLATE_BUILD_STATES,
   TEMPLATE_BUILD_TERMINAL_STATES,
@@ -74,6 +75,62 @@ export function buildPhase(phase: string | null): BuildPhase | null {
 
 export function buildErrorCode(code: string | null): TemplateBuildErrorCode | null {
   return code !== null && ERROR_CODES.has(code) ? (code as TemplateBuildErrorCode) : null;
+}
+
+const CAPTURE_DETAIL_CODES: ReadonlySet<string> = new Set(
+  TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES,
+);
+
+/** A build failure whose detail can be a capture's storage or export cause
+ * (the server's own list), so a known detail is explained as a sentence. */
+export function carriesCaptureDetail(code: string | null): boolean {
+  return code !== null && CAPTURE_DETAIL_CODES.has(code);
+}
+
+/** Storage failure details with a sentence of their own (`build_store_failed`). */
+const STORE_DETAIL_KEYS = [
+  "upload_stalled",
+  "upload_timeout",
+  "upload_reset",
+  "upload_connect",
+  "upload_tls",
+  "upload_url_expired",
+  "upload_local_io",
+  "upload_export",
+  "upload_no_grant",
+  "upload_protocol",
+  "upload_lost",
+  "upload_invalid",
+  "upload_stale",
+  "store_verify_failed",
+  "store_verify_timeout",
+  "store_complete_failed",
+  "store_list_failed",
+  "store_unavailable",
+  "store_failed",
+  "store_deadline",
+] as const;
+export type StoreDetailKey = (typeof STORE_DETAIL_KEYS)[number];
+const STORE_DETAILS: ReadonlySet<string> = new Set(STORE_DETAIL_KEYS);
+
+/**
+ * The translated sentence a storage detail maps to, or null for an unknown
+ * one (shown raw). HTTP statuses and server refusals carry their value.
+ */
+export function storeDetailMessage(
+  detail: string,
+):
+  | { key: StoreDetailKey | "upload_quota" }
+  | { key: "upload_http"; status: string }
+  | { key: "upload_refused"; reason: string }
+  | null {
+  if (STORE_DETAILS.has(detail)) return { key: detail as StoreDetailKey };
+  const http = /^upload_http_(\d{3})$/.exec(detail);
+  if (http?.[1]) return { key: "upload_http", status: http[1] };
+  if (detail === "upload_refused.image_quota_exceeded") return { key: "upload_quota" };
+  const refused = /^upload_refused\.([a-z_.]{1,64})$/.exec(detail);
+  if (refused?.[1]) return { key: "upload_refused", reason: refused[1] };
+  return null;
 }
 
 // ---------------------------------------------------------------------------

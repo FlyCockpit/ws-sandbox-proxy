@@ -17,6 +17,7 @@ const {
 } = await import("./decide");
 const { buildAuthorityLost } = await import("./build-authority");
 const { BuildContextPortError } = await import("./context-port");
+const { TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES } = await import("@wssp/sandbox-contracts");
 
 type View = Parameters<typeof decide>[0];
 type Obs = Parameters<typeof decide>[1];
@@ -54,10 +55,19 @@ const op = (state: string, extra: { errorCode?: string; exitCode?: number | null
 });
 const capture = (
   state: string,
-  extra: { opState?: string; errorCode?: string; attempt?: number; revisionId?: string } = {},
+  extra: {
+    opState?: string;
+    errorCode?: string;
+    errorDetail?: string;
+    capturedAt?: Date;
+    attempt?: number;
+    revisionId?: string;
+  } = {},
 ) => ({
   state: state as never,
   errorCode: extra.errorCode ?? null,
+  errorDetail: extra.errorDetail ?? null,
+  capturedAt: extra.capturedAt ?? null,
   opState: (extra.opState ?? "RUNNING") as never,
   attempt: extra.attempt ?? 0,
   revisionId: extra.revisionId ?? null,
@@ -349,7 +359,24 @@ describe("decision table (§3.2, §3.3)", () => {
         }),
         limits,
       ),
-    ).toEqual({ kind: "fail", failure: { errorCode: "build_store_failed" } });
+    ).toEqual({ kind: "fail", failure: { errorCode: "build_store_failed", errorDetail: null } });
+    // The capture's storage cause rides on the build failure (I4).
+    expect(
+      decide(
+        capturing,
+        obs({
+          capture: capture("FAILED", {
+            opState: "FAILED",
+            errorCode: "capture_store_failed",
+            errorDetail: "upload_stalled",
+          }),
+        }),
+        limits,
+      ),
+    ).toEqual({
+      kind: "fail",
+      failure: { errorCode: "build_store_failed", errorDetail: "upload_stalled" },
+    });
     expect(
       decide(
         capturing,
@@ -369,6 +396,140 @@ describe("decision table (§3.2, §3.3)", () => {
     expect(decide(late, obs({ capture: capture("CAPTURED") }), limits)).toMatchObject({
       kind: "wait",
     });
+    // Past the window, a recorded capture whose storing then failed keeps
+    // its store failure and cause; the window never relabels it.
+    const storeFailed = { opState: "FAILED", errorCode: "capture_store_failed" };
+    for (const failed of [
+      capture("FAILED", {
+        ...storeFailed,
+        errorDetail: "upload_http_503",
+        capturedAt: minutes(-40),
+      }),
+      capture("FAILED", { ...storeFailed, errorDetail: "upload_http_503" }),
+    ])
+      for (const build of [late, capturing])
+        expect(decide(build, obs({ capture: failed }), limits)).toEqual({
+          kind: "fail",
+          failure: { errorCode: "build_store_failed", errorDetail: "upload_http_503" },
+        });
+    // A capture failed before its result (no capturedAt) still meets the window.
+    expect(
+      decide(
+        late,
+        obs({ capture: capture("FAILED", { opState: "FAILED", errorCode: "capture_failed" }) }),
+        limits,
+      ),
+    ).toEqual({
+      kind: "fail",
+      failure: { errorCode: "build_capture_failed", errorDetail: "capture_deadline" },
+    });
+    // Within it, a host-reported storage cause names the capture failure.
+    expect(
+      decide(
+        capturing,
+        obs({
+          capture: capture("FAILED", {
+            opState: "FAILED",
+            errorCode: "capture_failed",
+            errorDetail: "upload_export",
+          }),
+        }),
+        limits,
+      ),
+    ).toEqual({
+      kind: "fail",
+      failure: { errorCode: "build_capture_failed", errorDetail: "upload_export" },
+    });
+    // An unknown outcome still retries with a new attempt, evidence or not.
+    expect(
+      decide(
+        capturing,
+        obs({
+          capture: capture("FAILED", { opState: "UNKNOWN_OUTCOME", errorDetail: "upload_export" }),
+        }),
+        limits,
+      ),
+    ).toMatchObject({ kind: "claim", action: "capture", attempt: 1 });
+  });
+
+  it("known capture evidence is never replaced by the window or the lease (I4)", () => {
+    const capturing = view({
+      state: "CAPTURING",
+      phase: "capturing",
+      captureDeadlineAt: minutes(30),
+    });
+    const late = { ...capturing, captureDeadlineAt: minutes(-1) };
+    const failedEarly = (errorDetail?: string) =>
+      capture("FAILED", {
+        opState: "FAILED",
+        errorCode: "capture_failed",
+        ...(errorDetail ? { errorDetail } : {}),
+      });
+    const fail = (errorCode: string, errorDetail?: string | null) => ({
+      kind: "fail",
+      failure: errorDetail === undefined ? { errorCode } : { errorCode, errorDetail },
+    });
+    // Pre-result window: export evidence keeps its code, store evidence
+    // becomes a store failure, none stays `capture_deadline`.
+    for (const [row, expected] of [
+      [
+        capture("PENDING", { errorDetail: "upload_export" }),
+        fail("build_capture_failed", "upload_export"),
+      ],
+      [failedEarly("upload_export"), fail("build_capture_failed", "upload_export")],
+      [
+        capture("PENDING", { errorDetail: "upload_http_503" }),
+        fail("build_store_failed", "upload_http_503"),
+      ],
+      [failedEarly("store_unavailable"), fail("build_store_failed", "store_unavailable")],
+      [capture("PENDING"), fail("build_capture_failed", "capture_deadline")],
+      [failedEarly(), fail("build_capture_failed", "capture_deadline")],
+    ] as const)
+      expect(decide(late, obs({ capture: row }), limits)).toEqual(expected);
+    // Expired lease: the same rule; without evidence the lease code alone.
+    const expired = { state: "STOPPED", leaseExpiresAt: minutes(-1) };
+    for (const [row, expected] of [
+      [failedEarly("upload_export"), fail("build_capture_lease_expired", "upload_export")],
+      [failedEarly("upload_reset"), fail("build_store_failed", "upload_reset")],
+      [failedEarly(), fail("build_capture_lease_expired")],
+    ] as const)
+      expect(decide(capturing, obs({ capture: row, sandbox: expired }), limits)).toEqual(expected);
+    // An unknown outcome inside the window still retries with a new attempt.
+    expect(
+      decide(
+        capturing,
+        obs({
+          capture: capture("FAILED", { opState: "UNKNOWN_OUTCOME", errorDetail: "upload_reset" }),
+          sandbox: expired,
+        }),
+        limits,
+      ),
+    ).toMatchObject({ kind: "claim", action: "capture", attempt: 1 });
+  });
+
+  it("every failure that carries a capture's detail uses a code the dashboard explains", () => {
+    const codes: ReadonlySet<string> = new Set(TEMPLATE_BUILD_CAPTURE_DETAIL_ERROR_CODES);
+    const seen = new Set<string>();
+    for (const deadline of [minutes(30), minutes(-1)])
+      for (const sandbox of [undefined, { state: "STOPPED", leaseExpiresAt: minutes(-1) }])
+        for (const state of ["PENDING", "CAPTURED", "STORING", "FAILED"])
+          for (const errorCode of ["capture_failed", "capture_store_failed"])
+            for (const errorDetail of ["upload_export", "upload_http_503", "store_deadline"]) {
+              const decision = decide(
+                view({ state: "CAPTURING", phase: "capturing", captureDeadlineAt: deadline }),
+                obs({
+                  capture: capture(state, { opState: "FAILED", errorCode, errorDetail }),
+                  ...(sandbox ? { sandbox } : {}),
+                }),
+                limits,
+              );
+              if (decision.kind !== "fail" || decision.failure.errorDetail !== errorDetail)
+                continue;
+              seen.add(decision.failure.errorCode);
+              expect(codes.has(decision.failure.errorCode)).toBe(true);
+            }
+    // Every listed code is reached, so the list is exactly what decide emits.
+    expect([...seen].sort()).toEqual([...codes].sort());
   });
 
   it("cancel vs finalizer (r3 N22): a recorded host result waits for the finalizer; otherwise CANCELLED", () => {

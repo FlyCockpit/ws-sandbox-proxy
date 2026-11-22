@@ -314,6 +314,14 @@ export function startImageScheduler(
     try {
       if (imageDistributionMode() !== "off") {
         for (const { outcome } of await sweepCaptures()) {
+          // Uploads the finalizer ended: their hosts stop them (I3).
+          if (outcome.kind === "failed")
+            for (const cancel of outcome.cancels ?? [])
+              send(cancel.hostId, cancel.epoch, {
+                type: "image.job.cancel",
+                transferId: cancel.transferId,
+                reason: cancel.reason,
+              });
           if (outcome.kind === "failed" && outcome.fingerprint) {
             const epoch = await hostEpoch(outcome.hostId);
             // A capture that will never become a revision must not keep its

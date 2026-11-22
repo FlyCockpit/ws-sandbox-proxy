@@ -658,7 +658,7 @@ fn run_connect_service_with_tls(
         crate::tls::Trust::http_agent_from(
             tls.clone(),
             super::images::upstream_agent_config(),
-            super::images::HTTP_IDLE_READ,
+            super::images::HTTP_IDLE,
         ),
         &options.server_url,
         &options.host_token,

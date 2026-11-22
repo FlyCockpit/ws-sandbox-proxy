@@ -19,10 +19,12 @@ import {
   buildErrorCode,
   buildPhase,
   buildTone,
+  carriesCaptureDetail,
   disabledReasonKey,
   isBuildActive,
   recipeCodeKey,
   type SourceProblem,
+  storeDetailMessage,
 } from "@/lib/template-build-rules";
 import { revisionLabel } from "@/lib/template-rules";
 import { orpc } from "@/utils/orpc";
@@ -84,6 +86,37 @@ export function BuildErrorText({ build }: { build: Pick<TemplateBuild, "errorCod
   return (
     <span data-build-error={code} className="text-destructive">
       {t(`templates:builds.error.${code}`)}
+    </span>
+  );
+}
+
+/**
+ * The failure's detail: a known storage cause as its translated sentence,
+ * anything else as the raw code ("Detail: x").
+ */
+export function BuildErrorDetailText({
+  build,
+}: {
+  build: Pick<TemplateBuild, "errorCode" | "errorDetail">;
+}) {
+  const { t } = useTranslation(["templates"]);
+  if (!build.errorDetail) return null;
+  const message = carriesCaptureDetail(build.errorCode)
+    ? storeDetailMessage(build.errorDetail)
+    : null;
+  if (message === null)
+    return (
+      <span className="break-all font-mono">
+        {t("templates:builds.errorDetail", { detail: build.errorDetail })}
+      </span>
+    );
+  return (
+    <span data-store-detail={message.key}>
+      {message.key === "upload_http"
+        ? t("templates:builds.storeDetail.upload_http", { status: message.status })
+        : message.key === "upload_refused"
+          ? t("templates:builds.storeDetail.upload_refused", { reason: message.reason })
+          : t(`templates:builds.storeDetail.${message.key}`)}
     </span>
   );
 }

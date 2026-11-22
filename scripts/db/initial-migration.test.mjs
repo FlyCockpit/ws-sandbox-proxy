@@ -32,18 +32,22 @@ function checksAfterLaterMigrations(initial) {
   return [...statements.values()];
 }
 
-test("all 154 documentary CHECKs match 0_init plus later migrations: names, mapped tables and exact expressions", () => {
+test("all 156 documentary CHECKs match 0_init plus later migrations: names, mapped tables and exact expressions", () => {
   const checks = schemaCheckConstraints(SCHEMA_DIR);
-  assert.equal(checks.length, 154);
+  assert.equal(checks.length, 156);
   const sql = readFileSync(INITIAL_PATH, "utf8");
+  const frozen = frozenSection(sql, "checks");
   assert.deepEqual(
-    checksAfterLaterMigrations(frozenSection(sql, "checks")).sort(),
+    checksAfterLaterMigrations(frozen).sort(),
     checkStatements(checks).split("\n").sort(),
   );
+  // 0_init materializes exactly its frozen CHECKs (later folders add or
+  // replace CHECKs; the comparison above covers them).
   const materialized = splitStatements(sql).filter(({ text }) =>
     /^ALTER TABLE .* ADD CONSTRAINT .* CHECK \(/s.test(text),
   );
-  assert.equal(materialized.length, checks.length);
+  assert.equal(materialized.length, frozen.split("\n").filter(Boolean).length);
+  assert.equal(materialized.length, 154);
   assert.equal(new Set(checks.map(({ constraint }) => constraint)).size, checks.length);
   assert.equal(checkWrapper(sql).ok, true);
 });

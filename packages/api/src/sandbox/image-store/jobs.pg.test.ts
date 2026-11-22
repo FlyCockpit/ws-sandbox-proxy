@@ -339,7 +339,14 @@ describe("image store maintenance against real PostgreSQL", () => {
       state: "ABORTED",
       liveArtifactId: null,
       uploadId: null,
+      // Its transfer ended with no reason recorded: the generic cause.
+      endReason: "upload_failed",
     });
+    // The session it ended was the artifact's live one: no capture waits on
+    // it, and the artifact carries the cause.
+    expect(
+      await db.inspect.sandboxImageArtifact.findUniqueOrThrow({ where: { id: uploading.id } }),
+    ).toMatchObject({ state: "FAILED", failureDetail: "upload_failed" });
     expect((await row(lost.id)).uploadId).toBe("upload-lost");
     await sweepImageStore(store);
     expect((await row(lost.id)).uploadId).toBeNull();

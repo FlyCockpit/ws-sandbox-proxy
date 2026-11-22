@@ -13,6 +13,7 @@ import {
   imageStore,
   unwrapDataKey,
 } from "./s3";
+import { endTemplateUpload, transferEndDetail } from "./store-failure";
 import { ImageIntegrityError, isTerminalImageVerificationError } from "./verification-errors";
 
 /**
@@ -423,20 +424,38 @@ export async function sweepImageStore(
   // above is the backstop after a day).
   // Template sessions only: a disk session holds its wrap while OPEN and is
   // ended with its offload by the disk maintenance job.
-  await prisma.sandboxImageUploadSession.updateMany({
-    where: {
-      state: "OPEN",
-      artifactId: { not: null },
-      OR: [
-        { Transfer: { state: { not: "OPEN" } } },
-        { Artifact: { state: "UPLOADING", lastProgressAt: { lt: dayAgo } } },
-      ],
-    },
-    data: { state: "ABORTED", liveArtifactId: null, endReason: "stale" },
-  });
+  // Each session ends through `endTemplateUpload` in its own transaction
+  // (session claimed, then its artifact failed while still UPLOADING, so a
+  // new upload that re-opened the artifact is never hit), with its cause: the
+  // ended transfer's reason, else `upload_stale`. A capture of the current
+  // attempt records it.
+  const deadSessions = await prisma.$queryRaw<
+    { id: string; transferState: string | null; endReason: string | null }[]
+  >`SELECT x.id, t.state::text AS "transferState", t."endReason" AS "endReason"
+    FROM sandbox_image_upload_session x
+    LEFT JOIN sandbox_image_transfer t ON t.id = x."transferId"
+    LEFT JOIN sandbox_image_artifact a ON a.id = x."artifactId"
+    WHERE x.state = 'OPEN' AND x."artifactId" IS NOT NULL
+      AND (t.state <> 'OPEN' OR (a.state = 'UPLOADING' AND a."lastProgressAt" < ${dayAgo}))
+    ORDER BY x.id LIMIT ${PAGE}`;
+  for (const dead of deadSessions)
+    await prisma
+      .$transaction((tx) =>
+        endTemplateUpload(
+          tx,
+          { sessionId: dead.id },
+          {
+            detail:
+              dead.transferState && dead.transferState !== "OPEN"
+                ? transferEndDetail(dead.endReason)
+                : "upload_stale",
+          },
+        ),
+      )
+      .catch(() => {});
   const stale = await prisma.sandboxImageArtifact.updateMany({
     where: { state: "UPLOADING", lastProgressAt: { lt: dayAgo } },
-    data: { state: "FAILED" },
+    data: { state: "FAILED", failureDetail: "upload_stale" },
   });
   let abortedUploads = 0;
   if (store) {
@@ -488,9 +507,9 @@ export async function sweepImageStore(
             objectKey: artifact.objectKey,
             updatedAt: artifact.updatedAt,
           },
-          // There is no artifact failure-reason column. FAILED leaves the
-          // corruption counter alone; normal GC cleans up the abandoned object.
-          data: { state: "FAILED" },
+          // FAILED leaves the corruption counter alone; normal GC cleans up
+          // the abandoned object.
+          data: { state: "FAILED", failureDetail: "store_verify_timeout" },
         });
         continue;
       }

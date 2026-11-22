@@ -209,14 +209,14 @@ impl Trust {
     }
 
     /// An agent for the relay's own TLS trust (connect passes the WSS config).
-    /// Every read on its connections fails once `idle_read` passes without a
-    /// byte arriving, independent of any total timeout in `config`.
+    /// Every read and write on its connections fails once `idle` passes
+    /// without a byte moving, independent of any total timeout in `config`.
     pub(crate) fn http_agent_from(
         tls: Option<Arc<rustls::ClientConfig>>,
         config: ureq::config::Config,
-        idle_read: std::time::Duration,
+        idle: std::time::Duration,
     ) -> ureq::Agent {
-        http::idle_read_agent(config, tls, idle_read)
+        http::idle_agent(config, tls, idle)
     }
 
     pub(crate) fn http_agent(&self, config: ureq::config::Config) -> ureq::Agent {

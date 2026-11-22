@@ -120,7 +120,36 @@
     {
       "type": "image.job.failed",
       "transferId": "tr-1",
-      "code": "format_unsupported"
+      "code": "format_unsupported",
+      "cause": "export"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-2",
+      "code": "io",
+      "cause": "http_status",
+      "httpStatus": 503,
+      "part": 3
+    },
+    {
+      "type": "image.job.failed",
+      "operationId": "op-2",
+      "attempt": 2,
+      "code": "cancelled",
+      "cause": "refused",
+      "refusal": "image_quota_exceeded"
+    },
+    {
+      "type": "image.job.failed",
+      "operationId": "op-3",
+      "attempt": 9007199254740991,
+      "code": "io",
+      "cause": "no_grant"
+    },
+    {
+      "type": "image.upload.progress",
+      "transferId": "tr-2",
+      "bytesSent": 33554432
     },
     {
       "type": "operation.progress",
@@ -399,6 +428,116 @@
       "type": "image.upload.parts",
       "transferId": "tr-2",
       "parts": []
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "operationId": "op-1",
+      "attempt": 1,
+      "code": "io",
+      "cause": "reset"
+    },
+    {
+      "type": "image.job.failed",
+      "operationId": "op-1",
+      "code": "io",
+      "cause": "reset"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "http_status"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "reset",
+      "httpStatus": 503
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "http_status",
+      "httpStatus": 600
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "reset",
+      "part": 0
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "cancelled",
+      "cause": "refused"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "cancelled",
+      "cause": "refused",
+      "refusal": "Bad Reason"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "reset",
+      "refusal": "stale_transfer"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "daydreaming"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "operationId": null,
+      "code": "io",
+      "cause": "reset"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "reset",
+      "httpStatus": null
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "reset",
+      "part": null,
+      "refusal": null
+    },
+    {
+      "type": "image.job.failed",
+      "operationId": "op-1",
+      "attempt": 9007199254740992,
+      "code": "io",
+      "cause": "export"
+    },
+    {
+      "type": "image.upload.progress",
+      "transferId": "tr-1",
+      "bytesSent": 2199023255553
+    },
+    {
+      "type": "image.upload.progress",
+      "transferId": "tr-1"
     },
     {
       "type": "image.fetch.request",

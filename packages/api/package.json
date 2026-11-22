@@ -154,6 +154,9 @@
     "./sandbox/image-store/jobs": {
       "default": "./src/sandbox/image-store/jobs.ts"
     },
+    "./sandbox/image-store/store-failure": {
+      "default": "./src/sandbox/image-store/store-failure.ts"
+    },
     "./sandbox/image-store/references": {
       "default": "./src/sandbox/image-store/references.ts"
     },

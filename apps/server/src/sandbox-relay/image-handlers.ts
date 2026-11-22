@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { consumeImageGrantBudget } from "@wssp/api/sandbox/budgets";
 import { foreignImageAccessHolds } from "@wssp/api/sandbox/image-store/access";
+import { finalizeCapture } from "@wssp/api/sandbox/image-store/captures";
 import {
   accountImageQuotas,
   accountStoredImageBytes,
@@ -20,6 +21,14 @@ import {
   unwrapDataKey,
   wrapDataKey,
 } from "@wssp/api/sandbox/image-store/s3";
+import {
+  abortEndedUploads,
+  abortSessionUpload,
+  cancelReasonOf,
+  endTemplateUpload,
+  imageFailureDetail,
+  type UploadEnd,
+} from "@wssp/api/sandbox/image-store/store-failure";
 import { restoreOffloadOf } from "@wssp/api/sandbox/launch-mode";
 import {
   hostDatabaseNow,
@@ -956,6 +965,8 @@ export async function handleImageFailure(
   ctx: ImageFrameContext,
   m: Extract<DaemonImageMessage, { type: "image.fetch.failed" | "image.job.failed" }>,
 ): Promise<void> {
+  if (m.type === "image.job.failed" && m.transferId === undefined)
+    return handleCaptureJobFailure(ctx, m);
   if (!m.transferId) return;
   // A disk upload transfer also ends its offload attempt;
   // the transfer itself is ended below like any other.
@@ -969,17 +980,26 @@ export async function handleImageFailure(
     },
   });
   if (!transfer) return;
+  // An S3 upload (a capture or a publish) is ended by a host report only
+  // through the fenced path (I3): `image.job.failed` from its source, with
+  // the host's cause as the detail (I4) and any split-export evidence in that
+  // same transaction. `image.fetch.failed` is a destination's report and an
+  // S3 upload has no destination: it changes nothing.
+  if (
+    transfer.mode === "S3" &&
+    (transfer.purpose === "CAPTURE_UPLOAD" || transfer.purpose === "PUBLISH")
+  ) {
+    if (m.type !== "image.job.failed") return;
+    return endReportedUpload(
+      ctx,
+      { transferId: transfer.id },
+      imageFailureDetail(m),
+      m.code === "format_unsupported",
+    );
+  }
   const senderIsSource = transfer.sourceHostId === ctx.sender.hostId;
   if (senderIsSource && m.code === "format_unsupported")
-    // The source's export was split: never pick this copy as a peer source.
-    await prisma.sandboxTemplateAvailability.updateMany({
-      where: {
-        hostId: ctx.sender.hostId,
-        userId: transfer.userId,
-        localFingerprint: transfer.fingerprint,
-      },
-      data: { imageFormat: "split" },
-    });
+    await markExportSplit(prisma, ctx.sender.hostId, transfer);
   const other = senderIsSource
     ? transfer.destHostId && transfer.destEpoch
       ? { hostId: transfer.destHostId, epoch: transfer.destEpoch }
@@ -989,6 +1009,151 @@ export async function handleImageFailure(
       : null;
   await endTransfer(ctx, transfer.id, "FAILED", m.code, other);
 }
+
+/**
+ * A host's report that its S3 template upload ended (by transfer), or that a
+ * capture upload ended before or without one (by operation + attempt). One
+ * fenced transaction: the sender's host lock by epoch, the transfer sourced
+ * by this connection (or the capture this connection runs, on that dispatch
+ * attempt) with its workload still authorized, then `endTemplateUpload`
+ * (session, artifact, transfer and the capture's evidence together). A stale
+ * report changes nothing. A capture is finalized afterwards; the 15 s sweep
+ * is the backstop (I1).
+ */
+async function endReportedUpload(
+  ctx: ImageFrameContext,
+  target: { transferId: string } | { operationId: string; attempt: number },
+  detail: string,
+  split = false,
+): Promise<void> {
+  const { sender } = ctx;
+  const done = await relayTransaction<{ end: UploadEnd; operationId: string | null } | null>(
+    async (tx) => {
+      await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
+      requireRelayFence(sender.isCurrent?.() !== false);
+      let operationId: string | null;
+      if ("transferId" in target) {
+        const transfer = await tx.sandboxImageTransfer.findFirst({
+          where: {
+            id: target.transferId,
+            state: "OPEN",
+            mode: "S3",
+            purpose: { in: ["CAPTURE_UPLOAD", "PUBLISH"] },
+            sourceHostId: sender.hostId,
+            sourceHostOwnerId: sender.userId,
+            sourceEpoch: sender.connectionEpoch,
+          },
+          select: { id: true, ...transferAuthoritySelect },
+        });
+        if (!transfer || !(await transferAuthorized(tx, transfer, await hostDatabaseNow(tx))))
+          return null;
+        if (split) await markExportSplit(tx, sender.hostId, transfer);
+        operationId = transfer.purpose === "CAPTURE_UPLOAD" ? transfer.operationId : null;
+      } else {
+        const capture = await captureWorkload(tx, {
+          operationId: target.operationId,
+          hostId: sender.hostId,
+          hostOwnerId: sender.userId,
+          epoch: sender.connectionEpoch,
+          attempt: target.attempt,
+        });
+        if (!capture || capture.dispatchAttempt !== target.attempt) return null;
+        operationId = target.operationId;
+      }
+      return { end: await endTemplateUpload(tx, target, { detail }), operationId };
+    },
+    null,
+  );
+  if (!done) return;
+  await abortEndedUploads(imageStore(), done.end);
+  if (done.operationId) await finalizeReportedCapture(ctx, done.operationId);
+}
+
+/** The source's export was split: never pick this copy as a peer source. */
+async function markExportSplit(
+  db: Pick<Prisma.TransactionClient, "sandboxTemplateAvailability">,
+  hostId: string,
+  transfer: { userId: string; fingerprint: string },
+): Promise<void> {
+  await db.sandboxTemplateAvailability.updateMany({
+    where: { hostId, userId: transfer.userId, localFingerprint: transfer.fingerprint },
+    data: { imageFormat: "split" },
+  });
+}
+
+/** Finalize a capture whose upload a report ended, and act on the outcome
+ * as the scheduler does: tell hosts to stop uploads the finalizer ended, and
+ * release the origin pin of a capture that will never become a revision. */
+async function finalizeReportedCapture(ctx: ImageFrameContext, operationId: string) {
+  const outcome = await finalizeCapture(operationId);
+  if (outcome.kind !== "failed") return;
+  for (const cancel of outcome.cancels ?? [])
+    ctx.sendTo(cancel.hostId, cancel.epoch, {
+      type: "image.job.cancel",
+      transferId: cancel.transferId,
+      reason: cancel.reason,
+    });
+  if (outcome.fingerprint && outcome.hostId === ctx.sender.hostId)
+    ctx.reply({
+      type: "image.release",
+      fingerprint: outcome.fingerprint,
+      imageOwnerId: outcome.ownerId,
+      reason: "gc",
+    });
+}
+
+/**
+ * `image.job.failed` by operation: a capture upload that never got a
+ * transfer the host knows of (export failure, no grant, refused begin).
+ * Honoured only for the capture this host's current connection runs, on that
+ * dispatch attempt; any upload the server opened for that attempt ends too.
+ */
+async function handleCaptureJobFailure(
+  ctx: ImageFrameContext,
+  m: Extract<DaemonImageMessage, { type: "image.job.failed" }>,
+): Promise<void> {
+  if (m.operationId === undefined || m.attempt === undefined) return;
+  await endReportedUpload(
+    ctx,
+    { operationId: m.operationId, attempt: m.attempt },
+    imageFailureDetail(m),
+  );
+}
+
+/**
+ * `image.upload.progress`: the upload is alive (I5). Moves the transfer's
+ * and its artifact's `lastProgressAt` and raises `bytesDone`, at most every
+ * ten seconds per transfer.
+ */
+export async function handleImageUploadProgress(
+  ctx: ImageFrameContext,
+  m: Extract<DaemonImageMessage, { type: "image.upload.progress" }>,
+  /** The handler's clock (tests pin it either side of the throttle). */
+  now: Date = new Date(),
+): Promise<void> {
+  await withUploadSession(ctx.sender, m.transferId, async (tx, session) => {
+    // Liveness is bytes moving (I5): only an offset beyond the recorded one
+    // refreshes it; a repeated, zero or lower count never does.
+    const bytes = BigInt(Math.min(m.bytesSent, Number(session.storedBytes)));
+    const moved = await tx.sandboxImageTransfer.updateMany({
+      where: {
+        id: session.transferId,
+        state: "OPEN",
+        bytesDone: { lt: bytes },
+        lastProgressAt: { lt: new Date(now.getTime() - PROGRESS_MIN_INTERVAL_MS) },
+      },
+      data: { lastProgressAt: now, bytesDone: bytes },
+    });
+    if (moved.count !== 1) return;
+    await tx.sandboxImageArtifact.updateMany({
+      where: { id: session.artifactId, state: "UPLOADING" },
+      data: { lastProgressAt: now },
+    });
+  });
+}
+
+/** Heartbeats closer than this are absorbed (the daemon sends every 30 s). */
+const PROGRESS_MIN_INTERVAL_MS = 10_000;
 
 /**
  * After a reconnect a background job re-binds its transfer to the new epoch,
@@ -1075,24 +1240,6 @@ async function uploadGrant(
 
 /** A VERIFYING artifact this recent is still being verified, not wedged. */
 const VERIFYING_FRESH_MS = 24 * 3_600_000;
-
-/** Best-effort abort of a session's multipart upload; on success (or when S3
- * no longer knows it) the session forgets the id, otherwise the sweeper
- * retries (`sweepImageStore`). Only for a session that is no longer OPEN. */
-async function abortSessionUpload(
-  store: { abortMultipart(key: string, uploadId: string): Promise<void> },
-  session: { id: string; objectKey: string; uploadId: string },
-): Promise<void> {
-  try {
-    await store.abortMultipart(session.objectKey, session.uploadId);
-  } catch (error) {
-    if ((error as { name?: string } | null)?.name !== "NoSuchUpload") return;
-  }
-  await prisma.sandboxImageUploadSession.updateMany({
-    where: { id: session.id, state: { not: "OPEN" }, uploadId: session.uploadId },
-    data: { uploadId: null },
-  });
-}
 
 /**
  * `image.upload.begin`: a publish job (transfer) or a capture (operation) on
@@ -1321,6 +1468,7 @@ export async function handleImageUploadBegin(
           wrappedKey: null,
           wrappedKeyNonce: null,
           keyId: null,
+          failureDetail: null,
         },
         select: { id: true },
       });
@@ -1427,7 +1575,7 @@ export async function handleImageUploadBegin(
   try {
     uploadId = await store.createMultipart(outcome.objectKey);
   } catch {
-    await endUploadSession(ctx, outcome.sessionId, "FAILED", "store_unavailable");
+    await endServerUpload(outcome.sessionId, "store_unavailable");
     return cancel("store_unavailable", outcome.transferId);
   }
   // Set once, on this session only. Then the session must still be the
@@ -1449,53 +1597,73 @@ export async function handleImageUploadBegin(
     });
     return cancel("superseded", outcome.transferId);
   }
-  const grant = await uploadGrant(
-    outcome.transferId,
-    {
-      objectKey: outcome.objectKey,
-      uploadId,
-      partSize: outcome.partSize,
-      storedBytes: outcome.storedBytes,
-    },
-    1,
-    outcome.dataKey
-      ? { scheme: IMAGE_ENCRYPTION_SCHEME, key: outcome.dataKey.toString("base64") }
-      : undefined,
-  );
+  // A store error presigning the first grant ends the upload with its
+  // cause, as a refused createMultipart does (never OPEN with no grant).
+  let grant: ServerImageMessage | null;
+  try {
+    grant = await uploadGrant(
+      outcome.transferId,
+      {
+        objectKey: outcome.objectKey,
+        uploadId,
+        partSize: outcome.partSize,
+        storedBytes: outcome.storedBytes,
+      },
+      1,
+      outcome.dataKey
+        ? { scheme: IMAGE_ENCRYPTION_SCHEME, key: outcome.dataKey.toString("base64") }
+        : undefined,
+    );
+  } catch {
+    await endServerUpload(outcome.sessionId, "store_unavailable");
+    return cancel("store_unavailable", outcome.transferId);
+  }
   if (grant) ctx.reply({ ...grant, ...answers });
 }
 
 /**
- * End one session that is still OPEN (conditional on its identity): the
- * session is ABORTED, its artifact FAILED while still UPLOADING, its transfer
- * ended. Returns false when the session was no longer OPEN.
+ * The server ends one template upload session for a store failure on a
+ * session no host has a grant for yet (begin's createMultipart or first
+ * presign) or one it already claimed (a failed Complete):
+ * `endTemplateUpload` in one transaction, then the multipart abort. A
+ * capture's waiting row records the cause; the 15 s sweep then fails it.
+ * Failures seen while serving a host's frame on a granted session go
+ * through `endUploadAndCancel` (fenced).
  */
-async function endUploadSession(
-  ctx: Pick<ImageFrameContext, "sendTo" | "spool">,
+async function endServerUpload(
   sessionId: string,
-  state: "FAILED" | "CANCELLED",
-  reason: string,
-): Promise<boolean> {
-  const ended = await prisma.$transaction(async (tx) => {
-    const session = await tx.sandboxImageUploadSession.findFirst({
-      where: { id: sessionId, state: "OPEN", artifactId: { not: null } },
-      select: { artifactId: true, transferId: true },
-    });
-    if (!session?.artifactId) return null;
-    const updated = await tx.sandboxImageUploadSession.updateMany({
-      where: { id: sessionId, state: "OPEN", artifactId: session.artifactId },
-      data: { state: "ABORTED", liveArtifactId: null, endReason: reason },
-    });
-    if (updated.count !== 1) return null;
-    await tx.sandboxImageArtifact.updateMany({
-      where: { id: session.artifactId, state: "UPLOADING" },
-      data: { state: "FAILED" },
-    });
-    return session;
+  detail: string,
+  from: "OPEN" | "COMPLETE" = "OPEN",
+): Promise<void> {
+  const end = await prisma.$transaction((tx) =>
+    endTemplateUpload(tx, { sessionId, from }, { detail }),
+  );
+  await abortEndedUploads(imageStore(), end);
+}
+
+/** A failure the server saw while serving this host's upload frame (S3
+ * refused ListParts or a presign, invalid parts): the session ends with that
+ * cause only through the same fence as the frame (`withUploadSession`: the
+ * sender's current connection still sources it, workload authorized), then
+ * (after its commit) the multipart abort and the host cancel;
+ * `stale_transfer` when the fence fails or another writer ended it first. */
+async function endUploadAndCancel(
+  ctx: Pick<ImageFrameContext, "reply" | "sender">,
+  transferId: string,
+  sessionId: string,
+  detail: string,
+): Promise<void> {
+  const end = await withUploadSession(ctx.sender, transferId, (tx, session) =>
+    session.id === sessionId
+      ? endTemplateUpload(tx, { sessionId, from: "OPEN" }, { detail })
+      : Promise.resolve(null),
+  );
+  if (end) await abortEndedUploads(imageStore(), end);
+  ctx.reply({
+    type: "image.job.cancel",
+    transferId,
+    reason: end && end.sessions.length > 0 ? cancelReasonOf(detail) : "stale_transfer",
   });
-  if (!ended) return false;
-  await endTransfer(ctx, ended.transferId, state, reason);
-  return true;
 }
 
 /** An upload continuation: the OPEN S3 transfer this host's current
@@ -1585,10 +1753,13 @@ export async function handleImageUploadParts(
     const now = new Date();
     await tx.sandboxImageTransfer.updateMany({
       where: { id: session.transferId, state: "OPEN" },
-      data: {
-        bytesDone: BigInt(Math.min(Number(session.storedBytes), done * session.partSize)),
-        lastProgressAt: now,
-      },
+      data: { lastProgressAt: now },
+    });
+    // bytesDone never moves back (heartbeats may have raised it further).
+    const reported = BigInt(Math.min(Number(session.storedBytes), done * session.partSize));
+    await tx.sandboxImageTransfer.updateMany({
+      where: { id: session.transferId, state: "OPEN", bytesDone: { lt: reported } },
+      data: { bytesDone: reported },
     });
     // The session is OPEN, so it is this artifact's live one.
     await tx.sandboxImageArtifact.updateMany({
@@ -1606,7 +1777,13 @@ export async function handleImageUploadParts(
   const highest = Math.max(...m.parts.map((p) => p.n));
   // Grant the next window once the current one is reported complete.
   if (highest % IMAGE_UPLOAD_PARTS_MAX === 0 && highest < found.parts) {
-    const grant = await uploadGrant(m.transferId, found.session, highest + 1);
+    // A store error presigning ends the upload with its cause.
+    let grant: ServerImageMessage | null;
+    try {
+      grant = await uploadGrant(m.transferId, found.session, highest + 1);
+    } catch {
+      return endUploadAndCancel(ctx, m.transferId, found.session.id, "store_unavailable");
+    }
     if (grant) ctx.reply(grant);
   }
 }
@@ -1631,7 +1808,10 @@ export async function handleImageUploadComplete(
     : null;
   if (!store || !session) return stale();
   const expectedParts = Math.max(1, Math.ceil(Number(session.storedBytes) / session.partSize));
-  const listed = await store.listParts(session.objectKey, session.uploadId);
+  // A store error here ends the upload with its cause (the daemon already
+  // returned after sending complete), never leaving it to the stall rule.
+  const listed = await store.listParts(session.objectKey, session.uploadId).catch(() => null);
+  if (!listed) return endUploadAndCancel(ctx, m.transferId, session.id, "store_list_failed");
   const valid =
     listed.length === expectedParts &&
     listed.every(
@@ -1641,49 +1821,40 @@ export async function handleImageUploadComplete(
         p.size === partSize(session.storedBytes, session.partSize, p.n),
     ) &&
     listed.reduce((sum, p) => sum + BigInt(p.size), 0n) === session.storedBytes;
-  if (!valid) {
-    if (!(await endUploadSession(ctx, session.id, "FAILED", "upload_invalid"))) return stale();
-    await abortSessionUpload(store, session);
-    return ctx.reply({
-      type: "image.job.cancel",
-      transferId: m.transferId,
-      reason: "upload_invalid",
+  if (!valid) return endUploadAndCancel(ctx, m.transferId, session.id, "upload_invalid");
+  // The claim re-checks the frame's fence (the connection may have been
+  // superseded during ListParts): a stale complete changes nothing.
+  const claimed = await withUploadSession(ctx.sender, m.transferId, async (tx, live) => {
+    if (live.id !== session.id || live.uploadId !== session.uploadId) return false;
+    const now = new Date();
+    const updated = await tx.sandboxImageUploadSession.updateMany({
+      where: { id: session.id, state: "OPEN", uploadId: session.uploadId },
+      data: { state: "COMPLETE", liveArtifactId: null, endReason: "uploaded" },
     });
-  }
-  const claimed = await prisma
-    .$transaction(async (tx) => {
-      const now = new Date();
-      const updated = await tx.sandboxImageUploadSession.updateMany({
-        where: { id: session.id, state: "OPEN", uploadId: session.uploadId },
-        data: { state: "COMPLETE", liveArtifactId: null, endReason: "uploaded" },
-      });
-      if (updated.count !== 1) return false;
-      const artifact = await tx.sandboxImageArtifact.updateMany({
-        where: { id: session.artifactId, state: "UPLOADING" },
-        data: {
-          state: "VERIFYING",
-          sizeBytes: session.sizeBytes,
-          objectKey: session.objectKey,
-          partSize: session.partSize,
-          encryption: session.encryption,
-          wrappedKey: session.wrappedKey,
-          wrappedKeyNonce: session.wrappedKeyNonce,
-          keyId: session.keyId,
-          storedAt: now,
-          lastProgressAt: now,
-        },
-      });
-      if (artifact.count !== 1) throw new SessionLost();
-      await tx.sandboxImageTransfer.updateMany({
-        where: { id: session.transferId, state: "OPEN" },
-        data: { state: "COMPLETE", endReason: "uploaded", bytesDone: session.storedBytes },
-      });
-      return true;
-    })
-    .catch((error: unknown) => {
-      if (error instanceof SessionLost) return false;
-      throw error;
+    if (updated.count !== 1) return false;
+    const artifact = await tx.sandboxImageArtifact.updateMany({
+      where: { id: session.artifactId, state: "UPLOADING" },
+      data: {
+        state: "VERIFYING",
+        sizeBytes: session.sizeBytes,
+        objectKey: session.objectKey,
+        partSize: session.partSize,
+        encryption: session.encryption,
+        wrappedKey: session.wrappedKey,
+        wrappedKeyNonce: session.wrappedKeyNonce,
+        keyId: session.keyId,
+        storedAt: now,
+        lastProgressAt: now,
+      },
     });
+    // The artifact lost its live session: roll the claim back.
+    requireRelayFence(artifact.count === 1);
+    await tx.sandboxImageTransfer.updateMany({
+      where: { id: session.transferId, state: "OPEN" },
+      data: { state: "COMPLETE", endReason: "uploaded", bytesDone: session.storedBytes },
+    });
+    return true;
+  });
   if (!claimed) return stale();
   try {
     await store.completeMultipart(
@@ -1704,17 +1875,10 @@ export async function handleImageUploadComplete(
       await enqueueVerify(session.artifactId);
       return;
     }
-    // The claimed object never appeared: the artifact fails (its waiting
-    // capture fails with it) and the upload is aborted.
-    await prisma.sandboxImageArtifact.updateMany({
-      where: { id: session.artifactId, state: "VERIFYING", objectKey: session.objectKey },
-      data: { state: "FAILED" },
-    });
-    await prisma.sandboxImageUploadSession.updateMany({
-      where: { id: session.id, state: "COMPLETE" },
-      data: { state: "ABORTED", endReason: "complete_failed" },
-    });
-    await abortSessionUpload(store, session);
+    // The claimed object never appeared: the session, artifact and transfer
+    // fail with `store_complete_failed` (its waiting capture records it) and
+    // the upload is aborted.
+    await endServerUpload(session.id, "store_complete_failed", "COMPLETE");
     return ctx.reply({
       type: "image.job.cancel",
       transferId: m.transferId,
@@ -1723,8 +1887,6 @@ export async function handleImageUploadComplete(
   }
   await enqueueVerify(session.artifactId);
 }
-
-class SessionLost extends Error {}
 
 /** Artifact became STORED: release origin pins (the bytes are durable now). */
 export async function onArtifactStored(

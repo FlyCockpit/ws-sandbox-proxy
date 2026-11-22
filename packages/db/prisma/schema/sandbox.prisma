@@ -1711,6 +1711,10 @@ model SandboxImageArtifact {
   lastFetchedAt     DateTime?
   lastProgressAt    DateTime?
   corruptReports    Int                         @default(0)
+  /// Why the last upload left this artifact FAILED, code-shaped
+  /// (`^[a-z0-9_.]{1,64}$`); reset when a begin re-opens it. The capture
+  /// finalizer reads it when its own capture recorded no cause.
+  failureDetail     String?
   createdAt         DateTime                    @default(now())
   updatedAt         DateTime                    @default(now()) @updatedAt
   User              User                        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
@@ -1720,6 +1724,7 @@ model SandboxImageArtifact {
   // @check sandbox_image_artifact_stored: "state"::text <> 'STORED' OR ("objectKey" IS NOT NULL AND "verifiedAt" IS NOT NULL AND "storeKind"::text = 'S3')
   // @check sandbox_image_artifact_encryption: ("encryption" IS NULL AND "wrappedKey" IS NULL AND "wrappedKeyNonce" IS NULL AND "keyId" IS NULL) OR ("encryption" = 'aes256gcm-r1' AND "wrappedKey" IS NOT NULL AND "wrappedKeyNonce" IS NOT NULL AND "keyId" IS NOT NULL)
   // @check sandbox_image_artifact_sizes: "sizeBytes" > 0 AND ("unpackedBytes" IS NULL OR "unpackedBytes" > 0) AND ("partSize" IS NULL OR "partSize" > 0) AND "corruptReports" >= 0
+  // @check sandbox_image_artifact_failure_detail: "failureDetail" IS NULL OR "failureDetail" ~ '^[a-z0-9_.]{1,64}$'
   @@unique([userId, fingerprint])
   @@unique([id, userId])
   @@index([state, deleteAfter])
@@ -1929,6 +1934,13 @@ model SandboxTemplateCapture {
   defaultDiskGiB   Int?
   storagePoolId    String?
   errorCode        String?
+  /// Why storing failed, code-shaped (`^[a-z0-9_.]{1,64}$`): a host's
+  /// `image.job.failed` report (recorded as evidence before the finalizer
+  /// fails the capture) or a finalizer rule. Never host free text.
+  errorDetail      String?
+  /// When the host result was recorded: the clock of the upload-liveness
+  /// rule (`upload_lost`).
+  capturedAt       DateTime?
   symlinkedPaths   String[]             @default([])
   /// The template build this capture belongs to (history, no FK).
   buildId          String?
@@ -1951,6 +1963,7 @@ model SandboxTemplateCapture {
   // @check sandbox_template_capture_shape: cardinality("scrubPaths") <= 80 AND "chargedMemoryMiB" >= 0 AND "chargedVcpu" >= 0 AND "diskChargeGiB" >= 0 AND ("fingerprint" IS NULL OR "fingerprint" ~ '^sha256:[0-9a-f]{64}$') AND (NOT "resourcesHeld" OR "storagePoolId" IS NOT NULL OR "diskChargeGiB" = 0)
   // @check sandbox_template_capture_build_attempt: "buildAttempt" >= 0 AND ("buildId" IS NOT NULL OR "buildAttempt" = 0)
   // @check sandbox_template_capture_default_disk: "defaultDiskGiB" IS NULL OR ("defaultDiskGiB" >= 1 AND "defaultDiskGiB" <= 2048)
+  // @check sandbox_template_capture_error_detail: "errorDetail" IS NULL OR "errorDetail" ~ '^[a-z0-9_.]{1,64}$'
   @@unique([operationId, sandboxId, userId])
   @@unique([buildId, buildAttempt])
   @@index([hostId, state])

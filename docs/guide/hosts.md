@@ -1565,6 +1565,29 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
 - **Relayed copies** use `https://<server>/host/image-relay/v1/parts/<link>`
   with the host credential in `Authorization` and a one-time link token in
   `X-Wssp-Image-Link`.
+- **Capture uploads (S3 mode).** The daemon PUTs each part to its presigned
+  URL. A socket read or write that moves no byte for 120 s fails the part
+  (`stalled`); a slow upload that keeps moving never fails for slowness, and
+  the response to a part is awaited up to 300 s (the last bytes may still be
+  draining from the kernel buffer). Every failure is logged as `image store
+  part upload failed` / `image upload ended` with its cause, `io_kind`,
+  `http_status` and part, never a URL or header, and is reported to the
+  server, which fails the capture at once with that cause (see
+  docs/operations/templates.md#capture). Troubleshooting:
+  - `stalled` or `reset` at about the same point on every try: something
+    between the host and the store cuts long request bodies. A reverse
+    proxy with a short request-body read timeout (check Traefik's
+    `respondingTimeouts.readTimeout`) cannot carry a 64 MiB part from a
+    slow uplink; serve the S3 endpoint without such a timeout.
+  - `http_status` 403, or `url_expired`: the part's presigned URL expired
+    before it was sent (`IMAGE_S3_PRESIGN_TTL_SECONDS`, default 600 s, for a
+    grant of up to 64 parts); raise it for slow uplinks.
+  - `connect` or `tls`: the host cannot reach the store, or does not trust
+    its certificate (`WSSP_CA_FILE`).
+  - `export`: the published image could not be exported from Incus (disk
+    full, or a split image).
+  - A daemon restart mid-upload is not resumed: the server fails the
+    capture (`upload_lost`); capture again.
 
 ### Disk offload on a host
 
