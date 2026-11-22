@@ -4,7 +4,7 @@
   "listRegion": "Registered templates",
   "empty": {
     "title": "No templates yet",
-    "description": "Register an Incus VM image on an owned host or a usable pool member to start sandboxes from it.",
+    "description": "The quickest first template is Create from community image: a tested Ubuntu image, prepared for you on one of your hosts or pools. Or register a VM image already in a host's Incus store.",
     "retiredTitle": "No archived templates",
     "retiredDescription": "Templates you archive stay listed here, and on the sandboxes that used them."
   },

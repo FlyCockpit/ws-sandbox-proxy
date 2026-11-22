@@ -38,15 +38,17 @@ describe("<Trans> components-prop rendering", () => {
     return renderToStaticMarkup(<I18nextProvider i18n={i18n}>{node}</I18nextProvider>);
   }
 
-  it("renders auth device enterCodeDescription with <code> around the query hint", () => {
+  it("renders auth device enterCodeDescription with <code> around the command and the query hint", () => {
     const html = renderTrans(
       <Trans
         i18nKey="device.enterCodeDescription"
         ns="auth"
-        components={[<code key="0" className="font-mono" />]}
+        components={{ code: <code className="font-mono" /> }}
       />,
     );
 
+    expect(html).toContain('<code class="font-mono">wssp host enroll</code>');
     expect(html).toContain('<code class="font-mono">?user_code=YOURCODE</code>');
+    expect(html).not.toContain("`");
   });
 });

@@ -17,7 +17,7 @@ import { toast } from "@wssp/ui/components/sileo";
 import { Switch } from "@wssp/ui/components/switch";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
 import { useId, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
@@ -805,11 +805,15 @@ export function CreateSandboxDialog({ lang, onClose }: { lang: string; onClose: 
               )}
             </form.Field>
             <p data-guest-sudo-hint="" className="text-xs text-muted-foreground">
-              {t(
-                values.guestSudo
-                  ? "sandboxes:create.guestSudoOnHint"
-                  : "sandboxes:create.guestSudoOffHint",
-              )}
+              <Trans
+                t={t}
+                i18nKey={
+                  values.guestSudo
+                    ? "sandboxes:create.guestSudoOnHint"
+                    : "sandboxes:create.guestSudoOffHint"
+                }
+                components={{ code: <code className="whitespace-nowrap" /> }}
+              />
             </p>
             {!values.guestSudo && revision && revisionRootTaint(revision) ? (
               <p data-guest-root-tainted="" className="text-xs text-amber-700 dark:text-amber-400">

@@ -3,7 +3,7 @@ import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { cn } from "@wssp/ui/lib/utils";
 import { PanelLeft } from "lucide-react";
-import { useCallback } from "react";
+import { type ReactNode, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
 import PullToRefresh from "@/components/pull-to-refresh";
@@ -22,7 +22,7 @@ import { useUiPreferences } from "@/stores/ui-preferences";
  * active item comes from `primarySectionFor`, so every `/settings/...` page
  * keeps Settings lit.
  */
-export function DashboardFrame({ lang }: { lang: string }) {
+export function DashboardFrame({ lang, banner }: { lang: string; banner?: ReactNode }) {
   const { t } = useTranslation(["dashboard"]);
   const sidebarCollapsed = useUiPreferences((state) => state.sidebarCollapsed);
   const toggleSidebar = useUiPreferences((state) => state.toggleSidebar);
@@ -77,6 +77,7 @@ export function DashboardFrame({ lang }: { lang: string }) {
       </aside>
 
       <div data-dashboard-content className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">
+        {banner}
         <PullToRefresh onRefresh={handleRefresh}>
           <div className="container mx-auto flex min-h-0 min-w-0 max-w-6xl flex-1 flex-col px-4 py-4 md:py-6">
             <div className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">

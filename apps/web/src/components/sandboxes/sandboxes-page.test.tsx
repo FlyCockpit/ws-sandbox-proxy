@@ -167,9 +167,36 @@ describe("sandboxes list", () => {
     expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
     expect(await screen.findByText(enSandboxes.onboarding.title)).toBeTruthy();
     expect(calls("list")[0]?.input).toMatchObject({ status: "active", limit: 50 });
-    // Each step check is one bounded read.
-    for (const procedure of ["listHosts:first", "listPools:first", "listTemplates:first"])
+    // Each step check is one bounded read (hosts: enough to find a ready one).
+    expect(calls("listHosts:first")[0]?.input).toMatchObject({ limit: 20 });
+    for (const procedure of ["listPools:first", "listTemplates:first"])
       expect(calls(procedure)[0]?.input, procedure).toMatchObject({ limit: 1 });
+  });
+
+  it("an enrolled host that cannot take sandboxes yet points at Hosts, not at enrolling another", async () => {
+    server.current.hosts = [
+      fakeHost({ egressGuard: { ok: false, reason: "guard_unreachable", leaseActive: false } }),
+      fakeHost({ id: "host-2", slug: "beta", label: "Beta", status: "DISCONNECTED" }),
+    ];
+    server.current.pools = [];
+    await mount();
+    await screen.findByText(enSandboxes.onboarding.title);
+    const first = document.querySelector<HTMLElement>("[data-step-done]");
+    expect(first?.dataset.stepDone).toBe("false");
+    expect(screen.getByText(enSandboxes.onboarding.host.notReady)).toBeTruthy();
+    expect(screen.getByRole("link", { name: enSandboxes.onboarding.host.openHosts })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: enSandboxes.onboarding.host.poolsAction }),
+    ).toBeTruthy();
+  });
+
+  it("a connected host with a running egress guard completes the first step", async () => {
+    server.current.hosts = [fakeHost()];
+    server.current.pools = [];
+    await mount();
+    await screen.findByText(enSandboxes.onboarding.title);
+    const first = document.querySelector<HTMLElement>("[data-step-done]");
+    expect(first?.dataset.stepDone).toBe("true");
   });
 
   it("the onboarding checklist marks what is done and counts a shared pool as a place to run", async () => {
@@ -659,7 +686,7 @@ describe("creating a sandbox", () => {
     const toggle = form.getByRole("switch", { name: enSandboxes.create.guestSudo });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     expect(dialog().querySelector("[data-guest-sudo-hint]")?.textContent).toBe(
-      enSandboxes.create.guestSudoOnHint,
+      enSandboxes.create.guestSudoOnHint.replace(/<\/?code>/g, ""),
     );
     await selectOption(user, form.getByLabelText(enSandboxes.create.host), /^Alpha \(alpha\)/);
     await chooseRevision(user, "tpl-1");

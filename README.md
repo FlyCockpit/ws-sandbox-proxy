@@ -208,12 +208,20 @@ addresses. After `pnpm run setup`:
 
 ## Usage
 
-1. Deploy the server ([deployment](docs/operations/deployment.md)), sign up
-   with an `ADMIN_EMAILS` address and enable 2FA.
+1. Deploy the server ([deployment](docs/operations/deployment.md)) with email
+   (SMTP) configured: every account, the first admin's included, confirms its
+   address by email before it can sign in. Sign up with an `ADMIN_EMAILS`
+   address and enable 2FA. **Admin → Overview → Deployment setup** shows which
+   optional features (S3 image store, data encryption key, backups, preview
+   tunnels) are configured.
 2. Enroll a Linux host with Incus and KVM: run
    `wssp host enroll --slug desk-01 --server https://api.example.com`, approve it in
-   the dashboard, then run `wssp host run` ([hosts](docs/guide/hosts.md)).
-3. Prepare an Incus VM image on that host and register it as a template
+   the browser, install the egress guard as root, then run `wssp host run`
+   ([hosts quick start](docs/guide/hosts.md#quick-start-your-first-host)).
+3. Add a template. The quickest is **Templates → Create from community
+   image**, a tested Ubuntu base prepared for you
+   ([community bases](docs/operations/templates.md#community-bases)); or
+   prepare an Incus VM image on that host and register it
    ([templates](docs/operations/templates.md)). OCI images are not VM images;
    [template builds](docs/guide/template-builds.md) derive new revisions from
    an existing VM template.

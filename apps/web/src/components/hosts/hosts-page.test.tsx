@@ -354,6 +354,23 @@ describe("hosts page query states", () => {
     ).toBeTruthy();
     expect(screen.getAllByText("wssp host run").length).toBeGreaterThan(0);
     const enroll = document.querySelector<HTMLElement>('[aria-labelledby="hosts-enroll-title"]')!;
+    // The steps a new node owner follows, in order, including the root-owned
+    // egress guard without which the host connects but takes no sandboxes.
+    expect(
+      [...enroll.querySelectorAll<HTMLElement>("[data-enroll-step]")].map(
+        (item) => item.dataset.enrollStep,
+      ),
+    ).toEqual(["install", "enroll", "guard", "run"]);
+    expect(within(enroll).getByText(GUARD_INSTALL_COMMAND)).toBeTruthy();
+    // No docs base in this environment: the guide is named by its repository path.
+    expect(
+      within(enroll).getByText(
+        enHosts.enroll.docsPath.replace(
+          "{{path}}",
+          "docs/guide/hosts.md#quick-start-your-first-host",
+        ),
+      ),
+    ).toBeTruthy();
     const link = within(enroll).getByRole("link", { name: enHosts.enroll.tokenLink });
     expect(link.getAttribute("href")).toBe("/en-US/settings/host-credentials");
     expect(screen.queryByRole("list", { name: enHosts.listRegion })).toBeNull();
@@ -488,7 +505,12 @@ describe("egress enforcement (E-06)", () => {
     // and no longer asserts that the Incus version is always the cause.
     expect(enHosts.egress.incusHint).toContain("daemon's log names the reason");
     expect(enHosts.egress.incusHint).not.toMatch(/need Incus 6\.14/);
-    expect(within(card("fake")).getByText(enHosts.egress.fakeHint)).toBeTruthy();
+    // The command in the hint renders as code, not as backticked text.
+    const fakeHint = card("fake").querySelector<HTMLElement>('[data-host-egress-hint="fakeHint"]')!;
+    expect(fakeHint.textContent).toBe(enHosts.egress.fakeHint.replace(/<\/?code>/g, ""));
+    expect(
+      within(fakeHint).getByText("wssp host run --runtime incus", { selector: "code" }),
+    ).toBeTruthy();
     // Inverse: a capable host, one that never reported, and an unsupported
     // runtime (its own hint) carry no egress badge.
     for (const id of ["capable", "unreported", "unsupported"]) {

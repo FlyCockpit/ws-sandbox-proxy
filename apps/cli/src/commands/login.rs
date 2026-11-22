@@ -113,17 +113,14 @@ impl<'a> Granted<'a> {
         }
     }
 
-    /// Human lines.
-    pub fn print(&self) -> Result<()> {
+    /// Human lines. `pool_slugs`: the selected pools' slugs from `GET /v1/key`
+    /// when that answered; otherwise the saved pool ids are shown.
+    pub fn print(&self, pool_slugs: Option<&[String]>) -> Result<()> {
         output::line(format!("server: {}", self.server))?;
         output::line(format!("user: {}", self.user_email))?;
         output::line(format!("login: {} ({})", self.name, self.key_id))?;
         output::line(format!("access: {}", self.access))?;
-        let pools = if self.pool_mode == "SELECTED" {
-            self.pool_ids.join(", ")
-        } else {
-            "all usable pools".to_owned()
-        };
+        let pools = pools_line(self.pool_mode, self.pool_ids, pool_slugs);
         output::line(format!("pools: {pools}"))?;
         output::line(format!(
             "sandboxes: {}",
@@ -140,6 +137,50 @@ impl<'a> Granted<'a> {
         ))?;
         output::line(format!("expires: {}", self.expires_at.unwrap_or("never")))
     }
+}
+
+/// The `pools:` value: slugs when known, the saved ids otherwise.
+fn pools_line(pool_mode: &str, pool_ids: &[String], pool_slugs: Option<&[String]>) -> String {
+    if !pool_mode.eq_ignore_ascii_case("selected") {
+        return "all usable pools".to_owned();
+    }
+    match pool_slugs {
+        Some(slugs) => slugs
+            .iter()
+            .map(|slug| output::remote_message(slug))
+            .collect::<Vec<_>>()
+            .join(", "),
+        None => pool_ids.join(", "),
+    }
+}
+
+/// One best-effort `GET /v1/key` with the login just saved (never the
+/// environment's credentials), for the pool slugs. Single attempt, short
+/// timeout; any failure falls back to the saved pool ids.
+fn lookup_pool_slugs(login: &UserLogin, ca_file: Option<PathBuf>) -> Option<Vec<String>> {
+    if !login.pool_mode.eq_ignore_ascii_case("selected") {
+        return None;
+    }
+    let credential = crate::user_state::UserCredential {
+        origin: login.origin.clone(),
+        secret: login.secret.clone(),
+        source: crate::user_state::CredentialSource::File,
+        login: None,
+        ca_file,
+    };
+    let key: crate::commands::whoami::KeyInfo = crate::api::Client::new(&credential)
+        .and_then(|client| {
+            client.request(
+                crate::api::Method::Get,
+                "/v1/key",
+                &[],
+                crate::api::Body::None,
+                None,
+                std::time::Duration::from_secs(10),
+            )
+        })
+        .ok()?;
+    Some(key.pools.into_iter().map(|pool| pool.slug).collect())
 }
 
 pub fn run(args: &Args, role: HostRole) -> Result<()> {
@@ -273,7 +314,8 @@ pub fn run(args: &Args, role: HostRole) -> Result<()> {
             output::warning(warning)?;
         }
         output::line("logged in")?;
-        granted.print()
+        let slugs = lookup_pool_slugs(&login, selected);
+        granted.print(slugs.as_deref())
     }
 }
 

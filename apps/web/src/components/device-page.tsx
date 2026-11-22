@@ -285,7 +285,7 @@ function DevicePageRequest({
         <CardHeader>
           <CardTitle>{t("device.enterCodeTitle")}</CardTitle>
           <CardDescription>
-            <Trans i18nKey="device.enterCodeDescription" t={t} components={[<code key="0" />]} />
+            <Trans i18nKey="device.enterCodeDescription" t={t} components={{ code: <code /> }} />
           </CardDescription>
         </CardHeader>
       </DeviceShell>
@@ -302,7 +302,11 @@ function DevicePageRequest({
             {t(user ? "device.user.approved.title" : "device.approved.title")}
           </CardTitle>
           <CardDescription>
-            {t(user ? "device.user.approved.description" : "device.approved.description")}
+            <Trans
+              t={t}
+              i18nKey={user ? "device.user.approved.description" : "device.approved.description"}
+              components={{ code: <code className="whitespace-nowrap" /> }}
+            />
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -349,7 +353,11 @@ function DevicePageRequest({
       <CardHeader>
         <CardTitle>{t(userLogin ? "device.user.approveTitle" : "device.approveTitle")}</CardTitle>
         <CardDescription>
-          {t(userLogin ? "device.user.approveDescription" : "device.approveDescription")}
+          <Trans
+            t={t}
+            i18nKey={userLogin ? "device.user.approveDescription" : "device.approveDescription"}
+            components={{ code: <code className="whitespace-nowrap" /> }}
+          />
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

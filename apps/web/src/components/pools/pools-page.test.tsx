@@ -7,7 +7,7 @@ import en from "@wssp/locales/src/en-US/hosts.json";
 import esCommon from "@wssp/locales/src/es-MX/common.json";
 import es from "@wssp/locales/src/es-MX/hosts.json";
 import { createInstance } from "i18next";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { selectChoices, selectOption } from "@/test/select-option";
@@ -157,7 +157,11 @@ beforeEach(() => {
   state.calls = [];
   state.previewAffected = 0;
 });
-async function mount(lang = "en-US") {
+function Harness({ lang, initialTab }: { lang: string; initialTab: "owned" | "shared" }) {
+  const [tab, setTab] = useState<"owned" | "shared">(initialTab);
+  return <PoolsPage lang={lang} tab={tab} onTabChange={setTab} />;
+}
+async function mount(lang = "en-US", initialTab: "owned" | "shared" = "owned") {
   const i18n = createInstance();
   await i18n.init({
     lng: lang,
@@ -173,7 +177,7 @@ async function mount(lang = "en-US") {
   const view = render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
-        <PoolsPage lang={lang} />
+        <Harness lang={lang} initialTab={initialTab} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -185,6 +189,7 @@ it.each(["en-US", "es-MX"])(
     await mount(lang);
     const text = lang === "en-US" ? en : es;
     expect(await screen.findByText(text.pools.empty)).toBeTruthy();
+    expect(screen.getByText(text.pools.emptyDescription)).toBeTruthy();
     expect(screen.getByRole("button", { name: text.pools.create })).toBeTruthy();
   },
 );

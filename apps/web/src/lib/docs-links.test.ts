@@ -21,9 +21,25 @@ describe("docs links", () => {
   it("every referenced doc page exists in the repository", async () => {
     const { existsSync } = await import("node:fs");
     const { fileURLToPath } = await import("node:url");
+    const { readFileSync } = await import("node:fs");
+    // GitHub-style heading anchors: lower case, punctuation dropped, spaces to hyphens.
+    const slug = (heading: string) =>
+      heading
+        .trim()
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s-]/gu, "")
+        .replace(/\s/g, "-");
     for (const page of Object.keys(DOC_PAGES) as (keyof typeof DOC_PAGES)[]) {
-      const path = fileURLToPath(new URL(`../../../../${docsRepoPath(page)}`, import.meta.url));
+      const [file, anchor] = docsRepoPath(page).split("#");
+      const path = fileURLToPath(new URL(`../../../../${file}`, import.meta.url));
       expect(existsSync(path), path).toBe(true);
+      if (anchor) {
+        const anchors = readFileSync(path, "utf8")
+          .split("\n")
+          .filter((line) => /^#{1,6} /.test(line))
+          .map((line) => slug(line.replace(/^#+ /, "")));
+        expect(anchors, `${file}#${anchor}`).toContain(anchor);
+      }
     }
   });
 

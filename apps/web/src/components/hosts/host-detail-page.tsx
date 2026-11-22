@@ -3,7 +3,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Link } from "@tanstack/react-router";
 import { Button } from "@wssp/ui/components/button";
 import { TextField } from "@wssp/ui/components/text-field";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
@@ -94,12 +94,17 @@ function HostLease({
         {t("hosts:lease.title")}
       </h2>
       <p data-host-lease-ceiling="">
-        {t("hosts:lease.ceiling", {
-          value:
-            lease.ceilingMs === null
-              ? t("hosts:lease.unlimited")
-              : formatLeaseDuration(lease.ceilingMs, lang),
-        })}
+        <Trans
+          t={t}
+          i18nKey="hosts:lease.ceiling"
+          values={{
+            value:
+              lease.ceilingMs === null
+                ? t("hosts:lease.unlimited")
+                : formatLeaseDuration(lease.ceilingMs, lang),
+          }}
+          components={{ code: <code className="whitespace-nowrap" /> }}
+        />
       </p>
       <p className="text-sm text-muted-foreground">{t("hosts:lease.ceilingHint")}</p>
       {draining ? (

@@ -26,7 +26,7 @@ import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
  * duplicating it. Rendered by the admin layout; renders nothing until the
  * session and settings resolve, so it never flashes the wrong copy.
  */
-export function TwoFactorNudge() {
+export function TwoFactorNudge({ variant = "admin" }: { variant?: "admin" | "shell" } = {}) {
   const { t, i18n } = useTranslation("admin");
   const params = useParams({ strict: false });
   const lang = isSupportedLocale(params.lang) ? params.lang : DEFAULT_LOCALE;
@@ -40,6 +40,10 @@ export function TwoFactorNudge() {
 
   const enrollment = twoFactorEnrollmentState(appSettings, user);
   if (enrollment.status === "enrolled") return null;
+  // The app shell (outside /admin) shows only the running deadline: a blocked
+  // admin is already taken over by ForcedTwoFactorGate, and an owner who turned
+  // the policy off should not be nagged on every page.
+  if (variant === "shell" && enrollment.status !== "grace") return null;
 
   const title =
     enrollment.status === "grace"
@@ -59,6 +63,7 @@ export function TwoFactorNudge() {
   return (
     <div
       role="alert"
+      data-two-factor-nudge={variant}
       className="border-b border-yellow-300 bg-yellow-100 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100"
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
@@ -75,9 +80,11 @@ export function TwoFactorNudge() {
           >
             {message}
           </p>
-          <p className="text-yellow-900/80 dark:text-yellow-100/80">
-            {t("twoFactorNudge.configurable")}
-          </p>
+          {variant === "admin" ? (
+            <p className="text-yellow-900/80 dark:text-yellow-100/80">
+              {t("twoFactorNudge.configurable")}
+            </p>
+          ) : null}
         </div>
         <Link
           to="/$lang/settings/security"

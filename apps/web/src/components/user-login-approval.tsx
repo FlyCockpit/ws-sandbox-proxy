@@ -16,7 +16,7 @@ import { FieldError, TextField } from "@wssp/ui/components/text-field";
 import type { TFunction } from "i18next";
 import { TriangleAlert } from "lucide-react";
 import { useId } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
@@ -133,7 +133,13 @@ export function UserLoginApproval({
         <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
         <div className="min-w-0 space-y-1">
           <p className="font-medium">{t("device.user.warningTitle")}</p>
-          <p>{t("device.user.warning")}</p>
+          <p>
+            <Trans
+              t={t}
+              i18nKey="device.user.warning"
+              components={{ code: <code className="whitespace-nowrap" /> }}
+            />
+          </p>
         </div>
       </div>
 
@@ -173,7 +179,11 @@ export function UserLoginApproval({
                   <span className="min-w-0">
                     <span className="block">{t(`device.user.access.${option}`)}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {t(`device.user.accessHint.${option}`)}
+                      <Trans
+                        t={t}
+                        i18nKey={`device.user.accessHint.${option}`}
+                        components={{ code: <code className="whitespace-nowrap" /> }}
+                      />
                     </span>
                   </span>
                 </label>

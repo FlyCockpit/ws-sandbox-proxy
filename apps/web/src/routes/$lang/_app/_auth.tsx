@@ -1,5 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { isAdminRole } from "@wssp/auth/roles";
 
+import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
 import { DashboardFrame } from "@/components/dashboard-frame";
 import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
@@ -36,9 +38,13 @@ function AuthLayout() {
   const { session, forcedTwoFactorSettings } = Route.useRouteContext();
   const { lang } = Route.useParams();
   // The takeover replaces the whole frame, so no nav renders behind it.
+  // Admins see their 2FA enrollment deadline here too, not only under /admin
+  // (a sibling route tree, so the banner never renders twice).
+  const admin = session.user.emailVerified === true && isAdminRole(session.user.role);
+  const banner = admin ? <TwoFactorNudge variant="shell" /> : null;
   return (
     <ForcedTwoFactorGate user={session.user} forcedTwoFactorSettings={forcedTwoFactorSettings}>
-      <DashboardFrame lang={lang} />
+      <DashboardFrame lang={lang} banner={banner} />
     </ForcedTwoFactorGate>
   );
 }

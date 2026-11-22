@@ -16,6 +16,7 @@ import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
+import { signupNotice } from "@/lib/signup-notice";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
@@ -55,11 +56,16 @@ function SignupPage() {
   // NOT return a session — there is nothing to redirect into yet. The address
   // is kept only to name it back to the user and to target a resend.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  // Whether the signup began from an invitation link. The secret itself is
+  // cleared on success (memory only), so only this flag survives to remind the
+  // person to reopen the link after verifying.
+  const [invited, setInvited] = useState(false);
 
   // Same gate as /$lang/verify-email: resending needs a working mail transport.
   // Without it the card below must not claim a link was sent, or offer a
   // button that can only ever error.
   const canResend = configData?.emailEnabled === true;
+  const notice = signupNotice(configData, poolInviteToken() !== undefined);
   const sessionPending =
     authSession.state.status === "pending" || authSession.state.status === "error";
 
@@ -77,7 +83,7 @@ function SignupPage() {
             : t("auth:verifyEmail.accountCreatedNoEmail", { email: pendingEmail })
         }
       >
-        <p>{t("auth:poolInviteReopen")}</p>
+        {invited ? <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p> : null}
         <Link
           to="/$lang/login"
           params={{ lang }}
@@ -101,8 +107,19 @@ function SignupPage() {
         title={t("auth:login.createAccount")}
         description={t("auth:login.createDescription")}
       >
-        <p>{t("auth:poolInviteReopen")}</p>
-        <SignUpForm onSignedUp={setPendingEmail} />
+        {notice === "invite" ? (
+          <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p>
+        ) : notice === "limited" ? (
+          <p data-signup-limited="" className="text-sm text-muted-foreground">
+            {t("auth:login.signupLimited")}
+          </p>
+        ) : null}
+        <SignUpForm
+          onSignedUp={(email, fromInvite) => {
+            setInvited(fromInvite);
+            setPendingEmail(email);
+          }}
+        />
         <div className="text-center">
           <Link
             to="/$lang/login"
@@ -128,7 +145,7 @@ function SignupPage() {
   );
 }
 
-function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
+function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: boolean) => void }) {
   const { t } = useTranslation(["auth"]);
 
   const form = useForm({
@@ -164,8 +181,9 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string) => void }) {
       // session, so anything behind the `_auth` guard would bounce straight back
       // to login. Hand the address up and let the page render the
       // check-your-email state instead.
+      const fromInvite = poolInviteToken() !== undefined;
       clearPoolInviteToken();
-      onSignedUp(value.email);
+      onSignedUp(value.email, fromInvite);
     },
     validators: {
       // Validation messages come from the locale-aware Zod error map installed

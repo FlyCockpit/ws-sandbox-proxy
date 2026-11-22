@@ -46,6 +46,7 @@ import { QueryBoundary } from "@/components/query-boundary";
 import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
+import { docsRepoPath, docsUrl } from "@/lib/docs-links";
 import { formatBytes } from "@/lib/format-bytes";
 import { dateTimeTitle } from "@/lib/format-date-time";
 import {
@@ -192,18 +193,52 @@ export function HostsPage({ lang }: { lang: string }) {
 }
 
 /**
- * Enrolling a machine: the device-code login and connect commands, plus the
- * token alternative. Shown in the Add host dialog, and inline while the list
- * is empty.
+ * Enrolling a machine, in the order a new node owner does it: install, enroll
+ * with a device code (approved on the link the CLI prints), install the
+ * root-owned egress guard (without it the host connects but takes no
+ * sandboxes), then start the daemon. Shown in the Add host dialog, and inline
+ * while the list is empty.
  */
 function EnrollHost({ lang }: { lang: string }) {
   const { t } = useTranslation("hosts");
   const commands = hostCommands(env.VITE_SERVER_URL);
+  const step = "flex min-w-0 flex-col gap-2";
   return (
     <div data-host-enroll="" className="flex min-w-0 flex-col gap-3">
       <p className="text-sm text-muted-foreground">{t("enroll.description")}</p>
-      <CopyField value={commands.deviceLogin} copyLabel={t("enroll.copyCommand")} />
-      <CopyField value={commands.connect} copyLabel={t("enroll.copyCommand")} />
+      {/* Numbers are part of each step's text, so text and command boxes stay
+          on the card's text line (docs/design/edge-lines.md). */}
+      <ol className="flex min-w-0 flex-col gap-4 text-sm">
+        <li data-enroll-step="install" className={step}>
+          <span>
+            <StepNumber n={1} />
+            {t("enroll.steps.install")}{" "}
+            <GuideLink page="hostsQuickStart" label={t("enroll.guideLink")} />
+          </span>
+        </li>
+        <li data-enroll-step="enroll" className={step}>
+          <span>
+            <StepNumber n={2} />
+            {t("enroll.steps.enroll")}
+          </span>
+          <CopyField value={commands.deviceLogin} copyLabel={t("enroll.copyCommand")} />
+        </li>
+        <li data-enroll-step="guard" className={step}>
+          <span>
+            <StepNumber n={3} />
+            {t("enroll.steps.guard")}
+          </span>
+          <CopyField value={GUARD_INSTALL_COMMAND} copyLabel={t("enroll.copyCommand")} />
+        </li>
+        <li data-enroll-step="run" className={step}>
+          <span>
+            <StepNumber n={4} />
+            {t("enroll.steps.run")}{" "}
+            <GuideLink page="hostsService" label={t("enroll.serviceLink")} />
+          </span>
+          <CopyField value={commands.connect} copyLabel={t("enroll.copyCommand")} />
+        </li>
+      </ol>
       <p className="text-sm text-muted-foreground">
         <Trans
           t={t}
@@ -230,6 +265,36 @@ function EnrollHost({ lang }: { lang: string }) {
         </Link>
       </p>
     </div>
+  );
+}
+
+/** The visible step number; the ordered list already conveys order to assistive tech. */
+function StepNumber({ n }: { n: number }) {
+  return (
+    <span aria-hidden="true" className="font-medium">
+      {n}.{" "}
+    </span>
+  );
+}
+
+/** A link into the host guide, or its repository path when no docs base is configured. */
+function GuideLink({ page, label }: { page: "hostsQuickStart" | "hostsService"; label: string }) {
+  const { t } = useTranslation("hosts");
+  const href = docsUrl(env.VITE_DOCS_URL, page);
+  return href ? (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      data-docs-link=""
+      className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+    >
+      {label}
+    </a>
+  ) : (
+    <span data-docs-path="" className="text-muted-foreground">
+      {t("enroll.docsPath", { path: docsRepoPath(page) })}
+    </span>
   );
 }
 
@@ -481,7 +546,11 @@ export function HostCard({
       ) : null}
       {egressBlocker ? (
         <p className="text-sm text-destructive" data-host-egress-hint={egressBlocker}>
-          {t(`hosts:egress.${egressBlocker}`)}
+          <Trans
+            t={t}
+            i18nKey={`hosts:egress.${egressBlocker}`}
+            components={{ code: <code className="whitespace-nowrap" /> }}
+          />
         </p>
       ) : null}
       {locked ? null : <HostNetwork host={host} connected={state === "ready"} />}

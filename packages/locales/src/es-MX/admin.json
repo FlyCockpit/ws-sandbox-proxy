@@ -301,6 +301,43 @@
     "notRequired": "no obligatoria",
     "policyLink": "Cambiar en Configuración"
   },
+  "setup": {
+    "title": "Configuración del despliegue",
+    "description": "Con qué está configurado este servidor. Aquí nunca se muestran valores; cada elemento se define en el entorno del servidor salvo que se indique otra cosa.",
+    "docsLink": "Variables de entorno",
+    "docsPath": "Variables de entorno: {{path}} en el repositorio de código de WS Sandbox Proxy.",
+    "unknown": "No se pudo cargar este estado. Recarga la página para intentarlo de nuevo.",
+    "maintenanceLink": "Abrir Observabilidad › Mantenimiento",
+    "settingsLink": "Abrir Configuración",
+    "email": {
+      "title": "Correo (SMTP)",
+      "ok": "La configuración SMTP está presente. La verificación de registro, el restablecimiento de contraseñas y las invitaciones se envían por correo.",
+      "missing": "No configurado. Nadie puede verificar una dirección de correo, así que las cuentas nuevas (incluida la tuya) no pueden iniciar sesión, y no se envían invitaciones ni restablecimientos de contraseña. Define SMTP_HOST y SMTP_FROM."
+    },
+    "imageStore": {
+      "title": "Almacén de imágenes",
+      "s3": "Almacén de imágenes S3. Las plantillas, las bases de la comunidad y los discos descargados se guardan en tu bucket.",
+      "peer": "Sin bucket S3: los hosts copian las imágenes de plantilla entre sí, así que una plantilla solo está disponible mientras lo estén los hosts que la tienen, y la descarga de discos está desactivada. Define las variables IMAGE_S3_*.",
+      "off": "La distribución de imágenes está desactivada (IMAGE_DISTRIBUTION=off): no hay compilaciones de plantillas ni bases de la comunidad."
+    },
+    "dataKey": {
+      "title": "Clave de cifrado de datos",
+      "ok": "Definida. Los webhooks, los inicios de sesión de CLI y los túneles de vista previa pueden guardar sus secretos.",
+      "missing": "No definida. Los webhooks, los inicios de sesión de CLI y los túneles de vista previa siguen desactivados. Define DATA_ENCRYPTION_KEY (64 caracteres hexadecimales, el mismo valor en el servidor y el worker)."
+    },
+    "backups": {
+      "title": "Respaldos de la base de datos",
+      "ok": "Activados.",
+      "optional": "Desactivados (opcional). Actívalos con BACKUP_ENABLED y un bucket de respaldos; consulta la guía de respaldos.",
+      "problem": "Activados, pero el último respaldo falta, está atrasado o falla.",
+      "unknown": "Activados, pero aún no se ha registrado ningún resultado de respaldo."
+    },
+    "tunnels": {
+      "title": "Túneles de vista previa",
+      "ok": "Configurado para usar {{url}}.",
+      "optional": "Desactivados (opcional). Permiten que los sandboxes compartan puertos declarados mediante enlaces de corta duración."
+    }
+  },
   "problems": {
     "selfDemotion": "No puedes quitarte tu propio rol de administrador. Pídeselo a otro administrador.",
     "selfArchive": "No puedes archivar tu propia cuenta.",
@@ -404,7 +441,7 @@
       "urlHint": "El origen https:// del servidor, por ejemplo https://tunnel.example.com.",
       "urlInvalid": "Ingresa un origen https:// sin ruta.",
       "credentialLabel": "Credencial de servicio",
-      "credentialHint": "Una credencial tnsvc_ creada en el servidor de túneles con `tunnel-server service add`. Se guarda cifrada y no se vuelve a mostrar.",
+      "credentialHint": "Una credencial tnsvc_ creada en el servidor de túneles con tunnel-server service add. Se guarda cifrada y no se vuelve a mostrar.",
       "credentialKeep": "El servidor y la credencial se mantienen como están configurados; aquí solo puede cambiar el límite. Para otro servidor o credencial, desactiva los túneles, espera a que desaparezca la configuración y luego configúralo.",
       "credentialInvalid": "Una credencial de servicio empieza con tnsvc_.",
       "maxLabel": "Túneles por cuenta",
@@ -496,7 +533,7 @@
     "userRestored": "Usuario restaurado",
     "userDeleted": "Usuario eliminado",
     "inviteTitle": "Invitar un usuario",
-    "inviteDescription": "Crea una cuenta con una contraseña temporal. El nuevo usuario recibe un correo con sus detalles de inicio de sesión (o puedes copiarlos después de la creación si el correo no está configurado).",
+    "inviteDescription": "Crea una cuenta con una contraseña temporal y envía por correo los datos de inicio de sesión. En su primer inicio de sesión, la persona recibe un enlace para confirmar su dirección de correo, así que el correo (SMTP) debe estar configurado en este servidor.",
     "nameLabel": "Nombre",
     "emailLabel": "Correo",
     "emailPlaceholder": "usuario@ejemplo.com",
@@ -510,7 +547,7 @@
     "revealNotEmailedDescription": "La cuenta para {{email}} fue creada, pero no se pudo enviar el correo. Comparte la contraseña temporal con ellos a través de otro canal.",
     "tempPasswordLabel": "Contraseña temporal",
     "copyTempPasswordAriaLabel": "Copiar contraseña temporal",
-    "tempPasswordHint": "Esta contraseña solo se muestra una vez. El usuario debe cambiarla después de su primer inicio de sesión.",
+    "tempPasswordHint": "Esta contraseña solo se muestra una vez. En su primer inicio de sesión, la persona confirma su dirección de correo con el enlace que recibe y vuelve a iniciar sesión. Después debe cambiar la contraseña.",
     "savedPassword": "He guardado la contraseña",
     "passwordCopied": "Contraseña copiada",
     "deleteTitle": "¿Eliminar este usuario?",

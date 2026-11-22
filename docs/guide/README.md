@@ -54,8 +54,10 @@ These are deliberate, current limits, not hidden features:
   runs a recipe (or a Dockerfile subset) inside a KVM build VM started from
   one of your templates. WS Sandbox Proxy does not pull OCI/Docker images, and a build
   has no layer cache and no multi-stage, `ADD`, `CMD` or `ENTRYPOINT`. The
-  first base template is still an Incus `virtual-machine` image you prepare
-  on a host yourself ([templates](../operations/templates.md)).
+  first base template is either the tested community image
+  ([Create from community image](../operations/templates.md#community-bases))
+  or an Incus `virtual-machine` image you prepare on a host yourself
+  ([templates](../operations/templates.md)).
 - **No snapshots, restore or fork.** Those entry points answer
   `UNSUPPORTED_CAPABILITY` until they are separately specified. Stop keeps the
   disk; that is the only persistence.

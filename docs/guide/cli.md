@@ -300,9 +300,9 @@ operator logs at info.
 | 0    | success                                                                                                                                                                   |
 | 1    | other failure (transport, an operation that failed, a server error)                                                                                                       |
 | 2    | usage error, or the server refused the request as invalid (400, 413, 415)                                                                                                 |
-| 3    | not found (404)                                                                                                                                                           |
+| 3    | not found (404); also a pool outside the login's pools: the server answers 404, so a login cannot learn which pools exist                                                 |
 | 7    | not logged in, or the server refused the key (401)                                                                                                                        |
-| 8    | forbidden: the login's scopes or pools do not allow it (403)                                                                                                              |
+| 8    | forbidden: the login's scopes do not allow it (403)                                                                                                                       |
 | 9    | a limit was reached: `sandbox.key_limit_reached`, a quota, `sandbox.capacity_queue_full`                                                                                  |
 | 10   | any other conflict (409)                                                                                                                                                  |
 | 11   | retryable: the server answered 429, 503 or 504                                                                                                                            |

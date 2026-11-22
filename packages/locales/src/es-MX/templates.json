@@ -433,7 +433,7 @@
     "title": "Aún no hay plantillas",
     "retiredTitle": "No hay plantillas archivadas",
     "retiredDescription": "Las plantillas que archives siguen apareciendo aquí y en los sandboxes que las usaron.",
-    "description": "Registra una imagen de VM de Incus en un host propio o en un miembro de grupo compartido utilizable para comenzar sandboxes a partir de ella."
+    "description": "La forma más rápida de tener una primera plantilla es Crear desde imagen de la comunidad: una imagen de Ubuntu probada, preparada para ti en uno de tus hosts o grupos. O registra una imagen de VM que ya esté en el almacén de Incus de un host."
   },
   "fields": {
     "fingerprint": "Huella fijada",

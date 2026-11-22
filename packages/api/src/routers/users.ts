@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { ORPCError, os } from "@orpc/server";
 import { auth } from "@wssp/auth";
+import { DEFAULT_LOCALE, isSupportedLocale } from "@wssp/config/locales";
 import prisma, { type Prisma } from "@wssp/db";
 import {
   AccountDeletionConflictError,
@@ -237,7 +238,12 @@ export const usersRouter = {
             name: input.name,
             email: input.email,
             tempPassword,
-            signInUrl: `${env.BETTER_AUTH_URL}/login`,
+            // A page link: the web origin (CORS_ORIGIN on split deployments,
+            // as the pool invitation mail does), under the invitee's locale.
+            signInUrl: new URL(
+              `/${isSupportedLocale(created.locale) ? created.locale : DEFAULT_LOCALE}/login`,
+              env.CORS_ORIGIN || env.BETTER_AUTH_URL,
+            ).toString(),
             locale: created.locale,
           });
           await sendEmail({ to: input.email, subject, html });

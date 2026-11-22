@@ -191,7 +191,12 @@ function LoginPage() {
           title={t("auth:login.signinTitle")}
           description={t("auth:login.signinDescription")}
         >
-          <p>{t("auth:poolInviteReopen")}</p>
+          {/* Only for a visitor who arrived from an invitation link: the secret is
+              held in memory (lib/pool-invite.ts), and reopening the link after
+              sign-in is the one thing they must know. */}
+          {poolInviteToken() ? (
+            <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p>
+          ) : null}
           <SignInForm
             lang={lang}
             redirectTo={postAuthRedirect}

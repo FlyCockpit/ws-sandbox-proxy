@@ -74,13 +74,14 @@ export default function UserMenuContent() {
               key={item.id}
               onClick={() => navigate({ to: toLangRoute(item.path), params: { lang } })}
             >
-              <item.icon className="mr-2 size-4" />
+              <item.icon className="size-4" />
               {t(item.labelKey)}
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
+            inset
             onClick={async () => {
               // Dynamic import keeps the sign-out path out of the menu chunk's
               // critical path; the auth client is already warm once the menu

@@ -33,6 +33,9 @@
         "vitest.s3.config.ts"
       ],
       "ignoreBinaries": [
+        // Machine tool: the opt-in onboarding e2e drives a browser through it
+        // (scripts/e2e/onboarding.mjs checks for it and fails clearly).
+        "agent-browser",
         // System tool: the webhook TLS tests mint a throwaway CA into a temp dir.
         "openssl",
         // PostgreSQL clients are supplied by the image/operator environment.

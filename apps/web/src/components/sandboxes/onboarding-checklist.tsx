@@ -7,14 +7,21 @@ import { CheckCircle2, Circle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
+import { hostConnectionState, hostGuardState } from "@/lib/host-status";
 import { orpc } from "@/utils/orpc";
 
 /**
  * Shown on Sandboxes when the Active list is empty: the three steps to a first
- * sandbox. Each check is one bounded (`limit: 1`) owner-scoped read. A shared
- * pool counts as "somewhere to run", so a user who only joined someone else's
- * pool is not told to enroll a host.
+ * sandbox. Each check is one bounded owner-scoped read. A shared pool counts
+ * as "somewhere to run", so a user who only joined someone else's pool is not
+ * told to enroll a host. An enrolled host counts only once it is connected
+ * with a healthy egress guard: an enrolled machine that cannot take
+ * sandboxes is not a finished step.
  */
+/** Hosts read for the first step: enough for a personal fleet, still bounded. */
+const HOSTS_CHECKED = 20;
+const HOSTS_REFETCH_MS = 15_000;
+
 export function OnboardingChecklist({
   lang,
   enabled,
@@ -26,8 +33,12 @@ export function OnboardingChecklist({
 }) {
   const { t } = useTranslation("sandboxes");
   const hosts = useQuery({
-    ...orpc.sandboxHosts.listHosts.queryOptions({ input: { limit: 1 } }),
+    ...orpc.sandboxHosts.listHosts.queryOptions({ input: { limit: HOSTS_CHECKED } }),
     enabled,
+    // Connection state depends on a fresh heartbeat: never judge from a cached
+    // page, and follow the host while the checklist is shown (as Hosts does).
+    refetchOnMount: "always",
+    refetchInterval: HOSTS_REFETCH_MS,
   });
   const pools = useQuery({
     ...orpc.sandboxPools.listUsable.queryOptions({ input: { limit: 1 } }),
@@ -52,7 +63,14 @@ export function OnboardingChecklist({
   }
 
   // A failed check reads as "not done yet": the step's link still works.
-  const hasPlace = (hosts.data?.items.length ?? 0) > 0 || (pools.data?.items.length ?? 0) > 0;
+  const now = Date.now();
+  const hostItems = hosts.data?.items ?? [];
+  const readyHost = hostItems.some(
+    (host) => hostConnectionState(host, now) === "ready" && hostGuardState(host) === "running",
+  );
+  const hasPlace = readyHost || (pools.data?.items.length ?? 0) > 0;
+  // Enrolled but not usable yet: point at the host, not at enrolling another.
+  const hostNotReady = !hasPlace && hostItems.length > 0;
   const hasTemplate = (templates.data?.items.length ?? 0) > 0;
   const linkClass = cn(buttonVariants({ variant: "outline", size: "touch" }), "shrink-0");
 
@@ -72,12 +90,22 @@ export function OnboardingChecklist({
         <Step
           done={hasPlace}
           title={t("onboarding.host.title")}
-          description={t("onboarding.host.description")}
+          description={t(hostNotReady ? "onboarding.host.notReady" : "onboarding.host.description")}
           action={
             hasPlace ? null : (
-              <Link to="/$lang/settings/hosts" params={{ lang }} className={linkClass}>
-                {t("onboarding.host.action")}
-              </Link>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Link to="/$lang/settings/hosts" params={{ lang }} className={linkClass}>
+                  {t(hostNotReady ? "onboarding.host.openHosts" : "onboarding.host.action")}
+                </Link>
+                <Link
+                  to="/$lang/settings/pools"
+                  params={{ lang }}
+                  search={{ tab: "shared" }}
+                  className={linkClass}
+                >
+                  {t("onboarding.host.poolsAction")}
+                </Link>
+              </div>
             )
           }
         />

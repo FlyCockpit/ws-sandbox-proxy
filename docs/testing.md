@@ -101,8 +101,15 @@ Outside the default baseline:
 - Explicit local suites `pnpm verify` does not chain: `pnpm test:s3`
   (disposable S3 gateway), `pnpm runtime:test-operations` (operations smoke
   on disposable services), `pnpm test:relay-chaos:full` (the full chaos
-  matrix, nightly) and `pnpm test:e2e:mcp` (disposable PostgreSQL/Valkey, a
-  local server and two FakeRuntime daemons).
+  matrix, nightly), `pnpm test:e2e:mcp` (disposable PostgreSQL/Valkey, a
+  local server and two FakeRuntime daemons) and `pnpm test:e2e:onboarding`
+  (the three onboarding paths in a real browser: instance admin sign-up, email
+  verification, TOTP and deployment setup; invited node owner and pool
+  invitation; device-code host enrolment with a FakeRuntime daemon. It needs
+  Docker, the `agent-browser` CLI and a debug `wssp` build, uses a disposable
+  `rp5-wsonbwalk-e2e` stack with Mailpit, and never reads a root `.env`; one
+  run at a time per machine (`/tmp/rp5-wsonbwalk-e2e.lock`), from a main
+  checkout, not a linked worktree).
 - Live suites against a real host or deployment: `pnpm test:relay-chaos:live`,
   `pnpm test:offload:live` and the qualification sections below.
 

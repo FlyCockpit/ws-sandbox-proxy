@@ -16,6 +16,43 @@
     "notRequired": "not required",
     "policyLink": "Change in Settings"
   },
+  "setup": {
+    "title": "Deployment setup",
+    "description": "What this server is configured with. Values are never shown here; each item is set in the server's environment unless it says otherwise.",
+    "docsLink": "Environment variables",
+    "docsPath": "Environment variables: {{path}} in the WS Sandbox Proxy source repository.",
+    "unknown": "Couldn't load this status. Reload the page to try again.",
+    "maintenanceLink": "Open Observability › Maintenance",
+    "settingsLink": "Open Settings",
+    "email": {
+      "title": "Email (SMTP)",
+      "ok": "SMTP settings are present. Sign-up verification, password resets and invitations are sent by email.",
+      "missing": "Not configured. Nobody can verify an email address, so new accounts (yours included) can't sign in, and invitations and password resets aren't sent. Set SMTP_HOST and SMTP_FROM."
+    },
+    "imageStore": {
+      "title": "Image store",
+      "s3": "S3 image store. Templates, community bases and offloaded disks are kept in your bucket.",
+      "peer": "No S3 bucket: hosts copy template images from each other, so a template is only as available as the hosts that hold it, and disk offload is off. Set the IMAGE_S3_* variables.",
+      "off": "Image distribution is off (IMAGE_DISTRIBUTION=off): no template builds or community bases."
+    },
+    "dataKey": {
+      "title": "Data encryption key",
+      "ok": "Set. Webhooks, CLI logins and preview tunnels can store their secrets.",
+      "missing": "Not set. Webhooks, CLI logins and preview tunnels stay off. Set DATA_ENCRYPTION_KEY (64 hex characters, the same on server and worker)."
+    },
+    "backups": {
+      "title": "Database backups",
+      "ok": "On.",
+      "optional": "Off (optional). Turn on with BACKUP_ENABLED and a backup bucket; see the backup guide.",
+      "problem": "On, but the latest backup is missing, late or failing.",
+      "unknown": "On, but no backup result has been recorded yet."
+    },
+    "tunnels": {
+      "title": "Preview tunnels",
+      "ok": "Configured to use {{url}}.",
+      "optional": "Off (optional). Lets sandboxes share declared ports through short-lived links."
+    }
+  },
   "users": {
     "title": "Users",
     "description": "Invite people, change roles, archive or restore accounts, and delete accounts that no longer own anything.",
@@ -53,7 +90,7 @@
     "userRestored": "User restored",
     "userDeleted": "User deleted",
     "inviteTitle": "Invite a user",
-    "inviteDescription": "Creates an account with a temporary password. The new user receives an email with their sign-in details (or you can copy them after creation if email isn't configured).",
+    "inviteDescription": "Creates an account with a temporary password and emails the sign-in details. On their first sign-in the person gets a link to confirm their email address, so email (SMTP) must be configured on this server.",
     "nameLabel": "Name",
     "emailLabel": "Email",
     "emailPlaceholder": "user@example.com",
@@ -67,7 +104,7 @@
     "revealNotEmailedDescription": "The account for {{email}} was created, but the email could not be sent. Share the temporary password with them through another channel.",
     "tempPasswordLabel": "Temporary password",
     "copyTempPasswordAriaLabel": "Copy temporary password",
-    "tempPasswordHint": "This password is only shown once. The user should change it after their first sign-in.",
+    "tempPasswordHint": "This password is only shown once. On their first sign-in the person confirms their email address through the link they're sent, then signs in again. They should change the password afterwards.",
     "savedPassword": "I've saved the password",
     "passwordCopied": "Password copied",
     "deleteTitle": "Delete this user?",
@@ -321,7 +358,7 @@
       "urlHint": "The server's https:// origin, for example https://tunnel.example.com.",
       "urlInvalid": "Enter an https:// origin without a path.",
       "credentialLabel": "Service credential",
-      "credentialHint": "A tnsvc_ credential created on the tunnel server with `tunnel-server service add`. It is stored encrypted and never shown again.",
+      "credentialHint": "A tnsvc_ credential created on the tunnel server with tunnel-server service add. It is stored encrypted and never shown again.",
       "credentialKeep": "The server and credential stay as configured; only the limit can change here. For another server or credential, turn tunnels off, wait until the setting is gone, then configure it.",
       "credentialInvalid": "A service credential starts with tnsvc_.",
       "maxLabel": "Tunnels per account",

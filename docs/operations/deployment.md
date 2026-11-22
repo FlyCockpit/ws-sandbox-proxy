@@ -173,7 +173,11 @@ retention and alert policy. Run a restore drill before storing real data:
    committed history. A first install starts with an empty database.
 4. Deploy the matching worker in `app-worker`; its follower wait must succeed.
 5. Run `pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha>`. Sign up with an `ADMIN_EMAILS` address and
-   verify email.
+   verify email. Email (SMTP) must be configured by then: sign-in requires a
+   verified address, and the server has no other way to verify one, the first
+   admin's included. **Admin → Overview → Deployment setup** then shows what
+   else is configured (S3 image store, data encryption key, backups, preview
+   tunnels).
 6. Optionally enable backups and run a restore drill. The deployment runs without them.
 
 `pnpm dokploy:config` topologies: `app` (default) and `app-worker`. Omitting the worker container never removes jobs — it

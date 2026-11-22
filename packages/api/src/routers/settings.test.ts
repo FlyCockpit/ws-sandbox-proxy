@@ -401,10 +401,13 @@ it("projects admin settings without arbitrary stored values or environment secre
   expect(Object.keys(result).sort()).toEqual([
     "force2faInternalUsers",
     "force2faPublicUsers",
+    "imageStoreMode",
     "limits",
     "offloadConsumedGraceSeconds",
     "signupEnabled",
   ]);
+  // The image store is reported by mode only.
+  expect(["off", "peer", "s3"]).toContain(result.imageStoreMode);
   expect(Object.keys(result.limits).sort()).toEqual([
     "commandPayloadMaxBytes",
     "commandTimeoutDefaultMs",
@@ -420,6 +423,27 @@ it("projects admin settings without arbitrary stored values or environment secre
     "transferOwnerActive",
   ]);
   expect(JSON.stringify(result)).not.toContain("must-not-leak");
+});
+
+it("reports the image store mode from the deployment environment, never its settings", async () => {
+  const client = createRouterClient(settingsRouter, {
+    context: buildContext({ user: { role: "admin", twoFactorEnabled: true } }),
+  });
+  db.appSetting.findMany.mockResolvedValue([]);
+  vi.stubEnv("IMAGE_DISTRIBUTION", "off");
+  try {
+    expect((await client.adminGet()).imageStoreMode).toBe("off");
+    vi.stubEnv("IMAGE_DISTRIBUTION", "");
+    vi.stubEnv("IMAGE_S3_BUCKET", "bucket-must-not-leak");
+    vi.stubEnv("IMAGE_S3_ACCESS_KEY_ID", "key-must-not-leak");
+    vi.stubEnv("IMAGE_S3_SECRET_ACCESS_KEY", "secret-must-not-leak");
+    vi.stubEnv("IMAGE_S3_ENDPOINT", "https://s3.example.test");
+    const result = await client.adminGet();
+    expect(result.imageStoreMode).toBe("s3");
+    expect(JSON.stringify(result)).not.toMatch(/must-not-leak|s3\.example\.test/);
+  } finally {
+    vi.unstubAllEnvs();
+  }
 });
 
 describe("setImagePolicyInput (foreign builds consent)", async () => {

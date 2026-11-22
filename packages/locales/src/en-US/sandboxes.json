@@ -373,7 +373,7 @@
     },
     "guestRoot": "Root in the guest",
     "guestSudo": "Allow root for the guest user (sudo)",
-    "guestSudoOnHint": "The guest user can run commands as root inside the VM with passwordless `sudo`. Commands, files and terminals still run as the guest user. Fixed at creation.",
+    "guestSudoOnHint": "The guest user can run commands as root inside the VM with passwordless <code>sudo</code>. Commands, files and terminals still run as the guest user. Fixed at creation.",
     "guestSudoOffHint": "WS Sandbox Proxy gives the guest user no root. Fixed at creation.",
     "guestRootTainted": "Root may still be reachable in this template: this revision was built with root steps or captured from a sandbox that could run as root."
   },
@@ -610,11 +610,11 @@
     "label": "Connect commands",
     "shellCommand": "wssp sandbox shell {{target}}",
     "sshCommand": "ssh {{target}}.wssp",
-    "sshSetup": "For ssh, scp, rsync and editors such as VS Code, run `wssp ssh-config --install` once. No SSH keys are needed."
+    "sshSetup": "For ssh, scp, rsync and editors such as VS Code, run <code>wssp ssh-config --install</code> once. No SSH keys are needed."
   },
   "connections": {
     "heading": "Recent connections",
-    "description": "CLI shells, command channels and port forwards opened with an API key (`wssp sandbox shell`, `wssp sandbox forward`). Only who connected, when, which guest ports were forwarded and how much data moved is kept, for 90 days; never what ran.",
+    "description": "CLI shells, command channels and port forwards opened with an API key (<code>wssp sandbox shell</code>, <code>wssp sandbox forward</code>). Only who connected, when, which guest ports were forwarded and how much data moved is kept, for 90 days; never what ran.",
     "label": "Recent connections",
     "empty": "No CLI connections in the last 90 days.",
     "unknownKey": "Deleted key",
@@ -660,7 +660,10 @@
     "host": {
       "title": "Enroll a host or join a pool",
       "description": "A machine you own, or a pool someone shared with you.",
-      "action": "Add a host"
+      "notReady": "Your host is enrolled but can't take sandboxes yet: it isn't connected, or its egress guard isn't installed. Open Hosts to see what it needs.",
+      "action": "Add a host",
+      "openHosts": "Open Hosts",
+      "poolsAction": "Pools & sharing"
     },
     "template": {
       "title": "Add a template",

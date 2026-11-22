@@ -9,6 +9,9 @@
 /** Doc pages the dashboard refers to, relative to the repository's `docs/`. */
 export const DOC_PAGES = {
   templates: "operations/templates.md",
+  environment: "operations/environment-variables.md",
+  hostsQuickStart: "guide/hosts.md#quick-start-your-first-host",
+  hostsService: "guide/hosts.md#run-as-a-service",
 } as const;
 
 export type DocPage = keyof typeof DOC_PAGES;

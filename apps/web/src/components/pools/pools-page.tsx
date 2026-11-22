@@ -65,10 +65,17 @@ const paging = {
   getNextPageParam: (page: { nextCursor: string | null }) => page.nextCursor ?? undefined,
 };
 
-export function PoolsPage({ lang }: { lang: string }) {
+export function PoolsPage({
+  lang,
+  tab,
+  onTabChange,
+}: {
+  lang: string;
+  tab: "owned" | "shared";
+  onTabChange: (tab: "owned" | "shared") => void;
+}) {
   const { t } = useTranslation(["hosts", "common"]);
   const [creating, setCreating] = useState(false);
-  const [tab, setTab] = useState<"owned" | "shared">("owned");
   const pools = useInfiniteQuery({
     ...orpc.sandboxPools.list.infiniteOptions({
       ...paging,
@@ -98,7 +105,7 @@ export function PoolsPage({ lang }: { lang: string }) {
             aria-selected={tab === value}
             size="touch"
             variant={tab === value ? "default" : "outline"}
-            onClick={() => setTab(value)}
+            onClick={() => onTabChange(value)}
           >
             {t(`hosts:sharing.${value}`)}
           </Button>
@@ -122,7 +129,11 @@ export function PoolsPage({ lang }: { lang: string }) {
             </ul>
           )}
           {pools.data?.pages[0]?.items.length === 0 ? (
-            <EmptyState className="border" title={t("hosts:pools.empty")} />
+            <EmptyState
+              className="border"
+              title={t("hosts:pools.empty")}
+              description={t("hosts:pools.emptyDescription")}
+            />
           ) : null}
           <LoadMore
             hasNextPage={pools.hasNextPage}

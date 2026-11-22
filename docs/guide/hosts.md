@@ -8,6 +8,38 @@ even while disconnected. The control plane never talks to Incus directly.
 Command and flag details: [CLI reference](../../apps/cli/docs/cli-reference.md).
 Daemon internals (receipt journal, leases, file staging): [CLI README](../../apps/cli/README.md).
 
+## Quick start: your first host
+
+The steps a new node owner follows, in order. Each links to the section with
+the details; the dashboard's **Settings → Hosts → Add host** shows the same
+steps with copyable commands.
+
+1. **Check the machine** ([requirements](#requirements)): Linux with KVM,
+   Incus 6.14 or newer with the `network_acl` extension, and the
+   `br_netfilter` module loaded with `net.bridge.bridge-nf-call-ip6tables=1`.
+   The user that will run the daemon must be an Incus admin.
+2. **Install `wssp`** ([install](#install)) as that user.
+3. **Enroll** ([enroll](#enroll)): `wssp host enroll --slug <name> --server
+   <server-origin>`. It prints a link and a code; open the link in a browser
+   signed in to the dashboard (verified email, and 2FA if your server requires
+   it) and approve. The command then finishes and tells you the next step.
+4. **Install the egress guard, once, as root** ([egress guard](#egress-guard)):
+   `sudo "$(command -v wssp)" host guard install --daemon-user "$USER"`.
+   Without it the host connects but cannot start any sandbox. If the machine
+   runs ufw or firewalld with a default-drop policy, add `--configure-ufw` or
+   `--configure-firewalld` ([host firewall](#host-firewall-ufwfirewalld)).
+5. **Start the daemon**: `wssp host run` in a terminal to try it, then
+   [run it as a systemd user service](#run-as-a-service) so it survives
+   logouts and reboots.
+6. **Check the dashboard**: the host shows **Connected** on **Settings →
+   Hosts**, and its detail page shows the guard, network, storage and capacity
+   it reported. Optional limits (guest RAM, vCPU budget, per-VM CPU cap,
+   storage budgets) are in [capacity, drain and deletion](#capacity-drain-and-deletion).
+7. **Give it work**: add a template (the quickest is **Templates → Create from
+   community image**; see [templates](../operations/templates.md#community-bases)),
+   and, to place sandboxes across hosts or share them, add the host to a
+   [pool](./pools.md#dashboard-walkthrough).
+
 ## Dashboard capacity
 
 Each **Hosts** card shows live count without a count limit, charged RAM and
@@ -1294,6 +1326,12 @@ subcommand 'daemon'`) and any restart crash-loops on `unrecognized subcommand
 binary under `/usr/local/lib/wssp/` and its socket protocol is unchanged.
 Re-running `sudo wssp host guard install --daemon-user <user>` later upgrades
 it and rewrites the guard unit to the new `__wssp-guard` entry.
+
+Check for systemd drop-ins too: a file under
+`~/.config/systemd/user/wssp-host.service.d/` that sets `ExecStart=` (or
+`ExecReload=`) overrides the unit and still runs the old command line. Edit
+each one the same way (`systemctl --user cat wssp-host` lists the unit and
+every drop-in), then run `systemctl --user daemon-reload`.
 
 **Upgrading a running host.** Install the new binary, then run
 `systemctl --user reload wssp-host` (the example unit's `ExecReload` runs

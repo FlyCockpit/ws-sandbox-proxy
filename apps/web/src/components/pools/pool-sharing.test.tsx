@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import common from "@wssp/locales/src/en-US/common.json";
 import en from "@wssp/locales/src/en-US/hosts.json";
@@ -12,6 +12,7 @@ import { afterEach, expect, it, vi } from "vitest";
 
 const grant = vi.hoisted(() => vi.fn());
 const contribute = vi.hoisted(() => vi.fn());
+const resend = vi.hoisted(() => vi.fn());
 const rows = vi.hoisted(() => ({
   contributions: [] as unknown[],
   invites: [] as unknown[],
@@ -38,7 +39,15 @@ vi.mock("@/utils/orpc", () => {
   });
   return {
     orpc: {
-      sandboxHosts: { listHosts: page("hosts", []) },
+      sandboxHosts: {
+        listHosts: page("hosts", []),
+        getHost: {
+          queryOptions: ({ input }: { input: { id: string } }) => ({
+            queryKey: ["host", input.id],
+            queryFn: async () => ({ id: input.id, label: "Own host", slug: "own-host" }),
+          }),
+        },
+      },
       sandboxPools: {
         key: () => ["pools"],
         listShares: page("shares", []),
@@ -46,6 +55,7 @@ vi.mock("@/utils/orpc", () => {
         revokeShare: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         revokeInvite: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         grantShare: { call: grant },
+        resendInvite: { call: resend },
         contributeHost: { mutationOptions: () => ({ mutationFn: contribute }) },
         updateShare: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         leave: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
@@ -126,7 +136,11 @@ it.each(["en-US", "es-MX"])(
         .getByRole("checkbox", { name: copy.sharing.canContribute })
         .getAttribute("aria-checked"),
     ).toBe("true");
-    expect(screen.getByText(copy.sharing.trust)).toBeTruthy();
+    expect(screen.getAllByText(copy.sharing.trust)).toHaveLength(1);
+    // The inviter's link warning is stated once (the dialog description), and
+    // the acceptor's wording is not shown to the inviter.
+    expect(screen.getAllByText(copy.sharing.forwardingInviter)).toHaveLength(1);
+    expect(screen.queryByText(copy.sharing.forwarding)).toBeNull();
     await user.type(screen.getByLabelText(copy.sharing.email), "invited@example.test");
     await user.click(screen.getByRole("button", { name: actions.actions.save }));
     await waitFor(() => expect(grant).toHaveBeenCalledTimes(1));
@@ -187,7 +201,12 @@ it("editing contribution percentages uses a sheet, preserves disabled state and 
   const memory = screen.getByLabelText(en.sharing.memoryCapPercent);
   await user.clear(memory);
   await user.type(memory, "25");
-  expect(screen.getAllByText(en.sharing.contributionNotice).length).toBeGreaterThan(0);
+  // The contribution notice is stated once in the sheet, not twice.
+  expect(
+    within(screen.getByRole("dialog")).getAllByText(en.sharing.contributionNotice),
+  ).toHaveLength(1);
+  // The contributed host is named, not shown by id.
+  expect(within(screen.getByRole("dialog")).getByText("Own host (own-host)")).toBeTruthy();
   await user.click(screen.getByRole("button", { name: en.sharing.contribute }));
   await waitFor(() => expect(contribute).toHaveBeenCalledTimes(1));
   expect(contribute.mock.calls[0]?.[0]).toMatchObject({
@@ -212,7 +231,7 @@ it("accepted invitations show accepted state and no expiry, rotate or revoke act
   ];
   await mount("manage");
   await screen.findByText("accepted@example.test");
-  expect(screen.getByText(en.sharing.accepted)).toBeTruthy();
+  expect(screen.getByText(en.sharing.inviteAccepted)).toBeTruthy();
   expect(screen.queryByRole("button", { name: en.sharing.resend })).toBeNull();
   expect(screen.queryByRole("button", { name: en.sharing.revoke })).toBeNull();
   expect(document.body.textContent).not.toContain("2030");
@@ -227,3 +246,26 @@ it.each(["en-US", "es-MX"])(
     expect(text).not.toMatch(/Unlimited MiB|Unlimited GiB|Ilimitado MiB|Ilimitado GiB|259200/);
   },
 );
+
+it("a resent invitation link is shown with the inviter's forwarding warning, once", async () => {
+  rows.invites = [
+    {
+      id: "pending",
+      email: "pending@example.test",
+      acceptedAt: null,
+      expiresAt: new Date("2030-01-01"),
+      sentAt: new Date(),
+      revokedAt: null,
+      expiredAt: null,
+    },
+  ];
+  resend.mockResolvedValue({ token: `wssp_inv_${"r".repeat(43)}`, sent: true });
+  const user = userEvent.setup();
+  await mount("manage");
+  // Before any link is revealed, the dialog describes sharing, not the link.
+  expect(screen.getByText(en.sharing.manageDescription)).toBeTruthy();
+  expect(screen.queryByText(en.sharing.forwardingInviter)).toBeNull();
+  await user.click(await screen.findByRole("button", { name: en.sharing.resend }));
+  await waitFor(() => expect(resend).toHaveBeenCalledTimes(1));
+  expect(await screen.findAllByText(en.sharing.forwardingInviter)).toHaveLength(1);
+});

@@ -1,5 +1,5 @@
 {
-  "body": "Hola {{name}}, un administrador ha creado una cuenta para ti. Puedes iniciar sesión con la contraseña temporal que aparece a continuación — por favor cámbiala después de tu primer inicio de sesión.",
+  "body": "Hola {{name}}, un administrador ha creado una cuenta para ti. Inicia sesión con la contraseña temporal que aparece a continuación. La primera vez te enviaremos un enlace para confirmar esta dirección: ábrelo y vuelve a iniciar sesión. Por favor cambia la contraseña cuando hayas entrado.",
   "cta": "Iniciar sesión",
   "emailLabel": "Correo electrónico",
   "heading": "Has sido invitado",

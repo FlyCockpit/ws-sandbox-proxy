@@ -466,7 +466,7 @@ async function run() {
       "user login has its own title",
     );
     assert(
-      container.textContent?.includes(en.device.user.warning),
+      container.textContent?.includes(en.device.user.warning.replace(/<\/?code>/g, "")),
       "user login warns to approve only a login you started",
     );
     assert(

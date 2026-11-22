@@ -487,13 +487,13 @@ fn list(args: &ListArgs) -> Result<()> {
         output::line("no sandboxes")?;
     } else {
         output::line(format!(
-            "{:<26} {:<28} {:<22} {:<26} CREATED",
+            "{:<36} {:<28} {:<22} {:<26} CREATED",
             "ID", "NAME", "STATE", "HOST"
         ))?;
     }
     for item in &items {
         output::line(format!(
-            "{:<26} {:<28} {:<22} {:<26} {}",
+            "{:<36} {:<28} {:<22} {:<26} {}",
             output::remote_message(str_field(item, "id")),
             output::remote_message(str_field(item, "name")),
             str_field(item, "state"),

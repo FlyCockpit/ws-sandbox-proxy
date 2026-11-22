@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import {
   contributePoolHostInput,
@@ -49,6 +49,22 @@ const paging = {
   initialPageParam: undefined as string | undefined,
   getNextPageParam: (page: { nextCursor: string | null }) => page.nextCursor ?? undefined,
 };
+/**
+ * A contributed host by its name. Contributions carry only the host id (the
+ * pool payload never includes host details); the contributor owns the host,
+ * so its own host read names it. Falls back to the id.
+ */
+function OwnHostName({ hostId }: { hostId: string }) {
+  const host = useQuery({
+    ...orpc.sandboxHosts.getHost.queryOptions({ input: { id: hostId } }),
+    meta: { skipGlobalErrorToast: true },
+  });
+  return (
+    <span className="break-all" data-contributed-host={hostId}>
+      {host.data ? `${host.data.label} (${host.data.slug})` : hostId}
+    </span>
+  );
+}
 export function SharingNotice({ contribution = false }: { contribution?: boolean }) {
   const { t } = useTranslation("hosts");
   return (
@@ -220,7 +236,7 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
           .flatMap((p) => p.items)
           .map((member) => (
             <li key={member.id} className="flex flex-wrap items-center gap-3">
-              <span className="break-all">{member.sandboxHostId}</span>
+              <OwnHostName hostId={member.sandboxHostId} />
               <span>
                 {t("hosts:sharing.percentages", {
                   memory: member.memoryCapPercent ?? 100,
@@ -435,7 +451,6 @@ export function ShareForm({
             </form.Field>
           ) : null}
           <SharingNotice />
-          <p>{t("hosts:sharing.forwarding")}</p>
           {action.error}
           <form.Subscribe selector={(state) => state.isValid}>
             {(valid) => (
@@ -479,7 +494,7 @@ export function ShareForm({
       >
         <DialogHeader>
           <DialogTitle>{t("hosts:sharing.add")}</DialogTitle>
-          <DialogDescription>{t("hosts:sharing.forwarding")}</DialogDescription>
+          <DialogDescription>{t("hosts:sharing.forwardingInviter")}</DialogDescription>
         </DialogHeader>
         {fields}
       </DialogContent>
@@ -535,7 +550,7 @@ export function PoolSharing({
       >
         <DialogHeader>
           <DialogTitle>{t("hosts:sharing.manage")}</DialogTitle>
-          <DialogDescription>{t("hosts:sharing.forwarding")}</DialogDescription>
+          <DialogDescription>{t("hosts:sharing.manageDescription")}</DialogDescription>
         </DialogHeader>
         <Button size="touch" onClick={() => setEditing("new")}>
           {t("hosts:sharing.add")}
@@ -548,6 +563,10 @@ export function PoolSharing({
               onDone={() => setSecret(null)}
             />
             <p>{t(secret.sent ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</p>
+            {/* Shown beside every revealed link: a new invitation or a resend. */}
+            <p className="text-sm text-muted-foreground" data-invite-forwarding="">
+              {t("hosts:sharing.forwardingInviter")}
+            </p>
           </>
         ) : null}
         <ul className="flex flex-col gap-3">
@@ -599,7 +618,7 @@ export function PoolSharing({
               <li key={invite.id} className="flex flex-col gap-2 border p-3">
                 <span>{invite.email}</span>
                 {invite.acceptedAt ? (
-                  <span>{t("hosts:sharing.accepted")}</span>
+                  <span>{t("hosts:sharing.inviteAccepted")}</span>
                 ) : (
                   <span>
                     {t("hosts:sharing.expires", {
@@ -752,12 +771,12 @@ function ContributionForm({
       {member ? (
         <SheetHeader>
           <SheetTitle>{t("hosts:sharing.editPercentages")}</SheetTitle>
-          <SheetDescription>{t("hosts:sharing.contributionNotice")}</SheetDescription>
+          <SheetDescription>{t("hosts:sharing.editPercentagesDescription")}</SheetDescription>
         </SheetHeader>
       ) : (
         <DialogHeader>
           <DialogTitle>{t("hosts:sharing.contribute")}</DialogTitle>
-          <DialogDescription>{t("hosts:sharing.contributionNotice")}</DialogDescription>
+          <DialogDescription>{t("hosts:sharing.contributeDescription")}</DialogDescription>
         </DialogHeader>
       )}
       <form
@@ -792,7 +811,9 @@ function ContributionForm({
             )}
           </form.Field>
         ) : (
-          <p className="break-all">{member.sandboxHostId}</p>
+          <p>
+            <OwnHostName hostId={member.sandboxHostId} />
+          </p>
         )}
         {!member ? <More query={hosts} /> : null}
         {(["memoryCapPercent", "vcpuCapPercent"] as const).map((name) => (

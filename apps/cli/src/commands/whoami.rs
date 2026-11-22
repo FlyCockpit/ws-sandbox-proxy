@@ -72,8 +72,13 @@ pub fn run(args: &Args) -> Result<()> {
     if args.json {
         return output::json(&view);
     }
+    let key_slugs: Option<Vec<String>> = view
+        .key
+        .as_ref()
+        .filter(|key| key.pool_mode.eq_ignore_ascii_case("selected"))
+        .map(|key| key.pools.iter().map(|p| p.slug.clone()).collect());
     match &view.login {
-        Some(login) => login.print()?,
+        Some(login) => login.print(key_slugs.as_deref())?,
         None => {
             output::line(format!("server: {}", view.server))?;
             output::line("login: `WSSP_API_KEY` from the environment")?;
@@ -87,7 +92,8 @@ pub fn run(args: &Args) -> Result<()> {
             key.origin
         ))?;
         output::line(format!("scopes: {}", key.scopes.join(" ")))?;
-        if key.pool_mode == "selected" {
+        // A saved login already printed its pools (as slugs) above.
+        if view.login.is_none() && key.pool_mode == "selected" {
             let pools: Vec<String> = key
                 .pools
                 .iter()

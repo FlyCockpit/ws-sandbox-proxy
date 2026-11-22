@@ -32,8 +32,12 @@ const reviewed: Record<string, string> = {
   "packages/db/src/admin-governance.ts":
     "8dfdfe8c74e4776dff92c9a32c4bae6e4f233b389632c5c5afe3e7666f72071e",
   "packages/auth/src/index.ts": "88408e82505911c393be4425cae5ed2d733f742d5a8055181c4c8ba3ea1263ed",
+  // Invites: the created user's locale picks the sign-in link (no proof write).
   "packages/api/src/routers/users.ts":
-    "99d459a0be0cda733a10c0371afdf12a52effe253e41355034587297a503d800",
+    "4df911e92c19c9228f7d016c9cfd90cd8a1a615bc2c1cbdb643e585486ddc0a6",
+  // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
+  "apps/web/src/routes/$lang/_app/_auth.tsx":
+    "0ed09ba34a1eaa6ba8a8fd3672687ecd4c2e8cfb4cc602eecf32d8a998d637aa",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
   "packages/api/src/lib/sensitive-session-two-factor-gate.ts":
     "efa5f35914250f409604ad4ea80a8a4f91072b5090e2b6f94f1d4274d456c122",

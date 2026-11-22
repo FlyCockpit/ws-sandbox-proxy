@@ -231,23 +231,23 @@ including Ubuntu 24.04, are in the [hosts guide](../../docs/guide/hosts.md#requi
 
 ### Exit Codes
 
-| Code | Meaning                                                                                           |
-| ---- | ------------------------------------------------------------------------------------------------- |
-| 0    | success                                                                                           |
-| 1    | runtime error                                                                                     |
-| 2    | usage error                                                                                       |
-| 3    | not found                                                                                         |
-| 4    | host credential inactive (`4003` close, HTTP 401/403 on run or drain/undrain)                     |
-| 5    | relay internal error during revalidation (`1011` close; retry `host run`)                         |
-| 6    | not an enrolled host (run `wssp host enroll --slug` or `--token-env`, or pass `--host-token-env`) |
-| 7    | not logged in (`wssp login`), or the server refused the user login's key (401)                    |
-| 8    | forbidden: the login's scopes or pools do not allow the action (403)                              |
-| 9    | limit reached: `sandbox.key_limit_reached`, a quota or `sandbox.capacity_queue_full`              |
-| 10   | any other conflict (409)                                                                          |
-| 11   | retryable: the server answered 429, 503 or 504                                                    |
-| 125  | `wssp sandbox exec`/`shell`/`forward` only: wssp failed or ended the session, or unknown outcome  |
-| 130  | Ctrl-C: `sandbox exec` (cancellation requested), `shell` without a tty (second), `forward`        |
-| 141  | stdout closed early: `wssp sandbox exec` (its cancellation was requested), `logs`, `files read`   |
+| Code | Meaning                                                                                                |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| 0    | success                                                                                                |
+| 1    | runtime error                                                                                          |
+| 2    | usage error                                                                                            |
+| 3    | not found (404); also a pool outside the user login's pools, so a login cannot learn which pools exist |
+| 4    | host credential inactive (`4003` close, HTTP 401/403 on run or drain/undrain)                          |
+| 5    | relay internal error during revalidation (`1011` close; retry `host run`)                              |
+| 6    | not an enrolled host (run `wssp host enroll --slug` or `--token-env`, or pass `--host-token-env`)      |
+| 7    | not logged in (`wssp login`), or the server refused the user login's key (401)                         |
+| 8    | forbidden: the login's scopes do not allow the action (403)                                            |
+| 9    | limit reached: `sandbox.key_limit_reached`, a quota or `sandbox.capacity_queue_full`                   |
+| 10   | any other conflict (409)                                                                               |
+| 11   | retryable: the server answered 429, 503 or 504                                                         |
+| 125  | `wssp sandbox exec`/`shell`/`forward` only: wssp failed or ended the session, or unknown outcome       |
+| 130  | Ctrl-C: `sandbox exec` (cancellation requested), `shell` without a tty (second), `forward`             |
+| 141  | stdout closed early: `wssp sandbox exec` (its cancellation was requested), `logs`, `files read`        |
 
 User commands also map `/v1` 404 to 3 and 400/413/415 to 2. With `--json`, a
 failing user command prints one line `{"error":{"code","status","message","data"}}`

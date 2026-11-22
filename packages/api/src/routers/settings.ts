@@ -26,6 +26,7 @@ import {
   consumedGraceSeconds,
   consumedGraceValueSchema,
 } from "../sandbox/disk-offload/settings";
+import { imageDistributionMode } from "../sandbox/image-store/config";
 import {
   getAccountImagePolicy,
   setAccountImagePolicy,
@@ -66,6 +67,10 @@ export const settingsRouter = {
         (values.get("force2faInternalUsers") ??
           String(FORCE_2FA_DEFAULTS.force2faInternalUsers)) === "true",
       offloadConsumedGraceSeconds,
+      // Where template images and offloaded disks live ("off" | "peer" | "s3"),
+      // for the overview's deployment setup card. The mode only: no bucket,
+      // endpoint or key ever leaves the server.
+      imageStoreMode: imageDistributionMode(),
       limits: {
         commandPayloadMaxBytes: SANDBOX_COMMAND_PAYLOAD_MAX_BYTES,
         commandTimeoutDefaultMs: SANDBOX_COMMAND_TIMEOUT_DEFAULT_MS,

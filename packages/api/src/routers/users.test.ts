@@ -30,8 +30,12 @@ vi.mock("@wssp/db/account-deletion", async () => {
   return { AccountDeletionConflictError, deleteAccountInTransaction };
 });
 
+const envMock = vi.hoisted(() => ({
+  BETTER_AUTH_URL: "http://localhost:3000",
+  CORS_ORIGIN: undefined as string | undefined,
+}));
 vi.mock("@wssp/env/server", () => ({
-  env: { BETTER_AUTH_URL: "http://localhost:3000" },
+  env: envMock,
   ADMIN_EMAILS: new Set<string>(),
 }));
 
@@ -61,7 +65,8 @@ const { default: prisma } = await import("@wssp/db");
 const { defaultSensitiveSessionGateUser, wireSensitiveSessionGateUser } = await import(
   "@wssp/api/test/mock-prisma"
 );
-const { sendEmail } = await import("@wssp/mailer");
+const { sendEmail, renderInviteUser } = await import("@wssp/mailer");
+const renderInviteUserMock = renderInviteUser as unknown as MockInstance;
 
 const db = prisma as unknown as {
   user: {
@@ -372,6 +377,27 @@ describe("usersRouter", () => {
         db.account.create.mock.invocationCallOrder[0]!,
       );
     });
+
+    it.each([
+      ["es-MX", undefined, "http://localhost:3000/es-MX/login"],
+      ["en-US", "https://app.example.test", "https://app.example.test/en-US/login"],
+      ["fr-FR", undefined, "http://localhost:3000/en-US/login"],
+    ])(
+      "links the invitee's sign-in page under their locale (%s) on the web origin (%s)",
+      async (locale, corsOrigin, signInUrl) => {
+        const client = createRouterClient(usersRouter, { context: buildContext() });
+        wireInvite();
+        db.user.create.mockResolvedValue({ id: "new-user-id", locale });
+        envMock.CORS_ORIGIN = corsOrigin;
+        sendEmailMock.mockResolvedValue(undefined);
+        try {
+          await client.invite({ email: "new@example.com", name: "New User" });
+          expect(renderInviteUserMock).toHaveBeenCalledWith(expect.objectContaining({ signInUrl }));
+        } finally {
+          envMock.CORS_ORIGIN = undefined;
+        }
+      },
+    );
 
     it("returns emailSent=false when SMTP throws but the user was still created", async () => {
       const client = createRouterClient(usersRouter, { context: buildContext() });

@@ -12,6 +12,7 @@ import { Activity, Settings, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AdminPolicySummary } from "@/components/admin/admin-policy-summary";
+import { DeploymentSetupCard } from "@/components/admin/deployment-setup-card";
 import { PageHeader, PageShell } from "@/components/page-shell";
 
 export const Route = createFileRoute("/$lang/_app/admin/")({
@@ -47,6 +48,7 @@ function AdminOverview() {
     <PageShell width="wide">
       <PageHeader title={t("admin:overview.title")} description={t("admin:overview.description")} />
       <AdminPolicySummary lang={lang} />
+      <DeploymentSetupCard lang={lang} />
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {ADMIN_LINKS.map((item) => (
           <Card key={item.to}>

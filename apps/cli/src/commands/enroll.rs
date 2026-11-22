@@ -76,8 +76,25 @@ fn enroll_token_env(args: &Args, env_var: &str) -> Result<()> {
             "recorded host token environment variable `{env_var}`"
         ))?;
         print_guard_hint(&guard)?;
+        let server = args.server.clone().or_else(|| {
+            crate::config::Config::load()
+                .ok()
+                .and_then(|c| c.server_url)
+        });
+        output::line(token_next_step(server.as_deref(), env_var))?;
     }
     Ok(())
+}
+
+const DEVICE_NEXT_STEP: &str = "next: start the daemon with `wssp host run`, or run it as a service (docs/guide/hosts.md#run-as-a-service)";
+
+/// The run command a token enrollment needs: a host token always needs the
+/// server and the host id, which the token itself does not name.
+fn token_next_step(server: Option<&str>, env_var: &str) -> String {
+    let server = server.map_or("<server-url>", |s| s.trim_end_matches('/'));
+    format!(
+        "next: start the daemon with `wssp host run --server {server} --host-id <host-id> --host-token-env {env_var}`, or run it as a service (docs/guide/hosts.md#run-as-a-service)"
+    )
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +222,7 @@ fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
         })?;
     } else {
         print_guard_hint(&guard)?;
+        output::line(DEVICE_NEXT_STEP)?;
     }
     Ok(())
 }
@@ -269,6 +287,17 @@ struct LoginStarted<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_steps_name_the_run_command_for_each_path() {
+        assert!(DEVICE_NEXT_STEP.contains("`wssp host run`"));
+        assert!(DEVICE_NEXT_STEP.contains("hosts.md#run-as-a-service"));
+        assert_eq!(
+            token_next_step(Some("https://wssp.example/"), "WSSP_HOST_TOKEN"),
+            "next: start the daemon with `wssp host run --server https://wssp.example --host-id <host-id> --host-token-env WSSP_HOST_TOKEN`, or run it as a service (docs/guide/hosts.md#run-as-a-service)"
+        );
+        assert!(token_next_step(None, "WSSP_X").contains("--server <server-url> "));
+    }
 
     #[test]
     fn only_an_explicit_yes_consents() {

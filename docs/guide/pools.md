@@ -309,6 +309,27 @@ for same-key replay. Env values never enter browser storage or persisted drafts.
 Neither closing the dialog nor clearing its editor deletes the server/host
 snapshot of accepted work.
 
+### Inviting someone and joining a pool
+
+1. The pool owner opens **Manage sharing → Share or invite**, enters the
+   person's email and the permissions (use, contribute hosts, optional RAM,
+   vCPU and disk caps), and saves. If an account with that verified email
+   already exists, the share is granted at once: no invitation, and the pool
+   appears under the person's **Shared with me**. Otherwise an invitation is
+   emailed, and the one-time link is shown once to copy (keep it if email
+   delivery is unconfirmed); the steps below are for that case.
+2. The invited person opens the link from the email. Signed out, they sign in
+   (or sign up, if the invitation allows it) and then open the link again: its
+   secret is kept only in that browser tab's memory, so verifying an email
+   address or reloading needs the link again.
+3. **Accept pool invitation** names the signed-in account. **Verified invited
+   email only** (the default) works when that account's verified email is the
+   invited address; **Bearer link** lets a different existing account accept,
+   for example when the person signed in with another address on purpose.
+4. After accepting, **Open Shared with me** lists the pool with its
+   permissions, caps and usage. With the contribute permission, **Contribute a
+   host** adds one of your enrolled hosts to it.
+
 ## Lease limits
 
 Each sandbox's longest lifetime is the smallest of the deployment maximum, its

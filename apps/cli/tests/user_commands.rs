@@ -362,6 +362,15 @@ fn login_pending_then_success_saves_a_private_login_beside_an_untouched_host_enr
             flow_error(400, "BAD_REQUEST", "authorization_pending")
         }
         2 => reply(200, minted(&minted_secret)),
+        3 => {
+            // One lookup with the key just minted, for the pool slugs.
+            assert!(request.is("GET", "/v1/key"), "{request:?}");
+            assert_eq!(
+                request.header("authorization"),
+                Some(format!("Bearer {minted_secret}").as_str())
+            );
+            reply(200, selected_key_info())
+        }
         _ => panic!("unexpected request {request:?}"),
     });
     let out = wssp(root, &["login", "--server", &server.url]);
@@ -373,7 +382,7 @@ fn login_pending_then_success_saves_a_private_login_beside_an_untouched_host_enr
         "user: person@example.test",
         "login: laptop (key-1)",
         "access: write",
-        "pools: pool-1",
+        "pools: team-pool",
         "sandboxes: only those this login creates",
         "live sandbox limit: 3",
         "expires: 2026-12-18T00:00:00.000Z",
@@ -430,6 +439,34 @@ fn login_json_reports_start_and_grant_and_slow_down_adds_five_seconds() {
     assert!(lines[1].get("secret").is_none());
     assert_eq!(sleeps(root), [1, 6]);
     assert!(!text(&out.stderr).contains("enrolled wssp host"));
+    // JSON mode makes no key lookup: start, slow_down, grant.
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[test]
+fn login_shows_saved_pool_ids_when_the_key_lookup_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let secret = sdk_key('L');
+    let minted_secret = secret.clone();
+    let server = Server::new(move |i, request| match i {
+        0 => reply(200, issued(600, 1)),
+        1 => reply(200, minted(&minted_secret)),
+        2 => {
+            assert!(request.is("GET", "/v1/key"), "{request:?}");
+            api_error(500, "internal", "fixture", None)
+        }
+        _ => panic!("unexpected request {request:?}"),
+    });
+    let out = wssp(root, &["login", "--server", &server.url]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.contains("logged in"), "{stdout}");
+    assert!(stdout.contains("pools: pool-1"), "{stdout}");
+    assert_no_secret(&out, &secret);
+    // A single attempt: no retry of the lookup.
+    assert_eq!(server.requests().len(), 3);
+    assert!(login_file(root).exists());
 }
 
 #[test]
@@ -523,6 +560,10 @@ fn logout_treats_401_as_already_revoked_but_keeps_the_login_on_other_failures() 
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("no longer accepted"));
     assert!(!login_file(root).exists());
+}
+
+fn selected_key_info() -> Value {
+    json!({"id":"key-1","name":"laptop","origin":"cliLogin","scopes":["sandboxes:read","sandboxes:create"],"resourceMode":"allOwned","poolMode":"selected","pools":[{"id":"pool-1","slug":"team-pool","label":"Team pool"}],"ownSandboxesOnly":true,"expiresAt":"2026-12-18T00:00:00.000Z","maxLiveSandboxes":3,"liveSandboxes":0})
 }
 
 fn key_info() -> Value {

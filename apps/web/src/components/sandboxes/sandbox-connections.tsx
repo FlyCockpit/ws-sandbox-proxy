@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Badge } from "@wssp/ui/components/badge";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { LoadMore } from "@/components/load-more";
 import { QueryBoundary } from "@/components/query-boundary";
@@ -82,7 +82,13 @@ export function SandboxConnectHint({ target }: { target: string }) {
           </li>
         ))}
       </ul>
-      <p className="text-sm text-muted-foreground">{t("sandboxes:connect.sshSetup")}</p>
+      <p className="text-sm text-muted-foreground">
+        <Trans
+          t={t}
+          i18nKey="sandboxes:connect.sshSetup"
+          components={{ code: <code className="whitespace-nowrap" /> }}
+        />
+      </p>
     </section>
   );
 }
@@ -116,7 +122,13 @@ export function SandboxConnections({ lang, sandboxId }: { lang: string; sandboxI
       <h2 id="sandbox-connections" className="text-sm font-medium">
         {t("sandboxes:connections.heading")}
       </h2>
-      <p className="text-sm text-muted-foreground">{t("sandboxes:connections.description")}</p>
+      <p className="text-sm text-muted-foreground">
+        <Trans
+          t={t}
+          i18nKey="sandboxes:connections.description"
+          components={{ code: <code className="whitespace-nowrap" /> }}
+        />
+      </p>
       <QueryBoundary
         query={{
           data: rows,

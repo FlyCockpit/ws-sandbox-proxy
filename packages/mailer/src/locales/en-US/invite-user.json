@@ -1,7 +1,7 @@
 {
   "subject": "You've been invited",
   "heading": "You've been invited",
-  "body": "Hi {{name}}, an admin has created an account for you. You can sign in with the temporary password below — please change it after your first sign-in.",
+  "body": "Hi {{name}}, an admin has created an account for you. Sign in with the temporary password below. The first time, we email you a link to confirm this address: open it, then sign in again. Please change the password once you're in.",
   "emailLabel": "Email",
   "tempPasswordLabel": "Temporary password",
   "cta": "Sign in",

@@ -134,7 +134,7 @@
     },
     "guestRoot": "Root en el invitado",
     "guestSudo": "Permitir root para el usuario invitado (sudo)",
-    "guestSudoOnHint": "El usuario invitado puede ejecutar comandos como root dentro de la VM con `sudo` sin contraseña. Los comandos, archivos y terminales aún se ejecutan como el usuario invitado. Se fija en la creación.",
+    "guestSudoOnHint": "El usuario invitado puede ejecutar comandos como root dentro de la VM con <code>sudo</code> sin contraseña. Los comandos, archivos y terminales aún se ejecutan como el usuario invitado. Se fija en la creación.",
     "guestSudoOffHint": "WS Sandbox Proxy no le da root al usuario invitado. Se fija en la creación.",
     "guestRootTainted": "Root aún puede ser alcanzable en esta plantilla: esta revisión fue compilada con pasos de root o capturada de un sandbox que podía ejecutarse como root.",
     "capacityWait": "Si el grupo está lleno"
@@ -171,11 +171,11 @@
     "label": "Comandos para conectarse",
     "shellCommand": "wssp sandbox shell {{target}}",
     "sshCommand": "ssh {{target}}.wssp",
-    "sshSetup": "Para ssh, scp, rsync y editores como VS Code, ejecuta `wssp ssh-config --install` una vez. No se necesitan llaves SSH."
+    "sshSetup": "Para ssh, scp, rsync y editores como VS Code, ejecuta <code>wssp ssh-config --install</code> una vez. No se necesitan llaves SSH."
   },
   "connections": {
     "heading": "Conexiones recientes",
-    "description": "Shells, canales de comandos y reenvíos de puertos de la CLI abiertos con una clave de API (`wssp sandbox shell`, `wssp sandbox forward`). Solo se guarda quién se conectó, cuándo, qué puertos del invitado se reenviaron y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",
+    "description": "Shells, canales de comandos y reenvíos de puertos de la CLI abiertos con una clave de API (<code>wssp sandbox shell</code>, <code>wssp sandbox forward</code>). Solo se guarda quién se conectó, cuándo, qué puertos del invitado se reenviaron y cuántos datos se movieron, durante 90 días; nunca lo que se ejecutó.",
     "label": "Conexiones recientes",
     "empty": "No hay conexiones de la CLI en los últimos 90 días.",
     "unknownKey": "Clave eliminada",
@@ -596,8 +596,11 @@
     "done": "listo",
     "host": {
       "action": "Agregar un host",
+      "openHosts": "Abrir Hosts",
+      "poolsAction": "Grupos y uso compartido",
       "title": "Registra un host o únete a un grupo",
-      "description": "Una máquina que posees, o un grupo que alguien compartió contigo."
+      "description": "Una máquina que posees, o un grupo que alguien compartió contigo.",
+      "notReady": "Tu host está inscrito pero aún no puede recibir sandboxes: no está conectado o no tiene instalada la protección de salida. Abre Hosts para ver qué le falta."
     },
     "template": {
       "title": "Agrega una plantilla",

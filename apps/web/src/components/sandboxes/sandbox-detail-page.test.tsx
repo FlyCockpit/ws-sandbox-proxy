@@ -239,7 +239,8 @@ describe("reading a sandbox", () => {
     const commands = within(panel).getByRole("list", { name: enSandboxes.connect.label });
     expect(within(commands).getByText("wssp sandbox shell quiet-otter")).toBeTruthy();
     expect(within(commands).getByText("ssh quiet-otter.wssp")).toBeTruthy();
-    expect(within(panel).getByText(enSandboxes.connect.sshSetup)).toBeTruthy();
+    expect(within(panel).getByText("wssp ssh-config --install", { selector: "code" })).toBeTruthy();
+    expect(panel.textContent).toContain(enSandboxes.connect.sshSetup.replace(/<\/?code>/g, ""));
     expect(esSandboxes.connect.sshCommand).toBe(enSandboxes.connect.sshCommand);
   });
 
