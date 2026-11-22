@@ -19,6 +19,35 @@ export const IMAGE_ENCRYPTION_RECORD_BYTES = 1024 * 1024;
 export const IMAGE_ENCRYPTION_TAG_BYTES = 16;
 export const IMAGE_ENCRYPTION_SCHEME = "aes256gcm-r1";
 export const IMAGE_SIZE_MAX = 2 ** 40;
+/** Bound on a heartbeat's `wireBytes`: every part of the largest stored
+ * object sent 8 times (the daemon sends a part at most 4 times). */
+export const IMAGE_WIRE_BYTES_MAX = IMAGE_SIZE_MAX * 2 * 8;
+
+/** Longest presigned URL lifetime a grant may carry (S3's own bound). */
+const IMAGE_UPLOAD_TTL_MAX_SECONDS = 7 * 24 * 3600;
+/** S3's bound on parts per multipart upload. */
+export const S3_PARTS_MAX = 10_000;
+/** Smallest upload part, in 1 MiB records (16 MiB: S3 needs >= 5 MiB but the last). */
+const IMAGE_UPLOAD_PART_RECORDS_MIN = 16;
+
+/**
+ * Stored bytes per part of a template upload session of `plain` image bytes
+ * (docs/operations/templates.md#capture): whole 1 MiB records,
+ * `max(16, ceil(records / 10 000))` of them, so a part is 16 MiB normally
+ * (short enough to finish, and cheap to retry, on a slow uplink) and an image
+ * up to `IMAGE_SIZE_MAX` still fits S3's 10 000 parts. Encrypted parts are
+ * whole sealed records (record + tag each).
+ */
+export function imageUploadPartBytes(plain: number, encrypted: boolean): number {
+  const records = Math.max(1, Math.ceil(plain / IMAGE_ENCRYPTION_RECORD_BYTES));
+  const perPart = Math.max(IMAGE_UPLOAD_PART_RECORDS_MIN, Math.ceil(records / S3_PARTS_MAX));
+  return (
+    perPart *
+    (encrypted
+      ? IMAGE_ENCRYPTION_RECORD_BYTES + IMAGE_ENCRYPTION_TAG_BYTES
+      : IMAGE_ENCRYPTION_RECORD_BYTES)
+  );
+}
 
 /** Ciphertext length of an `aes256gcm-r1` object for `plain` bytes. */
 export function encryptedImageLength(plain: number): number {
@@ -370,12 +399,26 @@ export const daemonImageMessageSchemas = [
       .max(IMAGE_UPLOAD_PARTS_MAX),
   }),
   z.strictObject({ type: z.literal("image.upload.complete"), transferId: idSchema }),
-  z.strictObject({
-    type: z.literal("image.job.resume"),
-    transferId: idSchema,
-    role: roleSchema,
-    bytesDone: z.number().int().min(0).max(IMAGE_SIZE_MAX),
-  }),
+  // Exactly one reference: the transfer, or (a capture upload before its
+  // first grant) its operation and dispatch attempt, as SOURCE with nothing
+  // done.
+  z
+    .strictObject({
+      type: z.literal("image.job.resume"),
+      transferId: idSchema.optional(),
+      operationId: idSchema.optional(),
+      attempt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+      role: roleSchema,
+      bytesDone: z.number().int().min(0).max(IMAGE_SIZE_MAX),
+    })
+    .refine((frame) =>
+      frame.transferId !== undefined
+        ? frame.operationId === undefined && frame.attempt === undefined
+        : frame.operationId !== undefined &&
+          frame.attempt !== undefined &&
+          frame.role === "SOURCE" &&
+          frame.bytesDone === 0,
+    ),
   // Exactly one reference: the transfer, or (a capture upload that never got
   // one) its operation and dispatch attempt. `httpStatus` exactly for
   // `http_status` / `url_expired`, `refusal` exactly for `refused`.
@@ -400,7 +443,11 @@ export const daemonImageMessageSchemas = [
           (frame.cause === "http_status" || frame.cause === "url_expired") &&
         (frame.refusal !== undefined) === (frame.cause === "refused"),
     ),
-  /** Upload liveness heartbeat: bytes of this transfer sent so far. */
+  /**
+   * Upload liveness heartbeat: the furthest stored-object offset reached
+   * (`bytesSent`, logical) and every body byte the transport took, retries
+   * included (`wireBytes`, physical, monotonic). Either advancing is liveness.
+   */
   z.strictObject({
     type: z.literal("image.upload.progress"),
     transferId: idSchema,
@@ -409,7 +456,10 @@ export const daemonImageMessageSchemas = [
       .int()
       .min(0)
       .max(IMAGE_SIZE_MAX * 2),
+    wireBytes: z.number().int().min(0).max(IMAGE_WIRE_BYTES_MAX),
   }),
+  /** Fresh part URLs, granted from the server's lowest unrecorded part. */
+  z.strictObject({ type: z.literal("image.upload.renew"), transferId: idSchema }),
 ] as const;
 export type DaemonImageMessage = z.infer<(typeof daemonImageMessageSchemas)[number]>;
 
@@ -476,14 +526,25 @@ export const serverImageMessageSchema = z.union([
         .array(z.strictObject({ n: partNumberSchema, url: urlSchema, sizeBytes: sizeSchema }))
         .max(IMAGE_UPLOAD_PARTS_MAX),
       expiresAtUnixMs: z.number().int().min(0),
+      /** URL lifetime relative to receipt (the host's own clock). */
+      ttlSeconds: z.number().int().min(1).max(IMAGE_UPLOAD_TTL_MAX_SECONDS),
       encryption: encryptionSchema.optional(),
     })
     .refine((grant) => grant.parts.every((part) => part.sizeBytes <= grant.partSize)),
-  z.strictObject({
-    type: z.literal("image.job.resume.result"),
-    transferId: idSchema,
-    continue: z.boolean(),
-  }),
+  // The reference of the resume it answers (exactly one shape).
+  z
+    .strictObject({
+      type: z.literal("image.job.resume.result"),
+      transferId: idSchema.optional(),
+      operationId: idSchema.optional(),
+      attempt: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+      continue: z.boolean(),
+    })
+    .refine((frame) =>
+      frame.transferId !== undefined
+        ? frame.operationId === undefined && frame.attempt === undefined
+        : frame.operationId !== undefined && frame.attempt !== undefined,
+    ),
   z.strictObject({
     type: z.literal("image.job.cancel"),
     transferId: idSchema,

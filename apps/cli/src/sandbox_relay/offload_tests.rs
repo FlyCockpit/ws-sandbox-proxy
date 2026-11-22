@@ -2039,3 +2039,205 @@ fn expect_disk_holds_only_for_the_unchanged_stored_copy_and_a_restore_drops_it()
         "T16: dropped on restore accept"
     );
 }
+
+/// A socket stream whose writes are buffered by tungstenite and whose flush
+/// fails (the relay connection died under a batch).
+struct FlushFails;
+
+impl std::io::Read for FlushFails {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::WouldBlock.into())
+    }
+}
+
+impl std::io::Write for FlushFails {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::BrokenPipe.into())
+    }
+}
+
+/// Fix 4 (r4 #3): the disk parts and completion of a finished upload were in
+/// an image batch whose flush failed, after the server had taken them (its
+/// offload is verifying). They are not replayed on the next connection, so
+/// no stale cancel answers a repeated completion (as the server would, the
+/// test plays it for any) and the `uploaded` journal entry, its alias and
+/// staging are kept until the stored ack stores it.
+#[test]
+fn a_disk_completion_in_a_failed_batch_is_not_replayed_and_the_entry_is_kept() {
+    let f = fixture();
+    f.offload.handle_server(request("off-1"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let (url, seen) = s3(1);
+    f.offload
+        .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
+    seen.join().unwrap();
+    wait_until("uploaded and the job over", || {
+        f.offload
+            .entry(SBX)
+            .is_some_and(|e| e.phase == OffloadPhase::Uploaded)
+            && f.offload.lock_jobs().active.is_empty()
+    });
+    let queued = f.images.queued();
+    assert!(
+        queued
+            .iter()
+            .any(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_))),
+        "{queued:?}"
+    );
+    let mut socket = tungstenite::WebSocket::from_raw_socket(
+        FlushFails,
+        tungstenite::protocol::Role::Client,
+        None,
+    );
+    assert!(
+        crate::sandbox_relay::connect::send_image_batch(
+            &mut socket,
+            sandbox_protocol::WireCodes::CURRENT,
+            &f.images,
+        )
+        .is_err()
+    );
+    f.images.on_disconnect();
+    f.images.on_registered("host-owner");
+    let replayed = f.images.drain();
+    assert!(
+        replayed.iter().all(|m| !matches!(
+            m,
+            DaemonControlMessage::DiskUploadParts(_) | DaemonControlMessage::DiskUploadComplete(_)
+        )),
+        "{replayed:?}"
+    );
+    for frame in &replayed {
+        if matches!(frame, DaemonControlMessage::DiskUploadComplete(_)) {
+            f.offload.handle_server(cancel("off-1", "stale"));
+        }
+    }
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    f.offload
+        .handle_server(stored_ack("off-1", &begin.fingerprint));
+    wait_for_frame(&f.images, |m| released_of(m) == Some("off-1"));
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+}
+
+/// Fix 5 (r5 #2): the finished upload's parts fill the last slot of an image
+/// batch whose write fails and its completion is queued behind it. On the
+/// next connection the completion (an older connection's continuation) is
+/// purged, not sent unbound; and a `stale` answer to a completion (as the
+/// server gives one that reached a newer connection) keeps the `uploaded`
+/// entry, its alias and staging, and asks for the verdict: the stored ack
+/// still settles the offload.
+#[test]
+fn a_queued_disk_completion_across_a_reconnect_is_purged_and_a_stale_answer_keeps_the_entry() {
+    let f = fixture();
+    f.offload.handle_server(request("off-1"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let filler = |i: usize| {
+        DaemonControlMessage::DiskOffloadReleased(DiskOffloadReleasedV11 {
+            sandbox_id: format!("sbx-filler-{i}"),
+            offload_id: format!("off-filler-{i}"),
+            seq: 1,
+        })
+    };
+    for i in 0..31 {
+        f.images.push_frame(filler(i));
+    }
+    let (url, seen) = s3(1);
+    f.offload
+        .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
+    seen.join().unwrap();
+    wait_until("uploaded and the job over", || {
+        f.offload
+            .entry(SBX)
+            .is_some_and(|e| e.phase == OffloadPhase::Uploaded)
+            && f.offload.lock_jobs().active.is_empty()
+    });
+    let queued = f.images.queued();
+    let complete = queued
+        .iter()
+        .position(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_)))
+        .expect("completion queued");
+    assert!(complete >= 32, "beyond the first batch: {queued:?}");
+    let mut socket = tungstenite::WebSocket::from_raw_socket(
+        FlushFails,
+        tungstenite::protocol::Role::Client,
+        None,
+    );
+    assert!(
+        crate::sandbox_relay::connect::send_image_batch(
+            &mut socket,
+            sandbox_protocol::WireCodes::CURRENT,
+            &f.images,
+        )
+        .is_err()
+    );
+    assert!(
+        f.images
+            .queued()
+            .iter()
+            .any(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_))),
+        "the completion was behind the failed batch"
+    );
+    f.images.on_disconnect();
+    f.images.on_registered("host-owner");
+    let sent = f.images.drain();
+    assert!(
+        sent.iter().all(|m| !matches!(
+            m,
+            DaemonControlMessage::DiskUploadParts(_) | DaemonControlMessage::DiskUploadComplete(_)
+        )),
+        "{sent:?}"
+    );
+    // A stale answer to a completion: the entry stays, the verdict is asked.
+    f.offload.handle_server(cancel("off-1", "stale"));
+    let (verdict, _) = wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskOffloadInventory(i)
+            if i.entries.iter().any(|e| e.offload_id == "off-1"))
+    });
+    assert!(matches!(
+        verdict,
+        DaemonControlMessage::DiskOffloadInventory(_)
+    ));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    f.offload
+        .handle_server(stored_ack("off-1", &begin.fingerprint));
+    wait_for_frame(&f.images, |m| released_of(m) == Some("off-1"));
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+}
+
+/// Fix 5 (r5 #1): an older connection's disk inventory page still queued is
+/// purged when the next connection starts its inventory.
+#[test]
+fn an_old_disk_inventory_page_is_purged_by_the_next_inventory() {
+    let f = fixture();
+    f.images
+        .push_frame(DaemonControlMessage::DiskOffloadInventory(
+            DiskOffloadInventoryV11 {
+                entries: vec![DiskOffloadInventoryEntryV11 {
+                    sandbox_id: "sbx-old".into(),
+                    offload_id: "off-old".into(),
+                    seq: 1,
+                }],
+            },
+        ));
+    f.images.on_disconnect();
+    f.images.on_registered("host-owner");
+    f.offload.begin_inventory();
+    let frames = f.images.drain();
+    assert!(
+        frames.iter().all(
+            |m| !matches!(m, DaemonControlMessage::DiskOffloadInventory(i)
+            if i.entries.iter().any(|e| e.offload_id == "off-old"))
+        ),
+        "{frames:?}"
+    );
+}

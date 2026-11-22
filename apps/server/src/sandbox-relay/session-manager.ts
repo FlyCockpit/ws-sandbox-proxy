@@ -2915,7 +2915,8 @@ export class SandboxRelaySessionManager {
         case "image.upload.complete":
         case "image.job.resume":
         case "image.job.failed":
-        case "image.upload.progress": {
+        case "image.upload.progress":
+        case "image.upload.renew": {
           // Image requests and replies require image-cache runtime support.
           if (!session.imageFeatures) throw new Error("unnegotiated image frame");
           if (!session.reconciled) throw new Error("image frame before reconciliation");
@@ -3581,6 +3582,8 @@ export class SandboxRelaySessionManager {
         return images.handleImageUploadParts(ctx, message);
       case "image.upload.progress":
         return images.handleImageUploadProgress(ctx, message);
+      case "image.upload.renew":
+        return images.handleImageUploadRenew(ctx, message);
       case "image.upload.complete": {
         const { enqueueImageVerify } = await import("@wssp/api/sandbox/image-store/jobs");
         return images.handleImageUploadComplete(ctx, message, enqueueImageVerify);
@@ -3588,7 +3591,8 @@ export class SandboxRelaySessionManager {
       case "image.job.resume": {
         await images.handleImageJobResume(ctx, message);
         // A resumed disk upload needs its grant again (§7 Mid-upload).
-        if (!session.diskOffload || message.role !== "SOURCE") return;
+        if (!session.diskOffload || message.role !== "SOURCE" || message.transferId === undefined)
+          return;
         const disks = await import("./disk-handlers.js");
         return disks.handleDiskUploadResume(
           {

@@ -63,7 +63,7 @@ describe("committed CHECK declarations (real PostgreSQL)", () => {
       .sort()
       .map((name) => readFileSync(new URL(`${name}/migration.sql`, migrations), "utf8"))
       .join("\n");
-    expect(repoChecks).toHaveLength(156);
+    expect(repoChecks).toHaveLength(157);
     const live = (
       await client.query<{ table: string; name: string; valid: boolean }>(
         `SELECT t.relname AS "table", c.conname AS name, c.convalidated AS valid

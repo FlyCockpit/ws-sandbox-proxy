@@ -437,6 +437,10 @@ describe("operation writers are reviewed for long-poll wakes", () => {
     "apps/server/src/sandbox-relay/inventory-reconcile.ts",
     "apps/server/src/sandbox-relay/operation-handlers.ts",
     "apps/server/src/sandbox-relay/outbox-processor.ts",
+    // The recorded-capture adoption (relayTransaction) moves only
+    // dispatchedConnectionEpoch of an ACCEPTED/RUNNING capture operation, never
+    // its state or result: nothing a long-poll waiter observes.
+    "apps/server/src/sandbox-relay/image-handlers.ts",
     // Download acceptance creates an operation (no waiter can hold a new id).
     "apps/server/src/sandbox-transfers/store.ts",
     // Helpers that receive a transaction from an observed caller.

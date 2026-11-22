@@ -223,6 +223,12 @@ const WRITERS: readonly Entry[] = [
     text: UPDATE,
     exempt: "template capture operation: RUNNING",
   },
+  {
+    file: "apps/server/src/sandbox-relay/image-handlers.ts",
+    text: "const adopted = await tx.sandboxOperation.updateMany({",
+    exempt:
+      "recorded-capture adoption: moves only dispatchedConnectionEpoch of an ACCEPTED/RUNNING template capture operation, never its state or result",
+  },
   { file: CONTROLS, text: "await tx.sandboxOperation.update({", exempt: "stdin sequence" },
   {
     file: CONTROLS,

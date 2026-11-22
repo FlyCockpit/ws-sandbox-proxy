@@ -20,6 +20,8 @@ pub(crate) struct UploadFailure {
     pub(crate) refusal: Option<String>,
     /// Logged only.
     pub(crate) io_kind: Option<std::io::ErrorKind>,
+    /// The part attempt that ended this way (1-based; logged only).
+    pub(crate) attempt: Option<u32>,
 }
 
 /// How a job ended when it did not succeed.
@@ -56,12 +58,33 @@ impl UploadFailure {
             part: None,
             refusal: None,
             io_kind: None,
+            attempt: None,
         }
     }
 
     pub(crate) fn at_part(mut self, part: u32) -> Self {
         self.part = Some(part);
         self
+    }
+
+    pub(crate) fn at_attempt(mut self, attempt: u32) -> Self {
+        self.attempt = Some(attempt);
+        self
+    }
+
+    /// Whether another attempt of the same part may succeed: a transport
+    /// that timed out, stalled, was reset or could not connect, or a store
+    /// answer that says "later" (5xx, 408, 429). A 403 is renewed by the
+    /// caller, never retried as is; everything else is final.
+    pub(crate) fn retryable(&self) -> bool {
+        use ImageFailureCause as C;
+        match self.cause {
+            C::Timeout | C::Stalled | C::Reset | C::Connect => true,
+            C::HttpStatus => self
+                .http_status
+                .is_some_and(|s| s >= 500 || s == 408 || s == 429),
+            _ => false,
+        }
     }
 
     /// The server refused the job; `reason` is its own cancel code, echoed
@@ -84,10 +107,10 @@ impl UploadFailure {
         failure
     }
 
-    /// A store answer other than success. A 403 at or after the grant's
-    /// expiry is an expired presigned URL.
-    pub(crate) fn status(status: u16, expires_at_unix_ms: Option<u64>, now_ms: u64) -> Self {
-        let expired = status == 403 && expires_at_unix_ms.is_some_and(|at| now_ms >= at);
+    /// A store answer other than success. A 403 once the URL's lifetime
+    /// (judged on the host's own clock) ran out is an expired presigned URL.
+    pub(crate) fn status(status: u16, url_expired: bool) -> Self {
+        let expired = status == 403 && url_expired;
         let cause = if expired {
             ImageFailureCause::UrlExpired
         } else {
@@ -143,7 +166,7 @@ impl UploadFailure {
             io_kind = ?self.io_kind,
             http_status = ?self.http_status,
             part = ?self.part,
-            attempt = 1,
+            attempt = self.attempt.unwrap_or(1),
             refusal = self.refusal.as_deref().unwrap_or("-"),
             "{what}"
         );
@@ -259,22 +282,56 @@ mod tests {
 
     #[test]
     fn statuses_are_captured_and_an_expired_url_is_named() {
-        let s = UploadFailure::status(503, Some(10), 5);
+        let s = UploadFailure::status(503, true);
         assert_eq!(
             (s.cause, s.http_status),
             (ImageFailureCause::HttpStatus, Some(503))
         );
-        let early = UploadFailure::status(403, Some(10), 5);
+        let early = UploadFailure::status(403, false);
         assert_eq!(early.cause, ImageFailureCause::HttpStatus);
-        let late = UploadFailure::status(403, Some(10), 10);
+        let late = UploadFailure::status(403, true);
         assert_eq!(
             (late.cause, late.http_status),
             (ImageFailureCause::UrlExpired, Some(403))
         );
-        assert_eq!(
-            UploadFailure::status(403, None, 10).cause,
-            ImageFailureCause::HttpStatus
-        );
+    }
+
+    /// Retried: timeouts, stalls, resets, connects, 5xx, 408, 429. Final:
+    /// everything else, 403 included (the caller renews its URL once).
+    #[test]
+    fn only_transient_failures_are_retried() {
+        use ImageFailureCause as C;
+        for cause in [C::Timeout, C::Stalled, C::Reset, C::Connect] {
+            assert!(
+                UploadFailure::new(ImageFailureCode::Io, cause).retryable(),
+                "{cause:?}"
+            );
+        }
+        for status in [500, 502, 503, 504, 599, 408, 429] {
+            assert!(UploadFailure::status(status, false).retryable(), "{status}");
+        }
+        for status in [400, 401, 403, 404, 409, 411, 413] {
+            assert!(
+                !UploadFailure::status(status, false).retryable(),
+                "{status}"
+            );
+        }
+        assert!(!UploadFailure::status(403, true).retryable());
+        for cause in [
+            C::Tls,
+            C::LocalIo,
+            C::Export,
+            C::NoGrant,
+            C::Refused,
+            C::Protocol,
+        ] {
+            assert!(
+                !UploadFailure::new(ImageFailureCode::Io, cause).retryable(),
+                "{cause:?}"
+            );
+        }
+        assert!(!UploadFailure::refused("cancelled").retryable());
+        assert!(!UploadFailure::local_io(std::io::ErrorKind::TimedOut).retryable());
     }
 
     #[test]
@@ -298,7 +355,7 @@ mod tests {
     /// Frames are valid for both references and carry exactly one.
     #[test]
     fn frames_name_the_transfer_else_the_operation_and_stay_valid() {
-        let failure = UploadFailure::status(503, None, 0).at_part(2);
+        let failure = UploadFailure::status(503, false).at_part(2);
         let by_transfer = failure.frame(Some("tr-1"), Some(("op-1", 1))).unwrap();
         assert_eq!(by_transfer.transfer_id.as_deref(), Some("tr-1"));
         assert!(by_transfer.operation_id.is_none() && by_transfer.attempt.is_none());

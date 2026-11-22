@@ -1854,6 +1854,10 @@ model SandboxImageTransfer {
   partSize          Int
   partCount         Int
   bytesDone         BigInt                     @default(0)
+  /// S3 uploads: the body bytes the source host's transport took so far,
+  /// retries included (its heartbeat's `wireBytes`, monotonic). Liveness
+  /// with `bytesDone`: either advancing refreshes `lastProgressAt`.
+  wireBytes         BigInt                     @default(0)
   sourceEpoch       Int?
   destEpoch         Int?
   /// Dispatch attempt of `operationId` this transfer was granted to (round-2
@@ -1873,6 +1877,7 @@ model SandboxImageTransfer {
   Links             SandboxImageLink[]
   UploadSession     SandboxImageUploadSession?
 
+  // @check sandbox_image_transfer_wire_bytes: "wireBytes" >= 0 AND "wireBytes" <= 17592186044416
   // @check sandbox_image_transfer_shape: "fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "mode" IN ('S3', 'RELAY') AND "sizeBytes" > 0 AND "partSize" > 0 AND "partCount" BETWEEN 1 AND 10000 AND "bytesDone" >= 0 AND "bytesDone" <= "sizeBytes"
   @@index([state, expiresAt])
   @@index([destHostId, state])

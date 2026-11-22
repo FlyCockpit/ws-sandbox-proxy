@@ -9,6 +9,19 @@ use std::net::TcpListener;
 
 const GIB: u64 = 1 << 30;
 
+/// Upload retry and renew timings of every test service: the production
+/// shape with pauses short enough for a test. A renew waits 30 s per try (a
+/// test answers in milliseconds, so it is never re-sent by accident, even on
+/// a slow machine); tests of the re-send set their own.
+const FAST_TIMINGS: UploadTimings = UploadTimings {
+    part_retry: [Duration::from_millis(10); 3],
+    begin_retry: [Duration::from_millis(20); 4],
+    begin_budget: Duration::from_secs(30),
+    renew_retry: [Duration::from_secs(30); 4],
+    url_margin: Duration::from_secs(60),
+    flush_every: Duration::from_secs(30),
+};
+
 type Response = (u16, Vec<(&'static str, String)>, Vec<u8>);
 type Seen = std::thread::JoinHandle<Vec<(String, Vec<u8>)>>;
 
@@ -48,6 +61,7 @@ fn service_with(
     .expect("start")
     .expect("enabled");
     service.on_registered("host-owner");
+    service.set_upload_timings_for_test(FAST_TIMINGS);
     service
 }
 
@@ -900,6 +914,7 @@ fn capture_grant(request: &str, transfer: &str, url: String, size: u64) -> Serve
             size_bytes: size,
         }],
         expires_at_unix_ms: 1,
+        ttl_seconds: 600,
         encryption: None,
     })
 }
@@ -1221,6 +1236,7 @@ fn idle_service(runtime: &FakeRuntime, dir: &Path, base: &str, idle: Duration) -
     .expect("start")
     .expect("enabled");
     service.on_registered("host-owner");
+    service.set_upload_timings_for_test(FAST_TIMINGS);
     service
 }
 
@@ -1282,6 +1298,7 @@ fn parts_grant(
             )
             .collect(),
         expires_at_unix_ms: 1,
+        ttl_seconds: 600,
         encryption: None,
     })
 }
@@ -1317,6 +1334,19 @@ fn upload_kinds(frames: &[DaemonControlMessage]) -> Vec<&'static str> {
         .collect()
 }
 
+/// The upload protocol frames in order: `upload_kinds` plus renews and
+/// resumes (heartbeats left out).
+fn upload_sequence(frames: &[DaemonControlMessage]) -> Vec<&'static str> {
+    frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadRenew(_) => Some("renew"),
+            DaemonControlMessage::ImageJobResume(_) => Some("resume"),
+            f => upload_kinds(std::slice::from_ref(f)).first().copied(),
+        })
+        .collect()
+}
+
 /// The one `image.job.failed` among `frames` (asserted valid).
 fn the_failure(frames: &[DaemonControlMessage]) -> sandbox_protocol::ImageJobFailedV11 {
     let failed: Vec<_> = frames
@@ -1331,92 +1361,462 @@ fn the_failure(frames: &[DaemonControlMessage]) -> sandbox_protocol::ImageJobFai
     failed[0].clone()
 }
 
-/// A store that accepts the PUT and then stops reading: the write stalls
-/// and the upload ends `stalled` after the idle bound, by its transfer. The
-/// store holds the socket until the client has failed (never a reset race).
+/// A scripted fake S3: on drop it stops accepting and joins its thread
+/// (and so the handler running there), so no test leaves a listener behind.
+struct S3Guard {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    addr: std::net::SocketAddr,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for S3Guard {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(self.addr);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// A fake S3 that hands each successive connection, after its request head,
+/// to `handle(index, path, reader, body_length)`; returns the base URL, the
+/// number of connections accepted so far and the guard that stops it.
+fn scripted_s3_paths(
+    handle: impl Fn(usize, &str, BufReader<std::net::TcpStream>, usize) + Send + 'static,
+) -> (String, Arc<std::sync::atomic::AtomicUsize>, S3Guard) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let base = format!("http://{addr}");
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = count.clone();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop.clone();
+    let thread = std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            if stopped.load(Ordering::SeqCst) {
+                return;
+            }
+            let Ok(stream) = stream else { return };
+            let index = seen.fetch_add(1, Ordering::SeqCst);
+            let mut reader = BufReader::new(stream);
+            let mut length = 0usize;
+            let mut path = String::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if path.is_empty() {
+                    path = line.split(' ').nth(1).unwrap_or_default().to_owned();
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            handle(index, &path, reader, length);
+        }
+    });
+    (
+        base,
+        count,
+        S3Guard {
+            stop,
+            addr,
+            thread: Some(thread),
+        },
+    )
+}
+
+/// `scripted_s3_paths` for handlers that do not look at the path.
+fn scripted_s3(
+    handle: impl Fn(usize, BufReader<std::net::TcpStream>, usize) + Send + 'static,
+) -> (String, Arc<std::sync::atomic::AtomicUsize>, S3Guard) {
+    scripted_s3_paths(move |i, _, reader, length| handle(i, reader, length))
+}
+
+/// Read the whole body, then answer 200 with an ETag.
+fn store_ok(mut reader: BufReader<std::net::TcpStream>, length: usize) {
+    let mut body = vec![0u8; length];
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    let mut stream = reader.into_inner();
+    let _ = stream.write_all(
+        b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+}
+
+/// Read the body at a paced rate (16 KiB every 20 ms), then answer 200.
+fn store_paced(mut reader: BufReader<std::net::TcpStream>, length: usize) {
+    let mut chunk = vec![0u8; 16 << 10];
+    let mut read = 0;
+    while read < length {
+        let n = chunk.len().min(length - read);
+        if reader.read_exact(&mut chunk[..n]).is_err() {
+            return;
+        }
+        read += n;
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut stream = reader.into_inner();
+    let _ = stream.write_all(
+        b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+}
+
+/// Read the whole body, then answer `status`.
+fn store_status(mut reader: BufReader<std::net::TcpStream>, length: usize, status: u16) {
+    let mut body = vec![0u8; length];
+    if reader.read_exact(&mut body).is_err() {
+        return;
+    }
+    let mut stream = reader.into_inner();
+    let _ = stream.write_all(
+        format!("HTTP/1.1 {status} No\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .as_bytes(),
+    );
+}
+
+/// Read 1 MiB of a longer body and close: unread data, so an RST.
+fn store_reset(mut reader: BufReader<std::net::TcpStream>) {
+    let mut some = vec![0u8; 1 << 20];
+    let _ = reader.read_exact(&mut some);
+}
+
+/// Sockets a stalling store holds open, unread, until the test ends.
+type Held = Arc<Mutex<Vec<BufReader<std::net::TcpStream>>>>;
+
+/// The grants a `FakeControl` issued, so a fake S3 refuses a URL as S3
+/// would: one of a superseded grant, or past its TTL. The store's clock is
+/// `Instant::now`, or a service's virtual upload clock (`clock`), judged
+/// when a request head arrives; every grant's URLs are distinct
+/// (`/g<grant>/p<n>`).
+#[derive(Default)]
+struct UrlBook {
+    /// When each grant was issued and its TTL (grant `g` at `g - 1`).
+    grants: Vec<(Instant, u64)>,
+    clock: Option<ImageService>,
+}
+
+type Book = Arc<Mutex<UrlBook>>;
+
+impl UrlBook {
+    fn now(&self) -> Instant {
+        self.clock
+            .as_ref()
+            .map_or_else(Instant::now, ImageService::now)
+    }
+
+    fn issue(&mut self, ttl: u64) -> usize {
+        let now = self.now();
+        self.grants.push((now, ttl));
+        self.grants.len()
+    }
+
+    /// The grant a part URL path (`/g<grant>/p<n>`) belongs to.
+    fn grant_of(path: &str) -> Option<usize> {
+        path.strip_prefix("/g")?.split('/').next()?.parse().ok()
+    }
+
+    /// Whether `path` is a URL of the latest grant, inside its TTL.
+    fn valid(&self, path: &str) -> bool {
+        let now = self.now();
+        Self::grant_of(path).is_some_and(|g| {
+            g == self.grants.len()
+                && now.saturating_duration_since(self.grants[g - 1].0)
+                    < Duration::from_secs(self.grants[g - 1].1)
+        })
+    }
+}
+
+/// A store that refuses (403) a URL its book does not hold valid, else
+/// hands the request to `then`.
+fn book_store(
+    book: &Book,
+    path: &str,
+    reader: BufReader<std::net::TcpStream>,
+    length: usize,
+    then: impl FnOnce(BufReader<std::net::TcpStream>, usize),
+) {
+    if book.lock().unwrap().valid(path) {
+        then(reader, length);
+    } else {
+        store_status(reader, length, 403);
+    }
+}
+
+/// The control plane of one upload, played by the test: records reported
+/// parts and answers every `image.upload.renew` with a grant from the
+/// lowest unrecorded part (`ttl` seconds), like the server.
+struct FakeControl<'a> {
+    images: &'a ImageService,
+    transfer: String,
+    base: String,
+    part_size: u64,
+    stored: u64,
+    ttl: u64,
+    recorded: std::collections::BTreeSet<u32>,
+    frames: Vec<DaemonControlMessage>,
+    /// Part reports to drop unrecorded (as the server does over its budget).
+    drop_reports: usize,
+    /// Renews to leave unanswered (as the server does over its budget).
+    drop_renews: usize,
+    /// The grants issued (shared with a store that checks URLs).
+    book: Book,
+}
+
+impl<'a> FakeControl<'a> {
+    fn new(
+        images: &'a ImageService,
+        transfer: &str,
+        base: &str,
+        part_size: u64,
+        stored: u64,
+    ) -> Self {
+        Self {
+            images,
+            transfer: transfer.into(),
+            base: base.into(),
+            part_size,
+            stored,
+            ttl: 600,
+            recorded: std::collections::BTreeSet::new(),
+            frames: Vec::new(),
+            drop_reports: 0,
+            drop_renews: 0,
+            book: Book::default(),
+        }
+    }
+
+    fn total(&self) -> u32 {
+        self.stored.div_ceil(self.part_size).max(1) as u32
+    }
+
+    /// A grant of up to 64 parts from `from`.
+    fn grant(&self, request: Option<&str>, from: u32) -> ServerControlMessage {
+        let total = self.total();
+        let grant = self.book.lock().unwrap().issue(self.ttl);
+        let parts = (from..=total.min(from + 63))
+            .map(|n| sandbox_protocol::ImageUploadPartUrlV11 {
+                n,
+                url: format!("{}/g{grant}/p{n}", self.base),
+                size_bytes: (self.stored - u64::from(n - 1) * self.part_size).min(self.part_size),
+            })
+            .collect();
+        ServerControlMessage::ImageUploadGrant(sandbox_protocol::ImageUploadGrantV11 {
+            transfer_id: self.transfer.clone(),
+            request_id: request.map(str::to_owned),
+            part_size: self.part_size,
+            parts,
+            expires_at_unix_ms: 1,
+            ttl_seconds: self.ttl,
+            encryption: None,
+        })
+    }
+
+    fn lowest_unrecorded(&self) -> u32 {
+        (1..=self.total())
+            .find(|n| !self.recorded.contains(n))
+            .unwrap_or(self.total() + 1)
+    }
+
+    /// Serve the upload until its job has returned, calling `on` for every
+    /// frame first; returns every frame the job sent (in order).
+    fn run(
+        &mut self,
+        on: &mut dyn FnMut(&DaemonControlMessage, &ImageService),
+    ) -> Vec<DaemonControlMessage> {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let finished = self.images.uploads_finished() >= 1;
+            let batch = self.images.drain();
+            for frame in &batch {
+                on(frame, self.images);
+                match frame {
+                    DaemonControlMessage::ImageUploadParts(_) if self.drop_reports > 0 => {
+                        self.drop_reports -= 1;
+                    }
+                    DaemonControlMessage::ImageUploadParts(p) => {
+                        assert_eq!(p.transfer_id, self.transfer);
+                        self.recorded.extend(p.parts.iter().map(|p| p.n));
+                    }
+                    DaemonControlMessage::ImageUploadRenew(_) if self.drop_renews > 0 => {
+                        self.drop_renews -= 1;
+                    }
+                    DaemonControlMessage::ImageUploadRenew(r) => {
+                        assert_eq!(r.transfer_id, self.transfer);
+                        let grant = self.grant(None, self.lowest_unrecorded());
+                        self.images.handle_server(grant);
+                    }
+                    _ => {}
+                }
+            }
+            let empty = batch.is_empty();
+            self.frames.extend(batch);
+            if finished && empty {
+                return std::mem::take(&mut self.frames);
+            }
+            assert!(Instant::now() < deadline, "upload never finished");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+fn renews(frames: &[DaemonControlMessage]) -> usize {
+    frames
+        .iter()
+        .filter(|f| matches!(f, DaemonControlMessage::ImageUploadRenew(_)))
+        .count()
+}
+
+/// Consecutive heartbeats `(bytesSent, wireBytes)`: neither count goes
+/// back, and at least one moved (the heartbeat rule).
+fn advanced(w: &[(u64, u64)]) -> bool {
+    w[0].0 <= w[1].0 && w[0].1 <= w[1].1 && w[0] != w[1]
+}
+
+fn no_hook() -> impl FnMut(&DaemonControlMessage, &ImageService) {
+    |_, _| {}
+}
+
+/// Run one capture upload of `bytes` in parts of `part` against a store at
+/// `base`; the test plays the control plane. Returns every frame sent.
+fn run_capture(
+    images: &ImageService,
+    runtime: &FakeRuntime,
+    base: &str,
+    bytes: &[u8],
+    part: u64,
+    transfer: &str,
+) -> Vec<DaemonControlMessage> {
+    let request = start_capture_upload(images, runtime, bytes);
+    let mut control = FakeControl::new(images, transfer, base, part, bytes.len() as u64);
+    images.handle_server(control.grant(Some(&request), 1));
+    control.run(&mut no_hook())
+}
+
+/// A store that accepts each PUT and then stops reading, four times: every
+/// attempt stalls, and after exactly 4 attempts (`PART_ATTEMPTS`) the upload
+/// ends `stalled` by its transfer. The store holds the sockets until the
+/// client has failed (never a reset race).
 #[test]
-fn a_stalled_part_upload_ends_stalled_after_the_idle_bound() {
+fn a_part_that_stalls_on_every_attempt_ends_stalled() {
     let runtime = FakeRuntime::default();
     let dir = tempfile::tempdir().unwrap();
-    let (failed, held) = mpsc::channel::<()>();
-    let base = fake_s3(move |reader| {
-        // Watchdog only: released once the client reported its failure.
-        let _ = held.recv_timeout(Duration::from_secs(60));
-        drop(reader);
+    let held: Held = Arc::default();
+    let keep = held.clone();
+    let (base, connections, _s3) = scripted_s3(move |_, reader, _| {
+        keep.lock().unwrap().push(reader);
     });
     let images = idle_service(&runtime, dir.path(), &base, Duration::from_millis(300));
     let bytes = vec![5u8; 32 << 20];
-    let request = start_capture_upload(&images, &runtime, &bytes);
-    images.handle_server(capture_grant(
-        &request,
-        "tr-stall",
-        format!("{base}/p1"),
-        bytes.len() as u64,
-    ));
-    let frames = upload_frames(&images);
-    let _ = failed.send(());
+    let frames = run_capture(&images, &runtime, &base, &bytes, 32 << 20, "tr-stall");
+    held.lock().unwrap().clear();
     assert_eq!(upload_kinds(&frames), ["failed"]);
     let failed = the_failure(&frames);
     assert_eq!(failed.transfer_id.as_deref(), Some("tr-stall"));
     assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Stalled);
     assert_eq!(failed.code, ImageFailureCode::Timeout);
     assert_eq!(failed.part, Some(1));
+    assert_eq!(connections.load(Ordering::SeqCst), 4);
 }
 
-/// A store answering 503 ends the upload `http_status` with the status.
+/// A stalled first attempt is retried, and the retry completes the upload.
 #[test]
-fn a_store_error_status_is_reported_with_its_status() {
+fn a_stalled_attempt_is_retried_and_the_upload_completes() {
     let runtime = FakeRuntime::default();
     let dir = tempfile::tempdir().unwrap();
-    let (base, server) = responder(vec![(503, Vec::new(), Vec::new())]);
+    let held: Held = Arc::default();
+    let keep = held.clone();
+    let (base, connections, _s3) = scripted_s3(move |i, reader, length| match i {
+        0 => keep.lock().unwrap().push(reader),
+        _ => store_ok(reader, length),
+    });
+    // An idle bound far above any loopback hiccup: the retry moving 32 MiB
+    // never looks stalled however loaded the machine is; only the held
+    // first socket does (test#5).
+    let images = idle_service(&runtime, dir.path(), &base, Duration::from_secs(5));
+    let bytes = vec![5u8; 32 << 20];
+    let frames = run_capture(&images, &runtime, &base, &bytes, 32 << 20, "tr-stall-ok");
+    held.lock().unwrap().clear();
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
+
+/// A store answering 503 is retried; one retry that gets 200 completes it.
+#[test]
+fn a_store_error_status_then_success_completes_with_one_retry() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, connections, _s3) = scripted_s3(|i, reader, length| match i {
+        0 => store_status(reader, length, 503),
+        _ => store_ok(reader, length),
+    });
     let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
     let bytes = b"captured image bytes".to_vec();
-    let request = start_capture_upload(&images, &runtime, &bytes);
-    images.handle_server(capture_grant(
-        &request,
-        "tr-503",
-        format!("{base}/p1"),
-        bytes.len() as u64,
-    ));
-    let frames = upload_frames(&images);
-    assert_eq!(upload_kinds(&frames), ["failed"]);
-    let failed = the_failure(&frames);
-    assert_eq!(failed.transfer_id.as_deref(), Some("tr-503"));
-    assert_eq!(
-        failed.cause,
-        sandbox_protocol::ImageFailureCause::HttpStatus
-    );
-    assert_eq!(failed.http_status, Some(503));
-    assert_eq!(failed.part, Some(1));
-    server.join().unwrap();
+    let frames = run_capture(&images, &runtime, &base, &bytes, 1 << 20, "tr-503");
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
 }
 
-/// A connection closed mid-body ends the upload `reset`.
+/// A store that keeps answering 503 ends the upload `http_status` with the
+/// status after exactly 4 attempts; a 400 is never retried.
 #[test]
-fn a_connection_closed_mid_body_is_a_reset() {
+fn a_store_error_status_is_reported_with_its_status_after_the_attempts() {
+    for (status, attempts) in [(503u16, 4), (400, 1)] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, connections, _s3) =
+            scripted_s3(move |_, reader, length| store_status(reader, length, status));
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        let bytes = b"captured image bytes".to_vec();
+        let frames = run_capture(&images, &runtime, &base, &bytes, 1 << 20, "tr-status");
+        assert_eq!(upload_kinds(&frames), ["failed"]);
+        let failed = the_failure(&frames);
+        assert_eq!(failed.transfer_id.as_deref(), Some("tr-status"));
+        assert_eq!(
+            failed.cause,
+            sandbox_protocol::ImageFailureCause::HttpStatus
+        );
+        assert_eq!(failed.http_status, Some(status));
+        assert_eq!(failed.part, Some(1));
+        assert_eq!(connections.load(Ordering::SeqCst), attempts, "{status}");
+    }
+}
+
+/// A connection closed mid-body is retried; the retry completes it.
+#[test]
+fn a_connection_closed_mid_body_is_retried_and_completes() {
     let runtime = FakeRuntime::default();
     let dir = tempfile::tempdir().unwrap();
-    let base = fake_s3(|mut reader| {
-        let mut some = vec![0u8; 1 << 20];
-        let _ = reader.read_exact(&mut some);
-        // Unread data in the receive buffer: the close is an RST.
-        drop(reader);
+    let (base, connections, _s3) = scripted_s3(|i, reader, length| match i {
+        0 => store_reset(reader),
+        _ => store_ok(reader, length),
     });
     let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
     let bytes = vec![9u8; 32 << 20];
-    let request = start_capture_upload(&images, &runtime, &bytes);
-    images.handle_server(capture_grant(
-        &request,
-        "tr-reset",
-        format!("{base}/p1"),
-        bytes.len() as u64,
-    ));
-    let frames = upload_frames(&images);
+    let frames = run_capture(&images, &runtime, &base, &bytes, 32 << 20, "tr-reset-ok");
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
+
+/// Four connections closed mid-body in a row end the upload `reset` after
+/// exactly 4 attempts.
+#[test]
+fn four_resets_in_a_row_end_the_upload_reset() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, connections, _s3) = scripted_s3(|_, reader, _| store_reset(reader));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = vec![9u8; 32 << 20];
+    let frames = run_capture(&images, &runtime, &base, &bytes, 32 << 20, "tr-reset");
     assert_eq!(upload_kinds(&frames), ["failed"]);
     let failed = the_failure(&frames);
     assert_eq!(failed.transfer_id.as_deref(), Some("tr-reset"));
     assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Reset);
     assert_eq!(failed.part, Some(1));
+    assert_eq!(connections.load(Ordering::SeqCst), 4);
 }
 
 /// A capture whose image cannot be exported reports it by its operation
@@ -1712,25 +2112,28 @@ fn a_moving_upload_sends_heartbeats_and_completes() {
         frames.extend(batch);
     }
     assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
-    let beats: Vec<u64> = frames
+    let beats: Vec<(u64, u64)> = frames
         .iter()
         .filter_map(|f| match f {
             DaemonControlMessage::ImageUploadProgress(p) => {
                 assert_eq!(p.transfer_id, "tr-slow");
                 assert!(p.is_valid());
-                Some(p.bytes_sent)
+                Some((p.bytes_sent, p.wire_bytes))
             }
             _ => None,
         })
         .collect();
     assert!(beats.len() >= 2, "{beats:?}");
-    assert!(beats.windows(2).all(|w| w[0] < w[1]), "{beats:?}");
-    assert!(beats.iter().all(|b| *b <= len as u64));
+    assert!(beats.windows(2).all(advanced), "{beats:?}");
+    assert!(beats.iter().all(|b| b.0 <= len as u64));
 }
 
-/// A heartbeat carries the stored-object offset reached, only when it moved
-/// past the last one sent, and at most every interval (no clock involved:
-/// a zero interval sends on every advance, an hour never twice).
+/// A heartbeat carries the stored-object offset reached and the body bytes
+/// the transport took (`wireBytes`), only when either moved past the last
+/// one sent, and at most every interval (no clock involved: a zero interval
+/// sends on every advance, an hour never twice). A part sent again below
+/// the offset reached still moves `wireBytes` (I5: bytes moving on the
+/// socket are liveness), never `bytesSent`.
 #[test]
 fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
     let runtime = FakeRuntime::default();
@@ -1741,12 +2144,12 @@ fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
         crate::config::ImageCacheSize::Gib(1),
         "http://127.0.0.1:9",
     );
-    let beats = |images: &ImageService| -> Vec<u64> {
+    let beats = |images: &ImageService| -> Vec<(u64, u64)> {
         images
             .drain()
             .into_iter()
             .filter_map(|f| match f {
-                DaemonControlMessage::ImageUploadProgress(p) => Some(p.bytes_sent),
+                DaemonControlMessage::ImageUploadProgress(p) => Some((p.bytes_sent, p.wire_bytes)),
                 _ => None,
             })
             .collect()
@@ -1754,11 +2157,12 @@ fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
     images.drain();
     images.set_heartbeat_for_test(Duration::ZERO);
     let heartbeat = images.heartbeat("tr-hb");
-    heartbeat.reach(10);
-    heartbeat.reach(10);
-    heartbeat.reach(5);
-    heartbeat.reach(20);
-    assert_eq!(beats(&images), [10, 20]);
+    heartbeat.reach(10, 10);
+    heartbeat.reach(10, 0);
+    // A retry re-sending bytes 0..5: physical activity, no logical progress.
+    heartbeat.reach(5, 5);
+    heartbeat.reach(20, 15);
+    assert_eq!(beats(&images), [(10, 10), (10, 15), (20, 30)]);
     // A part body reports its offset in the stored object.
     let body = [1u8; 8];
     let mut reader = CountingBody {
@@ -1769,12 +2173,67 @@ fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
     };
     let mut buf = [0u8; 3];
     std::io::Read::read(&mut reader, &mut buf).unwrap();
-    assert_eq!(beats(&images), [1003]);
+    // The body read moves the offset only: its bytes count on the wire as
+    // the socket takes them (`sending`).
+    assert_eq!(beats(&images), [(1003, 30)]);
     images.set_heartbeat_for_test(Duration::from_secs(3600));
     let throttled = images.heartbeat("tr-hb2");
-    throttled.reach(10);
-    throttled.reach(20);
+    throttled.reach(10, 10);
+    throttled.reach(20, 10);
     assert!(beats(&images).is_empty());
+}
+
+/// Fix 3 b#1 (I5): wire progress is counted as the socket takes the bytes,
+/// below ureq's body buffer. ureq reads one 128 KiB buffer from the body at
+/// once (one logical step, no heartbeat yet), then its one write drains
+/// slowly: 8 chunks of 16 KiB, each taking 20 s on the virtual upload clock.
+/// With the production 30 s interval that one write sends a heartbeat at
+/// 40, 80, 120 and 160 s, each with the wire bytes taken so far.
+#[test]
+fn a_slow_drain_of_one_buffered_write_keeps_heartbeats_flowing() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    images.set_test_clock(0.0);
+    images.drain();
+    let heartbeat = images.heartbeat("tr-drain");
+    let buffered = vec![7u8; 128 << 10];
+    let mut body = CountingBody {
+        bytes: &buffered,
+        pos: 0,
+        base: 0,
+        heartbeat: Some(&heartbeat),
+    };
+    let mut buf = vec![0u8; 128 << 10];
+    assert_eq!(std::io::Read::read(&mut body, &mut buf).unwrap(), 128 << 10);
+    let clock = images.clone();
+    heartbeat
+        .sending(|| {
+            crate::tls::transmit_through_idle_for_test(
+                &buf,
+                Arc::new(move |_| clock.advance_test_clock(Duration::from_secs(20))),
+            )
+        })
+        .unwrap();
+    let beats: Vec<(u64, u64)> = images
+        .drain()
+        .into_iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadProgress(p) => Some((p.bytes_sent, p.wire_bytes)),
+            _ => None,
+        })
+        .collect();
+    let chunk = 16u64 << 10;
+    assert_eq!(
+        beats,
+        [2, 4, 6, 8].map(|k| (128u64 << 10, k * chunk)),
+        "one slow buffered write must keep heartbeats flowing"
+    );
 }
 
 /// Real failures logged through the production subscriber carry their
@@ -1790,7 +2249,12 @@ fn upload_failure_logs_carry_fields_and_never_a_url_or_secret() {
             || {
                 let runtime = FakeRuntime::default();
                 let dir = tempfile::tempdir().unwrap();
-                let (base, server) = responder(vec![(503, Vec::new(), Vec::new())]);
+                // Every attempt of the part (each retry logs a line too).
+                let (base, server) = responder(
+                    (0..PART_ATTEMPTS)
+                        .map(|_| (503, Vec::new(), Vec::new()))
+                        .collect(),
+                );
                 let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
                 let path = dir.path().join("staged");
                 std::fs::write(&path, b"sixteen bytes!!!").unwrap();
@@ -1829,11 +2293,44 @@ fn upload_failure_logs_carry_fields_and_never_a_url_or_secret() {
             },
         );
         let logs = String::from_utf8_lossy(&logs);
-        for field in ["http_status", "503", "connect", "part", "tr-log", "io_kind"] {
+        for field in [
+            "http_status",
+            "503",
+            "connect",
+            "part",
+            "tr-log",
+            "io_kind",
+            "attempt",
+            "image store part upload retrying",
+            "image store part upload failed",
+        ] {
             assert!(logs.contains(field), "{field} missing: {logs}");
         }
         for secret in [SIG, KEY, "X-Amz", "bucket.example"] {
             assert!(!logs.contains(secret), "{secret} leaked: {logs}");
+        }
+        if format == crate::cli::LogFormat::Json {
+            // Parsed records (test#10): for each URL, the retries carry
+            // attempts 1-3 and the final failure attempt 4.
+            for cause in ["http_status", "connect"] {
+                let attempts = |message: &str| -> Vec<u64> {
+                    logs.lines()
+                        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                        .filter(|record| {
+                            record["fields"]["message"] == message
+                                && record["fields"]["cause"] == cause
+                                && record["fields"]["transfer"] == "tr-log"
+                        })
+                        .filter_map(|record| record["fields"]["attempt"].as_u64())
+                        .collect()
+                };
+                assert_eq!(
+                    attempts("image store part upload retrying"),
+                    [1, 2, 3],
+                    "{cause}"
+                );
+                assert_eq!(attempts("image store part upload failed"), [4], "{cause}");
+            }
         }
     }
 }
@@ -2009,4 +2506,1908 @@ fn an_import_refused_by_the_shared_server_fence_stays_a_guard_outage() {
     assert_guard_outage(&err);
     assert!(!runtime.has_image(&fp));
     assert!(images.entries().is_empty());
+}
+
+/// A slow uplink (the store reads ~800 KB/s, standing in for ~100 KB/s at
+/// test scale) over several parts: the upload completes, heartbeats rise
+/// while bytes move, and with a 1 s URL lifetime (renewed with half of it
+/// left) the upload pulls fresh URLs before later parts. Every part takes
+/// at least 320 ms (16 paced reads of 20 ms), so by the third part fewer
+/// than 500 ms of the first grant are left: at least one renew is certain
+/// however fast the machine is; a slower one renews more often.
+/// A slow upload over several parts on the virtual upload clock (b#5): each
+/// part takes the store 40 s (the store moves the clock), the grant's URLs
+/// live 120 s and are renewed with less than 60 s left. Parts 1 and 2 use
+/// grant 1; part 3 has 40 s left on it, so exactly one renew; parts 3 and 4
+/// use grant 2. The store refuses a superseded or lapsed URL (test#1).
+#[test]
+fn a_slow_upload_over_several_parts_renews_its_urls_and_completes() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let book = Book::default();
+    let checked = book.clone();
+    let clock: Arc<std::sync::OnceLock<ImageService>> = Arc::default();
+    let moves = clock.clone();
+    let (base, connections, _s3) = scripted_s3_paths(move |_, path, reader, length| {
+        book_store(&checked, path, reader, length, |reader, length| {
+            if let Some(images) = moves.get() {
+                images.advance_test_clock(Duration::from_secs(40));
+            }
+            store_paced(reader, length);
+        });
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_test_clock(0.0);
+    images.set_heartbeat_for_test(Duration::ZERO);
+    let _ = clock.set(images.clone());
+    book.lock().unwrap().clock = Some(images.clone());
+    let part = 256u64 << 10;
+    let bytes = vec![7u8; (4 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-slow-ttl", &base, part, bytes.len() as u64);
+    control.book = book;
+    control.ttl = 120;
+    images.handle_server(control.grant(Some(&request), 1));
+    let frames = control.run(&mut no_hook());
+    assert_eq!(
+        upload_sequence(&frames),
+        ["parts", "renew", "parts", "complete"],
+        "{frames:?}"
+    );
+    assert_eq!(control.recorded, (1..=4).collect());
+    assert_eq!(connections.load(Ordering::SeqCst), 4);
+    let beats: Vec<(u64, u64)> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadProgress(p) => Some((p.bytes_sent, p.wire_bytes)),
+            _ => None,
+        })
+        .collect();
+    assert!(beats.len() >= 4, "{beats:?}");
+    assert!(beats.windows(2).all(advanced), "{beats:?}");
+    assert_eq!(beats.iter().map(|b| b.0).max(), Some(bytes.len() as u64));
+}
+
+/// A 403 renews the part's URL once and retries: success. A second 403 on
+/// the fresh URL is final, `http_status` 403 (the URL had not lapsed).
+#[test]
+fn a_forbidden_part_renews_its_url_once() {
+    for forbidden in [1usize, 2] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        // After the scripted 403s the store takes only URLs of the latest
+        // grant (test#1): the retry must use the renewed URL.
+        let book = Book::default();
+        let checked = book.clone();
+        let (base, connections, _s3) = scripted_s3_paths(move |i, path, reader, length| {
+            if i < forbidden {
+                store_status(reader, length, 403);
+            } else {
+                book_store(&checked, path, reader, length, store_ok);
+            }
+        });
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        let bytes = b"forbidden then renewed".to_vec();
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        let mut control = FakeControl::new(&images, "tr-403", &base, 1 << 20, bytes.len() as u64);
+        control.book = book;
+        images.handle_server(control.grant(Some(&request), 1));
+        let frames = control.run(&mut no_hook());
+        assert_eq!(renews(&frames), 1, "{frames:?}");
+        assert_eq!(connections.load(Ordering::SeqCst), 2);
+        if forbidden == 1 {
+            assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+        } else {
+            assert_eq!(upload_kinds(&frames), ["failed"]);
+            let failed = the_failure(&frames);
+            assert_eq!(
+                failed.cause,
+                sandbox_protocol::ImageFailureCause::HttpStatus
+            );
+            assert_eq!(failed.http_status, Some(403));
+            assert_eq!(failed.part, Some(1));
+        }
+    }
+}
+
+/// A part report the server dropped (over its budget, no reply) is sent
+/// again when a renewed grant names that part: the upload completes and
+/// the server ends up with every part.
+#[test]
+fn a_dropped_part_report_is_resent_when_a_renewed_grant_names_it() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let part = 64u64 << 10;
+    let bytes = vec![1u8; (3 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-drop", &base, part, bytes.len() as u64);
+    // The first grant names part 1 only: the first report (part 1) is
+    // dropped, so the renew's grant starts at part 1 again.
+    let ServerControlMessage::ImageUploadGrant(mut first) = control.grant(Some(&request), 1) else {
+        unreachable!()
+    };
+    first.parts.truncate(1);
+    images.handle_server(ServerControlMessage::ImageUploadGrant(first));
+    control.drop_reports = 1;
+    let frames = control.run(&mut no_hook());
+    let reports: Vec<Vec<u32>> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadParts(p) => {
+                Some(p.parts.iter().map(|p| p.n).collect())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports[0], [1], "{reports:?}");
+    assert!(reports[1..].iter().any(|r| r.contains(&1)), "{reports:?}");
+    assert_eq!(upload_kinds(&frames).last(), Some(&"complete"));
+    assert_eq!(control.recorded, (1..=3).collect());
+}
+
+/// A begin refused `rate_limited` is sent again (a new request id) and the
+/// grant of the retry completes the upload.
+#[test]
+fn a_rate_limited_begin_is_retried_and_completes() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = b"rate limited begin".to_vec();
+    let first = start_capture_upload(&images, &runtime, &bytes);
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "none".into(),
+            reason: "rate_limited".into(),
+            request_id: Some(first.clone()),
+        },
+    ));
+    let DaemonControlMessage::ImageUploadBegin(again) = wait_frame(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    }) else {
+        unreachable!()
+    };
+    let second = again.request_id.expect("request id");
+    assert_ne!(second, first);
+    assert_eq!(
+        (again.operation_id.as_deref(), again.attempt),
+        (Some("op-up"), Some(4))
+    );
+    let mut control = FakeControl::new(&images, "tr-rl", &base, 1 << 20, bytes.len() as u64);
+    // A late grant for the first (refused) request reaches nobody.
+    images.handle_server(control.grant(Some(&first), 1));
+    images.handle_server(control.grant(Some(&second), 1));
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+}
+
+/// A begin refused `artifact_deleting` every time is retried through the
+/// whole begin budget, then reported `refused` with the reason, by its
+/// operation and attempt.
+#[test]
+fn a_begin_refused_until_the_retry_budget_is_spent_is_reported() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    let bytes = b"deleting artifact".to_vec();
+    let mut request = start_capture_upload(&images, &runtime, &bytes);
+    let mut begins = 1;
+    let mut frames = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        images.handle_server(ServerControlMessage::ImageJobCancel(
+            sandbox_protocol::ImageJobCancelV11 {
+                transfer_id: "none".into(),
+                reason: "artifact_deleting".into(),
+                request_id: Some(request.clone()),
+            },
+        ));
+        // The next begin, or the job's end.
+        let next = loop {
+            let finished = images.uploads_finished() >= 1;
+            let batch = images.drain();
+            let begin = batch.iter().find_map(|f| match f {
+                DaemonControlMessage::ImageUploadBegin(b) => b.request_id.clone(),
+                _ => None,
+            });
+            frames.extend(batch);
+            if begin.is_some() || finished {
+                break begin;
+            }
+            assert!(Instant::now() < deadline, "no begin and no end");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        match next {
+            Some(id) => {
+                begins += 1;
+                request = id;
+            }
+            None => break,
+        }
+    }
+    assert_eq!(begins, 1 + FAST_TIMINGS.begin_retry.len());
+    let mut kinds = upload_kinds(&frames);
+    kinds.retain(|k| *k != "begin");
+    assert_eq!(kinds, ["failed"]);
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id, None);
+    assert_eq!(
+        (failed.operation_id.as_deref(), failed.attempt),
+        (Some("op-up"), Some(4))
+    );
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+    assert_eq!(failed.refusal.as_deref(), Some("artifact_deleting"));
+}
+
+/// Polls the outbox (frames left queued) until one matches `wanted`.
+fn wait_queued(images: &ImageService, wanted: impl Fn(&DaemonControlMessage) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !images.queued().iter().any(&wanted) {
+        assert!(
+            Instant::now() < deadline,
+            "never queued: {:?}",
+            images.queued()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Drains until a frame matches `wanted`; every frame drained, in order.
+fn drain_until(
+    images: &ImageService,
+    wanted: impl Fn(&DaemonControlMessage) -> bool,
+) -> Vec<DaemonControlMessage> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut frames = Vec::new();
+    loop {
+        frames.extend(images.drain());
+        if frames.iter().any(&wanted) {
+            return frames;
+        }
+        assert!(Instant::now() < deadline, "never sent: {frames:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn is_resume_of_transfer(frame: &DaemonControlMessage, transfer: &str) -> bool {
+    matches!(frame, DaemonControlMessage::ImageJobResume(r)
+        if r.transfer_id.as_deref() == Some(transfer))
+}
+
+fn is_resume_of_operation(frame: &DaemonControlMessage, operation: &str, attempt: u64) -> bool {
+    matches!(frame, DaemonControlMessage::ImageJobResume(r)
+        if r.operation_id.as_deref() == Some(operation) && r.attempt == Some(attempt)
+            && r.transfer_id.is_none())
+}
+
+fn answer_transfer_resume(images: &ImageService, transfer: &str, proceed: bool) {
+    images.handle_server(ServerControlMessage::ImageJobResumeResult(
+        sandbox_protocol::ImageJobResumeResultV11::transfer(transfer, proceed),
+    ));
+}
+
+fn answer_operation_resume(images: &ImageService, operation: &str, attempt: u64, proceed: bool) {
+    images.handle_server(ServerControlMessage::ImageJobResumeResult(
+        sandbox_protocol::ImageJobResumeResultV11::operation(operation, attempt, proceed),
+    ));
+}
+
+fn refuse_begin(images: &ImageService, request: &str, reason: &str) {
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "none".into(),
+            reason: reason.into(),
+            request_id: Some(request.into()),
+        },
+    ));
+}
+
+/// A first grant of part 1 only: after it the upload reports part 1 and
+/// renews (both frames queued, in that order).
+fn first_part_only(control: &FakeControl<'_>, request: &str) -> ServerControlMessage {
+    let ServerControlMessage::ImageUploadGrant(mut first) = control.grant(Some(request), 1) else {
+        unreachable!()
+    };
+    first.parts.truncate(1);
+    ServerControlMessage::ImageUploadGrant(first)
+}
+
+/// A relay reconnect after part 1 was flushed, while its report and the
+/// renew still wait in the outbox (test#6): the new connection gets the
+/// transfer's `image.job.resume` first, carrying the bytes of part 1, then
+/// the queued report and renew. The upload sends nothing more of the
+/// transfer until the (delayed) answer: `continue` → it renews again (the
+/// grant answering the old renew is dropped, it was routed before) and
+/// completes from the server's lowest unrecorded part; `continue: false`
+/// stops it `refused` + `stale_transfer`, before part 2.
+#[test]
+fn a_relay_reconnect_mid_upload_resumes_the_transfer() {
+    for proceed in [true, false] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, connections, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        let part = 64u64 << 10;
+        let bytes = vec![2u8; (3 * part) as usize];
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        let mut control = FakeControl::new(&images, "tr-rc", &base, part, bytes.len() as u64);
+        images.handle_server(first_part_only(&control, &request));
+        wait_queued(&images, |f| {
+            matches!(f, DaemonControlMessage::ImageUploadRenew(_))
+        });
+        images.on_registered("host-owner");
+        let queued = images.drain();
+        let kinds: Vec<&str> = queued
+            .iter()
+            .filter_map(|f| match f {
+                DaemonControlMessage::ImageJobResume(r) => {
+                    assert_eq!(r.transfer_id.as_deref(), Some("tr-rc"));
+                    assert_eq!(r.role, ImageLinkRole::Source);
+                    assert_eq!(r.bytes_done, part, "part 1 was reported");
+                    Some("resume")
+                }
+                DaemonControlMessage::ImageUploadParts(_) => Some("parts"),
+                DaemonControlMessage::ImageUploadRenew(_) => Some("renew"),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kinds, ["resume", "parts", "renew"], "{queued:?}");
+        // The server handles them in order: the renew is granted at once,
+        // the resume's answer is late.
+        control.recorded.insert(1);
+        images.handle_server(control.grant(None, 2));
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "part 2 before the answer"
+        );
+        assert!(images.drain().is_empty(), "a frame before the answer");
+        answer_transfer_resume(&images, "tr-rc", proceed);
+        let frames = control.run(&mut no_hook());
+        if proceed {
+            assert!(
+                matches!(frames[0], DaemonControlMessage::ImageUploadRenew(_)),
+                "{frames:?}"
+            );
+            assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+            assert_eq!(control.recorded, (1..=3).collect());
+            assert_eq!(connections.load(Ordering::SeqCst), 3);
+        } else {
+            assert_eq!(upload_kinds(&frames), ["failed"]);
+            let failed = the_failure(&frames);
+            assert_eq!(failed.transfer_id.as_deref(), Some("tr-rc"));
+            assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+            assert_eq!(failed.refusal.as_deref(), Some("stale_transfer"));
+            assert_eq!(connections.load(Ordering::SeqCst), 1, "no part 2");
+        }
+        assert_eq!(images.resumable_jobs(), 0);
+    }
+}
+
+/// V1 (life#1, err#1): an upload whose part fails for good while the relay
+/// is down queues its failure; the next connection gets the transfer's
+/// resume first, then that failure with its cause, and the job leaves the
+/// resume registry only once the failure was drained (or, with
+/// `continue: false` for its resume, at once, its queued resume and failure
+/// going with it: fix 5, r5 #3).
+#[test]
+fn a_failure_while_the_relay_is_down_reaches_the_server_after_resume_with_its_cause() {
+    for refused_first in [false, true] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, _, _s3) = scripted_s3(|_, reader, length| store_status(reader, length, 503));
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        let bytes = b"fails while the relay is down".to_vec();
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        let control = FakeControl::new(&images, "tr-down", &base, 1 << 20, bytes.len() as u64);
+        images.handle_server(control.grant(Some(&request), 1));
+        images.on_disconnect();
+        wait_uploads_finished(&images, 1);
+        assert_eq!(
+            images.resumable_jobs(),
+            1,
+            "retired before its failure was sent"
+        );
+        images.on_registered("host-owner");
+        if refused_first {
+            answer_transfer_resume(&images, "tr-down", false);
+            assert_eq!(images.resumable_jobs(), 0);
+            let job = JobRef::Transfer("tr-down".into());
+            let frames = images.drain();
+            assert!(frames.iter().all(|f| !job.names(f)), "{frames:?}");
+            images.on_registered("host-owner");
+            assert!(images.drain().is_empty());
+            continue;
+        }
+        let frames = images.drain();
+        assert!(is_resume_of_transfer(&frames[0], "tr-down"), "{frames:?}");
+        let failed = the_failure(&frames);
+        assert_eq!(failed.transfer_id.as_deref(), Some("tr-down"));
+        assert_eq!(
+            failed.cause,
+            sandbox_protocol::ImageFailureCause::HttpStatus
+        );
+        assert_eq!(failed.http_status, Some(503));
+        assert_eq!(images.resumable_jobs(), 0);
+        // Retired: the next connection resumes nothing.
+        images.on_registered("host-owner");
+        assert!(images.drain().is_empty());
+    }
+}
+
+/// V1 (life#2, err#2): a capture begin refused for now, then a relay
+/// reconnect during its retry pause. The new connection gets the capture's
+/// resume by operation (it has no transfer yet) ahead of the next begin;
+/// once resumed, the retries go on, and the refusal still ending them is
+/// reported by operation with its reason. `continue: false` ends the
+/// capture `refused` + `stale_capture`.
+#[test]
+fn a_begin_retry_across_a_reconnect_resumes_the_operation_and_keeps_its_refusal() {
+    for proceed in [true, false] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+        let bytes = b"retry across a reconnect".to_vec();
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        refuse_begin(&images, &request, "rate_limited");
+        images.on_disconnect();
+        images.on_registered("host-owner");
+        let mut frames = drain_until(&images, |f| is_resume_of_operation(f, "op-up", 4));
+        let resume = frames
+            .iter()
+            .position(|f| is_resume_of_operation(f, "op-up", 4))
+            .unwrap();
+        if let Some(begin) = frames
+            .iter()
+            .position(|f| matches!(f, DaemonControlMessage::ImageUploadBegin(_)))
+        {
+            assert!(resume < begin, "{frames:?}");
+        }
+        answer_operation_resume(&images, "op-up", 4, proceed);
+        // Refuse every begin until the job ends.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut answered = std::collections::HashSet::new();
+        loop {
+            let finished = images.uploads_finished() >= 1;
+            frames.extend(images.drain());
+            for frame in &frames {
+                if let DaemonControlMessage::ImageUploadBegin(b) = frame {
+                    let id = b.request_id.clone().unwrap();
+                    if answered.insert(id.clone()) {
+                        refuse_begin(&images, &id, "artifact_deleting");
+                    }
+                }
+            }
+            if finished && images.queued().is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "never ended: {frames:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let failed = the_failure(&frames);
+        assert_eq!(failed.transfer_id, None);
+        assert_eq!(
+            (failed.operation_id.as_deref(), failed.attempt),
+            (Some("op-up"), Some(4))
+        );
+        assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+        let reason = if proceed {
+            "artifact_deleting"
+        } else {
+            "stale_capture"
+        };
+        assert_eq!(failed.refusal.as_deref(), Some(reason), "{frames:?}");
+        assert_eq!(images.resumable_jobs(), 0);
+    }
+}
+
+/// V1: a capture begin that had already left the outbox when the relay
+/// reconnected may have lost its answer: once the operation is resumed the
+/// begin is sent again (a new request id) and its grant completes the
+/// upload. Without the re-send the capture would wait for a grant that
+/// never comes.
+#[test]
+fn a_begin_lost_with_its_connection_is_sent_again_after_resume() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_grant_wait_for_test(Duration::from_secs(5));
+    let bytes = b"begin lost with its connection".to_vec();
+    let first = start_capture_upload(&images, &runtime, &bytes);
+    images.on_registered("host-owner");
+    let frames = images.drain();
+    assert!(is_resume_of_operation(&frames[0], "op-up", 4), "{frames:?}");
+    answer_operation_resume(&images, "op-up", 4, true);
+    let DaemonControlMessage::ImageUploadBegin(again) = wait_frame(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    }) else {
+        unreachable!()
+    };
+    let second = again.request_id.expect("request id");
+    assert_ne!(second, first);
+    let mut control = FakeControl::new(&images, "tr-lost", &base, 1 << 20, bytes.len() as u64);
+    images.handle_server(control.grant(Some(&second), 1));
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+}
+
+/// V1 (life#3, err#6): the first grant arrived on connection 1, and the
+/// relay reconnected before the upload named its transfer in the resume
+/// registry (held here by the test, so the order is certain; that
+/// reconnect queued the operation's resume, which cannot rebind the
+/// transfer). The upload
+/// sees that its grant is from an older connection: it queues its
+/// transfer's resume itself and sends nothing more until the answer.
+#[test]
+fn a_grant_from_an_older_connection_resumes_its_transfer_first() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, connections, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = b"granted on the old connection".to_vec();
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-old", &base, 1 << 20, bytes.len() as u64);
+    {
+        // The registry is held: the grant is routed on connection 1 and the
+        // reconnect counted while the job still names its operation,
+        // whether or not the job has taken the grant from its receiver yet.
+        let mut resumable = images.inner.resumable.lock().unwrap();
+        images.handle_server(control.grant(Some(&request), 1));
+        images.next_connection(&mut resumable);
+    }
+    wait_queued(&images, |f| is_resume_of_transfer(f, "tr-old"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        connections.load(Ordering::SeqCst),
+        0,
+        "a part before the answer"
+    );
+    let frames = images.drain();
+    let first = frames
+        .iter()
+        .position(|f| {
+            is_resume_of_transfer(f, "tr-old")
+                || matches!(f, DaemonControlMessage::ImageUploadParts(_))
+        })
+        .unwrap();
+    assert!(
+        is_resume_of_transfer(&frames[first], "tr-old"),
+        "{frames:?}"
+    );
+    answer_transfer_resume(&images, "tr-old", true);
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+}
+
+/// FB-B3: two reconnects while the upload waits for its resume answer. It
+/// waits for the answer on the current (third) connection, which gets one
+/// resume of the transfer (the queued one replaced), and completes.
+#[test]
+fn a_second_reconnect_during_the_resume_wait_waits_for_the_newer_answer() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_grant_wait_for_test(Duration::from_secs(5));
+    let part = 64u64 << 10;
+    let bytes = vec![3u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-twice", &base, part, bytes.len() as u64);
+    images.handle_server(first_part_only(&control, &request));
+    wait_queued(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadRenew(_))
+    });
+    images.on_registered("host-owner");
+    let second = images.drain();
+    assert!(is_resume_of_transfer(&second[0], "tr-twice"), "{second:?}");
+    control.recorded.insert(1);
+    images.on_registered("host-owner");
+    let third = images.drain();
+    assert_eq!(
+        third
+            .iter()
+            .filter(|f| is_resume_of_transfer(f, "tr-twice"))
+            .count(),
+        1,
+        "{third:?}"
+    );
+    answer_transfer_resume(&images, "tr-twice", true);
+    let frames = control.run(&mut no_hook());
+    assert_eq!(
+        upload_kinds(&frames).last(),
+        Some(&"complete"),
+        "{frames:?}"
+    );
+    assert_eq!(control.recorded, (1..=2).collect());
+}
+
+/// FB-B3: a resume answer routed on an older connection never resumes the
+/// upload on the current one. While part 1 is in flight the relay
+/// reconnects twice; the answer to the second connection's resume
+/// (`continue`) and then the third's (`continue: false`) are both waiting
+/// when the part ends: the upload heeds only the third and stops.
+#[test]
+fn an_answer_for_an_older_connection_never_resumes_the_upload() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (got, part_seen) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (base, connections, _s3) = scripted_s3(move |i, mut reader, length| {
+        if i == 0 {
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body).expect("part 1 body");
+            got.send(()).unwrap();
+            let _ = released
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(60));
+            let mut stream = reader.into_inner();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        } else {
+            store_ok(reader, length);
+        }
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let part = 64u64 << 10;
+    let bytes = vec![9u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-older", &base, part, bytes.len() as u64);
+    images.handle_server(control.grant(Some(&request), 1));
+    part_seen
+        .recv_timeout(Duration::from_secs(30))
+        .expect("part 1 reached the store");
+    images.on_registered("host-owner");
+    answer_transfer_resume(&images, "tr-older", true);
+    images.on_registered("host-owner");
+    answer_transfer_resume(&images, "tr-older", false);
+    release.send(()).unwrap();
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["failed"], "{frames:?}");
+    let failed = the_failure(&frames);
+    assert_eq!(failed.refusal.as_deref(), Some("stale_transfer"));
+    assert_eq!(connections.load(Ordering::SeqCst), 1, "no part 2");
+}
+
+/// FB-B4: a renew wait does not run down while the relay is down. The
+/// grant wait is 500 ms; the relay stays down three times that while the
+/// upload waits for its renew, and after the reconnect it resumes and
+/// completes instead of ending `no_grant`.
+#[test]
+fn a_renew_waits_out_a_relay_outage_longer_than_the_grant_wait() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let part = 64u64 << 10;
+    let bytes = vec![4u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-out", &base, part, bytes.len() as u64);
+    images.set_grant_wait_for_test(Duration::from_millis(500));
+    images.handle_server(first_part_only(&control, &request));
+    images.on_disconnect();
+    wait_queued(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadRenew(_))
+    });
+    std::thread::sleep(Duration::from_millis(1500));
+    assert_eq!(images.uploads_finished(), 0, "the outage ran the wait down");
+    images.on_registered("host-owner");
+    let mut frames = images.drain();
+    assert!(is_resume_of_transfer(&frames[0], "tr-out"), "{frames:?}");
+    control.recorded.insert(1);
+    answer_transfer_resume(&images, "tr-out", true);
+    frames.extend(control.run(&mut no_hook()));
+    assert_eq!(
+        upload_kinds(&frames).last(),
+        Some(&"complete"),
+        "{frames:?}"
+    );
+}
+
+/// W5 (a#4): a publish begin refused for now is never retried by the
+/// host: publishes are server backfill (the server ends the transfer, and
+/// for a store refusal its artifact, so backfill asks again). The job ends
+/// at once, reported by its transfer with the refusal; one begin only.
+#[test]
+fn a_transient_publish_begin_refusal_ends_the_publish_with_its_cause() {
+    for reason in ["rate_limited", "store_unavailable"] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+        let bytes = b"published image".to_vec();
+        let fp = runtime.seed_image_bytes(&bytes, "x86_64", true);
+        let job = images.clone();
+        std::thread::spawn(move || job.upload(&fp, "owner-a", UploadJob::Publish("tr-pub".into())));
+        let DaemonControlMessage::ImageUploadBegin(b) = wait_frame(&images, |f| {
+            matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+        }) else {
+            unreachable!()
+        };
+        assert_eq!(b.transfer_id.as_deref(), Some("tr-pub"));
+        images.handle_server(ServerControlMessage::ImageJobCancel(
+            sandbox_protocol::ImageJobCancelV11 {
+                transfer_id: "tr-pub".into(),
+                reason: reason.into(),
+                request_id: None,
+            },
+        ));
+        let frames = upload_frames(&images);
+        assert_eq!(upload_sequence(&frames), ["failed"], "{reason}: {frames:?}");
+        let failed = the_failure(&frames);
+        assert_eq!(failed.transfer_id.as_deref(), Some("tr-pub"));
+        assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+        assert_eq!(failed.refusal.as_deref(), Some(reason));
+        assert_eq!(images.resumable_jobs(), 0);
+    }
+}
+
+/// V2: a grant routed before a renew was sent (a late answer to an earlier
+/// one, here one that arrived while part 1 was in flight) is dropped: the
+/// upload uses only the grant answering its renew. The store refuses the
+/// stray grant's URLs once superseded, and no request ever names them.
+#[test]
+fn a_grant_routed_before_the_renew_is_dropped() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let book = Book::default();
+    let checked = book.clone();
+    let paths: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = paths.clone();
+    let (got, part_seen) = mpsc::channel::<()>();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let (base, _, _s3) = scripted_s3_paths(move |i, path, mut reader, length| {
+        seen.lock().unwrap().push(path.to_owned());
+        if i == 0 {
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body).expect("part 1 body");
+            got.send(()).unwrap();
+            let _ = released
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(60));
+            let mut stream = reader.into_inner();
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        } else {
+            book_store(&checked, path, reader, length, store_ok);
+        }
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let part = 64u64 << 10;
+    let bytes = vec![8u8; (3 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-stray", &base, part, bytes.len() as u64);
+    control.book = book;
+    images.handle_server(first_part_only(&control, &request));
+    part_seen
+        .recv_timeout(Duration::from_secs(30))
+        .expect("part 1 reached the store");
+    // Grant 2: routed before any renew.
+    images.handle_server(control.grant(None, 2));
+    release.send(()).unwrap();
+    let frames = control.run(&mut no_hook());
+    assert_eq!(
+        upload_kinds(&frames).last(),
+        Some(&"complete"),
+        "{frames:?}"
+    );
+    let paths = paths.lock().unwrap().clone();
+    assert!(!paths.iter().any(|p| p.starts_with("/g2/")), "{paths:?}");
+    assert_eq!(control.recorded, (1..=3).collect());
+}
+
+/// V4 (life#6, err#8): the resume's `bytesDone` counts each reported part
+/// once: a part reported again (a renewed grant named it) is sent again but
+/// never counted twice.
+#[test]
+fn reported_bytes_count_each_part_once_however_often_it_is_reported() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    images.drain();
+    let (_tx, rx) = mpsc::channel();
+    let (_resume_tx, resume_rx) = mpsc::channel();
+    let mut run = UploadRun {
+        service: &images,
+        tid: "tr-acc".into(),
+        rx,
+        resume_rx,
+        timings: FAST_TIMINGS,
+        part_size: 10,
+        stored_size: 25,
+        window: std::collections::BTreeMap::new(),
+        expiry: Instant::now(),
+        margin: Duration::ZERO,
+        done: std::collections::BTreeMap::new(),
+        pending: Vec::new(),
+        reported_parts: HashSet::new(),
+        counted: HashSet::new(),
+        reported: Arc::new(AtomicU64::new(0)),
+        last_flush: Instant::now(),
+        connection: 1,
+    };
+    for n in [1u32, 2] {
+        run.done.insert(n, format!("e{n}"));
+        run.pending.push(ImageUploadedPartV11 {
+            n,
+            etag: format!("e{n}"),
+        });
+    }
+    run.flush();
+    assert_eq!(run.reported.load(Ordering::SeqCst), 20);
+    let grant = sandbox_protocol::ImageUploadGrantV11 {
+        transfer_id: "tr-acc".into(),
+        request_id: None,
+        part_size: 10,
+        parts: (1..=3)
+            .map(|n| sandbox_protocol::ImageUploadPartUrlV11 {
+                n,
+                url: format!("http://127.0.0.1:9/p{n}"),
+                size_bytes: if n == 3 { 5 } else { 10 },
+            })
+            .collect(),
+        expires_at_unix_ms: 1,
+        ttl_seconds: 600,
+        encryption: None,
+    };
+    run.take_grant(grant, Instant::now()).unwrap();
+    run.flush();
+    assert_eq!(
+        run.reported.load(Ordering::SeqCst),
+        20,
+        "re-reported, not recounted"
+    );
+    run.done.insert(3, "e3".into());
+    run.pending.push(ImageUploadedPartV11 {
+        n: 3,
+        etag: "e3".into(),
+    });
+    run.flush();
+    assert_eq!(run.reported.load(Ordering::SeqCst), 25);
+    let reports: Vec<Vec<u32>> = images
+        .drain()
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadParts(p) => {
+                Some(p.parts.iter().map(|p| p.n).collect())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports, [vec![1, 2], vec![1, 2], vec![3]]);
+}
+
+/// test#4: part retries pause 2, 8 and 30 s (production timings, on the
+/// virtual clock with no jitter), and with full jitter 25 % longer each.
+#[test]
+fn part_retries_follow_the_production_schedule() {
+    for (jitter, scale) in [(0.0, 1.0), (1.0, 1.25)] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, server) = responder(
+            (0..PART_ATTEMPTS)
+                .map(|_| (503, Vec::new(), Vec::new()))
+                .collect(),
+        );
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+        images.set_test_clock(jitter);
+        let path = dir.path().join("staged");
+        std::fs::write(&path, b"sixteen bytes!!!").unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let parts = [sandbox_protocol::ImageUploadPartUrlV11 {
+            n: 1,
+            url: format!("{base}/obj"),
+            size_bytes: 16,
+        }];
+        let failure = images
+            .put_parts(&mut file, 16, 16, &parts, None, None, &|| false, None)
+            .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(failure.http_status, Some(503));
+        let expected: Vec<Duration> = [2u64, 8, 30]
+            .iter()
+            .map(|s| Duration::from_secs(*s).mul_f64(scale))
+            .collect();
+        assert_eq!(images.test_pauses(), expected);
+    }
+}
+
+/// test#4, V4 (err#7): begin retries pause 5, 15, 30 and 60 s, then the
+/// refusal is reported; one monotonic begin budget from the first refusal
+/// caps them: with 45 s the third pause (30 s) no longer fits in what is
+/// left (25 s), so that refusal is reported.
+#[test]
+fn begin_retries_follow_the_production_schedule_within_the_begin_budget() {
+    for (budget, pauses) in [(180u64, vec![5u64, 15, 30, 60]), (45, vec![5, 15])] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+        images.set_upload_timings_for_test(UploadTimings {
+            begin_budget: Duration::from_secs(budget),
+            ..UploadTimings::PRODUCTION
+        });
+        images.set_test_clock(0.0);
+        let bytes = b"begin schedule".to_vec();
+        let mut request = start_capture_upload(&images, &runtime, &bytes);
+        let mut frames = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            refuse_begin(&images, &request, "store_unavailable");
+            let next = loop {
+                let finished = images.uploads_finished() >= 1;
+                let batch = images.drain();
+                let begin = batch.iter().find_map(|f| match f {
+                    DaemonControlMessage::ImageUploadBegin(b) => b.request_id.clone(),
+                    _ => None,
+                });
+                frames.extend(batch);
+                if begin.is_some() || finished {
+                    break begin;
+                }
+                assert!(Instant::now() < deadline, "no begin and no end");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            match next {
+                Some(id) => request = id,
+                None => break,
+            }
+        }
+        let recorded = images.test_pauses();
+        let expected: Vec<Duration> = pauses.into_iter().map(Duration::from_secs).collect();
+        assert_eq!(recorded, expected, "budget {budget}");
+        assert!(recorded.iter().sum::<Duration>() <= Duration::from_secs(budget));
+        let failed = the_failure(&frames);
+        assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+        assert_eq!(failed.refusal.as_deref(), Some("store_unavailable"));
+    }
+}
+
+/// FB-B7: a server that answers every renew with a grant naming only parts
+/// already uploaded (their reports dropped) gets a pause before the next
+/// renew from the second such grant on, so the renews stay bounded and the
+/// upload ends `no_grant` within the renew wait.
+#[test]
+fn renews_answered_only_with_parts_already_held_pause_and_end_no_grant() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_grant_wait_for_test(Duration::from_secs(2));
+    images.set_test_clock(0.0);
+    let part = 64u64 << 10;
+    let bytes = vec![5u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let control = FakeControl::new(&images, "tr-loop", &base, part, bytes.len() as u64);
+    images.handle_server(first_part_only(&control, &request));
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut frames = Vec::new();
+    loop {
+        let finished = images.uploads_finished() >= 1;
+        let batch = images.drain();
+        for frame in &batch {
+            if let DaemonControlMessage::ImageUploadRenew(_) = frame {
+                let ServerControlMessage::ImageUploadGrant(mut held) = control.grant(None, 1)
+                else {
+                    unreachable!()
+                };
+                held.parts.truncate(1);
+                images.handle_server(ServerControlMessage::ImageUploadGrant(held));
+            }
+        }
+        let empty = batch.is_empty();
+        frames.extend(batch);
+        if finished && empty {
+            break;
+        }
+        assert!(Instant::now() < deadline, "never ended");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!images.test_pauses().is_empty(), "no pause between renews");
+    assert!(renews(&frames) <= 16, "{} renews", renews(&frames));
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-loop"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+}
+
+/// Fix 3 a#2/b#2: the pause after an unusable grant (one naming only parts
+/// already uploaded) is the rest of its step, never past the renew's 180 s.
+/// PRODUCTION timings on the virtual clock: renews at 0, 5, 20 and 50 s go
+/// unanswered; 59 s into the 60 s step (at 109 s) a grant names only part 1
+/// (re-reported, no pause), the renew is sent again; 59 s into that step
+/// (168 s) the second such grant comes: the pause is the 1 s left of the
+/// step, not another 60 s. The last renew waits the 11 s left, and the
+/// upload ends `no_grant` at exactly 180 s.
+#[test]
+fn a_late_unusable_grant_never_extends_the_renew_wait() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+    images.set_test_clock(0.0);
+    let part = 64u64 << 10;
+    let bytes = vec![8u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let control = FakeControl::new(&images, "tr-late", &base, part, bytes.len() as u64);
+    images.handle_server(first_part_only(&control, &request));
+    let mut frames = Vec::new();
+    let until_renew = |frames: &mut Vec<DaemonControlMessage>, n: usize| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while renews(frames) < n {
+            assert!(
+                Instant::now() < deadline,
+                "renew {n} never sent: {frames:?}"
+            );
+            frames.extend(images.drain());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let held = || {
+        let ServerControlMessage::ImageUploadGrant(mut grant) = control.grant(None, 1) else {
+            unreachable!()
+        };
+        grant.parts.truncate(1);
+        ServerControlMessage::ImageUploadGrant(grant)
+    };
+    for (n, delay) in [(1, 5u64), (2, 15), (3, 30)] {
+        until_renew(&mut frames, n);
+        images.advance_test_clock(Duration::from_secs(delay));
+    }
+    until_renew(&mut frames, 4);
+    images.advance_test_clock(Duration::from_secs(59));
+    images.handle_server(held());
+    until_renew(&mut frames, 5);
+    images.advance_test_clock(Duration::from_secs(59));
+    images.handle_server(held());
+    until_renew(&mut frames, 6);
+    assert_eq!(
+        images.test_pauses(),
+        [Duration::from_secs(1)],
+        "the pause is the rest of its step"
+    );
+    images.advance_test_clock(Duration::from_secs(10));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(images.uploads_finished(), 0, "ended before 180 s");
+    images.advance_test_clock(Duration::from_secs(1));
+    wait_uploads_finished(&images, 1);
+    frames.extend(images.drain());
+    assert_eq!(
+        upload_sequence(&frames),
+        [
+            "parts", "renew", "renew", "renew", "renew", "parts", "renew", "parts", "renew",
+            "failed"
+        ],
+        "{frames:?}"
+    );
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-late"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+}
+
+/// Fix 3 b#3: the begin's refusal-retry allowance starts at the first
+/// transient refusal, whatever the first wait spent. PRODUCTION timings on
+/// the virtual clock: the first begin is refused `store_unavailable` 250 s
+/// into its 300 s grant wait; after the 5 s pause the retried begin is
+/// granted 60 s later (65 s after the refusal, well inside its 180 s), and
+/// the upload completes.
+#[test]
+fn a_late_first_begin_refusal_gets_the_whole_retry_allowance() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+    images.set_test_clock(0.0);
+    let bytes = b"refused late in the first wait".to_vec();
+    let first = start_capture_upload(&images, &runtime, &bytes);
+    images.advance_test_clock(Duration::from_secs(250));
+    refuse_begin(&images, &first, "store_unavailable");
+    let DaemonControlMessage::ImageUploadBegin(again) = wait_frame(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    }) else {
+        unreachable!()
+    };
+    assert_eq!(images.test_pauses(), [Duration::from_secs(5)]);
+    images.advance_test_clock(Duration::from_secs(60));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        images.uploads_finished(),
+        0,
+        "the retry allowance was cut by the first wait"
+    );
+    let mut control =
+        FakeControl::new(&images, "tr-late-begin", &base, 1 << 20, bytes.len() as u64);
+    images.handle_server(control.grant(again.request_id.as_deref(), 1));
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"], "{frames:?}");
+}
+
+/// FB-B8: an overflowing outbox evicts advisory and ordinary frames, never
+/// a resume or a terminal upload frame.
+#[test]
+fn an_overflowing_outbox_keeps_resumes_and_terminal_frames() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = service(
+        &runtime,
+        dir.path(),
+        crate::config::ImageCacheSize::Gib(1),
+        "http://127.0.0.1:9",
+    );
+    images.drain();
+    images.push(JobRef::Transfer("tr-keep".into()).resume(7));
+    images.push(DaemonControlMessage::ImageUploadComplete(
+        ImageTransferRefV11 {
+            transfer_id: "tr-keep".into(),
+        },
+    ));
+    images.push(DaemonControlMessage::ImageUploadProgress(
+        sandbox_protocol::ImageUploadProgressV11 {
+            transfer_id: "tr-keep".into(),
+            bytes_sent: 1,
+            wire_bytes: 1,
+        },
+    ));
+    for _ in 0..OUTBOX_MAX + 8 {
+        images.push(DaemonControlMessage::ImageUploadRenew(
+            sandbox_protocol::ImageUploadRenewV11 {
+                transfer_id: "tr-keep".into(),
+            },
+        ));
+    }
+    let queued = images.queued();
+    assert_eq!(queued.len(), OUTBOX_MAX);
+    assert!(
+        is_resume_of_transfer(&queued[0], "tr-keep"),
+        "{:?}",
+        &queued[..3]
+    );
+    assert!(matches!(
+        queued[1],
+        DaemonControlMessage::ImageUploadComplete(_)
+    ));
+    assert!(
+        !queued
+            .iter()
+            .any(|f| matches!(f, DaemonControlMessage::ImageUploadProgress(_))),
+        "the heartbeat goes first"
+    );
+}
+
+/// test#2, W6 (b#6): renews the server leaves unanswered (over its budget)
+/// are sent again on the production schedule, on the virtual upload clock:
+/// 5, 15, 30, 60, 60 s, each re-send neither a second early nor late, within
+/// one 180 s renew wait. Answered on the third, the upload completes; never
+/// answered, the sixth renew's wait is cut to the 10 s left and the upload
+/// ends `no_grant` by its transfer. The whole ordered sequence is asserted.
+#[test]
+fn a_dropped_renew_is_sent_again_and_unanswered_renews_end_no_grant() {
+    for answered in [true, false] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+        images.set_test_clock(0.0);
+        let part = 64u64 << 10;
+        let bytes = vec![6u8; (2 * part) as usize];
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        let mut control = FakeControl::new(&images, "tr-rn", &base, part, bytes.len() as u64);
+        images.handle_server(first_part_only(&control, &request));
+        let mut frames = Vec::new();
+        let renews_so_far = |frames: &[DaemonControlMessage]| renews(frames);
+        // Collect frames until the `n`th renew was sent.
+        let until_renew = |frames: &mut Vec<DaemonControlMessage>, n: usize| {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while renews_so_far(frames) < n {
+                assert!(
+                    Instant::now() < deadline,
+                    "renew {n} never sent: {frames:?}"
+                );
+                frames.extend(images.drain());
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let delays = [5u64, 15, 30, 60, 60, 10];
+        for (sent, delay) in delays.iter().enumerate() {
+            until_renew(&mut frames, sent + 1);
+            if answered && sent == 2 {
+                for frame in &frames {
+                    if let DaemonControlMessage::ImageUploadParts(p) = frame {
+                        control.recorded.extend(p.parts.iter().map(|p| p.n));
+                    }
+                }
+                images.handle_server(control.grant(None, control.lowest_unrecorded()));
+                break;
+            }
+            // A second short of its delay nothing more is sent.
+            images.advance_test_clock(Duration::from_secs(delay - 1));
+            std::thread::sleep(Duration::from_millis(300));
+            frames.extend(images.drain());
+            assert_eq!(renews(&frames), sent + 1, "re-sent early: {frames:?}");
+            assert_eq!(images.uploads_finished(), 0, "ended early: {frames:?}");
+            images.advance_test_clock(Duration::from_secs(1));
+        }
+        wait_uploads_finished(&images, 1);
+        frames.extend(images.drain());
+        if answered {
+            assert_eq!(
+                upload_sequence(&frames),
+                ["parts", "renew", "renew", "renew", "parts", "complete"],
+                "{frames:?}"
+            );
+        } else {
+            let mut expected = vec!["parts"];
+            expected.extend(["renew"; 6]);
+            expected.push("failed");
+            assert_eq!(upload_sequence(&frames), expected, "{frames:?}");
+            let failed = the_failure(&frames);
+            assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+            assert_eq!(failed.transfer_id.as_deref(), Some("tr-rn"));
+        }
+    }
+}
+
+/// A socket stream that takes `accepts` writes, then fails every write and
+/// flush (nothing to read).
+struct FailingStream {
+    accepts: usize,
+}
+
+impl std::io::Read for FailingStream {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::WouldBlock.into())
+    }
+}
+
+impl std::io::Write for FailingStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.accepts == 0 {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        self.accepts -= 1;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.accepts == 0 {
+            return Err(std::io::ErrorKind::BrokenPipe.into());
+        }
+        Ok(())
+    }
+}
+
+/// Frames of a failed image batch that are not replayed (fix 4): a capture
+/// and a publish begin, a census page, disk offload parts, completion and
+/// inventory, and operation progress.
+fn not_replayed_frames(images: &ImageService) -> Vec<DaemonControlMessage> {
+    images.begin_census();
+    let census = images.drain();
+    assert!(
+        census
+            .iter()
+            .any(|f| matches!(f, DaemonControlMessage::ImageCacheCensus(_))),
+        "{census:?}"
+    );
+    let begin = |transfer: Option<&str>, request: Option<&str>| {
+        DaemonControlMessage::ImageUploadBegin(ImageUploadBeginV11 {
+            transfer_id: transfer.map(str::to_owned),
+            operation_id: request.map(|_| "op-other".to_owned()),
+            request_id: request.map(str::to_owned),
+            attempt: request.map(|_| 1),
+            fingerprint: format!("sha256:{}", "e".repeat(64)),
+            size_bytes: 10,
+            unpacked_bytes: None,
+            format: "unified".into(),
+        })
+    };
+    let mut frames = vec![
+        begin(None, Some("upload-other")),
+        begin(Some("tr-pub"), None),
+    ];
+    frames.extend(census);
+    frames.extend([
+        DaemonControlMessage::DiskUploadParts(sandbox_protocol::DiskUploadPartsV11 {
+            sandbox_id: "sbx-1".into(),
+            offload_id: "off-1".into(),
+            seq: 1,
+            session_id: "ses-1".into(),
+            parts: Vec::new(),
+        }),
+        DaemonControlMessage::DiskUploadComplete(sandbox_protocol::DiskUploadCompleteV11 {
+            sandbox_id: "sbx-1".into(),
+            offload_id: "off-1".into(),
+            seq: 1,
+            session_id: "ses-1".into(),
+        }),
+        DaemonControlMessage::DiskOffloadInventory(sandbox_protocol::DiskOffloadInventoryV11 {
+            entries: vec![sandbox_protocol::DiskOffloadInventoryEntryV11 {
+                sandbox_id: "sbx-1".into(),
+                offload_id: "off-1".into(),
+                seq: 1,
+            }],
+        }),
+        DaemonControlMessage::OperationProgress {
+            id: "p-1".into(),
+            operation_id: "op-other".into(),
+            sandbox_id: "sbx-1".into(),
+            generation: 1,
+            attempt: 1,
+            state: sandbox_protocol::OperationState::Running,
+            progress: None,
+        },
+    ]);
+    frames
+}
+
+/// W1 (a#1, b#1), fix 3 a#1, fix 4: sent means written AND flushed. A
+/// socket write that fails in the middle of a batch, or a flush that fails
+/// after every write was buffered: none of the batch is known to have left,
+/// so the job whose failure was among it stays in the resume registry. Of
+/// that batch only the upload progress and terminal frames go back to the
+/// front of the outbox, in order; its begins, census page, disk offload
+/// frames and operation progress (interleaved with them here) are dropped.
+/// The next connection gets the job's resume first, then exactly those
+/// frames with the failure and its cause; only once they are written and
+/// flushed is the job retired.
+#[test]
+fn a_failure_whose_write_or_flush_failed_is_sent_after_the_next_resume_with_its_cause() {
+    for flush_fails in [false, true] {
+        let runtime = FakeRuntime::default();
+        let dir = tempfile::tempdir().unwrap();
+        let (base, _, _s3) = scripted_s3(|_, reader, length| store_status(reader, length, 503));
+        let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+        images.set_heartbeat_for_test(Duration::ZERO);
+        let bytes = vec![1u8; 64 << 10];
+        let request = start_capture_upload(&images, &runtime, &bytes);
+        let others = not_replayed_frames(&images);
+        let (before, after) = others.split_at(4);
+        for frame in before {
+            images.push_frame(frame.clone());
+        }
+        let control = FakeControl::new(&images, "tr-write", &base, 1 << 20, bytes.len() as u64);
+        images.handle_server(control.grant(Some(&request), 1));
+        wait_uploads_finished(&images, 1);
+        for frame in after {
+            images.push_frame(frame.clone());
+        }
+        let queued = images.queued();
+        assert!(queued.len() <= 32, "one batch: {queued:?}");
+        let shown = |frames: &[DaemonControlMessage]| format!("{frames:?}");
+        let replayed: Vec<DaemonControlMessage> = queued
+            .iter()
+            .filter(|f| !others.iter().any(|o| format!("{f:?}") == format!("{o:?}")))
+            .cloned()
+            .collect();
+        assert!(replayed.len() >= 2, "{replayed:?}");
+        assert!(
+            replayed.iter().all(|f| matches!(
+                f,
+                DaemonControlMessage::ImageUploadParts(_)
+                    | DaemonControlMessage::ImageUploadProgress(_)
+                    | DaemonControlMessage::ImageJobFailed(_)
+            )),
+            "{replayed:?}"
+        );
+        assert!(matches!(
+            replayed.last(),
+            Some(DaemonControlMessage::ImageJobFailed(_))
+        ));
+        // The production write path (`connect::send_image_batch`) over a
+        // WebSocket whose stream fails: with tungstenite's default write
+        // buffer every `write` only buffers and succeeds, and the flush
+        // fails; with no write buffer, the stream takes the first frame and
+        // the write of the second fails.
+        let (accepts, config) = if flush_fails {
+            (0, None)
+        } else {
+            (
+                1,
+                Some(tungstenite::protocol::WebSocketConfig::default().write_buffer_size(0)),
+            )
+        };
+        let mut socket = tungstenite::WebSocket::from_raw_socket(
+            FailingStream { accepts },
+            tungstenite::protocol::Role::Client,
+            config,
+        );
+        let result = crate::sandbox_relay::connect::send_image_batch(
+            &mut socket,
+            sandbox_protocol::WireCodes::CURRENT,
+            &images,
+        );
+        assert!(
+            result.is_err(),
+            "the socket failed (flush fails: {flush_fails})"
+        );
+        assert_eq!(
+            shown(&images.queued()),
+            shown(&replayed),
+            "only the allowlisted frames are kept, in order (flush fails: {flush_fails})"
+        );
+        assert_eq!(
+            images.resumable_jobs(),
+            1,
+            "retired before its failure was flushed"
+        );
+        images.on_disconnect();
+        images.on_registered("host-owner");
+        let mut frames = Vec::new();
+        loop {
+            let batch = images.drain();
+            if batch.is_empty() {
+                break;
+            }
+            frames.extend(batch);
+        }
+        assert!(is_resume_of_transfer(&frames[0], "tr-write"), "{frames:?}");
+        assert_eq!(shown(&frames[1..]), shown(&replayed));
+        let failed = the_failure(&frames);
+        assert_eq!(
+            failed.cause,
+            sandbox_protocol::ImageFailureCause::HttpStatus
+        );
+        assert_eq!(failed.http_status, Some(503));
+        assert_eq!(images.resumable_jobs(), 0);
+    }
+}
+
+/// Fix 4 (r4 #1): a publish begin the server took (it made the session and
+/// granted) in a batch whose flush then failed. The begin is not replayed:
+/// the next connection carries only the transfer's resume, and the upload
+/// completes on the grant it got. (A replayed begin would be answered
+/// `stale_transfer`, as the server does here, and end the healthy upload.)
+#[test]
+fn a_publish_begin_in_a_failed_batch_is_not_replayed() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = vec![3u8; 64 << 10];
+    let fp = runtime.seed_image_bytes(&bytes, "x86_64", true);
+    let job = images.clone();
+    std::thread::spawn(move || job.upload(&fp, "owner-a", UploadJob::Publish("tr-pub".into())));
+    wait_queued(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    });
+    let mut socket = tungstenite::WebSocket::from_raw_socket(
+        FailingStream { accepts: 0 },
+        tungstenite::protocol::Role::Client,
+        None,
+    );
+    assert!(
+        crate::sandbox_relay::connect::send_image_batch(
+            &mut socket,
+            sandbox_protocol::WireCodes::CURRENT,
+            &images,
+        )
+        .is_err()
+    );
+    // The server took the begin: its grant arrived on the old connection.
+    let mut control = FakeControl::new(&images, "tr-pub", &base, 1 << 20, bytes.len() as u64);
+    images.handle_server(control.grant(None, 1));
+    images.on_disconnect();
+    images.on_registered("host-owner");
+    let first = images.drain();
+    assert!(
+        first
+            .iter()
+            .all(|f| !matches!(f, DaemonControlMessage::ImageUploadBegin(_))),
+        "{first:?}"
+    );
+    assert!(is_resume_of_transfer(&first[0], "tr-pub"), "{first:?}");
+    answer_transfer_resume(&images, "tr-pub", true);
+    let frames = control.run(&mut |frame, images| {
+        if let DaemonControlMessage::ImageUploadBegin(b) = frame
+            && b.transfer_id.as_deref() == Some("tr-pub")
+        {
+            images.handle_server(ServerControlMessage::ImageJobCancel(
+                sandbox_protocol::ImageJobCancelV11 {
+                    transfer_id: "tr-pub".into(),
+                    reason: "stale_transfer".into(),
+                    request_id: None,
+                },
+            ));
+        }
+    });
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"], "{frames:?}");
+    assert_eq!(images.resumable_jobs(), 0);
+}
+
+/// W3 (b#2, a#3): a reconnect while a renew waits, and the resume is never
+/// answered. The resume wait spends the renew's one 180 s budget (virtual
+/// clock): one second short of it the upload still waits, at 180 s it ends
+/// `no_grant` by its transfer (not after a further grant wait of its own).
+#[test]
+fn a_resume_inside_a_renew_spends_the_renew_wait() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+    images.set_test_clock(0.0);
+    let part = 64u64 << 10;
+    let bytes = vec![2u8; (2 * part) as usize];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let control = FakeControl::new(&images, "tr-rsw", &base, part, bytes.len() as u64);
+    images.handle_server(first_part_only(&control, &request));
+    wait_queued(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadRenew(_))
+    });
+    images.on_registered("host-owner");
+    images.advance_test_clock(Duration::from_secs(179));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(images.uploads_finished(), 0, "ended before the renew wait");
+    images.advance_test_clock(Duration::from_secs(1));
+    let frames = upload_frames(&images);
+    assert_eq!(
+        upload_sequence(&frames),
+        ["resume", "parts", "renew", "failed"],
+        "{frames:?}"
+    );
+    let failed = the_failure(&frames);
+    assert_eq!(failed.transfer_id.as_deref(), Some("tr-rsw"));
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::NoGrant);
+}
+
+/// W3 (a#3, a#7): a capture begin refused `store_unavailable`, then a relay
+/// reconnect while the retried begin waits, and the resume is never
+/// answered. The resume wait is inside the begin's retry budget (180 s from
+/// the refusal, 5 s of it paused): one second short of it the capture still
+/// waits; at the deadline it is reported `refused` with the remembered
+/// `store_unavailable`, by operation.
+#[test]
+fn a_resume_inside_a_begin_retry_keeps_the_retry_deadline_and_its_refusal() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    images.set_upload_timings_for_test(UploadTimings::PRODUCTION);
+    images.set_test_clock(0.0);
+    let bytes = b"begin retry then reconnect".to_vec();
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    refuse_begin(&images, &request, "store_unavailable");
+    let DaemonControlMessage::ImageUploadBegin(_) = wait_frame(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    }) else {
+        unreachable!()
+    };
+    assert_eq!(images.test_pauses(), [Duration::from_secs(5)]);
+    images.on_registered("host-owner");
+    images.advance_test_clock(Duration::from_secs(174));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(
+        images.uploads_finished(),
+        0,
+        "ended before the begin deadline"
+    );
+    images.advance_test_clock(Duration::from_secs(1));
+    let frames = upload_frames(&images);
+    assert_eq!(upload_sequence(&frames), ["resume", "failed"], "{frames:?}");
+    assert!(is_resume_of_operation(&frames[0], "op-up", 4));
+    let failed = the_failure(&frames);
+    assert_eq!(
+        (failed.operation_id.as_deref(), failed.attempt),
+        (Some("op-up"), Some(4))
+    );
+    assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
+    assert_eq!(failed.refusal.as_deref(), Some("store_unavailable"));
+}
+
+/// W4 (a#5, b#3), fix 3 b#4: the relay reconnects while the upload still
+/// exports (held here on a channel that also says when the export started),
+/// and the server answers the capture's resume at once. The answer is kept
+/// for the job (its waiter exists before the job is visible to a
+/// reconnect): once the export finishes the capture begins at once, on the
+/// virtual upload clock that never moves here, so no grant wait can run
+/// out on a slow test thread. Were the answer lost, the job would wait for
+/// it forever on that clock; the watchdog then moves the clock past the
+/// grant wait so the job ends, and fails the test.
+#[test]
+fn a_resume_answered_during_the_export_is_kept() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_ok(reader, length));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_test_clock(0.0);
+    let (export, exporting) = images.hold_exports_for_test();
+    let bytes = b"reconnect while exporting".to_vec();
+    let fp = runtime.seed_image_bytes(&bytes, "x86_64", true);
+    let mut d = dispatch(&fp, bytes.len() as u64, "owner-a");
+    d.operation_id = "op-up".into();
+    d.attempt = 4;
+    images
+        .captured(&d, &fp, bytes.len() as u64, true)
+        .expect("captured");
+    // The job is in the resume registry before its export starts (W4).
+    exporting
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the export never started");
+    assert_eq!(images.resumable_jobs(), 1);
+    images.on_registered("host-owner");
+    let frames = images.drain();
+    assert!(is_resume_of_operation(&frames[0], "op-up", 4), "{frames:?}");
+    answer_operation_resume(&images, "op-up", 4, true);
+    export.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let begin = loop {
+        let begin = images.drain().into_iter().find_map(|f| match f {
+            DaemonControlMessage::ImageUploadBegin(b) => Some(b),
+            _ => None,
+        });
+        if let Some(begin) = begin {
+            break begin;
+        }
+        if Instant::now() >= deadline {
+            images.advance_test_clock(Duration::from_secs(3600));
+            wait_uploads_finished(&images, 1);
+            panic!("the resume answer given during the export was lost");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let mut control = FakeControl::new(&images, "tr-exp", &base, 1 << 20, bytes.len() as u64);
+    images.handle_server(control.grant(begin.request_id.as_deref(), 1));
+    let frames = control.run(&mut no_hook());
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"], "{frames:?}");
+}
+
+/// W6 (b#5), V2: a grant's URLs lapse `ttlSeconds` after it was routed, not
+/// after the upload read it. The begin's grant (120 s, renewed under 60 s
+/// left) is routed, then ages 61 s on the virtual clock before the upload
+/// can take it (the test holds the registry the upload needs first): its
+/// URL is past the margin, so the upload renews and uses only grant 2.
+#[test]
+fn a_buffered_grant_ages_from_when_it_was_routed() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let book = Book::default();
+    let checked = book.clone();
+    let paths: Arc<Mutex<Vec<String>>> = Arc::default();
+    let seen = paths.clone();
+    let (base, _, _s3) = scripted_s3_paths(move |_, path, reader, length| {
+        seen.lock().unwrap().push(path.to_owned());
+        book_store(&checked, path, reader, length, store_ok);
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_test_clock(0.0);
+    book.lock().unwrap().clock = Some(images.clone());
+    let bytes = b"a grant that waited".to_vec();
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let mut control = FakeControl::new(&images, "tr-age", &base, 1 << 20, bytes.len() as u64);
+    control.book = book;
+    control.ttl = 120;
+    {
+        let _held = images.inner.resumable.lock().unwrap();
+        images.handle_server(control.grant(Some(&request), 1));
+        images.advance_test_clock(Duration::from_secs(61));
+    }
+    let frames = control.run(&mut no_hook());
+    assert_eq!(
+        upload_sequence(&frames),
+        ["renew", "parts", "complete"],
+        "{frames:?}"
+    );
+    assert_eq!(paths.lock().unwrap().clone(), ["/g2/p1"]);
+}
+
+/// test#3: three parts that each succeed only on their fourth attempt: the
+/// attempt budget is per part, the store ends up with exactly the image's
+/// bytes, and the heartbeats keep rising across the retransmissions
+/// (`wireBytes` strictly, `bytesSent` never back).
+#[test]
+fn every_part_gets_its_own_four_attempts() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let tries: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+    let stored: Arc<Mutex<std::collections::BTreeMap<u32, Vec<u8>>>> = Arc::default();
+    let (count, keep) = (tries.clone(), stored.clone());
+    let (base, connections, _s3) = scripted_s3_paths(move |_, path, mut reader, length| {
+        let n: u32 = path.rsplit("/p").next().unwrap().parse().unwrap();
+        let tried = {
+            let mut tries = count.lock().unwrap();
+            let entry = tries.entry(format!("p{n}")).or_default();
+            *entry += 1;
+            *entry
+        };
+        if tried < PART_ATTEMPTS as usize {
+            return store_status(reader, length, 503);
+        }
+        let mut body = vec![0u8; length];
+        if reader.read_exact(&mut body).is_err() {
+            return;
+        }
+        keep.lock().unwrap().insert(n, body);
+        let mut stream = reader.into_inner();
+        let _ = stream.write_all(
+            b"HTTP/1.1 200 OK\r\nETag: \"e\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_heartbeat_for_test(Duration::ZERO);
+    let part = 64u64 << 10;
+    let bytes: Vec<u8> = (0..(3 * part) as usize).map(|i| (i % 251) as u8).collect();
+    let frames = run_capture(&images, &runtime, &base, &bytes, part, "tr-each");
+    assert_eq!(upload_kinds(&frames), ["parts", "complete"]);
+    assert_eq!(
+        connections.load(Ordering::SeqCst),
+        3 * PART_ATTEMPTS as usize
+    );
+    let stored: Vec<u8> = stored.lock().unwrap().values().flatten().copied().collect();
+    assert!(stored == bytes, "stored bytes differ");
+    let beats: Vec<(u64, u64)> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageUploadProgress(p) => Some((p.bytes_sent, p.wire_bytes)),
+            _ => None,
+        })
+        .collect();
+    assert!(beats.windows(2).all(advanced), "{beats:?}");
+    assert_eq!(beats.last().map(|b| b.0), Some(bytes.len() as u64));
+    // Every attempt's body went out again (the wire count also has each
+    // request's head, as the socket took it).
+    let wire = beats.last().map_or(0, |b| b.1);
+    let bodies = bytes.len() as u64 * u64::from(PART_ATTEMPTS);
+    assert!(
+        (bodies..bodies + 12 * 4096).contains(&wire),
+        "{wire} wire bytes for {bodies} body bytes"
+    );
+}
+
+/// Fix 5 (r5 #1): an older run's final census page still queued behind a
+/// batch whose write failed is purged when the next connection starts its
+/// census: only the fresh census reaches the server.
+#[test]
+fn an_old_census_page_queued_behind_a_failed_batch_is_gone_after_reconnect() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    images.begin_census();
+    let fresh: Vec<DaemonControlMessage> = images
+        .drain()
+        .into_iter()
+        .filter(|f| matches!(f, DaemonControlMessage::ImageCacheCensus(_)))
+        .collect();
+    let [DaemonControlMessage::ImageCacheCensus(page)] = fresh.as_slice() else {
+        panic!("{fresh:?}")
+    };
+    // An older run's last page (marked by its page number), queued behind a
+    // full batch of other frames.
+    let mut old = page.clone();
+    old.page = 7;
+    old.complete = true;
+    for i in 0..BATCH_MAX {
+        images.push_frame(DaemonControlMessage::ImageUploadBegin(
+            ImageUploadBeginV11 {
+                transfer_id: Some(format!("tr-filler-{i}")),
+                operation_id: None,
+                request_id: None,
+                attempt: None,
+                fingerprint: format!("sha256:{}", "e".repeat(64)),
+                size_bytes: 10,
+                unpacked_bytes: None,
+                format: "unified".into(),
+            },
+        ));
+    }
+    images.push_frame(DaemonControlMessage::ImageCacheCensus(old));
+    let mut socket = tungstenite::WebSocket::from_raw_socket(
+        FailingStream { accepts: 0 },
+        tungstenite::protocol::Role::Client,
+        None,
+    );
+    assert!(
+        crate::sandbox_relay::connect::send_image_batch(
+            &mut socket,
+            sandbox_protocol::WireCodes::CURRENT,
+            &images,
+        )
+        .is_err()
+    );
+    assert!(
+        images
+            .queued()
+            .iter()
+            .any(|f| matches!(f, DaemonControlMessage::ImageCacheCensus(c) if c.page == 7)),
+        "the old page was behind the failed batch"
+    );
+    images.on_disconnect();
+    images.on_registered("host-owner");
+    images.begin_census();
+    let mut frames = Vec::new();
+    loop {
+        let batch = images.drain();
+        if batch.is_empty() {
+            break;
+        }
+        frames.extend(batch);
+    }
+    let census: Vec<u64> = frames
+        .iter()
+        .filter_map(|f| match f {
+            DaemonControlMessage::ImageCacheCensus(c) => Some(c.page),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(census, vec![0], "{frames:?}");
+}
+
+/// Fix 5 (r5 #3): a job retired by a definitive resume refusal
+/// (`continue: false`) takes its queued resume and terminal frame with it.
+#[test]
+fn a_refused_resume_removes_the_retired_jobs_queued_protected_frames() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let (base, _, _s3) = scripted_s3(|_, reader, length| store_status(reader, length, 503));
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    let bytes = vec![1u8; 64 << 10];
+    let request = start_capture_upload(&images, &runtime, &bytes);
+    let control = FakeControl::new(&images, "tr-refused", &base, 1 << 20, bytes.len() as u64);
+    images.handle_server(control.grant(Some(&request), 1));
+    wait_uploads_finished(&images, 1);
+    images.on_disconnect();
+    images.on_registered("host-owner");
+    let job = JobRef::Transfer("tr-refused".into());
+    let queued = images.queued();
+    assert!(
+        is_resume_of_transfer(&queued[0], "tr-refused"),
+        "{queued:?}"
+    );
+    assert!(
+        queued
+            .iter()
+            .any(|f| matches!(f, DaemonControlMessage::ImageJobFailed(_))),
+        "{queued:?}"
+    );
+    assert_eq!(images.resumable_jobs(), 1);
+    answer_transfer_resume(&images, "tr-refused", false);
+    assert_eq!(images.resumable_jobs(), 0);
+    let left = images.queued();
+    assert!(left.iter().all(|f| !job.names(f)), "{left:?}");
+}
+
+/// Fix 5 (r5 #3): a new upload job waits while the protected backlog is at
+/// `PROTECTED_MAX` (nothing registered, nothing sent) and starts once it
+/// drops below.
+#[test]
+fn a_new_upload_waits_while_the_protected_backlog_is_full() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    for i in 0..PROTECTED_MAX {
+        images.push_frame(JobRef::Transfer(format!("tr-backlog-{i}")).resume(0));
+    }
+    let bytes = vec![3u8; 64 << 10];
+    let fp = runtime.seed_image_bytes(&bytes, "x86_64", true);
+    let job = images.clone();
+    std::thread::spawn(move || job.upload(&fp, "owner-a", UploadJob::Publish("tr-adm".into())));
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(images.resumable_jobs(), 0, "admitted over the bound");
+    assert!(
+        images
+            .queued()
+            .iter()
+            .all(|f| !matches!(f, DaemonControlMessage::ImageUploadBegin(_)))
+    );
+    // One protected frame leaves: below the bound, the job starts.
+    images.purge_queued(|f| is_resume_of_transfer(f, "tr-backlog-0"));
+    wait_queued(&images, |f| {
+        matches!(f, DaemonControlMessage::ImageUploadBegin(_))
+    });
+    assert_eq!(images.resumable_jobs(), 1);
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "tr-adm".into(),
+            reason: "cancelled".into(),
+            request_id: None,
+        },
+    ));
+    wait_uploads_finished(&images, 1);
 }

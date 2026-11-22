@@ -1566,24 +1566,74 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
   with the host credential in `Authorization` and a one-time link token in
   `X-Wssp-Image-Link`.
 - **Capture uploads (S3 mode).** The daemon PUTs each part to its presigned
-  URL. A socket read or write that moves no byte for 120 s fails the part
-  (`stalled`); a slow upload that keeps moving never fails for slowness, and
-  the response to a part is awaited up to 300 s (the last bytes may still be
-  draining from the kernel buffer). Every failure is logged as `image store
-  part upload failed` / `image upload ended` with its cause, `io_kind`,
-  `http_status` and part, never a URL or header, and is reported to the
-  server, which fails the capture at once with that cause (see
-  docs/operations/templates.md#capture). Troubleshooting:
-  - `stalled` or `reset` at about the same point on every try: something
-    between the host and the store cuts long request bodies. A reverse
-    proxy with a short request-body read timeout (check Traefik's
-    `respondingTimeouts.readTimeout`) cannot carry a 64 MiB part from a
-    slow uplink; serve the S3 endpoint without such a timeout.
-  - `http_status` 403, or `url_expired`: the part's presigned URL expired
-    before it was sent (`IMAGE_S3_PRESIGN_TTL_SECONDS`, default 600 s, for a
-    grant of up to 64 parts); raise it for slow uplinks.
-  - `connect` or `tls`: the host cannot reach the store, or does not trust
-    its certificate (`WSSP_CA_FILE`).
+  URL. Parts are whole 1 MiB records, `max(16, ceil(records / 10 000))` of
+  them: 16 MiB for any image up to about 156 GiB, larger only as needed to
+  stay within S3's 10 000 parts (105 MiB at the 1 TiB maximum). A socket read
+  or write that moves no byte for 120 s fails the attempt (`stalled`); a slow
+  upload that keeps moving never fails for slowness down to a floor of
+  16 KiB per 10 minutes (about 27 B/s: progress is counted per 16 KiB
+  socket chunk, and the server ends an upload with no progress for
+  10 minutes `upload_stalled`), and the response to a
+  part is awaited up to 300 s (the last bytes may still be draining from the
+  kernel buffer).
+  - **Retries.** Each part gets up to 4 attempts, 2, 8 and 30 s apart (plus
+    up to 25 % jitter), for `timeout`, `stalled`, `reset`, `connect` and
+    store answers 5xx, 408 and 429; every other failure is final at once. A
+    403 gets one fresh URL (below) and one more try. Each retry is logged as
+    `image store part upload retrying` (cause, `io_kind`, `http_status`,
+    part, attempt). The upload is never restarted as a whole: a part that
+    still fails ends it.
+  - **URLs are pulled.** The first grant names up to 64 parts; the daemon
+    asks for fresh ones (`image.upload.renew`) when it has used them up or
+    the next URL has less than 60 s left (at most half the URL lifetime,
+    judged on the host's own clock), after reporting the parts it uploaded.
+    Uploaded parts are reported every 16 parts, every 30 s and before each
+    renew. A URL's lifetime counts from when its grant arrived. A presign
+    lifetime of `IMAGE_S3_PRESIGN_TTL_SECONDS` (default 600 s) therefore
+    only has to cover one part.
+  - **Busy server.** Over the host's image grant budget the server drops a
+    parts report, heartbeat or renew without answering: the daemon asks
+    again (5, 15, 30, 60 s, then every 60 s, up to 180 s for a renew) and
+    reports a part again when a renewed grant names it; the server logs the
+    first such drop of each transfer. A capture's begin refused
+    `rate_limited`, `artifact_deleting` or `store_unavailable` is sent again
+    after 5, 15, 30 and 60 s (within 3 minutes of the first refusal, however
+    late in the first wait it came, a resume wait in between included), then
+    reported `refused` with that reason. A publish begin is not sent again: the publish ends with the
+    refusal and the server's backfill asks for it later.
+  - **Relay reconnects.** A capture or publish upload survives a relay
+    reconnect: the new connection first sends `image.job.resume` for it (by
+    operation before its first grant), and once the server answers
+    `continue` the daemon renews its URLs from the server's lowest
+    unrecorded part and goes on (`refused` + `stale_transfer` otherwise).
+    Waits do not run down while the relay is down, and a failure that
+    happened meanwhile is sent, with its cause, after the resume; so is a
+    failure or completion whose socket write or flush failed (it counts as
+    sent only once written and flushed), with the parts reports and
+    heartbeats of that write; its other frames (begins, census pages, disk
+    offload frames) are not sent again. A resume wait inside a renew or a begin retry spends that
+    wait's own budget, never one of its own.
+  - Every failure is logged as `image store part upload failed` / `image
+    upload ended` with its cause, `io_kind`, `http_status`, part and attempt,
+    never a URL or header, and is reported to the server, which fails the
+    capture at once with that cause (see docs/operations/templates.md#capture).
+
+  Troubleshooting:
+  - **Slow uplinks.** At 120 KB/s a 16 MiB part, the smallest this daemon
+    sends, takes about 140 s. The S3 endpoint must not sit behind a proxy
+    with a short request-body timeout (for example Traefik's
+    `respondingTimeouts.readTimeout`, 60 s by default): such a timeout fails
+    every part (even S3's 5 MiB minimum needs about 44 s at that rate). `stalled` or `reset` at about the same
+    point on every attempt means something between the host and the store
+    cuts long request bodies; serve the S3 endpoint without such a timeout.
+  - `url_expired`: the store answered 403 after the URL's lifetime had run
+    out on the host's clock, so the part took longer than its URL lived:
+    raise `IMAGE_S3_PRESIGN_TTL_SECONDS` above the time one part takes.
+  - `http_status` 403 after the renewed try (a fresh URL, not past its
+    lifetime): the store refuses the URL itself (clock skew between the
+    server and the store, a revoked key or a bucket policy), not its age.
+  - `connect` or `tls` after every attempt: the host cannot reach the store,
+    or does not trust its certificate (`WSSP_CA_FILE`).
   - `export`: the published image could not be exported from Incus (disk
     full, or a split image).
   - A daemon restart mid-upload is not resumed: the server fails the

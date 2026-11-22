@@ -496,6 +496,8 @@ daemon_control! {
     ImageJobFailed(crate::ImageJobFailedV11),
     #[serde(rename = "image.upload.progress")]
     ImageUploadProgress(crate::ImageUploadProgressV11),
+    #[serde(rename = "image.upload.renew")]
+    ImageUploadRenew(crate::ImageUploadRenewV11),
     // Disk offload; only on `diskOffload` sessions.
     #[serde(rename = "disk.upload.begin")]
     DiskUploadBegin(crate::DiskUploadBeginV11),

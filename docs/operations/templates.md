@@ -717,10 +717,19 @@ sandbox into a new revision of its template (or another template you own).
   and never counts): session aborted, image **Failed** with that detail, the
   capture records it; then the multipart upload is aborted and the capture
   failed. A failure the server sees while serving the host's upload frame
-  (ListParts, invalid parts, a next-window presign) and a completion's claim
+  (ListParts, invalid parts, a renew's presign) and a completion's claim
   re-check that same fence first.
-  Every server-side end of an upload (an S3 refusal at begin or a failed
-  presign `store_unavailable`, a failed ListParts `store_list_failed`,
+  A begin the store refuses before any host holds a grant (CreateMultipart
+  or the first presign failed) is not a failure: its session and transfer
+  end `begin_retry.store_unavailable` with no evidence, the image stays
+  **Uploading**, and the host retries the begin (`store_unavailable`; see
+  **Slow uplinks** below); the `upload_lost` rule bounds a begin that never
+  succeeds. Once the capture's job is over (its host reports the retries
+  used up, or the finalizer fails the capture), such an image is failed with
+  the capture's detail, so it no longer holds quota or blocks a publish,
+  unless a newer upload of it (another job's) is live.
+  Every other server-side end of an upload (a failed renew presign
+  `store_unavailable`, a failed ListParts `store_list_failed`,
   invalid parts `upload_invalid`, a failed Complete
   `store_complete_failed`, the hourly sweep `upload_stale`, the finalizer's
   own rules below) goes the same way, and the finalizer ends any upload of
@@ -737,7 +746,11 @@ sandbox into a new revision of its template (or another template you own).
     example the other upload's cause when this capture's begin was refused
     `upload_in_progress`), else `store_verify_failed` for a corrupt image,
     else `store_failed`;
-  - this attempt's upload ended other than complete: `upload_<end reason>`;
+  - this attempt's upload ended other than complete: `upload_<end reason>`
+    (bookkeeping ends excepted: a retried begin's
+    `begin_retry.store_unavailable`, and a transfer a later begin of the same
+    job `superseded`, e.g. one re-sent after its grant was lost in a relay
+    reconnect; the newer transfer carries the cause);
   - no upload of its own (nor another job's live upload of the same image)
     15 minutes plus 2 minutes per GiB after the result (export and hashing
     come before any upload): `upload_lost` (a
@@ -749,14 +762,100 @@ sandbox into a new revision of its template (or another template you own).
     the build VM gone: `store_deadline`.
 - **Upload liveness.** A slow upload never fails for slowness: the host
   sends a heartbeat (`image.upload.progress`, the offset reached in the
-  stored object) at most every 30 s while bytes move, and fails a part only
+  stored object) at most every 30 s while bytes move, and fails a part attempt only
   when no byte moves on its socket for 120 s. The server counts a heartbeat
-  only when the offset advanced, at most every 10 s. A capture whose result
+  only when it advanced, at most every 10 s: the offset reached (`bytesSent`,
+  never moving back) or the bytes the host's socket took for the upload,
+  retries included (`wireBytes`, recorded on the transfer; counted per
+  chunk of at most 16 KiB once the socket took the whole chunk, so a slow
+  drain of one buffered write still sends heartbeats). That chunk size is
+  the liveness floor: an upload counts as moving only while it sustains at
+  least 16 KiB per stall window (10 minutes, about 27 B/s; about 29 B/s
+  when a 30 s heartbeat interval falls inside the window). Anything slower
+  ends `upload_stalled`; it could never finish a 16 MiB part within the
+  24-hour store deadline anyway. A retry re-sending a
+  part below the offset reached is liveness too. A capture whose result
   was recorded is never failed by the build's capture window: its storage
   outcome decides. A storage cause the host reported before its result (an
   export failure) also names a `build_capture_failed`. A build that
   stored nothing ends `build_store_failed` with the capture's detail, shown
   as a sentence on the build page (an unknown detail is shown raw).
+- **Slow uplinks.** An upload is sized and paced for slow, flaky links
+  (docs/guide/hosts.md#image-cache):
+  - **Part size** is chosen per upload session: whole 1 MiB records,
+    `max(16, ceil(records / 10 000))` of them (16 MiB, or 16 sealed records
+    when encrypted, up to about 156 GiB; 105 records at 1 TiB), recorded on
+    the session and transfer (`partSize`, `partCount`). Fetches read the
+    stored artifact's own part size.
+  - **Per-part retry** inside the upload: 4 attempts, 2 / 8 / 30 s apart with
+    jitter, for `timeout`, `stalled`, `reset`, `connect`, 5xx, 408 and 429; a
+    403 gets one renewed URL and one more try; anything else is final. A
+    retry never moves the heartbeat offset back. `image.job.failed` stays
+    final for the attempt: the server never asks for a whole-upload retry.
+  - **URLs are pulled**: the host sends `image.upload.renew` when its window
+    is used up or the next URL has less than 60 s left; the server answers
+    `image.upload.grant` (no data key) from the session's lowest unrecorded
+    part, under the same fence as every upload frame. Grants carry
+    `ttlSeconds`, counted on the host's own clock from when the grant
+    arrived; a grant that arrived before the renew was sent, or has lapsed,
+    is dropped. A parts report never grants. A renew is one wait: no usable
+    grant within 180 s of connected time, its re-sends, pauses and any
+    resume after a reconnect included, ends the upload `upload_no_grant`
+    (a pause after a grant naming only parts already held is the rest of
+    that re-send interval, never past the 180 s). A
+    reconnect between parts is resumed inside the renew that follows it. So
+    a moving upload is silent at most 30 s (heartbeat interval) + 300 s
+    (part response wait) + 180 s (renew) = 510 s, inside the 10 min stall
+    window.
+  - **Rate limits are not failures**: over the host's grant budget a parts
+    report, heartbeat or renew is dropped without a reply and changes
+    nothing; the host asks again, and re-reports a part a renewed grant
+    names; each such drop is logged once per transfer (ids and frame type).
+    Capture begins refused `rate_limited`, `artifact_deleting` or
+    `store_unavailable` are retried 5 / 15 / 30 / 60 s apart within one
+    3-minute budget that starts at the first refusal (whatever the first
+    wait spent) and also bounds any resume wait in between (a pause that
+    does not fit ends the retries), then reported
+    `upload_refused.<reason>` (the last refusal, also when the budget runs
+    out waiting). A publish begin is never retried by the host: the refusal
+    ends the publish (a store refusal also fails its artifact with
+    `store_unavailable`), and server backfill asks again.
+  - **Relay reconnects**: from its start until its last frame (the failure
+    report or `image.upload.complete`) was written to a connection's socket
+    and flushed, every new
+    connection carries the upload's `image.job.resume` before any other frame
+    of it: by transfer, or by operation and attempt before the first grant
+    (begin in flight or in retry backoff; a begin that had already been sent
+    is sent again once resumed). Of a batch whose socket write or flush
+    failed, only upload parts reports, heartbeats, failure reports and
+    completions are sent again, in order, after the next connection's
+    resumes (the server takes each of them idempotently); every other frame
+    of it is dropped: a begin the server may already have taken (a lost
+    capture begin is sent again once resumed), census and disk inventory
+    pages (restarted on every connection) and disk offload frames (which
+    keep their own resume and re-grant). The upload sends nothing more until the
+    answer on the current connection (an answer that comes while it still
+    exports is kept). Its waits count only connected time (at most 30 min of
+    wall time each, one deadline per wait across reconnects), so a failure that happened while the
+    relay was down reaches the server afterwards with its cause. The server
+    rebinds the transfer (and its session), or answers an operation, only
+    while the capture runs on this connection: for a capture whose result is
+    recorded (Captured or Storing, which reconnect reconciliation never
+    re-adopts) the resume itself moves the operation to the new epoch, and
+    only when it was authorized on its own epoch for this host, owner,
+    operation and dispatch attempt (it writes only the dispatch epoch; the
+    finalizer still owns the terminal write; the transfer is claimed first,
+    so a transfer that ended meanwhile rolls the whole resume back; its
+    session row is locked before the transfer, the order every writer of
+    both uses).
+    Otherwise the answer is
+    `continue: false` and the upload ends `upload_refused.stale_transfer`
+    (`stale_capture` before a grant).
+  - **Proxies**: a proxy that cuts request bodies at 60 s (Traefik's
+    `respondingTimeouts.readTimeout` default) fails every part on a slow
+    link: the smallest part here is 16 MiB, about 140 s at 120 KB/s (even
+    S3's 5 MiB minimum needs about 44 s there, with little margin). The S3
+    endpoint must not sit behind a short request-body timeout.
 - Snapshot restore and fork stay unsupported (`UNSUPPORTED_CAPABILITY`).
 
 ## Image store

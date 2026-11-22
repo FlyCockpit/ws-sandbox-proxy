@@ -309,7 +309,17 @@ export async function cancelQueuedOperation(
  * whatever the operation row says (RUNNING, or CANCEL_REQUESTED after a
  * supersession), no other path may retire or settle it: reconnect
  * reconciliation, supersession retire/settle, lease expiry (which goes
- * through both), and result/receipt ingress all exclude it. */
+ * through both), and result/receipt ingress all exclude it.
+ *
+ * One exception moves such an operation, never settles it: the
+ * recorded-capture adoption of an image upload resume
+ * (apps/server/src/sandbox-relay/image-handlers.ts adoptRecordedCapture).
+ * After a relay reconnect of the capture's own host it writes only
+ * `dispatchedConnectionEpoch` (old epoch → the new connection's), for the
+ * exact dispatch (host, epoch, attempt, ACCEPTED/RUNNING, capture
+ * CAPTURED/STORING on that host) that was authorized on the old epoch, so
+ * the upload goes on there. State, result and terminal write stay the
+ * finalizer's, so the invariant above holds. */
 export const RECORDED_CAPTURE_WHERE = {
   kind: "CAPTURE_TEMPLATE",
   Capture: { is: { state: { in: ["CAPTURED", "STORING", "FINALIZED"] } } },

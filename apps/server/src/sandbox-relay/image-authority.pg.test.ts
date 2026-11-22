@@ -4,10 +4,14 @@ import {
   seedTemplateRevision,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
+/** Rate-limit tests exhaust the per-host image grant budget. */
+const grantBudget = vi.hoisted(() => ({ exhausted: false }));
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
   consumeSandboxWriteBudget: async () => {},
-  consumeImageGrantBudget: async () => {},
+  consumeImageGrantBudget: async () => {
+    if (grantBudget.exhausted) throw new Error("budget exhausted");
+  },
 }));
 
 import { randomBytes, randomUUID } from "node:crypto";
@@ -130,8 +134,10 @@ const {
   handleImageUploadComplete,
   handleImageUploadParts,
   handleImageUploadProgress,
+  handleImageUploadRenew,
 } = await import("./image-handlers");
 const { finalizeCapture } = await import("@wssp/api/sandbox/image-store/captures");
+const { endTemplateUpload } = await import("@wssp/api/sandbox/image-store/store-failure");
 const { unwrapDataKey } = await import("@wssp/api/sandbox/image-store/s3");
 
 const FEATURES = {
@@ -938,121 +944,69 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
     });
   });
 
-  it("a store error at completion (ListParts) or presigning ends the upload with its cause, then the capture", async () => {
-    const f = await fixture();
-    for (const stage of ["list", "presign"] as const) {
-      fakeS3.on = true;
-      const op = await capture(f, 1);
-      const frame = begin(op.id, 1);
-      await db.inspect.sandboxTemplateCapture.update({
-        where: { operationId: op.id },
-        data: {
-          fingerprint: frame.fingerprint,
-          sizeBytes: 4096n,
-          capturedAt: new Date(),
-          state: "STORING",
-        },
-      });
-      const { ctx, replies } = frameCtx(f);
-      const upload = `upload-${stage}`;
-      fakeS3.created.push(upload);
-      let transferId: string;
-      const detail = stage === "list" ? "store_list_failed" : "store_unavailable";
-      if (stage === "presign") {
-        // The first grant's presign throws: no grant, the begin is refused.
-        fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
-          name: "CredentialsProviderError",
-        });
-        await handleImageUploadBegin(ctx, frame);
-        transferId = (
-          await db.inspect.sandboxImageTransfer.findFirstOrThrow({
-            where: { operationId: op.id },
-          })
-        ).id;
-        expect(replies).toEqual([
-          {
-            type: "image.job.cancel",
-            transferId,
-            reason: "store_unavailable",
-            requestId: frame.requestId,
-          },
-        ]);
-      } else {
-        await handleImageUploadBegin(ctx, frame);
-        transferId = (replies.at(-1) as { transferId: string }).transferId;
-        fakeS3.listError = Object.assign(new Error("SlowDown"), { name: "SlowDown" });
-        const verified: string[] = [];
-        await handleImageUploadComplete(
-          ctx,
-          { type: "image.upload.complete", transferId },
-          async (id) => {
-            verified.push(id);
-          },
-        );
-        expect(verified).toEqual([]);
-        expect(replies.at(-1)).toEqual({
-          type: "image.job.cancel",
-          transferId,
-          reason: "store_list_failed",
-        });
-      }
-      const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
-        where: { transferId },
-      });
-      expect(session).toMatchObject({ state: "ABORTED", endReason: detail, uploadId: null });
-      expect(fakeS3.calls).toContain(`abort:${upload}`);
-      expect(
-        await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
-          where: { id: session.artifactId! },
-        }),
-      ).toMatchObject({ state: "FAILED", failureDetail: detail });
-      expect(
-        await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
-      ).toMatchObject({ state: "FAILED", endReason: detail });
-      // The capture records the cause at once and fails with it on the
-      // next finalize; the build then reads it (decide: build_store_failed).
-      expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: detail });
-      expect(await finalizeCapture(op.id)).toMatchObject({ kind: "failed" });
-      expect(await captureOf(op.id)).toMatchObject({
-        state: "FAILED",
-        errorCode: "capture_store_failed",
-        errorDetail: detail,
-      });
-    }
-  });
-
-  it("a store error presigning the next window ends the upload with its cause, then the capture", async () => {
+  it("a store error at completion (ListParts) ends the upload with its cause, then the capture", async () => {
     const f = await fixture();
     fakeS3.on = true;
     const op = await capture(f, 1);
-    // 65 parts: the first grant covers 64, the continuation the last one.
-    const sizeBytes = IMAGE_UPLOAD_PARTS_MAX * IMAGE_S3_PART_BYTES + 4096;
-    const frame = { ...begin(op.id, 1), sizeBytes };
+    const frame = begin(op.id, 1);
     await db.inspect.sandboxTemplateCapture.update({
       where: { operationId: op.id },
       data: {
         fingerprint: frame.fingerprint,
-        sizeBytes: BigInt(sizeBytes),
+        sizeBytes: 4096n,
         capturedAt: new Date(),
         state: "STORING",
       },
     });
     const { ctx, replies } = frameCtx(f);
+    fakeS3.created.push("upload-list");
+    const detail = "store_list_failed";
     await handleImageUploadBegin(ctx, frame);
-    const grant = replies[0] as { type: string; transferId: string; parts: { n: number }[] };
-    expect(grant).toMatchObject({ type: "image.upload.grant", requestId: frame.requestId });
-    expect(grant.parts.map((p) => p.n)).toEqual(range(1, IMAGE_UPLOAD_PARTS_MAX));
-    const { transferId } = grant;
+    const transferId = (replies.at(-1) as { transferId: string }).transferId;
+    fakeS3.listError = Object.assign(new Error("SlowDown"), { name: "SlowDown" });
+    const verified: string[] = [];
+    await handleImageUploadComplete(
+      ctx,
+      { type: "image.upload.complete", transferId },
+      async (id) => {
+        verified.push(id);
+      },
+    );
+    expect(verified).toEqual([]);
+    expect(replies.at(-1)).toEqual({ type: "image.job.cancel", transferId, reason: detail });
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    expect(session).toMatchObject({ state: "ABORTED", endReason: detail, uploadId: null });
+    expect(fakeS3.calls).toContain("abort:upload-list");
+    expect(
+      await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+        where: { id: session.artifactId! },
+      }),
+    ).toMatchObject({ state: "FAILED", failureDetail: detail });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+    ).toMatchObject({ state: "FAILED", endReason: detail });
+    // The capture records the cause at once and fails with it on the
+    // next finalize; the build then reads it (decide: build_store_failed).
+    expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: detail });
+    expect(await finalizeCapture(op.id)).toMatchObject({ kind: "failed" });
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
+      errorCode: "capture_store_failed",
+      errorDetail: detail,
+    });
+  });
+
+  it("a store error presigning a renewed window ends the upload with its cause, then the capture", async () => {
+    const f = await fixture();
+    const { op, transferId } = await begun(f);
+    const { ctx, replies } = frameCtx(f);
     fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
       name: "CredentialsProviderError",
     });
-    await handleImageUploadParts(ctx, {
-      type: "image.upload.parts",
-      transferId,
-      parts: range(1, IMAGE_UPLOAD_PARTS_MAX).map((n) => ({ n, etag: `"e${n}"` })),
-    });
+    await handleImageUploadRenew(ctx, { type: "image.upload.renew", transferId });
     expect(replies).toEqual([
-      grant,
       { type: "image.job.cancel", transferId, reason: "store_unavailable" },
     ]);
     expect(await uploadRows(op.id, transferId)).toEqual({
@@ -1434,10 +1388,10 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
       where: { id: transferId },
       data: { lastProgressAt: at },
     });
-    const beat = (bytesSent: number, afterMs: number) =>
+    const beat = (bytesSent: number, afterMs: number, wireBytes = 0) =>
       handleImageUploadProgress(
         ctx,
-        { type: "image.upload.progress", transferId, bytesSent },
+        { type: "image.upload.progress", transferId, bytesSent, wireBytes },
         new Date(at.getTime() + afterMs),
       );
     // 9.9 s after the last progress: inside the throttle, nothing is written.
@@ -1466,10 +1420,22 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
       lastProgressAt: new Date(at.getTime() + 10_100),
       bytesDone: 1000n,
     });
+    // V3 (I5): a retry re-sending bytes below the offset reached moves
+    // only `wireBytes`; that is liveness too, and the offset never moves back.
+    await beat(500, 60_000, 1500);
+    expect(await row()).toMatchObject({
+      lastProgressAt: new Date(at.getTime() + 60_000),
+      bytesDone: 1000n,
+      wireBytes: 1500n,
+    });
+    // A lower or repeated wire count is not.
+    await beat(500, 120_000, 1500);
+    expect((await row()).lastProgressAt).toEqual(new Date(at.getTime() + 60_000));
     // An advance past the object is held to its stored size.
-    await beat(1_000_000, 60_000);
+    await beat(1_000_000, 180_000, 1500);
     moved = await row();
     expect(moved.bytesDone).toBe(4096n);
+    expect(moved.wireBytes).toBe(1500n);
     expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
     // No further progress: ten minutes later it is stalled and ended.
     const later = new Date(moved.lastProgressAt.getTime() + 11 * 60_000);
@@ -1479,5 +1445,1057 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
     });
     expect(await captureOf(op.id)).toMatchObject({ errorDetail: "upload_stalled" });
     expect(fakeS3.calls).toContain("abort:upload-1");
+  });
+});
+
+describe("capture uploads survive slow and flaky uplinks (increment B)", () => {
+  const MiB = 1024 * 1024;
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    grantBudget.exhausted = false;
+    Object.assign(fakeS3, {
+      on: false,
+      master: null,
+      created: [],
+      calls: [],
+      listed: [],
+      completeError: null,
+      listError: null,
+      presignError: null,
+      onList: null,
+    });
+  });
+  type UploadGrant = {
+    type: string;
+    transferId: string;
+    requestId?: string;
+    partSize: number;
+    parts: { n: number; sizeBytes: number }[];
+    ttlSeconds: number;
+    encryption?: unknown;
+  };
+
+  /** A recorded (STORING) capture of `sizeBytes` whose begin was granted. */
+  async function storing(f: F, sizeBytes: number) {
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    const frame = { ...begin(op.id, 1), sizeBytes };
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: {
+        fingerprint: frame.fingerprint,
+        sizeBytes: BigInt(sizeBytes),
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    const { ctx, replies } = frameCtx(f);
+    await handleImageUploadBegin(ctx, frame);
+    const grant = replies.at(-1) as UploadGrant;
+    expect(grant).toMatchObject({ type: "image.upload.grant", requestId: frame.requestId });
+    return { op, frame, grant, transferId: grant.transferId };
+  }
+  const captureOf = (operationId: string) =>
+    db.inspect.sandboxTemplateCapture.findUniqueOrThrow({ where: { operationId } });
+  const parts = (transferId: string, ns: number[]) => ({
+    type: "image.upload.parts" as const,
+    transferId,
+    parts: ns.map((n) => ({ n, etag: `"e${n}"` })),
+  });
+  const renew = (transferId: string) => ({ type: "image.upload.renew" as const, transferId });
+  const recorded = async (transferId: string) => {
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    return (
+      await db.inspect.sandboxImageUploadPart.findMany({
+        where: { sessionId: session.id },
+        orderBy: { partNumber: "asc" },
+        take: 100,
+      })
+    ).map((p) => p.partNumber);
+  };
+
+  it("sizes parts per session from the image size and records it on the session and transfer", async () => {
+    const f = await fixture();
+    fakeS3.on = true;
+    // The images below exceed the default per-account stored quota.
+    vi.stubEnv("IMAGE_STORE_MAX_GIB_PER_ACCOUNT", "unlimited");
+    const GiB = 1024 * MiB;
+    for (const [sizeBytes, master, partSize] of [
+      [40 * MiB, null, 16 * MiB],
+      [40 * MiB, randomBytes(32), 16 * (MiB + 16)],
+      [156 * GiB, null, 16 * MiB],
+      [1024 * GiB, randomBytes(32), 105 * (MiB + 16)],
+    ] as const) {
+      fakeS3.master = master;
+      const op = await capture(f, 1);
+      const frame = { ...begin(op.id, 1), sizeBytes };
+      const { ctx, replies } = frameCtx(f);
+      await handleImageUploadBegin(ctx, frame);
+      const grant = replies.at(-1) as UploadGrant;
+      expect(grant).toMatchObject({ type: "image.upload.grant", partSize });
+      const stored = master ? encryptedImageLength(sizeBytes) : sizeBytes;
+      const count = Math.ceil(stored / partSize);
+      expect(count).toBeLessThanOrEqual(10_000);
+      expect(grant.parts.map((p) => p.n)).toEqual(
+        range(1, Math.min(count, IMAGE_UPLOAD_PARTS_MAX)),
+      );
+      const transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+        where: { id: grant.transferId },
+      });
+      expect([transfer.partSize, transfer.partCount]).toEqual([partSize, count]);
+      const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+        where: { transferId: grant.transferId },
+      });
+      expect(session.partSize).toBe(partSize);
+      // Never the fixed 64 MiB part of earlier sessions.
+      expect(partSize).not.toBe(IMAGE_S3_PART_BYTES);
+    }
+  });
+
+  it("parts never push a grant; renew grants from the lowest unrecorded part, with a relative TTL and no key", async () => {
+    const f = await fixture();
+    fakeS3.master = randomBytes(32);
+    // 3 parts of 16 sealed records.
+    const { grant, transferId } = await storing(f, 40 * MiB);
+    expect(grant.ttlSeconds).toBe(600);
+    expect(grant.encryption).toBeDefined();
+    expect(grant.parts.map((p) => p.n)).toEqual([1, 2, 3]);
+    const { ctx, replies } = frameCtx(f);
+    await handleImageUploadParts(ctx, parts(transferId, [1, 3]));
+    expect(replies).toEqual([]);
+    await handleImageUploadRenew(ctx, renew(transferId));
+    const renewed = replies.at(-1) as UploadGrant;
+    expect(renewed).toMatchObject({
+      type: "image.upload.grant",
+      transferId,
+      partSize: grant.partSize,
+      ttlSeconds: 600,
+    });
+    expect(renewed.parts.map((p) => p.n)).toEqual([2, 3]);
+    expect(renewed.encryption).toBeUndefined();
+    expect(renewed.requestId).toBeUndefined();
+    await handleImageUploadParts(ctx, parts(transferId, [2]));
+    await handleImageUploadRenew(ctx, renew(transferId));
+    expect((replies.at(-1) as UploadGrant).parts).toEqual([]);
+    expect(replies.filter((r) => r.type === "image.upload.grant")).toHaveLength(2);
+    expect(await recorded(transferId)).toEqual([1, 2, 3]);
+    // A whole first window reported (the old server pushed the next window
+    // here): still no reply; the next window comes only on a renew.
+    fakeS3.master = null;
+    const big = await storing(f, IMAGE_UPLOAD_PARTS_MAX * 16 * MiB + 4096);
+    expect(big.grant.parts.map((p) => p.n)).toEqual(range(1, IMAGE_UPLOAD_PARTS_MAX));
+    const window = frameCtx(f);
+    await handleImageUploadParts(
+      window.ctx,
+      parts(big.transferId, range(1, IMAGE_UPLOAD_PARTS_MAX)),
+    );
+    expect(window.replies).toEqual([]);
+    await handleImageUploadRenew(window.ctx, renew(big.transferId));
+    expect((window.replies.at(-1) as UploadGrant).parts.map((p) => p.n)).toEqual([
+      IMAGE_UPLOAD_PARTS_MAX + 1,
+    ]);
+  });
+
+  it("a renew from another connection or a superseded attempt is refused and grants nothing", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    const before = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    const base = frameCtx(f);
+    const stale = { type: "image.job.cancel", transferId, reason: "stale_transfer" };
+    // Another epoch (the host is on epoch 1), a superseded connection.
+    for (const sender of [
+      { ...base.ctx.sender, connectionEpoch: 2 },
+      { ...base.ctx.sender, isCurrent: () => false },
+    ]) {
+      const replies: Array<Record<string, unknown>> = [];
+      await handleImageUploadRenew(
+        { ...base.ctx, sender, reply: (r) => replies.push(r as Record<string, unknown>) },
+        renew(transferId),
+      );
+      expect(replies).toEqual([stale]);
+    }
+    // The capture moved on to attempt 2.
+    await db.inspect.sandboxOperation.update({
+      where: { id: op.id },
+      data: { dispatchAttempt: 2 },
+    });
+    await handleImageUploadRenew(base.ctx, renew(transferId));
+    expect(base.replies).toEqual([stale]);
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+    ).toEqual(before);
+  });
+
+  it("over the grant budget, parts, heartbeats and renews change nothing and send nothing", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    const at = new Date(Date.now() - 60_000);
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transferId },
+      data: { lastProgressAt: at },
+    });
+    const rows = async () => ({
+      transfer: await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+        where: { id: transferId },
+      }),
+      session: await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+        where: { transferId },
+      }),
+      capture: await db.inspect.sandboxTemplateCapture.findUniqueOrThrow({
+        where: { operationId: op.id },
+      }),
+      // Heartbeats move the artifact's liveness too (test#9).
+      artifact: await db.inspect.sandboxImageArtifact.findFirstOrThrow({
+        where: { UploadSessions: { some: { transferId } } },
+      }),
+      parts: await recorded(transferId),
+    });
+    const before = await rows();
+    grantBudget.exhausted = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { ctx, replies } = frameCtx(f);
+    for (let i = 0; i < 2; i++) {
+      await handleImageUploadParts(ctx, parts(transferId, [1]));
+      await handleImageUploadProgress(ctx, {
+        type: "image.upload.progress",
+        transferId,
+        bytesSent: 1000,
+        wireBytes: 1000,
+      });
+      await handleImageUploadRenew(ctx, renew(transferId));
+    }
+    expect(replies).toEqual([]);
+    expect(await rows()).toEqual(before);
+    expect(fakeS3.calls).toEqual(["create"]);
+    // FB-B6: the drops are logged once for the transfer, ids and frame only.
+    const drops = warn.mock.calls.filter(([line]) => String(line).includes("grant budget"));
+    expect(drops).toEqual([
+      [
+        "[sandbox-image] upload frame dropped over the grant budget:",
+        { hostId: f.dest.id, transferId, frame: "image.upload.parts" },
+      ],
+    ]);
+    warn.mockRestore();
+    // Within budget again, the same frames count.
+    grantBudget.exhausted = false;
+    await handleImageUploadParts(ctx, parts(transferId, [1]));
+    await handleImageUploadRenew(ctx, renew(transferId));
+    expect(await recorded(transferId)).toEqual([1]);
+    expect((replies.at(-1) as UploadGrant).parts.map((p) => p.n)).toEqual([2, 3]);
+  });
+
+  it("a begin the store refuses records no evidence; the capture waits and a retried begin is granted", async () => {
+    const f = await fixture();
+    for (const stage of ["create", "presign"] as const) {
+      fakeS3.on = true;
+      const op = await capture(f, 1);
+      const frame = { ...begin(op.id, 1), sizeBytes: 40 * MiB };
+      await db.inspect.sandboxTemplateCapture.update({
+        where: { operationId: op.id },
+        data: {
+          fingerprint: frame.fingerprint,
+          sizeBytes: BigInt(frame.sizeBytes),
+          capturedAt: new Date(),
+          state: "STORING",
+        },
+      });
+      if (stage === "create") {
+        const refused = Promise.reject(Object.assign(new Error("SlowDown"), { name: "SlowDown" }));
+        refused.catch(() => {});
+        fakeS3.created.push(refused);
+      } else {
+        fakeS3.created.push(`upload-${stage}`);
+        fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
+          name: "CredentialsProviderError",
+        });
+      }
+      const { ctx, replies } = frameCtx(f);
+      await handleImageUploadBegin(ctx, frame);
+      const first = await db.inspect.sandboxImageTransfer.findFirstOrThrow({
+        where: { operationId: op.id },
+      });
+      expect(replies).toEqual([
+        {
+          type: "image.job.cancel",
+          transferId: first.id,
+          reason: "store_unavailable",
+          requestId: frame.requestId,
+        },
+      ]);
+      expect([first.state, first.endReason]).toEqual([
+        "CANCELLED",
+        "begin_retry.store_unavailable",
+      ]);
+      const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+        where: { transferId: first.id },
+      });
+      expect([session.state, session.liveArtifactId]).toEqual(["ABORTED", null]);
+      if (stage === "presign") expect(fakeS3.calls).toContain("abort:upload-presign");
+      // Not a failure: no evidence, the artifact stays UPLOADING.
+      expect(
+        await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+          where: { id: session.artifactId! },
+        }),
+      ).toMatchObject({ state: "UPLOADING", failureDetail: null });
+      expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
+      expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+      // The host's retried begin (a new request) is granted a new transfer.
+      fakeS3.created.push(`upload-retry-${stage}`);
+      const retry = { ...frame, requestId: randomUUID() };
+      const again = frameCtx(f);
+      await handleImageUploadBegin(again.ctx, retry);
+      const grant = again.replies.at(-1) as UploadGrant;
+      expect(grant).toMatchObject({ type: "image.upload.grant", requestId: retry.requestId });
+      expect(grant.transferId).not.toBe(first.id);
+      expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+      // A begin that never succeeds is bounded by `upload_lost` (G).
+      await db.inspect.sandboxImageTransfer.update({
+        where: { id: grant.transferId },
+        data: { state: "CANCELLED", endReason: "begin_retry.store_unavailable" },
+      });
+      expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+      expect(await finalizeCapture(op.id, new Date(Date.now() + 3 * 3_600_000))).toMatchObject({
+        kind: "failed",
+      });
+      expect(await captureOf(op.id)).toMatchObject({ errorDetail: "upload_lost" });
+    }
+  });
+
+  it("after a reconnect, resume rebinds a recorded capture's upload only from its own host and attempt; then its frames count on the new epoch", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    const resumeFrame = {
+      type: "image.job.resume" as const,
+      transferId,
+      role: "SOURCE" as const,
+      bytesDone: 0,
+    };
+    const stale = { type: "image.job.cancel", transferId, reason: "stale_transfer" };
+    // The host reconnects on epoch 2: before a resume, its upload frames on
+    // the new connection are stale (the transfer is bound to epoch 1).
+    await db.inspect.sandboxHost.update({
+      where: { id: f.dest.id },
+      data: { connectionEpoch: 2, imageCacheEpoch: 2 },
+    });
+    const next = frameCtx(f, 2);
+    await handleImageUploadParts(next.ctx, parts(transferId, [1]));
+    expect(next.replies).toEqual([stale]);
+    expect(await recorded(transferId)).toEqual([]);
+    const resume = async (ctx: ReturnType<typeof frameCtx>["ctx"]) => {
+      const replies: Array<Record<string, unknown>> = [];
+      await handleImageJobResume({ ...ctx, reply: (r) => replies.push(r as never) }, resumeFrame);
+      return replies;
+    };
+    const refused = [{ type: "image.job.resume.result", transferId, continue: false }];
+    // Another host of the owner (the source host, also on epoch 2).
+    await db.inspect.sandboxHost.update({
+      where: { id: f.source.id },
+      data: { connectionEpoch: 2 },
+    });
+    expect(
+      await resume({ ...next.ctx, sender: { ...next.ctx.sender, hostId: f.source.id } }),
+    ).toEqual(refused);
+    // A superseded attempt.
+    await db.inspect.sandboxOperation.update({
+      where: { id: op.id },
+      data: { dispatchAttempt: 2 },
+    });
+    expect(await resume(next.ctx)).toEqual(refused);
+    await db.inspect.sandboxOperation.update({
+      where: { id: op.id },
+      data: { dispatchAttempt: 1 },
+    });
+    // A capture whose result is not recorded runs on this connection only
+    // once reconciliation adopts it; the resume never does that.
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: { state: "PENDING" },
+    });
+    expect(await resume(next.ctx)).toEqual(refused);
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: { state: "STORING" },
+    });
+    let transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    expect(transfer.sourceEpoch).toBe(1);
+    // Its own host and attempt: the recorded capture now runs here.
+    expect(await resume(next.ctx)).toEqual([
+      { type: "image.job.resume.result", transferId, continue: true },
+    ]);
+    transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    expect([transfer.state, transfer.sourceEpoch]).toEqual(["OPEN", 2]);
+    expect(
+      (await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({ where: { transferId } }))
+        .hostEpoch,
+    ).toBe(2);
+    expect(
+      (await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: op.id } }))
+        .dispatchedConnectionEpoch,
+    ).toBe(2);
+    // Parts, renews and heartbeats on the new epoch count.
+    const after = frameCtx(f, 2);
+    await handleImageUploadParts(after.ctx, parts(transferId, [1]));
+    expect(await recorded(transferId)).toEqual([1]);
+    await handleImageUploadRenew(after.ctx, renew(transferId));
+    expect((after.replies.at(-1) as UploadGrant).parts.map((p) => p.n)).toEqual([2, 3]);
+    const beatAt = new Date(transfer.lastProgressAt.getTime() + 60_000);
+    await handleImageUploadProgress(
+      after.ctx,
+      { type: "image.upload.progress", transferId, bytesSent: 20 * MiB, wireBytes: 20 * MiB },
+      beatAt,
+    );
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+    ).toMatchObject({ lastProgressAt: beatAt, bytesDone: BigInt(20 * MiB) });
+    expect(after.replies.filter((r) => r.type === "image.job.cancel")).toEqual([]);
+    // The old connection's frames are stale now.
+    const old = frameCtx(f, 1);
+    await handleImageUploadRenew(old.ctx, renew(transferId));
+    expect(old.replies).toEqual([stale]);
+    expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+    // test#8: the upload completes on epoch 2: the remaining parts, then
+    // Complete through the rebound session, verification, and the capture's
+    // success path.
+    await handleImageUploadParts(after.ctx, parts(transferId, [2, 3]));
+    expect(await recorded(transferId)).toEqual([1, 2, 3]);
+    fakeS3.listed = [
+      { n: 1, size: 16 * MiB, etag: '"e1"' },
+      { n: 2, size: 16 * MiB, etag: '"e2"' },
+      { n: 3, size: 8 * MiB, etag: '"e3"' },
+    ];
+    const verified: string[] = [];
+    await handleImageUploadComplete(
+      after.ctx,
+      { type: "image.upload.complete", transferId },
+      async (id) => {
+        verified.push(id);
+      },
+    );
+    expect(after.replies.filter((r) => r.type === "image.job.cancel")).toEqual([]);
+    expect(fakeS3.calls).toContain("complete:upload-1");
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    expect(session.state).toBe("COMPLETE");
+    expect(verified).toEqual([session.artifactId]);
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } }),
+    ).toMatchObject({ state: "COMPLETE", sourceEpoch: 2 });
+    // The verify job proves the object; the capture then finalizes.
+    await db.inspect.sandboxImageArtifact.update({
+      where: { id: session.artifactId! },
+      data: { state: "STORED", verifiedAt: new Date() },
+    });
+    expect(await finalizeCapture(op.id)).toMatchObject({ kind: "finalized" });
+  });
+
+  /** The rows a refused resume must leave as they were (test#7). */
+  async function protectedRows(operationId: string) {
+    return {
+      operation: await db.inspect.sandboxOperation.findUniqueOrThrow({
+        where: { id: operationId },
+      }),
+      capture: await captureOf(operationId),
+      transfers: await db.inspect.sandboxImageTransfer.findMany({
+        where: { operationId },
+        orderBy: { createdAt: "asc" },
+        take: 10,
+      }),
+      sessions: await db.inspect.sandboxImageUploadSession.findMany({
+        where: { Transfer: { is: { operationId } } },
+        orderBy: { createdAt: "asc" },
+        take: 10,
+      }),
+    };
+  }
+  const setOperation = (id: string, data: Record<string, unknown>) =>
+    db.inspect.sandboxOperation.update({ where: { id }, data: data as never });
+  const reconnect = (f: F, epoch: number) =>
+    db.inspect.sandboxHost.update({
+      where: { id: f.dest.id },
+      data: { connectionEpoch: epoch, imageCacheEpoch: epoch },
+    });
+  async function resumeOn(ctx: ReturnType<typeof frameCtx>["ctx"], frame: unknown) {
+    const replies: Array<Record<string, unknown>> = [];
+    await handleImageJobResume(
+      { ...ctx, reply: (r) => replies.push(r as never) },
+      frame as Parameters<typeof handleImageJobResume>[1],
+    );
+    return replies;
+  }
+
+  it("V5: a transfer resume is refused, its rows unchanged, for another owner, a superseded connection, an expired transfer, a cancel request, a terminal operation and a conflicting dispatch epoch; reconnects 1→3→5 rebind; a later cancel makes its frames stale", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    await reconnect(f, 3);
+    const on3 = frameCtx(f, 3);
+    const frame = { type: "image.job.resume", transferId, role: "SOURCE", bytesDone: 0 };
+    const refused = [{ type: "image.job.resume.result", transferId, continue: false }];
+    const transfer0 = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    const cases: Array<{
+      name: string;
+      ctx: ReturnType<typeof frameCtx>["ctx"];
+      arrange?: () => Promise<unknown>;
+      restore?: () => Promise<unknown>;
+    }> = [
+      {
+        name: "another owner",
+        ctx: { ...on3.ctx, sender: { ...on3.ctx.sender, userId: `other-${randomUUID()}` } },
+      },
+      {
+        name: "a superseded connection",
+        ctx: { ...on3.ctx, sender: { ...on3.ctx.sender, isCurrent: () => false } },
+      },
+      {
+        name: "an expired transfer",
+        ctx: on3.ctx,
+        arrange: () =>
+          db.inspect.sandboxImageTransfer.update({
+            where: { id: transferId },
+            data: { expiresAt: new Date(Date.now() - 1000) },
+          }),
+        restore: () =>
+          db.inspect.sandboxImageTransfer.update({
+            where: { id: transferId },
+            data: { expiresAt: transfer0.expiresAt },
+          }),
+      },
+      {
+        name: "a cancel request",
+        ctx: on3.ctx,
+        arrange: () => setOperation(op.id, { state: "CANCEL_REQUESTED" }),
+        restore: () => setOperation(op.id, { state: "RUNNING" }),
+      },
+      {
+        name: "a terminal operation",
+        ctx: on3.ctx,
+        arrange: () => setOperation(op.id, { state: "FAILED" }),
+        restore: () => setOperation(op.id, { state: "RUNNING" }),
+      },
+      {
+        name: "a conflicting dispatch epoch",
+        ctx: on3.ctx,
+        arrange: () => setOperation(op.id, { dispatchedConnectionEpoch: 2 }),
+        restore: () => setOperation(op.id, { dispatchedConnectionEpoch: 1 }),
+      },
+    ];
+    for (const c of cases) {
+      await c.arrange?.();
+      const before = await protectedRows(op.id);
+      expect(await resumeOn(c.ctx, frame), c.name).toEqual(refused);
+      expect(await protectedRows(op.id), c.name).toEqual(before);
+      await c.restore?.();
+    }
+    // Reconnects 1 → 3 → 5: each resume rebinds the transfer, its session
+    // and the operation to the newest epoch.
+    expect(await resumeOn(on3.ctx, frame)).toEqual([{ ...refused[0], continue: true }]);
+    await reconnect(f, 5);
+    const on5 = frameCtx(f, 5);
+    expect(await resumeOn(on5.ctx, frame)).toEqual([{ ...refused[0], continue: true }]);
+    const rows = await protectedRows(op.id);
+    expect(rows.operation.dispatchedConnectionEpoch).toBe(5);
+    expect(rows.transfers.map((t) => t.sourceEpoch)).toEqual([5]);
+    expect(rows.sessions.map((s) => s.hostEpoch)).toEqual([5]);
+    // Epoch 3 is stale now.
+    const on3Again = frameCtx(f, 3);
+    await handleImageUploadParts(on3Again.ctx, parts(transferId, [1]));
+    expect(on3Again.replies).toEqual([
+      { type: "image.job.cancel", transferId, reason: "stale_transfer" },
+    ]);
+    await handleImageUploadParts(on5.ctx, parts(transferId, [1]));
+    expect(await recorded(transferId)).toEqual([1]);
+    // The build cancelled after the adoption: the upload's frames are stale.
+    await setOperation(op.id, { state: "CANCEL_REQUESTED" });
+    await handleImageUploadParts(on5.ctx, parts(transferId, [2]));
+    expect(on5.replies.at(-1)).toEqual({
+      type: "image.job.cancel",
+      transferId,
+      reason: "stale_transfer",
+    });
+    expect(await recorded(transferId)).toEqual([1]);
+  });
+
+  it("W4: a transfer resume whose transfer ends while it is read is refused, and its adoption rolls back", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    await reconnect(f, 2);
+    const on2 = frameCtx(f, 2);
+    const frame = { type: "image.job.resume", transferId, role: "SOURCE", bytesDone: 0 };
+    const before = await protectedRows(op.id);
+    // Maintenance expires the transfer and holds its row lock: the resume
+    // reads the transfer OPEN and authorized, then waits on that row.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const maintenance = db.inspect.$transaction(
+      async (tx) => {
+        await tx.sandboxImageTransfer.update({
+          where: { id: transferId },
+          data: { state: "EXPIRED", endReason: "expired" },
+        });
+        locked();
+        await held;
+      },
+      { timeout: 30_000 },
+    );
+    await isLocked;
+    const resumed = resumeOn(on2.ctx, frame);
+    for (let tries = 0; ; tries++) {
+      const [row] = await db.inspect.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND datname = current_database()`;
+      if ((row?.n ?? 0n) > 0n) break;
+      if (tries > 1000) throw new Error("the resume never waited on the transfer");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    release();
+    await maintenance;
+    expect(await resumed).toEqual([
+      { type: "image.job.resume.result", transferId, continue: false },
+    ]);
+    const after = await protectedRows(op.id);
+    expect(after.operation).toEqual(before.operation);
+    expect(after.capture).toEqual(before.capture);
+    expect(after.sessions).toEqual(before.sessions);
+    expect(after.transfers.map((t) => [t.state, t.sourceEpoch])).toEqual([["EXPIRED", 1]]);
+  });
+
+  /** A recorded (STORING) capture of `fingerprint` whose begin the store
+   * refused for now (CreateMultipart): its artifact stays UPLOADING. */
+  async function refusedBegin(f: F, fingerprint: string) {
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    const frame = { ...begin(op.id, 1, randomUUID(), fingerprint), sizeBytes: 40 * MiB };
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: {
+        fingerprint,
+        sizeBytes: BigInt(frame.sizeBytes),
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    const refused = Promise.reject(Object.assign(new Error("SlowDown"), { name: "SlowDown" }));
+    refused.catch(() => {});
+    fakeS3.created.push(refused);
+    await handleImageUploadBegin(frameCtx(f).ctx, frame);
+    const session = await db.inspect.sandboxImageUploadSession.findFirstOrThrow({
+      where: { Transfer: { is: { operationId: op.id } } },
+    });
+    expect([session.state, session.endReason]).toEqual([
+      "ABORTED",
+      "begin_retry.store_unavailable",
+    ]);
+    const artifactId = session.artifactId!;
+    expect(
+      await db.inspect.sandboxImageArtifact.findUniqueOrThrow({ where: { id: artifactId } }),
+    ).toMatchObject({ state: "UPLOADING" });
+    return { op, frame, artifactId };
+  }
+  const artifactOf = (id: string) =>
+    db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+      where: { id },
+      select: { state: true, failureDetail: true },
+    });
+  const exhausted = (operationId: string) => ({
+    type: "image.job.failed" as const,
+    operationId,
+    attempt: 1,
+    code: "cancelled" as const,
+    cause: "refused" as const,
+    refusal: "store_unavailable",
+  });
+
+  it("fix 3 a#3: once a capture's begin retries are exhausted, the artifact they kept UPLOADING is failed (quota released), unless a newer live session owns it", async () => {
+    const f = await fixture();
+    // The terminal operation-ref report releases it, with the capture's cause.
+    const fp1 = fpOf();
+    const one = await refusedBegin(f, fp1);
+    await handleImageFailure(frameCtx(f).ctx, exhausted(one.op.id));
+    const cause = (await captureOf(one.op.id)).errorDetail;
+    expect(cause).toMatch(/store_unavailable/);
+    expect(await artifactOf(one.artifactId)).toEqual({ state: "FAILED", failureDetail: cause });
+    // A publish (or any begin) of that image is no longer blocked: a new
+    // begin re-opens the artifact.
+    fakeS3.created.push("upload-after-release");
+    const again = await capture(f, 1);
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: again.id },
+      data: {
+        fingerprint: fp1,
+        sizeBytes: BigInt(40 * MiB),
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    const reopened = frameCtx(f);
+    await handleImageUploadBegin(reopened.ctx, {
+      ...begin(again.id, 1, randomUUID(), fp1),
+      sizeBytes: 40 * MiB,
+    });
+    expect(reopened.replies.at(-1)).toMatchObject({ type: "image.upload.grant" });
+    expect(await artifactOf(one.artifactId)).toMatchObject({ state: "UPLOADING" });
+
+    // The finalizer's failure path releases it too.
+    const two = await refusedBegin(f, fpOf());
+    expect(await finalizeCapture(two.op.id)).toEqual({ kind: "waiting" });
+    expect(await artifactOf(two.artifactId)).toMatchObject({ state: "UPLOADING" });
+    expect(await finalizeCapture(two.op.id, new Date(Date.now() + 3 * 3_600_000))).toMatchObject({
+      kind: "failed",
+    });
+    expect(await artifactOf(two.artifactId)).toEqual({
+      state: "FAILED",
+      failureDetail: "upload_lost",
+    });
+
+    // A newer live session (another job's begin of the same image) owns
+    // it: the report leaves it UPLOADING.
+    const fp3 = fpOf();
+    const three = await refusedBegin(f, fp3);
+    const other = await capture(f, 1);
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: other.id },
+      data: {
+        fingerprint: fp3,
+        sizeBytes: BigInt(40 * MiB),
+        capturedAt: new Date(),
+        state: "STORING",
+      },
+    });
+    fakeS3.created.push("upload-other");
+    const live = frameCtx(f);
+    await handleImageUploadBegin(live.ctx, {
+      ...begin(other.id, 1, randomUUID(), fp3),
+      sizeBytes: 40 * MiB,
+    });
+    expect(live.replies.at(-1)).toMatchObject({ type: "image.upload.grant" });
+    await handleImageFailure(frameCtx(f).ctx, exhausted(three.op.id));
+    expect((await captureOf(three.op.id)).errorDetail).toMatch(/store_unavailable/);
+    expect(await artifactOf(three.artifactId)).toEqual({ state: "UPLOADING", failureDetail: null });
+  });
+
+  it("fix 3 a#4: a resume racing a begin-failure cleanup of the same upload takes session then transfer, like the cleanup: no deadlock, the cleanup wins and the resume is refused", async () => {
+    const f = await fixture();
+    const { op, transferId } = await storing(f, 40 * MiB);
+    const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { transferId },
+    });
+    await reconnect(f, 2);
+    const on2 = frameCtx(f, 2);
+    // The cleanup (`endTemplateUpload` by session, as a store failure ends
+    // a begin) claims the session, then stops before its transfer write
+    // until the resume waits on a lock.
+    let claimed!: () => void;
+    const sessionClaimed = new Promise<void>((resolve) => {
+      claimed = resolve;
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const cleanup = db.inspect.$transaction(
+      async (tx) => {
+        const barrier = new Proxy(tx, {
+          get(target, model, receiver) {
+            const value = Reflect.get(target, model, receiver);
+            if (model !== "sandboxImageTransfer") return value;
+            return new Proxy(value as object, {
+              get(inner, method, innerReceiver) {
+                const call = Reflect.get(inner, method, innerReceiver);
+                if (method !== "updateMany" || typeof call !== "function") return call;
+                return async (...args: unknown[]) => {
+                  claimed();
+                  await held;
+                  return Reflect.apply(call, inner, args);
+                };
+              },
+            });
+          },
+        });
+        return endTemplateUpload(
+          barrier as typeof tx,
+          { sessionId: session.id, from: "OPEN" },
+          { detail: "store_unavailable" },
+        );
+      },
+      { timeout: 30_000 },
+    );
+    await sessionClaimed;
+    const resumed = resumeOn(on2.ctx, {
+      type: "image.job.resume",
+      transferId,
+      role: "SOURCE",
+      bytesDone: 0,
+    });
+    for (let tries = 0; ; tries++) {
+      const [row] = await db.inspect.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_stat_activity
+        WHERE wait_event_type = 'Lock' AND datname = current_database()`;
+      if ((row?.n ?? 0n) > 0n) break;
+      if (tries > 1000) throw new Error("the resume never waited on a lock");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    release();
+    // Both finish (a deadlock would abort one of them with an error).
+    const [ended, answer] = await Promise.all([cleanup, resumed]);
+    expect(ended.ended).toEqual([transferId]);
+    expect(answer).toEqual([{ type: "image.job.resume.result", transferId, continue: false }]);
+    const transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    expect([transfer.state, transfer.endReason, transfer.sourceEpoch]).toEqual([
+      "FAILED",
+      "store_unavailable",
+      1,
+    ]);
+    const after = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+      where: { id: session.id },
+    });
+    expect([after.state, after.hostEpoch]).toEqual(["ABORTED", session.hostEpoch]);
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: op.id } }),
+    ).toMatchObject({ dispatchedConnectionEpoch: 1 });
+  });
+
+  it("W2: a resent begin that supersedes its lost-grant transfer, then is refused for now, leaves the capture waiting; the retried begin is granted", async () => {
+    const f = await fixture();
+    // T1: granted on epoch 1, its grant lost with the connection.
+    const { op, frame, transferId: t1 } = await storing(f, 40 * MiB);
+    await reconnect(f, 2);
+    const on2 = frameCtx(f, 2);
+    expect(
+      await resumeOn(on2.ctx, {
+        type: "image.job.resume",
+        operationId: op.id,
+        attempt: 1,
+        role: "SOURCE",
+        bytesDone: 0,
+      }),
+    ).toEqual([
+      { type: "image.job.resume.result", operationId: op.id, attempt: 1, continue: true },
+    ]);
+    // The resent begin supersedes T1; the store refuses its multipart for now.
+    const refused = Promise.reject(Object.assign(new Error("SlowDown"), { name: "SlowDown" }));
+    refused.catch(() => {});
+    fakeS3.created.push(refused);
+    const resent = frameCtx(f, 2);
+    await handleImageUploadBegin(resent.ctx, { ...frame, requestId: randomUUID() });
+    expect(resent.replies.at(-1)).toMatchObject({
+      type: "image.job.cancel",
+      reason: "store_unavailable",
+    });
+    const transfers = async () =>
+      (
+        await db.inspect.sandboxImageTransfer.findMany({
+          where: { operationId: op.id },
+          orderBy: { createdAt: "asc" },
+          take: 10,
+        })
+      ).map((t) => [t.id === t1 ? "T1" : "new", t.state, t.endReason]);
+    expect(await transfers()).toEqual([
+      ["T1", "CANCELLED", "superseded"],
+      ["new", "CANCELLED", "begin_retry.store_unavailable"],
+    ]);
+    // Neither is the capture's failure: it keeps waiting.
+    expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+    expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
+    // The host's retried begin is granted.
+    const retried = frameCtx(f, 2);
+    await handleImageUploadBegin(retried.ctx, { ...frame, requestId: randomUUID() });
+    const grant = retried.replies.at(-1) as UploadGrant;
+    expect(grant).toMatchObject({ type: "image.upload.grant" });
+    expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+    // Bounded by G: a job whose transfers all ended as bookkeeping fails
+    // `upload_lost` once that runs out.
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: grant.transferId },
+      data: { state: "CANCELLED", endReason: "superseded" },
+    });
+    expect(await finalizeCapture(op.id)).toEqual({ kind: "waiting" });
+    expect(await finalizeCapture(op.id, new Date(Date.now() + 3 * 3_600_000))).toMatchObject({
+      kind: "failed",
+    });
+    expect(await captureOf(op.id)).toMatchObject({ errorDetail: "upload_lost" });
+  });
+
+  it("W5: a publish begin the store refuses ends the publish and its artifact FAILED with the cause (backfill retries it); nothing waits UPLOADING", async () => {
+    const f = await fixture();
+    // The second round begins the image whose artifact the first failed:
+    // a FAILED artifact is what backfill begins again.
+    const fingerprint = f.fingerprint;
+    for (const stage of ["create", "presign"] as const) {
+      fakeS3.on = true;
+      const transfer = await db.inspect.sandboxImageTransfer.create({
+        data: {
+          userId: f.ownerId,
+          fingerprint,
+          purpose: "PUBLISH",
+          mode: "S3",
+          sourceHostId: f.source.id,
+          sourceHostOwnerId: f.ownerId,
+          sourceEpoch: 1,
+          sizeBytes: 4096n,
+          partSize: 4096,
+          partCount: 1,
+          expiresAt: new Date(Date.now() + 3_600_000),
+        },
+      });
+      if (stage === "create") {
+        const refused = Promise.reject(Object.assign(new Error("SlowDown"), { name: "SlowDown" }));
+        refused.catch(() => {});
+        fakeS3.created.push(refused);
+      } else {
+        fakeS3.created.push("upload-publish");
+        fakeS3.presignError = Object.assign(new Error("CredentialsProviderError"), {
+          name: "CredentialsProviderError",
+        });
+      }
+      const { ctx, replies } = frameCtx(f);
+      await handleImageUploadBegin(
+        { ...ctx, sender: { ...ctx.sender, hostId: f.source.id } },
+        {
+          type: "image.upload.begin",
+          transferId: transfer.id,
+          fingerprint,
+          sizeBytes: 4096,
+          format: "unified",
+        },
+      );
+      expect(replies).toEqual([
+        { type: "image.job.cancel", transferId: transfer.id, reason: "store_unavailable" },
+      ]);
+      expect(
+        await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transfer.id } }),
+      ).toMatchObject({ state: "FAILED", endReason: "store_unavailable" });
+      const session = await db.inspect.sandboxImageUploadSession.findUniqueOrThrow({
+        where: { transferId: transfer.id },
+      });
+      expect(session).toMatchObject({ state: "ABORTED", liveArtifactId: null });
+      expect(
+        await db.inspect.sandboxImageArtifact.findUniqueOrThrow({
+          where: { id: session.artifactId! },
+        }),
+      ).toMatchObject({ state: "FAILED", failureDetail: "store_unavailable" });
+      if (stage === "presign") expect(fakeS3.calls).toContain("abort:upload-publish");
+    }
+  });
+
+  it("V1: a recorded capture with no transfer yet resumes by operation only on its own host, owner, attempt and live dispatch, then its begin is granted on the new epoch; refusals change nothing", async () => {
+    const f = await fixture();
+    fakeS3.on = true;
+    const op = await capture(f, 1);
+    await reconnect(f, 2);
+    const on2 = frameCtx(f, 2);
+    const frame = {
+      type: "image.job.resume",
+      operationId: op.id,
+      attempt: 1,
+      role: "SOURCE",
+      bytesDone: 0,
+    };
+    const answer = (proceed: boolean, attempt = 1) => [
+      { type: "image.job.resume.result", operationId: op.id, attempt, continue: proceed },
+    ];
+    // Before it, a begin on the new connection is stale.
+    const early = frameCtx(f, 2);
+    await handleImageUploadBegin(early.ctx, begin(op.id, 1));
+    expect(early.replies.at(-1)).toMatchObject({
+      type: "image.job.cancel",
+      reason: "stale_capture",
+    });
+    await db.inspect.sandboxHost.update({
+      where: { id: f.source.id },
+      data: { connectionEpoch: 2 },
+    });
+    const cases: Array<{
+      name: string;
+      ctx: ReturnType<typeof frameCtx>["ctx"];
+      frame?: Record<string, unknown>;
+      arrange?: () => Promise<unknown>;
+      restore?: () => Promise<unknown>;
+    }> = [
+      {
+        name: "another host",
+        ctx: { ...on2.ctx, sender: { ...on2.ctx.sender, hostId: f.source.id } },
+      },
+      {
+        name: "another owner",
+        ctx: { ...on2.ctx, sender: { ...on2.ctx.sender, userId: `other-${randomUUID()}` } },
+      },
+      {
+        name: "a superseded connection",
+        ctx: { ...on2.ctx, sender: { ...on2.ctx.sender, isCurrent: () => false } },
+      },
+      { name: "another attempt", ctx: on2.ctx, frame: { ...frame, attempt: 2 } },
+      {
+        name: "a cancel request",
+        ctx: on2.ctx,
+        arrange: () => setOperation(op.id, { state: "CANCEL_REQUESTED" }),
+        restore: () => setOperation(op.id, { state: "RUNNING" }),
+      },
+      {
+        name: "a terminal operation",
+        ctx: on2.ctx,
+        arrange: () => setOperation(op.id, { state: "FAILED" }),
+        restore: () => setOperation(op.id, { state: "RUNNING" }),
+      },
+      {
+        name: "a newer dispatch epoch",
+        ctx: on2.ctx,
+        arrange: () => setOperation(op.id, { dispatchedConnectionEpoch: 3 }),
+        restore: () => setOperation(op.id, { dispatchedConnectionEpoch: 1 }),
+      },
+      {
+        name: "an unrecorded capture the reconnect did not adopt",
+        ctx: on2.ctx,
+        arrange: () =>
+          db.inspect.sandboxTemplateCapture.update({
+            where: { operationId: op.id },
+            data: { state: "PENDING" },
+          }),
+        restore: () =>
+          db.inspect.sandboxTemplateCapture.update({
+            where: { operationId: op.id },
+            data: { state: "CAPTURED" },
+          }),
+      },
+    ];
+    for (const c of cases) {
+      await c.arrange?.();
+      const before = await protectedRows(op.id);
+      const sent = (c.frame ?? frame) as { attempt: number };
+      expect(await resumeOn(c.ctx, c.frame ?? frame), c.name).toEqual(answer(false, sent.attempt));
+      expect(await protectedRows(op.id), c.name).toEqual(before);
+      await c.restore?.();
+    }
+    expect(await resumeOn(on2.ctx, frame)).toEqual(answer(true));
+    expect(
+      (await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: op.id } }))
+        .dispatchedConnectionEpoch,
+    ).toBe(2);
+    // Resumed again on the same connection: still yes, nothing moves.
+    expect(await resumeOn(on2.ctx, frame)).toEqual(answer(true));
+    const granted = frameCtx(f, 2);
+    await handleImageUploadBegin(granted.ctx, begin(op.id, 1));
+    expect(granted.replies.at(-1)).toMatchObject({ type: "image.upload.grant" });
+    const transfer = await db.inspect.sandboxImageTransfer.findFirstOrThrow({
+      where: { operationId: op.id, state: "OPEN" },
+    });
+    expect(transfer.sourceEpoch).toBe(2);
   });
 });

@@ -35,6 +35,21 @@ pub(crate) use failure::{UploadEnd, UploadFailure};
 use journal::{CacheEntry, CacheJournal, Origin};
 
 const OUTBOX_MAX: usize = 512;
+/// Frames one `take_batch` takes for a socket write.
+const BATCH_MAX: usize = 32;
+/// Admission bound of the protected backlog (r5 #3): a new upload job
+/// starts only while the queued protected frames (`protected_frame`: resumes
+/// and terminal upload frames, never evicted) plus two per live job (its
+/// resume and its terminal frame, still to come) stay below this. So
+/// protected frames stay below it, plus at most one failed batch's replay;
+/// the assert keeps that within half the outbox, leaving the rest to begins,
+/// census and inventory pages and other traffic.
+const PROTECTED_MAX: usize = OUTBOX_MAX / 4;
+const _: () = assert!(PROTECTED_MAX + BATCH_MAX <= OUTBOX_MAX / 2);
+/// How long a new upload job waits for the protected backlog to drain
+/// before it ends without starting (no frame: the server's own stall and
+/// deadline rules end it).
+const UPLOAD_ADMISSION_WAIT: Duration = Duration::from_secs(30 * 60);
 pub const PRUNE_REQUEST_FILE: &str = "prune-request.json";
 pub const PRUNE_RESULT_FILE: &str = "prune-result.json";
 pub const LIST_REQUEST_FILE: &str = "list-request.json";
@@ -63,6 +78,159 @@ const UPLOAD_GRANT_WAIT: Duration = Duration::from_secs(300);
 /// At most one `image.upload.progress` heartbeat per upload this often, and
 /// only while bytes moved.
 const UPLOAD_HEARTBEAT_EVERY: Duration = Duration::from_secs(30);
+/// Attempts of one image-store part before its failure ends the upload.
+const PART_ATTEMPTS: u32 = 4;
+/// Uploaded parts reported (`image.upload.parts`) at least this often.
+const FLUSH_PARTS: usize = 16;
+/// Begin refusals the host retries (`UploadTimings::begin_retry`): the
+/// store or the host's grant budget is briefly unavailable, or GC is still
+/// deleting an earlier copy of the image.
+const BEGIN_RETRY_REASONS: [&str; 3] = ["rate_limited", "artifact_deleting", "store_unavailable"];
+
+/// The upload retry and renew timings (tests shorten them).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UploadTimings {
+    /// Pause before part attempts 2, 3 and 4 (plus up to 25 % jitter).
+    pub(crate) part_retry: [Duration; 3],
+    /// Pause before each re-sent begin after a transient refusal; the
+    /// refusal is reported once these are used up or `begin_budget` ran out.
+    pub(crate) begin_retry: [Duration; 4],
+    /// The retry allowance, starting at the first transient begin refusal
+    /// (whatever the first wait had spent): one deadline that every later
+    /// begin wait, resume and pause spends; a pause that does not fit in
+    /// what is left ends the retries.
+    pub(crate) begin_budget: Duration,
+    /// How long each renew waits for its grant before it is sent again (the
+    /// last repeats until the grant wait is over).
+    pub(crate) renew_retry: [Duration; 4],
+    /// A URL with less lifetime left than this is renewed before its part.
+    pub(crate) url_margin: Duration,
+    /// Uploaded parts are reported at least this often.
+    pub(crate) flush_every: Duration,
+}
+
+impl UploadTimings {
+    const PRODUCTION: Self = Self {
+        part_retry: [
+            Duration::from_secs(2),
+            Duration::from_secs(8),
+            Duration::from_secs(30),
+        ],
+        begin_retry: [
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+        ],
+        begin_budget: Duration::from_secs(180),
+        renew_retry: [
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Duration::from_secs(30),
+            Duration::from_secs(60),
+        ],
+        url_margin: Duration::from_secs(60),
+        flush_every: Duration::from_secs(30),
+    };
+}
+
+/// `base` plus up to 25 % jitter, so hosts that failed together do not
+/// retry in lockstep.
+fn jittered(base: Duration) -> Duration {
+    use ring::rand::SecureRandom;
+    let mut byte = [0u8; 2];
+    let fraction = match ring::rand::SystemRandom::new().fill(&mut byte) {
+        Ok(()) => f64::from(u16::from_le_bytes(byte)) / f64::from(u16::MAX),
+        Err(_) => 0.0,
+    };
+    base.mul_f64(1.0 + fraction / 4.0)
+}
+
+/// Connected time a renew waits for a usable grant in all (`no_grant`
+/// after). With `PUT_RESPONSE_WAIT` and one heartbeat interval it stays
+/// inside the server's 10 min stall window (I5: a moving upload is never
+/// failed for silence the host imposed on itself).
+const UPLOAD_RENEW_WAIT: Duration = Duration::from_secs(180);
+
+/// The server's stall window (`upload_stalled` after no heartbeat advanced
+/// for it; `packages/api/src/sandbox/image-store/captures.ts`).
+const SERVER_STALL_WINDOW: Duration = Duration::from_secs(600);
+
+/// The longest stretch a moving upload can go without a heartbeat, in
+/// connected time: the last heartbeat interval of a body (30 s), its
+/// response wait (300 s), then the longer of a retry pause (30 s + 25 %
+/// jitter = 37.5 s) and a renew (180 s). 30 + 300 + 180 = 510 s < 600 s.
+/// While a body is sent, `wireBytes` advances as the socket takes each
+/// chunk of at most 16 KiB (`crate::tls::counting_transmits`, below ureq's
+/// 128 KiB body buffer), so a slow drain of one buffered write is still
+/// "moving" and heartbeats every 30 s, down to the liveness floor
+/// (`UPLOAD_LIVENESS_FLOOR`); the idle bound fails a write that moves
+/// nothing.
+/// Every attempt re-sends its body, which advances `wireBytes` and so sends
+/// a heartbeat: four attempts never add up, the stretch is per attempt. A
+/// renew is one wait with one budget (W3): the resume a reconnect needs, its
+/// pauses and re-sends all spend those 180 s; between parts a reconnect is
+/// resumed only inside the renew that follows it, so no wait adds to it.
+const fn longest_silence() -> Duration {
+    let pause = Duration::from_millis(30_000 * 5 / 4);
+    let after = if UPLOAD_RENEW_WAIT.as_millis() > pause.as_millis() {
+        UPLOAD_RENEW_WAIT
+    } else {
+        pause
+    };
+    UPLOAD_HEARTBEAT_EVERY
+        .saturating_add(PUT_RESPONSE_WAIT)
+        .saturating_add(after)
+}
+
+const _: () = assert!(longest_silence().as_millis() < SERVER_STALL_WINDOW.as_millis());
+
+/// The liveness floor of an upload body, in bytes per second (r4 #4).
+/// Liveness is counted per socket chunk (`crate::tls::TRANSMIT_CHUNK`,
+/// 16 KiB), once the whole chunk was taken, not per short socket write. So
+/// a body counts as moving only while it sustains at least one chunk per
+/// server stall window: 16 KiB per 10 min is about 27 B/s, about 29 B/s
+/// when the 30 s heartbeat interval falls inside the window. Anything
+/// slower is reported `upload_stalled` by the server; it could never finish
+/// a part (16 MiB at 30 B/s is over six days, past the 24 h store
+/// deadline) anyway. The assert ties the chunk size, the stall window and
+/// the heartbeat interval to this documented floor: growing the chunk or
+/// shrinking the window fails the build until the floor (and
+/// docs/operations/templates.md, docs/guide/hosts.md) say so.
+const UPLOAD_LIVENESS_FLOOR: u64 = 30;
+
+const _: () = {
+    let chunk = crate::tls::TRANSMIT_CHUNK as u64;
+    let window = SERVER_STALL_WINDOW.as_secs() - UPLOAD_HEARTBEAT_EVERY.as_secs();
+    assert!(chunk.div_ceil(window) <= UPLOAD_LIVENESS_FLOOR);
+};
+
+/// The pieces of one upload job its parts loop needs.
+struct UploadJobRun<'a> {
+    /// Its number in the resume registry.
+    number: u64,
+    fingerprint: &'a str,
+    transfer: Option<&'a str>,
+    capture: Option<&'a (String, u64)>,
+    /// Stored bytes of the parts reported (shared with the registry).
+    reported: Arc<AtomicU64>,
+}
+
+/// Sleep `wait`, waking early (false) once `stop` holds.
+fn pause(wait: Duration, stop: &dyn Fn() -> bool) -> bool {
+    let until = Instant::now() + wait;
+    loop {
+        if stop() {
+            return false;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return true;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(100)));
+    }
+}
+
 /// Floor of the relay upload budget for one part.
 const RELAY_PART_SEND_MIN: Duration = Duration::from_secs(120);
 /// Lowest sustained upload rate a relay part must keep (64 KiB/s); a slower
@@ -78,6 +246,19 @@ fn relay_part_send_budget(part_len: usize) -> Duration {
     let len = u64::try_from(part_len).unwrap_or(u64::MAX);
     let at_floor = Duration::from_secs(len.div_ceil(RELAY_PART_SEND_FLOOR_BYTES_PER_SEC));
     at_floor.max(RELAY_PART_SEND_MIN)
+}
+
+/// Tests only: the virtual upload clock. It stands still at `base +
+/// offset`: only upload pauses (recorded) and the test
+/// (`advance_test_clock`) move it, so every upload deadline is
+/// deterministic.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestClock {
+    base: Instant,
+    offset: Duration,
+    pauses: Vec<Duration>,
+    jitter: f64,
 }
 
 /// Local settings (TOML only; a restart applies them).
@@ -151,7 +332,7 @@ struct Inner {
     staging: PathBuf,
     journal: Mutex<CacheJournal>,
     outbox: Mutex<VecDeque<DaemonControlMessage>>,
-    waiters: Mutex<HashMap<String, mpsc::Sender<ServerControlMessage>>>,
+    waiters: Mutex<HashMap<String, Waiter>>,
     inflight: Mutex<HashSet<String>>,
     inflight_cv: Condvar,
     in_use: Mutex<HashMap<String, usize>>,
@@ -188,6 +369,216 @@ struct Inner {
     /// Tests only: upload jobs that have returned (frames all pushed).
     #[cfg(test)]
     uploads_finished: AtomicU64,
+    /// Tests only: shorter upload retry and renew timings.
+    #[cfg(test)]
+    timings_override: Mutex<Option<UploadTimings>>,
+    /// Tests only: a virtual clock for upload pauses (recorded, not slept).
+    #[cfg(test)]
+    test_clock: Mutex<Option<TestClock>>,
+    /// Tests only: an upload's export says it started on the sender, then
+    /// waits for one message on the receiver.
+    #[cfg(test)]
+    export_gate: Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>,
+    /// Registered relay connections (`hello.ok`) so far, the generation of
+    /// the current one: an upload that sees it move resumes on the new one.
+    connections: AtomicU64,
+    /// Whether a relay connection is up (`hello.ok` .. its end): upload
+    /// waits do not run down while it is not.
+    connected: std::sync::atomic::AtomicBool,
+    /// Every template upload job from its start until its terminal frame
+    /// left the outbox (`ResumeEntry`), by job number: each gets an
+    /// `image.job.resume` ahead of its frames on every new connection.
+    resumable: Mutex<HashMap<u64, ResumeEntry>>,
+}
+
+/// How a server frame reaches the job waiting for it.
+enum Waiter {
+    Plain(mpsc::Sender<ServerControlMessage>),
+    /// Upload jobs: the frame with when and on which connection it arrived.
+    Stamped(mpsc::Sender<Routed>),
+}
+
+/// A server frame as routed to an upload job: the instant it was routed
+/// (a grant's URLs lapse `ttlSeconds` after it) and the relay connection
+/// generation it arrived on (a resume answer counts only for the current
+/// connection; a grant from an older one needs its transfer resumed).
+#[derive(Debug)]
+pub(crate) struct Routed {
+    frame: ServerControlMessage,
+    at: Instant,
+    connection: u64,
+}
+
+/// What an upload job's frames name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JobRef {
+    Transfer(String),
+    /// A capture upload before its first grant.
+    Operation(String, u64),
+}
+
+impl JobRef {
+    fn resume(&self, bytes_done: u64) -> DaemonControlMessage {
+        DaemonControlMessage::ImageJobResume(match self {
+            Self::Transfer(transfer) => sandbox_protocol::ImageJobResumeV11::transfer(
+                transfer,
+                ImageLinkRole::Source,
+                bytes_done.min(sandbox_protocol::IMAGE_SIZE_MAX),
+            ),
+            Self::Operation(operation, attempt) => {
+                sandbox_protocol::ImageJobResumeV11::operation(operation, *attempt)
+            }
+        })
+    }
+
+    /// The job a resume, its answer or a terminal frame names.
+    fn of(
+        transfer: Option<&String>,
+        operation: Option<&String>,
+        attempt: Option<u64>,
+    ) -> Option<Self> {
+        match (transfer, operation, attempt) {
+            (Some(transfer), None, None) => Some(Self::Transfer(transfer.clone())),
+            (None, Some(operation), Some(attempt)) => {
+                Some(Self::Operation(operation.clone(), attempt))
+            }
+            _ => None,
+        }
+    }
+
+    /// The job a terminal upload frame (`image.job.failed`,
+    /// `image.upload.complete`) ends.
+    fn ended_by(message: &DaemonControlMessage) -> Option<Self> {
+        match message {
+            DaemonControlMessage::ImageJobFailed(f) => {
+                Self::of(f.transfer_id.as_ref(), f.operation_id.as_ref(), f.attempt)
+            }
+            DaemonControlMessage::ImageUploadComplete(c) => {
+                Some(Self::Transfer(c.transfer_id.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    /// A frame `push` never evicts: a resume or a terminal upload frame.
+    fn protected_frame(message: &DaemonControlMessage) -> bool {
+        Self::resumed_by(message).is_some() || Self::ended_by(message).is_some()
+    }
+
+    /// A queued frame of this job that only matters while the job is in
+    /// the resume registry: its resume or its terminal frame.
+    fn names(&self, message: &DaemonControlMessage) -> bool {
+        Self::resumed_by(message).as_ref() == Some(self)
+            || Self::ended_by(message).as_ref() == Some(self)
+    }
+
+    fn resumed_by(message: &DaemonControlMessage) -> Option<Self> {
+        match message {
+            DaemonControlMessage::ImageJobResume(r) => {
+                Self::of(r.transfer_id.as_ref(), r.operation_id.as_ref(), r.attempt)
+            }
+            _ => None,
+        }
+    }
+
+    /// The waiter key of this job's resume answers.
+    fn resume_key(&self) -> String {
+        match self {
+            Self::Transfer(transfer) => format!("resume:{transfer}"),
+            Self::Operation(operation, attempt) => format!("resume-op:{operation}#{attempt}"),
+        }
+    }
+}
+
+/// One upload job in the resume registry. Invariant (V1): from the job's
+/// start until its terminal frame was drained to a connection, every new
+/// relay connection carries this job's `image.job.resume` before any other
+/// frame of the job, so nothing the job sends is refused as stale.
+#[derive(Debug)]
+struct ResumeEntry {
+    reference: JobRef,
+    /// Stored bytes of the parts reported (the resume's `bytesDone`).
+    reported: Arc<AtomicU64>,
+    /// The request id of a capture begin in flight.
+    begin: Option<String>,
+    /// That begin had already left the outbox when a new connection came:
+    /// its answer may be lost with the old one, so it is sent again.
+    begin_lost: bool,
+    /// The job has ended and its terminal frame is queued: the entry goes
+    /// once that frame is drained, or when the server answers a resume of
+    /// it `continue: false` (the job is gone there).
+    terminal: bool,
+}
+
+/// How an upload wait ended.
+enum Waited {
+    Frame(Box<Routed>),
+    /// The relay connection changed: the caller resumes, then decides.
+    Reconnected,
+    Timeout,
+}
+
+/// Bound on one upload wait in wall time, relay outages included (the
+/// waits themselves count connected time only). Past the server's 10 min
+/// stall window: by then the server has ended a running upload itself.
+const UPLOAD_OUTAGE_MAX: Duration = Duration::from_secs(30 * 60);
+
+/// What one upload wait may still spend (W3): `left` connected time (a
+/// relay outage does not count, FB-B4), never past the absolute `until`
+/// (upload clock, at most `UPLOAD_OUTAGE_MAX` from its start), charged up
+/// to `last`. Each wait (a begin with its retries, a renew) gets one from its
+/// caller; a wait inside it (a resume) spends that same budget, clipped to
+/// its own bound (`within` / `settle`), so no nested wait extends its
+/// caller's deadline.
+#[derive(Debug, Clone, Copy)]
+struct Budget {
+    left: Duration,
+    until: Instant,
+    last: Instant,
+    /// Connected time charged since this budget was made (uncapped).
+    spent: Duration,
+}
+
+impl Budget {
+    fn new(now: Instant, left: Duration, until: Instant) -> Self {
+        Self {
+            left,
+            until: until.min(now + UPLOAD_OUTAGE_MAX),
+            last: now,
+            spent: Duration::ZERO,
+        }
+    }
+
+    /// Charge the time since `last` (connected time only).
+    fn charge(&mut self, now: Instant, connected: bool) {
+        if connected {
+            let elapsed = now.saturating_duration_since(self.last);
+            self.left = self.left.saturating_sub(elapsed);
+            self.spent += elapsed;
+        }
+        self.last = self.last.max(now);
+    }
+
+    fn spent(&self, now: Instant) -> bool {
+        self.left.is_zero() || now >= self.until
+    }
+
+    /// A wait inside this one with at most `own` connected time of its own.
+    fn within(&self, own: Duration) -> Self {
+        Self {
+            left: self.left.min(own),
+            spent: Duration::ZERO,
+            ..*self
+        }
+    }
+
+    /// Charge this budget with all the time `inner` (from `within`) was
+    /// charged, also past its own bound.
+    fn settle(&mut self, inner: &Self) {
+        self.left = self.left.saturating_sub(inner.spent);
+        self.spent += inner.spent;
+        self.last = self.last.max(inner.last);
+    }
 }
 
 /// The agent config for upstream image downloads: never a redirect (the
@@ -278,6 +669,159 @@ impl Drop for StagingReservation {
 #[derive(Clone)]
 pub struct ImageService {
     inner: Arc<Inner>,
+}
+
+/// Image frames taken from the outbox for one socket write
+/// (`ImageService::take_batch`). Sent means written and flushed: `sent`
+/// retires the jobs whose terminal frame it carries; dropped without
+/// `sent` (a write or the flush failed), only the frames
+/// `replayed_after_failed_write` allows go back to the front of the outbox,
+/// in order; every other frame is dropped, as any frame of a failed write
+/// was before.
+pub struct ImageBatch {
+    inner: Arc<Inner>,
+    frames: Vec<DaemonControlMessage>,
+    sent: bool,
+}
+
+impl ImageBatch {
+    /// The frames to write, in order.
+    pub fn frames(&self) -> &[DaemonControlMessage] {
+        &self.frames
+    }
+
+    /// The socket wrote and flushed every frame.
+    pub fn sent(mut self) {
+        self.sent = true;
+        let ended: Vec<JobRef> = self.frames.iter().filter_map(JobRef::ended_by).collect();
+        if !ended.is_empty() {
+            self.inner
+                .resumable
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|_, e| !(e.terminal && ended.contains(&e.reference)));
+        }
+    }
+}
+
+impl Drop for ImageBatch {
+    fn drop(&mut self) {
+        if self.sent {
+            return;
+        }
+        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        for unsent in std::mem::take(&mut self.frames)
+            .into_iter()
+            .rev()
+            .filter(replayed_after_failed_write)
+        {
+            outbox.push_front(unsent);
+        }
+    }
+}
+
+/// Whether a frame of a batch whose write or flush failed is sent again on
+/// the next connection (after the jobs' resumes). A frame of such a batch
+/// may or may not have reached the server, so only frames the server takes
+/// idempotently, and that carry upload progress or a job's terminal cause,
+/// are replayed. Exhaustive on purpose (no wildcard arm): a new variant
+/// must decide here.
+fn replayed_after_failed_write(message: &DaemonControlMessage) -> bool {
+    use DaemonControlMessage as M;
+    match message {
+        // Template upload progress and terminal frames: repeated parts
+        // reports and heartbeats are idempotent, a repeated terminal frame
+        // is answered stale; the job stays in the resume registry until its
+        // terminal frame is flushed.
+        M::ImageJobFailed(_)
+        | M::ImageUploadComplete(_)
+        | M::ImageUploadParts(_)
+        | M::ImageUploadProgress(_) => true,
+        // The resume registry queues every live job's resume afresh on the
+        // next `hello.ok`; a disk offload re-sends its own.
+        M::ImageJobResume(_) => false,
+        // A delivered begin already made its session (a replay would be
+        // refused `stale_transfer` / supersede it, r4 #1); a lost capture
+        // begin is re-sent once its job is resumed (`begin_lost`).
+        M::ImageUploadBegin(_) => false,
+        // A renew is re-sent by its wait; links and fetches by their jobs.
+        M::ImageUploadRenew(_)
+        | M::ImageLinksRequest(_)
+        | M::ImageFetchRequest(_)
+        | M::ImagePartAck(_) => false,
+        // Census and disk inventory restart on every connection; a stale
+        // page would be taken as another run's (r4 #2).
+        M::ImageCacheCensus(_) | M::DiskOffloadInventory(_) => false,
+        // Cache reports are re-derived by the next census.
+        M::ImageCached(_) | M::ImageEvicted(_) | M::ImageFetchFailed(_) => false,
+        // Disk offload frames keep their own resume / regrant; a replayed
+        // completion would be answered with a stale cancel that removes the
+        // uploaded journal entry (r4 #3).
+        M::DiskUploadBegin(_)
+        | M::DiskUploadParts(_)
+        | M::DiskUploadComplete(_)
+        | M::DiskOffloadFailed(_)
+        | M::DiskOffloadReleased(_)
+        | M::DiskEvictRequest(_)
+        | M::DiskEvicted(_)
+        | M::DiskDiscarded(_) => false,
+        // Advisory.
+        M::OperationProgress { .. } => false,
+        // Not image frames: never queued in the image outbox.
+        M::AllocationAttestResult { .. }
+        | M::AvailabilityResult { .. }
+        | M::ChannelAck { .. }
+        | M::ChannelEof { .. }
+        | M::ChannelError { .. }
+        | M::ChannelExit { .. }
+        | M::ChannelReady { .. }
+        | M::CredentialBundleRequest { .. }
+        | M::CredentialCaptureBegin { .. }
+        | M::CredentialCaptureChunk { .. }
+        | M::CredentialCensus { .. }
+        | M::CredentialInstalled { .. }
+        | M::CredentialQuarantineDiscarded { .. }
+        | M::CredentialReturnKeyAck { .. }
+        | M::CredentialScrubbed { .. }
+        | M::CredentialSpecRequest { .. }
+        | M::DispatchAuditRequest { .. }
+        | M::DispatchAuditResult { .. }
+        | M::EgressRefused { .. }
+        | M::FileChunkAck { .. }
+        | M::Heartbeat { .. }
+        | M::Hello { .. }
+        | M::HostAdmission { .. }
+        | M::HostAgentPolicy { .. }
+        | M::HostEgressState { .. }
+        | M::HostExecRejected { .. }
+        | M::HostExecStarted { .. }
+        | M::HostExecStatus { .. }
+        | M::HostExecStdinResult { .. }
+        | M::HostFileResult { .. }
+        | M::HostLeasePolicy { .. }
+        | M::HostPolicyLowerResult { .. }
+        | M::HostQuiesce { .. }
+        | M::HostTerminalPolicy { .. }
+        | M::ImageVerifyResult { .. }
+        | M::InventoryUpdate { .. }
+        | M::JournalKeyAck { .. }
+        | M::OperationAdopt { .. }
+        | M::OperationReceipt { .. }
+        | M::OperationReceiptPruned { .. }
+        | M::OperationResult { .. }
+        | M::PrivateConfigAck { .. }
+        | M::PrivateConfigRefused { .. }
+        | M::ProcessStarted { .. }
+        | M::ReconcileComplete { .. }
+        | M::SandboxExpiryStatus { .. }
+        | M::SandboxInventory { .. }
+        | M::SandboxProbeResult { .. }
+        | M::TerminalAck { .. }
+        | M::TerminalExit { .. }
+        | M::TerminalReady { .. }
+        | M::TunnelPortsStatus { .. }
+        | M::TunnelStatus { .. } => false,
+    }
 }
 
 fn now_ms() -> u64 {
@@ -392,6 +936,15 @@ impl ImageService {
                 grant_wait_override: Mutex::new(None),
                 #[cfg(test)]
                 uploads_finished: AtomicU64::new(0),
+                #[cfg(test)]
+                timings_override: Mutex::new(None),
+                #[cfg(test)]
+                test_clock: Mutex::new(None),
+                #[cfg(test)]
+                export_gate: Mutex::new(None),
+                connections: AtomicU64::new(0),
+                connected: std::sync::atomic::AtomicBool::new(false),
+                resumable: Mutex::new(HashMap::new()),
             }),
         }))
     }
@@ -436,6 +989,135 @@ impl ImageService {
             .unwrap_or_else(|e| e.into_inner()) = Some(wait);
     }
 
+    /// Tests only: upload retry and renew timings.
+    #[cfg(test)]
+    pub(crate) fn set_upload_timings_for_test(&self, timings: UploadTimings) {
+        *self
+            .inner
+            .timings_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(timings);
+    }
+
+    /// Tests only: uploads run on a virtual clock that stands still
+    /// (`TestClock`): pauses are recorded, not slept, and move it; jitter is
+    /// the fixed `jitter` fraction.
+    #[cfg(test)]
+    pub(crate) fn set_test_clock(&self, jitter: f64) {
+        *self
+            .inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(TestClock {
+            base: Instant::now(),
+            offset: Duration::ZERO,
+            pauses: Vec::new(),
+            jitter,
+        });
+    }
+
+    /// Tests only: move the virtual upload clock by `by`.
+    #[cfg(test)]
+    pub(crate) fn advance_test_clock(&self, by: Duration) {
+        if let Some(clock) = self
+            .inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            clock.offset += by;
+        }
+    }
+
+    /// Tests only: the next upload export says on the returned receiver
+    /// that it started, then waits for one message on the returned sender
+    /// (or its drop).
+    #[cfg(test)]
+    pub(crate) fn hold_exports_for_test(&self) -> (mpsc::Sender<()>, mpsc::Receiver<()>) {
+        let (release, held) = mpsc::channel();
+        let (entered, started) = mpsc::channel();
+        *self
+            .inner
+            .export_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some((entered, held));
+        (release, started)
+    }
+
+    /// Tests only: the pauses recorded by the virtual clock.
+    #[cfg(test)]
+    pub(crate) fn test_pauses(&self) -> Vec<Duration> {
+        self.inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|c| c.pauses.clone())
+            .unwrap_or_default()
+    }
+
+    /// The upload clock (virtual in tests that ask for it).
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(clock) = self
+            .inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return clock.base + clock.offset;
+        }
+        Instant::now()
+    }
+
+    /// An upload pause of `wait` (see `pause`).
+    fn pause(&self, wait: Duration, stop: &dyn Fn() -> bool) -> bool {
+        #[cfg(test)]
+        if let Some(clock) = self
+            .inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_mut()
+        {
+            clock.pauses.push(wait);
+            clock.offset += wait;
+            return !stop();
+        }
+        pause(wait, stop)
+    }
+
+    /// `base` with the upload jitter (see `jittered`).
+    fn jittered(&self, base: Duration) -> Duration {
+        #[cfg(test)]
+        if let Some(clock) = self
+            .inner
+            .test_clock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
+            return base.mul_f64(1.0 + clock.jitter / 4.0);
+        }
+        jittered(base)
+    }
+
+    /// The upload retry and renew timings.
+    fn timings(&self) -> UploadTimings {
+        #[cfg(test)]
+        if let Some(timings) = *self
+            .inner
+            .timings_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
+            return timings;
+        }
+        UploadTimings::PRODUCTION
+    }
+
     /// Tests only: how many upload jobs have returned.
     #[cfg(test)]
     pub(crate) fn uploads_finished(&self) -> u64 {
@@ -457,7 +1139,7 @@ impl ImageService {
     }
 
     /// The heartbeat of one upload of `transfer`.
-    fn heartbeat(&self, transfer: &str) -> UploadHeartbeat<'_> {
+    fn heartbeat(&self, transfer: &str) -> UploadHeartbeat {
         #[allow(unused_mut)]
         let mut every = UPLOAD_HEARTBEAT_EVERY;
         #[cfg(test)]
@@ -470,11 +1152,15 @@ impl ImageService {
             every = test;
         }
         UploadHeartbeat {
-            service: self,
             transfer_id: transfer.to_owned(),
-            every,
-            reached: std::cell::Cell::new(0),
-            reported: std::cell::Cell::new((Instant::now(), 0)),
+            state: std::rc::Rc::new(HeartbeatState {
+                service: self.clone(),
+                transfer_id: transfer.to_owned(),
+                every,
+                reached: std::cell::Cell::new(0),
+                wire: std::cell::Cell::new(0),
+                reported: std::cell::Cell::new((self.now(), 0, 0)),
+            }),
         }
     }
 
@@ -602,43 +1288,155 @@ impl ImageService {
     }
 
     /// `hello.ok`: the host owner decides which cached bytes are foreign.
+    /// Every upload job in the resume registry gets its `image.job.resume`
+    /// at the front of the outbox (an older queued resume of it replaced),
+    /// so the new connection rebinds the job before any of its frames
+    /// (queued or later) reach the server. A capture begin in flight that
+    /// already left the outbox is marked lost (sent again once resumed).
     pub fn on_registered(&self, host_owner_id: &str) {
         *self
             .inner
             .host_owner
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(host_owner_id.to_owned());
+        let mut resumable = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        self.next_connection(&mut resumable);
     }
 
+    /// A new relay connection, under the resume registry's lock (see
+    /// `on_registered`).
+    fn next_connection(&self, resumable: &mut HashMap<u64, ResumeEntry>) {
+        self.inner.connections.fetch_add(1, Ordering::SeqCst);
+        self.inner.connected.store(true, Ordering::SeqCst);
+        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        // Disk offload continuations queued for an older connection's
+        // transfer (r5 #2) would reach this one unbound and be answered
+        // `stale`: they go, as a failed batch's do, and the offload's own
+        // resume / regrant or its inventory verdict decides.
+        outbox.retain(|m| {
+            !matches!(
+                m,
+                DaemonControlMessage::DiskUploadParts(_)
+                    | DaemonControlMessage::DiskUploadComplete(_)
+            )
+        });
+        for entry in resumable.values_mut() {
+            if let Some(request) = &entry.begin {
+                entry.begin_lost = !outbox.iter().any(|m| {
+                    matches!(m, DaemonControlMessage::ImageUploadBegin(b)
+                        if b.request_id.as_deref() == Some(request.as_str()))
+                });
+            }
+            outbox.retain(|m| JobRef::resumed_by(m).as_ref() != Some(&entry.reference));
+            outbox.push_front(
+                entry
+                    .reference
+                    .resume(entry.reported.load(Ordering::SeqCst)),
+            );
+        }
+    }
+
+    /// Tests only: the queued frames, left queued.
+    #[cfg(test)]
+    pub(crate) fn queued(&self) -> Vec<DaemonControlMessage> {
+        self.inner
+            .outbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Tests only: upload jobs in the resume registry.
+    #[cfg(test)]
+    pub(crate) fn resumable_jobs(&self) -> usize {
+        self.inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
+    }
+
+    /// The relay connection ended: upload waits stop counting until the
+    /// next `hello.ok`.
+    pub fn on_disconnect(&self) {
+        self.inner.connected.store(false, Ordering::SeqCst);
+    }
+
+    /// Queue `message`. The outbox is bounded (`OUTBOX_MAX`): advisory
+    /// frames go first (operation progress, then upload heartbeats), then
+    /// the oldest frame that is neither a resume nor a terminal upload frame
+    /// (`image.job.failed`, `image.upload.complete`). Those are never
+    /// evicted (V1: a job's cause and its rebind must reach the server);
+    /// they leave when flushed or when their job is retired otherwise, and
+    /// new upload jobs wait while they are backlogged (`PROTECTED_MAX`), so
+    /// they hold less than half of `OUTBOX_MAX`.
     fn push(&self, message: DaemonControlMessage) {
         let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
         if outbox.len() >= OUTBOX_MAX {
-            // Progress is advisory; drop the oldest one first.
-            if let Some(index) = outbox
+            let protected = JobRef::protected_frame;
+            let victim = outbox
                 .iter()
                 .position(|m| matches!(m, DaemonControlMessage::OperationProgress { .. }))
-            {
+                .or_else(|| {
+                    outbox
+                        .iter()
+                        .position(|m| matches!(m, DaemonControlMessage::ImageUploadProgress(_)))
+                })
+                .or_else(|| outbox.iter().position(|m| !protected(m)));
+            if let Some(index) = victim {
                 outbox.remove(index);
-            } else {
-                outbox.pop_front();
             }
         }
         outbox.push_back(message);
     }
 
-    /// Frames for the connect loop to send (bounded per call).
-    pub fn drain(&self) -> Vec<DaemonControlMessage> {
-        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
-        let n = outbox.len().min(32);
-        outbox.drain(..n).collect()
+    /// Take the next queued frames (bounded per call) for one socket write
+    /// (W1, a#1): the connect loop writes each, flushes the socket, then
+    /// calls `ImageBatch::sent`. Only then does a frame count as sent and a
+    /// terminal upload frame retire its job from the resume registry. Of a
+    /// batch dropped unsent (a write or the flush failed), the upload
+    /// progress and terminal frames (`replayed_after_failed_write`) go back
+    /// to the front of the outbox in order (the next connection's resumes
+    /// still go ahead of them); every other frame is dropped.
+    pub fn take_batch(&self) -> ImageBatch {
+        let frames = {
+            let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+            let n = outbox.len().min(BATCH_MAX);
+            outbox.drain(..n).collect()
+        };
+        ImageBatch {
+            inner: self.inner.clone(),
+            frames,
+            sent: false,
+        }
+    }
+
+    /// Tests only: the next queued frames, as a socket that writes and
+    /// flushes them all would take them (`take_batch`).
+    #[cfg(test)]
+    pub(crate) fn drain(&self) -> Vec<DaemonControlMessage> {
+        let batch = self.take_batch();
+        let sent = batch.frames().to_vec();
+        batch.sent();
+        sent
     }
 
     /// After `reconcile.complete`: queue the bounded census pages; the first
     /// goes now, each later page on the previous page's ACK. A new connection
     /// always starts afresh (the old one's ACKs can never arrive).
+    /// Every census page still queued (an older run's, or an older
+    /// connection's, r5 #1) goes first: the server takes a page as the
+    /// current run's, so only this run's pages may follow.
     pub fn begin_census(&self) {
         let pages = self.census_pages();
         let mut census = self.inner.census.lock().unwrap_or_else(|e| e.into_inner());
+        self.purge_queued(|m| matches!(m, DaemonControlMessage::ImageCacheCensus(_)));
         census.pages = pages;
         census.awaiting_since = None;
         if let Some(first) = census.pages.pop_front() {
@@ -727,7 +1525,17 @@ impl ImageService {
             .waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(key.to_owned(), tx);
+            .insert(key.to_owned(), Waiter::Plain(tx));
+        rx
+    }
+
+    /// One receiver of stamped frames for every key in `keys`.
+    fn register_stamped(&self, keys: &[String]) -> mpsc::Receiver<Routed> {
+        let (tx, rx) = mpsc::channel();
+        let mut waiters = self.inner.waiters.lock().unwrap_or_else(|e| e.into_inner());
+        for key in keys {
+            waiters.insert(key.clone(), Waiter::Stamped(tx.clone()));
+        }
         rx
     }
 
@@ -741,7 +1549,17 @@ impl ImageService {
 
     fn deliver(&self, key: &str, frame: ServerControlMessage) -> bool {
         let waiters = self.inner.waiters.lock().unwrap_or_else(|e| e.into_inner());
-        waiters.get(key).is_some_and(|tx| tx.send(frame).is_ok())
+        match waiters.get(key) {
+            Some(Waiter::Plain(tx)) => tx.send(frame).is_ok(),
+            Some(Waiter::Stamped(tx)) => tx
+                .send(Routed {
+                    frame,
+                    at: self.now(),
+                    connection: self.inner.connections.load(Ordering::SeqCst),
+                })
+                .is_ok(),
+            None => false,
+        }
     }
 
     /// Route one server→daemon image frame.
@@ -796,8 +1614,27 @@ impl ImageService {
                 }
             }
             ServerControlMessage::ImageJobResumeResult(ref r) => {
-                let key = format!("resume:{}", r.transfer_id);
-                self.deliver(&key, frame);
+                let Some(job) =
+                    JobRef::of(r.transfer_id.as_ref(), r.operation_id.as_ref(), r.attempt)
+                else {
+                    return;
+                };
+                if !r.proceed {
+                    // The server has no such job any more: an ended job
+                    // retires, and its queued resume and terminal frame go
+                    // with it (r5 #3; they would only be answered stale).
+                    let mut resumable = self
+                        .inner
+                        .resumable
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    let before = resumable.len();
+                    resumable.retain(|_, e| !(e.terminal && e.reference == job));
+                    if resumable.len() != before {
+                        self.purge_queued(|m| job.names(m));
+                    }
+                }
+                self.deliver(&job.resume_key(), frame);
             }
             ServerControlMessage::ImageServeRequest(request) => {
                 let service = self.clone();
@@ -2082,7 +2919,7 @@ impl ImageService {
             .map_err(|e| UploadFailure::transport(&e).at_part(link.part))?;
         let status = response.status().as_u16();
         if status != 204 {
-            return Err(UploadFailure::status(status, None, 0).at_part(link.part));
+            return Err(UploadFailure::status(status, false).at_part(link.part));
         }
         Ok(())
     }
@@ -2210,6 +3047,18 @@ impl ImageService {
         &self,
         fingerprint: &str,
     ) -> Result<(PathBuf, u64, StagingReservation), ImageFailureCode> {
+        #[cfg(test)]
+        if let Some(gate) = self
+            .inner
+            .export_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            let (entered, held) = gate;
+            let _ = entered.send(());
+            let _ = held.recv();
+        }
         // One directory and one reservation per export job (round-2 P2-5):
         // concurrent exports of one image never share a charge or a path.
         let name = format!("export-{}-{}", &fingerprint[7..], self.next_id("job"));
@@ -2360,23 +3209,88 @@ impl ImageService {
     /// capture (`operation`). Encrypts records when the grant carries a key.
     /// Every end other than success is reported (`image.job.failed`, by
     /// transfer, else by the capture's operation and attempt) unless the
-    /// server said another upload stores the image.
+    /// server said another upload stores the image. The job is in the resume
+    /// registry from its start until its terminal frame (that report, or
+    /// `image.upload.complete`) left the outbox (V1).
     pub fn upload(&self, fingerprint: &str, owner: &str, job: UploadJob) {
-        let (transfer, capture) = match job {
-            UploadJob::Publish(transfer) => (Some(transfer), None),
+        let (transfer, capture, reference) = match job {
+            UploadJob::Publish(transfer) => {
+                let reference = JobRef::Transfer(transfer.clone());
+                (Some(transfer), None, reference)
+            }
             UploadJob::Capture {
                 operation_id,
                 attempt,
-            } => (None, Some((operation_id, attempt))),
+            } => {
+                let reference = JobRef::Operation(operation_id.clone(), attempt);
+                (None, Some((operation_id, attempt)), reference)
+            }
         };
         let _ = owner;
         self.mark_in_use(fingerprint, 1);
+        let reported = Arc::new(AtomicU64::new(0));
+        // Its resume answers have a waiter before the job is visible to a
+        // reconnect (W4): an answer that comes while it exports is kept.
+        let start_key = reference.resume_key();
+        let start_rx = self.register_stamped(std::slice::from_ref(&start_key));
+        let mut waiters = vec![start_key];
+        // Registered under the lock `on_registered` takes: the job starts
+        // bound to the connection counted here, and every later one queues
+        // its resume. It waits while the protected backlog is full
+        // (`admits_upload`); past `UPLOAD_ADMISSION_WAIT` it ends unstarted.
+        let admission = Instant::now() + UPLOAD_ADMISSION_WAIT;
+        let admitted = loop {
+            let resumable = self
+                .inner
+                .resumable
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if self.admits_upload(&resumable) {
+                break Some(resumable);
+            }
+            drop(resumable);
+            if Instant::now() >= admission {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        let Some(mut resumable) = admitted else {
+            tracing::warn!(
+                fingerprint,
+                "image upload not started: the relay outbox stayed backlogged"
+            );
+            for key in waiters {
+                self.unregister(&key);
+            }
+            self.mark_in_use(fingerprint, -1);
+            return;
+        };
+        let (number, connection) = {
+            let number = self.inner.seq.fetch_add(1, Ordering::Relaxed);
+            resumable.insert(
+                number,
+                ResumeEntry {
+                    reference,
+                    reported: reported.clone(),
+                    begin: None,
+                    begin_lost: false,
+                    terminal: false,
+                },
+            );
+            (number, self.inner.connections.load(Ordering::SeqCst))
+        };
+        drop(resumable);
         let mut transfer_id = transfer.clone();
-        let mut waiters = Vec::new();
         let outcome = self.upload_job(
-            fingerprint,
-            transfer.as_deref(),
-            capture.as_ref(),
+            UploadJobRun {
+                number,
+                fingerprint,
+                transfer: transfer.as_deref(),
+                capture: capture.as_ref(),
+                reported,
+            },
+            connection,
+            start_rx,
             &mut transfer_id,
             &mut waiters,
         );
@@ -2385,142 +3299,515 @@ impl ImageService {
         }
         // The export directory went with its reservation (inside the job).
         self.mark_in_use(fingerprint, -1);
-        if let Err(UploadEnd::Failed(failure)) = outcome {
-            failure.log("image upload ended", transfer_id.as_deref());
-            let capture = capture
-                .as_ref()
-                .map(|(op, attempt)| (op.as_str(), *attempt));
-            if let Some(frame) = failure.frame(transfer_id.as_deref(), capture) {
-                self.push(DaemonControlMessage::ImageJobFailed(frame));
+        let terminal = match outcome {
+            Ok(()) => transfer_id.as_ref().map(|transfer| {
+                DaemonControlMessage::ImageUploadComplete(ImageTransferRefV11 {
+                    transfer_id: transfer.clone(),
+                })
+            }),
+            Err(UploadEnd::Failed(failure)) => {
+                failure.log("image upload ended", transfer_id.as_deref());
+                let capture = capture
+                    .as_ref()
+                    .map(|(op, attempt)| (op.as_str(), *attempt));
+                failure
+                    .frame(transfer_id.as_deref(), capture)
+                    .map(DaemonControlMessage::ImageJobFailed)
             }
-        }
+            Err(UploadEnd::Silent) => None,
+        };
+        self.finish_job(number, terminal);
         #[cfg(test)]
         self.inner.uploads_finished.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// One upload: export, begin, then each grant's parts. `transfer_id`
+    /// Queue a job's terminal frame; the job stays in the resume registry
+    /// until `drain` hands that frame to a connection (every connection
+    /// carries the job's resume first). Without one the job leaves now.
+    fn finish_job(&self, number: u64, terminal: Option<DaemonControlMessage>) {
+        let mut resumable = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        match terminal {
+            Some(frame) => {
+                if let Some(entry) = resumable.get_mut(&number) {
+                    entry.terminal = true;
+                    entry.begin = None;
+                }
+                self.push(frame);
+            }
+            None => {
+                // Retired without a terminal frame: its queued resume goes.
+                if let Some(entry) = resumable.remove(&number) {
+                    self.purge_queued(|m| entry.reference.names(m));
+                }
+            }
+        }
+    }
+
+    /// Drop every queued frame `unwanted` matches. Lock order: the resume
+    /// registry (when held) before the outbox.
+    pub(crate) fn purge_queued(&self, unwanted: impl Fn(&DaemonControlMessage) -> bool) {
+        self.inner
+            .outbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|m| !unwanted(m));
+    }
+
+    /// Whether a new upload job may start now (r5 #3): the queued
+    /// protected frames plus two per live job stay below `PROTECTED_MAX`.
+    /// Called under the resume registry's lock, which the caller then
+    /// inserts the job under.
+    fn admits_upload(&self, resumable: &HashMap<u64, ResumeEntry>) -> bool {
+        let live = resumable.values().filter(|e| !e.terminal).count();
+        let queued = self
+            .inner
+            .outbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|m| JobRef::protected_frame(m))
+            .count();
+        queued + 2 * live < PROTECTED_MAX
+    }
+
+    /// Record (or clear) the capture begin in flight of job `number`.
+    fn set_begin(&self, number: u64, request: Option<String>) {
+        if let Some(entry) = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&number)
+        {
+            entry.begin = request;
+            entry.begin_lost = false;
+        }
+    }
+
+    /// Whether job `number`'s begin in flight was lost with a connection.
+    fn take_begin_lost(&self, number: u64) -> bool {
+        self.inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&number)
+            .is_some_and(|entry| std::mem::take(&mut entry.begin_lost))
+    }
+
+    /// Wait on an upload job's receiver within `budget` (charged before
+    /// every return). A connection generation other than `connection` ends
+    /// the wait `Reconnected` (frames already routed come first); `stop`
+    /// ends it `Timeout`.
+    fn wait_upload(
+        &self,
+        rx: &mpsc::Receiver<Routed>,
+        budget: &mut Budget,
+        connection: u64,
+        stop: &dyn Fn() -> bool,
+    ) -> Waited {
+        loop {
+            let now = self.now();
+            budget.charge(now, self.inner.connected.load(Ordering::SeqCst));
+            match rx.try_recv() {
+                Ok(routed) => return Waited::Frame(Box::new(routed)),
+                Err(mpsc::TryRecvError::Disconnected) => return Waited::Timeout,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            if self.inner.connections.load(Ordering::SeqCst) != connection {
+                return Waited::Reconnected;
+            }
+            if budget.spent(now) || stop() {
+                return Waited::Timeout;
+            }
+            let slice = budget
+                .left
+                .min(budget.until.saturating_duration_since(now))
+                .min(Duration::from_millis(100));
+            match rx.recv_timeout(slice) {
+                Ok(routed) => {
+                    budget.charge(self.now(), self.inner.connected.load(Ordering::SeqCst));
+                    return Waited::Frame(Box::new(routed));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Waited::Timeout,
+            }
+        }
+    }
+
+    /// When the relay connection is no longer `connection`: wait for the
+    /// answer to this job's resume on the current connection
+    /// (`on_registered` queued it ahead of the job's frames). Answers to an
+    /// older connection are ignored, and a newer reconnect waits for the
+    /// newer answer (FB-B3). The wait spends the caller's `budget` (clipped
+    /// to the grant wait; one deadline across every reconnect) and, when it
+    /// runs out, ends with the caller's `timeout`. True when the job was
+    /// resumed (bound to the current connection now); `continue: false`
+    /// ends it `refused` with `refusal`, a cancel with its reason.
+    fn await_resume(
+        &self,
+        rx: &mpsc::Receiver<Routed>,
+        connection: &mut u64,
+        refusal: &str,
+        budget: &mut Budget,
+        timeout: &dyn Fn() -> UploadEnd,
+        stop: &dyn Fn() -> bool,
+    ) -> Result<bool, UploadEnd> {
+        let mut own = budget.within(self.grant_wait());
+        let mut resumed = false;
+        let outcome = loop {
+            let now = self.inner.connections.load(Ordering::SeqCst);
+            if now == *connection {
+                break Ok(resumed);
+            }
+            match self.wait_upload(rx, &mut own, now, stop) {
+                Waited::Reconnected => {}
+                Waited::Frame(routed) => match routed.frame {
+                    ServerControlMessage::ImageJobResumeResult(_) if routed.connection != now => {}
+                    ServerControlMessage::ImageJobResumeResult(answer) if answer.proceed => {
+                        *connection = now;
+                        resumed = true;
+                    }
+                    ServerControlMessage::ImageJobResumeResult(_) => {
+                        break Err(UploadFailure::refused(refusal).into());
+                    }
+                    ServerControlMessage::ImageJobCancel(cancel) => {
+                        break Err(UploadEnd::cancelled(&cancel.reason));
+                    }
+                    _ => {}
+                },
+                Waited::Timeout => break Err(timeout()),
+            }
+        };
+        budget.settle(&own);
+        outcome
+    }
+
+    /// `image.upload.begin` until the server grants it. A capture's begin is
+    /// re-sent after a transient refusal (`BEGIN_RETRY_REASONS`,
+    /// `UploadTimings::begin_retry`); a publish begin never is (W5: its
+    /// transfer ends with the refusal and server backfill retries it). The
+    /// whole begin is one wait (`Budget`): the grant wait of connected time
+    /// until the first transient refusal, then a fresh `begin_budget` from
+    /// that refusal, which every later wait, resume and pause spends; when
+    /// it runs out the capture
+    /// is reported `refused` with the last reason. A capture waits under a
+    /// fresh request id per begin until the grant that echoes it names the
+    /// transfer (round-3 P2-4). A relay reconnect first resumes the job (its
+    /// operation, or a publish's transfer); a capture begin that had already
+    /// left the outbox is sent again. Returns the first grant as routed.
+    fn begin_upload(
+        &self,
+        job: &UploadJobRun<'_>,
+        size: u64,
+        waiters: &mut Vec<String>,
+        connection: &mut u64,
+        resume_rx: &mpsc::Receiver<Routed>,
+    ) -> Result<Routed, UploadEnd> {
+        let never = || false;
+        let timings = self.timings();
+        let mut steps = timings.begin_retry.into_iter();
+        // From the first transient refusal: the last reason.
+        let mut retrying: Option<String> = None;
+        let refusal = if job.capture.is_some() {
+            "stale_capture"
+        } else {
+            "stale_transfer"
+        };
+        let refused_now = |retrying: &Option<String>| -> UploadEnd {
+            match retrying {
+                Some(reason) => UploadFailure::refused(reason).into(),
+                None => {
+                    UploadFailure::new(ImageFailureCode::Timeout, ImageFailureCause::NoGrant).into()
+                }
+            }
+        };
+        let start = self.now();
+        let mut budget = Budget::new(start, self.grant_wait(), start + UPLOAD_OUTAGE_MAX);
+        'begin: loop {
+            self.await_resume(
+                resume_rx,
+                connection,
+                refusal,
+                &mut budget,
+                &|| refused_now(&retrying),
+                &never,
+            )?;
+            let request_id = job.capture.map(|_| self.next_id("upload"));
+            let keys = match (job.transfer, &request_id) {
+                (Some(t), _) => vec![format!("upload:{t}")],
+                (None, Some(request)) => vec![format!("upload-req:{request}")],
+                (None, None) => return Err(UploadEnd::Silent),
+            };
+            let rx = self.register_stamped(&keys);
+            waiters.extend(keys.iter().cloned());
+            self.set_begin(job.number, request_id.clone());
+            self.push(DaemonControlMessage::ImageUploadBegin(
+                ImageUploadBeginV11 {
+                    transfer_id: job.transfer.map(str::to_owned),
+                    operation_id: job.capture.map(|(op, _)| op.clone()),
+                    request_id: request_id.clone(),
+                    attempt: job.capture.map(|(_, attempt)| *attempt),
+                    fingerprint: job.fingerprint.to_owned(),
+                    size_bytes: size,
+                    unpacked_bytes: None,
+                    format: "unified".into(),
+                },
+            ));
+            loop {
+                match self.wait_upload(&rx, &mut budget, *connection, &never) {
+                    Waited::Frame(routed) => match *routed {
+                        Routed {
+                            frame: ServerControlMessage::ImageUploadGrant(grant),
+                            at,
+                            connection: on,
+                        } => {
+                            if job.transfer.is_none() && grant.request_id != request_id {
+                                return Err(UploadFailure::new(
+                                    ImageFailureCode::Rejected,
+                                    ImageFailureCause::Protocol,
+                                )
+                                .into());
+                            }
+                            self.set_begin(job.number, None);
+                            return Ok(Routed {
+                                frame: ServerControlMessage::ImageUploadGrant(grant),
+                                at,
+                                connection: on,
+                            });
+                        }
+                        Routed {
+                            frame: ServerControlMessage::ImageJobCancel(cancel),
+                            ..
+                        } => {
+                            self.set_begin(job.number, None);
+                            if job.capture.is_none()
+                                || !BEGIN_RETRY_REASONS.contains(&cancel.reason.as_str())
+                            {
+                                return Err(UploadEnd::cancelled(&cancel.reason));
+                            }
+                            // The retry allowance starts at the first
+                            // transient refusal (b#3): `begin_budget` from
+                            // now, whatever the first wait spent; later waits,
+                            // resumes and pauses all spend it.
+                            if retrying.is_none() {
+                                let now = self.now();
+                                budget = Budget::new(
+                                    now,
+                                    timings.begin_budget,
+                                    now + timings.begin_budget,
+                                );
+                            }
+                            retrying = Some(cancel.reason.clone());
+                            // A pause that does not fit in what is left of the
+                            // budget ends the retries now.
+                            let left = budget.until.saturating_duration_since(self.now());
+                            let Some(wait) = steps
+                                .next()
+                                .map(|step| self.jittered(step))
+                                .filter(|w| *w <= left)
+                            else {
+                                return Err(refused_now(&retrying));
+                            };
+                            tracing::info!(
+                                refusal = cancel.reason.as_str(),
+                                "image upload begin refused for now; retrying"
+                            );
+                            for key in &keys {
+                                self.unregister(key);
+                            }
+                            self.pause(wait, &never);
+                            continue 'begin;
+                        }
+                        _ => {}
+                    },
+                    Waited::Reconnected => {
+                        self.await_resume(
+                            resume_rx,
+                            connection,
+                            refusal,
+                            &mut budget,
+                            &|| refused_now(&retrying),
+                            &never,
+                        )?;
+                        if job.capture.is_some() && self.take_begin_lost(job.number) {
+                            // Its answer went with the old connection.
+                            for key in &keys {
+                                self.unregister(key);
+                            }
+                            continue 'begin;
+                        }
+                    }
+                    Waited::Timeout => return Err(refused_now(&retrying)),
+                }
+            }
+        }
+    }
+
+    /// One upload: export, begin, then every part in order. Part URLs are
+    /// pulled (`image.upload.renew`) when the granted window is used up or
+    /// the next URL is about to expire; uploaded parts are reported every
+    /// `FLUSH_PARTS`, every `flush_every` and before each renew. A relay
+    /// reconnect resumes the job on the new connection first. `transfer_id`
     /// holds the transfer once known; `waiters` collects the keys to drop.
+    /// The terminal frame is the caller's (`finish_job`).
     fn upload_job(
         &self,
-        fingerprint: &str,
-        transfer: Option<&str>,
-        capture: Option<&(String, u64)>,
+        job: UploadJobRun<'_>,
+        mut connection: u64,
+        start_rx: mpsc::Receiver<Routed>,
         transfer_id: &mut Option<String>,
         waiters: &mut Vec<String>,
     ) -> Result<(), UploadEnd> {
         let (path, size, _reservation) = self
-            .export_unified(fingerprint)
+            .export_unified(job.fingerprint)
             .map_err(|code| UploadFailure::new(code, ImageFailureCause::Export))?;
         let protocol =
             || UploadFailure::new(ImageFailureCode::Rejected, ImageFailureCause::Protocol);
-        // A capture waits under its own request id until the server names
-        // the transfer in the grant that echoes it (round-3 P2-4).
-        let request_id = capture.map(|_| self.next_id("upload"));
-        let key = match (transfer, &request_id) {
-            (Some(t), _) => format!("upload:{t}"),
-            (None, Some(request)) => format!("upload-req:{request}"),
-            (None, None) => return Err(UploadEnd::Silent),
-        };
-        let mut rx = self.register(&key);
-        waiters.push(key);
-        self.push(DaemonControlMessage::ImageUploadBegin(
-            ImageUploadBeginV11 {
-                transfer_id: transfer.map(str::to_owned),
-                operation_id: capture.map(|(op, _)| op.clone()),
-                request_id: request_id.clone(),
-                attempt: capture.map(|(_, attempt)| *attempt),
-                fingerprint: fingerprint.to_owned(),
-                size_bytes: size,
-                unpacked_bytes: None,
-                format: "unified".into(),
-            },
-        ));
-        let always = || true;
         let mut file = std::fs::File::open(&path).map_err(|e| UploadFailure::local_io(e.kind()))?;
+        let routed = self.begin_upload(&job, size, waiters, &mut connection, &start_rx)?;
+        let Routed {
+            frame: ServerControlMessage::ImageUploadGrant(mut grant),
+            at: granted_at,
+            connection: granted_on,
+        } = routed
+        else {
+            return Err(protocol().into());
+        };
+        let tid = grant.transfer_id.clone();
+        if job.transfer.is_some_and(|t| t != tid) {
+            return Err(protocol().into());
+        }
+        *transfer_id = Some(tid.clone());
+        // Grants, refusals and cancels of the transfer (a capture re-keys
+        // its waiter from the begin's request id); resume answers.
+        let key = format!("upload:{tid}");
+        let rx = self.register_stamped(std::slice::from_ref(&key));
+        waiters.push(key);
+        let resume_rx = if job.capture.is_some() {
+            let resume_key = format!("resume:{tid}");
+            let rx = self.register_stamped(std::slice::from_ref(&resume_key));
+            waiters.push(resume_key);
+            rx
+        } else {
+            start_rx
+        };
         let mut record_key: Option<crypto::RecordKey> = None;
-        let mut heartbeat = transfer.map(|t| self.heartbeat(t));
-        let mut sent_total = 0u64;
+        if let Some(e) = grant.encryption.as_mut() {
+            // The data key leaves the frame at once (wiped on drop).
+            let text = crypto::take_grant_key(e);
+            record_key = Some(crypto::RecordKey::from_base64(&text).map_err(|_| protocol())?);
+        }
+        let stored_size = if record_key.is_some() {
+            sandbox_protocol::encrypted_image_len(size)
+        } else {
+            size
+        };
+        let part_size = grant.part_size;
+        let total = u32::try_from(stored_size.div_ceil(part_size.max(1)).max(1))
+            .ok()
+            .filter(|n| *n <= 10_000)
+            .ok_or_else(protocol)?;
+        // The job now names its transfer. The grant's transfer is bound to
+        // the connection the grant came on: when a reconnect came since
+        // (life#3), its resume is queued now, under the lock
+        // `on_registered` takes, and the run waits for the answer.
+        {
+            let mut resumable = self
+                .inner
+                .resumable
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let reference = JobRef::Transfer(tid.clone());
+            if let Some(entry) = resumable.get_mut(&job.number) {
+                entry.reference = reference.clone();
+                entry.begin = None;
+            }
+            if granted_on != self.inner.connections.load(Ordering::SeqCst) {
+                let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+                outbox.retain(|m| JobRef::resumed_by(m).as_ref() != Some(&reference));
+                outbox.push_front(reference.resume(0));
+            }
+        }
+        let heartbeat = self.heartbeat(&tid);
+        let mut run = UploadRun {
+            service: self,
+            tid: tid.clone(),
+            rx,
+            resume_rx,
+            timings: self.timings(),
+            part_size,
+            stored_size,
+            window: std::collections::BTreeMap::new(),
+            expiry: self.now(),
+            margin: Duration::ZERO,
+            done: std::collections::BTreeMap::new(),
+            pending: Vec::new(),
+            reported_parts: HashSet::new(),
+            counted: HashSet::new(),
+            reported: job.reported.clone(),
+            last_flush: Instant::now(),
+            connection: granted_on,
+        };
+        run.take_grant(grant, granted_at)?;
+        let stop = || self.cancelled(&tid);
+        let mut next = 1u32;
         loop {
-            let mut grant = match wait_for(&rx, self.grant_wait(), &always) {
-                Some(ServerControlMessage::ImageUploadGrant(grant)) => grant,
-                Some(ServerControlMessage::ImageJobCancel(cancel)) => {
-                    return Err(UploadEnd::cancelled(&cancel.reason));
-                }
-                _ => {
-                    return Err(UploadFailure::new(
-                        ImageFailureCode::Timeout,
-                        ImageFailureCause::NoGrant,
-                    )
-                    .into());
-                }
+            if self.cancelled(&tid) {
+                return Err(run.cancel_end());
+            }
+            while run.done.contains_key(&next) {
+                next += 1;
+            }
+            if next > total {
+                run.flush();
+                return Ok(());
+            }
+            // A reconnect is resumed inside the renew it needs anyway (the
+            // window is dropped on resume): one wait, one deadline (W3).
+            let url = if run.reconnected() {
+                None
+            } else {
+                run.url(next)
             };
-            if transfer_id.is_none() {
-                if grant.request_id != request_id {
-                    return Err(protocol().into());
-                }
-                // Capture: re-key the waiter by the transfer the server opened.
-                let key = format!("upload:{}", grant.transfer_id);
-                rx = self.register(&key);
-                waiters.push(key);
-                *transfer_id = Some(grant.transfer_id.clone());
-                heartbeat = Some(self.heartbeat(&grant.transfer_id));
-            }
-            let tid = transfer_id.clone().ok_or_else(protocol)?;
-            if let Some(e) = grant.encryption.as_mut() {
-                // The data key leaves the frame at once (wiped on drop).
-                let text = crypto::take_grant_key(e);
-                record_key = Some(crypto::RecordKey::from_base64(&text).map_err(|_| protocol())?);
-            }
-            let stop = || self.cancelled(&tid);
-            let (reported, sent) = self
-                .put_parts(
+            let Some((url, expiry)) = url else {
+                run.renew(next)?;
+                continue;
+            };
+            let etag = self
+                .put_part_retrying(
                     &mut file,
                     size,
-                    grant.part_size,
-                    &grant.parts,
+                    part_size,
+                    &url,
+                    Some(expiry),
                     record_key.as_ref(),
                     None,
                     &stop,
-                    heartbeat.as_ref(),
-                )
-                .map_err(|failure| {
-                    if failure.code == ImageFailureCode::Cancelled {
-                        // The server cancelled the transfer: its reason is
-                        // waiting on this transfer's receiver.
-                        let reason = rx.try_iter().find_map(|frame| match frame {
-                            ServerControlMessage::ImageJobCancel(cancel) => Some(cancel.reason),
-                            _ => None,
-                        });
-                        return UploadEnd::cancelled(reason.as_deref().unwrap_or("cancelled"));
-                    }
-                    let failure = match failure.http_status {
-                        Some(403) => UploadFailure {
-                            part: failure.part,
-                            ..UploadFailure::status(403, Some(grant.expires_at_unix_ms), now_ms())
-                        },
-                        _ => failure,
-                    };
-                    failure.into()
-                })?;
-            sent_total += sent;
-            let stored_size = if record_key.is_some() {
-                sandbox_protocol::encrypted_image_len(size)
-            } else {
-                size
-            };
-            for chunk in reported.chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX) {
-                self.push(DaemonControlMessage::ImageUploadParts(
-                    ImageUploadPartsV11 {
-                        transfer_id: tid.clone(),
-                        parts: chunk.to_vec(),
+                    Some(&heartbeat),
+                    &mut |n| {
+                        run.renew(n)?;
+                        Ok(run.url(n))
                     },
-                ));
-            }
-            if sent_total >= stored_size {
-                self.push(DaemonControlMessage::ImageUploadComplete(
-                    ImageTransferRefV11 { transfer_id: tid },
-                ));
-                return Ok(());
+                )
+                .map_err(|end| match end {
+                    // The server cancelled the transfer: its reason is
+                    // waiting on this transfer's receiver.
+                    UploadEnd::Failed(f) if f.code == ImageFailureCode::Cancelled => {
+                        run.cancel_end()
+                    }
+                    end => end,
+                })?;
+            run.window.remove(&next);
+            run.done.insert(next, etag.clone());
+            run.pending.push(ImageUploadedPartV11 { n: next, etag });
+            if run.pending.len() >= FLUSH_PARTS
+                || run.last_flush.elapsed() >= run.timings.flush_every
+            {
+                run.flush();
             }
         }
     }
@@ -2528,8 +3815,9 @@ impl ImageService {
     /// The image-store part loop shared by template uploads and disk
     /// offloads: read each granted part (whole sealed
     /// records when keyed), pace it through `limit`, PUT it to its presigned
-    /// URL and collect its ETag. `stop` is checked before every part (kill
-    /// and reconnect preempt a disk upload); a stop ends with code
+    /// URL (retried, `put_part_retrying`; a 403 is final here, there is no
+    /// renew) and collect its ETag. `stop` is checked before every part
+    /// (kill and reconnect preempt a disk upload); a stop ends with code
     /// `Cancelled`. Bytes are counted through the request body into
     /// `heartbeat`. Returns the parts and the bytes sent.
     #[allow(clippy::too_many_arguments)]
@@ -2542,7 +3830,7 @@ impl ImageService {
         key: Option<&crypto::RecordKey>,
         limit: Option<&super::offload::Bandwidth>,
         stop: &dyn Fn() -> bool,
-        heartbeat: Option<&UploadHeartbeat<'_>>,
+        heartbeat: Option<&UploadHeartbeat>,
     ) -> Result<(Vec<ImageUploadedPartV11>, u64), UploadFailure> {
         let mut reported = Vec::new();
         let mut sent = 0u64;
@@ -2550,25 +3838,100 @@ impl ImageService {
             if stop() {
                 return Err(UploadFailure::refused("cancelled"));
             }
-            let result = self.put_part(file, size, part_size, part, key, limit, stop, heartbeat);
-            match result {
-                Ok(etag) => {
-                    sent += part.size_bytes;
-                    reported.push(ImageUploadedPartV11 { n: part.n, etag });
-                }
-                Err(failure) => {
-                    let failure = failure.at_part(part.n);
-                    if failure.code != ImageFailureCode::Cancelled {
-                        failure.log(
-                            "image store part upload failed",
-                            heartbeat.map(|h| h.transfer_id.as_str()),
-                        );
-                    }
-                    return Err(failure);
-                }
-            }
+            let etag = self
+                .put_part_retrying(
+                    file,
+                    size,
+                    part_size,
+                    part,
+                    None,
+                    key,
+                    limit,
+                    stop,
+                    heartbeat,
+                    &mut |_| Ok(None),
+                )
+                .map_err(|end| match end {
+                    UploadEnd::Failed(failure) => failure,
+                    UploadEnd::Silent => UploadFailure::refused("cancelled"),
+                })?;
+            sent += part.size_bytes;
+            reported.push(ImageUploadedPartV11 { n: part.n, etag });
         }
         Ok((reported, sent))
+    }
+
+    /// PUT one part, retried inside the upload: up to `PART_ATTEMPTS`
+    /// attempts for a transient failure (`UploadFailure::retryable`), paced
+    /// by `UploadTimings::part_retry` with jitter; a 403 gets one fresh URL
+    /// from `renew` (`None`: no renew, the 403 is final) and one more try.
+    /// Every retry is one sanitized warn line; the final failure another.
+    /// `expiry` is when `part`'s URL lapses on this host's clock (a 403
+    /// after it is `url_expired`). Its ETag.
+    #[allow(clippy::too_many_arguments)]
+    fn put_part_retrying(
+        &self,
+        file: &mut std::fs::File,
+        size: u64,
+        part_size: u64,
+        part: &sandbox_protocol::ImageUploadPartUrlV11,
+        expiry: Option<Instant>,
+        key: Option<&crypto::RecordKey>,
+        limit: Option<&super::offload::Bandwidth>,
+        stop: &dyn Fn() -> bool,
+        heartbeat: Option<&UploadHeartbeat>,
+        renew: &mut dyn FnMut(
+            u32,
+        ) -> Result<
+            Option<(sandbox_protocol::ImageUploadPartUrlV11, Instant)>,
+            UploadEnd,
+        >,
+    ) -> Result<String, UploadEnd> {
+        let transfer = heartbeat.map(|h| h.transfer_id.as_str());
+        let delays = self.timings().part_retry;
+        let mut url = part.clone();
+        let mut expiry = expiry;
+        let mut renewed = false;
+        let mut attempt = 1u32;
+        loop {
+            let failure =
+                match self.put_part(file, size, part_size, &url, key, limit, stop, heartbeat) {
+                    Ok(etag) => return Ok(etag),
+                    Err(failure) => failure.at_part(part.n).at_attempt(attempt),
+                };
+            if failure.code == ImageFailureCode::Cancelled {
+                return Err(failure.into());
+            }
+            if failure.http_status == Some(403) && !renewed && attempt < PART_ATTEMPTS {
+                renewed = true;
+                if let Some((fresh, lapses)) = renew(part.n)? {
+                    failure.log("image store part upload retrying", transfer);
+                    url = fresh;
+                    expiry = Some(lapses);
+                    attempt += 1;
+                    continue;
+                }
+            }
+            let failure = match failure.http_status {
+                Some(403) => UploadFailure {
+                    part: failure.part,
+                    attempt: failure.attempt,
+                    ..UploadFailure::status(403, expiry.is_some_and(|at| self.now() >= at))
+                },
+                _ => failure,
+            };
+            if failure.retryable() && attempt < PART_ATTEMPTS {
+                failure.log("image store part upload retrying", transfer);
+                let wait = delays[(attempt - 1) as usize];
+                if !self.pause(self.jittered(wait), stop) {
+                    return Err(UploadFailure::refused("cancelled").into());
+                }
+                attempt += 1;
+                continue;
+            }
+            failure.log("image store part upload failed", transfer);
+            return Err(failure.into());
+        }
     }
 
     /// PUT one part; its ETag.
@@ -2582,7 +3945,7 @@ impl ImageService {
         key: Option<&crypto::RecordKey>,
         limit: Option<&super::offload::Bandwidth>,
         stop: &dyn Fn() -> bool,
-        heartbeat: Option<&UploadHeartbeat<'_>>,
+        heartbeat: Option<&UploadHeartbeat>,
     ) -> Result<String, UploadFailure> {
         let body = read_stored_part(file, size, part_size, part.n, key)
             .map_err(|e| UploadFailure::local_io(e.kind()))?;
@@ -2604,20 +3967,25 @@ impl ImageService {
             base: u64::from(part.n - 1).saturating_mul(part_size),
             heartbeat,
         };
-        let response = self
-            .inner
-            .http
-            .put(&part.url)
-            .header("Content-Type", "application/octet-stream")
-            .header("Content-Length", body.len().to_string())
-            .config()
-            .timeout_recv_response(Some(PUT_RESPONSE_WAIT))
-            .build()
-            .send(ureq::SendBody::from_reader(&mut reader))
-            .map_err(|e| UploadFailure::transport(&e))?;
+        let mut send = || {
+            self.inner
+                .http
+                .put(&part.url)
+                .header("Content-Type", "application/octet-stream")
+                .header("Content-Length", body.len().to_string())
+                .config()
+                .timeout_recv_response(Some(PUT_RESPONSE_WAIT))
+                .build()
+                .send(ureq::SendBody::from_reader(&mut reader))
+        };
+        let response = match heartbeat {
+            Some(heartbeat) => heartbeat.sending(send),
+            None => send(),
+        }
+        .map_err(|e| UploadFailure::transport(&e))?;
         let status = response.status().as_u16();
         if status != 200 {
-            return Err(UploadFailure::status(status, None, 0));
+            return Err(UploadFailure::status(status, false));
         }
         response
             .headers()
@@ -2898,46 +4266,352 @@ pub enum UploadJob {
     Capture { operation_id: String, attempt: u64 },
 }
 
-/// Liveness of one upload: the byte offset reached in the stored object
-/// (monotonic within the transfer: a part sent again never moves it back),
-/// counted through the request bodies and sent as `image.upload.progress` at
-/// most every `every` and only when it advanced.
-pub(crate) struct UploadHeartbeat<'a> {
-    service: &'a ImageService,
+/// Liveness of one upload (I5): the byte offset reached in the stored
+/// object (logical progress, monotonic within the transfer: a part sent
+/// again never moves it back; counted as the request body is read) and
+/// every byte the socket took for its requests, retries included (physical
+/// activity, `wireBytes`; counted below ureq's body buffer, as each chunk
+/// leaves for the socket, `sending`). Both are sent as
+/// `image.upload.progress` at most every `every` (upload clock) and only
+/// when either advanced.
+pub(crate) struct UploadHeartbeat {
+    transfer_id: String,
+    state: std::rc::Rc<HeartbeatState>,
+}
+
+/// The counters of one `UploadHeartbeat`, shared with its transport hook.
+struct HeartbeatState {
+    service: ImageService,
     transfer_id: String,
     every: Duration,
     reached: std::cell::Cell<u64>,
-    /// When the last heartbeat went, and the offset it carried.
-    reported: std::cell::Cell<(Instant, u64)>,
+    wire: std::cell::Cell<u64>,
+    /// When the last heartbeat went, and the offset and wire count it carried.
+    reported: std::cell::Cell<(Instant, u64, u64)>,
 }
 
-impl UploadHeartbeat<'_> {
-    fn reach(&self, offset: u64) {
+impl UploadHeartbeat {
+    /// The body reached stored `offset`, after `moved` more bytes went out.
+    fn reach(&self, offset: u64, moved: u64) {
+        self.state.reach(offset, moved);
+    }
+
+    /// Run `send` (one part's request on this thread) with every chunk of
+    /// bytes the socket takes counted as wire progress (b#1: a slow drain of
+    /// a buffered write keeps heartbeats flowing).
+    fn sending<R>(&self, send: impl FnOnce() -> R) -> R {
+        let state = self.state.clone();
+        crate::tls::counting_transmits(std::rc::Rc::new(move |n| state.reach(0, n)), send)
+    }
+}
+
+impl HeartbeatState {
+    fn reach(&self, offset: u64, moved: u64) {
         let reached = self.reached.get().max(offset);
         self.reached.set(reached);
-        let (at, last) = self.reported.get();
-        if reached > last && at.elapsed() >= self.every {
-            self.reported.set((Instant::now(), reached));
+        let wire = self
+            .wire
+            .get()
+            .saturating_add(moved)
+            .min(sandbox_protocol::IMAGE_WIRE_BYTES_MAX);
+        self.wire.set(wire);
+        let (at, last, last_wire) = self.reported.get();
+        let now = self.service.now();
+        if (reached > last || wire > last_wire) && now.saturating_duration_since(at) >= self.every {
+            self.reported.set((now, reached, wire));
             self.service.push(DaemonControlMessage::ImageUploadProgress(
                 sandbox_protocol::ImageUploadProgressV11 {
                     transfer_id: self.transfer_id.clone(),
                     bytes_sent: reached,
+                    wire_bytes: wire,
                 },
             ));
         }
     }
 }
 
-/// A part body that reports the stored-object offset the transport has
-/// taken from it.
-struct CountingBody<'a, 'h> {
+/// The state of one running template upload between its parts: the
+/// granted URL window, the parts uploaded and those not yet reported.
+struct UploadRun<'a> {
+    service: &'a ImageService,
+    tid: String,
+    rx: mpsc::Receiver<Routed>,
+    resume_rx: mpsc::Receiver<Routed>,
+    timings: UploadTimings,
+    part_size: u64,
+    stored_size: u64,
+    /// Granted part URLs not used yet, and when they lapse (host clock).
+    window: std::collections::BTreeMap<u32, sandbox_protocol::ImageUploadPartUrlV11>,
+    expiry: Instant,
+    /// Renew a URL with less lifetime left than this (`url_margin`, at most
+    /// half the grant's TTL, so a short TTL never renews in a loop).
+    margin: Duration,
+    /// Every part uploaded, with its ETag.
+    done: std::collections::BTreeMap<u32, String>,
+    /// Uploaded parts not reported yet.
+    pending: Vec<ImageUploadedPartV11>,
+    /// Parts reported and not named by a later grant (no re-report owed).
+    reported_parts: HashSet<u32>,
+    /// Parts whose bytes `reported` counts: each once, however often its
+    /// ETag is reported again.
+    counted: HashSet<u32>,
+    /// Stored bytes of the distinct parts reported (the resume's `bytesDone`).
+    reported: Arc<AtomicU64>,
+    last_flush: Instant,
+    /// The relay connection this upload is bound to.
+    connection: u64,
+}
+
+impl UploadRun<'_> {
+    fn protocol() -> UploadEnd {
+        UploadFailure::new(ImageFailureCode::Rejected, ImageFailureCause::Protocol).into()
+    }
+
+    /// Take a grant's URLs (the window it names, lapsing `ttlSeconds` after
+    /// `at`, when it was routed). A part it names that this host already
+    /// uploaded was not recorded by the server (its report was dropped):
+    /// reported again.
+    fn take_grant(
+        &mut self,
+        grant: sandbox_protocol::ImageUploadGrantV11,
+        at: Instant,
+    ) -> Result<(), UploadEnd> {
+        if grant.transfer_id != self.tid || grant.part_size != self.part_size {
+            return Err(Self::protocol());
+        }
+        let ttl = Duration::from_secs(grant.ttl_seconds);
+        self.expiry = at + ttl;
+        self.margin = self.timings.url_margin.min(ttl / 2);
+        self.window.clear();
+        for part in grant.parts {
+            match self.done.get(&part.n) {
+                Some(etag) => {
+                    self.reported_parts.remove(&part.n);
+                    if !self.pending.iter().any(|p| p.n == part.n) {
+                        self.pending.push(ImageUploadedPartV11 {
+                            n: part.n,
+                            etag: etag.clone(),
+                        });
+                    }
+                }
+                None => {
+                    self.window.insert(part.n, part);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Part `n`'s URL and its lapse, while it has more than `url_margin` left.
+    fn url(&self, n: u32) -> Option<(sandbox_protocol::ImageUploadPartUrlV11, Instant)> {
+        let left = self.expiry.saturating_duration_since(self.service.now());
+        (left >= self.margin)
+            .then(|| self.window.get(&n).cloned())
+            .flatten()
+            .map(|url| (url, self.expiry))
+    }
+
+    /// Report the uploaded parts not reported yet.
+    fn flush(&mut self) {
+        self.last_flush = Instant::now();
+        if self.pending.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending);
+        for part in &pending {
+            self.reported_parts.insert(part.n);
+            if self.counted.insert(part.n) {
+                let start = u64::from(part.n - 1).saturating_mul(self.part_size);
+                let len = self.stored_size.saturating_sub(start).min(self.part_size);
+                self.reported.fetch_add(len, Ordering::SeqCst);
+            }
+        }
+        for chunk in pending.chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX) {
+            self.service.push(DaemonControlMessage::ImageUploadParts(
+                ImageUploadPartsV11 {
+                    transfer_id: self.tid.clone(),
+                    parts: chunk.to_vec(),
+                },
+            ));
+        }
+    }
+
+    /// The end a server cancel of this transfer means (its reason is on the
+    /// transfer's receivers).
+    fn cancel_end(&self) -> UploadEnd {
+        let reason = self
+            .rx
+            .try_iter()
+            .chain(self.resume_rx.try_iter())
+            .find_map(|routed| match routed.frame {
+                ServerControlMessage::ImageJobCancel(cancel) => Some(cancel.reason),
+                _ => None,
+            });
+        UploadEnd::cancelled(reason.as_deref().unwrap_or("cancelled"))
+    }
+
+    /// Whether the relay connection moved since this upload was bound.
+    fn reconnected(&self) -> bool {
+        self.service.inner.connections.load(Ordering::SeqCst) != self.connection
+    }
+
+    /// Inside a renew: a server cancel ends the upload; a new relay
+    /// connection resumes it there first, within the renew's `budget`.
+    fn check(&mut self, budget: &mut Budget) -> Result<(), UploadEnd> {
+        if self.service.cancelled(&self.tid) {
+            return Err(self.cancel_end());
+        }
+        self.resume_if_reconnected(budget)
+    }
+
+    /// After a reconnect, wait for the answer to the transfer's resume on
+    /// the current connection (`await_resume`, spending `budget`; `no_grant`
+    /// when it runs out). Continue → the old window is dropped (the renew
+    /// that follows starts from the server's lowest unrecorded part, which
+    /// also re-reports parts whose report the old connection lost); anything
+    /// else ends the upload.
+    fn resume_if_reconnected(&mut self, budget: &mut Budget) -> Result<(), UploadEnd> {
+        let service = self.service;
+        let tid = self.tid.clone();
+        let stop = || service.cancelled(&tid);
+        match service.await_resume(
+            &self.resume_rx,
+            &mut self.connection,
+            "stale_transfer",
+            budget,
+            &no_grant,
+            &stop,
+        ) {
+            Ok(true) => {
+                tracing::info!(transfer = self.tid.as_str(), "image upload resumed");
+                self.window.clear();
+                Ok(())
+            }
+            Ok(false) => Ok(()),
+            Err(_) if service.cancelled(&self.tid) => Err(self.cancel_end()),
+            Err(end) => Err(end),
+        }
+    }
+
+    /// Fresh URLs up to a usable one for part `want`: resume after a
+    /// reconnect, report the pending parts, then `image.upload.renew`,
+    /// re-sent per `renew_retry` while no grant answers (a renew over the
+    /// server's budget gets no reply), after a reconnect, and while a grant
+    /// names only parts already held (re-reported; a pause before the next
+    /// renew when nothing new was owed or the second such grant in a row
+    /// came, FB-B7). Grants routed before this renew's first send (dropped
+    /// from the receiver before it is queued, V2/W4) or already lapsed are
+    /// never used. The whole renew, its resume waits and pauses included, is
+    /// one wait (`Budget`): `UPLOAD_RENEW_WAIT` of connected time, then
+    /// `no_grant`.
+    fn renew(&mut self, want: u32) -> Result<(), UploadEnd> {
+        let service = self.service;
+        let start = service.now();
+        let mut budget = Budget::new(
+            start,
+            service.grant_wait().min(UPLOAD_RENEW_WAIT),
+            start + UPLOAD_OUTAGE_MAX,
+        );
+        let last = self.timings.renew_retry[self.timings.renew_retry.len() - 1];
+        let mut steps = self
+            .timings
+            .renew_retry
+            .into_iter()
+            .chain(std::iter::repeat(last));
+        let mut idle_grants = 0u32;
+        // Anything routed so far answers an earlier request: no grant of it
+        // is used (a cancel still ends the upload).
+        for routed in self.rx.try_iter() {
+            if let ServerControlMessage::ImageJobCancel(cancel) = routed.frame {
+                return Err(UploadEnd::cancelled(&cancel.reason));
+            }
+        }
+        let tid = self.tid.clone();
+        let stop = || service.cancelled(&tid);
+        loop {
+            // A pause above is spent time of this renew.
+            budget.charge(
+                service.now(),
+                service.inner.connected.load(Ordering::SeqCst),
+            );
+            self.check(&mut budget)?;
+            self.flush();
+            if budget.spent(service.now()) {
+                return Err(no_grant());
+            }
+            self.service.push(DaemonControlMessage::ImageUploadRenew(
+                sandbox_protocol::ImageUploadRenewV11 {
+                    transfer_id: self.tid.clone(),
+                },
+            ));
+            let step = steps.next().unwrap_or(last).min(budget.left);
+            let mut attempt = budget.within(step);
+            let outcome = loop {
+                match service.wait_upload(&self.rx, &mut attempt, self.connection, &stop) {
+                    Waited::Frame(routed) => match *routed {
+                        Routed {
+                            frame: ServerControlMessage::ImageUploadGrant(grant),
+                            at,
+                            ..
+                        } => {
+                            if at + Duration::from_secs(grant.ttl_seconds) <= service.now() {
+                                continue;
+                            }
+                            let pending = self.pending.len();
+                            self.take_grant(grant, at)?;
+                            if self.url(want).is_some() {
+                                break Some(Ok(()));
+                            }
+                            idle_grants += 1;
+                            // The pause is the rest of this step: the wait
+                            // for this grant was charged above, and it never
+                            // runs past what is left of the renew's connected
+                            // or absolute budget (a#2/b#2).
+                            let rest = attempt
+                                .left
+                                .min(attempt.until.saturating_duration_since(service.now()));
+                            if (self.pending.len() == pending || idle_grants >= 2)
+                                && !service.pause(rest, &stop)
+                            {
+                                break Some(Err(self.cancel_end()));
+                            }
+                            break None;
+                        }
+                        Routed {
+                            frame: ServerControlMessage::ImageJobCancel(cancel),
+                            ..
+                        } => break Some(Err(UploadEnd::cancelled(&cancel.reason))),
+                        _ => {}
+                    },
+                    Waited::Reconnected => break None,
+                    Waited::Timeout if stop() => break Some(Err(self.cancel_end())),
+                    Waited::Timeout => break None,
+                }
+            };
+            budget.settle(&attempt);
+            if let Some(outcome) = outcome {
+                return outcome;
+            }
+        }
+    }
+}
+
+/// An upload that waited out its grant or renew wait (`no_grant`).
+fn no_grant() -> UploadEnd {
+    UploadFailure::new(ImageFailureCode::Timeout, ImageFailureCause::NoGrant).into()
+}
+
+/// A part body that reports the stored-object offset ureq has read from it
+/// (logical progress; the bytes on the wire are counted as the socket takes
+/// them, `UploadHeartbeat::sending`).
+struct CountingBody<'a> {
     bytes: &'a [u8],
     pos: usize,
     base: u64,
-    heartbeat: Option<&'a UploadHeartbeat<'h>>,
+    heartbeat: Option<&'a UploadHeartbeat>,
 }
 
-impl std::io::Read for CountingBody<'_, '_> {
+impl std::io::Read for CountingBody<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let rest = self.bytes.get(self.pos..).unwrap_or_default();
         let n = rest.len().min(buf.len());
@@ -2946,7 +4620,7 @@ impl std::io::Read for CountingBody<'_, '_> {
         if let Some(heartbeat) = self.heartbeat
             && n > 0
         {
-            heartbeat.reach(self.base.saturating_add(self.pos as u64));
+            heartbeat.reach(self.base.saturating_add(self.pos as u64), 0);
         }
         Ok(n)
     }

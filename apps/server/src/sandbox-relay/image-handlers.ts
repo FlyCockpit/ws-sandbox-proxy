@@ -24,8 +24,10 @@ import {
 import {
   abortEndedUploads,
   abortSessionUpload,
+  BEGIN_RETRY_END_REASON,
   cancelReasonOf,
   endTemplateUpload,
+  failAbandonedBeginArtifacts,
   imageFailureDetail,
   type UploadEnd,
 } from "@wssp/api/sandbox/image-store/store-failure";
@@ -33,6 +35,7 @@ import { restoreOffloadOf } from "@wssp/api/sandbox/launch-mode";
 import {
   hostDatabaseNow,
   lockHostByEpoch,
+  RECORDED_CAPTURE_WHERE,
   relayTransaction,
   requireRelayFence,
 } from "@wssp/api/sandbox/relay-fence";
@@ -46,7 +49,9 @@ import {
   IMAGE_RELAY_PART_BYTES,
   IMAGE_S3_PART_BYTES,
   IMAGE_UPLOAD_PARTS_MAX,
+  IMAGE_WIRE_BYTES_MAX,
   type ImageRelayLinkV11,
+  imageUploadPartBytes,
   type ServerImageMessage,
 } from "@wssp/sandbox-contracts";
 import type { ImageRelaySpool } from "../sandbox-image-relay/spool.js";
@@ -89,6 +94,29 @@ async function grantBudget(hostId: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Transfers whose budget-dropped upload frame was logged (FB-B6), oldest first. */
+const budgetDropLogged = new Set<string>();
+const BUDGET_DROP_LOGGED_MAX = 4096;
+
+/**
+ * An upload frame (parts, heartbeat, renew) dropped over the host's grant
+ * budget gets no reply, by design (the host retries). It is logged once per
+ * transfer, with ids and the frame type only, so the drop is never silent.
+ */
+function noteBudgetDrop(hostId: string, transferId: string, frame: string): void {
+  if (budgetDropLogged.has(transferId)) return;
+  if (budgetDropLogged.size >= BUDGET_DROP_LOGGED_MAX) {
+    const oldest = budgetDropLogged.values().next().value;
+    if (oldest !== undefined) budgetDropLogged.delete(oldest);
+  }
+  budgetDropLogged.add(transferId);
+  console.warn("[sandbox-image] upload frame dropped over the grant budget:", {
+    hostId,
+    transferId,
+    frame,
+  });
 }
 
 export function linkTokenDigest(token: string): string {
@@ -1066,6 +1094,10 @@ async function endReportedUpload(
   );
   if (!done) return;
   await abortEndedUploads(imageStore(), done.end);
+  // The capture's job is over: artifacts its retried begins kept UPLOADING
+  // are released (a#3).
+  if ("operationId" in target)
+    await failAbandonedBeginArtifacts(target.operationId).catch(() => {});
   if (done.operationId) await finalizeReportedCapture(ctx, done.operationId);
 }
 
@@ -1123,7 +1155,9 @@ async function handleCaptureJobFailure(
 /**
  * `image.upload.progress`: the upload is alive (I5). Moves the transfer's
  * and its artifact's `lastProgressAt` and raises `bytesDone`, at most every
- * ten seconds per transfer.
+ * ten seconds per transfer. It spends the host's grant budget like every
+ * upload frame; over it the heartbeat is dropped (no reply, nothing changes:
+ * the next one carries the furthest offset).
  */
 export async function handleImageUploadProgress(
   ctx: ImageFrameContext,
@@ -1131,20 +1165,25 @@ export async function handleImageUploadProgress(
   /** The handler's clock (tests pin it either side of the throttle). */
   now: Date = new Date(),
 ): Promise<void> {
+  if (!(await grantBudget(ctx.sender.hostId)))
+    return noteBudgetDrop(ctx.sender.hostId, m.transferId, m.type);
   await withUploadSession(ctx.sender, m.transferId, async (tx, session) => {
-    // Liveness is bytes moving (I5): only an offset beyond the recorded one
-    // refreshes it; a repeated, zero or lower count never does.
+    // Liveness is bytes moving (I5): logical progress (an offset beyond the
+    // recorded one) or physical activity (more body bytes on the wire than
+    // recorded, a retry re-sending a part included) refreshes it; repeated,
+    // zero or lower counts never do. Neither count ever moves back.
     const bytes = BigInt(Math.min(m.bytesSent, Number(session.storedBytes)));
-    const moved = await tx.sandboxImageTransfer.updateMany({
-      where: {
-        id: session.transferId,
-        state: "OPEN",
-        bytesDone: { lt: bytes },
-        lastProgressAt: { lt: new Date(now.getTime() - PROGRESS_MIN_INTERVAL_MS) },
-      },
-      data: { lastProgressAt: now, bytesDone: bytes },
-    });
-    if (moved.count !== 1) return;
+    const wire = BigInt(Math.min(m.wireBytes, IMAGE_WIRE_BYTES_MAX));
+    const since = new Date(now.getTime() - PROGRESS_MIN_INTERVAL_MS);
+    const moved = await tx.$executeRaw`
+      UPDATE sandbox_image_transfer
+      SET "lastProgressAt" = ${now},
+          "bytesDone" = GREATEST("bytesDone", ${bytes}),
+          "wireBytes" = GREATEST("wireBytes", ${wire})
+      WHERE id = ${session.transferId} AND state = 'OPEN'
+        AND ("bytesDone" < ${bytes} OR "wireBytes" < ${wire})
+        AND "lastProgressAt" < ${since}`;
+    if (moved !== 1) return;
     await tx.sandboxImageArtifact.updateMany({
       where: { id: session.artifactId, state: "UPLOADING" },
       data: { lastProgressAt: now },
@@ -1167,13 +1206,15 @@ export async function handleImageJobResume(
   m: Extract<DaemonImageMessage, { type: "image.job.resume" }>,
 ): Promise<void> {
   const { sender } = ctx;
+  const transferId = m.transferId;
+  if (transferId === undefined) return handleCaptureOperationResume(ctx, m);
   const resumed = await relayTransaction(async (tx) => {
     await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
     requireRelayFence(sender.isCurrent?.() !== false);
     const now = await hostDatabaseNow(tx);
     const transfer = await tx.sandboxImageTransfer.findFirst({
       where: {
-        id: m.transferId,
+        id: transferId,
         state: "OPEN",
         ...(m.role === "SOURCE"
           ? { sourceHostId: sender.hostId, sourceHostOwnerId: sender.userId }
@@ -1186,7 +1227,17 @@ export async function handleImageJobResume(
       m.role === "SOURCE"
         ? { ...transfer, sourceEpoch: sender.connectionEpoch }
         : { ...transfer, destEpoch: sender.connectionEpoch };
-    if (!(await transferAuthorized(tx, rebound, now))) return false;
+    const plain = await transferAuthorized(tx, rebound, now);
+    if (!plain && !(m.role === "SOURCE" && transfer.purpose === "CAPTURE_UPLOAD")) return false;
+    // Lock order session → transfer (a#4), as `endTemplateUpload`, the
+    // begin's supersession, completion and every `withUploadSession` frame
+    // take them: the upload's session row first (none for a fetch).
+    await tx.$queryRaw`SELECT id FROM sandbox_image_upload_session
+      WHERE "transferId" = ${transfer.id} FOR UPDATE`;
+    // The transfer claim comes before any other change (W4): a transfer
+    // ended since it was read (e.g. expired by maintenance, or by a
+    // begin-failure cleanup that held the session) rolls the whole resume
+    // back, the adoption below included.
     const updated = await tx.sandboxImageTransfer.updateMany({
       where: { id: transfer.id, state: "OPEN" },
       data:
@@ -1194,6 +1245,15 @@ export async function handleImageJobResume(
           ? { sourceEpoch: sender.connectionEpoch }
           : { destEpoch: sender.connectionEpoch },
     });
+    requireRelayFence(updated.count === 1);
+    if (!plain) requireRelayFence(await adoptRecordedCaptureUpload(tx, sender, transfer, now));
+    // A template upload's session follows its transfer (supersession tells
+    // the host on this epoch); disk offload sessions are left as they are.
+    if (m.role === "SOURCE")
+      await tx.sandboxImageUploadSession.updateMany({
+        where: { transferId: transfer.id, state: "OPEN", artifactId: { not: null } },
+        data: { hostEpoch: sender.connectionEpoch },
+      });
     // Links minted for the old epoch die with it.
     await tx.sandboxImageLink.deleteMany({
       where: {
@@ -1202,9 +1262,124 @@ export async function handleImageJobResume(
         hostEpoch: { lt: sender.connectionEpoch },
       },
     });
-    return updated.count === 1;
+    return true;
   }, false);
-  ctx.reply({ type: "image.job.resume.result", transferId: m.transferId, continue: resumed });
+  ctx.reply({ type: "image.job.resume.result", transferId, continue: resumed });
+}
+
+/**
+ * `image.job.resume` by operation: a capture upload with no transfer yet
+ * (its begin in flight or in retry backoff) after a relay reconnect of its
+ * host. It continues when the capture runs on this connection: already
+ * (`captureWorkload` on this epoch: an unrecorded capture the reconnect
+ * re-adopted), or through the recorded-capture adoption from the
+ * operation's own older epoch (`adoptRecordedCapture`). Otherwise no.
+ */
+async function handleCaptureOperationResume(
+  ctx: ImageFrameContext,
+  m: Extract<DaemonImageMessage, { type: "image.job.resume" }>,
+): Promise<void> {
+  const { sender } = ctx;
+  const { operationId, attempt } = m;
+  if (operationId === undefined || attempt === undefined) return;
+  const resumed = await relayTransaction(async (tx) => {
+    await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
+    requireRelayFence(sender.isCurrent?.() !== false);
+    const target = { operationId, hostId: sender.hostId, hostOwnerId: sender.userId, attempt };
+    const current = await captureWorkload(tx, { ...target, epoch: sender.connectionEpoch });
+    if (current) return current.dispatchAttempt === attempt;
+    const operation = await tx.sandboxOperation.findFirst({
+      where: { id: operationId, dispatchedHostId: sender.hostId },
+      select: { dispatchedConnectionEpoch: true },
+    });
+    const fromEpoch = operation?.dispatchedConnectionEpoch;
+    if (fromEpoch === null || fromEpoch === undefined) return false;
+    return adoptRecordedCapture(tx, sender, { operationId, attempt, fromEpoch });
+  }, false);
+  ctx.reply({ type: "image.job.resume.result", operationId, attempt, continue: resumed });
+}
+
+/**
+ * The recorded-capture adoption (V1). A recorded capture (CAPTURED/STORING:
+ * its result is in, only the upload runs) keeps its operation on the
+ * dispatch connection, which reconnect reconciliation deliberately never
+ * settles or re-adopts (RECORDED_CAPTURE_WHERE). After a relay reconnect of
+ * its host, its upload may go on on the new connection only when the
+ * capture was authorized on exactly `fromEpoch` (`captureWorkload`: host,
+ * owner, kind, attempt, sharing and credential policy) and the operation is
+ * still exactly that dispatch (this host, that epoch, that attempt,
+ * ACCEPTED/RUNNING, capture CAPTURED/STORING on this host). Then only the
+ * operation's dispatch epoch moves to this connection, and the capture must
+ * pass `captureWorkload` there, or the caller's whole transaction rolls back.
+ * The finalizer still owns the terminal write. Anything else (another host
+ * or owner, a newer attempt or epoch, CANCEL_REQUESTED, a terminal
+ * operation, an unrecorded capture the host did not re-adopt) is refused.
+ */
+async function adoptRecordedCapture(
+  tx: Prisma.TransactionClient,
+  sender: RelaySender,
+  capture: { operationId: string; attempt: number; fromEpoch: number },
+): Promise<boolean> {
+  if (capture.fromEpoch >= sender.connectionEpoch) return false;
+  const target = {
+    operationId: capture.operationId,
+    hostId: sender.hostId,
+    hostOwnerId: sender.userId,
+    attempt: capture.attempt,
+  };
+  const before = await captureWorkload(tx, { ...target, epoch: capture.fromEpoch });
+  if (!before || before.dispatchAttempt !== capture.attempt) return false;
+  const adopted = await tx.sandboxOperation.updateMany({
+    where: {
+      id: capture.operationId,
+      dispatchedHostId: sender.hostId,
+      dispatchedConnectionEpoch: capture.fromEpoch,
+      dispatchAttempt: capture.attempt,
+      state: { in: ["ACCEPTED", "RUNNING"] },
+      ...RECORDED_CAPTURE_WHERE,
+      Capture: { is: { hostId: sender.hostId, state: { in: ["CAPTURED", "STORING"] } } },
+    },
+    data: { dispatchedConnectionEpoch: sender.connectionEpoch },
+  });
+  if (adopted.count !== 1) return false;
+  // Never a moved operation that does not authorize its capture here: a
+  // failure rolls the whole resume back.
+  const after = await captureWorkload(tx, { ...target, epoch: sender.connectionEpoch });
+  requireRelayFence(after !== null && after.dispatchAttempt === capture.attempt);
+  return true;
+}
+
+/**
+ * A capture upload's transfer resumed after a relay reconnect of its host:
+ * the transfer must have been authorized on its own (older) epoch, then the
+ * recorded-capture adoption moves the operation from that epoch, and the
+ * rebound transfer must pass `transferAuthorized` (else the whole resume
+ * rolls back).
+ */
+async function adoptRecordedCaptureUpload(
+  tx: Prisma.TransactionClient,
+  sender: RelaySender,
+  transfer: Parameters<typeof transferAuthorized>[1],
+  now: Date,
+): Promise<boolean> {
+  if (
+    transfer.purpose !== "CAPTURE_UPLOAD" ||
+    transfer.operationId === null ||
+    transfer.dispatchAttempt === null ||
+    transfer.sourceEpoch === null ||
+    !(await transferAuthorized(tx, transfer, now))
+  )
+    return false;
+  const adopted = await adoptRecordedCapture(tx, sender, {
+    operationId: transfer.operationId,
+    attempt: transfer.dispatchAttempt,
+    fromEpoch: transfer.sourceEpoch,
+  });
+  if (!adopted) return false;
+  requireRelayFence(
+    await transferAuthorized(tx, { ...transfer, sourceEpoch: sender.connectionEpoch }, now),
+  );
+  return true;
 }
 
 // ---------------------------------------------------------------- S3 uploads
@@ -1234,6 +1409,7 @@ async function uploadGrant(
     partSize: session.partSize,
     parts: urls,
     expiresAtUnixMs: Date.now() + store.settings.presignTtlSeconds * 1000,
+    ttlSeconds: store.settings.presignTtlSeconds,
     ...(encryption ? { encryption } : {}),
   };
 }
@@ -1421,9 +1597,8 @@ export async function handleImageUploadBegin(
         encrypted,
       );
       const storedBytes = BigInt(encrypted ? encryptedImageLength(m.sizeBytes) : m.sizeBytes);
-      const sessionPartSize = encrypted
-        ? (IMAGE_S3_PART_BYTES / (1024 * 1024)) * (1024 * 1024 + 16)
-        : IMAGE_S3_PART_BYTES;
+      // Adaptive, whole records (16 MiB normally; ≤ 10 000 parts).
+      const sessionPartSize = imageUploadPartBytes(m.sizeBytes, encrypted);
       const architecture =
         (
           await tx.sandboxTemplateRevision.findFirst({
@@ -1571,11 +1746,18 @@ export async function handleImageUploadBegin(
     await onArtifactStored(ctx, outcome.artifactId);
     return cancel("already_stored", outcome.transferId);
   }
+  // A capture's begin the store refuses for now is retried by its host; a
+  // publish's is not (W5): it ends FAILED with the cause, so server
+  // backfill asks again.
+  const endRefusedBegin = (sessionId: string) =>
+    m.transferId !== undefined
+      ? endServerUpload(sessionId, "store_unavailable")
+      : endRetryableBegin(sessionId);
   let uploadId: string;
   try {
     uploadId = await store.createMultipart(outcome.objectKey);
   } catch {
-    await endServerUpload(outcome.sessionId, "store_unavailable");
+    await endRefusedBegin(outcome.sessionId);
     return cancel("store_unavailable", outcome.transferId);
   }
   // Set once, on this session only. Then the session must still be the
@@ -1615,16 +1797,40 @@ export async function handleImageUploadBegin(
         : undefined,
     );
   } catch {
-    await endServerUpload(outcome.sessionId, "store_unavailable");
+    await endRefusedBegin(outcome.sessionId);
     return cancel("store_unavailable", outcome.transferId);
   }
   if (grant) ctx.reply({ ...grant, ...answers });
 }
 
 /**
+ * The store refused a capture's begin before any host held a grant
+ * (createMultipart or the first presign): the host retries the begin (`store_unavailable`), so
+ * this session and transfer end without failing anything else. No capture
+ * evidence, the artifact stays UPLOADING for the retried begin, and the
+ * finalizer ignores the transfer (`BEGIN_RETRY_END_REASON`).
+ */
+async function endRetryableBegin(sessionId: string): Promise<void> {
+  const end = await prisma.$transaction((tx) =>
+    endTemplateUpload(
+      tx,
+      { sessionId, from: "OPEN" },
+      {
+        detail: BEGIN_RETRY_END_REASON,
+        state: "CANCELLED",
+        evidence: false,
+        keepArtifact: true,
+      },
+    ),
+  );
+  await abortEndedUploads(imageStore(), end);
+}
+
+/**
  * The server ends one template upload session for a store failure on a
- * session no host has a grant for yet (begin's createMultipart or first
- * presign) or one it already claimed (a failed Complete):
+ * session it already claimed (a failed Complete), or for a publish begin the
+ * store refused (W5: the publish and its artifact end FAILED, so backfill
+ * retries it):
  * `endTemplateUpload` in one transaction, then the multipart abort. A
  * capture's waiting row records the cause; the 15 s sweep then fails it.
  * Failures seen while serving a host's frame on a granted session go
@@ -1642,7 +1848,7 @@ async function endServerUpload(
 }
 
 /** A failure the server saw while serving this host's upload frame (S3
- * refused ListParts or a presign, invalid parts): the session ends with that
+ * refused ListParts or a renew's presign, invalid parts): the session ends with that
  * cause only through the same fence as the frame (`withUploadSession`: the
  * sender's current connection still sources it, workload authorized), then
  * (after its commit) the multipart abort and the host cancel;
@@ -1724,16 +1930,18 @@ type UploadSessionRow = Prisma.SandboxImageUploadSessionGetPayload<{
   select: typeof uploadSessionSelect;
 }>;
 
+/**
+ * `image.upload.parts`: record reported ETags. It never grants URLs (the
+ * host pulls them with `image.upload.renew`). Over the host's grant budget
+ * the report is dropped without a reply: nothing changes, and the host
+ * re-reports those parts when a renewed grant names them again.
+ */
 export async function handleImageUploadParts(
   ctx: ImageFrameContext,
   m: Extract<DaemonImageMessage, { type: "image.upload.parts" }>,
 ): Promise<void> {
   if (!(await grantBudget(ctx.sender.hostId)))
-    return ctx.reply({
-      type: "image.job.cancel",
-      transferId: m.transferId,
-      reason: "rate_limited",
-    });
+    return noteBudgetDrop(ctx.sender.hostId, m.transferId, m.type);
   const found = await withUploadSession(ctx.sender, m.transferId, async (tx, session) => {
     const parts = Math.max(1, Math.ceil(Number(session.storedBytes) / session.partSize));
     for (const part of m.parts) {
@@ -1774,18 +1982,45 @@ export async function handleImageUploadParts(
       transferId: m.transferId,
       reason: "stale_transfer",
     });
-  const highest = Math.max(...m.parts.map((p) => p.n));
-  // Grant the next window once the current one is reported complete.
-  if (highest % IMAGE_UPLOAD_PARTS_MAX === 0 && highest < found.parts) {
-    // A store error presigning ends the upload with its cause.
-    let grant: ServerImageMessage | null;
-    try {
-      grant = await uploadGrant(m.transferId, found.session, highest + 1);
-    } catch {
-      return endUploadAndCancel(ctx, m.transferId, found.session.id, "store_unavailable");
-    }
-    if (grant) ctx.reply(grant);
+}
+
+/**
+ * `image.upload.renew`: fresh presigned URLs for this host's upload, from
+ * the session's lowest unrecorded part (a report the host sent but the
+ * server dropped is named again, so the host re-reports it), through the
+ * same fence as every upload frame. No data key. Over the grant budget the
+ * renew is dropped without a reply (the host asks again after a backoff); a
+ * store error presigning ends the upload with its cause.
+ */
+export async function handleImageUploadRenew(
+  ctx: ImageFrameContext,
+  m: Extract<DaemonImageMessage, { type: "image.upload.renew" }>,
+): Promise<void> {
+  if (!(await grantBudget(ctx.sender.hostId)))
+    return noteBudgetDrop(ctx.sender.hostId, m.transferId, m.type);
+  const found = await withUploadSession(ctx.sender, m.transferId, async (tx, session) => {
+    const parts = Math.max(1, Math.ceil(Number(session.storedBytes) / session.partSize));
+    const [gap] = await tx.$queryRaw<{ n: number | null }[]>`
+      SELECT MIN(s.n)::int AS n FROM generate_series(1, ${parts}::int) AS s(n)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM sandbox_image_upload_part p
+        WHERE p."sessionId" = ${session.id} AND p."partNumber" = s.n
+      )`;
+    return { session, from: gap?.n ?? parts + 1 };
+  });
+  if (!found)
+    return ctx.reply({
+      type: "image.job.cancel",
+      transferId: m.transferId,
+      reason: "stale_transfer",
+    });
+  let grant: ServerImageMessage | null;
+  try {
+    grant = await uploadGrant(m.transferId, found.session, found.from);
+  } catch {
+    return endUploadAndCancel(ctx, m.transferId, found.session.id, "store_unavailable");
   }
+  if (grant) ctx.reply(grant);
 }
 
 /**

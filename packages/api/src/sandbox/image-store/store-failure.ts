@@ -1,5 +1,6 @@
 import prisma, { type Prisma } from "@wssp/db";
 import type { ImageFailureCause } from "@wssp/sandbox-contracts";
+import { lockImageQuota } from "./config";
 
 /**
  * Capture storage failure details (docs/operations/templates.md#capture).
@@ -31,6 +32,25 @@ export const SERVER_UPLOAD_DETAILS = [
   "store_verify_timeout",
   "operation_ended",
 ] as const;
+
+/**
+ * End reason of a capture upload whose begin the store refused before any
+ * host held a grant (CreateMultipartUpload or the first presign failed).
+ * The host retries the begin (a new transfer), so this end is no capture
+ * failure: no evidence, the artifact stays UPLOADING, and the finalizer
+ * ignores such a transfer (its `upload_lost` rule bounds a begin that never
+ * succeeds).
+ */
+export const BEGIN_RETRY_END_REASON = "begin_retry.store_unavailable";
+
+/**
+ * Transfer end reasons that are bookkeeping, never a capture's failure
+ * evidence (W2): a begin the store refused for now (retried by the host), and
+ * a transfer a later begin of the same job superseded (e.g. a begin re-sent
+ * after its grant was lost in a relay reconnect). The capture's newer
+ * transfer carries its real cause; `upload_lost` bounds a job with none.
+ */
+export const BOOKKEEPING_END_REASONS: readonly string[] = [BEGIN_RETRY_END_REASON, "superseded"];
 
 function shaped(detail: string): string {
   const cut = detail.slice(0, 64);
@@ -140,7 +160,9 @@ const sessionSelect = {
  * - the transfer → `state` with `endReason = detail` (and its links gone),
  *   unless another writer already claimed its session (a completion);
  * - with `evidence` (default), a capture upload of the capture's current
- *   attempt records `detail` on the capture (first writer wins).
+ *   attempt records `detail` on the capture (first writer wins);
+ * - with `keepArtifact`, the artifact is left as it is (a retried begin
+ *   reopens it; see `BEGIN_RETRY_END_REASON`).
  * The caller aborts `aborts` and sends `cancels` after commit.
  */
 export async function endTemplateUpload(
@@ -151,6 +173,7 @@ export async function endTemplateUpload(
     state?: "FAILED" | "CANCELLED";
     evidence?: boolean;
     notifyHost?: boolean;
+    keepArtifact?: boolean;
   },
 ): Promise<UploadEnd> {
   const detail = shaped(options.detail);
@@ -215,13 +238,14 @@ export async function endTemplateUpload(
       claimed = claim.count === 1;
       if (claimed) {
         result.sessions.push(session.id);
-        await tx.sandboxImageArtifact.updateMany({
-          where:
-            from === "OPEN"
-              ? { id: session.artifactId, state: "UPLOADING" }
-              : { id: session.artifactId, state: "VERIFYING", objectKey: session.objectKey },
-          data: { state: "FAILED", failureDetail: detail },
-        });
+        if (!options.keepArtifact)
+          await tx.sandboxImageArtifact.updateMany({
+            where:
+              from === "OPEN"
+                ? { id: session.artifactId, state: "UPLOADING" }
+                : { id: session.artifactId, state: "VERIFYING", objectKey: session.objectKey },
+            data: { state: "FAILED", failureDetail: detail },
+          });
         if (session.uploadId)
           result.aborts.push({
             id: session.id,
@@ -277,6 +301,65 @@ export async function endTemplateUpload(
       detail,
     });
   return result;
+}
+
+/**
+ * A capture whose job is over (its host's terminal operation-ref report, or
+ * the finalizer failed it) may leave artifacts that its retried begins kept
+ * UPLOADING (`BEGIN_RETRY_END_REASON`, a#3): no session is live on them,
+ * yet they hold stored-byte quota and block a publish of that image until
+ * stale maintenance. Each is failed here with the capture's cause, unless a
+ * newer session owns it: under the owner's image quota lock (which every
+ * begin takes first, so none re-opens it meanwhile), only while the
+ * artifact is UPLOADING with no OPEN session and its newest session is one
+ * of this capture's begin-retry sessions. One transaction per artifact,
+ * after the caller's commit (the quota lock comes before any host lock).
+ * Best effort: stale maintenance stays the backstop.
+ */
+export async function failAbandonedBeginArtifacts(operationId: string): Promise<void> {
+  const abandoned = await prisma.sandboxImageUploadSession.findMany({
+    where: {
+      state: "ABORTED",
+      endReason: BEGIN_RETRY_END_REASON,
+      artifactId: { not: null },
+      Transfer: { operationId, purpose: "CAPTURE_UPLOAD" },
+    },
+    select: { artifactId: true },
+    orderBy: { id: "asc" },
+    take: 64, // pagination:audited — one capture's retried begins (≤ 5 per attempt)
+  });
+  const artifactIds = [...new Set(abandoned.flatMap((s) => (s.artifactId ? [s.artifactId] : [])))];
+  if (artifactIds.length === 0) return;
+  const capture = await prisma.sandboxTemplateCapture.findUnique({
+    where: { operationId },
+    select: { errorDetail: true },
+  });
+  const detail = shaped(capture?.errorDetail ?? "store_unavailable");
+  for (const artifactId of artifactIds) {
+    const artifact = await prisma.sandboxImageArtifact.findUnique({
+      where: { id: artifactId },
+      select: { userId: true },
+    });
+    if (!artifact) continue;
+    await prisma.$transaction(async (tx) => {
+      await lockImageQuota(tx, artifact.userId);
+      const newest = await tx.sandboxImageUploadSession.findFirst({
+        where: { artifactId },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { state: true, endReason: true, Transfer: { select: { operationId: true } } },
+      });
+      if (
+        newest?.state !== "ABORTED" ||
+        newest.endReason !== BEGIN_RETRY_END_REASON ||
+        newest.Transfer.operationId !== operationId
+      )
+        return;
+      await tx.sandboxImageArtifact.updateMany({
+        where: { id: artifactId, state: "UPLOADING", UploadSessions: { none: { state: "OPEN" } } },
+        data: { state: "FAILED", failureDetail: detail },
+      });
+    });
+  }
 }
 
 /** Host or server storage-failure evidence on a waiting capture of its

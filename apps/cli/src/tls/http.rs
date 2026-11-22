@@ -130,14 +130,82 @@ impl<T: Transport> Idle<T> {
     }
 }
 
+/// A transport-progress hook: told how many bytes the socket just took.
+pub(crate) type TransmitHook = std::rc::Rc<dyn Fn(u64)>;
+
+thread_local! {
+    /// The transport-progress hook of the request this thread is sending
+    /// (`counting_transmits`), if any.
+    static TRANSMITTED: std::cell::RefCell<Option<TransmitHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Socket output is handed to the raw socket in chunks of at most this many
+/// bytes while a progress hook listens, so the hook hears of every chunk as
+/// it leaves (a slow drain of ureq's 128 KiB output buffer included). The
+/// hook runs once a whole chunk was taken, not per short socket write: this
+/// size sets the upload liveness floor (one chunk per server stall window,
+/// `images::UPLOAD_LIVENESS_FLOOR`, checked at compile time there).
+pub(crate) const TRANSMIT_CHUNK: usize = 16 * 1024;
+
+/// Run `send` (requests on this thread; ureq's blocking transport runs on
+/// the caller's thread) with `hook` told of every chunk of bytes an idle
+/// agent's raw socket took (TLS records and headers included), as it is
+/// taken. The previous hook is restored afterwards.
+pub(crate) fn counting_transmits<R>(hook: TransmitHook, send: impl FnOnce() -> R) -> R {
+    struct Restore(Option<TransmitHook>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            TRANSMITTED.with(|hook| *hook.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(TRANSMITTED.with(|current| current.borrow_mut().replace(hook)));
+    send()
+}
+
+fn transmit_hook() -> Option<TransmitHook> {
+    TRANSMITTED.with(|hook| hook.borrow().clone())
+}
+
+/// `timeout` less `elapsed` of its total (an exact budget only).
+fn less_elapsed(mut timeout: NextTimeout, elapsed: std::time::Duration) -> NextTimeout {
+    use ureq::unversioned::transport::time::Duration;
+    if let Duration::Exact(limit) = timeout.after {
+        timeout.after = limit.saturating_sub(elapsed).into();
+    }
+    timeout
+}
+
 impl<T: Transport> Transport for Idle<T> {
     fn buffers(&mut self) -> &mut dyn Buffers {
         self.inner.buffers()
     }
 
+    /// With a progress hook (`counting_transmits`), the output goes out in
+    /// `TRANSMIT_CHUNK`s, each within what is left of `timeout` and the idle
+    /// bound, and the hook hears of each once the socket took it.
     fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
-        let timeout = self.clamp(timeout, ureq::Timeout::PerWrite);
-        self.inner.transmit_output(amount, timeout)
+        let Some(hook) = transmit_hook() else {
+            let timeout = self.clamp(timeout, ureq::Timeout::PerWrite);
+            return self.inner.transmit_output(amount, timeout);
+        };
+        let started = std::time::Instant::now();
+        let mut rest = amount;
+        loop {
+            let n = rest.min(TRANSMIT_CHUNK);
+            let left = self.clamp(
+                less_elapsed(timeout, started.elapsed()),
+                ureq::Timeout::PerWrite,
+            );
+            self.inner.transmit_output(n, left)?;
+            hook(n as u64);
+            rest -= n;
+            if rest == 0 {
+                return Ok(());
+            }
+            self.inner.buffers().output().copy_within(n..n + rest, 0);
+        }
     }
 
     fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
@@ -261,6 +329,64 @@ impl std::fmt::Debug for TlsTransport {
     }
 }
 
+/// Tests only: told of every output write a `RecordingSocket` is given.
+#[cfg(test)]
+pub(crate) type OnWrite = Arc<dyn Fn(&[u8]) + Send + Sync>;
+
+/// Tests only: the socket under an idle transport, recording each output
+/// write.
+#[cfg(test)]
+struct RecordingSocket {
+    buffers: LazyBuffers,
+    on_write: OnWrite,
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for RecordingSocket {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RecordingSocket").finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+impl Transport for RecordingSocket {
+    fn buffers(&mut self) -> &mut dyn Buffers {
+        &mut self.buffers
+    }
+
+    fn transmit_output(&mut self, amount: usize, _: NextTimeout) -> Result<(), ureq::Error> {
+        (self.on_write)(&self.buffers.output()[..amount]);
+        Ok(())
+    }
+
+    fn await_input(&mut self, _: NextTimeout) -> Result<bool, ureq::Error> {
+        Ok(false)
+    }
+
+    fn is_open(&mut self) -> bool {
+        true
+    }
+}
+
+/// Tests only: hand `bytes` to an idle transport in one `transmit_output`
+/// (as ureq hands it a full output buffer), over a socket that calls
+/// `on_write` with every write it is given.
+#[cfg(test)]
+pub(crate) fn transmit_through_idle_for_test(
+    bytes: &[u8],
+    on_write: OnWrite,
+) -> Result<(), ureq::Error> {
+    let mut idle = Idle {
+        inner: RecordingSocket {
+            buffers: LazyBuffers::new(4096, bytes.len().max(1)),
+            on_write,
+        },
+        idle: std::time::Duration::from_secs(60),
+    };
+    idle.buffers().output()[..bytes.len()].copy_from_slice(bytes);
+    idle.transmit_output(bytes.len(), NextTimeout::default())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +396,44 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
     use ureq::unversioned::transport::time::Instant as TransportInstant;
+
+    /// I5 (fix 3 b#1): with a progress hook, one big output write reaches
+    /// the socket as `TRANSMIT_CHUNK`s, in order and byte for byte, and the
+    /// hook hears of each as the socket takes it; without one, the write is
+    /// handed on whole.
+    #[test]
+    fn idle_transport_reports_each_chunk_the_socket_takes() {
+        let bytes: Vec<u8> = (0..(128 * 1024 + 100)).map(|i| (i % 251) as u8).collect();
+        let writes: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+        let heard: std::rc::Rc<std::cell::RefCell<Vec<(u64, usize)>>> = std::rc::Rc::default();
+        let seen = writes.clone();
+        let on_write: OnWrite =
+            Arc::new(move |chunk: &[u8]| seen.lock().unwrap().push(chunk.to_vec()));
+        let log = heard.clone();
+        let written = writes.clone();
+        counting_transmits(
+            std::rc::Rc::new(move |n| log.borrow_mut().push((n, written.lock().unwrap().len()))),
+            || transmit_through_idle_for_test(&bytes, on_write.clone()).unwrap(),
+        );
+        let chunks = writes.lock().unwrap().clone();
+        assert_eq!(
+            chunks.iter().map(Vec::len).collect::<Vec<_>>(),
+            [16384, 16384, 16384, 16384, 16384, 16384, 16384, 16384, 100]
+        );
+        assert_eq!(chunks.concat(), bytes);
+        // Each chunk is reported right after the socket took it.
+        let expected: Vec<(u64, usize)> = chunks
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.len() as u64, i + 1))
+            .collect();
+        assert_eq!(*heard.borrow(), expected);
+        // The hook is gone after the request: no chunking, nothing heard.
+        writes.lock().unwrap().clear();
+        transmit_through_idle_for_test(&bytes, on_write).unwrap();
+        assert_eq!(writes.lock().unwrap().len(), 1);
+        assert_eq!(heard.borrow().len(), expected.len());
+    }
 
     #[derive(Debug)]
     struct ClockedTransport {

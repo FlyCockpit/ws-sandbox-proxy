@@ -70,7 +70,9 @@ import {
 import { imageStore } from "./s3";
 import {
   abortEndedUploads,
+  BOOKKEEPING_END_REASONS,
   endTemplateUpload,
+  failAbandonedBeginArtifacts,
   transferEndDetail,
   type UploadCancel,
   type UploadEnd,
@@ -604,7 +606,15 @@ async function storingFailure(
         take: 8,
       })
     : [];
-  const ended = own.find((t) => t.state !== "OPEN" && t.state !== "COMPLETE");
+  // A begin the store refused for now, or a transfer a later begin of this
+  // job superseded, is bookkeeping, no cause (`upload_lost` bounds a job
+  // that never gets a transfer through).
+  const ended = own.find(
+    (t) =>
+      t.state !== "OPEN" &&
+      t.state !== "COMPLETE" &&
+      !BOOKKEEPING_END_REASONS.includes(t.endReason ?? ""),
+  );
   if (input.s3) {
     const open = own.find((t) => t.state === "OPEN");
     const completed = own.some((t) => t.state === "COMPLETE") || artifact?.state === "VERIFYING";
@@ -1025,6 +1035,9 @@ export async function finalizeCapture(
     const store = imageStore();
     for (const end of ends) await abortEndedUploads(store, end);
   }
+  // A failed capture releases the artifacts its retried begins kept
+  // UPLOADING (a#3).
+  if (outcome.kind === "failed") await failAbandonedBeginArtifacts(operationId).catch(() => {});
   if (head.buildId) {
     notifyTemplateBuildsChanged();
     notifyTemplateBuildProgress(head.buildId);

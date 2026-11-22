@@ -1308,11 +1308,9 @@ impl OffloadService {
         }
         let key = format!("resume:{transfer}");
         let rx = self.inner.images.register_waiter(&key);
-        self.push(DaemonControlMessage::ImageJobResume(ImageJobResumeV11 {
-            transfer_id: transfer.to_owned(),
-            role: ImageLinkRole::Source,
-            bytes_done: sent,
-        }));
+        self.push(DaemonControlMessage::ImageJobResume(
+            ImageJobResumeV11::transfer(transfer, ImageLinkRole::Source, sent),
+        ));
         let wanted = || !cancel.load(Ordering::SeqCst);
         let answer = wait_frame(&rx, self.inner.grant_wait, &wanted, self.inner.poll);
         self.inner.images.unregister_waiter(&key);
@@ -1409,6 +1407,23 @@ impl OffloadService {
             && entry.offload_id == cancel.offload_id
             && !entry.phase.stored()
         {
+            // A `stale` answer (to a completion that reached a newer
+            // connection unbound, r5 #2) is ambiguous: an uploaded entry
+            // and its staging stay, and the server's verdict decides
+            // (`stored`, or `released` for an offload it ended).
+            if cancel.reason == STALE && entry.phase == OffloadPhase::Uploaded {
+                tracing::debug!(offload_id = %cancel.offload_id, "stale answer for an uploaded disk offload; asking for its verdict");
+                self.push(DaemonControlMessage::DiskOffloadInventory(
+                    DiskOffloadInventoryV11 {
+                        entries: vec![DiskOffloadInventoryEntryV11 {
+                            sandbox_id: sandbox_id.to_owned(),
+                            offload_id: entry.offload_id.clone(),
+                            seq: entry.seq,
+                        }],
+                    },
+                ));
+                return;
+            }
             let sandbox = sandbox_id.to_owned();
             self.spawn_cleanup("wssp-offload-cancel", move |service| {
                 service.cleanup(&sandbox, &entry)
@@ -1492,6 +1507,11 @@ impl OffloadService {
             .then(|| ordered.last().map(|e| e.sandbox_id.clone()))
             .flatten();
         drop(after);
+        // Every inventory page still queued (an older connection's, r5 #1)
+        // goes: this run lists every unfinished entry afresh.
+        self.inner
+            .images
+            .purge_queued(|m| matches!(m, DaemonControlMessage::DiskOffloadInventory(_)));
         for page in ordered.chunks(sandbox_protocol::DISK_OFFLOAD_INVENTORY_PAGE_MAX) {
             self.push(DaemonControlMessage::DiskOffloadInventory(
                 DiskOffloadInventoryV11 {

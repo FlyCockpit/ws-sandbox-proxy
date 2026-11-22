@@ -22,8 +22,12 @@ pub const IMAGE_CAPTURE_MARKERS_MAX: usize = 16;
 pub const CAPTURE_SCRUB_PATHS_MAX: usize = 80;
 /// Relay part size (fits Cloudflare's request body cap with headroom).
 pub const IMAGE_RELAY_PART_BYTES: u64 = 32 * 1024 * 1024;
-/// Plaintext S3 multipart part size.
+/// Plaintext S3 multipart part size of a transfer that has no session yet
+/// (a fetch of an artifact stored before its part size was recorded). An
+/// upload session sizes its own parts (`partSize` on the grant).
 pub const IMAGE_S3_PART_BYTES: u64 = 64 * 1024 * 1024;
+/// Longest presigned URL lifetime a grant may carry (S3's own bound).
+pub const IMAGE_UPLOAD_TTL_MAX_SECONDS: u64 = 7 * 24 * 3600;
 /// Plaintext bytes per AES-256-GCM record of an encrypted stored image.
 pub const IMAGE_ENCRYPTION_RECORD_BYTES: u64 = 1024 * 1024;
 /// GCM tag bytes appended to every encrypted record.
@@ -629,12 +633,79 @@ pub struct ImageTransferRefV11 {
     pub transfer_id: String,
 }
 
+/// After a relay reconnect a background job re-binds itself to the new
+/// connection. It names its transfer, or (a capture upload before its first
+/// grant: begin in flight or in retry backoff) the capture's operation and
+/// dispatch attempt; exactly one of the two, and an operation reference only
+/// as the `SOURCE` with nothing done.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageJobResumeV11 {
-    pub transfer_id: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub transfer_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub operation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub attempt: Option<u64>,
     pub role: ImageLinkRole,
     pub bytes_done: u64,
+}
+
+impl ImageJobResumeV11 {
+    /// The resume of a transfer.
+    pub fn transfer(transfer_id: &str, role: ImageLinkRole, bytes_done: u64) -> Self {
+        Self {
+            transfer_id: Some(transfer_id.to_owned()),
+            operation_id: None,
+            attempt: None,
+            role,
+            bytes_done,
+        }
+    }
+
+    /// The resume of a capture upload that has no transfer yet.
+    pub fn operation(operation_id: &str, attempt: u64) -> Self {
+        Self {
+            transfer_id: None,
+            operation_id: Some(operation_id.to_owned()),
+            attempt: Some(attempt),
+            role: ImageLinkRole::Source,
+            bytes_done: 0,
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        valid_job_reference(&self.transfer_id, &self.operation_id, self.attempt)
+            && (self.transfer_id.is_some()
+                || (self.role == ImageLinkRole::Source && self.bytes_done == 0))
+            && self.bytes_done <= IMAGE_SIZE_MAX
+    }
+}
+
+/// Exactly one job reference: a transfer, or an operation with its attempt
+/// (at most `Number.MAX_SAFE_INTEGER`).
+fn valid_job_reference(
+    transfer: &Option<String>,
+    operation: &Option<String>,
+    attempt: Option<u64>,
+) -> bool {
+    match (transfer, operation) {
+        (Some(transfer), None) => valid_id(transfer) && attempt.is_none(),
+        (None, Some(operation)) => valid_id(operation) && attempt.is_some_and(|a| a <= JS_SAFE_MAX),
+        _ => false,
+    }
 }
 
 /// Why a host-side upload or export ended (`image.job.failed`). The server
@@ -742,13 +813,7 @@ const JS_SAFE_MAX: u64 = 9_007_199_254_740_991;
 
 impl ImageJobFailedV11 {
     pub fn is_valid(&self) -> bool {
-        let reference = match (&self.transfer_id, &self.operation_id) {
-            (Some(transfer), None) => valid_id(transfer) && self.attempt.is_none(),
-            (None, Some(operation)) => {
-                valid_id(operation) && self.attempt.is_some_and(|a| a <= JS_SAFE_MAX)
-            }
-            _ => false,
-        };
+        let reference = valid_job_reference(&self.transfer_id, &self.operation_id, self.attempt);
         let with_status = matches!(
             self.cause,
             ImageFailureCause::HttpStatus | ImageFailureCause::UrlExpired
@@ -762,18 +827,39 @@ impl ImageJobFailedV11 {
     }
 }
 
-/// Upload liveness heartbeat: bytes of this transfer sent so far, at most
-/// every 30 s and only while the count advanced.
+/// The host asks for fresh presigned part URLs of its upload (its granted
+/// window is used up, or the next URL is about to expire). The server
+/// answers `image.upload.grant` from its lowest unrecorded part.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImageUploadRenewV11 {
+    pub transfer_id: String,
+}
+
+/// Upload liveness heartbeat, at most every 30 s and only while a count
+/// advanced: the furthest offset reached in the stored object (`bytesSent`,
+/// logical progress: a part sent again never moves it), and every body byte
+/// the transport took so far, retries included (`wireBytes`, physical
+/// activity, monotonic for the transfer). Either one advancing is liveness.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageUploadProgressV11 {
     pub transfer_id: String,
     pub bytes_sent: u64,
+    pub wire_bytes: u64,
 }
+
+/// Bound on `wireBytes`: every part of the largest stored object sent
+/// `IMAGE_WIRE_ATTEMPTS_MAX` times.
+pub const IMAGE_WIRE_BYTES_MAX: u64 = IMAGE_SIZE_MAX * 2 * IMAGE_WIRE_ATTEMPTS_MAX;
+/// Most attempts that can send one part's body (the daemon's are fewer).
+pub const IMAGE_WIRE_ATTEMPTS_MAX: u64 = 8;
 
 impl ImageUploadProgressV11 {
     pub fn is_valid(&self) -> bool {
-        valid_id(&self.transfer_id) && self.bytes_sent <= IMAGE_SIZE_MAX * 2
+        valid_id(&self.transfer_id)
+            && self.bytes_sent <= IMAGE_SIZE_MAX * 2
+            && self.wire_bytes <= IMAGE_WIRE_BYTES_MAX
     }
 }
 
@@ -1007,6 +1093,9 @@ pub struct ImageUploadGrantV11 {
     pub part_size: u64,
     pub parts: Vec<ImageUploadPartUrlV11>,
     pub expires_at_unix_ms: u64,
+    /// Lifetime of the part URLs, relative to receipt: the host judges
+    /// expiry on its own monotonic clock, never against the server's.
+    pub ttl_seconds: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encryption: Option<ImageEncryptionV11>,
 }
@@ -1029,9 +1118,49 @@ impl std::fmt::Debug for ImageUploadGrantV11 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageJobResumeResultV11 {
-    pub transfer_id: String,
+    /// The reference of the resume it answers (exactly one shape).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub transfer_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub operation_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub attempt: Option<u64>,
     #[serde(rename = "continue")]
     pub proceed: bool,
+}
+
+impl ImageJobResumeResultV11 {
+    /// The answer to a transfer's resume.
+    pub fn transfer(transfer_id: &str, proceed: bool) -> Self {
+        Self {
+            transfer_id: Some(transfer_id.to_owned()),
+            operation_id: None,
+            attempt: None,
+            proceed,
+        }
+    }
+
+    /// The answer to a capture operation's resume.
+    pub fn operation(operation_id: &str, attempt: u64, proceed: bool) -> Self {
+        Self {
+            transfer_id: None,
+            operation_id: Some(operation_id.to_owned()),
+            attempt: Some(attempt),
+            proceed,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1082,12 +1211,15 @@ pub(crate) fn valid_server_image(message: &crate::ServerControlMessage) -> bool 
         M::ImageUploadGrant(g) => {
             valid_id(&g.transfer_id)
                 && g.request_id.as_deref().is_none_or(valid_id)
+                && (1..=IMAGE_UPLOAD_TTL_MAX_SECONDS).contains(&g.ttl_seconds)
                 && valid_upload_part_urls(g.part_size, &g.parts)
                 && g.encryption
                     .as_ref()
                     .is_none_or(ImageEncryptionV11::is_valid)
         }
-        M::ImageJobResumeResult(r) => valid_id(&r.transfer_id),
+        M::ImageJobResumeResult(r) => {
+            valid_job_reference(&r.transfer_id, &r.operation_id, r.attempt)
+        }
         M::ImageJobCancel(r) => {
             valid_id(&r.transfer_id)
                 && valid_code(&r.reason)
@@ -1135,9 +1267,10 @@ pub(crate) fn valid_daemon_image(message: &crate::DaemonControlMessage) -> bool 
         M::ImageUploadBegin(r) => r.is_valid(),
         M::ImageUploadParts(r) => r.is_valid(),
         M::ImageUploadComplete(r) => valid_id(&r.transfer_id),
-        M::ImageJobResume(r) => valid_id(&r.transfer_id) && r.bytes_done <= IMAGE_SIZE_MAX,
+        M::ImageJobResume(r) => r.is_valid(),
         M::ImageJobFailed(r) => r.is_valid(),
         M::ImageUploadProgress(r) => r.is_valid(),
+        M::ImageUploadRenew(r) => valid_id(&r.transfer_id),
         M::OperationProgress {
             progress: Some(p), ..
         } => {
@@ -1232,6 +1365,7 @@ mod tests {
                 size_bytes: 5,
             }],
             expires_at_unix_ms: 1,
+            ttl_seconds: 600,
             encryption: None,
         };
         assert!(!format!("{upload:?}").contains("Signature"));

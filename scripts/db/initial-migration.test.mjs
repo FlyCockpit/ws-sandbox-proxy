@@ -32,9 +32,9 @@ function checksAfterLaterMigrations(initial) {
   return [...statements.values()];
 }
 
-test("all 156 documentary CHECKs match 0_init plus later migrations: names, mapped tables and exact expressions", () => {
+test("all 157 documentary CHECKs match 0_init plus later migrations: names, mapped tables and exact expressions", () => {
   const checks = schemaCheckConstraints(SCHEMA_DIR);
-  assert.equal(checks.length, 156);
+  assert.equal(checks.length, 157);
   const sql = readFileSync(INITIAL_PATH, "utf8");
   const frozen = frozenSection(sql, "checks");
   assert.deepEqual(

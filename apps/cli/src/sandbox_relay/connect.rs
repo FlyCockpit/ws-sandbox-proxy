@@ -999,6 +999,34 @@ fn send_terminal_frame(
     Ok(())
 }
 
+/// Write the next image frames and flush the socket (W1, a#1): a frame
+/// counts as sent only once it was written AND flushed. A write or flush
+/// error drops the batch unsent: its upload progress and terminal frames go
+/// back to the front of the outbox for the next connection, after the
+/// jobs' resumes; its other frames are dropped
+/// (`images::replayed_after_failed_write`).
+pub(super) fn send_image_batch<S: std::io::Read + std::io::Write>(
+    socket: &mut tungstenite::WebSocket<S>,
+    wire: WireCodes,
+    images: &super::images::ImageService,
+) -> Result<()> {
+    let batch = images.take_batch();
+    if batch.frames().is_empty() {
+        return Ok(());
+    }
+    for message in batch.frames() {
+        match super::spell(wire, message, None) {
+            Ok(text) => socket.write(Message::Text(text.into()))?,
+            // Never encodable: dropped with the batch once it is sent, not
+            // retried on every reconnect.
+            Err(error) => tracing::warn!(error = %error, "image frame not encodable; dropped"),
+        }
+    }
+    socket.flush()?;
+    batch.sent();
+    Ok(())
+}
+
 /// Queues a terminal frame without flushing; the caller flushes the batch.
 fn write_terminal_frame(
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
@@ -2292,6 +2320,9 @@ fn relay_session_active(
     if let Some(credentials) = relay.credentials() {
         credentials.on_disconnect();
     }
+    if let Some(images) = relay.images() {
+        images.on_disconnect();
+    }
     // Exit guard (§4.7): uploads still receiving chunks, downloads and
     // `file.get` cannot survive the socket; reconciliation reports them.
     // Everything else, including commands with open stdin, may be carried.
@@ -2783,9 +2814,7 @@ fn relay_session_loop(
             }
             // Image frames only after reconciliation (the server refuses earlier).
             if images_ready && let Some(images) = relay.images() {
-                for message in images.drain() {
-                    socket.write(Message::Text(super::spell(wire, &message, None)?.into()))?;
-                }
+                send_image_batch(socket, wire, images)?;
                 if last_image_sweep.elapsed() >= Duration::from_secs(5) {
                     last_image_sweep = Instant::now();
                     images.sweep_foreign();

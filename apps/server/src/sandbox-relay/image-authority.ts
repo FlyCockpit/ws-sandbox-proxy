@@ -17,7 +17,11 @@ import type { Prisma } from "@wssp/db";
  * A grant is only ever as good as the workload it serves: the exact operation
  * (kind, generation, dispatch attempt, still active) dispatched to the exact host connection
  * (host and epoch; a resume is honoured only after the operation was adopted
- * on the new epoch), the sandbox's host path (requireRelayWorkload), the
+ * on the new epoch, by reconnect reconciliation, or, for a recorded capture
+ * that reconciliation never re-adopts, by the recorded-capture adoption in
+ * image-handlers.ts `adoptRecordedCapture`, which moves only the dispatch
+ * epoch of that exact dispatch after it passed this fence on its old epoch
+ * and requires it again on the new one), the sandbox's host path (requireRelayWorkload), the
  * creator's sharing path, credential policy and authorizing SDK key
  * (checkAcceptedDispatchAuthority), and, on another account's host, the
  * host's accept-foreign setting and the template's image placement policy.

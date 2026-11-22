@@ -12,6 +12,9 @@ use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 
 mod http;
+#[cfg(test)]
+pub(crate) use http::transmit_through_idle_for_test;
+pub(crate) use http::{TRANSMIT_CHUNK, counting_transmits};
 
 /// Classify verification failures through the clients' typed wrappers. ureq's
 /// Error and tungstenite's TLS wrapper do not expose their rustls source;
