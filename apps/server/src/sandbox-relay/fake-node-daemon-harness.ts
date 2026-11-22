@@ -115,6 +115,8 @@ class DaemonSocket implements SandboxRelaySocket {
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 /** The real daemon's egress-state cadence (see `renewEgressState`). */
 const EGRESS_GUARD_RENEW_MS = 5_000;
+/** The real daemon's storage-health cadence (`STORAGE_POLL_MS`, see `renewEgressState`). */
+const STORAGE_POLL_MS = 5_000;
 const OUTPUT_CHUNK = 8 * 1024;
 const encoder = new TextEncoder();
 
@@ -266,6 +268,7 @@ export class FakeNodeDaemon {
   private egressSequence = 0;
   private egressReport: { guardOk?: boolean; openEgressForOthers?: boolean } = {};
   private egressRenewal: ReturnType<typeof setInterval> | undefined;
+  private storageRenewal: ReturnType<typeof setInterval> | undefined;
   /**
    * The real daemon re-sends its last `host.egress-state` every 5 s
    * (`EGRESS_STATE_INTERVAL`, apps/cli/src/sandbox_relay/egress_state.rs);
@@ -274,6 +277,13 @@ export class FakeNodeDaemon {
    * connecting, so a test still placing sandboxes then (six serialized
    * workers, or any run on a loaded machine) was refused
    * `egress_guard_unavailable`. Repeats the last report on this link only.
+   *
+   * Storage health likewise: the real daemon observes and publishes it every
+   * 5 s (`STORAGE_POLL_MS`, apps/cli/src/sandbox_relay/host_reports.rs), and
+   * placement drops a pool whose report is older than STORAGE_HEALTH_STALE_MS
+   * (15 s). A double that reported only at admission and on outbox pump steps
+   * left a test that spent 15 s between pumps (a loaded machine) with no
+   * eligible host: `sandbox.pool_full` reason `storage`.
    */
   private renewEgressState(connectionEpoch: number, socket: DaemonSocket) {
     this.stopEgressRenewal();
@@ -282,10 +292,17 @@ export class FakeNodeDaemon {
       this.track(this.reportEgressState(connectionEpoch, this.egressReport));
     }, EGRESS_GUARD_RENEW_MS);
     this.egressRenewal.unref();
+    this.storageRenewal = setInterval(() => {
+      if (socket !== this.socket || socket.readyState !== 1) return this.stopEgressRenewal();
+      this.track(this.reportStorage());
+    }, STORAGE_POLL_MS);
+    this.storageRenewal.unref();
   }
   private stopEgressRenewal() {
     clearInterval(this.egressRenewal);
+    clearInterval(this.storageRenewal);
     this.egressRenewal = undefined;
+    this.storageRenewal = undefined;
   }
   /** Send `host.egress-state` on the current link (a lease renewal). */
   async reportEgressState(

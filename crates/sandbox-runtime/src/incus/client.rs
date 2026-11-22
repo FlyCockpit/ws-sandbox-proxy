@@ -628,6 +628,15 @@ pub struct IncusClient {
     pub network_planning_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     #[cfg(test)]
     pub readiness_after_agent_barrier: Option<std::sync::Arc<std::sync::Barrier>>,
+    /// Measure readiness budgets on this clock instead of real time, so a
+    /// test decides in which step the budget runs out. Each step's own
+    /// process bound stays real (the clamped remaining budget).
+    #[cfg(test)]
+    pub readiness_clock: Option<std::sync::Arc<std::sync::Mutex<Instant>>>,
+    /// When the first readiness pass took its budget (`agent_wait`), so a
+    /// test can bound the pass itself, not the provisioning before it.
+    #[cfg(test)]
+    pub readiness_started: Option<std::sync::Arc<std::sync::Mutex<Option<Instant>>>>,
     /// Park after command/staging preparation, or inspect the short admission
     /// section. Never installed in production.
     #[cfg(test)]
@@ -933,6 +942,9 @@ pub(super) struct AgentWait {
     down_counted: bool,
     /// When a host state read last saw the VM Running.
     last_running: Option<Instant>,
+    /// Test seam ([`IncusClient::readiness_clock`]): the budget's clock.
+    #[cfg(test)]
+    clock: Option<std::sync::Arc<std::sync::Mutex<Instant>>>,
 }
 
 /// What re-observing the guest after a readiness pass established.
@@ -981,11 +993,31 @@ impl AgentWait {
             boot: None,
             down_counted: false,
             last_running: None,
+            #[cfg(test)]
+            clock: None,
         }
     }
 
+    /// The budget measured on `clock` instead of real time (test seam).
+    #[cfg(test)]
+    fn on_clock(mut self, clock: Option<std::sync::Arc<std::sync::Mutex<Instant>>>) -> Self {
+        if let Some(clock) = clock {
+            self.deadline = *clock.lock().unwrap_or_else(|err| err.into_inner()) + self.budget;
+            self.clock = Some(clock);
+        }
+        self
+    }
+
+    fn now(&self) -> Instant {
+        #[cfg(test)]
+        if let Some(clock) = &self.clock {
+            return *clock.lock().unwrap_or_else(|err| err.into_inner());
+        }
+        Instant::now()
+    }
+
     pub(super) fn remaining(&self) -> Duration {
-        self.deadline.saturating_duration_since(Instant::now())
+        self.deadline.saturating_duration_since(self.now())
     }
 
     /// Record one restart; past the bound it is a readiness failure.
@@ -1108,6 +1140,10 @@ impl IncusClient {
             network_planning_count: None,
             #[cfg(test)]
             readiness_after_agent_barrier: None,
+            #[cfg(test)]
+            readiness_clock: None,
+            #[cfg(test)]
+            readiness_started: None,
             #[cfg(test)]
             guest_spawn_hook: None,
             #[cfg(test)]
@@ -2769,6 +2805,17 @@ impl IncusClient {
 
     /// A fresh readiness pass: one agent budget for all of its waits.
     pub(super) fn agent_wait(&self) -> AgentWait {
+        #[cfg(test)]
+        if let Some(started) = &self.readiness_started {
+            started
+                .lock()
+                .unwrap_or_else(|err| err.into_inner())
+                .get_or_insert_with(Instant::now);
+        }
+        #[cfg(test)]
+        return AgentWait::new(self.agent_timeout, self.reboot_settle)
+            .on_clock(self.readiness_clock.clone());
+        #[cfg(not(test))]
         AgentWait::new(self.agent_timeout, self.reboot_settle)
     }
 

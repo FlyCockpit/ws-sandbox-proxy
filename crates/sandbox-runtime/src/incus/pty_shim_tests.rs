@@ -262,7 +262,9 @@ fn wait_ended(session: &mut PtySession) -> PtyTermination {
     panic!("session never ended");
 }
 
-fn lock() -> std::sync::MutexGuard<'static, ()> {
+/// Serializes every test that opens a PTY in this process (here and in
+/// `host_pty`): their descriptor baselines (`pty_fds`) count every PTY open.
+pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
     PTY_TESTS.lock().unwrap_or_else(|e| e.into_inner())
 }
 

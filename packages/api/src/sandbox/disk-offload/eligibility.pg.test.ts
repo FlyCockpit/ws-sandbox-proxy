@@ -26,6 +26,7 @@ const { seedOwner, seedSandbox } = await import("../../webhooks/testing/fixtures
 const service = await import("../../credentials/service");
 const { markCredentialFilesEver } = await import("../../credentials/specs");
 const { seedStoppedOnHost } = await import("../testing/offload-fixtures");
+const { hostDatabaseNow } = await import("../relay-fence");
 const {
   loginStateSettled,
   offloadReceiptsSettled,
@@ -263,6 +264,29 @@ describe("restoreHostEligibility (§5 matrix)", () => {
     const w = await eligibleWorld();
     await db.inspect.sandboxHost.update({ where: { id: w.host.id }, data: hostData });
     expect(reason(await w.verdict())).toBe(expected);
+  });
+
+  it("a heartbeat committed after the caller sampled its clock is fresh; one dated in the future is not", async () => {
+    const w = await eligibleWorld();
+    const at = async (sql: "now" | "future") =>
+      (
+        await db.inspect.$queryRaw<{ at: Date }[]>`UPDATE sandbox_host
+          SET "lastHeartbeatAt" = (clock_timestamp() AT TIME ZONE 'UTC')
+            + CASE WHEN ${sql} = 'future' THEN interval '60 seconds' ELSE interval '0' END
+          WHERE id = ${w.host.id} RETURNING "lastHeartbeatAt" AS at`
+      )[0]!.at;
+    const verdictAfter = (sql: "now" | "future") =>
+      db.prisma.$transaction(async (tx) => {
+        // Restore selection samples its clock, then reads candidates: the
+        // heartbeat lands in between, strictly after the sample.
+        const now = await hostDatabaseNow(tx);
+        await db.inspect.$executeRaw`SELECT pg_sleep(0.005)`;
+        const stamped = await at(sql);
+        expect(stamped.getTime()).toBeGreaterThan(now.getTime());
+        return restoreHostEligibility(tx, w.facts, { hostId: w.host.id, poolId: null }, null, now);
+      });
+    expect(reason(await verdictAfter("now"))).toBe("ok");
+    expect(reason(await verdictAfter("future"))).toBe("host_unavailable");
   });
 
   it("no storage pool on the current epoch that holds the root → no_room", async () => {

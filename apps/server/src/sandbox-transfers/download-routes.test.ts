@@ -42,9 +42,21 @@ afterEach(() => {
   expect(transferSlotsInUse()).toBe(0);
 });
 
-/** Arbitrary bytes of any size without materializing them: every 1 MiB chunk is
- * a random block XORed with its chunk index, so chunks differ from each other. */
+/** Arbitrary bytes of any size without materializing them: chunk k is a
+ * random 1 MiB block with every byte XORed with `k & 255`, so a byte taken from
+ * another chunk less than 256 chunks away always differs. Built a 32-bit word
+ * at a time; the bytes are the same as a per-byte XOR. */
 const block = randomBytes(CHUNK);
+function chunkAt(index: number) {
+  const chunk = Buffer.allocUnsafeSlow(CHUNK);
+  block.copy(chunk);
+  const salt = (index & 255) * 0x01010101;
+  if (salt !== 0) {
+    const words = new Uint32Array(chunk.buffer, chunk.byteOffset, CHUNK / 4);
+    for (let i = 0; i < words.length; i++) words[i]! ^= salt;
+  }
+  return chunk;
+}
 function generated(size: number) {
   const reads: [number, number][] = [];
   const bytesAt = (offset: number, length: number) => {
@@ -53,9 +65,7 @@ function generated(size: number) {
       const at = offset + i;
       const inChunk = at % CHUNK;
       const n = Math.min(length - i, CHUNK - inChunk);
-      block.copy(out, i, inChunk, inChunk + n);
-      const salt = Math.floor(at / CHUNK) & 255;
-      if (salt) for (let j = i; j < i + n; j++) out[j]! ^= salt;
+      chunkAt(Math.floor(at / CHUNK)).copy(out, i, inChunk, inChunk + n);
       i += n;
     }
     return out;
@@ -101,6 +111,23 @@ async function drain(
 }
 const get = (headers: Record<string, string> = {}, method = "GET") =>
   app.request(`/operations/${operationId}/content`, { method, headers });
+
+it("generated chunks differ at every byte from any chunk under 256 away", () => {
+  // A byte served from the wrong chunk (the 32 MiB + 1 case's last byte from
+  // chunk 31, say) changes the stream and so its hash.
+  for (const [a, b] of [
+    [31, 32],
+    [0, 1],
+    [0, 255],
+    [255, 256],
+    [700, 701],
+  ] as const) {
+    const left = chunkAt(a);
+    const right = chunkAt(b);
+    for (let i = 0; i < CHUNK; i++)
+      if (left[i] === right[i]) expect.fail(`chunks ${a}/${b} at ${i}`);
+  }
+});
 
 it.each([5 * 1024 * 1024, 7.5 * 1024 * 1024, 32 * 1024 * 1024 + 1, CAP])(
   "streams %i arbitrary bytes whole and resumed by range with one SHA-256",

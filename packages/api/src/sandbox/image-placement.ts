@@ -54,6 +54,20 @@ type PlanRevision = {
 
 const ACTIVE_STATES = PrismaValue.sql`('QUEUED','DISPATCHED','ACCEPTED','RUNNING','CANCEL_REQUESTED')`;
 
+/**
+ * The database clock at the statement that evaluates it, at the columns'
+ * millisecond precision: the upper bound of a freshness window ("reported no
+ * later than now"). A placement samples its `now` early and runs several
+ * statements after it, and a host's report (storage health every 5 s, a
+ * heartbeat) committed in between carries a later `clock_timestamp()`: compared
+ * with the early `now` it looked future-dated and the host was dropped
+ * (`pool_full` reason `storage`). Any row a statement can see committed before
+ * that statement, so its stamp is never after this clock; a row really dated
+ * in the future (a clock stepped back) is still refused. Lower bounds stay on
+ * the sampled `now`.
+ */
+export const STATEMENT_NOW = PrismaValue.sql`(clock_timestamp() AT TIME ZONE 'UTC')::timestamp(3)`;
+
 /** The one fetch plan for this owner's revision, or null when nothing is fetchable. */
 export async function imageFetchPlan(
   tx: Prisma.TransactionClient,
@@ -185,7 +199,7 @@ function peerSourceSql(
 ) {
   const freshness = current
     ? PrismaValue.sql`AND src.status = 'CONNECTED'
-        AND src."lastHeartbeatAt" BETWEEN ${new Date(current.now.getTime() - HOST_HEARTBEAT_STALE_AFTER_MS)} AND ${current.now}
+        AND src."lastHeartbeatAt" BETWEEN ${new Date(current.now.getTime() - HOST_HEARTBEAT_STALE_AFTER_MS)} AND ${STATEMENT_NOW}
         AND src."imageCacheEpoch" = src."connectionEpoch"
         AND a."verifiedConnectionEpoch" = src."connectionEpoch"`
     : PrismaValue.empty;

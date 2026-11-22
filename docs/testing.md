@@ -32,6 +32,48 @@ that lists its steps by hand runs every step named above, in the
 `package.json` `verify` script's order. Check that list against the script,
 not against memory.
 
+### The fast tier (`pnpm verify:fast`)
+
+`pnpm verify` is the landing gate and runs every row above unconditionally.
+`pnpm verify:fast` is the hand-back tier: the lint, policy and env checks,
+affected type checks and unit tests (`scripts/verify-fast-tests.ts`),
+`pnpm test:setup`, `pnpm db:test-unit` and `pnpm backup:test-unit`, plus the
+two wire suites only when the change can reach them:
+`pnpm test:wire:affected` (`scripts/test-wire-affected.ts`) runs
+`test:cancel-wire` and `test:relay-chaos` (each about 3 to 20 min) when
+this branch or the work tree (commits since the merge base with `origin/main`,
+staged, unstaged and untracked files; without `origin/main` both run) changes
+something the suite reads, and prints why. `scripts/lib/wire-affected.ts`
+decides:
+
+- Any Rust input of the daemon (`Cargo.*`, `crates/`, `apps/cli/`,
+  `third_party/`, `.cargo/`, a toolchain file), the lockfile, root manifests,
+  `.nvmrc` or the selector itself runs both.
+- Each suite's module closure is computed from the tree on every run, with
+  vite's own parser: its vitest config, the test files its literal
+  `test.include` lists (any other include shape runs the suite on every
+  change) and every repo file they import, re-export, `require()`, load with
+  a `vi` loader or name with `new URL("…", import.meta.url)`, through relative
+  paths and workspace package exports (every condition's target). A file in it
+  runs the suite.
+- In a package the closure reaches, a module it does not import still runs the
+  suite when a closure file names it (a spawned script, a computed path), and
+  every non-module file (data, fixtures, `package.json`, the Prisma schema)
+  runs it. A computed `import()`, or a file the parser cannot read, makes its
+  directory an input.
+- Packages the closure never reaches (today `apps/web`, `apps/worker`,
+  `packages/ui`, `packages/locales`, …) and the root paths in
+  `ROOT_SKIP_PATHS` (docs, CI, Dockerfiles, other tool configs) are skipped;
+  any other root path runs both (fail open).
+
+The self-test `scripts/lib/wire-affected.test.ts` (in `pnpm test:setup`) fails
+when an import does not resolve, a computed import appears, a workspace member
+or a file in Cargo's dep-info for the daemon (`target/debug/wssp.d`, when a
+build left one) would not select both suites, a closure file names a skipped
+package or root path in a string, or a repository file is unclassified. When it
+fails on a new root file, add the file to `RUST_PATHS`, `SHARED_PATHS` or
+`ROOT_SKIP_PATHS`.
+
 `pnpm policy:template-secrets` (`scripts/check-template-secret-patterns.mjs`)
 scans tracked files and untracked files that are not ignored, so a check run
 before `git add` sees new files. Without that, a new vendored tree passes

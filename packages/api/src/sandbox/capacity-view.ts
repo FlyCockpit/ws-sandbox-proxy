@@ -14,7 +14,7 @@ import { reservedHostIds } from "./capacity-queue";
 import type { Principal } from "./contracts";
 import { poolNotFound } from "./errors";
 import { STORAGE_HEALTH_STALE_MS } from "./host-admission";
-import { imageFetchPlan } from "./image-placement";
+import { imageFetchPlan, STATEMENT_NOW } from "./image-placement";
 import { poolLeaseViews } from "./lease-policy";
 import { MAX_ACTIVE_POOL_MEMBERSHIPS } from "./pool-locks";
 import { placementSql, revisionNeedsStartup } from "./pool-placement";
@@ -186,7 +186,7 @@ export async function poolCapacityView(
     ? await prisma.$queryRaw<StorageRow[]>`
         SELECT p."sandboxHostId" AS "hostId", p.name, p."capacityGiB", p."diskReservedGiB" AS "reservedGiB",
           (p."newRootsAllowed" AND p.health = 'healthy' AND NOT p.draining
-            AND p."reportedAt" BETWEEN ${storageOldest} AND ${now}) AS usable
+            AND p."reportedAt" BETWEEN ${storageOldest} AND ${STATEMENT_NOW}) AS usable
         FROM sandbox_host_storage_pool p JOIN sandbox_host h
           ON h.id = p."sandboxHostId" AND h."userId" = p."userId" AND p."connectionEpoch" = h."connectionEpoch"
         WHERE p."sandboxHostId" = ANY(${hosts.map((host) => host.id)}::text[])

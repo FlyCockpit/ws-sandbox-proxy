@@ -46,7 +46,7 @@ import type { OffloadPolicyColumns } from "./disk-offload/policy";
 import { capacityQueueFull, sandboxStateConflict } from "./errors";
 import { STORAGE_HEALTH_STALE_MS } from "./host-admission";
 import { requestDigestMetadata } from "./idempotency";
-import { imageFetchPlan } from "./image-placement";
+import { imageFetchPlan, STATEMENT_NOW } from "./image-placement";
 import { defaultIncusInstanceName } from "./incus-name";
 import { acceptedLaunchMode } from "./launch-mode";
 import type { LeaseClock } from "./lease";
@@ -480,7 +480,7 @@ async function headEligibleHosts(
       WHERE sp."sandboxHostId" = h.id AND sp."userId" = h."userId"
         AND sp."connectionEpoch" = h."connectionEpoch" AND sp."newRootsAllowed"
         AND sp.health = 'healthy' AND NOT sp.draining
-        AND sp."reportedAt" BETWEEN ${storageOldest} AND ${query.now}
+        AND sp."reportedAt" BETWEEN ${storageOldest} AND ${STATEMENT_NOW}
         AND sp."capacityGiB"::bigint - COALESCE((SELECT sum(r."rootChargeGiB"::bigint)
           FROM sandbox_instance r WHERE r."storagePoolId" = sp.id AND r."diskReservationHeld"
             AND NOT COALESCE(r."liveResourcesHeld" AND r."leaseExpiresAt" IS NOT NULL

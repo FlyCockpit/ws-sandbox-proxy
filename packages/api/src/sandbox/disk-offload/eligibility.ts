@@ -206,16 +206,23 @@ export async function restoreHostEligibility(
     select: HOST_FACTS_SELECT,
   });
   if (!row) return no("host_missing");
-  const clock =
-    now ??
-    (await tx.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now`)[0]
-      ?.now ??
-    new Date();
-  const age = row.lastHeartbeatAt ? clock.getTime() - row.lastHeartbeatAt.getTime() : -1;
+  // The future-dated bound is the database clock read after the row: a
+  // heartbeat committed after the caller's earlier `now` (restore selection
+  // samples before it reads its candidates) is fresh, not from the future
+  // (image-placement.ts STATEMENT_NOW). Staleness stays measured from `now`.
+  const read =
+    (
+      await tx.$queryRaw<
+        { now: Date }[]
+      >`SELECT (clock_timestamp() AT TIME ZONE 'UTC')::timestamp(3) AS now`
+    )[0]?.now ?? new Date();
+  const clock = now ?? read;
+  const heartbeat = row.lastHeartbeatAt;
   if (
     row.status !== "CONNECTED" ||
-    age < 0 ||
-    age > HOST_HEARTBEAT_STALE_AFTER_MS ||
+    !heartbeat ||
+    heartbeat > read ||
+    clock.getTime() - heartbeat.getTime() > HOST_HEARTBEAT_STALE_AFTER_MS ||
     row.admissionEpoch !== row.connectionEpoch ||
     row.inventoryAcknowledgedEpoch !== row.connectionEpoch ||
     row.daemonSchedulable !== true

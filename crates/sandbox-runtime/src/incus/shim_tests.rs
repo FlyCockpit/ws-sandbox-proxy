@@ -2873,7 +2873,7 @@ PYIMAGE
               printf '%s' "$((boots + 1))" > "$statedir/boots"
             fi
             [ "$mode" != frozen_after_check ] || : > "$statedir/frozen"
-            [ "$mode" != slow_network ] || sleep 10
+            if [ "$mode" = slow_network ]; then : > "$statedir/network-started"; sleep 10; : > "$statedir/network-slept"; fi
             # The last check takes 1.5 s; the binding refresh after the next
             # state read (the final boot read's) then stalls 3 s.
             if [ "$mode" = slow_metadata_after_network ]; then sleep 1.5; : > "$statedir/network-done"; fi
@@ -4762,11 +4762,39 @@ fn a_frozen_vm_after_the_checks_is_never_ready() {
 /// budget spent before the final host observation is `agent_timeout`.
 #[test]
 fn a_check_that_outlives_the_budget_is_agent_timeout_never_ready() {
-    let (mut runtime, _) = runtime_for("slow_network");
-    runtime.client_mut().agent_timeout = Duration::from_millis(1500);
-    let started = Instant::now();
-    let err = runtime
-        .create_bound(&create_req())
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
+    let (mut runtime, log) = runtime_for("slow_network");
+    let budget = Duration::from_millis(1500);
+    runtime.client_mut().agent_timeout = budget;
+    // The budget runs on a clock this test steps, so it ends inside the
+    // network check however long the earlier readiness steps take on a loaded
+    // machine (each still has its real bound, the clamped remaining budget):
+    // held still until the shim reports that the check started, then spent.
+    let clock = Arc::new(Mutex::new(Instant::now()));
+    runtime.client_mut().readiness_clock = Some(clock.clone());
+    let statedir = log.parent().unwrap().to_path_buf();
+    let marker = statedir.join("network-started");
+    let done = Arc::new(AtomicBool::new(false));
+    let stepper = std::thread::spawn({
+        let done = done.clone();
+        move || {
+            while !done.load(Ordering::Acquire) {
+                if marker.exists() {
+                    *clock.lock().unwrap() += budget;
+                    return Some(Instant::now());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            None
+        }
+    });
+    let result = runtime.create_bound(&create_req());
+    done.store(true, Ordering::Release);
+    let started = stepper
+        .join()
+        .unwrap()
+        .expect("the network check never started");
+    let err = result
         .expect_err("the network check outlives the budget")
         .into_error();
     assert_eq!(err.code, SandboxErrorCode::GuestUnavailable, "{err}");
@@ -4774,12 +4802,58 @@ fn a_check_that_outlives_the_budget_is_agent_timeout_never_ready() {
         err.readiness_reason(),
         Some(sandbox_protocol::ReadinessFailureReason::AgentTimeout)
     );
-    // Clamped: the 10 s network check never ran to completion.
+    // Clamped: the 10 s network check never ran to completion (its sleep
+    // started at the marker).
     assert!(
         started.elapsed() < Duration::from_secs(8),
         "{:?}",
         started.elapsed()
     );
+    assert!(!statedir.join("network-slept").exists());
+}
+
+/// P2-4, on the real clock: the readiness pass still ends within its budget
+/// plus a bounded margin, never READY, and the 10 s check never completes. On
+/// a loaded machine the real budget may end in an earlier readiness step,
+/// which then reports its own code (C37 R4), so the exact classification is
+/// the stepped test's job above; this one keeps the wall-clock bound on the
+/// pass, from the moment it took its budget (`readiness_started`), which also
+/// catches a wait between steps that ignores the budget. Provisioning before
+/// the pass has its own per-call bounds and is not part of the budget.
+#[test]
+fn a_check_that_outlives_the_budget_fails_within_the_budget_never_ready() {
+    use std::sync::{Arc, Mutex};
+    let (mut runtime, log) = runtime_for("slow_network");
+    runtime.client_mut().agent_timeout = Duration::from_millis(1500);
+    let readiness = Arc::new(Mutex::new(None));
+    runtime.client_mut().readiness_started = Some(readiness.clone());
+    let result = runtime.create_bound(&create_req());
+    let started = readiness
+        .lock()
+        .unwrap()
+        .expect("the readiness pass never started");
+    let elapsed = started.elapsed();
+    let err = result
+        .expect_err("the network check outlives the budget")
+        .into_error();
+    assert!(
+        matches!(
+            err.code,
+            SandboxErrorCode::GuestUnavailable
+                | SandboxErrorCode::UnknownOutcome
+                | SandboxErrorCode::Timeout
+        ),
+        "{err}"
+    );
+    if err.code == SandboxErrorCode::GuestUnavailable {
+        assert_eq!(
+            err.readiness_reason(),
+            Some(sandbox_protocol::ReadinessFailureReason::AgentTimeout),
+            "{err}"
+        );
+    }
+    assert!(elapsed < Duration::from_secs(8), "{elapsed:?}");
+    assert!(!log.parent().unwrap().join("network-slept").exists());
 }
 
 /// P2-5: once the VM was seen Stopped, a stalled state query is cut at the
@@ -8551,6 +8625,10 @@ fn qualification_dir_unpack_outlives_the_ordinary_agent_deadline() {
 /// the flag keeps the declared guest identity.
 #[test]
 fn build_root_command_runs_incus_exec_as_root_only_when_flagged() {
+    // The default pid directories are asserted below: hold the process-wide
+    // ops-dir override unset, or a concurrent test's directory (a G3 test's
+    // `/tmp/wssp-g3-…`) lands in these exec lines.
+    let _ops = super::exec::set_test_guest_ops_dir(None);
     let exec_line = |root: bool| {
         let (client, log) = client_for_with_log("exit1");
         let supervisor = ExecSupervisor::new(client);

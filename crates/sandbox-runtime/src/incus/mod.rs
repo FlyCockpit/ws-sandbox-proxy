@@ -47,7 +47,7 @@ mod image_shim_tests;
 #[cfg(test)]
 mod network_shim_tests;
 #[cfg(test)]
-mod pty_shim_tests;
+pub(crate) mod pty_shim_tests;
 #[cfg(test)]
 mod restore_shim_tests;
 #[cfg(test)]

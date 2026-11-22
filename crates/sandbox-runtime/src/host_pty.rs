@@ -93,10 +93,22 @@ impl HostPtyOpener for LocalHostPtyOpener {
 mod tests {
     use super::*;
     use crate::{PtyCloseIntent, PtyEvent, PtyTermination};
-    #[test]
-    fn local_host_pty_echo_resize_uid_groups_and_confirmed_close() {
-        use std::os::fd::AsRawFd;
-        let sentinel = std::fs::File::open(std::env::current_exe().unwrap()).unwrap();
+    /// Opens the local host shell while `sentinels` (descriptors of this test
+    /// binary) are open here, and asserts the shell holds none of them, that it
+    /// answers resize, uid, gid and groups, and that close is confirmed.
+    ///
+    /// The leak check compares what each of the shell's descriptors refers to
+    /// with the sentinel file, never descriptor numbers: interactive dash
+    /// (`/bin/sh -i`) keeps its own terminal on fd 10, so a sentinel that
+    /// happened to get number 10 (other tests holding descriptors) used to
+    /// read as a leak although nothing was inherited.
+    fn assert_host_shell_holds_none_of(sentinels: &[std::fs::File]) {
+        // A PTY open would move the descriptor baselines of the PTY shim tests.
+        let _serial = crate::incus::pty_shim_tests::lock();
+        let path = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let path = path.to_str().unwrap();
+        assert!(!path.contains('\''), "{path}");
+        assert!(!sentinels.is_empty());
         let opener = LocalHostPtyOpener::default();
         let mut session = opener
             .open(
@@ -109,8 +121,7 @@ mod tests {
         assert_eq!(session.size(), PtySize::new(40, 100).unwrap());
         // Octal escapes prevent terminal input echo from satisfying the marker.
         let command = format!(
-            "if [ -e /proc/$$/fd/{} ]; then printf '\\106D_LEAK\\n'; fi; printf '\\1241_HOST_OK\\n'; id -u; id -g; id -G\n",
-            sentinel.as_raw_fd()
+            "for f in /proc/$$/fd/*; do [ \"$(readlink \"$f\")\" != '{path}' ] || printf '\\106D_LEAK %s\\n' \"$f\"; done; printf '\\1241_HOST_OK\\n'; id -u; id -g; id -G\n"
         );
         session.write_input(command.as_bytes()).unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -153,12 +164,65 @@ mod tests {
         }
         assert!(
             !output.contains("FD_LEAK"),
-            "non-stdio descriptor reached the shell"
+            "non-stdio descriptor reached the shell: {output}"
         );
         assert!(matches!(
             session.close(PtyCloseIntent::Client),
             PtyTermination::Closed { reaped: true, .. }
         ));
         assert!(session.reap_confirmed());
+    }
+
+    #[test]
+    fn local_host_pty_echo_resize_uid_groups_and_confirmed_close() {
+        let sentinel = std::fs::File::open(std::env::current_exe().unwrap()).unwrap();
+        assert_host_shell_holds_none_of(&[sentinel]);
+    }
+
+    /// The same check while this process holds descriptors 3 through 12 (run
+    /// alone they are all sentinels, so one of them is the number the shell
+    /// uses for its own terminal); in the parallel suite the numbers are
+    /// whatever is free, which the identity check does not depend on.
+    #[test]
+    fn local_host_pty_leak_check_holds_with_sentinels_on_the_shells_own_descriptor_numbers() {
+        use std::os::fd::AsRawFd;
+        let exe = std::env::current_exe().unwrap();
+        let mut sentinels = Vec::new();
+        while sentinels.len() < 64
+            && sentinels
+                .last()
+                .is_none_or(|file: &std::fs::File| file.as_raw_fd() < 12)
+        {
+            sentinels.push(std::fs::File::open(&exe).unwrap());
+        }
+        assert_host_shell_holds_none_of(&sentinels);
+    }
+
+    /// An inheritable descriptor (`FD_CLOEXEC` cleared, as a library or an
+    /// inherited descriptor could leave one) never reaches the host shell: the
+    /// PTY spawn closes every descriptor above stdio. Positive control: a
+    /// plain `sh` spawned by std, which closes nothing, sees the same sentinel
+    /// through the same identity check.
+    #[test]
+    fn local_host_pty_closes_an_inheritable_descriptor() {
+        use nix::fcntl::{FcntlArg, FdFlag, fcntl};
+        let exe = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let path = exe.to_str().unwrap();
+        assert!(!path.contains('\''), "{path}");
+        let sentinel = std::fs::File::open(&exe).unwrap();
+        fcntl(&sentinel, FcntlArg::F_SETFD(FdFlag::empty())).unwrap();
+        let control = crate::host_child::command("/bin/sh", crate::host_child::Environment::PathOnly)
+            .arg("-c")
+            .arg(format!(
+                "for f in /proc/$$/fd/*; do [ \"$(readlink \"$f\")\" != '{path}' ] || echo FD_LEAK; done"
+            ))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&control.stdout).contains("FD_LEAK"),
+            "the identity check must see an inherited descriptor: {control:?}"
+        );
+        assert_host_shell_holds_none_of(&[sentinel]);
     }
 }

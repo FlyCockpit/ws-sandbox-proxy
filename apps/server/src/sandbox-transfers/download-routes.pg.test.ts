@@ -710,12 +710,17 @@ it("round-trips 33 MiB of arbitrary bytes from upload through capture to downloa
 it("round-trips a 1 GiB upload through capture and an interrupted ranged download with one hash", async () => {
   const f = await seed();
   const total = CAP;
-  // Arbitrary bytes, streamed: a random block XORed with the chunk index.
+  // Arbitrary bytes, streamed: a random block with every byte XORed with the
+  // chunk index (& 255), built a 32-bit word at a time.
   const block = randomBytes(CHUNK);
   const chunkAt = (offset: number) => {
-    const out = Buffer.from(block);
-    const salt = (offset / CHUNK) & 255;
-    if (salt) for (let i = 0; i < out.length; i++) out[i]! ^= salt;
+    const out = Buffer.allocUnsafeSlow(CHUNK);
+    block.copy(out);
+    const salt = ((offset / CHUNK) & 255) * 0x01010101;
+    if (salt !== 0) {
+      const words = new Uint32Array(out.buffer, out.byteOffset, CHUNK / 4);
+      for (let i = 0; i < words.length; i++) words[i]! ^= salt;
+    }
     return out;
   };
   const created = await app.request("/v1/transfers", {

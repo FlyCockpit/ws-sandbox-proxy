@@ -51,6 +51,7 @@ import {
   type ImageFetchPlan,
   imageFetchPlan,
   lockImageFetchSuffix,
+  STATEMENT_NOW,
 } from "./image-placement";
 import { foreignCopyUsableSql } from "./image-store/access";
 import { hostImageFeatures } from "./image-store/config";
@@ -265,7 +266,7 @@ export function placementSql(q: PlacementQuery) {
       WHERE p."sandboxHostId" = h.id AND p."userId" = h."userId"
         AND p."connectionEpoch" = h."connectionEpoch" AND p."newRootsAllowed"
         AND p.health = 'healthy' AND NOT p.draining
-        AND p."reportedAt" BETWEEN ${storageOldest} AND ${now}
+        AND p."reportedAt" BETWEEN ${storageOldest} AND ${STATEMENT_NOW}
       ORDER BY p."capacityGiB" - p."diskReservedGiB" DESC, p.marker ASC LIMIT 1
     ) storage ON true
     LEFT JOIN LATERAL (
@@ -306,7 +307,7 @@ export function placementSql(q: PlacementQuery) {
             AND a.architecture = ${revision.architecture}
             AND a."manifestDigest" = ${revision.manifestDigest})
           OR ${fetchableStaticSql(q.plan ?? null, owner.ownerId)})`,
-    online: PrismaValue.sql`(h.status = 'CONNECTED' AND h."lastHeartbeatAt" BETWEEN ${oldest} AND ${now}
+    online: PrismaValue.sql`(h.status = 'CONNECTED' AND h."lastHeartbeatAt" BETWEEN ${oldest} AND ${STATEMENT_NOW}
         AND h.draining = false AND h."deletionRequestedAt" IS NULL AND h."quarantinedAt" IS NULL
         AND h."daemonSchedulable" = true AND h."daemonVcpuBudget" IS NOT NULL
         AND h."daemonMemoryBudgetMiB" IS NOT NULL AND h."daemonMaxCpuCount" IS NOT NULL

@@ -516,12 +516,17 @@ export async function selectStoragePool(
       newRootsAllowed: true,
       health: "healthy",
       draining: false,
-      reportedAt: { gte: new Date(now.getTime() - STORAGE_HEALTH_STALE_MS), lte: now },
+      reportedAt: { gte: new Date(now.getTime() - STORAGE_HEALTH_STALE_MS) },
     },
     take: VM_SIZE_LIMITS.storagePoolMax,
     orderBy: { marker: "asc" },
   });
+  // The future-row bound is read after the rows (as in requireRetainedStorage): a
+  // report committed between the two reads is dated after `now`, never after
+  // a clock read that follows it (image-placement.ts STATEMENT_NOW).
+  const read = await hostDatabaseNow(tx);
   return pools
+    .filter((p) => p.reportedAt <= read)
     .filter((p) => chargeGiB === undefined || p.capacityGiB - p.diskReservedGiB >= chargeGiB)
     .sort((a, b) => b.capacityGiB - b.diskReservedGiB - (a.capacityGiB - a.diskReservedGiB))[0];
 }

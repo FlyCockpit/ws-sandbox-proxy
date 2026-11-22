@@ -27,6 +27,10 @@ libc = "0.2.191"
 nix.workspace = true
 portable-pty.workspace = true
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# `fs` for the PTY test that clears FD_CLOEXEC on a sentinel (safe `fcntl`).
+nix = { workspace = true, features = ["fs"] }
+
 [[bin]]
 name = "incus-surface"
 path = "src/bin/incus-surface.rs"

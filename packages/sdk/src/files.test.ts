@@ -7,7 +7,7 @@ import {
   TRANSFER_CHUNK_BYTES,
   VM_SIZE_PUBLIC_LIMITS,
 } from "@wssp/sandbox-contracts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWsspClient } from "./client";
 import { isWsspError, WsspError } from "./errors";
 import { DEFAULT_FILE_MEMORY_BYTES } from "./files";
@@ -650,6 +650,69 @@ async function failure(promise: Promise<unknown>): Promise<WsspError> {
   );
   expect(error).toBeInstanceOf(WsspError);
   return error as WsspError;
+}
+
+/** files.ts SOURCE_CLOSE_TIMEOUT_MS: how long an upload waits for a stalled source's return(). */
+const SOURCE_CLOSE_BOUND_MS = 10_000;
+
+/**
+ * An upload on a fake clock (setTimeout, clearTimeout and Date; setImmediate
+ * stays real), so the test crosses each bounded wait itself, one millisecond
+ * short first, only after `reach` has seen the upload enter that wait.
+ */
+function onFakeClock(promise: () => Promise<unknown>) {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  let settled = false;
+  const outcome = failure(promise()).finally(() => {
+    settled = true;
+  });
+  // Lets the fake server and the upload run (microtasks and real immediates)
+  // without moving the clock, until `reached` holds.
+  const reach = async (reached: () => boolean, what: string) => {
+    for (let turn = 0; turn < 10_000 && !reached(); turn++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(reached(), `the upload never reached ${what}`).toBe(true);
+  };
+  // Crosses a bound of `ms` that starts at the current fake time: still
+  // pending 1 ms before it, then the outcome once it elapses.
+  const cross = async (ms: number) => {
+    await vi.advanceTimersByTimeAsync(ms - 1);
+    expect(settled, `settled before the ${ms} ms bound`).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+  };
+  const result = async () => {
+    await reach(() => settled, "settlement");
+    vi.useRealTimers();
+    return outcome;
+  };
+  return { reach, cross, result, settled: () => settled };
+}
+
+// A failed onFakeClock() case must not leave its fake clock to the next case.
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/** `source`, counting next() and return() calls. */
+function observed(source: AsyncIterable<Uint8Array>) {
+  const calls = { next: 0, return: 0 };
+  const iterable: AsyncIterable<Uint8Array> = {
+    [Symbol.asyncIterator]() {
+      const inner = source[Symbol.asyncIterator]();
+      return {
+        next() {
+          calls.next += 1;
+          return inner.next();
+        },
+        return() {
+          calls.return += 1;
+          return inner.return?.() ?? Promise.resolve({ done: true, value: undefined });
+        },
+      };
+    },
+  };
+  return { iterable, calls };
 }
 
 /** Register a completed capture for `op` content reads after an upload flow. */
@@ -2225,26 +2288,31 @@ describe("files.upload and download — round-5 review", () => {
     return { server, transfer };
   };
 
-  it("aborting mid-recovery of a committed receipt reports unknown with both keys", {
-    timeout: 20_000,
-  }, async () => {
+  it("aborting mid-recovery of a committed receipt reports unknown with both keys", async () => {
     const key = "r5-commit-abort";
     const data = makeBytes(1000);
     const { server, transfer } = await sealedWithLostCommit(key, data);
     const controller = new AbortController();
     // The rehash source yields once, aborts, then stalls forever.
-    const stalling = (async function* () {
-      yield data.subarray(0, 10);
-      controller.abort();
-      await new Promise(() => {});
-    })();
-    const error = await failure(
-      server.client.files.upload("sbx_1", "/app/d.bin", stalling, {
+    const stalling = observed(
+      (async function* () {
+        yield data.subarray(0, 10);
+        controller.abort();
+        await new Promise(() => {});
+      })(),
+    );
+    const clock = onFakeClock(() =>
+      server.client.files.upload("sbx_1", "/app/d.bin", stalling.iterable, {
         idempotencyKey: key,
         totalBytes: data.byteLength,
         signal: controller.signal,
       }),
     );
+    // The abort reached the upload and it is waiting out the stalled source's cleanup.
+    await clock.reach(() => stalling.calls.return === 1, "source cleanup");
+    expect(controller.signal.aborted).toBe(true);
+    await clock.cross(SOURCE_CLOSE_BOUND_MS);
+    const error = await clock.result();
     // NOT a definitive abort: the committed operation may still run.
     expect(error.kind).toBe("unknown");
     expect(error.reason).toBe("aborted");
@@ -2258,23 +2326,29 @@ describe("files.upload and download — round-5 review", () => {
     expect(server.state.writes).toHaveLength(1);
   });
 
-  it("a deadline hit during sealed recovery also reports unknown with both keys", {
-    timeout: 20_000,
-  }, async () => {
+  it("a deadline hit during sealed recovery also reports unknown with both keys", async () => {
     const key = "r5-commit-timeout";
     const data = makeBytes(1000);
     const { server, transfer } = await sealedWithLostCommit(key, data);
-    const stalling = (async function* () {
-      yield data.subarray(0, 10);
-      await new Promise(() => {});
-    })();
-    const error = await failure(
-      server.client.files.upload("sbx_1", "/app/d.bin", stalling, {
+    const stalling = observed(
+      (async function* () {
+        yield data.subarray(0, 10);
+        await new Promise(() => {});
+      })(),
+    );
+    const clock = onFakeClock(() =>
+      server.client.files.upload("sbx_1", "/app/d.bin", stalling.iterable, {
         idempotencyKey: key,
         totalBytes: data.byteLength,
         waitTimeoutMs: 800,
       }),
     );
+    // Parked in the rehash read that never answers: only the deadline ends it.
+    await clock.reach(() => stalling.calls.next === 2, "the stalled rehash read");
+    await clock.cross(800);
+    await clock.reach(() => stalling.calls.return === 1, "source cleanup");
+    await clock.cross(SOURCE_CLOSE_BOUND_MS);
+    const error = await clock.result();
     expect(error.kind).toBe("unknown");
     expect(error.reason).toBe("timeout");
     expect(error.idempotencyKey).toBe(key);
@@ -2325,25 +2399,25 @@ describe("files.upload and download — round-6 review", () => {
     },
   });
 
-  it("abort during source cleanup after a successful rehash reports unknown with both keys", {
-    timeout: 20_000,
-  }, async () => {
+  it("abort during source cleanup after a successful rehash reports unknown with both keys", async () => {
     const key = "r6-cleanup-abort";
     const data = makeBytes(1000);
     const { server, transfer } = await sealedWithLostCommit(key, data);
     const controller = new AbortController();
-    const error = await failure(
-      server.client.files.upload(
-        "sbx_1",
-        "/app/d.bin",
-        hangingCleanupSource(data, () => controller.abort()),
-        {
-          idempotencyKey: key,
-          totalBytes: data.byteLength,
-          signal: controller.signal,
-        },
-      ),
+    const source = observed(hangingCleanupSource(data, () => controller.abort()));
+    const clock = onFakeClock(() =>
+      server.client.files.upload("sbx_1", "/app/d.bin", source.iterable, {
+        idempotencyKey: key,
+        totalBytes: data.byteLength,
+        signal: controller.signal,
+      }),
     );
+    // The whole rehash was read, then the abort came from inside the hanging cleanup.
+    await clock.reach(() => source.calls.return === 1, "source cleanup");
+    expect(source.calls.next).toBe(2);
+    expect(controller.signal.aborted).toBe(true);
+    await clock.cross(SOURCE_CLOSE_BOUND_MS);
+    const error = await clock.result();
     expect(error.kind).toBe("unknown");
     expect(error.reason).toBe("aborted");
     expect(error.idempotencyKey).toBe(key);
@@ -2355,19 +2429,23 @@ describe("files.upload and download — round-6 review", () => {
     expect(server.state.writes).toHaveLength(1);
   });
 
-  it("a deadline exhausted during source cleanup reports unknown with both keys", {
-    timeout: 20_000,
-  }, async () => {
+  it("a deadline exhausted during source cleanup reports unknown with both keys", async () => {
     const key = "r6-cleanup-deadline";
     const data = makeBytes(1000);
     const { server, transfer } = await sealedWithLostCommit(key, data);
-    const error = await failure(
-      server.client.files.upload("sbx_1", "/app/d.bin", hangingCleanupSource(data), {
+    const source = observed(hangingCleanupSource(data));
+    const clock = onFakeClock(() =>
+      server.client.files.upload("sbx_1", "/app/d.bin", source.iterable, {
         idempotencyKey: key,
         totalBytes: data.byteLength,
         waitTimeoutMs: 800,
       }),
     );
+    // The whole rehash was read inside the deadline; the hanging cleanup outlives it.
+    await clock.reach(() => source.calls.return === 1, "source cleanup");
+    expect(source.calls.next).toBe(2);
+    await clock.cross(SOURCE_CLOSE_BOUND_MS);
+    const error = await clock.result();
     expect(error.kind).toBe("unknown");
     expect(error.reason).toBe("timeout");
     expect(error.idempotencyKey).toBe(key);
@@ -2677,25 +2755,29 @@ describe("files.upload and download — round-9 review", () => {
     return { server, transfer };
   };
 
-  it("aborting an OPEN full-cursor replay keeps uncertainty until the original commit lands", {
-    timeout: 30_000,
-  }, async () => {
+  it("aborting an OPEN full-cursor replay keeps uncertainty until the original commit lands", async () => {
     const key = "r9-open-abort";
     const data = makeBytes(1000);
     const { server, transfer } = await commitHeldAtFullCursor(key, data);
     const controller = new AbortController();
-    const stalling = (async function* () {
-      yield data.subarray(0, 10);
-      controller.abort();
-      await new Promise(() => {});
-    })();
-    const error = await failure(
-      server.client.files.upload("sbx_1", "/app/d.bin", stalling, {
+    const stalling = observed(
+      (async function* () {
+        yield data.subarray(0, 10);
+        controller.abort();
+        await new Promise(() => {});
+      })(),
+    );
+    const clock = onFakeClock(() =>
+      server.client.files.upload("sbx_1", "/app/d.bin", stalling.iterable, {
         idempotencyKey: key,
         totalBytes: data.byteLength,
         signal: controller.signal,
       }),
     );
+    await clock.reach(() => stalling.calls.return === 1, "source cleanup");
+    expect(controller.signal.aborted).toBe(true);
+    await clock.cross(SOURCE_CLOSE_BOUND_MS);
+    const error = await clock.result();
     // Not a definitive abort: the held commit can still replace the file.
     expect(error.kind).toBe("unknown");
     expect(error.reason).toBe("aborted");

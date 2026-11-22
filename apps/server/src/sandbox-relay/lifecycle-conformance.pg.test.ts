@@ -279,7 +279,7 @@ type Fixture = Awaited<ReturnType<typeof fixture>>;
 /**
  * This file drives the whole stack (SDK → /v1 → PostgreSQL → outbox → relay
  * → host double) and its slowest tests run hundreds of serialized database
- * transactions: eight creates on one host, 256 committed 8 KiB output chunks,
+ * transactions: eight creates on one host, 226 committed 8 KiB output chunks,
  * two-identity pool lifecycles. Measured on the 8-core development host they
  * take up to ~25 s while one other heavy job runs and up to ~38 s at load
  * average ~21; the 30 s pg default (vitest.pg.config.ts) is a generic value,
@@ -1197,7 +1197,10 @@ describe("C57 default caps hold in the lifecycle", () => {
     const sandbox = await f
       .client()
       .sandboxes.create({ template: "revision/" + f.template.id, sandboxHostId: f.host.id });
-    const total = 2 * 1024 * 1024;
+    // Past a complete turnover of the retained tail (every byte it first held
+    // is evicted), plus one 8 KiB block and one byte so the last output chunk
+    // is partial: the smallest payload past every retention boundary.
+    const total = OUTPUT_HEAD_BYTES + 2 * OUTPUT_TAIL_BYTES + 8192 + 1;
     const noisy = new Uint8Array(total);
     for (let i = 0; i < total; i++) noisy[i] = 0x61 + (Math.floor(i / 8192) % 26);
     f.daemon.programs.set("./noisy", { stdout: noisy, exitCode: 0 });
