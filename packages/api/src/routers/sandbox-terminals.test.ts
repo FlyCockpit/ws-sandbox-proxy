@@ -103,10 +103,9 @@ describe("sandboxTerminals.createSession", () => {
     await expect(client(session()).createSession(input)).rejects.toMatchObject({
       code: "UNAUTHORIZED",
     });
+    // protectedProcedure's durable session check refuses it first.
     expect(db.session.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ id: "auth-session-1", impersonatedBy: null }),
-      }),
+      expect.objectContaining({ where: expect.objectContaining({ id: "auth-session-1" }) }),
     );
     expect(db.sandboxTerminalTicket.create).not.toHaveBeenCalled();
   });

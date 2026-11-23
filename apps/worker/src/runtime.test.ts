@@ -344,6 +344,36 @@ describe("startWorkerRuntime", () => {
     expect(state.disconnect).not.toHaveBeenCalled();
   });
 
+  it("names the failed drain step and only the queues whose consumer did not close cleanly", async () => {
+    vi.useFakeTimers();
+    let { startWorkerRuntime } = await import("./runtime");
+    // Deadline: one consumer still waits on an active job.
+    let runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+    const hung = state.workers[1]!;
+    hung.close.mockImplementation(() => new Promise(() => {}));
+    const deadline = runtime.stop().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await deadline).toMatchObject({ reason: "deadline", pendingQueues: [hung.name] });
+    // Consumers: one close rejected; the others closed cleanly.
+    vi.resetModules();
+    state.workers.length = 0;
+    ({ startWorkerRuntime } = await import("./runtime"));
+    runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+    const failed = state.workers[2]!;
+    failed.close.mockRejectedValueOnce(new Error("still active"));
+    await expect(runtime.stop()).rejects.toMatchObject({
+      reason: "consumers",
+      pendingQueues: [failed.name],
+    });
+    // Heartbeat: every consumer closed, the withdrawal failed.
+    vi.resetModules();
+    state.workers.length = 0;
+    ({ startWorkerRuntime } = await import("./runtime"));
+    runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+    state.heartbeatStop.mockRejectedValueOnce(new Error("offline"));
+    await expect(runtime.stop()).rejects.toMatchObject({ reason: "heartbeat", pendingQueues: [] });
+  });
+
   it("a missing or duplicate registered queue suppresses readiness", async () => {
     const { startWorkerRuntime } = await import("./runtime");
     const runtime = await startWorkerRuntime({ embedded: false, onFatal: vi.fn() });

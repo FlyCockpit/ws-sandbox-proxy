@@ -1,8 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { isAdminRole } from "@wssp/auth/roles";
-
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
 import { DashboardFrame } from "@/components/dashboard-frame";
+import { ForcedPasswordChange } from "@/components/forced-password-change";
 import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
 import { decideProtectedRouteAccess, loginRedirect } from "@/lib/route-session-access";
@@ -29,19 +28,22 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
     return {
       session: decision.session,
       forcedTwoFactorSettings: decision.forcedTwoFactorSettings,
+      passwordChangeRequired: decision.passwordChangeRequired,
     };
   },
   component: AuthLayout,
 });
 
 function AuthLayout() {
-  const { session, forcedTwoFactorSettings } = Route.useRouteContext();
+  const { session, forcedTwoFactorSettings, passwordChangeRequired } = Route.useRouteContext();
   const { lang } = Route.useParams();
-  // The takeover replaces the whole frame, so no nav renders behind it.
-  // Admins see their 2FA enrollment deadline here too, not only under /admin
-  // (a sibling route tree, so the banner never renders twice).
-  const admin = session.user.emailVerified === true && isAdminRole(session.user.role);
-  const banner = admin ? <TwoFactorNudge variant="shell" /> : null;
+  // Each takeover replaces the whole frame, so no nav renders behind it. An
+  // admin-set temporary password is replaced first: 2FA enrollment asks for
+  // the account's own password.
+  if (passwordChangeRequired) return <ForcedPasswordChange />;
+  // Everyone under a forced 2FA policy sees their enrollment deadline here
+  // (admins also under /admin, a sibling route tree, so it never renders twice).
+  const banner = session.user.emailVerified === true ? <TwoFactorNudge variant="shell" /> : null;
   return (
     <ForcedTwoFactorGate user={session.user} forcedTwoFactorSettings={forcedTwoFactorSettings}>
       <DashboardFrame lang={lang} banner={banner} />

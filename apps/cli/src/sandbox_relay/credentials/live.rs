@@ -102,7 +102,7 @@ impl CredentialService {
         target: &LaunchTarget,
         spec: &CredentialSpecV11,
         still_wanted: &dyn Fn() -> bool,
-    ) -> Result<(), LaunchFailure> {
+    ) -> Result<Vec<CredentialInstalledV11>, LaunchFailure> {
         if spec.leases.is_empty()
             || spec
                 .leases

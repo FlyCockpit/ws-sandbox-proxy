@@ -252,6 +252,7 @@ const surface = [
       resendInvite: sharing.resendPoolInvite,
       revokeInvite: sharing.revokePoolInvite,
       acceptInvite: sharing.acceptPoolInvite,
+      previewInvite: sharing.previewPoolInvite,
       contributeHost: sharing.contributePoolHost,
       withdrawHost: sharing.withdrawPoolHost,
 
@@ -283,6 +284,7 @@ const surface = [
       resendInvite: null,
       revokeInvite: null,
       acceptInvite: null,
+      previewInvite: null,
       contributeHost: null,
       withdrawHost: null,
 
@@ -556,7 +558,7 @@ const context = {
 };
 
 describe("independent SDK scope and service inventory", () => {
-  it("accounts for all 146 real router procedures and every service export", () => {
+  it("accounts for all 147 real router procedures and every service export", () => {
     const actions: string[] = [];
     let count = 0;
     for (const group of surface) {
@@ -583,7 +585,7 @@ describe("independent SDK scope and service inventory", () => {
         );
       expect(Object.keys(group.services).sort()).toEqual(serviceNames.sort());
     }
-    expect(count).toBe(146);
+    expect(count).toBe(147);
     // Owner dashboard reads and qualified usable reads share the same budgets
     // and SDK actions. Only these three explicit aliases may repeat.
     expect(actions.filter((action, index) => actions.indexOf(action) !== index).sort()).toEqual([

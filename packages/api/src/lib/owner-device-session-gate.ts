@@ -59,6 +59,14 @@ export async function evaluateOwnerDeviceSession(
     };
   }
 
+  if (gateUser.mustChangePassword) {
+    return {
+      ok: false,
+      status: 403,
+      body: { error: "access_denied", error_description: "Password change required" },
+    };
+  }
+
   if (!(await isSensitiveSessionTwoFactorPolicySatisfied(session.user.id))) {
     return {
       ok: false,

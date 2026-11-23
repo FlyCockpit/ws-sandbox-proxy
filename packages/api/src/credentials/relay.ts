@@ -11,6 +11,7 @@ export {
 } from "./census";
 export { deliverCredentialFrame, registerCredentialFrameSink } from "./frame-sink";
 export {
+  applyInstalledReceipt,
   type GrantResult,
   grantInstallBundle,
   grantRestoreBundle,
@@ -38,5 +39,5 @@ export {
   settleOperationCredentials,
   settleTerminalTeardown,
   teardownOutcomesFromResult,
-  withoutTeardownOutcomes,
+  withoutCredentialReceipts,
 } from "./teardown";

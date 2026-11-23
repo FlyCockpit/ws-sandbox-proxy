@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { ORPCError, os } from "@orpc/server";
 import { auth } from "@wssp/auth";
-import { DEFAULT_LOCALE, isSupportedLocale } from "@wssp/config/locales";
+import { adminInviteAcceptUrl } from "@wssp/auth/admin-invite-verification";
 import prisma, { type Prisma } from "@wssp/db";
 import {
   AccountDeletionConflictError,
@@ -211,7 +211,14 @@ export const usersRouter = {
       let created: { id: string; locale: string };
       try {
         created = await tx.user.create({
-          data: { email: input.email, name: input.name, role: input.role },
+          // The temporary password is known to the admin: the invitee must
+          // replace it before anything else (`mustChangePassword` gate).
+          data: {
+            email: input.email,
+            name: input.name,
+            role: input.role,
+            mustChangePassword: true,
+          },
           select: { id: true, locale: true },
         });
       } catch (error) {
@@ -238,12 +245,18 @@ export const usersRouter = {
             name: input.name,
             email: input.email,
             tempPassword,
-            // A page link: the web origin (CORS_ORIGIN on split deployments,
-            // as the pool invitation mail does), under the invitee's locale.
-            signInUrl: new URL(
-              `/${isSupportedLocale(created.locale) ? created.locale : DEFAULT_LOCALE}/login`,
-              env.CORS_ORIGIN || env.BETTER_AUTH_URL,
-            ).toString(),
+            // Accepting (opening the mailed link) verifies the invited
+            // address through Better Auth's own verify-email endpoint, then
+            // lands on the web verify-email page under the invitee's locale
+            // (the web origin, CORS_ORIGIN on split deployments).
+            acceptUrl: await adminInviteAcceptUrl({
+              secret: env.BETTER_AUTH_SECRET,
+              authBaseUrl: env.BETTER_AUTH_URL,
+              appOrigin: env.CORS_ORIGIN,
+              userId: created.id,
+              email: input.email,
+              locale: created.locale,
+            }),
             locale: created.locale,
           });
           await sendEmail({ to: input.email, subject, html });

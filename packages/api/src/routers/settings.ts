@@ -108,7 +108,7 @@ export const settingsRouter = {
       setAccountImagePolicy(sessionPrincipal(context.session.user.id), input),
     ),
 
-  myNotificationPreferences: authenticatedProcedure.handler(async ({ context }) => {
+  myNotificationPreferences: protectedProcedure.handler(async ({ context }) => {
     const user = await prisma.user.findUnique({
       where: { id: context.session.user.id },
       select: { operationalAlerts: true },
@@ -118,7 +118,7 @@ export const settingsRouter = {
     };
   }),
 
-  updateMyNotificationPreferences: authenticatedProcedure
+  updateMyNotificationPreferences: protectedProcedure
     .input(
       z.object({
         operationalAlerts: z.boolean(),

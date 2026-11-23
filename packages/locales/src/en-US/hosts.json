@@ -368,7 +368,10 @@
       "TEMPLATE_BUILD": "Template build"
     },
     "memberOption": "Member host {{n}}",
-    "nodeOwnerAccess": "The node owner has full access to sandboxes other users run on their node."
+    "nodeOwnerAccess": "The node owner has full access to sandboxes other users run on their node.",
+    "invitedBy": "{{inviter}} invited you to the pool {{pool}}.",
+    "notAddressedToYou": "This invitation was sent to a different email address, so it can only be accepted as a bearer link.",
+    "previewUnavailable": "This invitation can't be shown. It may have expired, been revoked or already been accepted; ask the owner for a new one."
   },
   "guestStates": {
     "REQUESTED": "Requested",

@@ -438,7 +438,9 @@ Invitation links carry a seven-day digest-only secret in the fragment, captured
 and removed before rendering/auth redirects. Copy-once links and signup secrets
 stay in browser memory, never Query caches or storage. Resend rotates the link;
 SMTP failure means delivery is unconfirmed. Explicit acceptance shows your
-signed-in account. Bearer mode permits forwarded links to a different existing
+signed-in account, the pool's name and who invited you (the same two facts the
+mail carries), and says when the invitation was sent to another address; an
+expired, revoked or accepted invitation shows nothing beyond "unavailable". Bearer mode permits forwarded links to a different existing
 account; email-only mode requires the verified invited email. Closed signup
 requires both the original token and exact invited address, with mailbox proof
 before explicit acceptance. Reopen the original link after verification/sign-in

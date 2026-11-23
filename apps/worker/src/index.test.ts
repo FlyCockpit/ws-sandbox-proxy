@@ -21,7 +21,15 @@ vi.mock("node:http", () => ({
 vi.mock("./operational-alerts.js", () => ({ sendOperationalFailureAlert: state.alert }));
 vi.mock("./runtime.js", () => ({
   startWorkerRuntime: state.start,
-  WorkerDrainError: class WorkerDrainError extends Error {},
+  WorkerDrainError: class WorkerDrainError extends Error {
+    constructor(
+      message: string,
+      readonly reason: string,
+      readonly pendingQueues: readonly string[],
+    ) {
+      super(message);
+    }
+  },
 }));
 const listeners = new Map<string, (...args: unknown[]) => void>();
 beforeEach(() => {
@@ -95,7 +103,7 @@ describe("worker process entrypoint", () => {
 
   it("an unclean startup drain does not permit shared-client teardown", async () => {
     const { WorkerDrainError } = await import("./runtime.js");
-    state.start.mockRejectedValue(new WorkerDrainError("still running"));
+    state.start.mockRejectedValue(new WorkerDrainError("still running", "deadline", []));
     await import("./index");
     await vi.advanceTimersByTimeAsync(0);
     expect(state.disconnectDb).not.toHaveBeenCalled();
@@ -156,3 +164,25 @@ it.each(["startup", "consumer", "drain", "health", "unhandledRejection", "uncaug
     expect(inspect(log.mock.calls, { depth: 20 })).not.toContain(sentinel);
   },
 );
+
+it("logs the failed drain step and its unclosed queues, never the message", async () => {
+  const sentinel = "synthetic-private-drain-message";
+  const { WorkerDrainError } = await import("./runtime.js");
+  state.stop.mockRejectedValueOnce(
+    new WorkerDrainError(sentinel, "consumers", ["webhook-delivery"]),
+  );
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  await import("./index");
+  listeners.get("SIGTERM")?.();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(log).toHaveBeenCalledWith(
+    "[worker] Unclean drain; exiting without tearing down shared clients:",
+    {
+      code: "worker_drain_failed",
+      errorClass: "WorkerDrainError",
+      reason: "consumers",
+      pendingQueues: ["webhook-delivery"],
+    },
+  );
+  expect(inspect(log.mock.calls, { depth: 20 })).not.toContain(sentinel);
+});

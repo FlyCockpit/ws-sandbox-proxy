@@ -2,6 +2,10 @@
 // redirect parameters. The one hand-off is `postAuthHref`: a same-origin
 // fragment, which no request, access log or Referer ever carries.
 let token: string | undefined;
+// Bumped on every capture: the accept page keys its preview and form state on
+// it, so a newly captured invitation never inherits another's. (Clearing after
+// an acceptance keeps the generation, so the accepted state stays on screen.)
+let generation = 0;
 const INVITE_PATH = /^\/(en-US|es-MX)\/settings\/pools\/invite\/?$/;
 export function capturePoolInviteFragment(browser: Pick<Window, "location" | "history"> = window) {
   if (!INVITE_PATH.test(browser.location.pathname)) return;
@@ -12,6 +16,7 @@ export function capturePoolInviteFragment(browser: Pick<Window, "location" | "hi
     return;
   }
   token = /^wssp_inv_[A-Za-z0-9_-]{43}$/.test(fragment) ? fragment : undefined;
+  generation++;
   browser.history.replaceState(browser.history.state, "", browser.location.pathname);
 }
 export function poolInviteToken() {
@@ -19,6 +24,10 @@ export function poolInviteToken() {
 }
 export function clearPoolInviteToken() {
   token = undefined;
+}
+/** Non-secret identity of the captured invitation (see `generation`). */
+export function poolInviteGeneration() {
+  return generation;
 }
 
 /** Only the invitation route discards URL details; ordinary intended destinations stay intact. */

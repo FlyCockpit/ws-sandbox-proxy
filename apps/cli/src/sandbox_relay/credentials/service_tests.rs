@@ -454,7 +454,7 @@ fn create_installs_before_ready_and_restart_restores_env() {
     assert!(guest_calls(&fake).is_empty(), "spec fetch touches no guest");
 
     // Post-readiness, before READY.
-    daemon
+    let receipt = daemon
         .launch(&fake, &target(&bytes), &fetched, &always)
         .unwrap();
     // `launch` returns only after `installed` was handed to the socket, so
@@ -482,6 +482,9 @@ fn create_installs_before_ready_and_restart_restores_env() {
         ),
         ("bind-lease-1", 1, 2, 1)
     );
+    // The READY receipt repeats the report: a frame handed to a socket that
+    // broke is lost, the journaled receipt replays.
+    assert_eq!(receipt, vec![installed.clone()]);
     assert_eq!(
         fake.guest_file(SANDBOX, FILE).as_deref(),
         Some(FILE_SENTINEL)

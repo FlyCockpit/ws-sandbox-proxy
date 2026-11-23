@@ -43,11 +43,22 @@ export type ProtectedRouteSessionResolution =
       status: "resolved";
       session: RouteSession;
       forcedTwoFactorSettings: ForcedTwoFactorSettings;
+      /**
+       * The account still has an admin-set temporary password. Read from the
+       * user row, not the cookie-cached session, so the takeover ends as soon
+       * as the password is replaced.
+       */
+      passwordChangeRequired: boolean;
     }
   | { status: "error" };
 
 export type ProtectedRouteDecision =
-  | { kind: "allow"; session: RouteSession; forcedTwoFactorSettings: ForcedTwoFactorSettings }
+  | {
+      kind: "allow";
+      session: RouteSession;
+      forcedTwoFactorSettings: ForcedTwoFactorSettings;
+      passwordChangeRequired: boolean;
+    }
   | { kind: "redirect-to-login" }
   | { kind: "error" };
 
@@ -107,6 +118,7 @@ export function decideProtectedRouteAccess(
     kind: "allow",
     session: resolution.session,
     forcedTwoFactorSettings: resolution.forcedTwoFactorSettings,
+    passwordChangeRequired: resolution.passwordChangeRequired,
   };
 }
 

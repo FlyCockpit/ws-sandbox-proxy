@@ -30,6 +30,11 @@ model User {
   createdViaPoolInviteBy        String?
   createdViaPoolInviteId        String?
   operationalAlerts             Boolean                       @default(true)
+  // Set only when an admin creates the account with a temporary password
+  // (users.invite); every authenticated surface except changing the password
+  // refuses until then. Cleared only after the account's own successful
+  // password change or reset (packages/auth/src/password-change-guard.ts).
+  mustChangePassword            Boolean                       @default(false)
   McpGrants                     McpGrant[]
   HostQueuedCommands            HostQueuedCommand[]
   HostFileReceipts              HostFileReceipt[]

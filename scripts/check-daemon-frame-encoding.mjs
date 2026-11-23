@@ -241,6 +241,9 @@ const reviewed = new Map([
   // CLI logins C8b: the typed, non-secret teardown outcomes
   // (CredentialTeardownOutcomeV11 list) placed in a stop/kill result payload.
   ["apps/cli/src/sandbox_relay/supervisor.rs|json ! ( outcomes )", 1],
+  // CLI logins: the typed, non-secret `credential.installed` reports
+  // (CredentialInstalledV11 list) repeated in a create/reconnect READY result.
+  ["apps/cli/src/sandbox_relay/supervisor.rs|json ! ( installed )", 1],
   ["apps/cli/src/sandbox_relay/supervisor.rs|json ! ( output_bytes )", 1],
   ["apps/cli/src/sandbox_relay/supervisor.rs|to_value ( & body )", 1],
   ["apps/cli/src/sandbox_relay/supervisor.rs|json ! ( dispatch . lease )", 1],

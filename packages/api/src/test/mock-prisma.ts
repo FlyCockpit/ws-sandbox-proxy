@@ -9,6 +9,7 @@ export const defaultSensitiveSessionGateUser = {
   banned: false,
   banExpires: null,
   deletionRequestedAt: null,
+  mustChangePassword: false,
   createdAt: new Date("2020-01-01T00:00:00.000Z"),
 };
 

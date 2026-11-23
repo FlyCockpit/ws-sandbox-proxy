@@ -21,6 +21,7 @@ import {
   requireDeviceLoginScope,
 } from "./host-device-login-scope.js";
 import { resolveMcpPlugins } from "./mcp-plugins";
+import { createPasswordChangeGuard } from "./password-change-guard.js";
 import {
   notifySessionOwners,
   notifySessionRevocations,
@@ -42,6 +43,10 @@ const terminalHooks = createTerminalAuthHooks(async (headers, disableCache) =>
     headers,
     query: { disableCookieCache: disableCache, disableRefresh: true },
   }),
+);
+
+const passwordChangeGuard = createPasswordChangeGuard(async (headers) =>
+  auth.api.getSession({ headers, query: { disableRefresh: true } }),
 );
 
 const isCrossOrigin = !!env.CORS_ORIGIN;
@@ -160,6 +165,9 @@ export const auth = betterAuth({
     // account created under an older policy must still be able to
     // authenticate.
     minPasswordLength: 12,
+    // A reset proves the mailbox: whoever else is signed in (a stolen
+    // password, an administrator's temporary one) is signed out.
+    revokeSessionsOnPasswordReset: true,
     sendResetPassword: async ({ user, url }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
       // callback `user` is typed against the base user shape, so `locale`
@@ -270,8 +278,12 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       await deviceIssuanceGuard(ctx);
       await terminalHooks.before(ctx);
+      return passwordChangeGuard.before(ctx);
     }),
-    after: terminalHooks.after,
+    after: createAuthMiddleware(async (ctx) => {
+      await terminalHooks.after(ctx);
+      await passwordChangeGuard.after(ctx);
+    }),
   },
   disabledPaths: [...DISABLED_BETTER_AUTH_PATHS],
   plugins: [

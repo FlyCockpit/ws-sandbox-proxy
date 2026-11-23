@@ -5,11 +5,15 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 
 import { createRouterClient, ORPCError } from "@orpc/server";
 import type { Session } from "@wssp/auth";
+import { PASSWORD_CHANGE_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
 import type { MockInstance } from "vitest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
 import type { Context } from "../context";
 import { checkLiveOwnerSession } from "../index";
+import {
+  isLiveOwnerSessionAuthorized,
+  sensitiveSessionRefusal,
+} from "../lib/sensitive-session-two-factor-gate";
 import { invalidateForceTwoFactorSettingsCache } from "../lib/two-factor-policy";
 import { appRouter } from "../routers/index";
 
@@ -98,10 +102,11 @@ function buildContext(userOverrides: Partial<Session["user"]> = {}): Context {
   };
 }
 
-function mockAuthoritativeUser(user: Session["user"]) {
+function mockAuthoritativeUser(user: Session["user"], mustChangePassword = false) {
   db.user.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) => {
     if (where.id !== user.id) return null;
     return {
+      mustChangePassword,
       twoFactorEnabled: user.twoFactorEnabled,
       role: user.role,
       emailVerified: user.emailVerified,
@@ -150,6 +155,73 @@ describe("authoritative sensitive session 2FA gate", () => {
       items: [],
       nextCursor: null,
     });
+  });
+});
+
+describe("admin-set temporary password gate", () => {
+  it("refuses protected procedures with its own code until the password is replaced, before 2FA", async () => {
+    // Enrolled or not, the pending password change is what the caller hears.
+    for (const twoFactorEnabled of [true, false]) {
+      const context = buildContext({ twoFactorEnabled });
+      mockAuthoritativeUser(context.session!.user, true);
+      const client = createRouterClient(appRouter, { context });
+      await expect(client.sandboxes.list({ limit: 1 })).rejects.toMatchObject({
+        code: "FORBIDDEN",
+        data: { code: PASSWORD_CHANGE_REQUIRED_ERROR_CODE },
+      });
+    }
+    const context = buildContext({ twoFactorEnabled: true });
+    mockAuthoritativeUser(context.session!.user, false);
+    await expect(
+      createRouterClient(appRouter, { context }).sandboxes.list({ limit: 1 }),
+    ).resolves.toEqual({ items: [], nextCursor: null });
+  });
+
+  it("a revoked session's cookie cache does not pass once the flag is cleared", async () => {
+    const context = buildContext({ twoFactorEnabled: true });
+    mockAuthoritativeUser(context.session!.user, false);
+    // The password change deleted this session's row; its signed cookie
+    // cache still names it for up to a minute.
+    vi.mocked(prisma.session.findUnique).mockResolvedValueOnce(null);
+    await expect(
+      createRouterClient(appRouter, { context }).sandboxes.list({ limit: 1 }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(
+      createRouterClient(appRouter, { context }).sandboxes.list({ limit: 1 }),
+    ).resolves.toEqual({ items: [], nextCursor: null });
+  });
+
+  it("reads the session row only after the flag", async () => {
+    // A password change deletes the sessions before it writes the password,
+    // and the flag clears only after that write, so a cleared flag must never
+    // be paired with a session row read before it was seen.
+    const context = buildContext({ twoFactorEnabled: true });
+    mockAuthoritativeUser(context.session!.user, false);
+    const row = await prisma.user.findUnique({ where: { id: "user-1" } });
+    let release: (value: unknown) => void = () => {};
+    vi.mocked(prisma.user.findUnique).mockImplementationOnce(
+      () => new Promise((resolve) => (release = resolve)) as never,
+    );
+    const sessionRead = vi.mocked(prisma.session.findUnique);
+    sessionRead.mockClear();
+    const call = createRouterClient(appRouter, { context }).sandboxes.list({ limit: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sessionRead).not.toHaveBeenCalled();
+    release(row);
+    await expect(call).resolves.toEqual({ items: [], nextCursor: null });
+    expect(sessionRead).toHaveBeenCalled();
+  });
+
+  it("hides the admin area and refuses live owner authority while it is pending", async () => {
+    const context = buildContext({ twoFactorEnabled: true, role: "admin" });
+    mockAuthoritativeUser(context.session!.user, true);
+    await expect(
+      createRouterClient(appRouter, { context }).users.list({ limit: 1 }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await isLiveOwnerSessionAuthorized(context.session)).toBe(false);
+    expect(await sensitiveSessionRefusal("user-1")).toBe("password_change_required");
+    mockAuthoritativeUser(context.session!.user, false);
+    expect(await sensitiveSessionRefusal("user-1")).toBeNull();
   });
 });
 

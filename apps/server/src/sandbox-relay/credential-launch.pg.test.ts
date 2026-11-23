@@ -47,7 +47,9 @@ vi.mock("./session-manager.js", () => ({
 const db = await pgTestDatabase();
 const { createSandbox } = await import("../../../../packages/api/src/sandbox/services/sandboxes");
 const service = await import("@wssp/api/credentials/service");
-const { grantInstallBundle, recordInstalled } = await import("@wssp/api/credentials/relay");
+const { applyInstalledReceipt, grantInstallBundle, recordInstalled } = await import(
+  "@wssp/api/credentials/relay"
+);
 const { leaseWireSchema } = await import("@wssp/api/sandbox/lease-wire");
 const { processSandboxOutboxBatch } = await import("./outbox-processor.js");
 const { applyOperationResult } = await import("./operation-handlers.js");
@@ -195,6 +197,25 @@ async function readyResult(f: Fixture, sandboxId: string, operationId: string) {
 
 const leaseOf = (sandboxId: string) =>
   db.inspect.credentialLease.findFirstOrThrow({ where: { sandboxId } });
+
+/** create → dispatch → grant: the lease is INSTALLING, no frame applied yet. */
+async function installing(f: Fixture) {
+  const { sandbox, operation } = await create(f);
+  await dispatch(f, sandbox.id);
+  const lease = await leaseOf(sandbox.id);
+  const granted = await grantInstallBundle({
+    hostId: f.host.id,
+    connectionEpoch: 1,
+    requestId: `req-${randomUUID()}`,
+    sandboxId: sandbox.id,
+    leaseId: lease.id,
+    operationId: operation.id,
+  });
+  if (granted.kind !== "granted") throw new Error(`grant refused: ${JSON.stringify(granted)}`);
+  granted.bytes.fill(0);
+  expect((await leaseOf(sandbox.id)).state).toBe("INSTALLING");
+  return { sandbox, operation, lease, bindingId: granted.bindingId };
+}
 
 describe("C8a credential launch (pg)", () => {
   it("a direct create with a login writes the attachment, a RESERVED lease naming the create, the spec, and dispatches its reference", async () => {
@@ -351,6 +372,410 @@ describe("C8a credential launch (pg)", () => {
         select: { activeLeases: true },
       }),
     ).toEqual({ activeLeases: 0 });
+  });
+
+  it("a replayed READY receipt repeating a lost credential.installed activates the lease and publishes READY; the receipt is not stored", async () => {
+    const f = await fixture();
+    const { sandbox, operation } = await create(f);
+    await dispatch(f, sandbox.id);
+    const lease = await leaseOf(sandbox.id);
+    const granted = await grantInstallBundle({
+      hostId: f.host.id,
+      connectionEpoch: 1,
+      requestId: "req-1",
+      sandboxId: sandbox.id,
+      leaseId: lease.id,
+      operationId: operation.id,
+    });
+    if (granted.kind !== "granted") throw new Error("unreachable");
+    granted.bytes.fill(0);
+    // The host installed the login, but its `credential.installed` frame was
+    // lost with the socket; the journaled receipt replays on a new connection.
+    await db.inspect.sandboxHost.update({
+      where: { id: f.host.id },
+      data: { connectionEpoch: 2 },
+    });
+    const ready = await readyResult(f, sandbox.id, operation.id);
+    const report = {
+      leaseId: lease.id,
+      bindingId: granted.bindingId,
+      storageSeq: 1,
+      fileCount: 2,
+      envCount: 0,
+    };
+    expect(
+      await applyOperationResult({
+        ...ready,
+        sender: { ...ready.sender, connectionEpoch: 2 },
+        result: { ...ready.result, credentialInstalled: [report] },
+      }),
+    ).toMatchObject({ written: true });
+    const op = await db.inspect.sandboxOperation.findUniqueOrThrow({
+      where: { id: operation.id },
+      select: { state: true, errorCode: true, result: true },
+    });
+    expect(op).toMatchObject({ state: "SUCCEEDED", errorCode: null });
+    expect(JSON.stringify(op.result)).not.toContain("credentialInstalled");
+    expect(
+      (
+        await db.inspect.sandbox.findUniqueOrThrow({
+          where: { id: sandbox.id },
+          select: { state: true },
+        })
+      ).state,
+    ).toBe("READY");
+    expect((await leaseOf(sandbox.id)).state).toBe("ACTIVE");
+  });
+
+  it("a READY receipt whose install report does not match the lease's binding and granted sequence is still an install failure", async () => {
+    const f = await fixture();
+    const { sandbox, operation } = await create(f);
+    await dispatch(f, sandbox.id);
+    const lease = await leaseOf(sandbox.id);
+    const granted = await grantInstallBundle({
+      hostId: f.host.id,
+      connectionEpoch: 1,
+      requestId: "req-1",
+      sandboxId: sandbox.id,
+      leaseId: lease.id,
+      operationId: operation.id,
+    });
+    if (granted.kind !== "granted") throw new Error("unreachable");
+    granted.bytes.fill(0);
+    const ready = await readyResult(f, sandbox.id, operation.id);
+    await applyOperationResult({
+      ...ready,
+      result: {
+        ...ready.result,
+        credentialInstalled: [
+          {
+            leaseId: lease.id,
+            bindingId: granted.bindingId,
+            storageSeq: 7,
+            fileCount: 2,
+            envCount: 0,
+          },
+        ],
+      },
+    });
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({
+        where: { id: operation.id },
+        select: { state: true, errorCode: true },
+      }),
+    ).toEqual({ state: "FAILED", errorCode: "credential_install_failed" });
+    expect(await leaseOf(sandbox.id)).toMatchObject({
+      state: "RELEASED",
+      endReason: "install_failed",
+    });
+  });
+
+  it("an install receipt applied directly activates only a matching INSTALLING lease of its own sandbox and host", async () => {
+    const f = await fixture();
+    const b = await installing(f);
+    // Sandbox A: another sandbox on the same host (no login of its own).
+    const a = await createSandbox(f.actor, {
+      template: `revision/${f.template.id}`,
+      sandboxHostId: f.host.id,
+      idempotencyKey: `create-${randomUUID()}`,
+    });
+    const other = await fixture();
+    const report = {
+      leaseId: b.lease.id,
+      bindingId: b.bindingId,
+      storageSeq: 1,
+      fileCount: 2,
+      envCount: 0,
+    };
+    const apply = (hostId: string, sandboxId: string, result: Record<string, unknown>) =>
+      db.inspect.$transaction((tx) => applyInstalledReceipt(tx, { hostId, sandboxId, result }));
+    // Sandbox A's receipt naming sandbox B's lease, a foreign host, a stale
+    // binding and a stale sequence apply nothing.
+    expect(await apply(f.host.id, a.id, { credentialInstalled: [report] })).toBe(0);
+    expect(await apply(other.host.id, b.sandbox.id, { credentialInstalled: [report] })).toBe(0);
+    expect(
+      await apply(f.host.id, b.sandbox.id, {
+        credentialInstalled: [{ ...report, bindingId: `binding-${randomUUID()}` }],
+      }),
+    ).toBe(0);
+    expect(
+      await apply(f.host.id, b.sandbox.id, {
+        credentialInstalled: [{ ...report, storageSeq: 2 }],
+      }),
+    ).toBe(0);
+    // Malformed receipts (extra field, wrong shape, duplicate lease) apply nothing.
+    for (const malformed of [
+      [{ ...report, value: "x" }],
+      { ...report },
+      [report, report],
+      [{ ...report, storageSeq: -1 }],
+    ])
+      expect(await apply(f.host.id, b.sandbox.id, { credentialInstalled: malformed })).toBe(0);
+    expect((await leaseOf(b.sandbox.id)).state).toBe("INSTALLING");
+    // The matching receipt applies once; a repeat is a no-op.
+    expect(await apply(f.host.id, b.sandbox.id, { credentialInstalled: [report] })).toBe(1);
+    const active = await leaseOf(b.sandbox.id);
+    expect(active.state).toBe("ACTIVE");
+    expect(await apply(f.host.id, b.sandbox.id, { credentialInstalled: [report] })).toBe(0);
+    expect((await leaseOf(b.sandbox.id)).updatedAt).toEqual(active.updatedAt);
+  });
+
+  it("an install receipt never reactivates a closed binding nor a lease awaiting recovery", async () => {
+    const apply = (f: Fixture, sandboxId: string, report: Record<string, unknown>) =>
+      db.inspect.$transaction((tx) =>
+        applyInstalledReceipt(tx, {
+          hostId: f.host.id,
+          sandboxId,
+          result: { credentialInstalled: [report] },
+        }),
+      );
+    // A matching report against the lease's current binding once it is closed.
+    const f = await fixture();
+    const closed = await installing(f);
+    const closedAt = new Date();
+    await db.inspect.credentialBinding.update({
+      where: { id: closed.bindingId },
+      data: { closedAt },
+    });
+    const report = (lease: { id: string }, bindingId: string) => ({
+      leaseId: lease.id,
+      bindingId,
+      storageSeq: 1,
+      fileCount: 2,
+      envCount: 0,
+    });
+    expect(await apply(f, closed.sandbox.id, report(closed.lease, closed.bindingId))).toBe(0);
+    expect((await leaseOf(closed.sandbox.id)).state).toBe("INSTALLING");
+    // A matching report against a lease awaiting recovery (its binding open).
+    const g = await fixture();
+    const recovering = await installing(g);
+    await db.inspect.credentialLease.update({
+      where: { id: recovering.lease.id },
+      data: { state: "RECOVERY_REQUIRED", endReason: "capture_failed" },
+    });
+    expect(
+      await apply(g, recovering.sandbox.id, report(recovering.lease, recovering.bindingId)),
+    ).toBe(0);
+    expect(await leaseOf(recovering.sandbox.id)).toMatchObject({
+      state: "RECOVERY_REQUIRED",
+      endReason: "capture_failed",
+      releasedAt: null,
+    });
+    expect(
+      (
+        await db.inspect.credentialBinding.findUniqueOrThrow({
+          where: { id: recovering.bindingId },
+          select: { closedAt: true },
+        })
+      ).closedAt,
+    ).toBeNull();
+  });
+
+  it.each(["frame first", "receipt first"] as const)(
+    "the installed frame and a READY receipt racing (%s) serialize on the sandbox lock: both finish, one ACTIVE transition",
+    async (order) => {
+      const f = await fixture();
+      const { sandbox, operation, lease, bindingId } = await installing(f);
+      const ready = await readyResult(f, sandbox.id, operation.id);
+      const report = { leaseId: lease.id, bindingId, storageSeq: 1, fileCount: 2, envCount: 0 };
+      let release!: () => void;
+      const released = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let locked!: () => void;
+      const isLocked = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      // Another transaction holds the sandbox row both paths lock.
+      let holderPid = 0;
+      const holder = db.inspect.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM sandbox_instance WHERE id = ${sandbox.id} FOR UPDATE`;
+          const [me] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+          holderPid = me?.pid ?? 0;
+          locked();
+          await released;
+        },
+        { timeout: 20_000 },
+      );
+      holder.catch(() => {});
+      // Backends blocked by the holder, directly or behind another waiter (the
+      // second path queues on a lock the first took), not any lock wait.
+      const waiting = async (n: number) => {
+        for (let i = 0; i < 200; i++) {
+          const [row] = await db.inspect.$queryRaw<{ n: bigint }[]>`WITH RECURSIVE blocked(pid) AS (
+            SELECT pid FROM pg_stat_activity WHERE ${holderPid}::int = ANY(pg_blocking_pids(pid))
+            UNION
+            SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid = ANY(pg_blocking_pids(a.pid))
+          ) SELECT count(*) AS n FROM blocked`;
+          if (Number(row?.n ?? 0) >= n) return;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        throw new Error(`fewer than ${n} backends blocked by the holder`);
+      };
+      const settled: string[] = [];
+      const frame = () =>
+        recordInstalled({
+          hostId: f.host.id,
+          connectionEpoch: 1,
+          leaseId: lease.id,
+          bindingId,
+          storageSeq: 1,
+        }).then((applied) => {
+          settled.push("frame");
+          return applied;
+        });
+      const result = () =>
+        applyOperationResult({
+          ...ready,
+          result: { ...ready.result, credentialInstalled: [report] },
+        }).then((outcome) => {
+          settled.push("result");
+          return outcome;
+        });
+      let framePromise: Promise<boolean> | undefined;
+      let resultPromise: Promise<unknown> | undefined;
+      const startFrame = () => {
+        framePromise = frame();
+        framePromise.catch(() => {});
+      };
+      const startResult = () => {
+        resultPromise = result();
+        resultPromise.catch(() => {});
+      };
+      let handshake: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          isLocked,
+          new Promise((_, reject) => {
+            handshake = setTimeout(() => reject(new Error("no row lock")), 5_000);
+          }),
+        ]);
+        if (order === "frame first") {
+          startFrame();
+          await waiting(1);
+          startResult();
+        } else {
+          startResult();
+          await waiting(1);
+          startFrame();
+        }
+        await waiting(2);
+        // Both wait on the held lock; neither has finished.
+        expect(settled).toEqual([]);
+      } finally {
+        // Even on a failed handshake or assertion: end the holder and every
+        // started path, so nothing outlives this test.
+        clearTimeout(handshake);
+        release();
+        await Promise.allSettled([holder, framePromise, resultPromise]);
+      }
+      const [applied, outcome] = await Promise.all([framePromise, resultPromise]);
+      expect(outcome).toMatchObject({ written: true });
+      // Whoever queued first activated the lease; the other found it ACTIVE.
+      expect(applied).toBe(order === "frame first");
+      expect(
+        await db.inspect.sandboxOperation.findUniqueOrThrow({
+          where: { id: operation.id },
+          select: { state: true, errorCode: true },
+        }),
+      ).toEqual({ state: "SUCCEEDED", errorCode: null });
+      expect((await leaseOf(sandbox.id)).state).toBe("ACTIVE");
+    },
+  );
+
+  it("a malformed READY receipt is ignored: the result is still applied and ends as an install failure", async () => {
+    const f = await fixture();
+    const { sandbox, operation, lease, bindingId } = await installing(f);
+    const ready = await readyResult(f, sandbox.id, operation.id);
+    expect(
+      await applyOperationResult({
+        ...ready,
+        result: {
+          ...ready.result,
+          credentialInstalled: [
+            { leaseId: lease.id, bindingId, storageSeq: 1, fileCount: 2, envCount: 0, extra: 1 },
+          ],
+        },
+      }),
+    ).toMatchObject({ written: true });
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({
+        where: { id: operation.id },
+        select: { state: true, errorCode: true },
+      }),
+    ).toEqual({ state: "FAILED", errorCode: "credential_install_failed" });
+    expect(await leaseOf(sandbox.id)).toMatchObject({
+      state: "RELEASED",
+      endReason: "install_failed",
+    });
+  });
+
+  it("a receipt replayed after the install failure was settled changes nothing: the lease stays RELEASED install_failed", async () => {
+    const f = await fixture();
+    const { sandbox, operation, lease, bindingId } = await installing(f);
+    const ready = await readyResult(f, sandbox.id, operation.id);
+    await applyOperationResult(ready);
+    expect(await leaseOf(sandbox.id)).toMatchObject({
+      state: "RELEASED",
+      endReason: "install_failed",
+    });
+    const report = { leaseId: lease.id, bindingId, storageSeq: 1, fileCount: 2, envCount: 0 };
+    await applyOperationResult({
+      ...ready,
+      result: { ...ready.result, credentialInstalled: [report] },
+    }).catch(() => undefined);
+    expect(
+      await db.inspect.$transaction((tx) =>
+        applyInstalledReceipt(tx, {
+          hostId: f.host.id,
+          sandboxId: sandbox.id,
+          result: { credentialInstalled: [report] },
+        }),
+      ),
+    ).toBe(0);
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({
+        where: { id: operation.id },
+        select: { state: true, errorCode: true },
+      }),
+    ).toEqual({ state: "FAILED", errorCode: "credential_install_failed" });
+    expect(await leaseOf(sandbox.id)).toMatchObject({
+      state: "RELEASED",
+      endReason: "install_failed",
+    });
+  });
+
+  it("the frame applied first and the same receipt in the READY result: one ACTIVE transition, READY published", async () => {
+    const f = await fixture();
+    const { sandbox, operation, lease, bindingId } = await installing(f);
+    const report = { leaseId: lease.id, bindingId, storageSeq: 1, fileCount: 2, envCount: 0 };
+    expect(
+      await recordInstalled({
+        hostId: f.host.id,
+        connectionEpoch: 1,
+        leaseId: lease.id,
+        bindingId,
+        storageSeq: 1,
+      }),
+    ).toBe(true);
+    const active = await leaseOf(sandbox.id);
+    const ready = await readyResult(f, sandbox.id, operation.id);
+    expect(
+      await applyOperationResult({
+        ...ready,
+        result: { ...ready.result, credentialInstalled: [report] },
+      }),
+    ).toMatchObject({ written: true });
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({
+        where: { id: operation.id },
+        select: { state: true },
+      }),
+    ).toEqual({ state: "SUCCEEDED" });
+    const after = await leaseOf(sandbox.id);
+    expect(after.state).toBe("ACTIVE");
+    expect(after.updatedAt).toEqual(active.updatedAt);
   });
 
   it("a create the dispatch refuses server-side (never sent) abandons its RESERVED lease in that transaction", async () => {

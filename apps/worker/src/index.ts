@@ -41,10 +41,14 @@ async function shutdown(reason: string, code = 0) {
       }));
     await active?.stop();
   } catch (error) {
-    console.error(
-      "[worker] Unclean drain; exiting without tearing down shared clients:",
-      safeErrorLog(error, "worker_drain_failed"),
-    );
+    // The failed step and unclosed queue names: a closed set and fixed
+    // `QUEUE_NAMES` constants, never a message or a value.
+    console.error("[worker] Unclean drain; exiting without tearing down shared clients:", {
+      ...safeErrorLog(error, "worker_drain_failed"),
+      ...(error instanceof WorkerDrainError && error.reason
+        ? { reason: error.reason, pendingQueues: error.pendingQueues }
+        : {}),
+    });
     process.exit(1);
     return;
   }

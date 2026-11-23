@@ -37,6 +37,8 @@ vi.mock("@wssp/api/lib/sensitive-session-two-factor-gate", () => ({
   loadSensitiveSessionGateUser: mocks.loadUser,
   isLiveOwnerSessionAuthorized: vi.fn().mockResolvedValue(true),
   isSensitiveSessionTwoFactorPolicySatisfied: mocks.policy,
+  sensitiveSessionRefusal: async () => ((await mocks.policy()) ? null : "two_factor_required"),
+  isSessionRowLive: async () => true,
 }));
 vi.mock("@wssp/api/lib/device-code-transitions", () => ({
   transitionDeviceCode: mocks.transition,
@@ -156,6 +158,15 @@ describe("production server device mounts", () => {
     const response = await request();
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error_description: "Account is banned" });
+  });
+  it("an owner with an admin-set temporary password cannot decide until it is replaced", async () => {
+    mocks.loadUser.mockResolvedValue({ emailVerified: true, mustChangePassword: true });
+    const response = await request();
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({
+      error_description: "Password change required",
+    });
+    expect(mocks.transition).not.toHaveBeenCalled();
   });
   it("unverified owner cannot decide", async () => {
     mocks.loadUser.mockResolvedValue({ emailVerified: false });

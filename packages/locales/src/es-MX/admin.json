@@ -494,7 +494,9 @@
     "blockedTitle": "El acceso de administrador está bloqueado hasta que configures la autenticación de dos factores",
     "blockedMessage": "Tu plazo para configurarla terminó, así que las acciones de administrador se están rechazando. Configura una aplicación de autenticación ahora para recuperar este panel.",
     "configurable": "Un administrador que ya la tenga configurada puede cambiar esta política en Configuración, dentro del panel de administración.",
-    "cta": "Configurar 2FA"
+    "cta": "Configurar 2FA",
+    "userRequiredTitle": "La autenticación de dos factores es obligatoria para tu cuenta",
+    "userRequiredMessage": "Agrega una aplicación de autenticación como segundo factor {{deadline}}. Después de eso, este panel queda bloqueado hasta que termines de configurarla."
   },
   "users": {
     "title": "Usuarios",

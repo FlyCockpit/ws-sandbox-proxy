@@ -32,6 +32,7 @@ vi.mock("@wssp/db/account-deletion", async () => {
 
 const envMock = vi.hoisted(() => ({
   BETTER_AUTH_URL: "http://localhost:3000",
+  BETTER_AUTH_SECRET: "users-test-secret-long-enough-for-hs256",
   CORS_ORIGIN: undefined as string | undefined,
 }));
 vi.mock("@wssp/env/server", () => ({
@@ -352,7 +353,12 @@ describe("usersRouter", () => {
       expect(hashPassword).toHaveBeenCalledWith(res.tempPassword);
       // Email should be lowercased by the input zod schema.
       expect(db.user.create).toHaveBeenCalledWith({
-        data: { email: "new@example.com", name: "New User", role: "user" },
+        data: {
+          email: "new@example.com",
+          name: "New User",
+          role: "user",
+          mustChangePassword: true,
+        },
         select: { id: true, locale: true },
       });
       expect(db.account.create).toHaveBeenCalledWith({
@@ -379,12 +385,12 @@ describe("usersRouter", () => {
     });
 
     it.each([
-      ["es-MX", undefined, "http://localhost:3000/es-MX/login"],
-      ["en-US", "https://app.example.test", "https://app.example.test/en-US/login"],
-      ["fr-FR", undefined, "http://localhost:3000/en-US/login"],
+      ["es-MX", undefined, "/es-MX/verify-email?ok=1"],
+      ["en-US", "https://app.example.test", "https://app.example.test/en-US/verify-email?ok=1"],
+      ["fr-FR", undefined, "/en-US/verify-email?ok=1"],
     ])(
-      "links the invitee's sign-in page under their locale (%s) on the web origin (%s)",
-      async (locale, corsOrigin, signInUrl) => {
+      "the accept link verifies the invited address and lands on the web verify-email page (%s, %s)",
+      async (locale, corsOrigin, callbackURL) => {
         const client = createRouterClient(usersRouter, { context: buildContext() });
         wireInvite();
         db.user.create.mockResolvedValue({ id: "new-user-id", locale });
@@ -392,7 +398,16 @@ describe("usersRouter", () => {
         sendEmailMock.mockResolvedValue(undefined);
         try {
           await client.invite({ email: "new@example.com", name: "New User" });
-          expect(renderInviteUserMock).toHaveBeenCalledWith(expect.objectContaining({ signInUrl }));
+          const [args] = renderInviteUserMock.mock.calls.at(-1) as [{ acceptUrl: string }];
+          const url = new URL(args.acceptUrl);
+          expect(`${url.origin}${url.pathname}`).toBe(
+            "http://localhost:3000/api/auth/verify-email",
+          );
+          expect(url.searchParams.get("callbackURL")).toBe(callbackURL);
+          const claims = JSON.parse(
+            Buffer.from(url.searchParams.get("token")!.split(".")[1]!, "base64url").toString(),
+          );
+          expect(claims).toMatchObject({ email: "new@example.com", userId: "new-user-id" });
         } finally {
           envMock.CORS_ORIGIN = undefined;
         }

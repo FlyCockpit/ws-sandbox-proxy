@@ -19,6 +19,9 @@ function budget(name: string, points: number, durationSeconds: number) {
 }
 export const consumeSharingWrite = budget("write", 30, 60);
 export const consumeInviteAccept = budget("accept", 10, 60);
+/** Reading a pending invitation by its secret (the accept page): its own
+ * per-actor budget, so loading the page never spends an accept attempt. */
+export const consumeInvitePreview = budget("invite-preview", 10, 60);
 /** Lease-lowering preview: a read-only policy join, budgeted per procedure
  * because one batched /rpc request can carry many calls. */
 export const consumeLeasePreview = budget("lease-preview", 30, 60);

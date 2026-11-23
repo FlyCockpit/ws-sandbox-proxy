@@ -30,6 +30,7 @@ export const poolInviteInput = z.object({ poolId: entityId, inviteId: entityId }
 export const acceptPoolInviteInput = z
   .object({ token: z.string().max(256), mode: z.enum(["bearer", "email"]) })
   .strict();
+export const previewPoolInviteInput = z.object({ token: z.string().max(256) }).strict();
 export const contributePoolHostInput = z
   .object({
     poolId: entityId,

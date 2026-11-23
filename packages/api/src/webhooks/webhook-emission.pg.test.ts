@@ -378,9 +378,10 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
         sandboxId: sandbox.id,
         reason: event.type === "credential.needs_login" ? "capture_lost" : "census_settlement",
       });
-      // The envelope's random id and timestamp can contain any digits; only
-      // the rendered data must not leak the host or the lease's sizing.
-      const data = JSON.stringify(parsed.data);
+      // The envelope's random id and timestamp, and the random sandbox id,
+      // can contain any digits; only the rest of the rendered data must not
+      // leak the host or the lease's sizing.
+      const data = JSON.stringify(parsed.data).replaceAll(sandbox.id, "<sandbox>");
       expect(data).not.toContain("host-1");
       expect(data).not.toContain("512");
     }

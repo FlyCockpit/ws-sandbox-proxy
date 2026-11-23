@@ -7,7 +7,7 @@ describe("renderInviteUser", () => {
     name: "Jane Doe",
     email: "jane@example.com",
     tempPassword: "hunter2hunter2",
-    signInUrl: "https://example.com/login",
+    acceptUrl: "https://example.com/login",
   };
 
   it("returns the en-US bundle for locale='en-US'", () => {
@@ -22,7 +22,7 @@ describe("renderInviteUser", () => {
     expect(html).toContain("https://example.com/login");
     expect(html).toContain("Email"); // label
     expect(html).toContain("Temporary password"); // label
-    expect(html).toContain("Sign in"); // CTA
+    expect(html).toContain("Accept invitation"); // CTA
   });
 
   it("returns the Spanish bundle for locale='es-MX'", () => {
@@ -37,7 +37,7 @@ describe("renderInviteUser", () => {
     expect(html).toContain("https://example.com/login");
     // The en-US CTA literal should not survive (would indicate fallback to
     // en-US per-key, i.e. unpopulated bundle).
-    expect(html).not.toContain(">Sign in<");
+    expect(html).not.toContain("Accept invitation");
   });
 
   it("falls back to en-US for an unsupported locale", () => {
@@ -45,7 +45,7 @@ describe("renderInviteUser", () => {
 
     expect(subject).toBe("You've been invited");
     expect(html).toContain('<html lang="en-US">');
-    expect(html).toContain("Sign in");
+    expect(html).toContain("Accept invitation");
   });
 
   it("HTML-escapes user-provided values to defeat injection", () => {
@@ -66,7 +66,7 @@ describe("renderInviteUser", () => {
   it("escapes sign-in href attribute values", () => {
     const { html } = renderInviteUser({
       ...baseArgs,
-      signInUrl: "https://example.com/login?email=jane%40example.com&next=%2Fadmin",
+      acceptUrl: "https://example.com/login?email=jane%40example.com&next=%2Fadmin",
       locale: "en-US",
     });
 
@@ -79,7 +79,7 @@ describe("renderInviteUser", () => {
     expect(() =>
       renderInviteUser({
         ...baseArgs,
-        signInUrl: "data:text/html,<script>alert(1)</script>",
+        acceptUrl: "data:text/html,<script>alert(1)</script>",
         locale: "en-US",
       }),
     ).toThrow("Email link must use HTTP or HTTPS.");

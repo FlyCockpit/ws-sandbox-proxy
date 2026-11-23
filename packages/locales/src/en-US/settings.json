@@ -25,6 +25,7 @@
     "changingPassword": "Changing password…",
     "passwordChangedSuccess": "Password changed. Other devices have been signed out.",
     "currentPasswordMismatch": "Your current password doesn't match.",
+    "passwordReused": "Choose a password different from the temporary one.",
     "passwordChangeError": "Couldn't change your password. Try again.",
     "twoFactorTitle": "Two-Factor Authentication",
     "enabledDescription": "Two-factor authentication is enabled for your account",

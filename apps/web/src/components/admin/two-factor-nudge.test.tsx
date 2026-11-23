@@ -77,6 +77,22 @@ describe("TwoFactorNudge", () => {
     expect(screen.getByText("twoFactorNudge.configurable")).toBeTruthy();
   });
 
+  it("shows a non-admin their own deadline only under a forced non-admin policy (off by default)", () => {
+    session.user = { role: "user", twoFactorEnabled: false, createdAt: now - 60_000 };
+    // No setting row: non-admin 2FA is optional, so nothing renders.
+    renderNudge({}, "shell");
+    expect(screen.queryByRole("alert")).toBeNull();
+    cleanup();
+    renderNudge({ force2faInternalUsers: "true" }, "shell");
+    expect(screen.queryByRole("alert")).toBeNull();
+    cleanup();
+    renderNudge({ force2faPublicUsers: "true" }, "shell");
+    expect(screen.getByRole("alert").getAttribute("data-two-factor-nudge")).toBe("shell");
+    expect(screen.getByText("twoFactorNudge.userRequiredTitle")).toBeTruthy();
+    expect(screen.getByText("twoFactorNudge.userRequiredMessage")).toBeTruthy();
+    expect(screen.queryByText("twoFactorNudge.requiredTitle")).toBeNull();
+  });
+
   it("renders nothing for an enrolled admin", () => {
     session.user = { role: "admin", twoFactorEnabled: true, createdAt: now - 60_000 };
     renderNudge({ force2faInternalUsers: "true" }, "shell");

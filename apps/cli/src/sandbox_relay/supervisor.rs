@@ -1133,6 +1133,7 @@ impl RelaySupervisor {
                     delete_restore_image(runtime.as_ref(), d);
                     // CLI logins (§10.4): credentials are installed after
                     // readiness and before the create/reconnect reports READY.
+                    let mut installed = Vec::new();
                     let launch_failure = match (&result, credential_spec.as_ref(), credentials.get()) {
                         (Ok(_), Some(spec), Some(service))
                             if matches!(d.kind.as_str(), "sandbox.create" | "sandbox.reconnect") =>
@@ -1152,6 +1153,7 @@ impl RelaySupervisor {
                                 spec,
                                 &still_wanted,
                             )
+                            .map(|reports| installed = reports)
                             .err()
                             .map(|failure| credential_launch_failure(runtime.as_ref(), &job, failure))
                         }
@@ -1207,6 +1209,18 @@ impl RelaySupervisor {
                         {
                             fields.insert("credentialOutcomes".into(), json!(outcomes));
                         }
+                    }
+                    // CLI logins: the READY receipt repeats every `installed`
+                    // report, so a frame lost with its socket cannot turn a
+                    // replayed create/reconnect into an install failure.
+                    if finished.state == OperationState::Succeeded
+                        && !installed.is_empty()
+                        && let Some(fields) = finished
+                            .payload
+                            .get_or_insert_with(|| json!({}))
+                            .as_object_mut()
+                    {
+                        fields.insert("credentialInstalled".into(), json!(installed));
                     }
                     // M7: a READY-based create ACKs readyAt + timeout, not the
                     // provisional backstop it was dispatched with.
@@ -2856,7 +2870,7 @@ fn run_credential_live(
                 .map(|r| r.digest.clone())
                 .unwrap_or_default(),
         };
-        service
+        let installed = service
             .attach(runtime, &target, spec, still_wanted)
             .map_err(|failure| DispatchError {
                 reason: None,
@@ -2867,8 +2881,9 @@ fn run_credential_live(
                 },
                 message: failure.as_str().into(),
             })?;
+        // The receipt repeats the `installed` reports (see the launch).
         return Ok(DispatchSuccess::ReadOnly((
-            Some(json!({ "state": "attached" })),
+            Some(json!({ "state": "attached", "credentialInstalled": installed })),
             None,
             None,
         )));

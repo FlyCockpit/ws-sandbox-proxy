@@ -1,5 +1,6 @@
 import type { OperationState, Prisma, SandboxOperationKind, SandboxState } from "@wssp/db";
 import {
+  CREDENTIAL_INSTALLED_RESULT_KEY,
   CREDENTIAL_TEARDOWN_RESULT_KEY,
   type CredentialTeardownOutcomeV11,
   credentialTeardownOutcomesV11Schema,
@@ -280,12 +281,23 @@ export function teardownOutcomesFromResult(
   return parsed.success ? parsed.data : null;
 }
 
-/** The result record minus the credential receipt (never stored on the operation). */
-export function withoutTeardownOutcomes(
+/**
+ * The result record minus the credential receipts (teardown outcomes and
+ * install reports; never stored on the operation).
+ */
+export function withoutCredentialReceipts(
   result: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (!result || !(CREDENTIAL_TEARDOWN_RESULT_KEY in result)) return result;
-  const { [CREDENTIAL_TEARDOWN_RESULT_KEY]: _omitted, ...rest } = result;
+  if (
+    !result ||
+    !(CREDENTIAL_TEARDOWN_RESULT_KEY in result || CREDENTIAL_INSTALLED_RESULT_KEY in result)
+  )
+    return result;
+  const {
+    [CREDENTIAL_TEARDOWN_RESULT_KEY]: _outcomes,
+    [CREDENTIAL_INSTALLED_RESULT_KEY]: _installed,
+    ...rest
+  } = result;
   return rest;
 }
 

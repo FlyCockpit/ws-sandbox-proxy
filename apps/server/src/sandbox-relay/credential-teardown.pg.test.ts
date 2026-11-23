@@ -1121,6 +1121,89 @@ describe("C8b-server teardown settlement (pg)", () => {
     expect(await sandboxRow(sandboxId)).toMatchObject({ state: "ERROR", liveResourcesHeld: true });
     expect((await leaseRow(lease.id)).state).toBe("RELEASED");
   });
+  it("a cold reconnect whose credential.installed frame was lost: the receipt replayed on a later connection activates the lease and publishes READY; nothing stored", async () => {
+    const f = await fixture();
+    const { sandboxId, held } = await readySandbox(f);
+    const a = held[0]!;
+    await stopSandbox(f.actor, { id: sandboxId, idempotencyKey: `stop-${randomUUID()}` });
+    const stop = await latestOp(sandboxId, "STOP_SANDBOX");
+    await dispatch(f);
+    const c = await capture(f, sandboxId, a, { captureSeq: 1, token: "v2" });
+    await report(f, stop.id, "succeeded", {
+      state: "stopped",
+      credentialOutcomes: [acked(a, c.captureId, "committed")],
+    });
+    await credentialCensus(f);
+    await reconnectSandbox(f.actor, { id: sandboxId, idempotencyKey: `re-${randomUUID()}` });
+    const reconnect = await db.inspect.sandboxOperation.findFirstOrThrow({
+      where: { sandboxId, kind: "RECONNECT_SANDBOX" },
+    });
+    await dispatch(f);
+    const lease = await db.inspect.credentialLease.findFirstOrThrow({
+      where: { sandboxId, state: "RESERVED" },
+    });
+    const granted = await grantInstallBundle({
+      hostId: f.host.id,
+      connectionEpoch: f.epoch,
+      requestId: `req-${randomUUID()}`,
+      sandboxId,
+      leaseId: lease.id,
+      operationId: reconnect.id,
+    });
+    if (granted.kind !== "granted") throw new Error(`grant refused: ${JSON.stringify(granted)}`);
+    granted.bytes.fill(0);
+    // The frame was lost with the socket; the journaled READY replays on the
+    // next connection with its receipt.
+    await reconnectHost(f);
+    const op = await db.inspect.sandboxOperation.findUniqueOrThrow({
+      where: { id: reconnect.id },
+    });
+    const event = await db.inspect.outboxEvent.findFirstOrThrow({
+      where: { userId: f.ownerId, payload: { path: ["operationId"], equals: reconnect.id } },
+    });
+    const payload = event.payload as Record<string, unknown>;
+    const leaseWire = leaseWireSchema.safeParse(payload.lease);
+    expect(
+      await applyOperationResult(
+        {
+          sender: { userId: f.ownerId, hostId: f.host.id, connectionEpoch: f.epoch },
+          operationId: reconnect.id,
+          sandboxId,
+          generation: op.generation,
+          attempt: op.dispatchAttempt,
+          state: "succeeded",
+          // A replay on a later connection carries its dispatch receipt.
+          receipt: {
+            bodyHash: op.requestBodyHash,
+            idempotencyKey: op.idempotencyKey,
+            kind: String(payload.kind),
+          },
+          result: {
+            state: "ready",
+            ...(leaseWire.success ? { lease: leaseWire.data } : {}),
+            credentialInstalled: [
+              {
+                leaseId: lease.id,
+                bindingId: granted.bindingId,
+                storageSeq: granted.storageSeq,
+                fileCount: granted.fileCount,
+                envCount: 0,
+              },
+            ],
+          },
+        },
+        clock,
+      ),
+    ).toMatchObject({ written: true });
+    const done = await db.inspect.sandboxOperation.findUniqueOrThrow({
+      where: { id: reconnect.id },
+      select: { state: true, errorCode: true, result: true },
+    });
+    expect(done).toMatchObject({ state: "SUCCEEDED", errorCode: null });
+    expect(JSON.stringify(done.result)).not.toContain("credentialInstalled");
+    expect((await sandboxRow(sandboxId)).state).toBe("READY");
+    expect((await leaseRow(lease.id)).state).toBe("ACTIVE");
+  });
 });
 
 describe("C8c: template capture vs logins, HOST_LOST, UNKNOWN cold reconnect (pg)", () => {
@@ -1745,6 +1828,51 @@ describe("C10 live attach / free (pg)", () => {
     expect((await instanceRow(lease.instanceId)).activeLeases).toBe(0);
     expect((await attachment(sandboxId, spare.id))?.detachedAt).not.toBeNull();
     expect((await sandboxRow(sandboxId)).state).toBe("READY");
+  });
+
+  it("an attach result whose credential.installed frame was lost: the receipt in the result activates the lease and the attach succeeds; the receipt is not stored", async () => {
+    const { f, sandboxId, spare } = await readyWithSpare();
+    await attachSandboxCredential(f.actor, {
+      id: sandboxId,
+      credentialId: spare.id,
+      idempotencyKey: `attach-${randomUUID()}`,
+    });
+    const op = await attachOp(sandboxId);
+    await dispatch(f);
+    const lease = await db.inspect.credentialLease.findFirstOrThrow({
+      where: { sandboxId, credentialId: spare.id, operationId: op.id },
+    });
+    const granted = await grantInstallBundle({
+      hostId: f.host.id,
+      connectionEpoch: f.epoch,
+      requestId: `req-${randomUUID()}`,
+      sandboxId,
+      leaseId: lease.id,
+      operationId: op.id,
+    });
+    if (granted.kind !== "granted") throw new Error(`grant refused: ${JSON.stringify(granted)}`);
+    granted.bytes.fill(0);
+    // No recordInstalled: the frame never reached the server.
+    await report(f, op.id, "succeeded", {
+      state: "attached",
+      credentialInstalled: [
+        {
+          leaseId: lease.id,
+          bindingId: granted.bindingId,
+          storageSeq: granted.storageSeq,
+          fileCount: granted.fileCount,
+          envCount: 0,
+        },
+      ],
+    });
+    const done = await db.inspect.sandboxOperation.findUniqueOrThrow({
+      where: { id: op.id },
+      select: { state: true, errorCode: true, result: true },
+    });
+    expect(done).toMatchObject({ state: "SUCCEEDED", errorCode: null });
+    expect(JSON.stringify(done.result)).not.toContain("credentialInstalled");
+    expect(await leaseRow(lease.id)).toMatchObject({ state: "ACTIVE" });
+    expect((await attachment(sandboxId, spare.id))?.detachedAt).toBeNull();
   });
 
   it("12: stop during attach — RESERVED → ABANDONED, INSTALLING → RELEASED{superseded}; the superseded attach can never fetch a value", async () => {

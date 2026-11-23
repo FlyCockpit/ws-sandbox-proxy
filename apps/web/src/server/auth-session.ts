@@ -51,7 +51,8 @@ export const getRouteSession = createServerFn({ method: "GET" }).handler(
  * takeover needs — in ONE round trip, so the dashboard no longer waits on
  * session → `settings.getAll` → page data. The settings come from the same
  * server helper the oRPC 2FA gates read (`getForcedTwoFactorSettingsRecord`),
- * so the takeover and the procedures cannot disagree.
+ * so the takeover and the procedures cannot disagree. Likewise whether an
+ * admin-set temporary password must be replaced first, read from the user row.
  */
 export const getProtectedRouteSession = createServerFn({ method: "GET" }).handler(
   async (): Promise<ProtectedRouteSessionResolution> => {
@@ -65,6 +66,13 @@ export const getProtectedRouteSession = createServerFn({ method: "GET" }).handle
         );
         return getForcedTwoFactorSettingsRecord();
       },
+      async (userId) => {
+        // The same user row the oRPC gates read (`sensitiveSessionRefusal`).
+        const { loadSensitiveSessionGateUser } = await import(
+          "@wssp/api/lib/sensitive-session-two-factor-gate"
+        );
+        return (await loadSensitiveSessionGateUser(userId))?.mustChangePassword === true;
+      },
     );
   },
 );
@@ -75,21 +83,28 @@ export const getProtectedRouteSession = createServerFn({ method: "GET" }).handle
  * signed-in one gets only the client-readable force-2FA keys. A failed
  * settings read is an `error` resolution (a retryable route error), never a
  * session without settings — the layout must not render protected content
- * before it can decide the forced-2FA takeover.
+ * before it can decide the forced-2FA and password-change takeovers.
  */
 export async function resolveProtectedRouteSessionFromAuth(
   headers: Headers,
   getSession: GetBetterAuthSession,
   loadForcedTwoFactorSettings: () => Promise<Readonly<Record<string, string | undefined>>>,
+  loadPasswordChangeRequired: (userId: string) => Promise<boolean>,
 ): Promise<ProtectedRouteSessionResolution> {
   const resolution = await resolveRouteSessionFromAuth(headers, getSession);
   if (resolution.status === "error") return resolution;
   if (!resolution.session) return { status: "resolved", session: null };
   try {
-    const forcedTwoFactorSettings = clientReadableForcedTwoFactorSettings(
-      await loadForcedTwoFactorSettings(),
-    );
-    return { status: "resolved", session: resolution.session, forcedTwoFactorSettings };
+    const [settings, passwordChangeRequired] = await Promise.all([
+      loadForcedTwoFactorSettings(),
+      loadPasswordChangeRequired(resolution.session.user.id),
+    ]);
+    return {
+      status: "resolved",
+      session: resolution.session,
+      forcedTwoFactorSettings: clientReadableForcedTwoFactorSettings(settings),
+      passwordChangeRequired,
+    };
   } catch {
     return { status: "error" };
   }

@@ -13,6 +13,9 @@
     "./ban": {
       "default": "./src/ban.ts"
     },
+    "./admin-invite-verification": {
+      "default": "./src/admin-invite-verification.ts"
+    },
     "./roles": {
       "default": "./src/roles.ts"
     },

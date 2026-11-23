@@ -56,6 +56,7 @@ import {
   listSharedPools,
   listUsablePoolMembers,
   listUsablePools,
+  previewPoolInvite,
   resendPoolInvite,
   revokePoolInvite,
   revokePoolShare,
@@ -1560,4 +1561,57 @@ it("lease limits: own-host membership limit through add/update; re-adding a remo
       enabled: true,
     }),
   ).toMatchObject({ id: added.id, maxLeaseMs: null });
+});
+it("the accept page previews only a live invitation of another owner: pool label, inviter name and whether it was addressed to the caller", async () => {
+  const f = await fixture();
+  await db.inspect.user.update({ where: { id: f.a.id }, data: { name: "Ada Inviter" } });
+  // An unverified recipient gets an invitation (a verified one a direct grant);
+  // they verify before opening it.
+  await db.inspect.user.update({ where: { id: f.b.id }, data: { emailVerified: false } });
+  const issued = await invite(f, f.b.email);
+  await db.inspect.user.update({ where: { id: f.b.id }, data: { emailVerified: true } });
+  expect(await previewPoolInvite(session(f.b.id), { token: issued.token })).toEqual({
+    poolLabel: "Shared",
+    inviterName: "Ada Inviter",
+    addressedToYou: true,
+    expiresAt: issued.invite.expiresAt,
+  });
+  // A bearer forwarded to someone else previews too, but not as theirs.
+  expect(await previewPoolInvite(session(f.c.id), { token: issued.token })).toMatchObject({
+    addressedToYou: false,
+  });
+  const refused = { code: "CONFLICT" };
+  // The inviter's own token, a malformed or unknown token: one generic answer.
+  await expect(previewPoolInvite(session(f.a.id), { token: issued.token })).rejects.toMatchObject(
+    refused,
+  );
+  await expect(previewPoolInvite(session(f.b.id), { token: "nope" })).rejects.toMatchObject(
+    refused,
+  );
+  await expect(
+    previewPoolInvite(session(f.b.id), { token: `wssp_inv_${"A".repeat(43)}` }),
+  ).rejects.toMatchObject(refused);
+  // An unverified caller cannot read it (accepting needs a verified email too).
+  await db.inspect.user.update({ where: { id: f.c.id }, data: { emailVerified: false } });
+  await expect(previewPoolInvite(session(f.c.id), { token: issued.token })).rejects.toMatchObject(
+    refused,
+  );
+  // Expired, accepted and revoked invitations no longer preview.
+  const expiring = await invite(f);
+  await db.inspect.shareInvite.update({
+    where: { id: expiring.invite.id },
+    data: { createdAt: new Date(Date.now() - 2000), expiresAt: new Date(Date.now() - 1000) },
+  });
+  await expect(previewPoolInvite(session(f.b.id), { token: expiring.token })).rejects.toMatchObject(
+    refused,
+  );
+  await acceptPoolInvite(session(f.b.id), { token: issued.token, mode: "email" });
+  await expect(previewPoolInvite(session(f.b.id), { token: issued.token })).rejects.toMatchObject(
+    refused,
+  );
+  const revoked = await invite(f);
+  await revokePoolInvite(session(f.a.id), { poolId: f.pool.id, inviteId: revoked.invite.id });
+  await expect(previewPoolInvite(session(f.b.id), { token: revoked.token })).rejects.toMatchObject(
+    refused,
+  );
 });

@@ -473,6 +473,27 @@ export type CredentialTeardownOutcomeV11 = z.infer<typeof credentialTeardownOutc
 export const CREDENTIAL_TEARDOWN_RESULT_KEY = "credentialOutcomes" as const;
 
 /**
+ * Install receipt: a create / reconnect READY result and an attach result
+ * repeat every `credential.installed` report as `result.credentialInstalled`.
+ * The receipt is journaled and replayed; the frame is lost with its socket.
+ * The server applies it exactly like the frame and never stores it.
+ */
+export const credentialInstalledReceiptV11Schema = z
+  .array(
+    z.strictObject({
+      leaseId: idSchema,
+      bindingId: idSchema,
+      storageSeq: epochSchema,
+      fileCount: countSchema(4096),
+      envCount: countSchema(16),
+    }),
+  )
+  .max(limits.specLeasesMax)
+  .refine((reports) => unique(reports.map((r) => r.leaseId)));
+export type CredentialInstalledReceiptV11 = z.infer<typeof credentialInstalledReceiptV11Schema>;
+export const CREDENTIAL_INSTALLED_RESULT_KEY = "credentialInstalled" as const;
+
+/**
  * Chunk frames carry credential plaintext (bundles) or sealed captures:
  * never log one verbatim. Every other frame is returned unchanged.
  */

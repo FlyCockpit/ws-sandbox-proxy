@@ -58,10 +58,9 @@ describe("_auth layout guard (cold dashboard load)", () => {
   it("resolves session and force-2FA settings in ONE server round trip, no oRPC request", async () => {
     const forcedTwoFactorSettings = { force2faInternalUsers: "true" };
 
-    await expect(guard({ status: "resolved", session, forcedTwoFactorSettings })).resolves.toEqual({
-      session,
-      forcedTwoFactorSettings,
-    });
+    await expect(
+      guard({ status: "resolved", session, forcedTwoFactorSettings, passwordChangeRequired: true }),
+    ).resolves.toEqual({ session, forcedTwoFactorSettings, passwordChangeRequired: true });
 
     expect(server.getProtectedRouteSession).toHaveBeenCalledOnce();
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -72,6 +71,7 @@ describe("_auth layout guard (cold dashboard load)", () => {
       status: "resolved",
       session,
       forcedTwoFactorSettings: { force2faPublicUsers: "true", force2faInternalUsers: undefined },
+      passwordChangeRequired: false,
     });
 
     const query = queryClient

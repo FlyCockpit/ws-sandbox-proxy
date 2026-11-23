@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
+import { isAdminRole } from "@wssp/auth/roles";
 import { buttonVariants } from "@wssp/ui/components/button";
 import { cn } from "@wssp/ui/lib/utils";
 import { ShieldAlert } from "lucide-react";
@@ -12,7 +13,10 @@ import { formatRelativeTime } from "@/utils/relative-time";
 import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
 
 /**
- * Nudges a signed-in admin who has not enrolled a TOTP second factor.
+ * Nudges a signed-in admin who has not enrolled a TOTP second factor, and, in
+ * the app shell, anyone whose role a forced-2FA policy covers (non-admins
+ * only when an admin turned `force2faPublicUsers` on) while their enrollment
+ * deadline runs.
  *
  * Enrollment is REQUIRED for admins unless the owner has explicitly turned
  * `force2faInternalUsers` off, so this banner has three voices:
@@ -45,15 +49,20 @@ export function TwoFactorNudge({ variant = "admin" }: { variant?: "admin" | "she
   // the policy off should not be nagged on every page.
   if (variant === "shell" && enrollment.status !== "grace") return null;
 
+  // Non-admins only ever see the shell's running deadline, in their own words:
+  // the policy that applies to them is the one for non-admin accounts.
+  const admin = isAdminRole(user.role);
   const title =
     enrollment.status === "grace"
-      ? t("twoFactorNudge.requiredTitle")
+      ? admin
+        ? t("twoFactorNudge.requiredTitle")
+        : t("twoFactorNudge.userRequiredTitle")
       : enrollment.status === "blocked"
         ? t("twoFactorNudge.blockedTitle")
         : t("twoFactorNudge.title");
   const message =
     enrollment.status === "grace"
-      ? t("twoFactorNudge.requiredMessage", {
+      ? t(admin ? "twoFactorNudge.requiredMessage" : "twoFactorNudge.userRequiredMessage", {
           deadline: formatRelativeTime(enrollment.deadlineMs, i18n.language),
         })
       : enrollment.status === "blocked"

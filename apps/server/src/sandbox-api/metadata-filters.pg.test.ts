@@ -115,6 +115,15 @@ async function fixture() {
     hostIds: [],
     templateRevisionIds: [],
   });
+  // protectedProcedure requires the durable session row behind the session.
+  await db.inspect.session.create({
+    data: {
+      id: `session-${id}`,
+      userId: id,
+      token: `fixture-${id}`,
+      expiresAt: new Date(Date.now() + 60000),
+    },
+  });
   const context = {
     clientIp: undefined,
     session: {

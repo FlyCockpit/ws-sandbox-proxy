@@ -22,6 +22,7 @@ vi.mock("@wssp/env/server", () => ({
   env: {
     SANDBOX_REQUEST_HMAC_SECRET: "0123456789abcdef".repeat(4),
     BETTER_AUTH_URL: "http://localhost:3000",
+    BETTER_AUTH_SECRET: "users-pg-test-secret-long-enough-for-hs256",
   },
   SIGNUP_ENABLED: false,
   ADMIN_EMAILS: new Set<string>(),
@@ -259,6 +260,14 @@ it("leaves unrelated authority tickets valid across committed and rolled-back in
     admin.client.invite({ email, name: "Invitee", role: "user" }),
   ).resolves.toMatchObject({ emailSent: true });
   expect(ticket()).toBe(true);
+  // The invitee must replace the admin-known password; only the mailed accept
+  // link (Better Auth's verify-email) verifies the address.
+  expect(
+    await db.inspect.user.findUniqueOrThrow({
+      where: { email },
+      select: { mustChangePassword: true, emailVerified: true },
+    }),
+  ).toEqual({ mustChangePassword: true, emailVerified: false });
   const rollback = db.pauseAt("invite", { after: "account.create" });
   const failed = db.run("invite", () =>
     admin.client.invite({ email: `${randomUUID()}@example.test`, name: "Other", role: "user" }),

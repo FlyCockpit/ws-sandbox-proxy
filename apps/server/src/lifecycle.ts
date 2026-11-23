@@ -40,6 +40,14 @@ function startupFailureLog(step: string, error: unknown, fallbackCode: string) {
   return { step, ...safeErrorLog(error, fallbackCode), ...(errno ? { errno } : {}) };
 }
 
+/** The failed drain step and unclosed queue names: a closed set and fixed
+ * `QUEUE_NAMES` constants, never a message or a value. */
+function workerDrainDiagnostics(error: unknown) {
+  return error instanceof WorkerDrainError && error.reason
+    ? { reason: error.reason, pendingQueues: error.pendingQueues }
+    : {};
+}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
@@ -164,10 +172,10 @@ export function createServerLifecycle() {
         const jobResult = Promise.all([jobDrain, relayDrain]).then(
           () => true,
           (error: unknown) => {
-            console.error(
-              "[server] Background drain failed:",
-              safeErrorLog(error, "server_background_drain_failed"),
-            );
+            console.error("[server] Background drain failed:", {
+              ...safeErrorLog(error, "server_background_drain_failed"),
+              ...workerDrainDiagnostics(error),
+            });
             return false;
           },
         );

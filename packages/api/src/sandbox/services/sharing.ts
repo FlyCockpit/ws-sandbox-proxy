@@ -24,7 +24,12 @@ import {
   shareSelect,
   withSharingAuthorityChange,
 } from "../sharing-authority";
-import { consumeInviteAccept, consumeInviteIssue, consumeSharingWrite } from "../sharing-budgets";
+import {
+  consumeInviteAccept,
+  consumeInviteIssue,
+  consumeInvitePreview,
+  consumeSharingWrite,
+} from "../sharing-budgets";
 import {
   acceptPoolInviteInput,
   contributePoolHostInput,
@@ -32,6 +37,7 @@ import {
   inviteTokenInput,
   leavePoolInput,
   poolInviteInput,
+  previewPoolInviteInput,
   revokePoolShareInput,
   updatePoolShareInput,
 } from "../sharing-input";
@@ -960,6 +966,59 @@ export const acceptPoolInvite = serviceProcedure(
     });
     if (!result) throw unavailable();
     return result;
+  },
+);
+
+/**
+ * What the accept page shows before the invitee accepts: the pool's label and
+ * the inviter's name (exactly what the invitation mail already carries), and
+ * whether the invitation was addressed to the caller's own email, so the page
+ * can pick the right acceptance mode. Only a pending, unexpired invitation of
+ * another owner previews, to a caller with a verified email (the same
+ * preconditions as accepting); everything else is the one generic CONFLICT,
+ * so a token holder learns nothing about why. Read-only: it never expires a
+ * row or touches the graph.
+ */
+export const previewPoolInvite = serviceProcedure(
+  { sessionOnly: true },
+  async (owner: Principal, raw: z.input<typeof previewPoolInviteInput>) => {
+    // Invalid presentations consume the same durable-actor budget.
+    await consumeInvitePreview(owner.ownerId);
+    const parsed = previewPoolInviteInput.safeParse(raw);
+    if (!parsed.success || !inviteTokenInput.safeParse(parsed.data.token).success)
+      throw unavailable();
+    const [invite, user, clock] = await Promise.all([
+      prisma.shareInvite.findUnique({
+        where: { tokenDigest: digest(parsed.data.token) },
+        select: {
+          email: true,
+          ownerUserId: true,
+          pendingKey: true,
+          expiresAt: true,
+          Pool: { select: { label: true, deletedAt: true } },
+          Owner: { select: { name: true } },
+        },
+      }),
+      prisma.user.findUnique({
+        where: { id: owner.ownerId },
+        select: { email: true, emailVerified: true },
+      }),
+      prisma.$queryRaw<{ now: Date }[]>`SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now`,
+    ]);
+    if (
+      !invite?.pendingKey ||
+      !user?.emailVerified ||
+      invite.ownerUserId === owner.ownerId ||
+      invite.Pool.deletedAt ||
+      invite.expiresAt <= clock[0]!.now
+    )
+      throw unavailable();
+    return {
+      poolLabel: invite.Pool.label,
+      inviterName: invite.Owner.name,
+      addressedToYou: invite.email === user.email.trim().toLowerCase(),
+      expiresAt: invite.expiresAt,
+    };
   },
 );
 

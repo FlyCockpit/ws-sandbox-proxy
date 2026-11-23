@@ -1,4 +1,3 @@
-import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Button } from "@wssp/ui/components/button";
@@ -13,15 +12,14 @@ import { Input } from "@wssp/ui/components/input";
 import { Label } from "@wssp/ui/components/label";
 import { toast } from "@wssp/ui/components/sileo";
 import { Skeleton } from "@wssp/ui/components/skeleton";
-import { KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
+import { ShieldCheck, ShieldOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import z from "zod";
 
 import { AccountSettingsLayout } from "@/components/settings/account-settings-layout";
+import { ChangePasswordCard } from "@/components/settings/change-password-card";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { authClient } from "@/lib/auth-client";
-import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/security")({
@@ -108,172 +106,6 @@ function PasswordCardSkeleton() {
           </div>
         ))}
         <Skeleton className="h-8 max-md:min-h-11 w-36" />
-      </CardContent>
-    </Card>
-  );
-}
-
-function ChangePasswordCard() {
-  const { t } = useTranslation(["settings", "validation"]);
-
-  const form = useForm({
-    defaultValues: {
-      currentPassword: "",
-      newPassword: "",
-      confirmPassword: "",
-    },
-    validators: {
-      onSubmit: z
-        .object({
-          currentPassword: z.string().min(1),
-          newPassword: z.string().min(12).max(128),
-          confirmPassword: z.string().min(1),
-        })
-        .refine((values) => values.newPassword === values.confirmPassword, {
-          message: t("validation:passwordsMustMatch"),
-          path: ["confirmPassword"],
-        }),
-    },
-    onSubmit: async ({ value }) => {
-      try {
-        const result = await authClient.changePassword({
-          currentPassword: value.currentPassword,
-          newPassword: value.newPassword,
-          revokeOtherSessions: true,
-        });
-
-        if (result.error) {
-          const message =
-            result.error.code === "INVALID_PASSWORD"
-              ? t("settings:security.currentPasswordMismatch")
-              : isRateLimit(result.error)
-                ? friendly(result.error, t("settings:security.passwordChangeError"))
-                : t("settings:security.passwordChangeError");
-          toast.error(message);
-          return;
-        }
-
-        toast.success(t("settings:security.passwordChangedSuccess"));
-        form.reset();
-      } catch (error) {
-        toast.error(
-          isRateLimit(error)
-            ? friendly(error, t("settings:security.passwordChangeError"))
-            : t("settings:security.passwordChangeError"),
-        );
-      }
-    },
-  });
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <KeyRound aria-hidden="true" className="size-5 text-muted-foreground" />
-          {t("settings:security.passwordTitle")}
-        </CardTitle>
-        <CardDescription>{t("settings:security.passwordDescription")}</CardDescription>
-      </CardHeader>
-      <CardContent className="max-w-lg">
-        <form
-          className="space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            form.handleSubmit();
-          }}
-        >
-          <form.Field name="currentPassword">
-            {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.currentPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="current-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
-            )}
-          </form.Field>
-
-          <form.Field name="newPassword">
-            {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.newPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
-            )}
-          </form.Field>
-
-          <form.Field name="confirmPassword">
-            {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.confirmPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
-            )}
-          </form.Field>
-
-          <p className="text-sm text-muted-foreground">
-            {t("settings:security.passwordSessionRevocation")}
-          </p>
-
-          <form.Subscribe
-            selector={(state) => ({
-              canSubmit: state.canSubmit,
-              isSubmitting: state.isSubmitting,
-            })}
-          >
-            {({ canSubmit, isSubmitting }) => (
-              <Button type="submit" className="min-h-[44px]" disabled={!canSubmit || isSubmitting}>
-                {isSubmitting
-                  ? t("settings:security.changingPassword")
-                  : t("settings:security.changePassword")}
-              </Button>
-            )}
-          </form.Subscribe>
-        </form>
       </CardContent>
     </Card>
   );

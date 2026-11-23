@@ -429,7 +429,10 @@
     },
     "memberOption": "Host miembro {{n}}",
     "acceptUnavailable": "Este grupo o invitación ya no está disponible. Pídele al propietario una nueva invitación.",
-    "nodeOwnerAccess": "La persona propietaria del nodo tiene acceso completo a los sandboxes que otras personas ejecutan en su nodo."
+    "nodeOwnerAccess": "La persona propietaria del nodo tiene acceso completo a los sandboxes que otras personas ejecutan en su nodo.",
+    "invitedBy": "{{inviter}} te invitó al pool {{pool}}.",
+    "notAddressedToYou": "Esta invitación se envió a otra dirección de correo, así que solo se puede aceptar como enlace al portador.",
+    "previewUnavailable": "No se puede mostrar esta invitación. Puede que haya vencido, se haya revocado o ya se haya aceptado; pide una nueva al propietario."
   },
   "status": {
     "ready": "Conectado",

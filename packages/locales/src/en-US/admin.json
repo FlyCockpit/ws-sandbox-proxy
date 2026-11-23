@@ -458,7 +458,9 @@
     "blockedTitle": "Admin access is locked until you set up two-factor authentication",
     "blockedMessage": "Your enrollment window has closed, so admin actions are being refused. Set up an authenticator app now to get this dashboard back.",
     "configurable": "An admin who has already enrolled can change this policy under Settings in the admin dashboard.",
-    "cta": "Set up 2FA"
+    "cta": "Set up 2FA",
+    "userRequiredTitle": "Two-factor authentication is required for your account",
+    "userRequiredMessage": "Add an authenticator app as a second factor {{deadline}}. After that, this dashboard stays locked until you finish enrolling."
   },
   "imageQuota": {
     "action": "Image quotas",

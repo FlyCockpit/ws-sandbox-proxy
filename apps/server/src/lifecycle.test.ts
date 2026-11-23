@@ -39,7 +39,15 @@ vi.mock("@wssp/queue", () => ({
 }));
 vi.mock("worker/runtime", () => ({
   startWorkerRuntime: state.start,
-  WorkerDrainError: class WorkerDrainError extends Error {},
+  WorkerDrainError: class WorkerDrainError extends Error {
+    constructor(
+      message: string,
+      readonly reason: string,
+      readonly pendingQueues: readonly string[],
+    ) {
+      super(message);
+    }
+  },
 }));
 vi.mock("./sandbox-transfers/runtime.js", () => ({ startTransferStore: state.startTransfers }));
 vi.mock("./template-builds/runtime.js", () => ({
@@ -248,7 +256,7 @@ describe("createServerLifecycle", { timeout: COLD_IMPORT_TIMEOUT_MS }, () => {
 
   it("exits on an unclean startup drain without closing shared dependencies", async () => {
     const { WorkerDrainError } = await import("worker/runtime");
-    state.start.mockRejectedValue(new WorkerDrainError("unfinished job"));
+    state.start.mockRejectedValue(new WorkerDrainError("unfinished job", "deadline", []));
     const { createServerLifecycle } = await import("./lifecycle");
     await createServerLifecycle().start(() => ({ close: vi.fn(), closeIdleConnections: vi.fn() }));
     expect(state.disconnectDb).not.toHaveBeenCalled();
@@ -583,6 +591,27 @@ it.each(["startup", "embedded", "drain", "http-close"])(
     expect(inspect(log.mock.calls, { depth: 20 })).not.toContain(sentinel);
   },
 );
+
+it("logs the failed worker drain step and its unclosed queues, never the message", async () => {
+  const sentinel = "synthetic-private-drain-message";
+  const { WorkerDrainError } = await import("worker/runtime");
+  state.stop.mockRejectedValueOnce(
+    new WorkerDrainError(sentinel, "deadline", ["image-store-maintenance"]),
+  );
+  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const { createServerLifecycle } = await import("./lifecycle");
+  const lifecycle = createServerLifecycle();
+  await lifecycle.start(() => ({ close: (done) => done() }));
+  listeners.get("SIGTERM")?.();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(log).toHaveBeenCalledWith("[server] Background drain failed:", {
+    code: "server_background_drain_failed",
+    errorClass: "WorkerDrainError",
+    reason: "deadline",
+    pendingQueues: ["image-store-maintenance"],
+  });
+  expect(inspect(log.mock.calls, { depth: 20 })).not.toContain(sentinel);
+});
 
 it("keeps serving with template builds unavailable when the context store cannot start", async () => {
   const sentinel = "/synthetic/private/path";

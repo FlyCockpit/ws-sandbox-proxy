@@ -508,6 +508,7 @@ const admin = `${project}-admin-${run_id}`;
 const owner = `${project}-owner-${run_id}`;
 const adminPassword = secret();
 let ownerTempPassword;
+let ownerPassword;
 try {
   await stage("agent-browser present", async () => {
     try {
@@ -727,22 +728,32 @@ try {
     await clickText(admin, '[role="dialog"] button', "I've saved it");
   });
 
-  await stage("path 2: invitee's first sign-in asks for email verification", async () => {
-    const before = Date.now() - 1000;
+  await stage("path 2: invitee accepts the admin invitation, then chooses a password", async () => {
+    // The temporary password alone is no mailbox proof: sign-in is refused.
     await signIn(owner, ownerEmail, ownerTempPassword);
-    const verify = link(await mail(ownerEmail, "Verify your email", before));
-    assert.ok((await evaluate(owner, "location.pathname")).endsWith("/login"));
-    // The refusal names verification (not "wrong password") and offers a new link.
     await waitFor(
       owner,
-      `document.body.textContent.includes("Verify your email before signing in") && document.body.textContent.includes("Send a new link")`,
+      `document.body.textContent.includes("Verify your email before signing in")`,
       "verification-specific refusal",
     );
-    await abSecret(owner, [["open", verify]]);
+    // Accepting the mailed invitation verifies the address (no second mail).
+    const accept = link(await mail(ownerEmail, "You've been invited"));
+    await abSecret(owner, [["open", accept]]);
     await waitFor(owner, `location.pathname.endsWith("/verify-email")`, "verified page");
     await signIn(owner, ownerEmail, ownerTempPassword);
+    // Before anything else, the admin-known password is replaced.
+    await waitFor(owner, present("[data-forced-password-change]"), "password change takeover");
+    assert.equal(await evaluate(owner, present("[data-onboarding]")), false);
+    ownerPassword = secret();
+    await abSecret(owner, [
+      ["fill", 'input[name="currentPassword"]', ownerTempPassword],
+      ["fill", 'input[name="newPassword"]', ownerPassword],
+      ["fill", 'input[name="confirmPassword"]', ownerPassword],
+    ]);
+    await clickText(owner, "[data-forced-password-change] button", "Change password");
     await waitFor(owner, `location.pathname.endsWith("/dashboard/sandboxes")`, "invitee signed in");
     await waitFor(owner, present("[data-onboarding]"), "onboarding checklist");
+    assert.equal(await evaluate(owner, present("[data-forced-password-change]")), false);
   });
   await stage("path 2: invitee accepts the pool invitation", async () => {
     const invite = link(
@@ -752,6 +763,12 @@ try {
     await abSecret(owner, [["open", invite]]);
     await waitFor(owner, present("[data-pool-invite-page]"), "invitation page");
     assert.equal(await evaluate(owner, present("[data-pool-invite-missing]")), false);
+    // The page names the pool (and the inviter) before acceptance.
+    await waitFor(
+      owner,
+      `document.querySelector("[data-pool-invite-preview]")?.textContent.includes("E2E pool")`,
+      "invitation preview",
+    );
     await clickText(owner, "[data-pool-invite-page] button", "Accept pool invitation");
     await waitFor(owner, present("[data-pool-invite-accepted]"), "accepted");
     await ab(owner, "click", '[data-pool-invite-accepted] a[href*="tab=shared"]');

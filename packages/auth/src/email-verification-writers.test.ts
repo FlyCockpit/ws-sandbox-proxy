@@ -8,19 +8,20 @@ import { describe, expect, it } from "vitest";
 const digest = (source: string) => createHash("sha256").update(source).digest("hex");
 const reviewed: Record<string, string> = {
   "packages/db/src/terminal-proof.ts":
-    "9ff895e70988d9ec5cf686e8bf8976c8889ee8f2510580803de7c0a46f6441bd",
+    "237f60137936aeaabd690be1365540e1f6e609f68240e6665bd29d733fc5f71e",
   "packages/api/src/sandbox/host-terminal-tickets.ts":
     "ec42d2b5527551376ad0e4d2fc882414e1cf4ee93fddb6a3c88d8f39baa00bc3",
   "packages/auth/src/terminal-hooks.ts":
     "fd5892eec0910cf1162b1ebfb89d224e6d564fd0f321326922d3113cfa9ce42d",
+  // Pool invitations: acceptance and its preview require (read) a verified email.
   "packages/api/src/sandbox/services/sharing.ts":
-    "09c5735ed08eae111eaba64e596e9f3559556f3aa1930a01a85fd1ce536024a6",
+    "2277349e144318dcdea25c423a065ae99bae1cfc9076ef77bcb6020607418d62",
   "apps/web/src/hooks/use-admin-navigation.ts":
     "edda6b0dc1e47f7ce522201510c3d5a4e16c14de20fc3d5652b2ee94eb39235e",
   "apps/web/src/lib/route-session-access.ts":
-    "59a8aa2cfccd365e00dcd1badd1ce0da290313b618a6c2d61cce4bf06513e4e2",
+    "31841cc3a1c9f70a14e7ac982f894cb646639734568156b6a864b8a79e2a6bf7",
   "apps/web/src/server/auth-session.ts":
-    "45d680463d56aa864720a380f703ad275206bed29f837501fbd88b82e65978c7",
+    "d814bdeff8c464203bcdf31eae102ca8e99b56c77f378de287d30daede452b33",
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
     "2bc11a672816e859f9e11a58321d59a7b705beac2e6ff21aa3eb53a44a39f284",
   "apps/web/src/components/admin/admin-users-page.tsx":
@@ -31,21 +32,26 @@ const reviewed: Record<string, string> = {
     "fdefe353a9bec8bbe260b57df4f043f53a8d4decb0eda5cde2c510da068a56f9",
   "packages/db/src/admin-governance.ts":
     "8dfdfe8c74e4776dff92c9a32c4bae6e4f233b389632c5c5afe3e7666f72071e",
-  "packages/auth/src/index.ts": "88408e82505911c393be4425cae5ed2d733f742d5a8055181c4c8ba3ea1263ed",
-  // Invites: the created user's locale picks the sign-in link (no proof write).
+  // Reviewed 11-23: adds the temporary-password guard to hooks.before/after and
+  // revokeSessionsOnPasswordReset; no mailbox proof input or write.
+  "packages/auth/src/index.ts": "cd048f1401ae2398f4ac9ae95e03ad0ffe8e330b6afac796ca6290d6d2b959e7",
+  // Invites: no proof write. The mailed accept link is Better Auth's own
+  // verify-email link (admin-invite-verification.ts mints its signed token, as
+  // its sendVerificationEmail does); Better Auth's endpoint writes the proof.
+  // The new row is created with mustChangePassword, not emailVerified.
   "packages/api/src/routers/users.ts":
-    "4df911e92c19c9228f7d016c9cfd90cd8a1a615bc2c1cbdb643e585486ddc0a6",
+    "6a6c6a8e4fbd9cf302b0e49309778986acf2f12c31be7dbceb99d723d28cc7fa",
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   "apps/web/src/routes/$lang/_app/_auth.tsx":
-    "0ed09ba34a1eaa6ba8a8fd3672687ecd4c2e8cfb4cc602eecf32d8a998d637aa",
+    "a9abcb66f0e84ed7136b1c513f6a678c265143f005269ac7447ccba9c2560c0c",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
   "packages/api/src/lib/sensitive-session-two-factor-gate.ts":
-    "efa5f35914250f409604ad4ea80a8a4f91072b5090e2b6f94f1d4274d456c122",
+    "6a51bb5c7a528ca30fda6700413196bda144bbfc9f6f58d77e878250c192cbcf",
   // Webhook disable notice: selects emailVerified to skip unverified addresses (read only).
   "apps/worker/src/handlers/deliver-webhook.ts":
     "2aa4705a8815f360e7fe7cdbec2f67887ba88ef0cfe8a86c80507cf739fbb48e",
   "packages/api/src/lib/owner-device-session-gate.ts":
-    "a5a5b9f7bc8e50e59525635ae44b3bfd23c664f2884534a9a5437f9c5ded9976",
+    "4bdd48a03e1b376842e83130e15f763b583eac0dc5b5e911d4c334797c4d26e4",
   "packages/api/src/lib/host-device-credential-access.ts":
     "7287f6e4b29bd4d638f783cd86b4a1aac08749cb662caf2224fa175b2221c871",
   // `wssp login` mint: reads the owner's emailVerified for the credential policy (read only).

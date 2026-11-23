@@ -1,5 +1,8 @@
 import { ORPCError, os } from "@orpc/server";
-import { TWO_FACTOR_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
+import {
+  PASSWORD_CHANGE_REQUIRED_ERROR_CODE,
+  TWO_FACTOR_REQUIRED_ERROR_CODE,
+} from "@wssp/auth/two-factor-policy";
 
 import prisma from "@wssp/db";
 import { accountDeletionConflictAfterForeignKeyRace } from "@wssp/db/account-deletion";
@@ -11,7 +14,8 @@ import { assertOwnerDeviceSession } from "./lib/owner-device-session-gate";
 import {
   isAdminSessionAuthorized,
   isLiveOwnerSessionAuthorized,
-  isSensitiveSessionTwoFactorPolicySatisfied,
+  isSessionRowLive,
+  sensitiveSessionRefusal,
 } from "./lib/sensitive-session-two-factor-gate";
 import { invalidateForceTwoFactorSettingsCache } from "./lib/two-factor-policy";
 
@@ -43,7 +47,21 @@ const requireRequiredTwoFactor = o.middleware(async ({ context, next }) => {
   if (!context.session?.user) {
     throw new ORPCError("UNAUTHORIZED");
   }
-  if (!(await isSensitiveSessionTwoFactorPolicySatisfied(context.session.user.id))) {
+  // The cookie cache is not session authority here either: a session revoked
+  // by a password change (e.g. one signed in with an admin-set temporary
+  // password) must not pass on the account's now-cleared flags. Sequential on
+  // purpose: Better Auth deletes the sessions before it writes the password,
+  // and the flag is cleared only after that write, so a session row read
+  // after a cleared flag is read after the revocation.
+  const refusal = await sensitiveSessionRefusal(context.session.user.id);
+  if (!(await isSessionRowLive(context.session))) throw new ORPCError("UNAUTHORIZED");
+  if (refusal === "password_change_required") {
+    throw new ORPCError("FORBIDDEN", {
+      message: "Choose a new password first.",
+      data: { code: PASSWORD_CHANGE_REQUIRED_ERROR_CODE },
+    });
+  }
+  if (refusal) {
     throw new ORPCError("FORBIDDEN", {
       message: "Two-factor authentication setup is required.",
       data: { code: TWO_FACTOR_REQUIRED_ERROR_CODE },

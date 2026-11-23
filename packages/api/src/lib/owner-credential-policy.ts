@@ -20,6 +20,7 @@ export const ownerCredentialPolicyUserSelect = {
   twoFactorEnabled: true,
   createdAt: true,
   role: true,
+  mustChangePassword: true,
 } satisfies Prisma.UserSelect;
 
 export type OwnerCredentialPolicyUser = Prisma.UserGetPayload<{
@@ -38,6 +39,8 @@ export async function isOwnerCredentialPolicySatisfied(
   if (user.deletionRequestedAt || isUserBanned(user, now)) {
     return false;
   }
+  // An admin-set temporary password is replaced before anything else.
+  if (user.mustChangePassword) return false;
   if (settings) {
     const key = forcedTwoFactorSettingKeyForRole(user.role);
     return isTwoFactorRequirementSatisfied(

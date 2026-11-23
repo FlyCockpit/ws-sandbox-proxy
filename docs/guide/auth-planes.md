@@ -18,10 +18,24 @@ sandbox, operation and transfer belongs to exactly one user account.
   protection on every mutation. When the dashboard and API are on different
   origins (`CORS_ORIGIN`), the CSRF header is required.
 - Two-factor authentication is required for administrators by default
-  (`FORCE_2FA_DEFAULTS`); an administrator can also require it of everyone.
+  (`FORCE_2FA_DEFAULTS`) and optional for everyone else; an administrator can
+  also require it of everyone. A required account gets 24 hours from its
+  creation to enroll and sees the deadline above every page until then.
   Owner pages and the device-approval page use the same 2FA-gated procedures.
 - Public signup is off by default (`SIGNUP_ENABLED=false`); addresses in
   `ADMIN_EMAILS` may sign up to bootstrap the first administrator.
+- An administrator can invite a person from `/{lang}/admin/users`. The
+  invitation mail's **Accept invitation** link confirms the invited address
+  (it is Better Auth's own verification link, valid for seven days); signing
+  in with the temporary password alone does not, because the administrator
+  knows it. The first sign-in then asks for a new password before anything
+  else: until it is replaced, every owner, admin, device-approval and OAuth
+  consent surface refuses the account (`auth.password_change_required`), as
+  do Better Auth's own endpoints other than signing in or out, sessions and
+  password recovery. The new password must differ from the temporary one, and
+  changing it signs out the account's other sessions whatever the client asks.
+  A reset by email also replaces it; every reset signs all of the account's
+  sessions out.
 - The browser terminal is part of this plane: a short-lived one-use ticket
   minted by a cookie-authenticated, CSRF-protected call. See
   [Sandbox terminal](./terminal.md).

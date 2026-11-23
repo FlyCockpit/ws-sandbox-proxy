@@ -313,10 +313,7 @@ fn create_with_login_installs_before_ready_and_restart_reinstalls_env() {
         |m| matches!(m, DaemonControlMessage::CredentialCensus(p) if p.complete),
     );
     send(&mut wire, create_dispatch());
-    let seen = serve(
-        &mut wire,
-        |m| matches!(m, DaemonControlMessage::OperationResult { operation_id, .. } if operation_id == "create"),
-    );
+    let (seen, result) = result_of(&mut wire, &json!({"outcome":"committed"}), "create");
     assert_eq!(
         seen,
         vec![
@@ -326,6 +323,16 @@ fn create_with_login_installs_before_ready_and_restart_reinstalls_env() {
             "result:create:Succeeded"
         ],
         "install happens before READY and its frame precedes the result"
+    );
+    // The journaled READY receipt repeats the report, so a replay after the
+    // frame was lost with its socket still proves the install.
+    let DaemonControlMessage::OperationResult { result, .. } = result else {
+        unreachable!()
+    };
+    let installed = &result.expect("result payload")["credentialInstalled"];
+    assert_eq!(
+        (&installed[0]["bindingId"], &installed[0]["storageSeq"]),
+        (&json!("bind-1"), &json!(1))
     );
     assert_eq!(
         fake.guest_file(SANDBOX, FILE).as_deref(),
@@ -604,4 +611,70 @@ fn stop_captures_and_a_refused_stop_keeps_the_sandbox_usable() {
         assert!(!contains(&bytes, FILE_SENTINEL), "file value at rest");
         assert!(!contains(&bytes, ROTATED), "rotated value at rest");
     }
+}
+
+/// Live attach through the real connect loop: the attach result repeats the
+/// `installed` report as `credentialInstalled`, so a result replayed after
+/// the frame was lost with its socket still proves the install.
+#[test]
+fn live_attach_result_repeats_the_installed_report() {
+    let _staging = crate::sandbox_relay::test_support::staging_quota();
+    let dir = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+    let address = listener.local_addr().expect("address");
+    let fake = sandbox_runtime::FakeRuntime::new();
+    fake.fixture_root().unwrap();
+    let opts = options(dir.path(), address);
+    let shutdown = opts.shutdown.clone();
+    let daemon_fake = fake.clone();
+    let client = thread::spawn(move || {
+        run_connect_with_credentials(&opts, |_| Ok((Box::new(daemon_fake), None)))
+    });
+    let mut wire = register(&listener, address);
+    serve(
+        &mut wire,
+        |m| matches!(m, DaemonControlMessage::CredentialCensus(p) if p.complete),
+    );
+    // A create without a login, then a live attach of one.
+    let mut create = create_dispatch();
+    create.as_object_mut().unwrap().remove("credentialSpec");
+    send(&mut wire, create);
+    let (seen, _) = result_of(&mut wire, &json!({"outcome":"committed"}), "create");
+    assert_eq!(seen, vec!["result:create:Succeeded"]);
+    let spec = spec_bytes();
+    let mut attach = dispatch("attach", "credential.attach", 1);
+    attach.as_object_mut().unwrap().remove("allocation");
+    attach["credentialSpec"] = json!({"digest": crate::sandbox_relay::journal::sha256_hex(&spec),
+        "bytes": spec.len()});
+    send(&mut wire, attach);
+    let (seen, result) = result_of(&mut wire, &json!({"outcome":"committed"}), "attach");
+    assert_eq!(
+        seen,
+        vec![
+            "spec.request",
+            "bundle.install",
+            "installed",
+            "result:attach:Succeeded"
+        ],
+        "{result:?}"
+    );
+    let DaemonControlMessage::OperationResult { result, .. } = result else {
+        unreachable!()
+    };
+    let result = result.expect("result payload");
+    assert_eq!(result["state"], "attached");
+    let installed = &result["credentialInstalled"];
+    assert_eq!(
+        (
+            &installed[0]["leaseId"],
+            &installed[0]["bindingId"],
+            &installed[0]["storageSeq"]
+        ),
+        (&json!("lease-1"), &json!("bind-1"), &json!(1))
+    );
+
+    shutdown.request();
+    while wire.read().is_ok_and(|f| !matches!(f, Message::Close(_))) {}
+    drop(wire);
+    client.join().unwrap().unwrap();
 }

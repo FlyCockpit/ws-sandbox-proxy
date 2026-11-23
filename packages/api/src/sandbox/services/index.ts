@@ -115,6 +115,7 @@ export const POOL_PROCEDURE_INVENTORY = {
   resendInvite: sharingServices.resendPoolInvite,
   revokeInvite: sharingServices.revokePoolInvite,
   acceptInvite: sharingServices.acceptPoolInvite,
+  previewInvite: sharingServices.previewPoolInvite,
   contributeHost: sharingServices.contributePoolHost,
   withdrawHost: sharingServices.withdrawPoolHost,
 

@@ -208,6 +208,24 @@ describe("settingsRouter", () => {
   });
 
   describe("updateMyNotificationPreferences", () => {
+    it("is refused before a temporary password is replaced, or for a revoked session", async () => {
+      const ctx = buildContext();
+      wireSensitiveSessionGateUser(prisma as never, { mustChangePassword: true });
+      const client = createRouterClient(settingsRouter, { context: ctx });
+      await expect(
+        client.updateMyNotificationPreferences({ operationalAlerts: false }),
+      ).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(client.myNotificationPreferences()).rejects.toMatchObject({
+        code: "FORBIDDEN",
+      });
+      wireSensitiveSessionGateUser(prisma as never, { mustChangePassword: false });
+      vi.mocked(prisma.session.findUnique).mockResolvedValueOnce(null);
+      await expect(
+        client.updateMyNotificationPreferences({ operationalAlerts: false }),
+      ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+      expect(db.user.update).not.toHaveBeenCalled();
+    });
+
     it("updates the user's operational alert preference", async () => {
       db.user.update.mockResolvedValue({});
 

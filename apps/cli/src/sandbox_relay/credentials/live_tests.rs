@@ -30,9 +30,17 @@ impl Live {
         let daemon = keyed_service(dir.path(), &key);
         let server = FakeServer::start(&daemon, script.clone());
         assert!(daemon.env_for(SANDBOX, Duration::ZERO).unwrap().is_empty());
-        daemon
+        let receipt = daemon
             .attach(&fake, &target(&script.spec), &attach, &always)
             .unwrap();
+        // The attach receipt repeats the `installed` report.
+        assert_eq!(
+            receipt
+                .iter()
+                .map(|r| r.lease_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["lease-1"]
+        );
         Self {
             dir,
             fake,

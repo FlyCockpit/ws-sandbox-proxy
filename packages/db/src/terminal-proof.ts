@@ -22,6 +22,8 @@ export const terminalProofUserSelect = {
   twoFactorEnabled: true,
   role: true,
   createdAt: true,
+  // The owner credential policy refuses an admin-set temporary password.
+  mustChangePassword: true,
   hostTerminalFailedAttempts: true,
   hostTerminalLockedUntil: true,
   hostTerminalLastTotpStep: true,

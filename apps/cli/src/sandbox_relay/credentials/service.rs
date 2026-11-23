@@ -16,7 +16,7 @@ use sandbox_protocol::{
     BundleRequestReason, CREDENTIAL_BUNDLE_MAX_BYTES, CREDENTIAL_CHUNK_RAW_BYTES,
     CaptureAckOutcome, CaptureAckReason, CaptureKind, CredentialBundleRequestV11,
     CredentialCapabilitiesV11, CredentialCaptureAckV11, CredentialCaptureBeginV11,
-    CredentialCaptureChunkV11, CredentialCensusV11, CredentialDelivery,
+    CredentialCaptureChunkV11, CredentialCensusV11, CredentialDelivery, CredentialInstalledV11,
     CredentialQuarantineDiscardedV11, CredentialScrubbedV11, CredentialSpecRefV11,
     CredentialSpecRequestV11, CredentialSpecV11, DaemonControlMessage, ServerControlMessage,
     SpecLeaseAction, SpecLeaseV11, SpecResidueAction, encode_chunk_data,
@@ -670,14 +670,16 @@ impl CredentialService {
     /// → upload → outcome → scrub → `scrubbed`), then residue `scrub`
     /// entries (scrub → verify → `scrubbed`), then per lease `bundle.request`
     /// → install intent → restore → env in memory → `installed`. Returns
-    /// once every frame is on the wire ahead of the operation result.
+    /// once every frame is on the wire ahead of the operation result, with
+    /// the `installed` reports the result receipt repeats: a frame handed to
+    /// a socket that then broke is lost, the journaled receipt is not.
     pub fn launch(
         &self,
         runtime: &dyn SandboxRuntime,
         target: &LaunchTarget,
         spec: &CredentialSpecV11,
         still_wanted: &dyn Fn() -> bool,
-    ) -> Result<(), LaunchFailure> {
+    ) -> Result<Vec<CredentialInstalledV11>, LaunchFailure> {
         // The install holds the sandbox's guest slot: an expiry or stop that
         // must preempt it cancels the helper through this permit.
         let coord = self.coord(&target.guest.sandbox_id);
@@ -710,7 +712,7 @@ impl CredentialService {
         target: &LaunchTarget,
         spec: &CredentialSpecV11,
         still_wanted: &dyn Fn() -> bool,
-    ) -> Result<(), LaunchFailure> {
+    ) -> Result<Vec<CredentialInstalledV11>, LaunchFailure> {
         let sandbox_id = target.guest.sandbox_id.as_str();
         if spec.sandbox_id != sandbox_id
             || self.host_owner().as_deref() != Some(spec.host_owner_id.as_str())
@@ -718,6 +720,7 @@ impl CredentialService {
             return Err(LaunchFailure::SpecInvalid);
         }
         let mut last = 0;
+        let mut reports = Vec::new();
         // 1. Recover residue the RECOVERING lease's RECOVER binding supersedes.
         for residue in spec
             .residue
@@ -854,6 +857,7 @@ impl CredentialService {
                 // The grant closed the RECOVER binding; its files were scrubbed.
                 let _ = self.inner.store.journal().forget_binding(old);
             }
+            reports.push(installed.clone());
             last = self.push(DaemonControlMessage::CredentialInstalled(installed));
             // A revocation that raced the install wins: no env lands after it.
             let landed = self.inner.revocations.while_valid(&authority, || {
@@ -867,7 +871,8 @@ impl CredentialService {
                 tracing::debug!("credential env not kept: the lease was revoked meanwhile");
             }
         }
-        self.flush(last, still_wanted)
+        self.flush(last, still_wanted)?;
+        Ok(reports)
     }
 
     fn record(

@@ -142,6 +142,7 @@ describe("auth route session server helpers", () => {
   });
 
   describe("protected (_auth) route session", () => {
+    const notPending = vi.fn(async (_userId: string) => false);
     const unenrolledPastGrace = {
       ...fullSession,
       user: {
@@ -167,23 +168,31 @@ describe("auth route session server helpers", () => {
         new Headers({ cookie: "better-auth.session_token=abc" }),
         getSessionMock,
         loadSettings,
+        notPending,
       );
 
       expect(resolution).toEqual({
         status: "resolved",
         session: toRouteSession(fullSession),
         forcedTwoFactorSettings: { force2faPublicUsers: "true", force2faInternalUsers: "false" },
+        passwordChangeRequired: false,
       });
       expect(loadSettings).toHaveBeenCalledOnce();
+      expect(notPending).toHaveBeenCalledWith(fullSession.user.id);
     });
 
     it("keeps absent rows absent, exactly like settings.getAll", async () => {
       getSessionMock.mockResolvedValue(fullSession);
       await expect(
-        resolveProtectedRouteSessionFromAuth(new Headers(), getSessionMock, async () => ({
-          force2faPublicUsers: "true",
-          force2faInternalUsers: undefined,
-        })),
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          async () => ({
+            force2faPublicUsers: "true",
+            force2faInternalUsers: undefined,
+          }),
+          notPending,
+        ),
       ).resolves.toMatchObject({ forcedTwoFactorSettings: { force2faPublicUsers: "true" } });
     });
 
@@ -194,7 +203,12 @@ describe("auth route session server helpers", () => {
       const loadSettings = vi.fn(async () => ({ force2faPublicUsers: "true" }));
 
       await expect(
-        resolveProtectedRouteSessionFromAuth(new Headers(), getSessionMock, loadSettings),
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          loadSettings,
+          notPending,
+        ),
       ).resolves.toEqual({ status: "resolved", session: null });
       expect(loadSettings).not.toHaveBeenCalled();
     });
@@ -202,9 +216,36 @@ describe("auth route session server helpers", () => {
     it("is an error, not a settings-less session, when the settings read fails", async () => {
       getSessionMock.mockResolvedValue(fullSession);
       await expect(
-        resolveProtectedRouteSessionFromAuth(new Headers(), getSessionMock, async () => {
-          throw new Error("db down");
-        }),
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          async () => {
+            throw new Error("db down");
+          },
+          notPending,
+        ),
+      ).resolves.toEqual({ status: "error" });
+    });
+
+    it("carries a pending admin-set password from the user row, and fails closed when that read fails", async () => {
+      getSessionMock.mockResolvedValue(fullSession);
+      await expect(
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          async () => ({}),
+          async () => true,
+        ),
+      ).resolves.toMatchObject({ status: "resolved", passwordChangeRequired: true });
+      await expect(
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          async () => ({}),
+          async () => {
+            throw new Error("db down");
+          },
+        ),
       ).resolves.toEqual({ status: "error" });
     });
 
@@ -212,7 +253,12 @@ describe("auth route session server helpers", () => {
       getSessionMock.mockRejectedValue(new Error("auth down"));
       const loadSettings = vi.fn(async () => ({}));
       await expect(
-        resolveProtectedRouteSessionFromAuth(new Headers(), getSessionMock, loadSettings),
+        resolveProtectedRouteSessionFromAuth(
+          new Headers(),
+          getSessionMock,
+          loadSettings,
+          notPending,
+        ),
       ).resolves.toEqual({ status: "error" });
       expect(loadSettings).not.toHaveBeenCalled();
     });
@@ -223,6 +269,7 @@ describe("auth route session server helpers", () => {
         new Headers(),
         getSessionMock,
         async () => ({ force2faPublicUsers: "true" }),
+        notPending,
       );
       if (resolution.status !== "resolved" || !resolution.session) {
         throw new Error("expected a resolved session");
@@ -241,6 +288,7 @@ describe("auth route session server helpers", () => {
         new Headers(),
         getSessionMock,
         async () => ({}),
+        notPending,
       );
       if (resolution.status !== "resolved" || !resolution.session) {
         throw new Error("expected a resolved session");

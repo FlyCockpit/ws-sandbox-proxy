@@ -1,4 +1,8 @@
 import prisma, { type Prisma } from "@wssp/db";
+import {
+  CREDENTIAL_INSTALLED_RESULT_KEY,
+  credentialInstalledReceiptV11Schema,
+} from "@wssp/sandbox-contracts";
 import { lockHostByEpoch, RelayFenceRejected } from "../sandbox/relay-fence";
 import { consumeCredentialBundle } from "./budgets";
 import { lockLeaseSandbox } from "./leases";
@@ -361,18 +365,65 @@ export async function recordInstalled(input: {
       });
       if (!peek?.sandboxId) return false;
       await lockLeaseSandbox(tx, peek.sandboxId);
-      const updated = await tx.$executeRaw`UPDATE credential_lease l SET state = 'ACTIVE',
-          "updatedAt" = (clock_timestamp() AT TIME ZONE 'UTC')
-        FROM credential_binding b
-        WHERE l.id = ${input.leaseId} AND l.state::text = 'INSTALLING' AND l."hostId" = ${input.hostId}
-          AND l."currentBindingId" = ${input.bindingId} AND b.id = l."currentBindingId"
-          AND b."closedAt" IS NULL AND b."hostId" = ${input.hostId} AND b."baseSeq" = ${input.storageSeq}`;
-      return updated === 1;
+      return markInstalled(tx, { ...input, sandboxId: peek.sandboxId });
     });
   } catch (error) {
     if (error instanceof RelayFenceRejected) return false;
     throw error;
   }
+}
+
+/** INSTALLING → ACTIVE for one matching report; the caller holds H and S. */
+async function markInstalled(
+  tx: Tx,
+  input: {
+    hostId: string;
+    sandboxId: string;
+    leaseId: string;
+    bindingId: string;
+    storageSeq: number;
+  },
+): Promise<boolean> {
+  const updated = await tx.$executeRaw`UPDATE credential_lease l SET state = 'ACTIVE',
+      "updatedAt" = (clock_timestamp() AT TIME ZONE 'UTC')
+    FROM credential_binding b
+    WHERE l.id = ${input.leaseId} AND l.state::text = 'INSTALLING' AND l."hostId" = ${input.hostId}
+      AND l."sandboxId" = ${input.sandboxId}
+      AND l."currentBindingId" = ${input.bindingId} AND b.id = l."currentBindingId"
+      AND b."closedAt" IS NULL AND b."hostId" = ${input.hostId} AND b."baseSeq" = ${input.storageSeq}`;
+  return updated === 1;
+}
+
+/**
+ * The install receipt of a create / reconnect READY or an attach result
+ * (`result.credentialInstalled`): each report applies exactly as its
+ * `credential.installed` frame would, inside the result transaction (host
+ * epoch and sandbox already locked by its fence), before the READY gate. A
+ * replayed result whose frames were lost with their socket thus finds its
+ * leases ACTIVE. A malformed receipt applies nothing (the gate decides).
+ */
+export async function applyInstalledReceipt(
+  tx: Tx,
+  input: { hostId: string; sandboxId: string; result: Record<string, unknown> | undefined },
+): Promise<number> {
+  const raw = input.result?.[CREDENTIAL_INSTALLED_RESULT_KEY];
+  if (raw === undefined) return 0;
+  const parsed = credentialInstalledReceiptV11Schema.safeParse(raw);
+  if (!parsed.success || parsed.data.length === 0) return 0;
+  await lockLeaseSandbox(tx, input.sandboxId);
+  let applied = 0;
+  for (const report of [...parsed.data].sort((a, b) => a.leaseId.localeCompare(b.leaseId)))
+    if (
+      await markInstalled(tx, {
+        hostId: input.hostId,
+        sandboxId: input.sandboxId,
+        leaseId: report.leaseId,
+        bindingId: report.bindingId,
+        storageSeq: report.storageSeq,
+      })
+    )
+      applied += 1;
+  return applied;
 }
 
 /**

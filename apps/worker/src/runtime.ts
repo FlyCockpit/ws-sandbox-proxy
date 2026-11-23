@@ -56,7 +56,29 @@ export type WorkerRuntime = {
   isReady(): boolean;
   stop(): Promise<void>;
 };
-export class WorkerDrainError extends Error {}
+/** Which part of the drain failed: a closed set, safe to log. */
+export type WorkerDrainReason = "deadline" | "consumers" | "heartbeat" | "instance_heartbeat";
+export class WorkerDrainError extends Error {
+  constructor(
+    message: string,
+    /** Values-free diagnostics: the failed step and the queues (fixed
+     * `QUEUE_NAMES` constants) whose consumer had not closed cleanly. */
+    readonly reason: WorkerDrainReason,
+    readonly pendingQueues: readonly string[],
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+class DrainStepError extends Error {
+  constructor(
+    message: string,
+    readonly reason: WorkerDrainReason,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
 
 export async function startWorkerRuntime(options: {
   embedded: boolean;
@@ -79,6 +101,7 @@ export async function startWorkerRuntime(options: {
   let ready = false;
   let failed = false;
   let stopPromise: Promise<void> | undefined;
+  const unclosedQueues = new Set<string>();
   let dispatcher: WebhookDispatcher | undefined;
   let instanceHeartbeat: InstanceHeartbeat | undefined;
   const dataKeyHeartbeat = new AbortController();
@@ -116,7 +139,13 @@ export async function startWorkerRuntime(options: {
       const dispatcherStop = dispatcher?.stop() ?? Promise.resolve();
       // Closing consumers must begin even if a pending heartbeat cannot finish.
       // stop() closes BullMQ admission synchronously before awaiting active jobs.
-      const workerDrains = Promise.allSettled(workers.map((worker) => worker.close()));
+      // A consumer leaves this set once it has closed cleanly, so a failed
+      // drain names the queues still waiting on an active job (deadline) or
+      // whose close rejected (consumers).
+      for (const worker of workers) unclosedQueues.add(worker.name);
+      const workerDrains = Promise.allSettled(
+        workers.map((worker) => worker.close().then(() => unclosedQueues.delete(worker.name))),
+      );
       const heartbeatFailure = await heartbeat.stop().then(
         () => false,
         () => true,
@@ -124,13 +153,18 @@ export async function startWorkerRuntime(options: {
       const results = await workerDrains;
       await dispatcherStop.catch(() => {});
       if (results.some((result) => result.status === "rejected")) {
-        throw new Error("One or more job consumers did not close cleanly.");
+        throw new DrainStepError("One or more job consumers did not close cleanly.", "consumers");
       }
-      await instanceHeartbeat?.stop();
+      await instanceHeartbeat?.stop().catch((error: unknown) => {
+        throw new DrainStepError("Instance heartbeat did not stop cleanly.", "instance_heartbeat", {
+          cause: error,
+        });
+      });
       connection.disconnect();
       heartbeatConnection.disconnect();
       closeOperationalAlertConnection();
-      if (heartbeatFailure) throw new Error("Consumer heartbeat did not close cleanly.");
+      if (heartbeatFailure)
+        throw new DrainStepError("Consumer heartbeat did not close cleanly.", "heartbeat");
     })();
     // Do not disconnect shared clients or pretend timed-out handlers stopped.
     // The host must exit on this rejection; its watchdog owns the hard deadline.
@@ -139,9 +173,13 @@ export async function startWorkerRuntime(options: {
       15_000,
       "Worker drain timed out; process must exit.",
     ).catch((error: unknown) => {
-      throw new WorkerDrainError(error instanceof Error ? error.message : "Worker drain failed.", {
-        cause: error,
-      });
+      // Only DrainStepError and the deadline below reject the drain.
+      throw new WorkerDrainError(
+        error instanceof Error ? error.message : "Worker drain failed.",
+        error instanceof DrainStepError ? error.reason : "deadline",
+        [...unclosedQueues].sort(),
+        { cause: error },
+      );
     });
     return stopPromise;
   }

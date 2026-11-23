@@ -40,6 +40,7 @@ import {
   listSharedPools,
   listUsablePoolMembers,
   listUsablePools,
+  previewPoolInvite,
   resendPoolInvite,
   revokePoolInvite,
   revokePoolShare,
@@ -52,6 +53,7 @@ import {
   grantPoolShareInput,
   leavePoolInput,
   poolInviteInput,
+  previewPoolInviteInput,
   revokePoolShareInput,
   updatePoolShareInput,
 } from "../sandbox/sharing-input";
@@ -132,6 +134,11 @@ export const sandboxPoolsRouter = {
     .input(acceptPoolInviteInput)
     .handler(({ input, context }) =>
       acceptPoolInvite(sessionPrincipal(context.session.user.id), input),
+    ),
+  previewInvite: liveOwnerSessionProcedure
+    .input(previewPoolInviteInput)
+    .handler(({ input, context }) =>
+      previewPoolInvite(sessionPrincipal(context.session.user.id), input),
     ),
   contributeHost: liveOwnerSessionProcedure
     .input(contributePoolHostInput)

@@ -48,8 +48,11 @@ export interface RenderInviteUserArgs {
   email: string;
   /** Generated password. HTML-escaped before insertion. */
   tempPassword: string;
-  /** Absolute URL the recipient should follow to sign in. */
-  signInUrl: string;
+  /**
+   * Absolute URL the recipient opens to accept the invitation: it verifies
+   * the invited address, then leads on to sign-in.
+   */
+  acceptUrl: string;
   /** BCP-47 locale tag. Falls back to en-US if unsupported. */
   locale: string;
 }
@@ -75,7 +78,7 @@ export function renderInviteUser(args: RenderInviteUserArgs): RenderInviteUserRe
   const safeName = escapeHtml(args.name);
   const safeEmail = escapeHtml(args.email);
   const safePassword = escapeHtml(args.tempPassword);
-  const href = safeHref(args.signInUrl);
+  const href = safeHref(args.acceptUrl);
   const greeting = interpolate(bodyTemplate, { name: safeName });
 
   const html = `<!DOCTYPE html>

@@ -41,8 +41,14 @@ describe("route session access decisions", () => {
         status: "resolved",
         session: baseSession,
         forcedTwoFactorSettings,
+        passwordChangeRequired: true,
       }),
-    ).toEqual({ kind: "allow", session: baseSession, forcedTwoFactorSettings });
+    ).toEqual({
+      kind: "allow",
+      session: baseSession,
+      forcedTwoFactorSettings,
+      passwordChangeRequired: true,
+    });
   });
 
   // Pins the asymmetry documented on `decideProtectedRouteAccess`: the ordinary
@@ -59,8 +65,14 @@ describe("route session access decisions", () => {
         status: "resolved",
         session: unverified,
         forcedTwoFactorSettings: {},
+        passwordChangeRequired: false,
       }),
-    ).toEqual({ kind: "allow", session: unverified, forcedTwoFactorSettings: {} });
+    ).toEqual({
+      kind: "allow",
+      session: unverified,
+      forcedTwoFactorSettings: {},
+      passwordChangeRequired: false,
+    });
     expect(showsAdminNavigation({ ...unverified.user, role: "admin" }, {})).toBe(false);
   });
 

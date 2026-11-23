@@ -51,6 +51,7 @@ vi.mock("@wssp/api/lib/push-subscription", () => ({
 }));
 vi.mock("@wssp/api/lib/sensitive-session-two-factor-gate", () => ({
   isSensitiveSessionTwoFactorPolicySatisfied: vi.fn(),
+  sensitiveSessionRefusal: vi.fn(),
 }));
 
 // Unrelated API planes are excluded; requests still use the production app's

@@ -15,6 +15,8 @@ vi.mock("@wssp/db", async () => {
 vi.mock("../lib/sensitive-session-two-factor-gate", () => ({
   isLiveOwnerSessionAuthorized: vi.fn().mockResolvedValue(true),
   isSensitiveSessionTwoFactorPolicySatisfied: vi.fn().mockResolvedValue(true),
+  sensitiveSessionRefusal: vi.fn().mockResolvedValue(null),
+  isSessionRowLive: vi.fn().mockResolvedValue(true),
   loadSensitiveSessionGateUser: vi.fn(),
 }));
 const { loadSensitiveSessionGateUser } = await import("../lib/sensitive-session-two-factor-gate");

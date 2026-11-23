@@ -19,6 +19,7 @@ export const sensitiveSessionGateUserSelect = {
   banExpires: true,
   createdAt: true,
   deletionRequestedAt: true,
+  mustChangePassword: true,
 } satisfies Prisma.UserSelect;
 
 export type SensitiveSessionGateUser = Prisma.UserGetPayload<{
@@ -35,25 +36,42 @@ export async function loadSensitiveSessionGateUser(
   });
 }
 
+/** Why a sensitive browser session is refused; `null` when it may proceed. */
+type SensitiveSessionRefusal = "inactive" | "password_change_required" | "two_factor_required";
+
 /**
- * Authoritative forced-2FA decision for sensitive browser procedures and admin
- * gates. Better Auth's cookie cache can lag `twoFactorEnabled` (and related
- * fields); non-sensitive procedures may keep using the cached session user.
+ * Authoritative decision for sensitive browser procedures and admin gates:
+ * an active account, no pending admin-set temporary password, and the role's
+ * forced-2FA policy. Better Auth's cookie cache can lag `twoFactorEnabled`
+ * (and related fields); non-sensitive procedures may keep using the cached
+ * session user. The password change comes first: enrolling a second factor
+ * needs the account's own password, and an admin-set one is not that.
  */
+export async function sensitiveSessionRefusal(
+  sessionUserId: string,
+  now = new Date(),
+): Promise<SensitiveSessionRefusal | null> {
+  const user = await loadSensitiveSessionGateUser(sessionUserId);
+  if (!user || user.deletionRequestedAt != null || isUserBanned(user, now)) return "inactive";
+  if (user.mustChangePassword) return "password_change_required";
+  return (await isTwoFactorPolicySatisfied(user satisfies TwoFactorPolicyUser & { role?: unknown }))
+    ? null
+    : "two_factor_required";
+}
+
+/** {@link sensitiveSessionRefusal} as a yes/no, for gates with one refusal shape. */
 export async function isSensitiveSessionTwoFactorPolicySatisfied(
   sessionUserId: string,
   now = new Date(),
 ): Promise<boolean> {
-  const user = await loadSensitiveSessionGateUser(sessionUserId);
-  if (!user || user.deletionRequestedAt != null || isUserBanned(user, now)) {
-    return false;
-  }
-  return isTwoFactorPolicySatisfied(user satisfies TwoFactorPolicyUser & { role?: unknown });
+  return (await sensitiveSessionRefusal(sessionUserId, now)) === null;
 }
 
 export type AdminSessionGateSnapshot = {
   emailVerified: boolean;
   isAdmin: boolean;
+  /** An admin-set temporary password is still pending replacement. */
+  passwordChangeRequired: boolean;
   twoFactorPolicySatisfied: boolean;
 };
 
@@ -70,6 +88,7 @@ export async function loadAdminSessionGateSnapshot(
   return {
     emailVerified: user.emailVerified,
     isAdmin: isAdminRole(user.role),
+    passwordChangeRequired: user.mustChangePassword,
     twoFactorPolicySatisfied: db
       ? isTwoFactorRequirementSatisfied(
           user,
@@ -104,6 +123,25 @@ export async function isAdminSessionActive(
   );
 }
 
+/**
+ * The durable session row behind a (possibly cookie-cached) session: exists,
+ * belongs to the user and is unexpired. Unlike {@link isAdminSessionActive} an
+ * admin impersonation passes; `protectedProcedure` keeps that behaviour.
+ */
+export async function isSessionRowLive(
+  session: { user: { id: string }; session?: { id?: string } | null },
+  db: Pick<Prisma.TransactionClient, "session"> = prisma,
+): Promise<boolean> {
+  const id = session.session?.id;
+  if (!id) return false;
+  return Boolean(
+    await db.session.findUnique({
+      where: { id, userId: session.user.id, expiresAt: { gt: new Date() } },
+      select: { id: true },
+    }),
+  );
+}
+
 export type AdminGateSession = { user: { id: string }; session: { id: string } };
 
 /**
@@ -133,7 +171,8 @@ export async function isLiveOwnerSessionAuthorized(
  *
  * Requires a live, non-impersonated, unexpired durable session row, and an
  * authoritative user row that is not banned or deleting, has a verified email,
- * the admin role, and satisfies the role's forced-2FA policy. Pass `db` inside
+ * the admin role, no pending admin-set temporary password, and satisfies the
+ * role's forced-2FA policy. Pass `db` inside
  * a transaction so the check reads the rows the transaction has locked.
  * `pnpm test` inventories call sites of the two primitives below; add new
  * consumers here, not beside them.
@@ -149,7 +188,12 @@ export async function isAdminSessionAuthorized(
   const decide = async (db: Pick<Prisma.TransactionClient, "session" | "user" | "appSetting">) => {
     if (!(await isAdminSessionActive(session, db))) return false;
     const gate = await loadAdminSessionGateSnapshot(session.user.id, options.now ?? new Date(), db);
-    return Boolean(gate?.emailVerified && gate.isAdmin && gate.twoFactorPolicySatisfied);
+    return Boolean(
+      gate?.emailVerified &&
+        gate.isAdmin &&
+        !gate.passwordChangeRequired &&
+        gate.twoFactorPolicySatisfied,
+    );
   };
   // Callers passing `db` already hold these row locks. Otherwise the separate
   // session and user reads would let a revocation or demotion commit between
@@ -184,5 +228,10 @@ export async function isAdminAccountAuthorized(
     options.now ?? new Date(),
     options.db ?? prisma,
   );
-  return Boolean(gate?.emailVerified && gate.isAdmin && gate.twoFactorPolicySatisfied);
+  return Boolean(
+    gate?.emailVerified &&
+      gate.isAdmin &&
+      !gate.passwordChangeRequired &&
+      gate.twoFactorPolicySatisfied,
+  );
 }

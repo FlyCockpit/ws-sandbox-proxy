@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import {
   activateLoginLease,
+  applyInstalledReceipt,
   credentialAttachReady,
   credentialLaunchReady,
   destroySavedLoginSandbox,
@@ -10,7 +11,7 @@ import {
   settleCredentialsOnDeleted,
   settleOperationCredentials,
   teardownOutcomesFromResult,
-  withoutTeardownOutcomes,
+  withoutCredentialReceipts,
 } from "@wssp/api/credentials/relay";
 import {
   appendCommandOutput,
@@ -1037,6 +1038,15 @@ async function applyResultOnce(
           sandboxId: input.sandboxId,
           operationId: input.operationId,
         });
+      // The READY / attach receipt repeats every `credential.installed`
+      // report: a frame lost with its socket (the result replays, the frame
+      // does not) must not turn a real install into an install failure.
+      if ((launch || operation.kind === "CREDENTIAL_ATTACH") && opState === "SUCCEEDED")
+        await applyInstalledReceipt(tx, {
+          hostId: input.sender.hostId,
+          sandboxId: input.sandboxId,
+          result: input.result,
+        });
       if (
         launch &&
         opState === "SUCCEEDED" &&
@@ -1486,7 +1496,7 @@ async function applyResultOnce(
                   outputBytes: typed.outputBytes,
                 }
               : {}
-            : withoutTeardownOutcomes(input.result)),
+            : withoutCredentialReceipts(input.result)),
           ...(downloaded
             ? {
                 size: downloaded.size,

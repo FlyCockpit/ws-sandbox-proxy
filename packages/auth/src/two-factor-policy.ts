@@ -23,6 +23,13 @@ import { isAdminRole } from "./roles";
  */
 export const TWO_FACTOR_REQUIRED_ERROR_CODE = "auth.two_factor_required";
 
+/**
+ * `data.code` of the FORBIDDEN error a sensitive browser procedure throws while
+ * the account still has an admin-set temporary password (`mustChangePassword`).
+ * Takes precedence over {@link TWO_FACTOR_REQUIRED_ERROR_CODE}.
+ */
+export const PASSWORD_CHANGE_REQUIRED_ERROR_CODE = "auth.password_change_required";
+
 export const FORCE_2FA_PUBLIC_USERS_SETTING_KEY = "force2faPublicUsers";
 export const FORCE_2FA_INTERNAL_USERS_SETTING_KEY = "force2faInternalUsers";
 
