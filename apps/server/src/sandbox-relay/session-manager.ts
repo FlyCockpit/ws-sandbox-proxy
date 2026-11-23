@@ -2982,6 +2982,7 @@ export class SandboxRelaySessionManager {
         }
         case "disk.upload.begin":
         case "disk.upload.parts":
+        case "disk.upload.resume":
         case "disk.upload.complete":
         case "disk.offload.failed":
         case "disk.evict.request":
@@ -3670,24 +3671,9 @@ export class SandboxRelaySessionManager {
           await images.handleImageUploadComplete(ctx, message, enqueueImageVerify),
         );
       }
-      case "image.job.resume": {
-        await images.handleImageJobResume(ctx, message);
-        // A resumed disk upload needs its grant again (§7 Mid-upload).
-        if (!session.diskOffload || message.role !== "SOURCE" || message.transferId === undefined)
-          return;
-        const disks = await import("./disk-handlers.js");
-        return disks.handleDiskUploadResume(
-          {
-            sender,
-            reply: (frame) => {
-              if (!this.isCurrentRegistered(session, socket)) return;
-              this.noteDiskGrant(session, frame);
-              socket.send(encodeServerControlMessage(frame, session.protocolVersion));
-            },
-          },
-          message.transferId,
-        );
-      }
+      case "image.job.resume":
+        // A disk upload is never resumed here: `disk.upload.resume` only.
+        return images.handleImageJobResume(ctx, message);
     }
   }
 
@@ -3713,6 +3699,8 @@ export class SandboxRelaySessionManager {
         return disks.handleDiskUploadBegin(ctx, message);
       case "disk.upload.parts":
         return disks.handleDiskUploadParts(ctx, message);
+      case "disk.upload.resume":
+        return disks.handleDiskUploadResume(ctx, message);
       case "disk.upload.complete": {
         const { enqueueDiskVerify } = await import("@wssp/api/sandbox/disk-offload/store");
         return disks.handleDiskUploadComplete(ctx, message, enqueueDiskVerify);
@@ -3748,11 +3736,12 @@ export class SandboxRelaySessionManager {
     }
   }
 
-  /** A disk upload grant this connection sends: its transfer holds a disk
-   * liveness slot from now on (`grantDiskLiveness`), so unproven heartbeat
-   * ids never crowd out its first heartbeat (round 4). */
+  /** A disk upload grant or resume answer this connection sends: its
+   * transfer holds a disk liveness slot from now on (`grantDiskLiveness`), so
+   * unproven heartbeat ids never crowd out its first heartbeat (round 4). */
   private noteDiskGrant(session: SessionState, frame: { type: string; transferId?: string }) {
-    if (frame.type !== "disk.upload.grant" || frame.transferId === undefined) return;
+    if (frame.type !== "disk.upload.grant" && frame.type !== "disk.upload.resumed") return;
+    if (frame.transferId === undefined) return;
     session.diskLiveness ??= new Map();
     grantDiskLiveness(session.diskLiveness, frame.transferId);
   }

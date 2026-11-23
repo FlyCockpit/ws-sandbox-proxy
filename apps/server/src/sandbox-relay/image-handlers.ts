@@ -1272,8 +1272,8 @@ export async function handleImageUploadProgress(
  * (`endStalledOffloadUploads`). Moves `lastProgressAt` and `wireBytes` when
  * more body bytes went on the wire, at most every ten seconds, for this
  * host and owner's OPEN transfer on this or an older connection of this host
- * (a reconnected upload is rebound only by its next resume; a heartbeat
- * never rebinds and never grants). Parts stay counted by `disk.upload.parts`.
+ * (a reconnected upload is rebound only by its `disk.upload.resume`; a
+ * heartbeat never rebinds and never grants). Parts stay counted by `disk.upload.parts`.
  */
 async function diskUploadHeartbeat(
   sender: RelaySender,
@@ -1338,7 +1338,10 @@ export async function handleImageJobResume(
       },
       select: { id: true, ...transferAuthoritySelect },
     });
-    if (!transfer) return false;
+    // A disk offload upload continues only through `disk.upload.resume`
+    // (re-authorized there, with its stored parts from the object store):
+    // refused here before anything moves.
+    if (!transfer || transfer.purpose === "OFFLOAD_UPLOAD") return false;
     const rebound =
       m.role === "SOURCE"
         ? { ...transfer, sourceEpoch: sender.connectionEpoch }

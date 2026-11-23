@@ -3579,6 +3579,7 @@ fn relay_session_loop(
                     | ServerControlMessage::DiskOffloadStored(_)
                     | ServerControlMessage::DiskOffloadCancel(_)
                     | ServerControlMessage::DiskUploadGrant(_)
+                    | ServerControlMessage::DiskUploadResumed(_)
                     | ServerControlMessage::DiskEvictSuggest(_)
                     | ServerControlMessage::DiskEvictGrant(_)
                     | ServerControlMessage::DiskEvictRefused(_)

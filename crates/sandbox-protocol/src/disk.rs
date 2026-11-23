@@ -9,9 +9,10 @@
 //! from before this chunk. Disk images never appear in image cache frames
 //! (S6): there is no disk cache origin.
 //!
-//! The upload grant carries the session's data key; it is redacted from
-//! `Debug` and never journaled. A disk grant without encryption does not
-//! parse (I13).
+//! The first upload grant of a session carries the session's data key; it
+//! is redacted from `Debug` and never journaled. Later grants of the session
+//! (the next window, a resume) never carry it: the host keeps the key of a
+//! session in memory from that first grant (I13).
 
 use serde::{Deserialize, Serialize};
 
@@ -174,6 +175,9 @@ pub enum DiskOffloadFailureCode {
     Io,
     Timeout,
     Cancelled,
+    /// The server refused to resume the upload on a new connection (the
+    /// session, transfer or offload is no longer this host's live upload).
+    ResumeRefused,
 }
 
 /// The export finished: request an upload session for it. The server
@@ -262,6 +266,31 @@ pub struct DiskUploadCompleteV11 {
     pub offload_id: String,
     pub seq: u64,
     pub session_id: String,
+}
+
+/// After a relay connection change: resume this upload session on the
+/// current connection. The server re-authorizes it, binds its transfer to
+/// this connection and answers `disk.upload.resumed` (or
+/// `disk.offload.cancel`). No part report counts on a connection before this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiskUploadResumeV11 {
+    pub sandbox_id: String,
+    pub offload_id: String,
+    pub seq: u64,
+    pub session_id: String,
+    pub transfer_id: String,
+}
+
+impl DiskUploadResumeV11 {
+    pub fn is_valid(&self) -> bool {
+        valid_disk_session(
+            &self.sandbox_id,
+            &self.offload_id,
+            self.seq,
+            &self.session_id,
+        ) && valid_id(&self.transfer_id)
+    }
 }
 
 fn valid_disk_session(sandbox_id: &str, offload_id: &str, seq: u64, session_id: &str) -> bool {
@@ -439,9 +468,10 @@ pub struct DiskOffloadCancelV11 {
 }
 
 /// Presigned part URLs for one disk upload session. Mirrors
-/// `image.upload.grant`, but encryption is required (I13) and the frame is
-/// keyed by the offload and its session; `transfer_id` names the session's
-/// transfer for `image.job.resume` / `image.job.failed`.
+/// `image.upload.grant`, keyed by the offload and its session;
+/// `transfer_id` names the session's transfer (heartbeats, resume).
+/// `encryption` is the session's data key: present on the session's first
+/// grant only (I13: the host refuses a new session's grant without it).
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DiskUploadGrantV11 {
@@ -454,7 +484,12 @@ pub struct DiskUploadGrantV11 {
     pub part_size: u64,
     pub parts: Vec<ImageUploadPartUrlV11>,
     pub expires_at_unix_ms: u64,
-    pub encryption: ImageEncryptionV11,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub encryption: Option<ImageEncryptionV11>,
 }
 
 impl std::fmt::Debug for DiskUploadGrantV11 {
@@ -481,7 +516,76 @@ impl DiskUploadGrantV11 {
             &self.session_id,
         ) && valid_id(&self.transfer_id)
             && valid_upload_part_urls(self.part_size, &self.parts)
-            && self.encryption.is_valid()
+            && self
+                .encryption
+                .as_ref()
+                .is_none_or(ImageEncryptionV11::is_valid)
+    }
+}
+
+/// Most stored-part ranges one `disk.upload.resumed` names (the server
+/// counts parts past them as missing and grants them again).
+pub const DISK_RESUME_RANGES_MAX: usize = 256;
+
+/// The answer to `disk.upload.resume`: the transfer is bound to this
+/// connection. `stored` are the parts the object store holds (inclusive
+/// ranges, ascending, disjoint); `parts` is the next window, from the
+/// lowest missing part (empty when every part is stored). Never a key.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DiskUploadResumedV11 {
+    pub sandbox_id: String,
+    pub offload_id: String,
+    pub seq: u64,
+    pub session_id: String,
+    pub transfer_id: String,
+    pub part_size: u64,
+    pub stored: Vec<[u32; 2]>,
+    pub parts: Vec<ImageUploadPartUrlV11>,
+    pub expires_at_unix_ms: u64,
+}
+
+impl std::fmt::Debug for DiskUploadResumedV11 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiskUploadResumedV11")
+            .field("sandbox_id", &self.sandbox_id)
+            .field("offload_id", &self.offload_id)
+            .field("seq", &self.seq)
+            .field("session_id", &self.session_id)
+            .field("transfer_id", &self.transfer_id)
+            .field("part_size", &self.part_size)
+            .field("stored", &self.stored.len())
+            .field("parts", &self.parts.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl DiskUploadResumedV11 {
+    pub fn is_valid(&self) -> bool {
+        let mut after = 0u32;
+        let ranges = self.stored.len() <= DISK_RESUME_RANGES_MAX
+            && self.stored.iter().all(|[first, last]| {
+                let ok = *first > after && first <= last && *last <= 10_000;
+                after = *last;
+                ok
+            });
+        valid_disk_session(
+            &self.sandbox_id,
+            &self.offload_id,
+            self.seq,
+            &self.session_id,
+        ) && valid_id(&self.transfer_id)
+            && ranges
+            && valid_upload_part_urls(self.part_size, &self.parts)
+            && self
+                .parts
+                .iter()
+                .all(|p| !self.stored.iter().any(|[a, b]| (*a..=*b).contains(&p.n)))
+    }
+
+    /// Whether part `n` is stored.
+    pub fn is_stored(&self, n: u32) -> bool {
+        self.stored.iter().any(|[a, b]| (*a..=*b).contains(&n))
     }
 }
 
@@ -569,6 +673,7 @@ pub(crate) fn valid_server_disk(message: &crate::ServerControlMessage) -> bool {
             valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq) && valid_code(&r.reason)
         }
         M::DiskUploadGrant(g) => g.is_valid(),
+        M::DiskUploadResumed(r) => r.is_valid(),
         M::DiskEvictSuggest(r) => valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq),
         M::DiskEvictGrant(g) => {
             valid_offload_ref(&g.sandbox_id, &g.offload_id, g.seq) && valid_id(&g.grant_id)
@@ -587,6 +692,7 @@ pub(crate) fn valid_daemon_disk(message: &crate::DaemonControlMessage) -> bool {
     match message {
         M::DiskUploadBegin(r) => r.is_valid(),
         M::DiskUploadParts(r) => r.is_valid(),
+        M::DiskUploadResume(r) => r.is_valid(),
         M::DiskUploadComplete(r) => {
             valid_disk_session(&r.sandbox_id, &r.offload_id, r.seq, &r.session_id)
         }
@@ -628,10 +734,10 @@ mod tests {
                 size_bytes: 5,
             }],
             expires_at_unix_ms: 1,
-            encryption: ImageEncryptionV11 {
+            encryption: Some(ImageEncryptionV11 {
                 scheme: crate::IMAGE_ENCRYPTION_SCHEME.into(),
                 key: encryption_key.into(),
-            },
+            }),
         }
     }
 
@@ -651,12 +757,58 @@ mod tests {
     }
 
     #[test]
-    fn disk_grant_requires_valid_encryption() {
+    fn disk_grant_encryption_is_valid_when_present() {
         assert!(grant(&"K".repeat(44)).is_valid());
         assert!(!grant("short").is_valid());
         let mut value = serde_json::to_value(grant(&"K".repeat(44))).unwrap();
         value.as_object_mut().unwrap().remove("encryption");
+        let keyless = serde_json::from_value::<DiskUploadGrantV11>(value.clone()).unwrap();
+        assert!(keyless.is_valid() && keyless.encryption.is_none());
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("encryption".into(), serde_json::Value::Null);
         assert!(serde_json::from_value::<DiskUploadGrantV11>(value).is_err());
+    }
+
+    fn resumed(stored: Vec<[u32; 2]>, parts: &[u32]) -> DiskUploadResumedV11 {
+        DiskUploadResumedV11 {
+            sandbox_id: "sbx".into(),
+            offload_id: "off".into(),
+            seq: 1,
+            session_id: "ses".into(),
+            transfer_id: "tr".into(),
+            part_size: 5,
+            stored,
+            parts: parts
+                .iter()
+                .map(|n| ImageUploadPartUrlV11 {
+                    n: *n,
+                    url: "https://x/?X-Amz-Signature=abc".into(),
+                    size_bytes: 5,
+                })
+                .collect(),
+            expires_at_unix_ms: 1,
+        }
+    }
+
+    #[test]
+    fn a_resume_answer_names_disjoint_ascending_ranges_and_only_missing_parts() {
+        assert!(resumed(vec![[1, 3], [5, 5]], &[4, 6]).is_valid());
+        assert!(resumed(vec![], &[1]).is_valid());
+        assert!(resumed(vec![[1, 9]], &[]).is_valid());
+        assert!(!resumed(vec![[0, 3]], &[4]).is_valid());
+        assert!(!resumed(vec![[3, 2]], &[]).is_valid());
+        assert!(!resumed(vec![[1, 3], [3, 4]], &[]).is_valid());
+        assert!(!resumed(vec![[5, 6], [1, 2]], &[]).is_valid());
+        assert!(!resumed(vec![[1, 3]], &[2]).is_valid());
+        assert!(!resumed(vec![[1, 10_001]], &[]).is_valid());
+        let many = (0..=DISK_RESUME_RANGES_MAX as u32)
+            .map(|i| [2 * i + 1, 2 * i + 1])
+            .collect();
+        assert!(!resumed(many, &[]).is_valid());
+        let text = format!("{:?}", resumed(vec![[1, 1]], &[2]));
+        assert!(!text.contains("Signature"), "{text}");
     }
 
     #[test]

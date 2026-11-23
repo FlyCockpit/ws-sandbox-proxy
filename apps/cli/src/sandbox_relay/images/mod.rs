@@ -480,6 +480,17 @@ pub(crate) struct Routed {
     connection: u64,
 }
 
+impl Routed {
+    /// The relay connection generation the frame arrived on.
+    pub(crate) fn connection(&self) -> u64 {
+        self.connection
+    }
+
+    pub(crate) fn into_frame(self) -> ServerControlMessage {
+        self.frame
+    }
+}
+
 /// What an upload job's frames name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum JobRef {
@@ -962,11 +973,13 @@ fn replayed_after_failed_write(message: &DaemonControlMessage) -> bool {
         | M::DiskOffloadFailed(_)
         | M::DiskOffloadReleased(_)
         | M::DiskEvicted(_) => true,
-        // The upload job re-begins or resumes and regrants itself; a lost
-        // eviction request stops blocking after `EVICT_ANSWER_WAIT` (or the
-        // next connection); a discard is asked again by the server.
+        // The upload job re-begins or resumes itself on the next connection
+        // (`disk.upload.resume` belongs to the connection it was sent on); a
+        // lost eviction request stops blocking after `EVICT_ANSWER_WAIT` (or
+        // the next connection); a discard is asked again by the server.
         M::DiskUploadBegin(_)
         | M::DiskUploadParts(_)
+        | M::DiskUploadResume(_)
         | M::DiskEvictRequest(_)
         | M::DiskDiscarded(_) => false,
         // Advisory.
@@ -1541,7 +1554,17 @@ impl ImageService {
         // `stale`: they go, and the offload's own resume / regrant decides.
         // A queued completion stays: the server rebinds its session's
         // transfer to this connection (post-landing #1).
-        outbox.retain(|m| !matches!(m, DaemonControlMessage::DiskUploadParts(_)));
+        // So do queued disk upload begins and resumes: each belongs to the
+        // connection it was queued for (its answer is read only from there),
+        // and the offload begins or resumes again on this one.
+        outbox.retain(|m| {
+            !matches!(
+                m,
+                DaemonControlMessage::DiskUploadParts(_)
+                    | DaemonControlMessage::DiskUploadBegin(_)
+                    | DaemonControlMessage::DiskUploadResume(_)
+            )
+        });
         for entry in resumable.values_mut() {
             if let Some(request) = &entry.begin {
                 entry.begin_lost = !outbox.iter().any(|m| {
@@ -4561,9 +4584,38 @@ impl ImageService {
         self.push(message);
     }
 
-    /// Route frames keyed `key` to the returned receiver (see `deliver`).
-    pub(crate) fn register_waiter(&self, key: &str) -> mpsc::Receiver<ServerControlMessage> {
-        self.register(key)
+    /// Route frames keyed `key` to the returned receiver, each stamped with
+    /// the relay connection it arrived on (see `deliver`).
+    pub(crate) fn register_stamped_waiter(&self, key: &str) -> mpsc::Receiver<Routed> {
+        self.register_stamped(&[key.to_owned()])
+    }
+
+    /// The current relay connection's generation (`hello.ok` count).
+    pub(crate) fn connection(&self) -> u64 {
+        self.inner.connections.load(Ordering::SeqCst)
+    }
+
+    /// Whether a relay connection is up (`hello.ok` .. its end).
+    pub(crate) fn is_connected(&self) -> bool {
+        self.inner.connected.load(Ordering::SeqCst)
+    }
+
+    /// Queue `message` for relay connection `connection` only: false (not
+    /// queued) once another connection registered. Checked under the resume
+    /// registry's lock, which `next_connection` holds while it moves to a new
+    /// connection and purges the frames that belonged to the old one, so a
+    /// frame queued here is either purged with its connection or sent on it.
+    pub(crate) fn push_on(&self, connection: u64, message: DaemonControlMessage) -> bool {
+        let _registry = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.inner.connections.load(Ordering::SeqCst) != connection {
+            return false;
+        }
+        self.push(message);
+        true
     }
 
     pub(crate) fn unregister_waiter(&self, key: &str) {
@@ -4854,6 +4906,11 @@ impl UploadHeartbeat {
     /// The transfer this heartbeat reports.
     pub(crate) fn transfer_id(&self) -> &str {
         &self.transfer_id
+    }
+
+    /// Body bytes that went on the wire so far (any part, any window).
+    pub(crate) fn wire_bytes(&self) -> u64 {
+        self.state.wire.get()
     }
 
     /// The body reached stored `offset`, after `moved` more bytes went out.

@@ -503,6 +503,8 @@ daemon_control! {
     DiskUploadBegin(crate::DiskUploadBeginV11),
     #[serde(rename = "disk.upload.parts")]
     DiskUploadParts(crate::DiskUploadPartsV11),
+    #[serde(rename = "disk.upload.resume")]
+    DiskUploadResume(crate::DiskUploadResumeV11),
     #[serde(rename = "disk.upload.complete")]
     DiskUploadComplete(crate::DiskUploadCompleteV11),
     #[serde(rename = "disk.offload.failed")]
@@ -1254,6 +1256,8 @@ pub enum ServerControlMessage {
     DiskOffloadCancel(crate::DiskOffloadCancelV11),
     #[serde(rename = "disk.upload.grant")]
     DiskUploadGrant(crate::DiskUploadGrantV11),
+    #[serde(rename = "disk.upload.resumed")]
+    DiskUploadResumed(crate::DiskUploadResumedV11),
     #[serde(rename = "disk.evict.suggest")]
     DiskEvictSuggest(crate::DiskEvictSuggestV11),
     #[serde(rename = "disk.evict.grant")]

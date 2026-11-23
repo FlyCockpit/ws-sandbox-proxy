@@ -598,7 +598,9 @@ export function redactImageFrame(frame: { type: string } & Record<string, unknow
   if (Array.isArray(copy.links)) copy.links = `<${copy.links.length} links>`;
   if (
     Array.isArray(copy.parts) &&
-    (frame.type === "image.upload.grant" || frame.type === "disk.upload.grant")
+    (frame.type === "image.upload.grant" ||
+      frame.type === "disk.upload.grant" ||
+      frame.type === "disk.upload.resumed")
   )
     copy.parts = `<${copy.parts.length} parts>`;
   return copy;
@@ -752,6 +754,8 @@ export const DISK_OFFLOAD_FAILURE_CODES = [
   "io",
   "timeout",
   "cancelled",
+  /** The server refused to resume the upload on a new relay connection. */
+  "resume_refused",
 ] as const;
 export type DiskOffloadFailureCode = (typeof DISK_OFFLOAD_FAILURE_CODES)[number];
 
@@ -781,6 +785,9 @@ const uploadedPartsSchema = z
   .min(1)
   .max(IMAGE_UPLOAD_PARTS_MAX);
 
+/** Most stored-part ranges one `disk.upload.resumed` names (Rust mirror). */
+export const DISK_RESUME_RANGES_MAX = 256;
+
 /** Most entries one `disk.offload.inventory` frame carries (Rust mirror). */
 export const DISK_OFFLOAD_INVENTORY_PAGE_MAX = 256;
 
@@ -804,6 +811,17 @@ export const daemonDiskMessageSchemas = [
     ...offloadRef,
     sessionId: idSchema,
     parts: uploadedPartsSchema,
+  }),
+  /**
+   * After a relay connection change: resume this upload session here. The
+   * server re-authorizes it, binds its transfer to this connection and
+   * answers `disk.upload.resumed` (or `disk.offload.cancel`).
+   */
+  z.strictObject({
+    type: z.literal("disk.upload.resume"),
+    ...offloadRef,
+    sessionId: idSchema,
+    transferId: idSchema,
   }),
   z.strictObject({ type: z.literal("disk.upload.complete"), ...offloadRef, sessionId: idSchema }),
   z.strictObject({
@@ -884,10 +902,42 @@ export const serverDiskMessageSchema = z.union([
         .array(z.strictObject({ n: partNumberSchema, url: nodeUrlSchema, sizeBytes: sizeSchema }))
         .max(IMAGE_UPLOAD_PARTS_MAX),
       expiresAtUnixMs: z.number().int().min(0),
-      // Required (I13): a disk object is always encrypted.
-      encryption: encryptionSchema,
+      // The session's key (I13): on its first grant only; later windows and
+      // resumes never carry it (the host holds it from that grant).
+      encryption: encryptionSchema.optional(),
     })
     .refine((grant) => grant.parts.every((part) => part.sizeBytes <= grant.partSize)),
+  z
+    .strictObject({
+      type: z.literal("disk.upload.resumed"),
+      ...offloadRef,
+      sessionId: idSchema,
+      transferId: idSchema,
+      partSize: z.number().int().min(1),
+      /** Stored parts (object store), inclusive ranges, ascending, disjoint. */
+      stored: z
+        .array(z.tuple([partNumberSchema, partNumberSchema]))
+        .max(DISK_RESUME_RANGES_MAX)
+        .refine(
+          (ranges) =>
+            ranges.every(([a, b], i) => a <= b && (i === 0 || a > (ranges[i - 1]?.[1] ?? 0))),
+          "ascending disjoint ranges",
+        ),
+      /** The next window, from the lowest missing part; never a stored one. */
+      parts: z
+        .array(z.strictObject({ n: partNumberSchema, url: nodeUrlSchema, sizeBytes: sizeSchema }))
+        .max(IMAGE_UPLOAD_PARTS_MAX),
+      expiresAtUnixMs: z.number().int().min(0),
+    })
+    .refine(
+      (frame) =>
+        frame.parts.every(
+          (part) =>
+            part.sizeBytes <= frame.partSize &&
+            !frame.stored.some(([a, b]) => part.n >= a && part.n <= b),
+        ),
+      "parts are missing ones within the part size",
+    ),
   z.strictObject({ type: z.literal("disk.evict.suggest"), ...offloadRef }),
   z.strictObject({
     type: z.literal("disk.evict.grant"),
@@ -917,6 +967,7 @@ export const SERVER_DISK_MESSAGE_TYPES = new Set<string>([
   "disk.offload.stored",
   "disk.offload.cancel",
   "disk.upload.grant",
+  "disk.upload.resumed",
   "disk.evict.suggest",
   "disk.evict.grant",
   "disk.evict.refused",

@@ -28,8 +28,8 @@ use sandbox_protocol::{
     DaemonControlMessage, DiskOffloadCancelV11, DiskOffloadFailedV11, DiskOffloadFailureCode,
     DiskOffloadInventoryEntryV11, DiskOffloadInventoryV11, DiskOffloadReleasedV11,
     DiskOffloadRequestV11, DiskOffloadStoredV11, DiskUploadBeginV11, DiskUploadCompleteV11,
-    DiskUploadPartsV11, ImageFailureCode, ImageJobResumeV11, ImageLinkRole, SandboxErrorCode,
-    ServerControlMessage,
+    DiskUploadPartsV11, DiskUploadResumeV11, ImageFailureCode, ImageUploadPartUrlV11,
+    SandboxErrorCode, ServerControlMessage,
 };
 use sandbox_runtime::SandboxRuntime;
 use serde::{Deserialize, Serialize};
@@ -47,13 +47,30 @@ pub const OFFLOAD_JOURNAL_FILE: &str = "disk-offload.json";
 const STAGING_PREFIX: &str = "offload-";
 const MIB: u64 = 1 << 20;
 const GIB: u64 = 1 << 30;
-/// Resumes of one upload session after a lost grant (`image.job.resume`).
-const RESUME_ATTEMPTS: usize = 3;
+/// An upload that makes no progress (no part done, no new stored part
+/// on a resume, no body byte on the wire) for this long ends
+/// `Failed(Timeout)`, reported: the server's stall rule
+/// (`OFFLOAD_UPLOAD_STALL_MS`) on the host's side.
+const UPLOAD_GIVE_UP: Duration = Duration::from_secs(30 * 60);
+/// First wait after a transient refusal (`rate_limited`,
+/// `store_unavailable`, a `stale` resume answer); doubles to
+/// `RESUME_BACKOFF_MAX`.
+const RESUME_BACKOFF: Duration = Duration::from_secs(5);
+const RESUME_BACKOFF_MAX: Duration = Duration::from_secs(60);
 /// `disk.offload.cancel` reason for a refused repeated begin: not a cancel.
 const UPLOAD_IN_PROGRESS: &str = "upload_in_progress";
 /// `disk.offload.cancel` reason for a begin of an offload the server no
 /// longer uploads.
 const STALE: &str = "stale";
+/// Transient `disk.offload.cancel` reasons: the job backs off and resumes
+/// (or begins) again.
+const RATE_LIMITED: &str = "rate_limited";
+const STORE_UNAVAILABLE: &str = "store_unavailable";
+/// The server refused to resume the upload: it is over for this host.
+const RESUME_REFUSED: &str = "resume_refused";
+/// Answers a running upload job reads itself (none of them ends it by
+/// setting its cancel flag).
+const JOB_ANSWERS: [&str; 4] = [STALE, RATE_LIMITED, STORE_UNAVAILABLE, RESUME_REFUSED];
 /// `disk.offload.inventory` pages one session sends at most (the server's
 /// `DISK_INVENTORY_PAGES_PER_SESSION`, of `DISK_INVENTORY_PAGES_PER_WINDOW`
 /// per 10 minutes); a longer inventory continues on the
@@ -441,6 +458,8 @@ struct Inner {
     grant_wait: Duration,
     publish_wait: Duration,
     poll: Duration,
+    /// `UPLOAD_GIVE_UP` and `RESUME_BACKOFF` (shorter in tests).
+    upload_timing: Mutex<(Duration, Duration)>,
     /// Eviction and discard (installed by `connect`).
     disks: std::sync::OnceLock<Arc<dyn LocalDisks>>,
     /// The server time relayed by the last `heartbeat.pong` (S11).
@@ -601,6 +620,7 @@ impl OffloadService {
                 grant_wait: timing.0,
                 publish_wait: timing.1,
                 poll: timing.2,
+                upload_timing: Mutex::new((UPLOAD_GIVE_UP, RESUME_BACKOFF)),
                 disks: std::sync::OnceLock::new(),
                 server_time: Mutex::new(None),
                 evict_pending: Mutex::new(HashMap::new()),
@@ -612,6 +632,16 @@ impl OffloadService {
                 before_settle: Mutex::new(None),
             }),
         })
+    }
+
+    /// Tests: the no-progress deadline and the first backoff step.
+    #[cfg(test)]
+    pub(crate) fn set_upload_timing_for_test(&self, give_up: Duration, backoff: Duration) {
+        *self
+            .inner
+            .upload_timing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = (give_up, backoff);
     }
 
     /// The restore fetch pace (`offload_fetch_mbps`; applied by the restore
@@ -753,12 +783,14 @@ impl OffloadService {
             }
             ServerControlMessage::DiskOffloadCancel(cancel) => self.on_cancel(&cancel),
             ServerControlMessage::DiskUploadGrant(mut grant) => {
-                // The receive site (§3): the data key leaves the frame at
-                // once into a wiped buffer the job takes; the frame itself
-                // travels on without it.
+                // The receive site (§3): the data key (a session's first
+                // grant only) leaves the frame at once into a wiped buffer
+                // the job takes; the frame itself travels on without it.
                 let stash = stash_key(&grant.offload_id, grant.seq, &grant.session_id);
-                let key = crypto::take_grant_key(&mut grant.encryption);
-                self.lock_keys().insert(stash.clone(), key);
+                if let Some(encryption) = grant.encryption.as_mut() {
+                    let key = crypto::take_grant_key(encryption);
+                    self.lock_keys().insert(stash.clone(), key);
+                }
                 let route = grant_key(&grant.offload_id, grant.seq);
                 let offload_id = grant.offload_id.clone();
                 if !self
@@ -769,6 +801,16 @@ impl OffloadService {
                     // No offload waits for it: the key is wiped now.
                     self.lock_keys().remove(&stash);
                     tracing::debug!(offload_id = %offload_id, "disk upload grant with no waiting offload");
+                }
+            }
+            ServerControlMessage::DiskUploadResumed(resumed) => {
+                let route = grant_key(&resumed.offload_id, resumed.seq);
+                if !self
+                    .inner
+                    .images
+                    .deliver_to(&route, ServerControlMessage::DiskUploadResumed(resumed))
+                {
+                    tracing::debug!("disk upload resume answer with no waiting offload");
                 }
             }
             ServerControlMessage::DiskEvictSuggest(suggest) => {
@@ -1171,7 +1213,7 @@ impl OffloadService {
         entry.phase = OffloadPhase::Uploading;
         self.job_step(sandbox_id, &entry)?;
         let key = grant_key(&entry.offload_id, entry.seq);
-        let rx = self.inner.images.register_waiter(&key);
+        let rx = self.inner.images.register_stamped_waiter(&key);
         let result = self.upload_with(sandbox_id, &entry, &fingerprint, file, size, cancel, &rx);
         self.inner.images.unregister_waiter(&key);
         let unsettled = match result {
@@ -1224,6 +1266,17 @@ impl OffloadService {
         }
     }
 
+    /// The upload of one staged export: `disk.upload.begin`, then each
+    /// window's parts until every part is up. Returns the session id.
+    ///
+    /// A session's parts are reported only on the relay connection its
+    /// transfer is bound to (`bound`: the one its first grant, or its last
+    /// `disk.upload.resumed`, came on; `ImageService::push_on`). After a
+    /// connection change the job resumes the session explicitly on the new
+    /// connection (`disk.upload.resume`) and continues from the server's
+    /// stored parts (the object store's listing), never from its own memory.
+    /// A refused resume ends the job `Failed(ResumeRefused)`; no progress for
+    /// `UPLOAD_GIVE_UP` ends it `Failed(Timeout)`: both are reported.
     #[allow(clippy::too_many_arguments)]
     fn upload_with(
         &self,
@@ -1233,11 +1286,17 @@ impl OffloadService {
         path: &Path,
         size: u64,
         cancel: &Arc<AtomicBool>,
-        rx: &mpsc::Receiver<ServerControlMessage>,
+        rx: &mpsc::Receiver<super::images::Routed>,
     ) -> Result<String, JobEnd> {
+        let images = &self.inner.images;
+        let (give_up, backoff_base) = *self
+            .inner
+            .upload_timing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let mut file =
             std::fs::File::open(path).map_err(|_| JobEnd::Failed(DiskOffloadFailureCode::Io))?;
-        self.push(DaemonControlMessage::DiskUploadBegin(DiskUploadBeginV11 {
+        let begin = DaemonControlMessage::DiskUploadBegin(DiskUploadBeginV11 {
             sandbox_id: sandbox_id.to_owned(),
             generation: entry.generation,
             offload_id: entry.offload_id.clone(),
@@ -1247,165 +1306,370 @@ impl OffloadService {
             unpacked_bytes: None,
             format: "unified".into(),
             cloud_init_instance_id: entry.cloud_init_instance_id.clone(),
-        }));
+        });
         let stored_size = sandbox_protocol::encrypted_image_len(size);
-        let mut session: Option<(String, String, crypto::RecordKey)> = None;
-        // Uploaded parts of the session by number, with their bytes: a
-        // re-grant after a resume may name parts already sent (the server
-        // grants from its lowest unrecorded part), so completion counts
-        // distinct parts, never bytes sent.
+        // The no-progress deadline: moved by a finished window, a resume
+        // that finds more parts stored, and body bytes on the wire.
+        let progress = std::cell::Cell::new(Instant::now());
+        let expired = || progress.get().elapsed() >= give_up;
+        let stopped = || cancel.load(Ordering::SeqCst);
+        // The connection the frame being answered was queued for: a begin
+        // (like a resume) is sent only there (`push_on`; a reconnect purges
+        // it), so its grant, the one frame with the session's key, is never
+        // read as another connection's answer.
+        let send_begin = |waiting_on: &mut u64| {
+            let on = images.connection();
+            images.push_on(on, begin.clone());
+            *waiting_on = on;
+        };
+        let mut waiting_on = 0;
+        send_begin(&mut waiting_on);
+        let mut session: Option<UploadSession> = None;
+        // Uploaded (or, after a resume, stored) parts by number, with their
+        // bytes: completion counts distinct parts, never bytes sent.
         let mut done: BTreeMap<u32, u64> = BTreeMap::new();
-        let mut resumes = 0;
+        let mut step = Step::Wait;
+        let mut backoff = Backoff::new(backoff_base);
+        // The staging is re-hashed once per entry into a resume after
+        // progress (§3 nonce safety: the same key never seals other bytes).
+        let mut rehashed = false;
         // Liveness for the server's stall rule (`image.upload.progress`, at
-        // most every 30 s while bytes move): parts are reported only once
-        // per granted window, which may take longer than the rule's limit.
-        // One per transfer, across its windows, so its counts only grow.
+        // most every 30 s while bytes move): one per transfer, across its
+        // windows, so its counts only grow.
         let mut heartbeat: Option<super::images::UploadHeartbeat> = None;
         // The transfer this job runs: its cancel is kept meanwhile.
         let mut _running: Option<super::images::RunningTransfer> = None;
         loop {
-            let wanted = || !cancel.load(Ordering::SeqCst);
-            let frame = wait_frame(rx, self.inner.grant_wait, &wanted, self.inner.poll);
-            if cancel.load(Ordering::SeqCst) {
+            if stopped() {
                 return Err(JobEnd::Cancelled);
             }
-            let grant = match frame {
-                Some(ServerControlMessage::DiskUploadGrant(grant)) => grant,
-                // A `stale` answer to the begin itself (no session yet):
-                // this offload may be past uploading on the server (review
-                // r3: an upload whose complete went out before a crash).
-                Some(ServerControlMessage::DiskOffloadCancel(c))
-                    if c.reason == STALE && session.is_none() =>
-                {
-                    return Err(JobEnd::Unsettled);
-                }
-                Some(ServerControlMessage::DiskOffloadCancel(c))
-                    if c.reason != UPLOAD_IN_PROGRESS =>
-                {
-                    return Err(JobEnd::Cancelled);
-                }
-                Some(_) => continue,
-                None => {
-                    // A lost grant (relay drop): resume the open session.
-                    let Some((_, transfer, _)) = &session else {
-                        return Err(JobEnd::Failed(DiskOffloadFailureCode::Timeout));
-                    };
-                    if resumes >= RESUME_ATTEMPTS {
-                        return Err(JobEnd::Failed(DiskOffloadFailureCode::Timeout));
+            if expired() {
+                tracing::warn!(offload_id = %entry.offload_id, "disk upload made no progress; giving up");
+                return Err(JobEnd::Failed(DiskOffloadFailureCode::Timeout));
+            }
+            match std::mem::replace(&mut step, Step::Wait) {
+                Step::Wait => {
+                    let on = waiting_on;
+                    let wanted = || !stopped() && !expired() && images.connection() == on;
+                    let routed = wait_routed(rx, self.inner.grant_wait, &wanted, self.inner.poll);
+                    if stopped() {
+                        return Err(JobEnd::Cancelled);
                     }
-                    resumes += 1;
-                    let sent = done.values().sum();
-                    self.resume(transfer, entry, path, sent, cancel)?;
-                    continue;
+                    let Some(routed) = routed else {
+                        if expired() {
+                            continue;
+                        }
+                        if session.is_some() {
+                            // A lost grant, or the connection moved.
+                            step = Step::Resume;
+                        } else if images.connection() != on {
+                            // The begin (or its grant) went with the old
+                            // connection: begin again on the new one (a
+                            // session of the old one is superseded).
+                            if !self.wait_connected(&stopped, &expired) {
+                                continue;
+                            }
+                            send_begin(&mut waiting_on);
+                        } else {
+                            return Err(JobEnd::Failed(DiskOffloadFailureCode::Timeout));
+                        }
+                        continue;
+                    };
+                    if routed.connection() != on {
+                        // An answer to a frame of an older connection.
+                        self.discard(routed.into_frame(), entry);
+                        continue;
+                    }
+                    match routed.into_frame() {
+                        ServerControlMessage::DiskUploadGrant(grant) => {
+                            let held = session.as_ref().is_some_and(|s| s.id == grant.session_id);
+                            let key = self.lock_keys().remove(&stash_key(
+                                &entry.offload_id,
+                                entry.seq,
+                                &grant.session_id,
+                            ));
+                            if !held {
+                                // I13: a new session's first grant carries its
+                                // key; a disk never leaves this host
+                                // unencrypted.
+                                let valid = grant.encryption.as_ref().is_some_and(|e| {
+                                    e.scheme == sandbox_protocol::IMAGE_ENCRYPTION_SCHEME
+                                });
+                                let record_key = key
+                                    .filter(|_| valid)
+                                    .and_then(|text| crypto::RecordKey::from_base64(&text).ok());
+                                let Some(record_key) = record_key else {
+                                    tracing::warn!(offload_id = %entry.offload_id, "disk upload grant refused: no valid encryption");
+                                    return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
+                                };
+                                // A new session (the server superseded the old
+                                // one) starts from byte 0 under its own key.
+                                session = Some(UploadSession {
+                                    id: grant.session_id.clone(),
+                                    transfer: grant.transfer_id.clone(),
+                                    key: record_key,
+                                    bound: on,
+                                });
+                                done.clear();
+                                rehashed = false;
+                            }
+                            // A key on a held session's grant is wiped unused
+                            // (dropped above): the held key is never replaced.
+                            step = Step::Window(grant.part_size, grant.parts);
+                        }
+                        ServerControlMessage::DiskOffloadCancel(c) => match c.reason.as_str() {
+                            UPLOAD_IN_PROGRESS => {}
+                            // A `stale` answer to the begin itself (no session
+                            // yet): this offload may be past uploading on the
+                            // server (review r3: an upload whose complete went
+                            // out before a crash).
+                            STALE if session.is_none() => return Err(JobEnd::Unsettled),
+                            STALE => step = Step::Resume,
+                            RATE_LIMITED | STORE_UNAVAILABLE => {
+                                self.back_off(&mut backoff, &stopped, &expired);
+                                if session.is_some() {
+                                    step = Step::Resume;
+                                } else if self.wait_connected(&stopped, &expired) {
+                                    send_begin(&mut waiting_on);
+                                }
+                            }
+                            RESUME_REFUSED => {
+                                return Err(JobEnd::Failed(DiskOffloadFailureCode::ResumeRefused));
+                            }
+                            // The server ended the offload (its row says so).
+                            _ => return Err(JobEnd::Cancelled),
+                        },
+                        _ => {}
+                    }
                 }
-            };
-            // The grant's data key (wiped on drop), never journaled or
-            // logged (§3).
-            let text = self
-                .lock_keys()
-                .remove(&stash_key(&entry.offload_id, entry.seq, &grant.session_id))
-                .unwrap_or_default();
-            // I13: a disk never leaves this host unencrypted.
-            if grant.encryption.scheme != sandbox_protocol::IMAGE_ENCRYPTION_SCHEME {
-                tracing::warn!(offload_id = %entry.offload_id, "disk upload grant refused: no encryption");
-                return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
-            }
-            let fresh = session
-                .as_ref()
-                .is_none_or(|(id, _, _)| *id != grant.session_id);
-            if fresh {
-                let Ok(record_key) = crypto::RecordKey::from_base64(&text) else {
-                    tracing::warn!(offload_id = %entry.offload_id, "disk upload grant refused: invalid key");
-                    return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
-                };
-                // A new session (the server superseded the old one) starts
-                // from byte 0 under its own key.
-                session = Some((
-                    grant.session_id.clone(),
-                    grant.transfer_id.clone(),
-                    record_key,
-                ));
-                done.clear();
-            }
-            let Some((session_id, transfer, record_key)) = &session else {
-                return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
-            };
-            let stop =
-                || cancel.load(Ordering::SeqCst) || self.inner.images.transfer_cancelled(transfer);
-            if heartbeat
-                .as_ref()
-                .is_none_or(|h| h.transfer_id() != transfer.as_str())
-            {
-                heartbeat = Some(self.inner.images.upload_heartbeat(transfer));
-                _running = Some(self.inner.images.run_transfer(transfer));
-            }
-            let (parts, _) = self
-                .inner
-                .images
-                .put_parts(
-                    &mut file,
-                    size,
-                    grant.part_size,
-                    &grant.parts,
-                    Some(record_key),
-                    self.inner.upload_limit.as_deref(),
-                    &stop,
-                    heartbeat.as_ref(),
-                )
-                .map_err(|failure| failure_of(failure.code))?;
-            for (part, url) in parts.iter().zip(&grant.parts) {
-                done.insert(part.n, url.size_bytes);
-            }
-            for chunk in parts.chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX) {
-                self.push(DaemonControlMessage::DiskUploadParts(DiskUploadPartsV11 {
-                    sandbox_id: sandbox_id.to_owned(),
-                    offload_id: entry.offload_id.clone(),
-                    seq: entry.seq,
-                    session_id: session_id.clone(),
-                    parts: chunk.to_vec(),
-                }));
-            }
-            let total = stored_size.div_ceil(grant.part_size.max(1)).max(1);
-            if done.len() as u64 >= total {
-                // Every part is up: `upload` journals the session, then
-                // sends the completion.
-                return Ok(session_id.clone());
+                Step::Window(part_size, parts) => {
+                    let Some(s) = &session else {
+                        return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
+                    };
+                    if heartbeat
+                        .as_ref()
+                        .is_none_or(|h| h.transfer_id() != s.transfer.as_str())
+                    {
+                        heartbeat = Some(images.upload_heartbeat(&s.transfer));
+                        _running = Some(images.run_transfer(&s.transfer));
+                    }
+                    let wire =
+                        std::cell::Cell::new(heartbeat.as_ref().map_or(0, |h| h.wire_bytes()));
+                    let stop = || {
+                        // Body bytes moving count as progress.
+                        let now = heartbeat.as_ref().map_or(0, |h| h.wire_bytes());
+                        if now != wire.get() {
+                            wire.set(now);
+                            progress.set(Instant::now());
+                        }
+                        stopped() || images.transfer_cancelled(&s.transfer) || expired()
+                    };
+                    let put = images.put_parts(
+                        &mut file,
+                        size,
+                        part_size,
+                        &parts,
+                        Some(&s.key),
+                        self.inner.upload_limit.as_deref(),
+                        &stop,
+                        heartbeat.as_ref(),
+                    );
+                    let uploaded = match put {
+                        Ok((uploaded, _)) => uploaded,
+                        Err(_) if stopped() => return Err(JobEnd::Cancelled),
+                        Err(_) if expired() => continue,
+                        Err(failure) if failure.http_status == Some(403) => {
+                            // The window's URLs lapsed (a long reconnect):
+                            // a resume answers fresh ones.
+                            tracing::info!(offload_id = %entry.offload_id, "disk upload part URL refused; resuming for fresh URLs");
+                            self.back_off(&mut backoff, &stopped, &expired);
+                            step = Step::Resume;
+                            continue;
+                        }
+                        Err(failure) => return Err(failure_of(failure.code)),
+                    };
+                    for (part, url) in uploaded.iter().zip(&parts) {
+                        done.insert(part.n, url.size_bytes);
+                    }
+                    progress.set(Instant::now());
+                    backoff.reset();
+                    rehashed = false;
+                    // Reported only on the connection the transfer is bound
+                    // to; after a connection change the session resumes
+                    // first (its listing records these parts).
+                    let reported = uploaded
+                        .chunks(sandbox_protocol::IMAGE_UPLOAD_PARTS_MAX)
+                        .all(|chunk| {
+                            images.push_on(
+                                s.bound,
+                                DaemonControlMessage::DiskUploadParts(DiskUploadPartsV11 {
+                                    sandbox_id: sandbox_id.to_owned(),
+                                    offload_id: entry.offload_id.clone(),
+                                    seq: entry.seq,
+                                    session_id: s.id.clone(),
+                                    parts: chunk.to_vec(),
+                                }),
+                            )
+                        });
+                    let total = stored_size.div_ceil(part_size.max(1)).max(1);
+                    if done.len() as u64 >= total {
+                        // Every part is up: `upload` journals the session,
+                        // then sends the completion (on any connection: the
+                        // server authorizes it without a resume; its
+                        // ListParts, not the reports, decides).
+                        return Ok(s.id.clone());
+                    }
+                    if reported {
+                        waiting_on = s.bound;
+                    } else {
+                        step = Step::Resume;
+                    }
+                }
+                Step::Resume => {
+                    let Some(s) = &mut session else {
+                        return Err(JobEnd::Failed(DiskOffloadFailureCode::Io));
+                    };
+                    if !rehashed {
+                        if !staged_matches(path, entry) {
+                            return Err(JobEnd::Failed(DiskOffloadFailureCode::Corrupt));
+                        }
+                        rehashed = true;
+                    }
+                    if !self.wait_connected(&stopped, &expired) {
+                        step = Step::Resume;
+                        continue;
+                    }
+                    let on = images.connection();
+                    let resume = DaemonControlMessage::DiskUploadResume(DiskUploadResumeV11 {
+                        sandbox_id: sandbox_id.to_owned(),
+                        offload_id: entry.offload_id.clone(),
+                        seq: entry.seq,
+                        session_id: s.id.clone(),
+                        transfer_id: s.transfer.clone(),
+                    });
+                    if !images.push_on(on, resume) {
+                        step = Step::Resume;
+                        continue;
+                    }
+                    tracing::info!(offload_id = %entry.offload_id, "resuming the disk upload on the current relay connection");
+                    waiting_on = on;
+                    let answer = self.resume_answer(rx, on, entry, &stopped, &expired);
+                    if stopped() {
+                        return Err(JobEnd::Cancelled);
+                    }
+                    match answer {
+                        Some(ServerControlMessage::DiskUploadResumed(r))
+                            if r.session_id == s.id && r.transfer_id == s.transfer =>
+                        {
+                            let before = done.len();
+                            // The server's stored parts (the object store's
+                            // listing) replace what this host remembers.
+                            done.clear();
+                            for [first, last] in &r.stored {
+                                for n in *first..=*last {
+                                    done.insert(n, part_bytes(stored_size, r.part_size, n));
+                                }
+                            }
+                            if done.len() > before {
+                                // More stored than this host knew of: progress.
+                                progress.set(Instant::now());
+                                backoff.reset();
+                            }
+                            s.bound = on;
+                            // This resume episode is over: the next one
+                            // re-hashes the staging again before any part
+                            // is sent again.
+                            rehashed = false;
+                            let total = stored_size.div_ceil(r.part_size.max(1)).max(1);
+                            if done.len() as u64 >= total {
+                                return Ok(s.id.clone());
+                            }
+                            if r.parts.is_empty() {
+                                self.back_off(&mut backoff, &stopped, &expired);
+                                step = Step::Resume;
+                            } else {
+                                step = Step::Window(r.part_size, r.parts);
+                            }
+                        }
+                        Some(ServerControlMessage::DiskOffloadCancel(c)) => {
+                            match c.reason.as_str() {
+                                RESUME_REFUSED => {
+                                    tracing::warn!(offload_id = %entry.offload_id, "disk upload resume refused");
+                                    return Err(JobEnd::Failed(
+                                        DiskOffloadFailureCode::ResumeRefused,
+                                    ));
+                                }
+                                STALE | RATE_LIMITED | STORE_UNAVAILABLE | UPLOAD_IN_PROGRESS => {
+                                    self.back_off(&mut backoff, &stopped, &expired);
+                                    step = Step::Resume;
+                                }
+                                _ => return Err(JobEnd::Cancelled),
+                            }
+                        }
+                        // No answer (the connection moved, or none came):
+                        // resume again on the current connection.
+                        _ => step = Step::Resume,
+                    }
+                }
             }
         }
     }
 
-    /// `image.job.resume` of the open session, after re-hashing the staged
-    /// file against `stagedSha256` (§3 nonce safety: the same key never
-    /// seals different bytes).
-    fn resume(
+    /// The answer to a `disk.upload.resume` sent on connection `on`: the
+    /// first frame that arrived on `on` (older connections' frames are
+    /// dropped); `None` once `on` is no longer current or after the grant
+    /// wait.
+    fn resume_answer(
         &self,
-        transfer: &str,
+        rx: &mpsc::Receiver<super::images::Routed>,
+        on: u64,
         entry: &OffloadEntry,
-        path: &Path,
-        sent: u64,
-        cancel: &Arc<AtomicBool>,
-    ) -> Result<(), JobEnd> {
-        if !staged_matches(path, entry) {
-            return Err(JobEnd::Failed(DiskOffloadFailureCode::Corrupt));
+        stopped: &dyn Fn() -> bool,
+        expired: &dyn Fn() -> bool,
+    ) -> Option<ServerControlMessage> {
+        let images = &self.inner.images;
+        let deadline = Instant::now() + self.inner.grant_wait;
+        let wanted = || !stopped() && !expired() && images.connection() == on;
+        loop {
+            let left = deadline.checked_duration_since(Instant::now())?;
+            let routed = wait_routed(rx, left, &wanted, self.inner.poll)?;
+            if routed.connection() == on {
+                return Some(routed.into_frame());
+            }
+            self.discard(routed.into_frame(), entry);
         }
-        let key = format!("resume:{transfer}");
-        let rx = self.inner.images.register_waiter(&key);
-        // At most one queued resume of this transfer (post-landing #3: the
-        // offload slot's reservation counts one).
-        self.inner.images.purge_queued(|m| {
-            matches!(m, DaemonControlMessage::ImageJobResume(r)
-                if r.transfer_id.as_deref() == Some(transfer))
-        });
-        self.push(DaemonControlMessage::ImageJobResume(
-            ImageJobResumeV11::transfer(transfer, ImageLinkRole::Source, sent),
-        ));
-        let wanted = || !cancel.load(Ordering::SeqCst);
-        let answer = wait_frame(&rx, self.inner.grant_wait, &wanted, self.inner.poll);
-        self.inner.images.unregister_waiter(&key);
-        match answer {
-            Some(ServerControlMessage::ImageJobResumeResult(result)) if result.proceed => Ok(()),
-            _ if cancel.load(Ordering::SeqCst) => Err(JobEnd::Cancelled),
-            _ => Err(JobEnd::Failed(DiskOffloadFailureCode::Timeout)),
+    }
+
+    /// A frame the job does not take: a grant's key (if any) is wiped.
+    fn discard(&self, frame: ServerControlMessage, entry: &OffloadEntry) {
+        if let ServerControlMessage::DiskUploadGrant(grant) = frame {
+            self.lock_keys()
+                .remove(&stash_key(&entry.offload_id, entry.seq, &grant.session_id));
+        }
+    }
+
+    /// Wait until a relay connection is up; false once `stopped` or
+    /// `expired`.
+    fn wait_connected(&self, stopped: &dyn Fn() -> bool, expired: &dyn Fn() -> bool) -> bool {
+        while !self.inner.images.is_connected() {
+            if stopped() || expired() {
+                return false;
+            }
+            std::thread::sleep(self.inner.poll.min(Duration::from_millis(250)));
+        }
+        !stopped() && !expired()
+    }
+
+    /// Sleep the next backoff step (cut short by `stopped` or `expired`).
+    fn back_off(
+        &self,
+        backoff: &mut Backoff,
+        stopped: &dyn Fn() -> bool,
+        expired: &dyn Fn() -> bool,
+    ) {
+        let until = Instant::now() + backoff.next();
+        while Instant::now() < until && !stopped() && !expired() {
+            std::thread::sleep(self.inner.poll.min(Duration::from_millis(250)));
         }
     }
 
@@ -1504,10 +1768,12 @@ impl OffloadService {
             jobs.active
                 .get(sandbox_id)
                 .filter(|job| job.offload_id == cancel.offload_id)
-                // A `stale` answer is the job's to read (to its
-                // begin it means "ask for the verdict", not "cancelled").
+                // A `stale`, transient or `resume_refused` answer is the
+                // job's to read (to its begin `stale` means "ask for the
+                // verdict"; to an upload "resume"; `resume_refused` ends it
+                // with a failure report), never "cancelled".
                 .map(|job| {
-                    if cancel.reason != STALE {
+                    if !JOB_ANSWERS.contains(&cancel.reason.as_str()) {
                         job.cancel.store(true, Ordering::SeqCst);
                     }
                 })
@@ -2101,14 +2367,66 @@ fn staged_matches(path: &Path, entry: &OffloadEntry) -> bool {
     digest == expected
 }
 
+/// The open upload session a job holds.
+struct UploadSession {
+    id: String,
+    transfer: String,
+    /// The session's data key (from its first grant; memory only, wiped on
+    /// drop, never journaled).
+    key: crypto::RecordKey,
+    /// The relay connection the session's transfer is bound to: its parts
+    /// are reported only there.
+    bound: u64,
+}
+
+/// What an upload job does next.
+enum Step {
+    /// Wait for a grant (the begin's or the next window's).
+    Wait,
+    /// Upload these parts (`part_size` ciphertext bytes each, the last
+    /// shorter).
+    Window(u64, Vec<ImageUploadPartUrlV11>),
+    /// Resume the held session on the current connection.
+    Resume,
+}
+
+/// Doubling waits after transient refusals, from `base` to
+/// `RESUME_BACKOFF_MAX`.
+struct Backoff {
+    base: Duration,
+    next: Duration,
+}
+
+impl Backoff {
+    fn new(base: Duration) -> Self {
+        Self { base, next: base }
+    }
+
+    fn next(&mut self) -> Duration {
+        let wait = self.next;
+        self.next = (self.next * 2).min(RESUME_BACKOFF_MAX.max(self.base));
+        wait
+    }
+
+    fn reset(&mut self) {
+        self.next = self.base;
+    }
+}
+
+/// Ciphertext bytes of part `n` (1-based) of a `total`-byte object.
+fn part_bytes(total: u64, part_size: u64, n: u32) -> u64 {
+    let start = u64::from(n.saturating_sub(1)).saturating_mul(part_size);
+    total.saturating_sub(start).min(part_size)
+}
+
 /// Wait for one routed frame; `None` on timeout, or once `wanted` turns
-/// false.
-fn wait_frame(
-    rx: &mpsc::Receiver<ServerControlMessage>,
+/// false (frames already routed come first).
+fn wait_routed(
+    rx: &mpsc::Receiver<super::images::Routed>,
     timeout: Duration,
     wanted: &dyn Fn() -> bool,
     poll: Duration,
-) -> Option<ServerControlMessage> {
+) -> Option<super::images::Routed> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         match rx.recv_timeout(poll.min(Duration::from_millis(250))) {

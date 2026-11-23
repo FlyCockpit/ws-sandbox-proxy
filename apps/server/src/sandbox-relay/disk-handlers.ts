@@ -7,7 +7,6 @@ import {
   DISK_ENCRYPTION_SCHEME,
   generateDiskDek,
   loadDiskObjectKey,
-  loadOpenDiskSessionKey,
   newDiskSessionWrap,
 } from "@wssp/api/sandbox/disk-offload/keys";
 import { GIB, offloadAdmits } from "@wssp/api/sandbox/disk-offload/quota";
@@ -44,6 +43,7 @@ import { readImageStoreEnv } from "@wssp/env/image-store-config";
 import {
   type DaemonDiskMessage,
   type DaemonImageMessage,
+  DISK_RESUME_RANGES_MAX,
   encryptedImageLength,
   IMAGE_ENCRYPTION_RECORD_BYTES,
   IMAGE_ENCRYPTION_TAG_BYTES,
@@ -66,10 +66,10 @@ import type { RelaySender } from "./operation-handlers.js";
  * `SandboxDiskOffload` row, never a `SandboxImageArtifact`. Every step runs
  * under owner (31, begin only) → host by epoch → sandbox row → offload row,
  * and CASes the offload's source generation with the sandbox still STOPPED
- * on its source host. A disk grant always carries `encryption` (I13): the
- * session's own DEK, drawn fresh at begin and wrapped under the disk root
- * key; it leaves the server only in that grant, never a log, row or frame
- * other than `disk.upload.grant`.
+ * on its source host. A session's first grant (the begin's) carries
+ * `encryption` (I13): the session's own DEK, drawn fresh at begin and wrapped
+ * under the disk root key; it leaves the server only in that grant, never a
+ * log, row or later frame (next windows and resumes carry no key).
  */
 export type DiskFrameContext = {
   sender: RelaySender;
@@ -85,6 +85,8 @@ const SEALED_RECORD_BYTES = IMAGE_ENCRYPTION_RECORD_BYTES + IMAGE_ENCRYPTION_TAG
 /** Slack over the sandbox's disk size a unified export may declare (R15.6). */
 const EXPORT_SLACK_BYTES = GIB;
 const SESSION_TTL_MS = 24 * 3_600_000;
+/** `disk.offload.cancel` reason: the upload is not this host's to resume. */
+const RESUME_REFUSED = "resume_refused";
 
 /** Ciphertext bytes per part: whole sealed records, at least 64 (64 MiB of
  * plaintext), and few enough parts for S3. */
@@ -122,24 +124,19 @@ function cancelFrame(ref: OffloadRef, reason: string): ServerDiskMessage {
   };
 }
 
-/** Presigned part URLs from `from`, with the session's key (I13). */
-async function diskGrant(
-  store: ImageStore,
-  ref: OffloadRef,
-  session: {
-    id: string;
-    transferId: string;
-    objectKey: string;
-    uploadId: string;
-    partSize: number;
-    storedBytes: bigint;
-  },
-  from: number,
-  dek: Buffer,
-): Promise<ServerDiskMessage> {
-  const parts = partCount(session.storedBytes, session.partSize);
+type GrantSession = {
+  id: string;
+  transferId: string;
+  objectKey: string;
+  uploadId: string;
+  partSize: number;
+  storedBytes: bigint;
+};
+
+/** Presigned URLs of the part numbers `numbers`. */
+async function presignParts(store: ImageStore, session: GrantSession, numbers: readonly number[]) {
   const urls = [];
-  for (let n = from; n <= Math.min(parts, from + IMAGE_UPLOAD_PARTS_MAX - 1); n++) {
+  for (const n of numbers) {
     const size = partBytes(session.storedBytes, session.partSize, n);
     urls.push({
       n,
@@ -147,6 +144,18 @@ async function diskGrant(
       url: await store.presignUploadPart(session.objectKey, session.uploadId, n, size),
     });
   }
+  return urls;
+}
+
+/** Presigned part URLs of `numbers`; `dek` (the session's key, I13) only on
+ * the session's first grant (the begin's): the host holds it from then on. */
+async function diskGrant(
+  store: ImageStore,
+  ref: OffloadRef,
+  session: GrantSession,
+  numbers: readonly number[],
+  dek: Buffer | null,
+): Promise<ServerDiskMessage> {
   return {
     type: "disk.upload.grant",
     sandboxId: ref.sandboxId,
@@ -155,9 +164,9 @@ async function diskGrant(
     sessionId: session.id,
     transferId: session.transferId,
     partSize: session.partSize,
-    parts: urls,
+    parts: await presignParts(store, session, numbers),
     expiresAtUnixMs: Date.now() + store.settings.presignTtlSeconds * 1000,
-    encryption: { scheme: DISK_ENCRYPTION_SCHEME, key: dek.toString("base64") },
+    ...(dek ? { encryption: { scheme: DISK_ENCRYPTION_SCHEME, key: dek.toString("base64") } } : {}),
   };
 }
 
@@ -478,7 +487,7 @@ export async function handleDiskUploadBegin(
           partSize: outcome.partSize,
           storedBytes: outcome.storedBytes,
         },
-        1,
+        windowFrom(1, partCount(outcome.storedBytes, outcome.partSize), new Set()),
         dek,
       ),
     );
@@ -499,77 +508,108 @@ const diskSessionSelect = {
 type DiskSessionRow = Prisma.SandboxImageUploadSessionGetPayload<{
   select: typeof diskSessionSelect;
 }>;
+type DiskSession = DiskSessionRow & { uploadId: string };
+
+/**
+ * How a disk upload continuation finds its session's transfer:
+ * - `bound`: on this connection's epoch (parts reports, the resume's
+ *   reconciliation). Only `disk.upload.begin` and `disk.upload.resume` bind a
+ *   transfer to an epoch, so no part counts on a connection that did neither.
+ * - `authorize`: on this or an older epoch of this host, authorized as if
+ *   bound here, but never moved (completion: its claim ends the transfer).
+ * - `rebind`: as `authorize`, then moved to this epoch (`disk.upload.resume`).
+ */
+type SessionMode = "bound" | "authorize" | "rebind";
+
+/** `fenced`: this connection is not the host's current one (no answer);
+ * `refused`: the upload is not this host's live, authorized upload. */
+type DiskSessionOutcome<T> = { kind: "fenced" } | { kind: "refused" } | { kind: "ok"; value: T };
 
 /**
  * A disk upload continuation: this host's current connection, the named
- * OPEN session that is its offload's live one, with its transfer OPEN on
- * this epoch and still authorized (`OFFLOAD_UPLOAD`: offload uploadable,
- * sandbox STOPPED at the source generation on this host). Locks host →
+ * OPEN session that is its offload's live one, with its transfer OPEN and
+ * still authorized (`OFFLOAD_UPLOAD`: offload uploadable, sandbox STOPPED at
+ * the source generation on this host), found as `mode` says. Locks host →
  * sandbox → session and runs `then` in the same transaction.
- *
- * `rebind` (Complete only): a transfer of this host and owner still bound to
- * an older epoch is first moved to the current one, exactly as an accepted
- * `image.job.resume` would move it (same host, owner, OPEN transfer, and
- * the authority check on the rebound row), so a completion re-sent after a
- * reconnect needs no resume (which would re-send the session's key in a
- * grant). Parts reports never rebind.
  */
 async function withDiskSession<T>(
   sender: RelaySender,
-  m: OffloadRef & { sessionId: string },
-  then: (
-    tx: Prisma.TransactionClient,
-    session: DiskSessionRow & { uploadId: string },
-  ) => Promise<T>,
-  rebind = false,
-): Promise<T | null> {
-  return relayTransaction(async (tx) => {
-    await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
-    requireRelayFence(sender.isCurrent?.() !== false);
-    requireRelayFence(await lockSandboxRow(tx, m.sandboxId));
-    await tx.$queryRaw`SELECT id FROM sandbox_image_upload_session WHERE id = ${m.sessionId} FOR UPDATE`;
-    const session = await tx.sandboxImageUploadSession.findFirst({
-      where: {
-        id: m.sessionId,
-        state: "OPEN",
-        liveDiskOffloadId: m.offloadId,
-        hostId: sender.hostId,
-        DiskOffload: { is: { sandboxId: m.sandboxId, seq: m.seq } },
-        Transfer: {
-          is: {
-            state: "OPEN",
-            mode: "S3",
-            purpose: "OFFLOAD_UPLOAD",
-            sourceHostId: sender.hostId,
-            sourceHostOwnerId: sender.userId,
-            ...(rebind
-              ? { sourceEpoch: { lte: sender.connectionEpoch } }
-              : { sourceEpoch: sender.connectionEpoch }),
+  m: OffloadRef & { sessionId: string; transferId?: string },
+  then: (tx: Prisma.TransactionClient, session: DiskSession) => Promise<T>,
+  mode: SessionMode = "bound",
+): Promise<DiskSessionOutcome<T>> {
+  const refused = { kind: "refused" } as const;
+  return relayTransaction<DiskSessionOutcome<T>>(
+    async (tx) => {
+      await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
+      requireRelayFence(sender.isCurrent?.() !== false);
+      if (!(await lockSandboxRow(tx, m.sandboxId))) return refused;
+      await tx.$queryRaw`SELECT id FROM sandbox_image_upload_session WHERE id = ${m.sessionId} FOR UPDATE`;
+      // Session → transfer (as the stall rule and `image.job.resume` take
+      // them): a transfer ended meanwhile (expiry, cancel) is seen below, and
+      // none ends before this transaction commits what it read.
+      await tx.$queryRaw`SELECT t.id FROM sandbox_image_transfer t
+        JOIN sandbox_image_upload_session s ON s."transferId" = t.id
+        WHERE s.id = ${m.sessionId} FOR UPDATE OF t`;
+      const session = await tx.sandboxImageUploadSession.findFirst({
+        where: {
+          id: m.sessionId,
+          state: "OPEN",
+          liveDiskOffloadId: m.offloadId,
+          hostId: sender.hostId,
+          DiskOffload: { is: { sandboxId: m.sandboxId, seq: m.seq } },
+          Transfer: {
+            is: {
+              ...(m.transferId === undefined ? {} : { id: m.transferId }),
+              state: "OPEN",
+              mode: "S3",
+              purpose: "OFFLOAD_UPLOAD",
+              sourceHostId: sender.hostId,
+              sourceHostOwnerId: sender.userId,
+              sourceEpoch:
+                mode === "bound" ? sender.connectionEpoch : { lte: sender.connectionEpoch },
+            },
           },
         },
-      },
-      select: {
-        ...diskSessionSelect,
-        Transfer: { select: { id: true, ...transferAuthoritySelect } },
-      },
-    });
-    if (!session?.uploadId) return null;
-    const { Transfer: transfer, ...row } = session;
-    const bound = { ...transfer, sourceEpoch: sender.connectionEpoch };
-    if (!(await transferAuthorized(tx, bound, await hostDatabaseNow(tx)))) return null;
-    if (transfer.sourceEpoch !== sender.connectionEpoch) {
-      const moved = await tx.sandboxImageTransfer.updateMany({
-        where: { id: transfer.id, state: "OPEN", sourceEpoch: transfer.sourceEpoch },
-        data: { sourceEpoch: sender.connectionEpoch },
+        select: {
+          ...diskSessionSelect,
+          Transfer: { select: { id: true, ...transferAuthoritySelect } },
+        },
       });
-      if (moved.count !== 1) return null;
-    }
-    return then(tx, { ...row, uploadId: session.uploadId });
-  }, null);
+      if (!session?.uploadId) return refused;
+      const { Transfer: transfer, ...row } = session;
+      const bound = { ...transfer, sourceEpoch: sender.connectionEpoch };
+      if (!(await transferAuthorized(tx, bound, await hostDatabaseNow(tx)))) return refused;
+      if (mode === "rebind" && transfer.sourceEpoch !== sender.connectionEpoch) {
+        const moved = await tx.sandboxImageTransfer.updateMany({
+          where: { id: transfer.id, state: "OPEN", sourceEpoch: transfer.sourceEpoch },
+          data: { sourceEpoch: sender.connectionEpoch },
+        });
+        if (moved.count !== 1) return refused;
+      }
+      return { kind: "ok", value: await then(tx, { ...row, uploadId: session.uploadId }) };
+    },
+    { kind: "fenced" },
+  );
 }
 
-/** `disk.upload.parts`: record uploaded parts; grant the next window (with
- * the session's key: every disk grant carries it) once one completes. */
+/** The parts of `[from, from + 63]` not in `recorded`: the next window. */
+function windowFrom(from: number, parts: number, recorded: ReadonlySet<number>): number[] {
+  const window: number[] = [];
+  for (let n = from; n <= Math.min(parts, from + IMAGE_UPLOAD_PARTS_MAX - 1); n++)
+    if (!recorded.has(n)) window.push(n);
+  return window;
+}
+
+/** The lowest part of `1..parts` not in `recorded`, or null. */
+function lowestMissing(parts: number, recorded: ReadonlySet<number>): number | null {
+  for (let n = 1; n <= parts; n++) if (!recorded.has(n)) return n;
+  return null;
+}
+
+/** `disk.upload.parts`: record uploaded parts (on a transfer bound to this
+ * connection only); once the report passes the lowest unrecorded part, grant
+ * the next window from it (without the key: the host holds it). */
 export async function handleDiskUploadParts(
   ctx: DiskFrameContext,
   m: Extract<DaemonDiskMessage, { type: "disk.upload.parts" }>,
@@ -592,94 +632,149 @@ export async function handleDiskUploadParts(
         update: { etag: part.etag },
       });
     }
-    const done = await tx.sandboxImageUploadPart.count({ where: { sessionId: session.id } });
+    const recorded = new Set(
+      // A session has at most `S3_PARTS_MAX` parts (one row per part number).
+      (
+        await tx.sandboxImageUploadPart.findMany({
+          where: { sessionId: session.id },
+          select: { partNumber: true },
+          take: S3_PARTS_MAX,
+        })
+      ).map((part) => part.partNumber),
+    );
     await tx.sandboxImageTransfer.updateMany({
       where: { id: session.transferId, state: "OPEN" },
       data: {
-        bytesDone: BigInt(Math.min(Number(session.storedBytes), done * session.partSize)),
+        bytesDone: BigInt(Math.min(Number(session.storedBytes), recorded.size * session.partSize)),
         lastProgressAt: new Date(),
       },
     });
     const highest = Math.max(...m.parts.map((p) => p.n));
-    const next = highest % IMAGE_UPLOAD_PARTS_MAX === 0 && highest < parts ? highest + 1 : null;
-    return { session, next, dek: next ? await loadOpenDiskSessionKey(tx, session.id) : null };
+    const from = lowestMissing(parts, recorded);
+    return {
+      session,
+      next: from !== null && from > highest ? windowFrom(from, parts, recorded) : [],
+    };
   });
-  if (!found) return ctx.reply(cancelFrame(m, "stale"));
-  if (!found.next || !found.dek) return;
-  try {
-    ctx.reply(await diskGrant(store, m, found.session, found.next, found.dek));
-  } finally {
-    found.dek.fill(0);
+  if (found.kind !== "ok") return ctx.reply(cancelFrame(m, "stale"));
+  if (found.value.next.length === 0) return;
+  ctx.reply(await diskGrant(store, m, found.value.session, found.value.next, null));
+}
+
+/** Inclusive ranges of the ascending part numbers `numbers`. */
+function rangesOf(numbers: readonly number[]): [number, number][] {
+  const ranges: [number, number][] = [];
+  for (const n of numbers) {
+    const last = ranges[ranges.length - 1];
+    if (last && last[1] === n - 1) last[1] = n;
+    else ranges.push([n, n]);
   }
+  return ranges;
 }
 
 /**
- * After an accepted `image.job.resume` of a disk upload transfer (the grant
- * was lost with the relay): re-grant the session's window from its lowest
- * unrecorded part, with the session's key. A part sent but not recorded is
- * sent again: the same bytes under the same key and record nonces (the
- * daemon re-hashed its staging first), so S3 just replaces it. Nothing is
- * sent unless the transfer is this host's OPEN `OFFLOAD_UPLOAD` on its
- * current epoch (the resume rebound it) with a live OPEN session.
+ * `disk.upload.resume` (after a relay connection change): the only way an
+ * upload continues on a new connection. Re-authorizes the named session as
+ * this host's live upload (host, owner, offload, sandbox STOPPED at its
+ * source generation here, transfer OPEN and unexpired) and binds its transfer
+ * to this connection; then reconciles the recorded parts to the object
+ * store's own listing (ListParts: parts at their exact size count; rows the
+ * store does not hold go) and answers `disk.upload.resumed` with the stored
+ * ranges and the window from the lowest missing part. Never the key: the
+ * host holds it from the session's first grant. A part sent but not listed
+ * is sent again: the same bytes under the same key and record nonces (the
+ * host re-hashed its staging), so the store just replaces it.
+ *
+ * `resume_refused` when the upload is no longer this host's; no answer when
+ * this connection is no longer current (the host resumes on the new one);
+ * `store_unavailable` / `rate_limited` are transient (the host resumes again;
+ * a repeat on the same connection is idempotent).
  */
 export async function handleDiskUploadResume(
   ctx: DiskFrameContext,
-  transferId: string,
+  m: Extract<DaemonDiskMessage, { type: "disk.upload.resume" }>,
 ): Promise<void> {
   const store = imageStore();
   const { sender } = ctx;
-  if (!store) return;
-  const live = await prisma.sandboxImageUploadSession.findFirst({
-    where: {
-      transferId,
-      state: "OPEN",
-      hostId: sender.hostId,
-      liveDiskOffloadId: { not: null },
-      Transfer: {
-        is: {
-          state: "OPEN",
-          purpose: "OFFLOAD_UPLOAD",
-          sourceHostId: sender.hostId,
-          sourceHostOwnerId: sender.userId,
-          sourceEpoch: sender.connectionEpoch,
-        },
-      },
-    },
-    select: { id: true, DiskOffload: { select: { id: true, sandboxId: true, seq: true } } },
-  });
-  const offload = live?.DiskOffload;
-  if (!live || !offload) return;
-  const ref = { sandboxId: offload.sandboxId, offloadId: offload.id, seq: offload.seq };
-  if (!(await grantBudget(sender.hostId))) return ctx.reply(cancelFrame(ref, "rate_limited"));
-  const found = await withDiskSession(
-    sender,
-    { ...ref, sessionId: live.id },
-    async (tx, session) => {
-      const parts = partCount(session.storedBytes, session.partSize);
-      const recorded = await tx.sandboxImageUploadPart.findMany({
-        where: { sessionId: session.id },
-        select: { partNumber: true },
-        orderBy: { partNumber: "asc" },
-        take: parts,
-      });
-      let from = 1;
-      for (const part of recorded) {
-        if (part.partNumber !== from) break;
-        from++;
-      }
-      return {
-        session,
-        from: Math.min(from, parts),
-        dek: await loadOpenDiskSessionKey(tx, session.id),
-      };
-    },
-  );
-  if (!found) return;
+  const cancel = (reason: string) => ctx.reply(cancelFrame(m, reason));
+  if (!store) return cancel("store_unavailable");
+  if (!(await grantBudget(sender.hostId))) return cancel("rate_limited");
+  const bound = await withDiskSession(sender, m, async (_tx, session) => session, "rebind");
+  if (bound.kind === "fenced") return;
+  if (bound.kind === "refused") return cancel(RESUME_REFUSED);
+  const session = bound.value;
+  const parts = partCount(session.storedBytes, session.partSize);
+  let listed: { n: number; size: number; etag: string }[];
   try {
-    ctx.reply(await diskGrant(store, ref, found.session, found.from, found.dek));
-  } finally {
-    found.dek.fill(0);
+    listed = await store.listParts(session.objectKey, session.uploadId);
+  } catch {
+    return cancel("store_unavailable");
   }
+  const etags = new Map<number, string>();
+  for (const part of listed)
+    if (
+      part.n >= 1 &&
+      part.n <= parts &&
+      part.size === partBytes(session.storedBytes, session.partSize, part.n)
+    )
+      etags.set(part.n, part.etag);
+  // At most `DISK_RESUME_RANGES_MAX` ranges count as stored; parts past them
+  // are granted again (same bytes, same key and nonces).
+  const stored = rangesOf([...etags.keys()].sort((a, b) => a - b)).slice(0, DISK_RESUME_RANGES_MAX);
+  const kept = new Set<number>();
+  for (const [first, last] of stored) for (let n = first; n <= last; n++) kept.add(n);
+  const reconciled = await withDiskSession(sender, m, async (tx, s) => {
+    // A session has at most `S3_PARTS_MAX` parts (one row per part number).
+    const rows = await tx.sandboxImageUploadPart.findMany({
+      where: { sessionId: s.id },
+      select: { partNumber: true },
+      take: S3_PARTS_MAX,
+    });
+    const have = new Set(rows.map((row) => row.partNumber));
+    const added = [...etags].filter(([n]) => kept.has(n) && !have.has(n));
+    const dropped = rows.map((row) => row.partNumber).filter((n) => !kept.has(n));
+    // Set-based and bounded (one insert, one delete), whatever the part count.
+    if (added.length > 0)
+      await tx.sandboxImageUploadPart.createMany({
+        data: added.map(([n, etag]) => ({
+          sessionId: s.id,
+          partNumber: n,
+          etag,
+          sizeBytes: partBytes(s.storedBytes, s.partSize, n),
+        })),
+        skipDuplicates: true,
+      });
+    if (dropped.length > 0)
+      await tx.sandboxImageUploadPart.deleteMany({
+        where: { sessionId: s.id, partNumber: { in: dropped } },
+      });
+    // Progress (the stall rule's clock) only for parts the server did not
+    // know of: a resume that finds nothing new never holds the attempt open.
+    await tx.sandboxImageTransfer.updateMany({
+      where: { id: s.transferId, state: "OPEN" },
+      data: {
+        bytesDone: BigInt(Math.min(Number(s.storedBytes), kept.size * s.partSize)),
+        ...(added.length > 0 ? { lastProgressAt: new Date() } : {}),
+      },
+    });
+    return s;
+  });
+  if (reconciled.kind === "fenced") return;
+  if (reconciled.kind === "refused") return cancel(RESUME_REFUSED);
+  const from = lowestMissing(parts, kept);
+  const window = from === null ? [] : windowFrom(from, parts, kept);
+  ctx.reply({
+    type: "disk.upload.resumed",
+    sandboxId: m.sandboxId,
+    offloadId: m.offloadId,
+    seq: m.seq,
+    sessionId: session.id,
+    transferId: session.transferId,
+    partSize: session.partSize,
+    stored,
+    parts: await presignParts(store, session, window),
+    expiresAtUnixMs: Date.now() + store.settings.presignTtlSeconds * 1000,
+  });
 }
 
 /**
@@ -691,9 +786,11 @@ export async function handleDiskUploadResume(
  * offload (UPLOADING → VERIFYING, taking the wrap, object key and sizes).
  * Otherwise the call is refused. After CompleteMultipartUpload the worker
  * verifies the object (decrypt, hash, size) before `markStored`. A session
- * whose transfer is still bound to an older epoch of this host is rebound
- * first (`withDiskSession`'s `rebind`): the host re-sends a completion lost
- * with a relay connection until its offload has a verdict.
+ * whose transfer is still bound to an older epoch of this host is authorized
+ * on this connection without moving it (`withDiskSession`'s `authorize`;
+ * the claim ends the transfer): the host re-sends a completion lost with a
+ * relay connection until its offload has a verdict, and no connection ever
+ * gets a part accepted without a resume.
  */
 export async function handleDiskUploadComplete(
   ctx: DiskFrameContext,
@@ -702,8 +799,11 @@ export async function handleDiskUploadComplete(
 ): Promise<void> {
   const store = imageStore();
   const stale = () => ctx.reply(cancelFrame(m, "stale"));
-  const session = store ? await withDiskSession(ctx.sender, m, async (_tx, s) => s, true) : null;
-  if (!store || !session) return stale();
+  const found = store
+    ? await withDiskSession(ctx.sender, m, async (_tx, s) => s, "authorize")
+    : null;
+  if (!store || found?.kind !== "ok") return stale();
+  const session = found.value;
   const expected = partCount(session.storedBytes, session.partSize);
   let listed: { n: number; size: number; etag: string }[];
   try {

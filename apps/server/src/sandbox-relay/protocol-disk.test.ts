@@ -64,11 +64,33 @@ it("an offload inventory page carries at most DISK_OFFLOAD_INVENTORY_PAGE_MAX en
   expect(() => parseDaemonControlFrame(page(DISK_OFFLOAD_INVENTORY_PAGE_MAX + 1))).toThrow();
 });
 
-it("I13: a disk upload grant without encryption never validates", () => {
+it("I13: a grant's key is valid when present; continuation grants and resume answers carry none", () => {
   const grant = fixture.server.find((frame) => frame.type === "disk.upload.grant")!;
   expect(serverDiskMessageSchema.safeParse(grant).success).toBe(true);
   const { encryption: _key, ...bare } = grant as Record<string, unknown>;
-  expect(serverDiskMessageSchema.safeParse(bare).success).toBe(false);
+  expect(serverDiskMessageSchema.safeParse(bare).success).toBe(true);
+  expect(serverDiskMessageSchema.safeParse({ ...bare, encryption: null }).success).toBe(false);
+  expect(
+    serverDiskMessageSchema.safeParse({ ...bare, encryption: { scheme: "aes256gcm-r1", key: "x" } })
+      .success,
+  ).toBe(false);
+  const resumed = fixture.server.find((frame) => frame.type === "disk.upload.resumed")!;
+  expect(serverDiskMessageSchema.safeParse(resumed).success).toBe(true);
+  expect(
+    serverDiskMessageSchema.safeParse({
+      ...resumed,
+      encryption: (grant as { encryption: unknown }).encryption,
+    }).success,
+  ).toBe(false);
+});
+
+it("redactImageFrame hides a resume answer's presigned URLs", () => {
+  const resumed = fixture.server.find((frame) => frame.type === "disk.upload.resumed")!;
+  const text = JSON.stringify(
+    redactImageFrame(resumed as { type: string } & Record<string, unknown>),
+  );
+  expect(text).not.toContain("X-Amz-Signature");
+  expect(text).toContain("<1 parts>");
 });
 
 it("redactImageFrame hides the disk grant's key and presigned URLs", () => {

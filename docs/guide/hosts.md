@@ -1742,13 +1742,36 @@ offload_fetch_mbps = 0    # cap restore downloads (0 = unlimited)
   booting, and the next start has the server discard the local copy and
   restore the stored copy instead. The same happens when the daemon refuses
   a server eviction grant and lets it expire.
+- **Relay reconnects during an upload.** An upload survives a relay
+  reconnect. Parts already on their way finish, but the daemon reports parts
+  only on the connection the upload is bound to. On the new connection it
+  first asks the server to resume the upload. The server checks that the
+  upload is still this host's own live upload (same host and owner, the
+  sandbox still stopped at the exported generation, the transfer open and
+  unexpired), binds it to the new connection and answers with the parts the
+  object store already holds. The daemon re-checks its staged export, then
+  continues from the first missing part. Parts sent but never reported are
+  not sent again. The upload's key never travels again: only the first
+  grant carries it. Until the resume, the server refuses every part report
+  from the new connection. Reports still arriving on the old connection are
+  refused after it.
+  - A refused resume ends the offload with `resume_refused`, for example
+    when the upload was cancelled, superseded or expired meanwhile.
+  - `rate_limited`, `store_unavailable` and other transient answers are
+    retried after 5 s, doubling up to 60 s. So is an expired part URL.
+  - An upload that makes no progress for 30 minutes ends with `timeout`.
+    No part done, no new stored part and no body byte sent counts as no
+    progress. The same limit applies while the relay stays down.
+  - Every way the daemon gives up is reported to the server, which ends the
+    attempt and keeps the disk local. The server's own 30-minute stall rule
+    remains the backstop.
 - **Lost answers.** No lost frame or answer leaves an offload, its
   temporary image or its staging waiting. After every reconnect, and every
   10 minutes on a live connection, the daemon:
   - sends the completion of every upload still waiting for a verdict
-    again. The server moves that upload's transfer to the current connection
-    itself, so a completion lost with a connection, or dropped from a full
-    outbox, still counts;
+    again. The server takes it on the current connection without a resume
+    (its own listing of the stored parts decides), so a completion lost with
+    a connection, or dropped from a full outbox, still counts;
   - lists every unfinished offload. The server answers stored, released (it
     ended the offload, for example in its hourly maintenance), or nothing
     while the offload is still in flight.

@@ -409,7 +409,7 @@ describe("disk.upload.parts / complete (S1)", () => {
       sizes.map((size, i) => ({ n: i + 1, size, etag: `"e${i + 1}"` })),
     );
 
-  it("parts past a 64-part window are granted the next window with the same key", async () => {
+  it("parts past a 64-part window are granted the next window, without the key", async () => {
     const w = await opened(65 * 64 * MIB);
     expect((w.grant.parts as unknown[]).length).toBe(64);
     await handlers.handleDiskUploadParts(w.ctx(), {
@@ -421,37 +421,12 @@ describe("disk.upload.parts / complete (S1)", () => {
     const next = w.last();
     expect(next.type).toBe("disk.upload.grant");
     expect((next.parts as { n: number }[])[0]?.n).toBe(65);
-    expect(next.encryption).toEqual(w.grant.encryption);
+    // The key went once, in the begin's grant.
+    expect(w.grant.encryption).toEqual({ scheme: "aes256gcm-r1", key: expect.any(String) });
+    expect(next).not.toHaveProperty("encryption");
     expect(
       await db.inspect.sandboxImageUploadPart.count({ where: { sessionId: w.session.id } }),
     ).toBe(64);
-  });
-
-  it("a resumed upload is re-granted from its lowest unrecorded part, only on the rebound epoch", async () => {
-    const w = await opened(3 * 64 * MIB);
-    expect((w.grant.parts as unknown[]).length).toBe(3);
-    await handlers.handleDiskUploadParts(w.ctx(), {
-      type: "disk.upload.parts",
-      ...w.ref,
-      sessionId: w.session.id,
-      parts: [{ n: 1, etag: '"e1"' }],
-    });
-    const before = w.replies.length;
-    // The relay dropped; the old epoch's resume is not answered with a grant.
-    await db.inspect.sandboxHost.update({ where: { id: w.host.id }, data: { connectionEpoch: 2 } });
-    await handlers.handleDiskUploadResume(w.ctx(2), w.session.transferId);
-    expect(w.replies.length).toBe(before);
-    // `image.job.resume` rebinds the transfer; the re-grant follows.
-    await db.inspect.sandboxImageTransfer.update({
-      where: { id: w.session.transferId },
-      data: { sourceEpoch: 2 },
-    });
-    await handlers.handleDiskUploadResume(w.ctx(2), w.session.transferId);
-    const regrant = w.last();
-    expect(regrant.type).toBe("disk.upload.grant");
-    expect((regrant.parts as { n: number }[]).map((p) => p.n)).toEqual([2, 3]);
-    expect(regrant.sessionId).toBe(w.session.id);
-    expect(regrant.encryption).toEqual(w.grant.encryption);
   });
 
   it("Complete moves the wrap to the offload (VERIFYING) and leaves the session without one", async () => {
@@ -537,7 +512,7 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect((await w.row()).state).toBe("UPLOADING");
   });
 
-  it("a Complete re-sent on a newer connection rebinds its transfer and claims the upload; parts never rebind", async () => {
+  it("a Complete re-sent on a newer connection claims the upload without moving its transfer; parts need a resume", async () => {
     const w = await opened();
     listAll(w.session, [3 * (MIB + 16)]);
     // The relay dropped after the last part: the transfer is still bound to epoch 1.
@@ -576,7 +551,7 @@ describe("disk.upload.parts / complete (S1)", () => {
       await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
         where: { id: w.session.transferId },
       }),
-    ).toMatchObject({ sourceEpoch: 2, state: "COMPLETE" });
+    ).toMatchObject({ sourceEpoch: 1, state: "COMPLETE" });
     // A copy of it that was still queued is answered stale and changes nothing.
     await handlers.handleDiskUploadComplete(
       w.ctx(2),
@@ -820,40 +795,40 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect(transfer).toMatchObject({ state: "CANCELLED", lastProgressAt: old });
   });
 
-  it("a disk resume racing the stall rule takes the session before the transfer as it does: no deadlock", async () => {
+  it("a disk resume racing the stall rule takes sandbox → session → transfer as it does: no deadlock", async () => {
     // Round 2 (A #2 / B #1): sandbox → offload → session → transfer.
     const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
       "@wssp/api/sandbox/disk-offload/upload-stall"
     );
-    const { handleImageJobResume } = await import("./image-handlers");
     const now = new Date();
     const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
     const w = await opened();
-    const transferId = (await sessions(w.offload.id))[0]!.transferId!;
     await db.inspect.sandboxImageTransfer.update({
-      where: { id: transferId },
+      where: { id: w.session.transferId },
       data: { lastProgressAt: old },
     });
+    await db.inspect.sandboxHost.update({ where: { id: w.host.id }, data: { connectionEpoch: 2 } });
     const lockedSession = db.pauseAt("resume", {
-      after: /FROM sandbox_image_upload_session\s+WHERE "transferId" = .* FOR UPDATE/s,
+      after: /FROM sandbox_image_upload_session WHERE id = .* FOR UPDATE/s,
     });
     const resume = db.run("resume", () =>
-      handleImageJobResume(
-        { ...w.ctx(), spool: {} as never, sendTo: () => true, isHostCurrent: () => true } as never,
-        { type: "image.job.resume", transferId, role: "SOURCE", bytesDone: 0 },
-      ),
+      handlers.handleDiskUploadResume(w.ctx(2), {
+        type: "disk.upload.resume",
+        ...w.ref,
+        sessionId: w.session.id,
+        transferId: w.session.transferId,
+      }),
     );
     let stall: Promise<unknown[]> | undefined;
     try {
       await lockedSession.waitReached();
-      // The rule waits on the session the resume holds, holding no transfer.
       stall = db.run("stall", () => endStalledOffloadUploads(null, now));
       await db.waitUntilBlocked("stall", { by: "resume" });
     } finally {
       lockedSession.release();
     }
     await resume;
-    // The resume committed; the rule then still saw no progress and ended it.
+    // The rebind is no progress: the rule then still saw none and ended it.
     expect(await stall).toHaveLength(1);
     expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "upload_stalled" });
   });
@@ -913,6 +888,396 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect(await sessions(w.offload.id)).toEqual([
       expect.objectContaining({ state: "ABORTED", wrapped: false }),
     ]);
+  });
+});
+
+describe("disk.upload.resume (after a relay connection change)", () => {
+  /** An upload of `parts` 64-MiB parts, begun on epoch 1. */
+  async function opened(parts: number) {
+    const w = await world(parts * 64 * MIB);
+    await w.begin();
+    const grant = w.last();
+    const [session] = await sessions(w.offload.id);
+    const part = 64 * (MIB + 16);
+    const resume = (c = w.ctx(2)) =>
+      handlers.handleDiskUploadResume(c, {
+        type: "disk.upload.resume",
+        ...w.ref,
+        sessionId: session!.id,
+        transferId: session!.transferId!,
+      });
+    const report = (numbers: number[], c = w.ctx(2)) =>
+      handlers.handleDiskUploadParts(c, {
+        type: "disk.upload.parts",
+        ...w.ref,
+        sessionId: session!.id,
+        parts: numbers.map((n) => ({ n, etag: `"e${n}"` })),
+      });
+    const store = (numbers: number[], size = part) =>
+      s3.listed.set(
+        session!.uploadId!,
+        numbers.map((n) => ({ n, size, etag: `"s${n}"` })),
+      );
+    const transfer = () =>
+      db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: session!.transferId! } });
+    const recorded = async () =>
+      (
+        await db.inspect.sandboxImageUploadPart.findMany({
+          where: { sessionId: session!.id },
+          orderBy: { partNumber: "asc" },
+        })
+      ).map((p) => p.partNumber);
+    const reconnect = (epoch = 2) =>
+      db.inspect.sandboxHost.update({ where: { id: w.host.id }, data: { connectionEpoch: epoch } });
+    return { ...w, grant, session: session!, resume, report, store, transfer, recorded, reconnect };
+  }
+  const numbers = (frame: Record<string, unknown>) =>
+    (frame.parts as { n: number }[]).map((p) => p.n);
+  const range = (first: number, last: number) =>
+    Array.from({ length: last - first + 1 }, (_, i) => first + i);
+
+  it("a part on a connection that did not resume is refused: no row, no grant, no key", async () => {
+    const w = await opened(3);
+    await w.report([1], w.ctx(1));
+    await w.reconnect();
+    const before = await w.recorded();
+    const replies = w.replies.length;
+    await w.report([2]);
+    expect(w.replies.slice(replies)).toEqual([
+      { type: "disk.offload.cancel", ...w.ref, reason: "stale" },
+    ]);
+    expect(await w.recorded()).toEqual(before);
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+  });
+
+  it("rebinds, reconciles to the store's listing and answers the stored ranges and the window from the first missing part", async () => {
+    const w = await opened(70);
+    // Recorded: 1..3 and 9 (9 is not in the store: dropped). Stored: 1..5
+    // (4 and 5 went up but their report was lost) and 7; 6 has a wrong size.
+    await w.report([1, 2, 3, 9], w.ctx(1));
+    await w.reconnect();
+    s3.listed.set(w.session.uploadId!, [
+      ...[1, 2, 3, 4, 5, 7].map((n) => ({ n, size: 64 * (MIB + 16), etag: `"s${n}"` })),
+      { n: 6, size: 5, etag: '"short"' },
+    ]);
+    await w.resume();
+    const resumed = w.last();
+    expect(resumed).toMatchObject({
+      type: "disk.upload.resumed",
+      sessionId: w.session.id,
+      transferId: w.session.transferId,
+      stored: [
+        [1, 5],
+        [7, 7],
+      ],
+    });
+    expect(resumed).not.toHaveProperty("encryption");
+    expect(numbers(resumed)).toEqual([6, ...range(8, 69)]);
+    expect(await w.recorded()).toEqual([1, 2, 3, 4, 5, 7]);
+    expect(await w.transfer()).toMatchObject({ sourceEpoch: 2, state: "OPEN" });
+    // Parts now count on this connection; the next window follows the report.
+    await w.report([6, ...range(8, 69)]);
+    expect(numbers(w.last())).toEqual([70]);
+    expect(w.last()).not.toHaveProperty("encryption");
+  });
+
+  it("a resumed upload ends byte-exact: Complete takes the store's own parts and ETags", async () => {
+    const w = await opened(3);
+    await w.reconnect();
+    w.store([1]);
+    await w.resume();
+    expect(numbers(w.last())).toEqual([2, 3]);
+    await w.report([2, 3]);
+    w.store([1, 2, 3]);
+    const enqueue = vi.fn(async () => {});
+    await handlers.handleDiskUploadComplete(
+      w.ctx(2),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      enqueue,
+    );
+    expect(enqueue).toHaveBeenCalledWith(w.offload.id);
+    expect(await w.row()).toMatchObject({
+      state: "VERIFYING",
+      storedBytes: BigInt(3 * 64 * (MIB + 16)),
+    });
+  });
+
+  it("after a resume the old connection's late parts and resumes change nothing", async () => {
+    const w = await opened(3);
+    await w.reconnect();
+    w.store([]);
+    await w.resume();
+    const replies = w.replies.length;
+    await w.report([1], w.ctx(1));
+    expect(await w.recorded()).toEqual([]);
+    await w.resume(w.ctx(1));
+    expect(w.replies.slice(replies).filter((r) => r.type !== "disk.offload.cancel")).toEqual([]);
+    expect((await w.transfer()).sourceEpoch).toBe(2);
+  });
+
+  it("a resume on a connection that is no longer current gets no answer and moves nothing", async () => {
+    const w = await opened(3);
+    await w.reconnect(3);
+    const replies = w.replies.length;
+    await w.resume(w.ctx(2));
+    await w.resume({ ...w.ctx(3), sender: { ...w.ctx(3).sender, isCurrent: () => false } });
+    expect(w.replies.length).toBe(replies);
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+    // A second reconnect during a resume: the newest connection resumes.
+    w.store([1]);
+    await w.resume(w.ctx(3));
+    expect(w.last()).toMatchObject({ type: "disk.upload.resumed", stored: [[1, 1]] });
+    expect((await w.transfer()).sourceEpoch).toBe(3);
+  });
+
+  it("a repeated resume on one connection is idempotent and keeps the stall clock", async () => {
+    const w = await opened(3);
+    await w.reconnect();
+    w.store([1]);
+    await w.resume();
+    const first = w.last();
+    const progress = (await w.transfer()).lastProgressAt;
+    await w.resume();
+    expect({ ...w.last(), expiresAtUnixMs: 0, parts: numbers(w.last()) }).toEqual({
+      ...first,
+      expiresAtUnixMs: 0,
+      parts: numbers(first),
+    });
+    expect((await w.transfer()).lastProgressAt).toEqual(progress);
+    expect(await w.recorded()).toEqual([1]);
+  });
+
+  it("a resume that finds nothing new does not move the stall clock", async () => {
+    const w = await opened(3);
+    const old = new Date(Date.now() - 3_600_000);
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: w.session.transferId },
+      data: { lastProgressAt: old },
+    });
+    await w.reconnect();
+    w.store([]);
+    await w.resume();
+    expect(w.last().type).toBe("disk.upload.resumed");
+    expect((await w.transfer()).lastProgressAt).toEqual(old);
+  });
+
+  it("a resume from another host is refused and changes nothing of this upload", async () => {
+    const w = await opened(3);
+    const other = await opened(1);
+    await w.reconnect();
+    await handlers.handleDiskUploadResume(other.ctx(1), {
+      type: "disk.upload.resume",
+      ...w.ref,
+      sessionId: w.session.id,
+      transferId: w.session.transferId,
+    });
+    expect(other.last()).toMatchObject({ type: "disk.offload.cancel", reason: "resume_refused" });
+    expect(other.last()).not.toHaveProperty("parts");
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+    // Nor with the right host but another session's transfer.
+    await handlers.handleDiskUploadResume(w.ctx(2), {
+      type: "disk.upload.resume",
+      ...w.ref,
+      sessionId: w.session.id,
+      transferId: other.session.transferId,
+    });
+    expect(w.last()).toMatchObject({ reason: "resume_refused" });
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+  });
+
+  it.each([
+    [
+      "a cancelled transfer",
+      async (w: Awaited<ReturnType<typeof opened>>) => {
+        await db.inspect.sandboxImageTransfer.update({
+          where: { id: w.session.transferId },
+          data: { state: "CANCELLED" },
+        });
+      },
+    ],
+    [
+      "an expired transfer",
+      async (w: Awaited<ReturnType<typeof opened>>) => {
+        await db.inspect.sandboxImageTransfer.update({
+          where: { id: w.session.transferId },
+          data: { expiresAt: new Date(Date.now() - 1000) },
+        });
+      },
+    ],
+    [
+      "a failed (stalled) offload",
+      async (w: Awaited<ReturnType<typeof opened>>) => {
+        const { endLiveOffload } = await import("@wssp/api/sandbox/disk-offload/store");
+        await db.prisma.$transaction((tx) =>
+          endLiveOffload(tx, w.offload.id, "FAILED", "upload_stalled"),
+        );
+      },
+    ],
+    [
+      "a sandbox that left STOPPED",
+      async (w: Awaited<ReturnType<typeof opened>>) => {
+        await db.inspect.sandbox.update({
+          where: { id: w.sandbox.id },
+          data: { generation: { increment: 1 } },
+        });
+      },
+    ],
+  ])("%s: the resume is refused resume_refused", async (_name, end) => {
+    const w = await opened(3);
+    await end(w);
+    await w.reconnect();
+    await w.resume();
+    expect(w.last()).toMatchObject({ type: "disk.offload.cancel", reason: "resume_refused" });
+  });
+
+  it("a completed session is never resumed", async () => {
+    const w = await opened(1);
+    w.store([1]);
+    await handlers.handleDiskUploadComplete(
+      w.ctx(1),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      async () => {},
+    );
+    expect((await w.row()).state).toBe("VERIFYING");
+    await w.reconnect();
+    await w.resume();
+    expect(w.last()).toMatchObject({ reason: "resume_refused" });
+  });
+
+  it("a Complete whose ListParts failed leaves the transfer where it was: parts still need a resume", async () => {
+    const w = await opened(3);
+    await w.reconnect();
+    s3.duringList = async () => {
+      throw new Error("store down");
+    };
+    await handlers.handleDiskUploadComplete(
+      w.ctx(2),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      async () => {},
+    );
+    expect(w.last()).toMatchObject({ reason: "store_unavailable" });
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+    await w.report([1]);
+    expect(w.last()).toMatchObject({ reason: "stale" });
+    expect(await w.recorded()).toEqual([]);
+  });
+
+  it("a store outage or a spent budget is transient: nothing moves but the rebind, and a retry answers", async () => {
+    const w = await opened(3);
+    await w.reconnect();
+    budgets.grantsExhausted = true;
+    try {
+      await w.resume();
+    } finally {
+      budgets.grantsExhausted = false;
+    }
+    expect(w.last()).toMatchObject({ reason: "rate_limited" });
+    expect((await w.transfer()).sourceEpoch).toBe(1);
+    s3.duringList = async () => {
+      throw new Error("store down");
+    };
+    await w.resume();
+    expect(w.last()).toMatchObject({ reason: "store_unavailable" });
+    w.store([1, 2]);
+    await w.resume();
+    expect(w.last()).toMatchObject({ type: "disk.upload.resumed", stored: [[1, 2]] });
+    expect(numbers(w.last())).toEqual([3]);
+  });
+
+  it("every stored part: an empty window, ready to complete", async () => {
+    const w = await opened(2);
+    await w.reconnect();
+    w.store([1, 2]);
+    await w.resume();
+    expect(w.last()).toMatchObject({ stored: [[1, 2]], parts: [] });
+  });
+
+  it("many parts reconcile set-based; past 256 ranges the rest is granted again", async () => {
+    const w = await opened(520);
+    await w.report(range(1, 64), w.ctx(1));
+    await w.reconnect();
+    const odd = range(1, 520).filter((n) => n % 2 === 1);
+    w.store(odd);
+    await w.resume();
+    const resumed = w.last();
+    const stored = resumed.stored as [number, number][];
+    expect(stored).toHaveLength(256);
+    expect(stored.at(-1)).toEqual([511, 511]);
+    expect(numbers(resumed)).toEqual(range(2, 65).filter((n) => n % 2 === 0));
+    expect(await w.recorded()).toEqual(odd.filter((n) => n <= 511));
+  });
+
+  it("expiry racing a resume: it waits for a reconciliation in flight and is seen by one that starts after it", async () => {
+    const lockedTransfer =
+      /FROM sandbox_image_transfer t JOIN sandbox_image_upload_session s .* FOR UPDATE OF t/s;
+    const expire = (transferId: string) =>
+      db.prisma.$transaction(
+        (tx) =>
+          tx.$executeRaw`UPDATE sandbox_image_transfer SET state = 'EXPIRED', "endReason" = 'expired'
+            WHERE id = ${transferId} AND state = 'OPEN'`,
+      );
+    // Reconciliation first: the expiry waits for its commit, then ends the
+    // transfer; the answer that went out belongs to a still-OPEN transfer.
+    const first = await opened(3);
+    await first.reconnect();
+    first.store([1]);
+    let reconciling: ReturnType<typeof db.pauseAt> | undefined;
+    s3.duringList = async () => {
+      reconciling = db.pauseAt("resume", { after: lockedTransfer });
+    };
+    const resumeFirst = db.run("resume", () => first.resume());
+    await vi.waitFor(() => expect(reconciling).toBeDefined());
+    await reconciling!.waitReached();
+    const expiring = db.run("expire", () => expire(first.session.transferId));
+    await db.waitUntilBlocked("expire", { by: "resume" });
+    reconciling!.release();
+    await resumeFirst;
+    await expiring;
+    expect(first.last()).toMatchObject({ type: "disk.upload.resumed", stored: [[1, 1]] });
+    expect(await first.recorded()).toEqual([1]);
+    expect((await first.transfer()).state).toBe("EXPIRED");
+
+    // Expiry first: the resume waits for it and is refused, writing nothing.
+    const second = await opened(3);
+    await second.reconnect();
+    second.store([1]);
+    const expired = db.pauseAt("expire", {
+      after: /UPDATE sandbox_image_transfer SET state = 'EXPIRED'/,
+    });
+    const expiringFirst = db.run("expire", () => expire(second.session.transferId));
+    await expired.waitReached();
+    const resumeSecond = db.run("resume", () => second.resume());
+    try {
+      await db.waitUntilBlocked("resume", { by: "expire" });
+    } finally {
+      expired.release();
+    }
+    await expiringFirst;
+    await resumeSecond;
+    expect(second.last()).toMatchObject({ type: "disk.offload.cancel", reason: "resume_refused" });
+    expect(await second.recorded()).toEqual([]);
+    expect(await second.transfer()).toMatchObject({ state: "EXPIRED", sourceEpoch: 1 });
+  });
+
+  it("image.job.resume never rebinds a disk upload's transfer", async () => {
+    const { handleImageJobResume } = await import("./image-handlers");
+    const w = await opened(3);
+    await w.reconnect();
+    const replies: unknown[] = [];
+    await handleImageJobResume(
+      {
+        ...w.ctx(2),
+        reply: (frame: unknown) => replies.push(frame),
+        spool: {} as never,
+        sendTo: () => true,
+        isHostCurrent: () => true,
+      } as never,
+      { type: "image.job.resume", transferId: w.session.transferId, role: "SOURCE", bytesDone: 0 },
+    );
+    expect(replies).toEqual([
+      { type: "image.job.resume.result", transferId: w.session.transferId, continue: false },
+    ]);
+    expect((await w.transfer()).sourceEpoch).toBe(1);
   });
 });
 

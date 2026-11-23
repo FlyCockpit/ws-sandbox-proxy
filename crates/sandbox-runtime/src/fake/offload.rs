@@ -35,6 +35,9 @@ pub(super) struct FakeOffloadState {
     publishing: usize,
     /// Every offload alias listing blocks this long first (a slow Incus).
     alias_list_hold: Option<std::time::Duration>,
+    /// Published disks are padded to this many bytes (tests of
+    /// multi-part uploads).
+    publish_size: Option<usize>,
 }
 
 fn sandbox_of(instance_name: &str) -> Result<&str, RuntimeError> {
@@ -84,6 +87,12 @@ impl FakeRuntime {
     /// Tests: every publish blocks this long first.
     pub fn set_publish_hold(&self, hold: Option<std::time::Duration>) {
         self.offload_state().offload.publish_hold = hold;
+    }
+
+    /// Tests: every later publish yields a disk of `bytes` bytes (its
+    /// usual unique content, padded with a fixed pattern).
+    pub fn set_publish_size(&self, bytes: Option<usize>) {
+        self.offload_state().offload.publish_size = bytes;
     }
 
     /// Tests: every offload alias listing blocks this long first.
@@ -181,7 +190,15 @@ impl FakeRuntime {
             .offload
             .calls
             .push((instance_name.to_owned(), alias.to_owned()));
-        let bytes = format!("fake-offload:{sandbox_id}:{}", state.offload.publishes).into_bytes();
+        let mut bytes =
+            format!("fake-offload:{sandbox_id}:{}", state.offload.publishes).into_bytes();
+        if let Some(size) = state.offload.publish_size {
+            let mut n = 0u8;
+            bytes.resize_with(size.max(bytes.len()), || {
+                n = n.wrapping_mul(31).wrapping_add(7);
+                n
+            });
+        }
         let fp = format!("sha256:{}", sha256_hex(&bytes));
         state.images.insert(
             fp.clone(),

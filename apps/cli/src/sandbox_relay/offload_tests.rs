@@ -199,10 +199,10 @@ fn grant(
             size_bytes: size,
         }],
         expires_at_unix_ms: u64::MAX,
-        encryption: ImageEncryptionV11 {
+        encryption: Some(ImageEncryptionV11 {
             scheme: sandbox_protocol::IMAGE_ENCRYPTION_SCHEME.into(),
             key: key.into(),
-        },
+        }),
     })
 }
 
@@ -471,15 +471,24 @@ fn an_offload_publishes_uploads_encrypted_and_is_dropped_on_stored() {
 
 #[test]
 fn a_disk_grant_without_valid_encryption_is_refused_before_any_byte_leaves() {
-    // I13 at the parser: no `encryption`, no frame.
-    let mut value = serde_json::to_value(match grant("off-1", "ses-1", "http://x", 5, KEY) {
-        ServerControlMessage::DiskUploadGrant(g) => g,
-        _ => unreachable!(),
-    })
-    .unwrap();
-    value.as_object_mut().unwrap().remove("encryption");
-    value["type"] = "disk.upload.grant".into();
-    assert!(sandbox_protocol::parse_server_control(&value.to_string()).is_err());
+    // I13 at the daemon: a new session's grant without a key uploads nothing.
+    let f = fixture();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    f.offload.handle_server(request("off-0"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let size = begin_of(&begin).unwrap().size_bytes;
+    let mut keyless = grant("off-0", "ses-0", &url, size, KEY);
+    if let ServerControlMessage::DiskUploadGrant(g) = &mut keyless {
+        g.encryption = None;
+    }
+    f.offload.handle_server(keyless);
+    let (failed, _) = wait_for_frame(&f.images, |m| failed_of(m).is_some());
+    assert_eq!(failed_of(&failed), Some(DiskOffloadFailureCode::Io));
+    assert!(listener.accept().is_err(), "no byte may leave the host");
+    assert!(f.offload.entry(SBX).is_none());
+    drop(f);
 
     // I13 at the daemon: a grant whose key does not decode uploads nothing.
     let f = fixture();
@@ -504,8 +513,10 @@ fn a_disk_grant_without_valid_encryption_is_refused_before_any_byte_leaves() {
     let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
     let size = begin_of(&begin).unwrap().size_bytes;
     let mut bad = grant("off-2", "ses-2", &url, size, KEY);
-    if let ServerControlMessage::DiskUploadGrant(g) = &mut bad {
-        g.encryption.scheme = "none".into();
+    if let ServerControlMessage::DiskUploadGrant(g) = &mut bad
+        && let Some(encryption) = g.encryption.as_mut()
+    {
+        encryption.scheme = "none".into();
     }
     f.offload.handle_server(bad);
     let (failed, _) = wait_for_frame(&f.images, |m| failed_of(m).is_some());
@@ -2587,4 +2598,625 @@ fn a_disk_upload_sends_heartbeats_for_its_transfer() {
         unreachable!()
     };
     assert!(beat.wire_bytes > 0 || beat.bytes_sent > 0, "{beat:?}");
+}
+
+// ---------------------------------------------------------------- resume
+
+/// A loopback S3 that keeps each PUT body by part number (`/partN`), can
+/// hold a part's response until released, and answers a part 403 once.
+struct PartStore {
+    base: String,
+    bodies: Arc<Mutex<BTreeMap<u32, Vec<u8>>>>,
+    held: Arc<Mutex<std::collections::HashSet<u32>>>,
+    forbid_once: Arc<Mutex<std::collections::HashSet<u32>>>,
+    stop: Arc<AtomicBool>,
+}
+
+impl PartStore {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let base = format!("http://{}", listener.local_addr().expect("addr"));
+        let store = Self {
+            base,
+            bodies: Arc::default(),
+            held: Arc::default(),
+            forbid_once: Arc::default(),
+            stop: Arc::default(),
+        };
+        let (bodies, held, forbid, stop) = (
+            store.bodies.clone(),
+            store.held.clone(),
+            store.forbid_once.clone(),
+            store.stop.clone(),
+        );
+        std::thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                let Ok((stream, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(2));
+                    continue;
+                };
+                let (bodies, held, forbid) = (bodies.clone(), held.clone(), forbid.clone());
+                std::thread::spawn(move || {
+                    stream.set_nonblocking(false).ok();
+                    let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                    let mut request = String::new();
+                    reader.read_line(&mut request).ok();
+                    let n: u32 = request
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|path| path.strip_prefix("/part"))
+                        .and_then(|n| n.split('?').next())
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(0);
+                    let mut length = 0usize;
+                    loop {
+                        let mut line = String::new();
+                        if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                            return;
+                        }
+                        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                            length = v.trim().parse().unwrap_or(0);
+                        }
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let mut body = vec![0u8; length];
+                    if reader.read_exact(&mut body).is_err() {
+                        return;
+                    }
+                    let mut stream = stream;
+                    if forbid.lock().unwrap().remove(&n) {
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        );
+                        return;
+                    }
+                    bodies.lock().unwrap().insert(n, body);
+                    while held.lock().unwrap().contains(&n) {
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                    let _ = stream.write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nETag: \"e{n}\"\r\nConnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    );
+                });
+            }
+        });
+        store
+    }
+
+    fn hold(&self, n: u32) {
+        self.held.lock().unwrap().insert(n);
+    }
+
+    fn release(&self, n: u32) {
+        self.held.lock().unwrap().remove(&n);
+    }
+
+    fn has(&self, n: u32) -> bool {
+        self.bodies.lock().unwrap().contains_key(&n)
+    }
+
+    /// Every stored part, in order, decrypted record by record under `key`.
+    fn plaintext(&self, key: &str) -> Vec<u8> {
+        let cipher: Vec<u8> = self
+            .bodies
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .copied()
+            .collect();
+        let key = crypto::RecordKey::from_base64(key).unwrap();
+        let records: Vec<&[u8]> = cipher.chunks(crypto::SEALED_RECORD).collect();
+        let mut plain = Vec::new();
+        for (i, record) in records.iter().enumerate() {
+            plain.extend(
+                key.open(i as u64, i + 1 == records.len(), record)
+                    .expect("every record opens under the session key at its index"),
+            );
+        }
+        plain
+    }
+}
+
+impl Drop for PartStore {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A disk of six one-record parts (5 MiB and a bit).
+const MULTI_PART_DISK: usize = 5 * 1024 * 1024 + 100;
+const PARTS: u32 = 6;
+
+fn part_urls(store: &PartStore, plain: u64, numbers: &[u32]) -> Vec<ImageUploadPartUrlV11> {
+    let total = sandbox_protocol::encrypted_image_len(plain);
+    numbers
+        .iter()
+        .map(|&n| ImageUploadPartUrlV11 {
+            n,
+            url: format!("{}/part{n}", store.base),
+            size_bytes: part_bytes(total, crypto::SEALED_RECORD as u64, n),
+        })
+        .collect()
+}
+
+/// A window of `numbers` for `ses-1`; the key only when given (first grant).
+fn window(
+    store: &PartStore,
+    plain: u64,
+    numbers: &[u32],
+    key: Option<&str>,
+) -> ServerControlMessage {
+    ServerControlMessage::DiskUploadGrant(DiskUploadGrantV11 {
+        sandbox_id: SBX.into(),
+        offload_id: "off-1".into(),
+        seq: 1,
+        session_id: "ses-1".into(),
+        transfer_id: "tr-ses-1".into(),
+        part_size: crypto::SEALED_RECORD as u64,
+        parts: part_urls(store, plain, numbers),
+        expires_at_unix_ms: u64::MAX,
+        encryption: key.map(|key| ImageEncryptionV11 {
+            scheme: sandbox_protocol::IMAGE_ENCRYPTION_SCHEME.into(),
+            key: key.into(),
+        }),
+    })
+}
+
+fn resumed(
+    store: &PartStore,
+    plain: u64,
+    stored: Vec<[u32; 2]>,
+    numbers: &[u32],
+) -> ServerControlMessage {
+    ServerControlMessage::DiskUploadResumed(sandbox_protocol::DiskUploadResumedV11 {
+        sandbox_id: SBX.into(),
+        offload_id: "off-1".into(),
+        seq: 1,
+        session_id: "ses-1".into(),
+        transfer_id: "tr-ses-1".into(),
+        part_size: crypto::SEALED_RECORD as u64,
+        stored,
+        parts: part_urls(store, plain, numbers),
+        expires_at_unix_ms: u64::MAX,
+    })
+}
+
+fn resume_of(frame: &DaemonControlMessage) -> Option<&DiskUploadResumeV11> {
+    match frame {
+        DaemonControlMessage::DiskUploadResume(r) => Some(r),
+        _ => None,
+    }
+}
+
+fn parts_of(frame: &DaemonControlMessage) -> Option<Vec<u32>> {
+    match frame {
+        DaemonControlMessage::DiskUploadParts(p) => Some(p.parts.iter().map(|p| p.n).collect()),
+        _ => None,
+    }
+}
+
+/// A new relay connection, as the connect loop runs it.
+fn reconnect(f: &Fixture) {
+    f.images.on_disconnect();
+    f.images.on_registered("host-owner");
+    f.offload.on_connection();
+}
+
+/// An offload of a six-part disk, begun (no progress for `give_up` ends
+/// it); its plaintext size.
+fn begun_with(f: &Fixture, give_up: Duration) -> (DiskUploadBeginV11, u64) {
+    begun_timed(f, give_up, Duration::from_millis(5))
+}
+
+/// `begun_with`, the first backoff step `backoff`.
+fn begun_timed(f: &Fixture, give_up: Duration, backoff: Duration) -> (DiskUploadBeginV11, u64) {
+    f.runtime.set_publish_size(Some(MULTI_PART_DISK));
+    f.offload.set_upload_timing_for_test(give_up, backoff);
+    f.offload.handle_server(request("off-1"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let plain = begin.size_bytes;
+    assert_eq!(
+        sandbox_protocol::encrypted_image_len(plain).div_ceil(crypto::SEALED_RECORD as u64),
+        u64::from(PARTS)
+    );
+    (begin, plain)
+}
+
+fn begun(f: &Fixture) -> (DiskUploadBeginV11, u64) {
+    begun_with(f, Duration::from_secs(20))
+}
+
+fn exported(f: &Fixture, begin: &DiskUploadBeginV11) -> Vec<u8> {
+    let verify = f.dir.join("verify");
+    std::fs::create_dir_all(&verify).unwrap();
+    let files = f.runtime.export_image(&begin.fingerprint, &verify).unwrap();
+    std::fs::read(&files[0]).unwrap()
+}
+
+/// The owner decision (11-23): a reconnect in the middle of a non-final
+/// window. The window's PUTs finish, its report is never queued for the new
+/// connection (no part reaches a connection that did not resume), the job
+/// resumes explicitly on the new one, continues from the server's stored
+/// parts and the object ends byte-exact under the session's one key.
+#[test]
+fn a_reconnect_mid_window_resumes_from_the_stored_parts_and_ends_byte_exact() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    store.hold(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_until("part 2 sent", || store.has(2));
+    reconnect(&f);
+    store.release(2);
+    let (resume, before) = wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    assert!(
+        before.iter().all(|m| parts_of(m).is_none()),
+        "a parts report reached the new connection before its resume: {before:#?}"
+    );
+    let resume = resume_of(&resume).unwrap().clone();
+    assert_eq!(
+        (resume.session_id.as_str(), resume.transfer_id.as_str()),
+        ("ses-1", "tr-ses-1")
+    );
+    // The store holds 1 and 2 (their report was lost): the server's window
+    // starts at 3, without a key.
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 2]], &[3, 4]));
+    let (report, _) = wait_for_frame(&f.images, |m| parts_of(m).is_some());
+    assert_eq!(parts_of(&report).unwrap(), [3, 4]);
+    f.offload
+        .handle_server(window(&store, plain, &[5, 6], None));
+    let (complete, before) = wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert!(matches!(
+        complete,
+        DaemonControlMessage::DiskUploadComplete(ref c) if c.session_id == "ses-1"
+    ));
+    assert!(before.iter().all(|m| resume_of(m).is_none()));
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+    assert!(f.offload.lock_keys().is_empty());
+}
+
+/// A reconnect during the final window: every part is up, so the job
+/// completes (the server authorizes the completion on the new connection)
+/// without a resume.
+#[test]
+fn a_reconnect_in_the_final_window_completes_without_a_resume() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2, 3, 4], Some(KEY)));
+    let (report, _) = wait_for_frame(&f.images, |m| parts_of(m).is_some());
+    assert_eq!(parts_of(&report).unwrap(), [1, 2, 3, 4]);
+    store.hold(6);
+    f.offload
+        .handle_server(window(&store, plain, &[5, 6], None));
+    wait_until("part 6 sent", || store.has(6));
+    reconnect(&f);
+    store.release(6);
+    let (_, before) = wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert!(
+        before
+            .iter()
+            .all(|m| resume_of(m).is_none() && parts_of(m).is_none())
+    );
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// A refused resume ends the upload with a durable failure report (the
+/// cancel goes through `on_cancel`, which must not end the job silently).
+#[test]
+fn a_refused_resume_is_reported_failed_and_cleaned_up() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (_, plain) = begun(&f);
+    store.hold(1);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_until("part 1 sent", || store.has(1));
+    reconnect(&f);
+    store.release(1);
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    f.offload.handle_server(cancel("off-1", "resume_refused"));
+    let (failed, _) = wait_for_frame(&f.images, |m| failed_of(m).is_some());
+    assert_eq!(
+        failed_of(&failed),
+        Some(DiskOffloadFailureCode::ResumeRefused)
+    );
+    let DaemonControlMessage::DiskOffloadFailed(failed) = failed else {
+        unreachable!()
+    };
+    assert!(failed.report_id.is_some(), "kept until acked");
+    wait_until("cleaned up", || {
+        f.offload.entry(SBX).is_none()
+            && staging_dirs(&f).is_empty()
+            && f.runtime.alias_target(&al("off-1")).is_none()
+    });
+}
+
+/// Transient answers to a resume (`rate_limited`, `store_unavailable`, a
+/// `stale` one) back off and resume again; the job then continues.
+#[test]
+fn transient_resume_answers_back_off_and_resume_again() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    store.hold(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_until("part 2 sent", || store.has(2));
+    reconnect(&f);
+    store.release(2);
+    for reason in ["rate_limited", "store_unavailable", "stale"] {
+        wait_for_frame(&f.images, |m| resume_of(m).is_some());
+        f.offload.handle_server(cancel("off-1", reason));
+    }
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploading);
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 2]], &[3, 4, 5, 6]));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// A second reconnect while a resume is unanswered: the queued resume of
+/// the older connection goes, the job resumes on the newest, and the
+/// server's listing (here: part 2 never reached the store) decides what is
+/// sent again.
+#[test]
+fn a_second_reconnect_during_a_resume_resumes_on_the_newest_connection() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    store.hold(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_until("part 2 sent", || store.has(2));
+    reconnect(&f);
+    store.release(2);
+    wait_until("resume queued", || {
+        f.images.queued().iter().any(|m| resume_of(m).is_some())
+    });
+    reconnect(&f);
+    wait_until("the older resume purged and a new one queued", || {
+        f.images
+            .queued()
+            .iter()
+            .filter(|m| resume_of(m).is_some())
+            .count()
+            == 1
+    });
+    let (_, before) = wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    assert!(before.iter().all(|m| resume_of(m).is_none()));
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 1]], &[2, 3, 4]));
+    let (report, _) = wait_for_frame(&f.images, |m| parts_of(m).is_some());
+    assert_eq!(parts_of(&report).unwrap(), [2, 3, 4]);
+    f.offload
+        .handle_server(window(&store, plain, &[5, 6], None));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// A `stale` answer to a parts report (the transfer is not bound to this
+/// connection) resumes the session instead of abandoning it.
+#[test]
+fn a_stale_parts_answer_resumes_the_session() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_for_frame(&f.images, |m| parts_of(m).is_some());
+    f.offload.handle_server(cancel("off-1", "stale"));
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    assert!(!f.offload.lock_jobs().active.is_empty(), "the job runs on");
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 2]], &[3, 4, 5, 6]));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// A part URL that lapsed during a long reconnect (403): fresh URLs come
+/// from a resume.
+#[test]
+fn a_lapsed_part_url_resumes_for_fresh_urls() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    store.forbid_once.lock().unwrap().insert(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 1]], &[2, 3, 4, 5, 6]));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// No progress for the deadline (here: the relay never comes back) ends the
+/// upload `timeout`, reported, never a silent abandon.
+#[test]
+fn no_progress_for_the_deadline_is_reported_as_a_timeout() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (_, plain) = begun_with(&f, Duration::from_millis(400));
+    store.hold(1);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_until("part 1 sent", || store.has(1));
+    f.images.on_disconnect();
+    store.release(1);
+    let (failed, _) = wait_for_frame(&f.images, |m| failed_of(m).is_some());
+    assert_eq!(failed_of(&failed), Some(DiskOffloadFailureCode::Timeout));
+}
+
+/// A begin refused as transient (no session yet) is sent again after a
+/// backoff instead of ending the job without a report.
+#[test]
+fn a_transient_begin_refusal_begins_again() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun(&f);
+    f.offload.handle_server(cancel("off-1", "rate_limited"));
+    let (again, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    assert_eq!(begin_of(&again).unwrap(), &begin);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2, 3, 4, 5, 6], Some(KEY)));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// `push_on` never queues a frame for a connection that is no longer the
+/// current one.
+#[test]
+fn a_frame_for_an_older_connection_is_never_queued() {
+    let f = fixture();
+    let old = f.images.connection();
+    reconnect(&f);
+    f.images.drain();
+    let frame = DaemonControlMessage::DiskUploadParts(DiskUploadPartsV11 {
+        sandbox_id: SBX.into(),
+        offload_id: "off-1".into(),
+        seq: 1,
+        session_id: "ses-1".into(),
+        parts: vec![sandbox_protocol::ImageUploadedPartV11 {
+            n: 1,
+            etag: "\"e\"".into(),
+        }],
+    });
+    assert!(!f.images.push_on(old, frame.clone()));
+    assert!(f.images.queued().is_empty());
+    assert!(f.images.push_on(f.images.connection(), frame));
+    assert_eq!(f.images.queued().len(), 1);
+}
+
+/// Codex r1 #1: a reconnect while the begin is still queued. The begin
+/// belongs to the old connection: it is purged and sent again on the new
+/// one, so its grant (the only frame with the session's key) is read.
+#[test]
+fn a_reconnect_before_the_begin_is_sent_begins_again_on_the_new_connection() {
+    let f = fixture();
+    let store = PartStore::start();
+    f.runtime.set_publish_size(Some(MULTI_PART_DISK));
+    f.offload
+        .set_upload_timing_for_test(Duration::from_secs(20), Duration::from_millis(5));
+    f.offload.handle_server(request("off-1"));
+    wait_until("begin queued", || {
+        f.images.queued().iter().any(|m| begin_of(m).is_some())
+    });
+    let old = f.images.connection();
+    reconnect(&f);
+    let begins = || {
+        f.images
+            .queued()
+            .iter()
+            .filter(|m| begin_of(m).is_some())
+            .count()
+    };
+    // The old connection's begin went with it; one goes for the new one.
+    wait_until("the begin queued again", || begins() == 1);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(begins(), 1);
+    assert_ne!(f.images.connection(), old);
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let plain = begin.size_bytes;
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2, 3, 4, 5, 6], Some(KEY)));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
+}
+
+/// Codex r1 #2: every resume episode re-hashes the staging, also after a
+/// resumed window ends in a lapsed URL: staging that changed meanwhile
+/// fails the upload `corrupt` before another part is sent (§3: the session
+/// key never seals other bytes at the same record nonces).
+#[test]
+fn a_staging_change_after_a_resumed_window_is_caught_by_the_next_resume() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (_, plain) = begun(&f);
+    store.forbid_once.lock().unwrap().insert(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    store.forbid_once.lock().unwrap().insert(3);
+    store.hold(2);
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 1]], &[2, 3, 4]));
+    wait_until("part 2 sent", || store.has(2));
+    let dir = f
+        .images
+        .staging_dir()
+        .join(format!("{STAGING_PREFIX}off-1"));
+    let (path, _) = staged_file(&dir).expect("staged export");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes[0] ^= 0xff;
+    std::fs::write(&path, bytes).unwrap();
+    store.release(2);
+    let (failed, before) = wait_for_frame(&f.images, |m| failed_of(m).is_some());
+    assert_eq!(failed_of(&failed), Some(DiskOffloadFailureCode::Corrupt));
+    assert!(before.iter().all(|m| resume_of(m).is_none()));
+    assert!(!store.has(4), "no part after the changed staging");
+}
+
+/// Codex r2: a resume answer that finds nothing new is no progress: lapsed
+/// URLs again and again back off longer each time (5 s doubling to 60 s in
+/// production; 100 ms doubling here).
+#[test]
+fn repeated_lapsed_urls_back_off_longer_each_time() {
+    let f = fixture();
+    let store = PartStore::start();
+    let (begin, plain) = begun_timed(&f, Duration::from_secs(20), Duration::from_millis(100));
+    store.forbid_once.lock().unwrap().insert(2);
+    f.offload
+        .handle_server(window(&store, plain, &[1, 2], Some(KEY)));
+    let mut at = Vec::new();
+    for _ in 0..3 {
+        wait_for_frame(&f.images, |m| resume_of(m).is_some());
+        at.push(Instant::now());
+        store.forbid_once.lock().unwrap().insert(2);
+        f.offload
+            .handle_server(resumed(&store, plain, vec![[1, 1]], &[2]));
+    }
+    wait_for_frame(&f.images, |m| resume_of(m).is_some());
+    at.push(Instant::now());
+    let gaps: Vec<Duration> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(
+        gaps[1] >= Duration::from_millis(190) && gaps[2] >= Duration::from_millis(390),
+        "{gaps:?}"
+    );
+    // Progress resets it: the store now takes part 2 and the rest.
+    f.offload
+        .handle_server(resumed(&store, plain, vec![[1, 1]], &[2, 3, 4, 5, 6]));
+    wait_for_frame(&f.images, |m| {
+        matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+    });
+    assert_eq!(store.plaintext(KEY), exported(&f, &begin));
 }

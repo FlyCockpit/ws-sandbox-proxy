@@ -41,6 +41,21 @@
       ]
     },
     {
+      "type": "disk.upload.resume",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1"
+    },
+    {
+      "type": "disk.offload.failed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "resume_refused"
+    },
+    {
       "type": "disk.upload.complete",
       "sandboxId": "sbx-1",
       "offloadId": "off-1",
@@ -225,6 +240,53 @@
         "scheme": "aes256gcm-r1",
         "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
       }
+    },
+    {
+      "type": "disk.upload.grant",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "parts": [
+        {
+          "n": 1,
+          "url": "https://bucket.example/obj?partNumber=1&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000
+    },
+    {
+      "type": "disk.upload.resumed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "stored": [[1, 2], [4, 4]],
+      "parts": [
+        {
+          "n": 3,
+          "url": "https://bucket.example/obj?partNumber=3&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000
+    },
+    {
+      "type": "disk.upload.resumed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "stored": [[1, 4]],
+      "parts": [],
+      "expiresAtUnixMs": 1700000000000
     },
     {
       "type": "disk.evict.suggest",
@@ -494,6 +556,22 @@
       "parts": []
     },
     {
+      "type": "disk.upload.resume",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1"
+    },
+    {
+      "type": "disk.upload.resume",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "from": 3
+    },
+    {
       "type": "disk.offload.failed",
       "sandboxId": "sbx-1",
       "offloadId": "off-1",
@@ -656,7 +734,66 @@
           "sizeBytes": 67108880
         }
       ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": null
+    },
+    {
+      "type": "disk.upload.resumed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "stored": [[1, 3]],
+      "parts": [
+        {
+          "n": 3,
+          "url": "https://bucket.example/obj?partNumber=3&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
       "expiresAtUnixMs": 1700000000000
+    },
+    {
+      "type": "disk.upload.resumed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "stored": [[2, 2], [1, 1]],
+      "parts": [
+        {
+          "n": 3,
+          "url": "https://bucket.example/obj?partNumber=3&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000
+    },
+    {
+      "type": "disk.upload.resumed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "sessionId": "ses-1",
+      "transferId": "tr-1",
+      "partSize": 67108880,
+      "stored": [[1, 2], [4, 4]],
+      "parts": [
+        {
+          "n": 3,
+          "url": "https://bucket.example/obj?partNumber=3&X-Amz-Signature=BBBBBBBBBBBB",
+          "sizeBytes": 67108880
+        }
+      ],
+      "expiresAtUnixMs": 1700000000000,
+      "encryption": {
+        "scheme": "aes256gcm-r1",
+        "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      }
     },
     {
       "type": "disk.upload.grant",
