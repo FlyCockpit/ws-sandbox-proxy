@@ -6,11 +6,13 @@ Releases are automated by the root `Release` GitHub Actions workflow
 version, merge it to the default branch, then manually run the workflow with
 that version tag. The supported CLI targets are Linux x86_64
 (`x86_64-unknown-linux-musl`) and Linux ARM64 (`aarch64-unknown-linux-musl`).
-Use the shell installer on Linux.
+Hosts and devices install it from their own server's `/install.sh`, which
+downloads the release of that server's version.
 
 The release configuration (`apps/cli/dist-workspace.toml`) builds those two
-Linux targets and generates only a shell installer. GitHub Releases and GHCR
-are the supported release destinations.
+Linux targets as `wssp-<target>.tar.xz` archives with a `sha256.sum`, and
+generates no installer of its own (`installers = []`): the server serves the
+only one. GitHub Releases and GHCR are the supported release destinations.
 
 The container images are published to GHCR as:
 
@@ -29,32 +31,54 @@ Prisma Migrate runner and committed history; the app image runs one-shot
 ## Cutting a release
 
 ```sh
-# 1. Bump the version in apps/cli/Cargo.toml (e.g. 1.0.0 -> 1.0.1).
+# 1. Bump the version in apps/cli/Cargo.toml (e.g. 1.0.0 -> 1.0.1) and
+#    SERVER_VERSION in apps/server/src/version.ts to the same version.
 # 2. Merge that change to the default branch.
 # 3. In GitHub Actions, run the root "Release" workflow from the default
 #    branch with: version = v1.0.1
 ```
 
 The workflow validates that it is running from the default branch and that the
-requested `vX.Y.Z` tag matches `apps/cli/Cargo.toml`, runs the release
-preflight gates, creates the GitHub Release for that tag, uploads the CLI
-artifacts and publishes the containers to GHCR. Watch it in the repo's Actions tab; when it's green, the
-GitHub Release has all the artifacts.
+requested `vX.Y.Z` tag matches `apps/cli/Cargo.toml` and `SERVER_VERSION`,
+runs the release preflight gates, builds the CLI archives and checks them
+(`scripts/release/check-cli-artifacts.sh`: both archives present, each named on
+exactly one `sha256.sum` line, each holding `wssp-<target>/wssp`, every
+checksum matching), and only then publishes the containers to GHCR, so no image
+serves an `/install.sh` whose release cannot be published. It then checks the
+uploaded files again, signs SLSA build provenance for the archives and
+`sha256.sum` with [`actions/attest`](https://github.com/actions/attest)
+(keyless: the job's OIDC token and Sigstore, no secret), and creates the GitHub
+Release. Watch it in the repo's Actions tab; when it's green, the GitHub
+Release has all the artifacts.
+
+Between a version bump and its release, a server built from that commit serves
+an `/install.sh` whose download fails ("is wssp X published there yet?") and
+names the source build (`cargo install --git … --rev <commit>` when the image
+carries its commit in `BUILD_VERSION`). Point `WSSP_CLI_RELEASE_BASE_URL` at a
+mirror to install before the release exists.
 
 ## One-time setup
 
-1. **Repos must be public** for the shell installer and unauthenticated
-   container pulls to work without GitHub tokens.
+1. **Repos must be public** for `/install.sh` downloads, unauthenticated
+   container pulls and build provenance attestations (on a private repository
+   they need GitHub Enterprise) to work without GitHub tokens.
 2. **GHCR package visibility:** after the first release, make the GHCR packages
    public if you want unauthenticated users to pull them.
 
 ## Installation after release
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/FlyCockpit/ws-sandbox-proxy/releases/latest/download/wssp-installer.sh | sh
-
 docker pull ghcr.io/flycockpit/ws-sandbox-proxy:latest
+# then, on each host or device, from that server:
+curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh | sh
+```
+
+The archives come from the GitHub Release of
+https://github.com/FlyCockpit/ws-sandbox-proxy. Verify a downloaded archive's
+provenance (needs the GitHub CLI):
+
+```sh
+gh attestation verify wssp-x86_64-unknown-linux-musl.tar.xz --repo FlyCockpit/ws-sandbox-proxy
 ```
 
 ## Changing release behavior

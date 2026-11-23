@@ -47,6 +47,7 @@ import {
   SIGNUP_RECIPIENT_PATH,
   signinSentMail,
 } from "./email-recipient-limit.js";
+import { registerInstallRoutes } from "./install-script.js";
 import type { createServerLifecycle } from "./lifecycle.js";
 import { withTimeout } from "./lifecycle.js";
 import {
@@ -328,6 +329,8 @@ export async function createApp(
   // — before the static-asset middleware and the SSR catch-all below — so the
   // `/$lang/...` router never swallows them and returns the SPA HTML shell.
   registerSeoRoutes(app);
+  // The CLI installer (/install.sh, /install.ps1): static text, same placement and reasons.
+  registerInstallRoutes(app, { commit });
 
   // ADMIN_EMAILS bootstrap marker (see signup-gate.ts). Pass-through by design:
   // it marks member requests for admin promotion but NEVER rejects, so member

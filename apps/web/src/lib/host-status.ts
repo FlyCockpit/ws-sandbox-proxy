@@ -284,10 +284,19 @@ export function shellWord(value: string): string {
   return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Nonsecret enrollment commands use the daemon automatic resource defaults. */
+/**
+ * Nonsecret enrollment commands use the daemon automatic resource defaults.
+ * `install` runs the server's own `/install.sh` (apps/server/src/install-script.ts
+ * `installCommand`): https-only curl for an https server, plain for a loopback
+ * http dev server.
+ */
 export function hostCommands(serverUrl: string, host?: { id: string; slug: string }) {
   const server = shellWord(serverUrl);
+  const installUrl = shellWord(`${serverUrl.replace(/\/+$/, "")}/install.sh`);
   return {
+    install: serverUrl.startsWith("https://")
+      ? `curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 ${installUrl} | sh`
+      : `curl -fsSL --max-time 120 ${installUrl} | sh`,
     deviceLogin: `wssp host enroll --slug ${shellWord(host?.slug ?? "my-host")} --server ${server}`,
     connect: `wssp host run`,
     tokenConnect: host

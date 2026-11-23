@@ -124,20 +124,25 @@ signals, upgrades, drain and credential rotation; the
 recovery model, and the [CLI reference](apps/cli/docs/cli-reference.md) lists
 every command and flag.
 
-#### Install after release
+#### Install the CLI
 
-The CLI and outbound node daemon are Linux-only. Install on the spare Linux
-machine that will run your sandboxes, after the first public GitHub release:
+The CLI and outbound node daemon are Linux-only. Each server serves an
+installer for the `wssp` release of its own version; run it on the spare Linux
+machine that will run your sandboxes (and on any Linux machine you use `wssp`
+from), as that machine's normal user:
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/FlyCockpit/ws-sandbox-proxy/releases/latest/download/wssp-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh | sh
 ```
+
+It verifies the archive against the release's `sha256.sum` before installing
+`~/.local/bin/wssp`, then prints the next step. See the
+[CLI guide](docs/guide/cli.md#install).
 
 Releases are cut from the default branch with the root `Release` workflow.
 A release publishes the app and worker images to GHCR and the
-`wssp` CLI artifacts to the GitHub Release. Linux is the supported CLI
-platform; the release generates a shell installer for the two Linux targets.
+`wssp` CLI archives for the two Linux targets, their `sha256.sum` and signed
+build provenance to the GitHub Release.
 
 ### Production
 
@@ -214,7 +219,8 @@ addresses. After `pnpm run setup`:
    address and enable 2FA. **Admin → Overview → Deployment setup** shows which
    optional features (S3 image store, data encryption key, backups, preview
    tunnels) are configured.
-2. Enroll a Linux host with Incus and KVM: run
+2. Enroll a Linux host with Incus and KVM: install `wssp` from your server
+   (`curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.com/install.sh | sh`), run
    `wssp host enroll --slug desk-01 --server https://api.example.com`, approve it in
    the browser, install the egress guard as root, then run `wssp host run`
    ([hosts quick start](docs/guide/hosts.md#quick-start-your-first-host)).

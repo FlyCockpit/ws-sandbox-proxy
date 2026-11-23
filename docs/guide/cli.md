@@ -15,13 +15,39 @@ Every flag is listed in the generated
 
 ## Install
 
-Release binaries are published for x86_64 and ARM64 Linux:
+`wssp` runs on x86_64 and ARM64 Linux (on Windows, in a WSL 2 shell). Install
+the version that matches your server from the server itself, as the user who
+will run `wssp` (not root):
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/FlyCockpit/ws-sandbox-proxy/releases/latest/download/wssp-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh | sh
 ```
 
-From a checkout: `cargo install --path apps/cli --bin wssp`.
+The script (read it first if you like: open the same URL in a browser):
+
+- downloads `wssp-<target>.tar.xz` and `sha256.sum` of the server's version
+  from its GitHub Release (or the mirror the operator set in
+  `WSSP_CLI_RELEASE_BASE_URL`), over https only;
+- installs only when the archive's SHA-256 matches exactly one `sha256.sum`
+  entry, the archive holds only `wssp-<target>/` with the binary in it, and the
+  binary reports the server's version; any failure stops it with nothing
+  installed;
+- writes `~/.local/bin/wssp` (replacing an older one in place), refuses to run
+  as root unless you pass `--install-dir`, and prints the next step: `wssp
+  login --server <server>` on a computer you work from, or the host enrolment
+  steps.
+
+Options go after `sh -s --`, for example
+`… | sh -s -- --install-dir /usr/local/bin`. To keep a failed download from
+running as an empty script, download first:
+`curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh -o install.sh && sh install.sh`.
+
+The checksum proves the archive is the one the release lists; the release's
+build provenance proves GitHub Actions built it from this repository. Check it
+with the GitHub CLI:
+`gh attestation verify wssp-x86_64-unknown-linux-musl.tar.xz --repo FlyCockpit/ws-sandbox-proxy`.
+
+From a checkout (Rust 1.99+): `cargo install --path apps/cli --bin wssp`.
 
 ## Log in
 

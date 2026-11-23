@@ -7,7 +7,8 @@
 # Cargo.toml version — container images and CLI artifacts version in lockstep.
 #
 # This file is hand-maintained. The CLI jobs were adapted from cargo-dist's
-# generated workflow; cargo-dist artifact settings (targets, installers)
+# generated workflow, so every dist call passes --allow-dirty (dist would
+# otherwise refuse this file as out of date); cargo-dist artifact settings (targets, installers)
 # live in apps/cli/dist-workspace.toml — see apps/cli/docs/releasing.md before
 # changing either.
 name: Release
@@ -71,6 +72,12 @@ jobs:
             echo "::error::apps/cli/Cargo.toml version is $cargo_version, expected $version."
             exit 1
           fi
+          # /install.sh installs the CLI release of the server's own version.
+          server_version="$(sed -n 's/^export const SERVER_VERSION = "\(.*\)";$/\1/p' apps/server/src/version.ts)"
+          if [ "$server_version" != "$version" ]; then
+            echo "::error::SERVER_VERSION in apps/server/src/version.ts is $server_version, expected $version."
+            exit 1
+          fi
 
           # Canonical package: ghcr.io/flycockpit/ws-sandbox-proxy
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
@@ -127,15 +134,19 @@ jobs:
   # keep building on the deploy platform instead (see the rebrand pattern doc).
   publish-containers:
     name: Publish ${{ matrix.name }} container
+    # After the CLI archives pass their check: a published image serves /install.sh, which
+    # installs this version's CLI release, so no image ships before that release can.
     needs:
       - validate
       - node-checks
       - release-preflight
+      - build-cli-global-artifacts
     if: >-
       !cancelled()
       && needs.validate.result == 'success'
       && needs.node-checks.result == 'success'
       && needs.release-preflight.result == 'success'
+      && needs.build-cli-global-artifacts.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -289,7 +300,7 @@ jobs:
         name: Plan dist release
         working-directory: apps/cli
         run: |
-          dist host --steps=create --tag=${{ needs.validate.outputs.tag }} --output-format=json > plan-dist-manifest.json
+          dist host --steps=create --tag=${{ needs.validate.outputs.tag }} --allow-dirty --output-format=json > plan-dist-manifest.json
           echo "dist ran successfully"
           cat plan-dist-manifest.json
           echo "manifest=$(jq -c "." plan-dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -371,7 +382,7 @@ jobs:
       - name: Build artifacts
         working-directory: apps/cli
         run: |
-          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
+          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --allow-dirty --print=linkage --output-format=json ${{ matrix.dist_args }} > dist-manifest.json
           echo "dist ran successfully"
 
       - name: Verify static musl binaries
@@ -451,7 +462,7 @@ jobs:
         shell: bash
         working-directory: apps/cli
         run: |
-          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --output-format=json "--artifacts=global" > dist-manifest.json
+          dist build ${{ needs.plan-cli-release.outputs.tag-flag }} --allow-dirty --output-format=json "--artifacts=global" > dist-manifest.json
           echo "dist ran successfully"
 
           echo "paths<<EOF" >> "$GITHUB_OUTPUT"
@@ -459,6 +470,11 @@ jobs:
           echo "EOF" >> "$GITHUB_OUTPUT"
 
           cp dist-manifest.json "$BUILD_MANIFEST_NAME"
+
+      # The archives and sha256.sum /install.sh verifies (fail closed): refuse them here, before
+      # any container image or release is published.
+      - name: Check CLI archives and checksums
+        run: sh scripts/release/check-cli-artifacts.sh apps/cli/target/distrib
 
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -485,6 +501,13 @@ jobs:
       && needs.plan-cli-release.result == 'success'
       && (needs.build-cli-global-artifacts.result == 'skipped' || needs.build-cli-global-artifacts.result == 'success')
       && (needs.build-cli-local-artifacts.result == 'skipped' || needs.build-cli-local-artifacts.result == 'success')
+    # Job-level permissions replace the workflow's: contents to publish the release, id-token
+    # and attestations to sign build provenance for the CLI archives (keyless: the job's OIDC
+    # token and Sigstore, no repository secret).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: ubuntu-latest
@@ -520,7 +543,7 @@ jobs:
         shell: bash
         working-directory: apps/cli
         run: |
-          dist host ${{ needs.plan-cli-release.outputs.tag-flag }} --steps=upload --steps=release --output-format=json > dist-manifest.json
+          dist host ${{ needs.plan-cli-release.outputs.tag-flag }} --allow-dirty --steps=upload --steps=release --output-format=json > dist-manifest.json
           echo "artifacts uploaded and released successfully"
           cat dist-manifest.json
           echo "manifest=$(jq -c "." dist-manifest.json)" >> "$GITHUB_OUTPUT"
@@ -540,6 +563,19 @@ jobs:
 
       - name: Cleanup
         run: rm -f apps/cli/artifacts/*-dist-manifest.json
+
+      # The exact files the release publishes: checked again, then attested.
+      - name: Check CLI archives and checksums
+        run: sh scripts/release/check-cli-artifacts.sh apps/cli/artifacts
+
+      # Signed SLSA build provenance for every archive and the checksum file. Verify with
+      # `gh attestation verify <file> --repo FlyCockpit/ws-sandbox-proxy`.
+      - name: Attest CLI build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            apps/cli/artifacts/wssp-*.tar.xz
+            apps/cli/artifacts/sha256.sum
 
       - name: Create GitHub Release
         env:
@@ -567,5 +603,5 @@ jobs:
             echo
             echo "- App container: \`${{ needs.validate.outputs.image }}:${{ needs.validate.outputs.tag }}\`"
             echo "- Worker container: \`${{ needs.validate.outputs.image }}-worker:${{ needs.validate.outputs.tag }}\`"
-            echo "- CLI artifacts: GitHub Release \`${{ needs.validate.outputs.tag }}\`"
+            echo "- CLI artifacts: GitHub Release \`${{ needs.validate.outputs.tag }}\` (sha256.sum, build provenance attested)"
           } >> "$GITHUB_STEP_SUMMARY"

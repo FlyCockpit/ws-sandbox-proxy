@@ -1236,6 +1236,14 @@ export const ENV_VARS: EnvVar[] = [
     example: "203.0.113.0/24,bad.example",
     hint: "Deployment-wide egress blocklist pushed to every host's egress guard: IPv4 CIDRs and domains, comma or space separated. An invalid list is logged at boot and never sent (hosts keep their last list).",
   },
+  {
+    key: "WSSP_CLI_RELEASE_BASE_URL",
+    hidden: true,
+    group: "sandbox-relay",
+    source: "manual",
+    example: "https://downloads.example.com/wssp/v1.0.0",
+    hint: "Where /install.sh downloads the wssp release archives and sha256.sum from (a mirror of this version's release). Unset: this version's GitHub Release. Plain https URL only.",
+  },
 
   {
     key: "WSSP_CA_FILE",

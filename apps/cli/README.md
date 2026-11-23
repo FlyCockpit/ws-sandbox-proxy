@@ -266,14 +266,18 @@ when wssp ends the session (ssh itself then exits 255).
 
 ## Install After Release
 
-The CLI and node daemon support Linux only. These commands work after the first public GitHub release (cut via the root
-`Release` workflow — see [docs/releasing.md](docs/releasing.md)).
+The CLI and node daemon support Linux only. Install from your wssp server,
+which serves the `wssp` release of its own version (releases are cut via the
+root `Release` workflow — see [docs/releasing.md](docs/releasing.md)):
 
-**Shell:**
+**From your server:**
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/FlyCockpit/ws-sandbox-proxy/releases/latest/download/wssp-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh | sh
 ```
+
+It installs `~/.local/bin/wssp` after checking the archive against the
+release's `sha256.sum`; see the [CLI guide](../../docs/guide/cli.md#install).
 
 **From source:**
 

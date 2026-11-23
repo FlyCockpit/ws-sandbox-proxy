@@ -215,6 +215,7 @@ function EnrollHost({ lang }: { lang: string }) {
             {t("enroll.steps.install")}{" "}
             <GuideLink page="hostsQuickStart" label={t("enroll.guideLink")} />
           </span>
+          <CopyField value={commands.install} copyLabel={t("enroll.copyCommand")} />
         </li>
         <li data-enroll-step="enroll" className={step}>
           <span>

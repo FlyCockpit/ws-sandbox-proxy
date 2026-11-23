@@ -13,7 +13,7 @@
     "copyCommand": "Copy command",
     "action": "Add host",
     "steps": {
-      "install": "Install wssp on a Linux machine with KVM, Incus 6.14 or newer and the br_netfilter module.",
+      "install": "On a Linux machine with KVM, Incus 6.14 or newer and the br_netfilter module, install wssp from this server as the user that will run the daemon (not root). The installer checks the download's checksum and prints the next steps.",
       "enroll": "Enroll it (replace my-host with a name for it). The command prints a link and a code: open the link while signed in here and approve.",
       "guard": "Install the egress guard once, as root. Without it the host connects but can't start any sandbox.",
       "run": "Start the daemon. To keep it running across logouts and reboots, run it as a systemd user service."

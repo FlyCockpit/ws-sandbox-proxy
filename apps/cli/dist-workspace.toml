@@ -7,8 +7,10 @@ members = ["cargo:."]
 cargo-dist-version = "0.34.0"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app.
-installers = ["shell"]
+# No cargo-dist installer: each wssp server serves /install.sh, which installs
+# the release of its own version from these archives and sha256.sum
+# (apps/server/src/install-script.ts).
+installers = []
 # Ship notices for the statically linked libc and other bundled dependencies,
 # and the full Apache-2.0 text the (modified) russh notice refers to.
 # apps/cli/tests/dist_notices.rs checks that every file named here exists.

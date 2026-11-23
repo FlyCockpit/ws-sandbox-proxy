@@ -214,6 +214,8 @@ describe("commands", () => {
   it("builds nonsecret enrollment and connect commands for a host", () => {
     const commands = hostCommands("https://api.example.com", { id: "h_1", slug: "desk-01" });
     expect(commands).toEqual({
+      install:
+        "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.com/install.sh | sh",
       deviceLogin: "wssp host enroll --slug desk-01 --server https://api.example.com",
       connect: "wssp host run",
       tokenConnect:
@@ -222,6 +224,15 @@ describe("commands", () => {
     // Only an env var NAME appears, never a credential value or prefix.
     expect(JSON.stringify(commands)).not.toMatch(/wssp_(host|device|sdk)_/);
     expect(hostCommands("https://api.example.com").tokenConnect).toBeNull();
+  });
+
+  it("installs from the server's own /install.sh, https-only for an https server", () => {
+    expect(hostCommands("https://api.example.com/").install).toBe(
+      "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.com/install.sh | sh",
+    );
+    expect(hostCommands("http://localhost:3000").install).toBe(
+      "curl -fsSL --max-time 120 http://localhost:3000/install.sh | sh",
+    );
   });
 
   it("connect commands use automatic local resource defaults", () => {

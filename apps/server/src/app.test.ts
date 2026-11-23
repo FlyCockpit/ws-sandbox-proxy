@@ -277,6 +277,25 @@ describe("production bearer application", () => {
     expect(health.status).toBe(200);
     expect(health.headers.get("access-control-allow-origin")).toBe(state.env.CORS_ORIGIN);
   });
+  it("serves the CLI installer before SSR, with the security headers and no session", async () => {
+    const response = await app.request("/install.sh", {
+      headers: { cookie, host: "evil.example" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/x-shellscript; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-security-policy")).toBeTruthy();
+    const text = await response.text();
+    expect(text).toMatch(/^#!\/bin\/sh\n/);
+    expect(text).toContain("WSSP_ORIGIN='https://api.example'");
+    expect(text).not.toContain("evil.example");
+    const ps1 = await app.request("/install.ps1");
+    expect(ps1.status).toBe(200);
+    expect(await ps1.text()).toContain("Linux only");
+    expect(state.render).not.toHaveBeenCalled();
+    expect(state.getSession).not.toHaveBeenCalled();
+  });
   it("resolves no browser session for asset and page requests", async () => {
     for (const path of ["/assets/test.js", "/en-US", "/en-US/sandboxes", "/rpcx", "/favicon.ico"])
       await app.request(path, { headers: { cookie } });

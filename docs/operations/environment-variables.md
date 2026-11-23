@@ -158,6 +158,17 @@ rather than clearing the list: it is never treated as empty. Changing the
 variable takes effect when the server restarts and the hosts reconnect. See
 [network egress](../guide/network.md#what-is-always-blocked).
 
+`WSSP_CLI_RELEASE_BASE_URL` (unset, `sandbox-relay` group, not in
+`.env.example`) is where `/install.sh` downloads `wssp-<target>.tar.xz` and
+`sha256.sum` from: a mirror of this server version's CLI release. Unset, it is
+this version's GitHub Release
+(`https://github.com/FlyCockpit/ws-sandbox-proxy/releases/download/v<version>`).
+A plain `https://` URL without query, quotes or spaces (the script embeds it
+in single quotes); a trailing `/` is dropped. The script refuses an archive
+whose checksum, layout or `--version` does not match, so a mirror must hold
+exactly this version's archives. Takes effect on restart. See
+[installing the CLI](../guide/cli.md#install).
+
 A single-owner deployment that fills several large machines can set
 `SANDBOX_MAX_HOSTS_PER_OWNER=unlimited`. Per-host sandbox capacity is the
 daemon's charged RAM, total-vCPU and local storage budgets

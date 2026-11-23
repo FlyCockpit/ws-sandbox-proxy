@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({ error: undefined as unknown }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     NODE_ENV: "test",
+    BETTER_AUTH_URL: "https://api.example",
     RATE_LIMIT_AUTH_POINTS: 30,
     RATE_LIMIT_AUTH_WINDOW_SECONDS: 60,
     RATE_LIMIT_RPC_POINTS: 100,

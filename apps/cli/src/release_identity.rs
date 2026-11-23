@@ -6,6 +6,9 @@ const CANONICAL_REPO: &str = "https://github.com/FlyCockpit/ws-sandbox-proxy";
 const CANONICAL_REPO_GIT: &str = "https://github.com/FlyCockpit/ws-sandbox-proxy.git";
 const GHCR_IMAGE: &str = "ghcr.io/flycockpit/ws-sandbox-proxy";
 const ADVISORY_URL: &str = "https://github.com/FlyCockpit/ws-sandbox-proxy/security/advisories/new";
+/// The install command the docs give: the user's own server's installer.
+const SERVER_INSTALLER: &str = "/install.sh | sh";
+/// cargo-dist's installer, which the release no longer ships.
 const SHELL_INSTALLER: &str =
     "https://github.com/FlyCockpit/ws-sandbox-proxy/releases/latest/download/wssp-installer.sh";
 const POWERSHELL_INSTALLER: &str =
@@ -76,12 +79,13 @@ fn cargo_package_uses_product_identity() {
 }
 
 #[test]
-fn dist_workspace_ships_linux_shell_installer() {
+fn dist_workspace_ships_linux_archives_without_an_installer() {
     let text = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/dist-workspace.toml"));
     let parsed: DistWorkspaceManifest =
         toml::from_str(text).expect("apps/cli/dist-workspace.toml parses");
 
-    assert_eq!(parsed.dist.installers, ["shell"]);
+    // The server serves the only installer (`/install.sh`).
+    assert!(parsed.dist.installers.is_empty());
     // The CLI and node daemon are Linux-only.
     assert_eq!(
         parsed.dist.targets,
@@ -100,14 +104,18 @@ fn root_package_json_points_at_canonical_repo() {
 }
 
 #[test]
-fn readme_documents_linux_shell_installation_from_canonical_repo() {
+fn readme_documents_server_installer_from_canonical_repo() {
     let cli_readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/README.md"));
     let root_readme = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../README.md"));
     let releasing = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/releasing.md"));
 
     for text in [cli_readme, root_readme, releasing] {
         assert!(text.contains(CANONICAL_REPO));
-        assert!(text.contains(SHELL_INSTALLER));
+        assert!(text.contains(SERVER_INSTALLER));
+        assert!(
+            !text.contains(SHELL_INSTALLER),
+            "the unpublished cargo-dist installer is advertised"
+        );
     }
     for text in [cli_readme, root_readme, releasing] {
         assert!(

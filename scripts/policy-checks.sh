@@ -2259,7 +2259,10 @@ hits="$(
 # wrapper text (ADR-006) that a person reviews and runs in their own host
 # terminal; it only drops cached sudo credentials (`sudo -k`) and the server
 # never executes it.
-hits="$(filter_paths "$hits" scripts/policy-checks.sh scripts/claude-hooks/pre-tool-use.mjs scripts/claude-hooks/settings.json apps/web/src/lib/host-status.ts packages/api/src/sandbox/host-queued-wrapper.ts)"
+# apps/server/src/install-script.ts renders /install.sh, which prints the same
+# guard command as a next step for the person to run (it never runs sudo); its
+# test asserts that printed line.
+hits="$(filter_paths "$hits" scripts/policy-checks.sh scripts/claude-hooks/pre-tool-use.mjs scripts/claude-hooks/settings.json apps/web/src/lib/host-status.ts packages/api/src/sandbox/host-queued-wrapper.ts apps/server/src/install-script.ts apps/server/src/install-script.test.ts)"
 report "Do not run sudo from agent-owned scripts. Print the command block and ask the developer to run it." "$hits"
 
 # AGENTS.md rule 8: "Every list query is bounded (`cursorPageInput` + `take`)".

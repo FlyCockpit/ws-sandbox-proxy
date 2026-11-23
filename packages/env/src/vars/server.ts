@@ -200,6 +200,17 @@ export const serverVars = {
   // relay at boot WITHOUT failing boot: an invalid list is logged and never
   // sent, so hosts keep their last list (or refuse new sandboxes).
   SANDBOX_EGRESS_BLOCKLIST: z.string().optional(),
+  // Where /install.sh downloads wssp-<target>.tar.xz and sha256.sum from (a mirror of this
+  // version's release). Unset: the GitHub Release of this server's version
+  // (apps/server/src/install-script.ts). https only, and a plain URL: the script embeds it in
+  // single quotes, so quotes, spaces, queries and shell metacharacters are refused.
+  WSSP_CLI_RELEASE_BASE_URL: z
+    .string()
+    .regex(/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~%+@-]+)*\/?$/, {
+      message: "WSSP_CLI_RELEASE_BASE_URL must be a plain https URL (no query, quotes or spaces).",
+    })
+    .transform((url) => url.replace(/\/+$/, ""))
+    .optional(),
   // Relayed peer image copies: transient part spool (never durable storage).
   // Defaults inside the node-owned server-data volume (`.data`), beside but
   // never inside TRANSFER_SPOOL_DIR: transfer recovery refuses any foreign entry.

@@ -18,7 +18,8 @@ steps with copyable commands.
    Incus 6.14 or newer with the `network_acl` extension, and the
    `br_netfilter` module loaded with `net.bridge.bridge-nf-call-ip6tables=1`.
    The user that will run the daemon must be an Incus admin.
-2. **Install `wssp`** ([install](#install)) as that user.
+2. **Install `wssp`** ([install](#install)) as that user, from your server:
+   `curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 <server-origin>/install.sh | sh`.
 3. **Enroll** ([enroll](#enroll)): `wssp host enroll --slug <name> --server
    <server-origin>`. It prints a link and a code; open the link in a browser
    signed in to the dashboard (verified email, and 2FA if your server requires
@@ -297,7 +298,7 @@ maintainers' packages), then check `incus version`:
 
 ```sh
 sudo mkdir -p /etc/apt/keyrings
-sudo curl -fsSL https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
+sudo curl -fsSL --max-time 120 https://pkgs.zabbly.com/key.asc -o /etc/apt/keyrings/zabbly.asc
 sudo sh -c 'cat > /etc/apt/sources.list.d/zabbly-incus-stable.sources <<EOF
 Enabled: yes
 Types: deb
@@ -478,9 +479,17 @@ under it.
 
 ## Install
 
-The CLI is Linux-only. After a public release, use the shell installer on
-Linux in the [CLI README](../../apps/cli/README.md#install-after-release).
-From source (Rust 1.99+):
+The CLI is Linux-only. As the user that will run the daemon (not root), install
+the `wssp` that matches your server from the server itself:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://<your-server>/install.sh | sh
+```
+
+It installs into `~/.local/bin/wssp` (where the [service](#run-as-a-service)
+runs it), only after the archive's SHA-256 matches the release's `sha256.sum`,
+and prints the enrolment steps for this server. Details, options and provenance
+checks: [CLI guide](cli.md#install). From source (Rust 1.99+):
 
 ```sh
 cargo install --path apps/cli --bin wssp
@@ -1333,7 +1342,9 @@ Check for systemd drop-ins too: a file under
 each one the same way (`systemctl --user cat wssp-host` lists the unit and
 every drop-in), then run `systemctl --user daemon-reload`.
 
-**Upgrading a running host.** Install the new binary, then run
+**Upgrading a running host.** Install the new binary (run the server's
+`/install.sh` again after the server upgrade: it replaces `~/.local/bin/wssp`
+in place, and the running daemon keeps its old file until it restarts), then run
 `systemctl --user reload wssp-host` (the example unit's `ExecReload` runs
 `wssp host daemon quiesce`). Running commands finish first, for at most
 `quiesce_max`, and new ones wait in the server queue until the new daemon

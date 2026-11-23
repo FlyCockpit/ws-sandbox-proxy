@@ -118,7 +118,7 @@
     "copyCommand": "Copiar comando",
     "action": "Agregar host",
     "steps": {
-      "install": "Instala wssp en una máquina Linux con KVM, Incus 6.14 o posterior y el módulo br_netfilter.",
+      "install": "En una máquina Linux con KVM, Incus 6.14 o posterior y el módulo br_netfilter, instala wssp desde este servidor como el usuario que ejecutará el daemon (no root). El instalador verifica la suma de comprobación de la descarga y muestra los siguientes pasos.",
       "enroll": "Inscríbela (reemplaza my-host por un nombre para ella). El comando imprime un enlace y un código: abre el enlace con la sesión iniciada aquí y aprueba.",
       "guard": "Instala la protección de salida una vez, como root. Sin ella el host se conecta pero no puede iniciar ningún sandbox.",
       "run": "Inicia el daemon. Para que siga funcionando tras cerrar sesión y reiniciar, ejecútalo como servicio de usuario de systemd."

@@ -152,9 +152,9 @@ the vendored copy (upstream ships manual windows) are there too.
 
 Releases are handled by the root `Release` GitHub Actions workflow and `dist` (cargo-dist).
 
-1. Bump `version` in `apps/cli/Cargo.toml`.
+1. Bump `version` in `apps/cli/Cargo.toml` and `SERVER_VERSION` in `apps/server/src/version.ts`.
 2. Merge that change to the default branch.
 3. Manually run the root `Release` workflow with the matching tag, for example `v1.0.1`.
-4. The supported CLI and node-daemon platform is Linux. The workflow publishes Linux CLI artifacts and a shell installer to GitHub Releases, and containers to GHCR.
+4. The supported CLI and node-daemon platform is Linux. The workflow checks and attests (`actions/attest`) the Linux CLI archives and `sha256.sum`, publishes them to GitHub Releases, and containers to GHCR. Hosts and devices install from their server's `/install.sh` (`apps/server/src/install-script.ts`); cargo-dist ships no installer.
 
 Cargo-dist artifact behavior lives in `dist-workspace.toml`; the root release workflow owns monorepo orchestration. See `docs/releasing.md`.

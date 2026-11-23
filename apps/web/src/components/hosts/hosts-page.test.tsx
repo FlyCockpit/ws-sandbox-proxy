@@ -362,6 +362,12 @@ describe("hosts page query states", () => {
       ),
     ).toEqual(["install", "enroll", "guard", "run"]);
     expect(within(enroll).getByText(GUARD_INSTALL_COMMAND)).toBeTruthy();
+    // Step 1 installs wssp from this server's own installer.
+    expect(
+      within(enroll).getByText(
+        "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.test/install.sh | sh",
+      ),
+    ).toBeTruthy();
     // No docs base in this environment: the guide is named by its repository path.
     expect(
       within(enroll).getByText(
