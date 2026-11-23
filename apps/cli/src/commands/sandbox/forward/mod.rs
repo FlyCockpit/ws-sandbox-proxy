@@ -225,6 +225,11 @@ fn bind(args: &ForwardArgs) -> Result<(Vec<Listener>, Vec<Listening>, Option<Uni
         listener
             .set_nonblocking(true)
             .context("configuring the listener")?;
+        if let Err(error) = clamp_segment_size(&listener) {
+            // Best effort: without it a shrinking client window can only
+            // slow a connection down, never break it.
+            tracing::debug!(%error, "TCP_MAXSEG on the listener refused");
+        }
         let bound = listener.local_addr().context("configuring the listener")?;
         listening.push(Listening {
             local: bound.to_string(),
@@ -244,6 +249,33 @@ fn bind(args: &ForwardArgs) -> Result<(Vec<Listener>, Vec<Listening>, Option<Uni
 /// place with a rename that refuses an existing target. Nothing touches the
 /// process-wide umask: a narrowed umask would apply to every other thread's
 /// file and directory creation at the same moment.
+/// The largest TCP segment of an accepted connection, both ways.
+///
+/// Linux sends a segment no larger than half the largest receive window
+/// the peer ever offered (up to 64 KiB on loopback) and, while more data
+/// waits than the peer's window, nothing shorter: when the window a local
+/// client offers later shrinks below that size (its receive buffer
+/// re-scaled, a reader that slowed down), the forward's queued output
+/// moves only through the persist timer, one window per probe, about
+/// 100-200 KB/s for the rest of the connection. A segment size no larger
+/// than the smallest window a receive buffer can offer keeps every open
+/// window usable (1 KiB never stalled down to the kernel's smallest
+/// receive buffer; 2 KiB did). On loopback (segmentation offload) it costs
+/// nothing; on a real interface it means somewhat more packets, on a path
+/// the relay limits far below the link anyway.
+const LOCAL_SEGMENT: u32 = 1024;
+
+/// Accepted connections inherit the listener's `TCP_MAXSEG`.
+#[cfg(target_os = "linux")]
+fn clamp_segment_size(listener: &TcpListener) -> std::io::Result<()> {
+    socket2::SockRef::from(listener).set_tcp_mss(LOCAL_SEGMENT)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clamp_segment_size(_listener: &TcpListener) -> std::io::Result<()> {
+    Ok(())
+}
+
 fn bind_unix(path: &Path) -> Result<(UnixListener, UnixPath)> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let exists = || {
@@ -605,6 +637,10 @@ struct Forward {
     buffer: Vec<u8>,
     /// The next channel `read_input` serves first.
     in_cursor: u32,
+    /// This turn moved bytes (local output written, local input sent):
+    /// what a local socket does next announces itself with no frame, so
+    /// the next poll waits only briefly ([`Connection::set_busy`]).
+    moved: bool,
 }
 
 impl Forward {
@@ -619,6 +655,7 @@ impl Forward {
             refusals_unlogged: 0,
             buffer: vec![0; data_max.max(1)],
             in_cursor: 0,
+            moved: false,
         }
     }
 
@@ -837,6 +874,7 @@ impl Forward {
                     // A socket that takes nothing: try again next turn.
                     Ok(0) => break,
                     Ok(n) => {
+                        self.moved = true;
                         *written += n;
                         if *written >= bytes.len() {
                             let seq = *seq;
@@ -907,6 +945,7 @@ impl Forward {
                     Ok(n) => {
                         connection.send_stdin(channel, &self.buffer[..n])?;
                         served = true;
+                        self.moved = true;
                     }
                     Err(error) if is_would_block(&error) => break,
                     Err(_) => {
@@ -1067,6 +1106,7 @@ fn pump(
     let mut closing: Option<(i32, Instant)> = None;
     loop {
         let mut released: VecDeque<Event> = connection.poll()?.into();
+        forward.moved |= !released.is_empty();
         let now = Instant::now();
         while let Ok(signal) = signals.try_recv() {
             if closing.is_some() {
@@ -1136,6 +1176,7 @@ fn pump(
         for channel in forward.ended.drain(..) {
             connection.forget(channel);
         }
+        connection.set_busy(std::mem::take(&mut forward.moved))?;
     }
 }
 

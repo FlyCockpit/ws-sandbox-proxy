@@ -36,6 +36,9 @@ use wssp::connect_client::wire::{
 mod managed_child;
 use managed_child::ManagedChild;
 
+#[path = "support/latency.rs"]
+mod latency;
+
 const SECRET: &str = "wssp_sdk_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 fn limits() -> Limits {
@@ -909,6 +912,9 @@ struct World {
     root: tempfile::TempDir,
     fake: Fake,
     config: PathBuf,
+    /// The server URL the client uses: the fake's, or a latency proxy's.
+    server: String,
+    _latency: Option<latency::Latency>,
 }
 
 fn wssp_env(command: &mut Command, root: &Path, server: &str) {
@@ -939,16 +945,29 @@ fn wssp_env(command: &mut Command, root: &Path, server: &str) {
 
 impl World {
     fn new() -> Self {
+        Self::with_latency(None)
+    }
+
+    /// A world whose client reaches the fake through a path that adds
+    /// `one_way` in each direction.
+    fn with_latency(one_way: Option<Duration>) -> Self {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(root.path().join("home")).unwrap();
         std::fs::create_dir_all(root.path().join("guest")).unwrap();
         let fake = Fake::new(&root.path().join("guest"));
+        let latency = one_way.map(|one_way| {
+            latency::Latency::start(fake.url.strip_prefix("http://").unwrap(), one_way)
+        });
+        let server = latency.as_ref().map_or_else(
+            || fake.url.clone(),
+            |proxy| format!("http://{}", proxy.address),
+        );
         // The generated block, as `--install` writes it (`--install` itself
         // refuses a `$HOME` that is not the account's home, which ssh reads;
         // `tests/ssh_config.rs` covers it).
         let mut print = Command::new(env!("CARGO_BIN_EXE_wssp"));
         print.args(["ssh-config", "--json"]);
-        wssp_env(&mut print, root.path(), &fake.url);
+        wssp_env(&mut print, root.path(), &server);
         let output = print.output().unwrap();
         assert!(
             output.status.success(),
@@ -959,7 +978,13 @@ impl World {
         let config = root.path().join("home/.ssh/config.d/wssp");
         std::fs::create_dir_all(config.parent().unwrap()).unwrap();
         std::fs::write(&config, report["config"].as_str().unwrap()).unwrap();
-        Self { root, fake, config }
+        Self {
+            root,
+            fake,
+            config,
+            server,
+            _latency: latency,
+        }
     }
 
     fn guest(&self) -> PathBuf {
@@ -1007,7 +1032,7 @@ impl World {
     /// A client tool (`ssh`, `scp`, `sftp`) with the generated config.
     fn tool(&self, program: &str) -> Command {
         let mut command = Command::new(program);
-        wssp_env(&mut command, self.root.path(), &self.fake.url);
+        wssp_env(&mut command, self.root.path(), &self.server);
         command.env("WSSP_TEST_SSH_NOTE_LOG", self.note_log());
         command
             .arg("-F")
@@ -1035,7 +1060,7 @@ impl World {
 
     fn rsync(&self) -> Command {
         let mut command = Command::new("rsync");
-        wssp_env(&mut command, self.root.path(), &self.fake.url);
+        wssp_env(&mut command, self.root.path(), &self.server);
         command.env("WSSP_TEST_SSH_NOTE_LOG", self.note_log());
         command
             .arg("-e")
@@ -1580,6 +1605,105 @@ fn rsync_moves_a_sizeable_file_both_ways() {
     assert!(
         std::fs::read(world.path("back.bin")).unwrap() == bytes,
         "download changed"
+    );
+}
+
+/// Over a path with 15 ms each way, a channel moves its data at the pace
+/// of its window (1 MiB of stdin or output credit per round trip), both
+/// ways: the endpoint's connection thread must not add a wait of its own
+/// per turn (it once waited a whole poll slice per turn for input that no
+/// frame announces, and again after the frames that woke it). Each transfer
+/// is timed inside its own connection, from its first byte to its end (the
+/// upload in the guest by `/proc/uptime`, the download at the client by a
+/// monotonic clock), so the connection's setup never counts. In a debug build: about 37 ms per MiB both ways (up
+/// to 67 up next to this file's other tests); 141-182 up and 67-92 down
+/// with those waits. The upload limit sits between; the download limit
+/// only catches a gross regression. A busy machine only adds time (the
+/// other tests of this file run at once), so the best of up to three
+/// attempts counts; the waits it guards against are there every time.
+#[test]
+fn a_transfer_runs_at_the_pace_of_its_window() {
+    require!("ssh");
+    const MIB: usize = 16;
+    const ONE_WAY: Duration = Duration::from_millis(15);
+    const UP_LIMIT_MS_PER_MIB: f64 = 110.0;
+    const DOWN_LIMIT_MS_PER_MIB: f64 = 70.0;
+    const ATTEMPTS: usize = 3;
+    let world = World::with_latency(Some(ONE_WAY));
+    let source = world.path("up.bin");
+    let bytes = payload(MIB * 1024 * 1024, 5);
+    std::fs::write(&source, &bytes).unwrap();
+    let guest = world.guest();
+    let per_mib = |secs: f64| secs * 1000.0 / MIB as f64;
+    let (mut best_up, mut best_down) = (f64::MAX, f64::MAX);
+    for attempt in 1..=ATTEMPTS {
+        // The guest stamps the arrival of the first byte and of the end
+        // (`/proc/uptime`: a clock nobody sets, 10 ms steps).
+        let mut up = world.ssh();
+        up.args([
+            "sbx_1.wssp",
+            "dd bs=1 count=1 status=none > up.bin && cat /proc/uptime > up.start && \
+             cat >> up.bin && cat /proc/uptime > up.end",
+        ])
+        .stdin(std::fs::File::open(&source).unwrap());
+        let output = run(up, None, Duration::from_secs(300));
+        assert!(output.status.success(), "upload: {}", text(&output.stderr));
+        assert!(
+            std::fs::read(guest.join("up.bin")).unwrap() == bytes,
+            "upload changed"
+        );
+        let stamp = |name: &str| -> f64 {
+            let text = std::fs::read_to_string(guest.join(name)).unwrap();
+            text.split_whitespace()
+                .next()
+                .unwrap()
+                .parse::<f64>()
+                .unwrap()
+        };
+        let up = per_mib(stamp("up.end") - stamp("up.start"));
+        // The client times its first byte and the end of the stream; the
+        // read runs on its own thread so a hung download still fails in
+        // time (its process group is killed).
+        let mut down = world.ssh();
+        down.args(["sbx_1.wssp", "cat up.bin"]);
+        let mut child = ManagedChild::spawn(&mut down).unwrap();
+        let mut stdout = child.stdout.take().unwrap();
+        let (done, finished) = mpsc::channel();
+        thread::spawn(move || {
+            let mut got = Vec::new();
+            let mut buffer = vec![0_u8; 64 * 1024];
+            let mut first = None;
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        first.get_or_insert_with(Instant::now);
+                        got.extend_from_slice(&buffer[..n]);
+                    }
+                }
+            }
+            let _ = done.send((first.map(|at| at.elapsed()), got));
+        });
+        let Ok((elapsed, got)) = finished.recv_timeout(Duration::from_secs(300)) else {
+            let _ = rustix::process::kill_process_group(
+                rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+                rustix::process::Signal::KILL,
+            );
+            panic!("the download did not end within 300 s");
+        };
+        let down = per_mib(elapsed.expect("no download").as_secs_f64());
+        assert!(exit_within(&mut child, LIMIT, "the download").success());
+        assert!(got == bytes, "download changed");
+        eprintln!("attempt {attempt}: up {up:.0} ms/MiB, down {down:.0} ms/MiB");
+        best_up = best_up.min(up);
+        best_down = best_down.min(down);
+        if best_up < UP_LIMIT_MS_PER_MIB && best_down < DOWN_LIMIT_MS_PER_MIB {
+            return;
+        }
+    }
+    panic!(
+        "best of {ATTEMPTS}: upload {best_up:.0}, download {best_down:.0} ms per MiB over a 30 ms \
+         round trip (limits {UP_LIMIT_MS_PER_MIB} and {DOWN_LIMIT_MS_PER_MIB})"
     );
 }
 

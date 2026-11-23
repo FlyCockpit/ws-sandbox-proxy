@@ -50,10 +50,10 @@ rsync runs the guest's own `rsync` binary over ssh (`rsync --server …` as a
 command). The community templates include it; a custom template needs it
 installed ([What the sandbox needs](./README.md#what-the-sandbox-needs)).
 
-**Speed.** Uploads with rsync are slower than downloads: in the verification
-above a 1 GiB tree took about 7 to 13 minutes up and 3 to 4 minutes down
-between the test sites. scp uploads ran at about 5 MB/s. For one large file,
-`scp` is the faster upload.
+**Speed.** A transfer moves at most about 1 MiB per round trip between your
+machine and the sandbox's node, in each direction, so the round trip sets the
+speed more than the tool: about 10 MB/s at 100 ms. rsync and scp, uploads and
+downloads, all run close to that.
 
 ## scp
 

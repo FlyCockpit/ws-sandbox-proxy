@@ -1017,6 +1017,109 @@ fn a_slow_local_reader_holds_the_credit_instead_of_buffering() {
     assert!(!path.exists(), "the socket file is removed at the end");
 }
 
+/// Whether the loopback TCP socket from `local` to `remote` (ports) runs
+/// its window probe timer (`/proc/net/tcp` timer 4): nothing in flight,
+/// and the peer's window has no room for a segment, so with segments of
+/// at most 1 KiB less than 1 KiB of it is still open.
+fn probes_zero_window(local: u16, remote: u16) -> bool {
+    let table = std::fs::read_to_string("/proc/net/tcp").unwrap();
+    let want = (
+        format!("0100007F:{local:04X}"),
+        format!("0100007F:{remote:04X}"),
+    );
+    table.lines().skip(1).any(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        fields.len() > 5
+            && fields[1] == want.0
+            && fields[2] == want.1
+            && fields[5].starts_with("04:")
+    })
+}
+
+/// A local reader whose receive window shrinks below half the largest it
+/// ever offered (here: `SO_RCVBUF` lowered mid-stream; in the field: a
+/// loopback client's receive buffer re-scaled by the kernel) must not drop
+/// the stream into the kernel's persist-probe mode, where a sender whose
+/// segment size (half the largest window seen, up to 32 KiB on loopback)
+/// exceeds the open window sends one window per probe timer, about
+/// 100-200 KB/s. A healthy run moves the rest in a few seconds; the slow
+/// mode needs minutes, far past the limit.
+#[test]
+fn a_reader_whose_window_shrinks_keeps_its_throughput() {
+    const FRAME: usize = 32 * 1024;
+    const FRAMES: u64 = 2048; // 64 MiB
+    const WARM: usize = 8 * 1024 * 1024;
+    let root = tempfile::tempdir().unwrap();
+    let fake = Fake::new(Script {
+        echo: false,
+        ..Script::default()
+    });
+    let forward = Forward::spawn(root.path(), &fake, &["5432:0"]);
+    let address = forward.address();
+    let mut client = connect(&address);
+    // The forward's segment size, as the client sees it in the handshake.
+    let mss = socket2::SockRef::from(&client).tcp_mss().unwrap();
+    assert!(mss <= 1024, "segments of {mss} bytes");
+    client.write_all(b"go").unwrap();
+    fake.wait("the first stdin frame", |log| {
+        log.iter().any(|f| matches!(f, In::Data(..)))
+    });
+    let frame = payload(FRAME, 11);
+    fake.order(Cmd::Stream(1, FRAMES, frame.clone()));
+    let total = FRAME * FRAMES as usize;
+    let mut buffer = vec![0_u8; 16 * 1024];
+    let mut got = 0_usize;
+    let mut shrunk_at = None;
+    let mut mismatch = false;
+    while got < total {
+        if got >= WARM && shrunk_at.is_none() {
+            // Shrink only while the window is (nearly) closed: the reader
+            // pauses until the forward can hand the kernel nothing more
+            // (its acks stop with a full credit window outstanding) and
+            // the forward's socket runs its window probe timer. A smaller
+            // buffer under an open window drops what arrives in it, and
+            // repeated drops back the sender's retransmissions off into a
+            // stall of their own; here at most the window's last < 1 KiB
+            // can be dropped, one retransmission (well under a second of
+            // the 30 s allowed).
+            fake.wait_stalled(1);
+            let ours = client.local_addr().unwrap().port();
+            let theirs = client.peer_addr().unwrap().port();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !probes_zero_window(theirs, ours) {
+                assert!(
+                    Instant::now() < deadline,
+                    "the forward's socket never probed a closed window"
+                );
+                thread::sleep(Duration::from_millis(20));
+            }
+            rustix::net::sockopt::set_socket_recv_buffer_size(&client, 16 * 1024).unwrap();
+            shrunk_at = Some(Instant::now());
+        }
+        let n = match client.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) => panic!("read after {got} bytes: {error}"),
+        };
+        for (i, byte) in buffer[..n].iter().enumerate() {
+            mismatch |= *byte != frame[(got + i) % FRAME];
+        }
+        got += n;
+        if let Some(at) = shrunk_at {
+            assert!(
+                at.elapsed() < Duration::from_secs(30),
+                "slow mode: {got} of {total} bytes after {:?} with the smaller window",
+                at.elapsed()
+            );
+        }
+    }
+    assert_eq!(got, total);
+    assert!(!mismatch, "the stream changed");
+    forward.signal(rustix::process::Signal::INT);
+    assert_eq!(forward.finish(Duration::from_secs(10)).0, Some(130));
+}
+
 #[test]
 fn the_backlog_beyond_the_channel_cap_is_bounded() {
     let root = tempfile::tempdir().unwrap();

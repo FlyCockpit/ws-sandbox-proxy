@@ -239,6 +239,11 @@ struct Bridge {
     /// stdin round robin: the next turn starts at this local key, which
     /// moves past a channel only once it sent a frame.
     cursor: u64,
+    /// This turn handled a command, an event or sent stdin: the SSH side
+    /// is active, and what it hands over next announces itself with no
+    /// frame, so the next poll waits only briefly
+    /// ([`Connection::set_busy`]).
+    busy: bool,
 }
 
 /// Drive the connection until the SSH side shuts down or the connection
@@ -252,6 +257,7 @@ pub fn run(connection: Connection, commands: mpsc::Receiver<Cmd>, up: UnboundedS
         locals: BTreeMap::new(),
         ended: Vec::new(),
         cursor: 0,
+        busy: false,
     };
     let result = bridge.pump();
     match result {
@@ -272,6 +278,7 @@ impl Bridge {
                 return self.shutdown();
             }
             let events = self.connection.poll()?;
+            self.busy |= !events.is_empty();
             for event in events {
                 self.on_event(event);
             }
@@ -280,6 +287,7 @@ impl Bridge {
             // What left as stdin frames is window for the SSH client again.
             self.send_grants();
             self.forget_ended();
+            self.connection.set_busy(std::mem::take(&mut self.busy))?;
         }
     }
 
@@ -292,6 +300,7 @@ impl Bridge {
                 Err(mpsc::TryRecvError::Empty) => return Ok(false),
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(true),
             };
+            self.busy = true;
             if self.on_command(command)? {
                 return Ok(true);
             }
@@ -479,7 +488,7 @@ impl Bridge {
     fn send_stdin(&mut self) -> anyhow::Result<()> {
         self.connection.queue_acks()?;
         let order: Vec<u64> = self.links.keys().copied().collect();
-        let (links, connection) = (&mut self.links, &mut self.connection);
+        let (links, connection, busy) = (&mut self.links, &mut self.connection, &mut self.busy);
         round_robin(&order, &mut self.cursor, |local| {
             let Some(link) = links.get_mut(&local) else {
                 return Ok(false);
@@ -494,6 +503,7 @@ impl Bridge {
                 };
                 connection.send_stdin(link.channel, &bytes)?;
                 sent += 1;
+                *busy = true;
             }
             // A pty has no stdin eof (sshd keeps the terminal open).
             if link.eof && link.kind != Kind::Pty && link.stdin.is_empty() {

@@ -111,6 +111,10 @@ signal-hook = { version = "0.4.6", default-features = false, features = ["iterat
 # (safe API, `process` feature; `signal` for the guard's process-group kill). `mlock` stays unused: nix exposes it only as
 # an `unsafe fn` and the crate forbids `unsafe`.
 nix = { workspace = true, features = ["process", "signal"] }
+# `wssp sandbox forward`: `TCP_MAXSEG` on its listeners (`clamp_segment_size`)
+# without `unsafe`; socket2 is already in Cargo.lock through tokio, `all`
+# only adds the option setters, no new crate.
+socket2 = { version = "0.6.5", features = ["all"] }
 # Egress guard: `SO_PEERCRED` on the guard socket without `unsafe` (std's
 # `peer_cred` is unstable). rustix (>= 1.1.5) is already in Cargo.lock through
 # tempfile; this adds only its `net` feature, no new crate. `wssp host daemon

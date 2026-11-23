@@ -199,17 +199,31 @@ impl Budget {
         Admit::Dropped
     }
 
-    /// Take up to `max` bytes to send as one stdin frame now; they are owed
-    /// back to the client as window.
+    /// Take up to `max` bytes to send as one stdin frame now, as many of the
+    /// queued bytes as fit (a frame costs one unit of the channel's credit
+    /// whatever its size, so small packets are joined); they are owed back
+    /// to the client as window.
     pub fn take(&self, max: usize) -> Option<Vec<u8>> {
+        let max = max.max(1);
         let mut state = self.lock();
-        let front = state.queue.front_mut()?;
-        let bytes = if front.len() <= max {
-            state.queue.pop_front()?
-        } else {
-            let rest = front.split_off(max.max(1));
-            std::mem::replace(front, rest)
-        };
+        let mut bytes = state.queue.pop_front()?;
+        if bytes.len() > max {
+            let rest = bytes.split_off(max);
+            state.queue.push_front(rest);
+        }
+        while bytes.len() < max {
+            let Some(next) = state.queue.front_mut() else {
+                break;
+            };
+            let room = max - bytes.len();
+            if next.len() <= room {
+                bytes.extend_from_slice(next);
+                state.queue.pop_front();
+            } else {
+                bytes.extend_from_slice(&next[..room]);
+                next.drain(..room);
+            }
+        }
         state.owed = state.owed.saturating_add(bytes.len());
         Some(bytes)
     }
@@ -403,6 +417,28 @@ mod tests {
         }
         assert!(got == sent);
         assert!(budget.is_empty());
+        assert_eq!(budget.take_grant(), Some(sent.len() as u32));
+    }
+
+    #[test]
+    fn queued_packets_join_into_full_frames() {
+        // Credit counts frames, not bytes: packets that arrived one by one
+        // leave as few frames as fit, in order, each at most `max`.
+        let budget = started(INITIAL, BULK);
+        let mut sent = Vec::new();
+        for n in [20_000_usize, 32 * 1024, 5, 32 * 1024, 7_000] {
+            let packet: Vec<u8> = (0..n).map(|i| (i * 7 + n) as u8).collect();
+            sent.extend_from_slice(&packet);
+            assert_eq!(budget.admit(&packet), Admit::Kept);
+        }
+        let max = 32 * 1024;
+        let mut frames = Vec::new();
+        while let Some(frame) = budget.take(max) {
+            frames.push(frame);
+        }
+        let sizes: Vec<usize> = frames.iter().map(Vec::len).collect();
+        assert_eq!(sizes, [max, max, sent.len() - 2 * max]);
+        assert!(frames.concat() == sent);
         assert_eq!(budget.take_grant(), Some(sent.len() as u32));
     }
 

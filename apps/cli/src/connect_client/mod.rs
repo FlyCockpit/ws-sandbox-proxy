@@ -57,6 +57,16 @@ const WRITE_STALL: Duration = Duration::from_secs(30);
 const CLOSE_WRITE: Duration = Duration::from_secs(2);
 /// How long one [`Connection::poll`] waits for a frame at most.
 pub const POLL_SLICE: Duration = Duration::from_millis(10);
+/// The wait of [`Connection::poll`] while the caller has work coming that
+/// no frame announces (input its other side hands over, a delivery report
+/// to acknowledge): that work then waits for at most this, not a whole
+/// [`POLL_SLICE`] per turn, which capped a transfer at one turn's frames
+/// per slice.
+pub const BUSY_POLL_SLICE: Duration = Duration::from_millis(1);
+/// How long after its last activity the caller counts as busy, so a short
+/// gap in a transfer (a burst boundary, a request and its answer) does not
+/// cost a whole [`POLL_SLICE`].
+const BUSY_HOLD: Duration = Duration::from_millis(50);
 /// Frames handled per poll before the caller gets a turn.
 const POLL_BATCH: usize = 64;
 /// Largest upgrade response head read.
@@ -151,6 +161,12 @@ pub struct Connection {
     broken: bool,
     /// The closing handshake was attempted already.
     closed: bool,
+    /// The read timeout of [`Connection::poll`] now.
+    poll_wait: Duration,
+    /// When the caller last reported activity ([`Connection::set_busy`]).
+    last_active: Option<Instant>,
+    /// The socket is in nonblocking mode (only within [`Connection::poll`]).
+    nonblocking: bool,
 }
 
 impl std::fmt::Debug for Connection {
@@ -636,6 +652,9 @@ impl Connection {
             last_heard: Instant::now(),
             broken: false,
             closed: false,
+            poll_wait: POLL_SLICE,
+            last_active: None,
+            nonblocking: false,
         })
     }
 
@@ -714,11 +733,64 @@ impl Connection {
         self.mux.forget(channel);
     }
 
-    /// Wait up to [`POLL_SLICE`] for frames and return their events in
-    /// delivery order.
+    /// The caller's turn moved data (`active`) or not: the next polls wait
+    /// [`BUSY_POLL_SLICE`] until [`BUSY_HOLD`] after the last active turn,
+    /// then [`POLL_SLICE`] again, so an idle connection wakes as rarely as
+    /// before.
+    pub fn set_busy(&mut self, active: bool) -> Result<()> {
+        let now = Instant::now();
+        if active {
+            self.last_active = Some(now);
+        }
+        let busy = self
+            .last_active
+            .is_some_and(|at| now.duration_since(at) < BUSY_HOLD);
+        let wait = if busy { BUSY_POLL_SLICE } else { POLL_SLICE };
+        if wait != self.poll_wait {
+            self.control
+                .set_read_timeout(Some(wait))
+                .context("configuring the socket")?;
+            self.poll_wait = wait;
+        }
+        Ok(())
+    }
+
+    /// Wait up to [`POLL_SLICE`] (see [`Connection::set_busy`]) for frames
+    /// and return their events in delivery order. Only the first read
+    /// waits: once a frame arrived, the rest of the batch takes only what
+    /// is already there, so the caller gets its turn as soon as the frames
+    /// that woke it are handled (a wait after them delayed every ack by a
+    /// whole slice).
     pub fn poll(&mut self) -> Result<Vec<Event>> {
+        let result = self.poll_batch();
+        let restored = self.set_blocking();
+        let events = result?;
+        restored.map_err(|error| {
+            self.broken = true;
+            anyhow::Error::new(error).context("configuring the socket")
+        })?;
+        Ok(events)
+    }
+
+    /// Back to blocking reads and writes (with their timeouts).
+    fn set_blocking(&mut self) -> std::io::Result<()> {
+        if self.nonblocking {
+            self.nonblocking = false;
+            self.control.set_nonblocking(false)?;
+        }
+        Ok(())
+    }
+
+    fn poll_batch(&mut self) -> Result<Vec<Event>> {
         let mut events = Vec::new();
-        for _ in 0..POLL_BATCH {
+        for turn in 0..POLL_BATCH {
+            if turn == 1 && !self.nonblocking {
+                if let Err(error) = self.control.set_nonblocking(true) {
+                    self.broken = true;
+                    return Err(anyhow::Error::new(error).context("configuring the socket"));
+                }
+                self.nonblocking = true;
+            }
             let message = match self.socket.read() {
                 Ok(message) => message,
                 Err(tungstenite::Error::Io(error)) if is_timeout(&error) => {
@@ -875,7 +947,9 @@ impl Connection {
             return;
         }
         self.closed = true;
-        if self.control.set_write_timeout(Some(CLOSE_WRITE)).is_err() {
+        if self.set_blocking().is_err()
+            || self.control.set_write_timeout(Some(CLOSE_WRITE)).is_err()
+        {
             return;
         }
         let deadline = Instant::now() + CLOSE_WRITE;
