@@ -23,6 +23,8 @@ import {
  *    backstop, X2);
  * 2. stale: PENDING/EXPORTING with no begin for a while, UPLOADING with no
  *    OPEN session or whose session's transfer ended or expired → FAILED;
+ *    (the upload stall rule runs on the server's 15 s image tick instead,
+ *    `stallOffloadUploads`, which also tells the host);
  * 3. verify backstop: retry after an hour, fail unavailable after a day;
  * 4. consumed grace: a CONSUMED row past `deleteAfter` is shredded in the GC
  *    transaction that precedes the object delete (§3, §6a);

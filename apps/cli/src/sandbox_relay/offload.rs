@@ -55,9 +55,38 @@ const UPLOAD_IN_PROGRESS: &str = "upload_in_progress";
 /// longer uploads.
 const STALE: &str = "stale";
 /// `disk.offload.inventory` pages one session sends at most (the server's
-/// `DISK_INVENTORY_PAGES_PER_SESSION`); a longer inventory continues on the
+/// `DISK_INVENTORY_PAGES_PER_SESSION`, of `DISK_INVENTORY_PAGES_PER_WINDOW`
+/// per 10 minutes); a longer inventory continues on the
 /// next session after the last entry reported.
 const INVENTORY_PAGES_MAX: usize = 16;
+/// Completion and inventory reconciliation on a live connection
+/// ([`OffloadService::tick`]): a verdict lost on a stable connection (an
+/// answer that never came, a frame evicted from a full outbox, an offload
+/// the server's maintenance ended without telling the host) is asked again
+/// this often, until local cleanup is done.
+pub(super) const RECONCILE_EVERY: Duration = Duration::from_secs(600);
+
+/// `RECONCILE_EVERY`, or a debug test daemon's shorter period
+/// (`WSSP_TEST_DISK_TIMING`).
+fn reconcile_every() -> Duration {
+    super::test_timing::disk_test_timing().map_or(RECONCILE_EVERY, |t| t.reconcile)
+}
+/// A `disk.evicted` with no ack is re-sent this often (the server clears an
+/// outlived grant 2 min after its 10 min lifetime).
+const EVICTED_RESEND_EVERY: Duration = Duration::from_secs(60);
+/// ... for this long after it was first sent. Past the grant's outlived
+/// clearing a repeat can no longer be acked (e.g. the sandbox was restored
+/// elsewhere meanwhile): the entry, whose VM is deleted and proven absent, is
+/// forgotten (post-landing r2 #2; the server's census decides from the
+/// roots this host reports).
+const EVICTED_RESEND_FOR: Duration = Duration::from_secs(15 * 60);
+/// A `disk.evict.request` with no answer stops blocking its sandbox (and a
+/// pressure slot) after this long.
+pub(super) const EVICT_ANSWER_WAIT: Duration = Duration::from_secs(600);
+/// `disk.offload.cancel` reasons for a completion the server could not
+/// take now (its grant budget, the store): an `uploaded` entry keeps its
+/// staging and the next pass sends the completion again.
+const RETRIED_COMPLETION: [&str; 2] = ["rate_limited", "store_unavailable"];
 
 // ------------------------------------------------------------------ journal
 
@@ -160,6 +189,11 @@ pub struct OffloadEntry {
     pub evict_grant_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evict_expires_at_unix_ms: Option<u64>,
+    /// The upload session whose `disk.upload.complete` was sent (phase
+    /// `uploaded`): re-sent until the offload has a verdict. An id, never a
+    /// key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_session_id: Option<String>,
 }
 
 impl OffloadEntry {
@@ -411,8 +445,15 @@ struct Inner {
     disks: std::sync::OnceLock<Arc<dyn LocalDisks>>,
     /// The server time relayed by the last `heartbeat.pong` (S11).
     server_time: Mutex<Option<(u64, Instant)>>,
-    /// Sandboxes with a `disk.evict.request` awaiting its answer.
-    evict_pending: Mutex<std::collections::HashSet<String>>,
+    /// Sandboxes with a `disk.evict.request` awaiting its answer, since
+    /// when (cleared on a new connection, expired after
+    /// `EVICT_ANSWER_WAIT`).
+    evict_pending: Mutex<HashMap<String, Instant>>,
+    /// `disk.evicted` reports sent, by offload id, with when: re-sent
+    /// until acked (a restart re-proves and re-reports instead).
+    pub(super) evicted_sent: Mutex<HashMap<String, EvictedReport>>,
+    /// The last completion and inventory pass (`tick`).
+    last_reconcile: Mutex<Instant>,
     /// The last sandbox a truncated inventory reported: the next one
     /// continues after it.
     inventory_after: Mutex<Option<String>>,
@@ -422,6 +463,13 @@ struct Inner {
     /// Test seam: runs after a job's steps end, before it settles.
     #[cfg(test)]
     before_settle: Mutex<Option<Box<dyn Fn() + Send>>>,
+}
+
+/// A `disk.evicted` report kept for re-sending until acked.
+pub(super) struct EvictedReport {
+    pub(super) frame: sandbox_protocol::DiskEvictedV11,
+    pub(super) first: Instant,
+    pub(super) last: Instant,
 }
 
 /// The node's disk offload service (needs the image cache's staging,
@@ -555,7 +603,9 @@ impl OffloadService {
                 poll: timing.2,
                 disks: std::sync::OnceLock::new(),
                 server_time: Mutex::new(None),
-                evict_pending: Mutex::new(std::collections::HashSet::new()),
+                evict_pending: Mutex::new(HashMap::new()),
+                evicted_sent: Mutex::new(HashMap::new()),
+                last_reconcile: Mutex::new(Instant::now()),
                 inventory_after: Mutex::new(None),
                 forgets: Mutex::new(Forgets::default()),
                 #[cfg(test)]
@@ -650,6 +700,7 @@ impl OffloadService {
                 sandbox_id: sandbox_id.to_owned(),
                 offload_id: offload_id.to_owned(),
                 seq,
+                report_id: None,
             },
         ));
     }
@@ -672,6 +723,7 @@ impl OffloadService {
                 offload_id: offload_id.to_owned(),
                 seq,
                 code,
+                report_id: None,
             },
         ));
     }
@@ -842,6 +894,7 @@ impl OffloadService {
             cloud_init_instance_id: None,
             evict_grant_id: None,
             evict_expires_at_unix_ms: None,
+            upload_session_id: None,
         };
         self.run_job(sandbox_id, entry, Start::Publish, Some(local.disk_gib));
     }
@@ -1102,7 +1155,8 @@ impl OffloadService {
         }
     }
 
-    /// `disk.upload.begin`, then each grant's parts until every byte is up.
+    /// `disk.upload.begin`, then each grant's parts until every byte is up;
+    /// journals `uploaded` with the completed session's id.
     fn upload(
         &self,
         sandbox_id: &str,
@@ -1121,7 +1175,14 @@ impl OffloadService {
         let result = self.upload_with(sandbox_id, &entry, &fingerprint, file, size, cancel, &rx);
         self.inner.images.unregister_waiter(&key);
         let unsettled = match result {
-            Ok(()) => false,
+            Ok(session) => {
+                // Journaled with `uploaded` before the completion is sent
+                // (post-landing r1 #2): every answer to it finds the entry,
+                // and the completion is re-sent from it until the offload
+                // has a verdict (`resend_completions`).
+                entry.upload_session_id = Some(session);
+                false
+            }
             Err(JobEnd::Unsettled) => true,
             Err(end) => return Err(end),
         };
@@ -1129,6 +1190,19 @@ impl OffloadService {
         // A stored ack that overtook this write keeps `stored` (Past).
         entry.phase = OffloadPhase::Uploaded;
         match (self.transition(sandbox_id, &entry)?, unsettled) {
+            (Moved::Applied, false) => {
+                if let Some(session_id) = entry.upload_session_id.clone() {
+                    self.push(DaemonControlMessage::DiskUploadComplete(
+                        DiskUploadCompleteV11 {
+                            sandbox_id: sandbox_id.to_owned(),
+                            offload_id: entry.offload_id.clone(),
+                            seq: entry.seq,
+                            session_id,
+                        },
+                    ));
+                }
+                Ok(())
+            }
             (_, false) => Ok(()),
             (Moved::Applied, true) => {
                 // Ask for the verdict: `stored`, `released`, or (still
@@ -1160,7 +1234,7 @@ impl OffloadService {
         size: u64,
         cancel: &Arc<AtomicBool>,
         rx: &mpsc::Receiver<ServerControlMessage>,
-    ) -> Result<(), JobEnd> {
+    ) -> Result<String, JobEnd> {
         let mut file =
             std::fs::File::open(path).map_err(|_| JobEnd::Failed(DiskOffloadFailureCode::Io))?;
         self.push(DaemonControlMessage::DiskUploadBegin(DiskUploadBeginV11 {
@@ -1182,6 +1256,13 @@ impl OffloadService {
         // distinct parts, never bytes sent.
         let mut done: BTreeMap<u32, u64> = BTreeMap::new();
         let mut resumes = 0;
+        // Liveness for the server's stall rule (`image.upload.progress`, at
+        // most every 30 s while bytes move): parts are reported only once
+        // per granted window, which may take longer than the rule's limit.
+        // One per transfer, across its windows, so its counts only grow.
+        let mut heartbeat: Option<super::images::UploadHeartbeat> = None;
+        // The transfer this job runs: its cancel is kept meanwhile.
+        let mut _running: Option<super::images::RunningTransfer> = None;
         loop {
             let wanted = || !cancel.load(Ordering::SeqCst);
             let frame = wait_frame(rx, self.inner.grant_wait, &wanted, self.inner.poll);
@@ -1251,6 +1332,13 @@ impl OffloadService {
             };
             let stop =
                 || cancel.load(Ordering::SeqCst) || self.inner.images.transfer_cancelled(transfer);
+            if heartbeat
+                .as_ref()
+                .is_none_or(|h| h.transfer_id() != transfer.as_str())
+            {
+                heartbeat = Some(self.inner.images.upload_heartbeat(transfer));
+                _running = Some(self.inner.images.run_transfer(transfer));
+            }
             let (parts, _) = self
                 .inner
                 .images
@@ -1262,7 +1350,7 @@ impl OffloadService {
                     Some(record_key),
                     self.inner.upload_limit.as_deref(),
                     &stop,
-                    None,
+                    heartbeat.as_ref(),
                 )
                 .map_err(|failure| failure_of(failure.code))?;
             for (part, url) in parts.iter().zip(&grant.parts) {
@@ -1279,15 +1367,9 @@ impl OffloadService {
             }
             let total = stored_size.div_ceil(grant.part_size.max(1)).max(1);
             if done.len() as u64 >= total {
-                self.push(DaemonControlMessage::DiskUploadComplete(
-                    DiskUploadCompleteV11 {
-                        sandbox_id: sandbox_id.to_owned(),
-                        offload_id: entry.offload_id.clone(),
-                        seq: entry.seq,
-                        session_id: session_id.clone(),
-                    },
-                ));
-                return Ok(());
+                // Every part is up: `upload` journals the session, then
+                // sends the completion.
+                return Ok(session_id.clone());
             }
         }
     }
@@ -1308,6 +1390,12 @@ impl OffloadService {
         }
         let key = format!("resume:{transfer}");
         let rx = self.inner.images.register_waiter(&key);
+        // At most one queued resume of this transfer (post-landing #3: the
+        // offload slot's reservation counts one).
+        self.inner.images.purge_queued(|m| {
+            matches!(m, DaemonControlMessage::ImageJobResume(r)
+                if r.transfer_id.as_deref() == Some(transfer))
+        });
         self.push(DaemonControlMessage::ImageJobResume(
             ImageJobResumeV11::transfer(transfer, ImageLinkRole::Source, sent),
         ));
@@ -1382,6 +1470,35 @@ impl OffloadService {
             return;
         }
         let sandbox_id = cancel.sandbox_id.as_str();
+        // An answer to a completion: the entry is `uploaded` from before the
+        // completion was sent (post-landing r1 #2), whether or not its job
+        // has left `active` yet. `stale` asks the verdict; a deferral keeps
+        // it for the next pass; anything else ends it below. A cancel does
+        // not name the frame it answers (a `stale` may answer a parts report
+        // of an older connection, r3 #2), so none of them stops the next
+        // pass's completion: only a verdict (stored, released) ends it.
+        if let Some(entry) = self.entry(sandbox_id)
+            && entry.offload_id == cancel.offload_id
+            && entry.phase == OffloadPhase::Uploaded
+        {
+            if cancel.reason == STALE {
+                tracing::debug!(offload_id = %cancel.offload_id, "stale answer for an uploaded disk offload; asking for its verdict");
+                self.push(DaemonControlMessage::DiskOffloadInventory(
+                    DiskOffloadInventoryV11 {
+                        entries: vec![DiskOffloadInventoryEntryV11 {
+                            sandbox_id: sandbox_id.to_owned(),
+                            offload_id: entry.offload_id.clone(),
+                            seq: entry.seq,
+                        }],
+                    },
+                ));
+                return;
+            }
+            if RETRIED_COMPLETION.contains(&cancel.reason.as_str()) {
+                tracing::debug!(offload_id = %cancel.offload_id, reason = %cancel.reason, "disk upload completion deferred; sent again by the next pass");
+                return;
+            }
+        }
         let running = {
             let jobs = self.lock_jobs();
             jobs.active
@@ -1407,23 +1524,6 @@ impl OffloadService {
             && entry.offload_id == cancel.offload_id
             && !entry.phase.stored()
         {
-            // A `stale` answer (to a completion that reached a newer
-            // connection unbound, r5 #2) is ambiguous: an uploaded entry
-            // and its staging stay, and the server's verdict decides
-            // (`stored`, or `released` for an offload it ended).
-            if cancel.reason == STALE && entry.phase == OffloadPhase::Uploaded {
-                tracing::debug!(offload_id = %cancel.offload_id, "stale answer for an uploaded disk offload; asking for its verdict");
-                self.push(DaemonControlMessage::DiskOffloadInventory(
-                    DiskOffloadInventoryV11 {
-                        entries: vec![DiskOffloadInventoryEntryV11 {
-                            sandbox_id: sandbox_id.to_owned(),
-                            offload_id: entry.offload_id.clone(),
-                            seq: entry.seq,
-                        }],
-                    },
-                ));
-                return;
-            }
             let sandbox = sandbox_id.to_owned();
             self.spawn_cleanup("wssp-offload-cancel", move |service| {
                 service.cleanup(&sandbox, &entry)
@@ -1466,7 +1566,170 @@ impl OffloadService {
         }
     }
 
-    /// After reconciliation: report this host's unfinished
+    /// `hello.ok` of a connection that negotiated disk offload: answers to
+    /// an older connection's eviction requests may be lost with it (they
+    /// stop blocking now), every unacked `disk.evicted` is sent again, and
+    /// the completion and inventory pass runs (`begin_inventory`).
+    pub fn on_connection(&self) {
+        self.inner
+            .evict_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.resend_evicted(Duration::ZERO);
+        *self
+            .inner
+            .last_reconcile
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Instant::now();
+        self.begin_inventory();
+    }
+
+    /// The periodic pass on a live connection (every minute, post-landing
+    /// #1): unacked `disk.evicted` reports go again, unanswered eviction
+    /// requests expire, and every `RECONCILE_EVERY` the completion and
+    /// inventory pass runs again, so no lost frame or answer leaves an
+    /// entry, its alias or its staging waiting on a stable connection.
+    pub fn tick(&self) {
+        self.inner
+            .evict_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, since| since.elapsed() < EVICT_ANSWER_WAIT);
+        self.resend_evicted(EVICTED_RESEND_EVERY);
+        let due = {
+            let mut last = self
+                .inner
+                .last_reconcile
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let due = last.elapsed() >= reconcile_every();
+            if due {
+                *last = Instant::now();
+            }
+            due
+        };
+        if due {
+            self.begin_inventory();
+        }
+    }
+
+    /// Tests only: the next `tick` runs the completion and inventory pass.
+    #[cfg(test)]
+    pub(crate) fn force_reconcile_due(&self) {
+        let mut last = self
+            .inner
+            .last_reconcile
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(past) = Instant::now().checked_sub(RECONCILE_EVERY) {
+            *last = past;
+        }
+    }
+
+    /// Re-send `disk.evicted` for every `evicted` entry (the server acks a
+    /// repeated report of a finished eviction again) last sent at least
+    /// `every` ago and not queued. Reports of entries gone are forgotten.
+    fn resend_evicted(&self, every: Duration) {
+        let evicted: Vec<String> = self
+            .lock_journal()
+            .entries()
+            .filter(|(_, e)| e.phase == OffloadPhase::Evicted)
+            .map(|(_, e)| e.offload_id.clone())
+            .collect();
+        let (due, expired): (Vec<sandbox_protocol::DiskEvictedV11>, Vec<(String, String)>) = {
+            let mut sent = self
+                .inner
+                .evicted_sent
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            sent.retain(|id, _| evicted.contains(id));
+            // A periodic pass forgets an entry past its window (a new
+            // connection first sends it once more, whatever its age).
+            let expired: Vec<(String, String)> = if every.is_zero() {
+                Vec::new()
+            } else {
+                sent.iter()
+                    .filter(|(_, r)| r.first.elapsed() >= EVICTED_RESEND_FOR)
+                    .map(|(id, r)| (r.frame.sandbox_id.clone(), id.clone()))
+                    .collect()
+            };
+            for (_, id) in &expired {
+                sent.remove(id);
+            }
+            let due = sent
+                .values_mut()
+                .filter(|r| every.is_zero() || r.last.elapsed() >= every)
+                .map(|r| {
+                    r.last = Instant::now();
+                    r.frame.clone()
+                })
+                .collect();
+            (due, expired)
+        };
+        for (sandbox_id, offload_id) in expired {
+            tracing::info!(sandbox_id = %sandbox_id, offload_id = %offload_id, "disk eviction report never acked; the evicted entry is forgotten");
+            self.journal_remove(&sandbox_id, &offload_id);
+        }
+        for frame in due {
+            let id = frame.offload_id.clone();
+            self.inner.images.purge_queued(
+                |m| matches!(m, DaemonControlMessage::DiskEvicted(e) if e.offload_id == id),
+            );
+            self.push(DaemonControlMessage::DiskEvicted(frame));
+        }
+    }
+
+    /// Re-send `disk.upload.complete` for every `uploaded` entry no job
+    /// runs, whose session is journaled (post-landing #1), until its
+    /// offload has a verdict. The server
+    /// rebinds a session's transfer of an older connection and claims the
+    /// upload (→ verifying, then the stored ack); a claimed, superseded or
+    /// ended session is answered `stale`, which asks the verdict (a few
+    /// frames per pass while the server verifies). A queued completion of
+    /// the same offload is replaced, so at most one is queued.
+    fn resend_completions(&self) {
+        let running: Vec<(String, String)> = self
+            .lock_jobs()
+            .active
+            .iter()
+            .map(|(sandbox, job)| (sandbox.clone(), job.offload_id.clone()))
+            .collect();
+        let uploaded: Vec<(String, OffloadEntry, String)> = self
+            .lock_journal()
+            .entries()
+            .filter(|(_, e)| e.phase == OffloadPhase::Uploaded)
+            .filter_map(|(id, e)| {
+                e.upload_session_id
+                    .clone()
+                    .map(|session| (id.clone(), e.clone(), session))
+            })
+            .collect();
+        for (sandbox_id, entry, session_id) in uploaded {
+            if running
+                .iter()
+                .any(|(s, o)| *s == sandbox_id && *o == entry.offload_id)
+            {
+                continue;
+            }
+            self.inner.images.purge_queued(|m| {
+                matches!(m, DaemonControlMessage::DiskUploadComplete(c)
+                    if c.offload_id == entry.offload_id && c.seq == entry.seq)
+            });
+            self.push(DaemonControlMessage::DiskUploadComplete(
+                DiskUploadCompleteV11 {
+                    sandbox_id,
+                    offload_id: entry.offload_id.clone(),
+                    seq: entry.seq,
+                    session_id,
+                },
+            ));
+        }
+    }
+
+    /// After reconciliation (and every `RECONCILE_EVERY` on a live
+    /// connection): re-send the completions still owed a verdict
+    /// (`resend_completions`), then report this host's unfinished
     /// offloads (`disk.offload.inventory`, pages of at most
     /// `DISK_OFFLOAD_INVENTORY_PAGE_MAX`, at most `INVENTORY_PAGES_MAX`
     /// pages). The server answers each from its row: `stored`, `released`
@@ -1474,6 +1737,7 @@ impl OffloadService {
     /// entry), or nothing while it is in flight. A truncated inventory
     /// continues on the next session after its last entry.
     pub fn begin_inventory(&self) {
+        self.resend_completions();
         let unfinished: Vec<DiskOffloadInventoryEntryV11> = self
             .lock_journal()
             .entries()

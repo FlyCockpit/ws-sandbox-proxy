@@ -2437,6 +2437,7 @@ fn stored_offload_with(
         cloud_init_instance_id: None,
         evict_grant_id: None,
         evict_expires_at_unix_ms: None,
+        upload_session_id: None,
     };
     crate::sandbox_relay::offload::OffloadJournal::open(&images.state_dir())
         .unwrap()

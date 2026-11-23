@@ -20,6 +20,7 @@ const FAST_TIMINGS: UploadTimings = UploadTimings {
     renew_retry: [Duration::from_secs(30); 4],
     url_margin: Duration::from_secs(60),
     flush_every: Duration::from_secs(30),
+    response_idle: HTTP_IDLE,
 };
 
 type Response = (u16, Vec<(&'static str, String)>, Vec<u8>);
@@ -1975,6 +1976,9 @@ fn a_server_cancel_between_parts_stops_before_the_next_part() {
     assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
     assert_eq!(failed.code, ImageFailureCode::Cancelled);
     assert_eq!(failed.refusal.as_deref(), Some("upload_stalled"));
+    // Round 4: the ended job took its cancel with it (no accumulation).
+    wait_uploads_finished(&images, 1);
+    assert!(!images.cancelled("tr-cut"));
 }
 
 /// No grant answers the begin: `no_grant`, by operation and attempt.
@@ -2170,6 +2174,8 @@ fn heartbeats_carry_the_offset_reached_and_only_when_it_moved() {
         pos: 0,
         base: 1000,
         heartbeat: Some(&heartbeat),
+        done_at: None,
+        stop: &|| false,
     };
     let mut buf = [0u8; 3];
     std::io::Read::read(&mut reader, &mut buf).unwrap();
@@ -2208,6 +2214,8 @@ fn a_slow_drain_of_one_buffered_write_keeps_heartbeats_flowing() {
         pos: 0,
         base: 0,
         heartbeat: Some(&heartbeat),
+        done_at: None,
+        stop: &|| false,
     };
     let mut buf = vec![0u8; 128 << 10];
     assert_eq!(std::io::Read::read(&mut body, &mut buf).unwrap(), 128 << 10);
@@ -2883,6 +2891,9 @@ fn a_relay_reconnect_mid_upload_resumes_the_transfer() {
             assert_eq!(failed.refusal.as_deref(), Some("stale_transfer"));
             assert_eq!(connections.load(Ordering::SeqCst), 1, "no part 2");
         }
+        // Kept until the server acknowledges its terminal report.
+        assert_eq!(images.resumable_jobs(), 1);
+        ack_kept_reports(&images);
         assert_eq!(images.resumable_jobs(), 0);
     }
 }
@@ -2890,9 +2901,9 @@ fn a_relay_reconnect_mid_upload_resumes_the_transfer() {
 /// V1 (life#1, err#1): an upload whose part fails for good while the relay
 /// is down queues its failure; the next connection gets the transfer's
 /// resume first, then that failure with its cause, and the job leaves the
-/// resume registry only once the failure was drained (or, with
-/// `continue: false` for its resume, at once, its queued resume and failure
-/// going with it: fix 5, r5 #3).
+/// resume registry only once the failure was acknowledged (a `continue:
+/// false` answer to its resume does not retire it, round 1 L1 #1: the
+/// failure still goes, and its `report.ack` retires the job).
 #[test]
 fn a_failure_while_the_relay_is_down_reaches_the_server_after_resume_with_its_cause() {
     for refused_first in [false, true] {
@@ -2914,10 +2925,12 @@ fn a_failure_while_the_relay_is_down_reaches_the_server_after_resume_with_its_ca
         images.on_registered("host-owner");
         if refused_first {
             answer_transfer_resume(&images, "tr-down", false);
-            assert_eq!(images.resumable_jobs(), 0);
-            let job = JobRef::Transfer("tr-down".into());
+            assert_eq!(images.resumable_jobs(), 1);
             let frames = images.drain();
-            assert!(frames.iter().all(|f| !job.names(f)), "{frames:?}");
+            let failed = the_failure(&frames);
+            let id = failed.report_id.clone().expect("a kept report");
+            images.handle_server(ack(&id));
+            assert_eq!(images.resumable_jobs(), 0);
             images.on_registered("host-owner");
             assert!(images.drain().is_empty());
             continue;
@@ -2931,6 +2944,9 @@ fn a_failure_while_the_relay_is_down_reaches_the_server_after_resume_with_its_ca
             sandbox_protocol::ImageFailureCause::HttpStatus
         );
         assert_eq!(failed.http_status, Some(503));
+        // Kept until the server acknowledges its terminal report.
+        assert_eq!(images.resumable_jobs(), 1);
+        ack_kept_reports(&images);
         assert_eq!(images.resumable_jobs(), 0);
         // Retired: the next connection resumes nothing.
         images.on_registered("host-owner");
@@ -3000,6 +3016,9 @@ fn a_begin_retry_across_a_reconnect_resumes_the_operation_and_keeps_its_refusal(
             "stale_capture"
         };
         assert_eq!(failed.refusal.as_deref(), Some(reason), "{frames:?}");
+        // Kept until the server acknowledges its terminal report.
+        assert_eq!(images.resumable_jobs(), 1);
+        ack_kept_reports(&images);
         assert_eq!(images.resumable_jobs(), 0);
     }
 }
@@ -3243,6 +3262,9 @@ fn a_transient_publish_begin_refusal_ends_the_publish_with_its_cause() {
         assert_eq!(failed.transfer_id.as_deref(), Some("tr-pub"));
         assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
         assert_eq!(failed.refusal.as_deref(), Some(reason));
+        // Kept until the server acknowledges its terminal report.
+        assert_eq!(images.resumable_jobs(), 1);
+        ack_kept_reports(&images);
         assert_eq!(images.resumable_jobs(), 0);
     }
 }
@@ -3648,6 +3670,7 @@ fn an_overflowing_outbox_keeps_resumes_and_terminal_frames() {
     images.push(DaemonControlMessage::ImageUploadComplete(
         ImageTransferRefV11 {
             transfer_id: "tr-keep".into(),
+            report_id: None,
         },
     ));
     images.push(DaemonControlMessage::ImageUploadProgress(
@@ -3823,11 +3846,10 @@ fn not_replayed_frames(images: &ImageService) -> Vec<DaemonControlMessage> {
             session_id: "ses-1".into(),
             parts: Vec::new(),
         }),
-        DaemonControlMessage::DiskUploadComplete(sandbox_protocol::DiskUploadCompleteV11 {
+        DaemonControlMessage::DiskEvictRequest(sandbox_protocol::DiskEvictRequestV11 {
             sandbox_id: "sbx-1".into(),
             offload_id: "off-1".into(),
             seq: 1,
-            session_id: "ses-1".into(),
         }),
         DaemonControlMessage::DiskOffloadInventory(sandbox_protocol::DiskOffloadInventoryV11 {
             entries: vec![sandbox_protocol::DiskOffloadInventoryEntryV11 {
@@ -3957,6 +3979,9 @@ fn a_failure_whose_write_or_flush_failed_is_sent_after_the_next_resume_with_its_
             sandbox_protocol::ImageFailureCause::HttpStatus
         );
         assert_eq!(failed.http_status, Some(503));
+        // Kept until the server acknowledges its terminal report.
+        assert_eq!(images.resumable_jobs(), 1);
+        ack_kept_reports(&images);
         assert_eq!(images.resumable_jobs(), 0);
     }
 }
@@ -4020,6 +4045,9 @@ fn a_publish_begin_in_a_failed_batch_is_not_replayed() {
         }
     });
     assert_eq!(upload_kinds(&frames), ["parts", "complete"], "{frames:?}");
+    // Kept until the server acknowledges its terminal report.
+    assert_eq!(images.resumable_jobs(), 1);
+    ack_kept_reports(&images);
     assert_eq!(images.resumable_jobs(), 0);
 }
 
@@ -4339,10 +4367,11 @@ fn an_old_census_page_queued_behind_a_failed_batch_is_gone_after_reconnect() {
     assert_eq!(census, vec![0], "{frames:?}");
 }
 
-/// Fix 5 (r5 #3): a job retired by a definitive resume refusal
-/// (`continue: false`) takes its queued resume and terminal frame with it.
+/// An ended job answered `continue: false` keeps its terminal report (and
+/// its registry entry) until the report's `report.ack`, which then takes
+/// its queued resume and terminal frame with it (round 1 L1 #1).
 #[test]
-fn a_refused_resume_removes_the_retired_jobs_queued_protected_frames() {
+fn a_refused_resume_keeps_the_ended_jobs_report_until_acked() {
     let runtime = FakeRuntime::default();
     let dir = tempfile::tempdir().unwrap();
     let (base, _, _s3) = scripted_s3(|_, reader, length| store_status(reader, length, 503));
@@ -4368,20 +4397,32 @@ fn a_refused_resume_removes_the_retired_jobs_queued_protected_frames() {
     );
     assert_eq!(images.resumable_jobs(), 1);
     answer_transfer_resume(&images, "tr-refused", false);
+    // Round 1 (L1 #1): a refused resume may be a fence of the moment; the
+    // ended job's failure stays queued and the job registered until acked.
+    assert_eq!(images.resumable_jobs(), 1);
+    let id = images
+        .queued()
+        .iter()
+        .find_map(|f| match f {
+            DaemonControlMessage::ImageJobFailed(f) => f.report_id.clone(),
+            _ => None,
+        })
+        .expect("its failure still queued");
+    images.handle_server(ack(&id));
     assert_eq!(images.resumable_jobs(), 0);
     let left = images.queued();
     assert!(left.iter().all(|f| !job.names(f)), "{left:?}");
 }
 
-/// Fix 5 (r5 #3): a new upload job waits while the protected backlog is at
-/// `PROTECTED_MAX` (nothing registered, nothing sent) and starts once it
-/// drops below.
+/// Fix 5 (r5 #3): a new upload job waits while the protected backlog plus
+/// its reservation (and the offload slot's) would pass `PROTECTED_MAX`
+/// (nothing registered, nothing sent) and starts once it fits.
 #[test]
 fn a_new_upload_waits_while_the_protected_backlog_is_full() {
     let runtime = FakeRuntime::default();
     let dir = tempfile::tempdir().unwrap();
     let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
-    for i in 0..PROTECTED_MAX {
+    for i in 0..PROTECTED_MAX - OFFLOAD_PROTECTED - 1 {
         images.push_frame(JobRef::Transfer(format!("tr-backlog-{i}")).resume(0));
     }
     let bytes = vec![3u8; 64 << 10];
@@ -4410,4 +4451,697 @@ fn a_new_upload_waits_while_the_protected_backlog_is_full() {
         },
     ));
     wait_uploads_finished(&images, 1);
+}
+
+/// Post-landing #3: a peer serve reserves its one protected failure report.
+/// At capacity it ends unstarted with no frame; with room it runs, and its
+/// failure report is queued (and counted while it runs).
+#[test]
+fn a_peer_serve_reserves_its_failure_report_and_ends_unstarted_at_capacity() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    for i in 0..PROTECTED_MAX - OFFLOAD_PROTECTED {
+        images.push_frame(JobRef::Transfer(format!("tr-backlog-{i}")).resume(0));
+    }
+    let serve = |transfer: &str| sandbox_protocol::ImageServeRequestV11 {
+        transfer_id: transfer.into(),
+        image_owner_id: "owner-a".into(),
+        fingerprint: format!("sha256:{}", "0".repeat(64)),
+        size_bytes: 1 << 20,
+        part_size: 1 << 20,
+        links: Vec::new(),
+    };
+    images.serve(serve("tr-full"));
+    let failed = |q: &[DaemonControlMessage], id: &str| {
+        q.iter().any(|f| {
+            matches!(f, DaemonControlMessage::ImageJobFailed(j)
+            if j.transfer_id.as_deref() == Some(id))
+        })
+    };
+    assert!(
+        !failed(&images.queued(), "tr-full"),
+        "a serve over capacity queued a frame"
+    );
+    assert_eq!(images.inner.serving.load(Ordering::SeqCst), 0);
+    // Room for one: it runs (the image is not cached here, so its export
+    // fails) and reports that once.
+    images.purge_queued(|f| is_resume_of_transfer(f, "tr-backlog-0"));
+    images.serve(serve("tr-room"));
+    assert!(failed(&images.queued(), "tr-room"));
+    assert_eq!(images.inner.serving.load(Ordering::SeqCst), 0);
+    // Every protected frame queued stays within the bound plus one batch.
+    let protected = images
+        .queued()
+        .iter()
+        .filter(|f| JobRef::protected_frame(f))
+        .count();
+    assert!(protected <= PROTECTED_MAX, "{protected}");
+}
+
+/// Post-landing #1/#3: a disk offload failure report is protected (never
+/// evicted from a full outbox) and replayed after a failed write, as are a
+/// completion, a release and an eviction report; parts reports are not.
+#[test]
+fn disk_terminal_reports_survive_a_full_outbox_and_a_failed_write() {
+    let failed = DaemonControlMessage::DiskOffloadFailed(sandbox_protocol::DiskOffloadFailedV11 {
+        sandbox_id: "sbx".into(),
+        offload_id: "off".into(),
+        seq: 1,
+        code: sandbox_protocol::DiskOffloadFailureCode::Io,
+        report_id: None,
+    });
+    assert!(JobRef::protected_frame(&failed));
+    assert!(replayed_after_failed_write(&failed));
+    let complete =
+        DaemonControlMessage::DiskUploadComplete(sandbox_protocol::DiskUploadCompleteV11 {
+            sandbox_id: "sbx".into(),
+            offload_id: "off".into(),
+            seq: 1,
+            session_id: "ses".into(),
+        });
+    assert!(replayed_after_failed_write(&complete));
+    assert!(!JobRef::protected_frame(&complete));
+    let parts = DaemonControlMessage::DiskUploadParts(sandbox_protocol::DiskUploadPartsV11 {
+        sandbox_id: "sbx".into(),
+        offload_id: "off".into(),
+        seq: 1,
+        session_id: "ses".into(),
+        parts: Vec::new(),
+    });
+    assert!(!replayed_after_failed_write(&parts));
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let images = idle_service(&runtime, dir.path(), "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    images.push_frame(failed.clone());
+    // r2 #3: a release frees the host's export slot; it is protected too.
+    let released =
+        DaemonControlMessage::DiskOffloadReleased(sandbox_protocol::DiskOffloadReleasedV11 {
+            sandbox_id: "sbx".into(),
+            offload_id: "off-released".into(),
+            seq: 1,
+            report_id: None,
+        });
+    assert!(JobRef::protected_frame(&released));
+    images.push_frame(released);
+    for i in 0..OUTBOX_MAX + 8 {
+        images.push_frame(DaemonControlMessage::DiskEvictRequest(
+            sandbox_protocol::DiskEvictRequestV11 {
+                sandbox_id: format!("sbx-{i}"),
+                offload_id: format!("off-{i}"),
+                seq: 1,
+            },
+        ));
+    }
+    let queued = images.queued();
+    assert!(queued.len() <= OUTBOX_MAX);
+    assert!(
+        queued.iter().any(
+            |f| matches!(f, DaemonControlMessage::DiskOffloadFailed(x) if x.offload_id == "off")
+        ),
+        "the failure report was evicted"
+    );
+    assert!(
+        queued
+            .iter()
+            .any(|f| matches!(f, DaemonControlMessage::DiskOffloadReleased(x)
+            if x.offload_id == "off-released")),
+        "the release was evicted"
+    );
+}
+
+/// Post-landing #5: the response wait after a part body covers only what
+/// can still be draining, then `HTTP_IDLE`: a small body or a fast link
+/// waits about 120 s, a long body on the slow-uplink design rate keeps the
+/// full 300 s, and a measured slow rate keeps it too.
+#[test]
+fn the_part_response_wait_follows_what_can_still_be_draining() {
+    let idle = HTTP_IDLE;
+    let mib = 1u64 << 20;
+    let tiny = put_response_wait(123, None, idle);
+    assert!(
+        tiny >= idle && tiny < idle + Duration::from_millis(10),
+        "{tiny:?}"
+    );
+    assert_eq!(put_response_wait(16 * mib, None, idle), PUT_RESPONSE_WAIT);
+    let fast = put_response_wait(16 * mib, Some(60_000_000), idle);
+    assert!(fast < idle + Duration::from_secs(1), "{fast:?}");
+    assert_eq!(
+        put_response_wait(16 * mib, Some(45_000), idle),
+        PUT_RESPONSE_WAIT
+    );
+    let mid = put_response_wait(16 * mib, Some(1_000_000), idle);
+    assert!(
+        mid > idle + Duration::from_secs(8) && mid < idle + Duration::from_secs(9),
+        "{mid:?}"
+    );
+    // The documented bound for a store that takes every body and never
+    // answers (fast link, or a small part): 4 attempts × the idle bound
+    // plus the 2 / 8 / 30 s pauses (+25 % jitter at most), under 10 min.
+    let attempts = 4u32 * fast.as_secs() as u32 + (2 + 8 + 30) * 5 / 4;
+    assert!(attempts < 600, "{attempts}");
+}
+
+/// Post-landing #5 (fails on 5c91540, where every attempt waited 300 s): a
+/// store that reads the body and never answers fails each attempt after the
+/// response idle bound (shortened here), not after `PUT_RESPONSE_WAIT`.
+#[test]
+fn a_part_whose_response_never_comes_is_retried_after_the_idle_bound() {
+    let runtime = FakeRuntime::default();
+    let dir = tempfile::tempdir().unwrap();
+    let held: Arc<Mutex<Vec<std::net::TcpStream>>> = Arc::default();
+    let keep = held.clone();
+    let (base, count, _s3) = scripted_s3(move |_, mut reader, length| {
+        let mut body = vec![0u8; length];
+        if reader.read_exact(&mut body).is_ok() {
+            keep.lock().unwrap().push(reader.into_inner());
+        }
+    });
+    let images = idle_service(&runtime, dir.path(), &base, FRAME_TEST_IDLE);
+    images.set_upload_timings_for_test(UploadTimings {
+        response_idle: Duration::from_millis(300),
+        ..FAST_TIMINGS
+    });
+    let bytes = vec![9u8; 4 << 10];
+    let path = dir.path().join("part.bin");
+    std::fs::write(&path, &bytes).unwrap();
+    let mut file = std::fs::File::open(&path).unwrap();
+    let part = sandbox_protocol::ImageUploadPartUrlV11 {
+        n: 1,
+        url: format!("{base}/part1"),
+        size_bytes: bytes.len() as u64,
+    };
+    let started = Instant::now();
+    let failure = images
+        .put_parts(
+            &mut file,
+            bytes.len() as u64,
+            1 << 20,
+            &[part],
+            None,
+            None,
+            &|| false,
+            None,
+        )
+        .expect_err("never answered");
+    let took = started.elapsed();
+    assert_eq!(failure.cause, ImageFailureCause::Timeout, "{failure:?}");
+    assert_eq!(count.load(Ordering::SeqCst), PART_ATTEMPTS as usize);
+    assert!(took < Duration::from_secs(20), "{took:?}");
+}
+
+// --- Terminal reports kept until acknowledged (capture-fix-d) -------------
+
+/// The server acknowledges every kept report.
+fn ack_kept_reports(images: &ImageService) {
+    for id in images.kept_reports() {
+        images.handle_server(ack(&id));
+    }
+}
+
+fn report_service(dir: &Path) -> (FakeRuntime, ImageService) {
+    let runtime = FakeRuntime::default();
+    let images = idle_service(&runtime, dir, "http://127.0.0.1:9", FRAME_TEST_IDLE);
+    images.drain();
+    (runtime, images)
+}
+
+fn offload_failed(offload: &str) -> DaemonControlMessage {
+    DaemonControlMessage::DiskOffloadFailed(sandbox_protocol::DiskOffloadFailedV11 {
+        sandbox_id: "sbx".into(),
+        offload_id: offload.into(),
+        seq: 1,
+        code: sandbox_protocol::DiskOffloadFailureCode::Io,
+        report_id: None,
+    })
+}
+
+fn ack(id: &str) -> ServerControlMessage {
+    ServerControlMessage::ReportAck(sandbox_protocol::ReportAckV11 {
+        report_id: id.into(),
+    })
+}
+
+fn copies_of(images: &ImageService, id: &str) -> usize {
+    images
+        .queued()
+        .iter()
+        .filter(|m| report_id(m) == Some(id))
+        .count()
+}
+
+/// A finished upload job of `transfer` in the resume registry (number 7),
+/// its `image.upload.complete` kept as a report; the report's id.
+fn finished_job(images: &ImageService, transfer: &str) -> String {
+    images.inner.resumable.lock().unwrap().insert(
+        7,
+        ResumeEntry {
+            reference: JobRef::Transfer(transfer.into()),
+            reported: Arc::new(AtomicU64::new(42)),
+            begin: None,
+            begin_lost: false,
+            terminal: false,
+        },
+    );
+    images.finish_job(
+        7,
+        Some(DaemonControlMessage::ImageUploadComplete(
+            ImageTransferRefV11 {
+                transfer_id: transfer.into(),
+                report_id: None,
+            },
+        )),
+    );
+    let report = images
+        .inner
+        .reports
+        .lock()
+        .unwrap()
+        .back()
+        .cloned()
+        .unwrap();
+    assert_eq!(report.job, Some(7));
+    report.id
+}
+
+/// Major r5 #1: a report written and flushed (the server may then discard
+/// it with the connection) is sent again on every new connection, once,
+/// until the server acknowledges its id; then never again.
+#[test]
+fn a_flushed_report_is_sent_again_on_each_connection_until_acked() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.push_frame(offload_failed("off"));
+    let sent = images.drain();
+    let id = report_id(&sent[0])
+        .expect("the report carries an id")
+        .to_owned();
+    assert!(sandbox_protocol::valid_report_id(&id), "{id}");
+    assert_eq!(copies_of(&images, &id), 0);
+    for _ in 0..2 {
+        images.on_registered("host-owner");
+        assert_eq!(copies_of(&images, &id), 1, "re-sent once per connection");
+        let again = images.drain();
+        assert_eq!(
+            again.iter().filter(|m| report_id(m) == Some(&id)).count(),
+            1
+        );
+        assert!(matches!(
+            again.iter().find(|m| report_id(m) == Some(&id)),
+            Some(DaemonControlMessage::DiskOffloadFailed(f)) if f.offload_id == "off"
+        ));
+    }
+    images.handle_server(ack(&id));
+    assert!(images.kept_reports().is_empty());
+    images.on_registered("host-owner");
+    assert_eq!(
+        copies_of(&images, &id),
+        0,
+        "an acked report never goes again"
+    );
+    // An unknown id changes nothing.
+    images.push_frame(offload_failed("off-2"));
+    images.handle_server(ack(&"f".repeat(32)));
+    assert_eq!(images.kept_reports().len(), 1);
+}
+
+/// A finished upload job stays in the resume registry while its terminal
+/// report is unacknowledged: every new connection carries the job's resume
+/// first (the server fences the report on this connection), then the
+/// report; the ack retires both.
+#[test]
+fn a_kept_job_report_follows_its_resume_and_the_ack_retires_the_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    let id = finished_job(&images, "tr-9");
+    images.drain();
+    assert_eq!(images.resumable_jobs(), 1, "flushed is not acknowledged");
+    images.on_registered("host-owner");
+    let queued = images.queued();
+    let resume = queued
+        .iter()
+        .position(|m| is_resume_of_transfer(m, "tr-9"))
+        .expect("the job's resume");
+    let report = queued
+        .iter()
+        .position(|m| report_id(m) == Some(id.as_str()))
+        .expect("the report");
+    assert!(resume < report, "{queued:?}");
+    images.drain();
+    images.handle_server(ack(&id));
+    assert_eq!(images.resumable_jobs(), 0);
+    assert!(images.kept_reports().is_empty());
+    images.on_registered("host-owner");
+    assert!(images.queued().is_empty(), "{:?}", images.queued());
+}
+
+/// Round 1 (L1 #1): a `continue: false` answer to an ended job's resume does
+/// not retire its kept report: the server also refuses a resume it could not
+/// fence right now while the upload is still open. The report (and its job,
+/// so the next connection resumes it first) stays until its `report.ack`; a
+/// stale cancel of the transfer meanwhile is not recorded either.
+#[test]
+fn a_resume_answered_continue_false_keeps_the_job_report_until_acked() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    let id = finished_job(&images, "tr-9");
+    images.drain();
+    images.on_registered("host-owner");
+    images.handle_server(ServerControlMessage::ImageJobResumeResult(
+        sandbox_protocol::ImageJobResumeResultV11 {
+            transfer_id: Some("tr-9".into()),
+            operation_id: None,
+            attempt: None,
+            proceed: false,
+        },
+    ));
+    assert_eq!(images.resumable_jobs(), 1);
+    assert_eq!(images.kept_reports(), std::slice::from_ref(&id));
+    assert_eq!(copies_of(&images, &id), 1);
+    // The repeat is answered stale (already claimed), then acked.
+    images.handle_server(ServerControlMessage::ImageJobCancel(
+        sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: "tr-9".into(),
+            reason: "stale_transfer".into(),
+            request_id: None,
+        },
+    ));
+    assert!(!images.cancelled("tr-9"));
+    images.handle_server(ack(&id));
+    assert_eq!(images.resumable_jobs(), 0);
+    assert!(images.kept_reports().is_empty());
+    assert!(images.queued().is_empty(), "{:?}", images.queued());
+}
+
+/// Round 1 (L1 #4): a report forgotten at a reconnect (past its age) goes
+/// with its queued copy (a failed batch had put it back) and its job's
+/// resume: nothing of it reaches the new connection.
+#[test]
+fn a_report_forgotten_at_a_reconnect_leaves_nothing_queued() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.set_test_clock(0.0);
+    let job = finished_job(&images, "tr-9");
+    images.push_frame(offload_failed("off"));
+    let other = images.kept_reports()[1].clone();
+    // Both written in a batch whose write failed: back in the outbox.
+    drop(images.take_batch());
+    assert_eq!(copies_of(&images, &job), 1);
+    assert_eq!(copies_of(&images, &other), 1);
+    images.advance_test_clock(REPORT_MAX_AGE);
+    images.on_registered("host-owner");
+    assert!(images.kept_reports().is_empty());
+    assert_eq!(images.resumable_jobs(), 0);
+    assert!(images.queued().is_empty(), "{:?}", images.queued());
+}
+
+/// Round 1 (L1 #3): re-queued reports and resumes respect `OUTBOX_MAX` like
+/// any push: advisory frames make room for them.
+#[test]
+fn re_queued_reports_keep_the_outbox_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.set_test_clock(0.0);
+    let job = finished_job(&images, "tr-9");
+    images.push_frame(offload_failed("off"));
+    let batch = images.take_batch();
+    batch.sent();
+    for i in 0..OUTBOX_MAX {
+        images.push_frame(DaemonControlMessage::ImageUploadProgress(
+            sandbox_protocol::ImageUploadProgressV11 {
+                transfer_id: format!("tr-hb-{i}"),
+                bytes_sent: 1,
+                wire_bytes: 1,
+            },
+        ));
+    }
+    assert_eq!(images.queued().len(), OUTBOX_MAX);
+    images.on_registered("host-owner");
+    assert_eq!(images.queued().len(), OUTBOX_MAX);
+    assert_eq!(copies_of(&images, &job), 1);
+    assert!(
+        images
+            .queued()
+            .iter()
+            .any(|m| is_resume_of_transfer(m, "tr-9"))
+    );
+    // And on a live re-send: every report flushed, the outbox full of
+    // advisory frames again, the reports due.
+    while !images.drain().is_empty() {}
+    assert!(images.queued().is_empty());
+    fill(&images, "tr-hb2");
+    assert_eq!(images.queued().len(), OUTBOX_MAX);
+    images.advance_test_clock(REPORT_RESEND_EVERY);
+    images.resend_reports();
+    let queued = images.queued();
+    assert_eq!(queued.len(), OUTBOX_MAX);
+    assert_eq!(copies_of(&images, &job), 1);
+    assert!(queued.iter().any(|m| is_resume_of_transfer(m, "tr-9")));
+    // And a failed batch of the reports put back into a full outbox.
+    while !images.drain().is_empty() {}
+    images.advance_test_clock(REPORT_RESEND_EVERY);
+    images.resend_reports();
+    let batch = images.take_batch();
+    assert!(
+        batch
+            .frames()
+            .iter()
+            .any(|m| report_id(m) == Some(job.as_str()))
+    );
+    fill(&images, "tr-hb3");
+    drop(batch);
+    assert_eq!(images.queued().len(), OUTBOX_MAX);
+    assert_eq!(copies_of(&images, &job), 1);
+}
+
+fn fill(images: &ImageService, prefix: &str) {
+    for i in 0..OUTBOX_MAX {
+        images.push_frame(DaemonControlMessage::ImageUploadProgress(
+            sandbox_protocol::ImageUploadProgressV11 {
+                transfer_id: format!("{prefix}-{i}"),
+                bytes_sent: 1,
+                wire_bytes: 1,
+            },
+        ));
+    }
+}
+
+/// The store is bounded: beyond `REPORTS_MAX` the oldest report goes (with
+/// its queued copy), and a report older than `REPORT_MAX_AGE` is forgotten
+/// at the next connection, acked or not; a job whose report went retires.
+#[test]
+fn kept_reports_are_bounded_by_count_and_age() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    for i in 0..=REPORTS_MAX {
+        images.push_frame(offload_failed(&format!("off-{i}")));
+    }
+    let kept = images.kept_reports();
+    assert_eq!(kept.len(), REPORTS_MAX);
+    let queued = images.queued();
+    assert!(
+        !queued.iter().any(
+            |m| matches!(m, DaemonControlMessage::DiskOffloadFailed(f) if f.offload_id == "off-0")
+        ),
+        "the oldest went with its queued copy"
+    );
+    assert!(queued.iter().any(
+        |m| matches!(m, DaemonControlMessage::DiskOffloadFailed(f) if f.offload_id == "off-32")
+    ));
+
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.set_test_clock(0.0);
+    let job = finished_job(&images, "tr-9");
+    images.push_frame(offload_failed("off"));
+    images.drain();
+    images.advance_test_clock(REPORT_MAX_AGE - Duration::from_secs(1));
+    images.on_registered("host-owner");
+    assert_eq!(images.kept_reports().len(), 2, "still within the hour");
+    images.drain();
+    images.advance_test_clock(Duration::from_secs(1));
+    images.on_registered("host-owner");
+    assert!(images.kept_reports().is_empty());
+    assert_eq!(images.resumable_jobs(), 0, "the job left with its report");
+    assert_eq!(copies_of(&images, &job), 0);
+    assert!(images.queued().is_empty(), "{:?}", images.queued());
+}
+
+/// A report of a batch whose write failed is replayed (as before) and then
+/// queued exactly once on the next connection.
+#[test]
+fn a_failed_batch_and_the_next_connection_send_a_report_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.push_frame(offload_failed("off"));
+    let id = images.kept_reports()[0].clone();
+    drop(images.take_batch()); // the write failed
+    assert_eq!(copies_of(&images, &id), 1);
+    images.on_registered("host-owner");
+    assert_eq!(copies_of(&images, &id), 1);
+    // A live re-send already queued and a failed batch holding a copy.
+    images.set_test_clock(0.0);
+    images.drain();
+    images.advance_test_clock(REPORT_RESEND_EVERY);
+    let batch = images.take_batch();
+    assert!(batch.frames().is_empty());
+    images.on_registered("host-owner");
+    let batch = images.take_batch();
+    images.advance_test_clock(REPORT_RESEND_EVERY);
+    images.resend_reports();
+    drop(batch);
+    assert_eq!(copies_of(&images, &id), 1);
+}
+
+/// On a live connection an unacknowledged report goes again every
+/// `REPORT_RESEND_EVERY` after it was flushed (its handler may have
+/// failed), a job's behind its resume; never while a copy is queued.
+#[test]
+fn a_kept_report_is_sent_again_on_a_live_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    images.set_test_clock(0.0);
+    let job = finished_job(&images, "tr-9");
+    images.push_frame(offload_failed("off"));
+    let other = images.kept_reports()[1].clone();
+    images.resend_reports();
+    assert_eq!(
+        copies_of(&images, &other),
+        1,
+        "queued, not yet sent: no second copy"
+    );
+    images.drain();
+    images.advance_test_clock(REPORT_RESEND_EVERY - Duration::from_secs(1));
+    images.resend_reports();
+    assert!(images.queued().is_empty());
+    images.advance_test_clock(Duration::from_secs(1));
+    images.resend_reports();
+    let queued = images.queued();
+    assert_eq!(copies_of(&images, &other), 1);
+    assert_eq!(copies_of(&images, &job), 1);
+    let resume = queued.iter().position(|m| is_resume_of_transfer(m, "tr-9"));
+    let report = queued
+        .iter()
+        .position(|m| report_id(m) == Some(job.as_str()));
+    assert!(resume.is_some() && resume < report, "{queued:?}");
+    images.resend_reports();
+    assert_eq!(
+        images.queued().len(),
+        queued.len(),
+        "queued copies are not doubled"
+    );
+}
+
+/// Admission reserves the kept reports that are not queued (they come back
+/// on a reconnect): one frame each, two for a job's (its resume too).
+#[test]
+fn admission_reserves_the_kept_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    let free = PROTECTED_MAX - OFFLOAD_PROTECTED;
+    let admits = |needs: usize| {
+        let resumable = images.inner.resumable.lock().unwrap();
+        images.admits(&resumable, needs)
+    };
+    assert!(admits(free) && !admits(free + 1));
+    for i in 0..4 {
+        images.push_frame(offload_failed(&format!("off-{i}")));
+    }
+    // Queued: counted once as queued protected frames.
+    assert!(admits(free - 4) && !admits(free - 3));
+    images.drain();
+    // Flushed, unacknowledged: still reserved.
+    assert!(admits(free - 4) && !admits(free - 3));
+    finished_job(&images, "tr-9");
+    images.drain();
+    assert!(admits(free - 6) && !admits(free - 5));
+}
+
+/// A cancel of a job that already ended here (a repeated completion is
+/// answered `stale_transfer`) is not recorded: the set would only grow.
+#[test]
+fn a_cancel_of_an_ended_job_is_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    finished_job(&images, "tr-9");
+    let cancel = |transfer: &str| {
+        ServerControlMessage::ImageJobCancel(sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: transfer.into(),
+            reason: "stale_transfer".into(),
+            request_id: None,
+        })
+    };
+    images.handle_server(cancel("tr-9"));
+    assert!(!images.cancelled("tr-9"));
+    images.handle_server(cancel("tr-live"));
+    assert!(images.cancelled("tr-live"));
+    // Rounds 3-4: a stale answer to a repeat that arrives after the report
+    // was acked is not recorded either (no job runs it any more).
+    let id = images.kept_reports()[0].clone();
+    images.handle_server(ack(&id));
+    images.handle_server(cancel("tr-9"));
+    assert!(!images.cancelled("tr-9"));
+    // Round 5: cancels no job consumes (late, after a successful serve)
+    // stay bounded; the newest are kept.
+    for i in 0..=CANCELLED_MAX {
+        images.handle_server(cancel(&format!("tr-late-{i}")));
+    }
+    assert!(!images.cancelled("tr-live"));
+    assert!(images.cancelled(&format!("tr-late-{CANCELLED_MAX}")));
+    assert_eq!(images.inner.cancelled.lock().unwrap().len(), CANCELLED_MAX);
+}
+
+/// Land round 1: the `CANCELLED_MAX` cap never drops the cancel of a
+/// transfer a job still runs (a serve inside a long export, an upload
+/// between parts), however many other cancels arrive meanwhile; once the
+/// job ends its cancel is an ordinary one again.
+#[test]
+fn the_cancel_cap_keeps_a_running_jobs_cancel() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_runtime, images) = report_service(dir.path());
+    let cancel = |transfer: &str| {
+        ServerControlMessage::ImageJobCancel(sandbox_protocol::ImageJobCancelV11 {
+            transfer_id: transfer.into(),
+            reason: "cancelled".into(),
+            request_id: None,
+        })
+    };
+    let running = images.run_transfer("tr-run");
+    images.handle_server(cancel("tr-run"));
+    for i in 0..CANCELLED_MAX + 8 {
+        images.handle_server(cancel(&format!("tr-other-{i}")));
+    }
+    assert!(images.cancelled("tr-run"), "a running job lost its cancel");
+    assert_eq!(images.inner.cancelled.lock().unwrap().len(), CANCELLED_MAX);
+    drop(running);
+    assert!(images.inner.running.lock().unwrap().is_empty());
+    images.handle_server(cancel("tr-after"));
+    assert!(
+        !images.cancelled("tr-run"),
+        "an ended job's cancel is capped"
+    );
+    assert_eq!(images.inner.cancelled.lock().unwrap().len(), CANCELLED_MAX);
+}
+
+/// Round 1 (L2 #4): a cancel stops a part body at its next buffer, so a
+/// slow PUT does not keep its job (and the export slot and staging) until
+/// the whole part went out.
+#[test]
+fn a_cancelled_part_body_stops_at_the_next_read() {
+    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let stop = || cancelled.load(Ordering::SeqCst);
+    let body = [3u8; 64];
+    let mut reader = CountingBody {
+        bytes: &body,
+        pos: 0,
+        base: 0,
+        heartbeat: None,
+        done_at: None,
+        stop: &stop,
+    };
+    let mut buf = [0u8; 16];
+    assert_eq!(std::io::Read::read(&mut reader, &mut buf).unwrap(), 16);
+    cancelled.store(true, Ordering::SeqCst);
+    assert!(std::io::Read::read(&mut reader, &mut buf).is_err());
+    assert_eq!(reader.pos, 16, "nothing more of the part was read");
 }

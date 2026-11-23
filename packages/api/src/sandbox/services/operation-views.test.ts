@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe("listOperationViews", () => {
-  it("selects status metadata only: no request, result, key, hash or error detail", async () => {
+  it("selects status metadata only: no request, result, key, hash or free-text error detail", async () => {
     db.sandboxOperation.findMany
       .mockResolvedValueOnce([row()])
       .mockResolvedValueOnce([{ id: "op-1", result: { exitCode: 3, pid: 44, outputBytes: 9 } }]);
@@ -83,7 +83,8 @@ describe("listOperationViews", () => {
       ].sort(),
     );
     expect(select.Sandbox).toEqual({ select: { state: true, name: true } });
-    expect(select.Capture).toEqual({ select: { revisionId: true } });
+    // The capture's storage cause is a CHECK-constrained code (post-landing #6).
+    expect(select.Capture).toEqual({ select: { revisionId: true, errorDetail: true } });
     // The row carries the exit code, nothing else from the stored result.
     expect(page.items).toEqual([
       {
@@ -102,6 +103,7 @@ describe("listOperationViews", () => {
         sandboxState: "READY",
         progress: null,
         capturedRevisionId: null,
+        captureDetail: null,
       },
     ]);
     expect(JSON.stringify(page)).not.toMatch(/pid|outputBytes|result/);
@@ -228,6 +230,32 @@ describe("getOperationView", () => {
       where: { id: "rev-9", Template: { userId: "user-a" } },
       select: { revision: true, Template: { select: { slug: true } } },
     });
+  });
+
+  it("shows a failed capture's storage cause, as builds do (post-landing #6)", async () => {
+    db.sandboxOperation.findFirst.mockResolvedValueOnce(
+      detail({
+        kind: "CAPTURE_TEMPLATE",
+        state: "FAILED",
+        errorCode: "capture_store_failed",
+        Capture: { revisionId: null, errorDetail: "upload_timeout" },
+      }),
+    );
+    const view = await getOperationView(owner, { operationId: "op-1" });
+    expect(view).toMatchObject({
+      errorCode: "capture_store_failed",
+      captureDetail: "upload_timeout",
+    });
+    expect(view).not.toHaveProperty("errorDetail");
+    db.sandboxOperation.findFirst.mockResolvedValueOnce(
+      detail({
+        kind: "CAPTURE_TEMPLATE",
+        state: "FAILED",
+        errorCode: "capture_failed",
+        Capture: { revisionId: null, errorDetail: "upload_timeout" },
+      }),
+    );
+    expect((await getOperationView(owner, { operationId: "op-1" })).captureDetail).toBeNull();
   });
 
   it("is owner-scoped and a foreign or missing operation is NOT_FOUND", async () => {

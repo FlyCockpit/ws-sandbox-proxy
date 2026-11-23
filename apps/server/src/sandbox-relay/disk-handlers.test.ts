@@ -26,3 +26,28 @@ describe("disk part size (offload plan §6)", () => {
     },
   );
 });
+
+describe("disk inventory budget (post-landing #1)", () => {
+  it("admits one window's pages, refuses more, and replenishes after the window", async () => {
+    const { admitDiskInventoryPage, DISK_INVENTORY_PAGES_PER_WINDOW, DISK_INVENTORY_WINDOW_MS } =
+      await import("./disk-handlers");
+    let budget: Parameters<typeof admitDiskInventoryPage>[0];
+    const t0 = 1_000_000;
+    for (let i = 0; i < DISK_INVENTORY_PAGES_PER_WINDOW; i++) {
+      const next = admitDiskInventoryPage(budget, t0 + i);
+      expect(next.admitted).toBe(true);
+      budget = next.budget;
+    }
+    // A long-lived connection past the first window's budget: ignored now…
+    const over = admitDiskInventoryPage(budget, t0 + 1_000);
+    expect(over.admitted).toBe(false);
+    budget = over.budget;
+    // …and answered again once the window rolled over (16 passes of the
+    // daemon's 10-minute reconciliation would have exhausted a per-session cap).
+    for (let pass = 1; pass <= 20; pass++) {
+      const next = admitDiskInventoryPage(budget, t0 + pass * DISK_INVENTORY_WINDOW_MS);
+      expect(next.admitted).toBe(true);
+      budget = next.budget;
+    }
+  });
+});

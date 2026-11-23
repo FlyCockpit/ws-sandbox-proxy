@@ -155,14 +155,21 @@ impl OffloadService {
         if self.inner.disks.get().is_none() || self.lifecycle_busy(sandbox_id) {
             return;
         }
-        if !self
-            .inner
-            .evict_pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(sandbox_id.to_owned())
         {
-            return;
+            let mut pending = self
+                .inner
+                .evict_pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // One request at a time per sandbox; one whose answer never came
+            // (lost with a frame) stops blocking after `EVICT_ANSWER_WAIT`.
+            if pending
+                .get(sandbox_id)
+                .is_some_and(|since| since.elapsed() < EVICT_ANSWER_WAIT)
+            {
+                return;
+            }
+            pending.insert(sandbox_id.to_owned(), Instant::now());
         }
         self.push(DaemonControlMessage::DiskEvictRequest(
             DiskEvictRequestV11 {
@@ -180,12 +187,15 @@ impl OffloadService {
         let Some(disks) = self.inner.disks.get().cloned() else {
             return 0;
         };
-        let pending = self
-            .inner
-            .evict_pending
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .len();
+        let pending = {
+            let mut pending = self
+                .inner
+                .evict_pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            pending.retain(|_, since| since.elapsed() < EVICT_ANSWER_WAIT);
+            pending.len()
+        };
         let room = PRESSURE_MAX_PENDING.saturating_sub(pending);
         if room == 0 {
             return 0;
@@ -305,12 +315,26 @@ impl OffloadService {
                 if self.transition(sandbox_id, &entry) != Ok(Moved::Applied) {
                     return;
                 }
-                self.push(DaemonControlMessage::DiskEvicted(DiskEvictedV11 {
+                let frame = DiskEvictedV11 {
                     sandbox_id: sandbox_id.to_owned(),
                     offload_id: entry.offload_id.clone(),
                     grant_id,
                     root_absence_proof: proof,
-                }));
+                };
+                // Re-sent by `tick` / `on_connection` until acked.
+                self.inner
+                    .evicted_sent
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(
+                        entry.offload_id.clone(),
+                        EvictedReport {
+                            frame: frame.clone(),
+                            first: Instant::now(),
+                            last: Instant::now(),
+                        },
+                    );
+                self.push(DaemonControlMessage::DiskEvicted(frame));
             }
             Err(code) => {
                 // The grant expires; the server's census decides from what

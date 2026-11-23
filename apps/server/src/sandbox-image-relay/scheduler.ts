@@ -5,6 +5,7 @@ import {
   offloadCandidates,
 } from "@wssp/api/sandbox/disk-offload/enqueue";
 import { storedAckFrame } from "@wssp/api/sandbox/disk-offload/store";
+import { endStalledOffloadUploads } from "@wssp/api/sandbox/disk-offload/upload-stall";
 import { foreignImageAccessLost } from "@wssp/api/sandbox/image-store/access";
 import { sweepCaptures } from "@wssp/api/sandbox/image-store/captures";
 import { imageDistributionMode } from "@wssp/api/sandbox/image-store/config";
@@ -162,6 +163,27 @@ async function releaseUnreferencedOriginImages(send: Send) {
     )
       sent++;
   return sent;
+}
+
+/**
+ * The offload upload stall rule on the 15 s tick (`endStalledOffloadUploads`):
+ * each ended attempt's source host, if connected, gets `disk.offload.cancel`
+ * (`upload_stalled`) so a still-running job stops and drops its staging.
+ */
+export async function stallOffloadUploads(sendDisk: SendDisk, now = new Date()): Promise<number> {
+  const ended = await endStalledOffloadUploads(undefined, now);
+  for (const offload of ended) {
+    const epoch = await hostEpoch(offload.sourceHostId);
+    if (epoch === null) continue;
+    sendDisk(offload.sourceHostId, epoch, {
+      type: "disk.offload.cancel",
+      sandboxId: offload.sandboxId,
+      offloadId: offload.offloadId,
+      seq: offload.seq,
+      reason: "upload_stalled",
+    });
+  }
+  return ended.length;
 }
 
 /**
@@ -352,6 +374,9 @@ export function startImageScheduler(
       // Disk offload needs only the store and the data key (its own gates),
       // never the template distribution mode.
       await sendStoredAcks(sendDisk);
+      // Stalled uploads free their host's export slot first, so the same
+      // tick can send that host its next export.
+      await stallOffloadUploads(sendDisk);
       await offloadScheduling(sendDisk);
       await diskEvictionMaintenance(sendDisk);
     } catch (error) {

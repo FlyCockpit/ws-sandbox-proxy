@@ -11,6 +11,7 @@ import {
   failureSchema,
   OPERATION_PROGRESS_PHASES,
   type OperationDto,
+  operationErrorDetailSchema,
   operationOutcome,
   publicOperationErrorCode,
   readinessFailureReasonSchema,
@@ -215,8 +216,22 @@ export type OperationRow = {
   progressBytesDone?: bigint | null;
   progressBytesTotal?: bigint | null;
   progressAt?: Date | null;
-  Capture?: { revisionId: string | null } | null;
+  Capture?: { revisionId: string | null; errorDetail?: string | null } | null;
 };
+
+/**
+ * The storage cause of a failed template capture (`capture_store_failed`),
+ * code-shaped as its CHECK requires (never message text): the same detail a
+ * template build shows (post-landing #6). Null for every other operation.
+ */
+export function captureErrorDetail(row: {
+  kind: SandboxOperationKind;
+  errorCode: string | null;
+  Capture?: { errorDetail?: string | null } | null;
+}): string | null {
+  if (row.kind !== "CAPTURE_TEMPLATE" || row.errorCode !== "capture_store_failed") return null;
+  return operationErrorDetailSchema.safeParse(row.Capture?.errorDetail).data ?? null;
+}
 
 const PROGRESS_PHASES: ReadonlySet<string> = new Set(OPERATION_PROGRESS_PHASES);
 
@@ -231,6 +246,7 @@ function readinessReasonOf(row: OperationRow): Pick<OperationDto, "readinessReas
 
 export function toOperationDto(row: OperationRow): OperationDto {
   const failure = failureSchema.safeParse(row.failure).data;
+  const captureDetail = captureErrorDetail(row);
   return {
     id: row.id,
     sandboxId: row.sandboxId,
@@ -277,6 +293,7 @@ export function toOperationDto(row: OperationRow): OperationDto {
         : row.errorCode,
     ),
     ...readinessReasonOf(row),
+    ...(captureDetail ? { captureDetail } : {}),
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
     dispatchedAt: isoOrNull(row.dispatchedAt),

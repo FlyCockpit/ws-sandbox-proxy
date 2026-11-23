@@ -641,6 +641,87 @@ describe("capture upload-begin binds its originating attempt (round-3 P2-2)", ()
   });
 });
 
+describe("a capture begin that overtakes its own result waits for it (post-landing #4)", () => {
+  afterEach(() => {
+    fakeS3.on = false;
+  });
+
+  it("is held while the capture's result is pending and granted once the result is recorded", async () => {
+    const { CaptureBeginOrder, captureResultPending } = await import("./capture-begin-order");
+    const f = await fixture();
+    const op = await capture(f, 1);
+    // The capture is still running: its host result (architecture) is not recorded.
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: { state: "PENDING", architecture: null },
+    });
+    fakeS3.on = true;
+    const early = begin(op.id, 1);
+    // Handled now, the begin is refused for good (the live e2e's failure).
+    const unordered = frameCtx(f);
+    await handleImageUploadBegin(unordered.ctx, early);
+    expect(unordered.replies.at(-1)).toMatchObject({ reason: "unknown_architecture" });
+    // Held instead, for this host, connection and attempt only.
+    const { ctx, replies } = frameCtx(f);
+    const order = new CaptureBeginOrder();
+    expect(await order.hold(ctx.sender, early)).toBe("held");
+    expect(order.size).toBe(1);
+    expect(await captureResultPending({ ...ctx.sender, connectionEpoch: 2 }, op.id, 1)).toBe(false);
+    expect(await captureResultPending({ ...ctx.sender, hostId: f.source.id }, op.id, 1)).toBe(
+      false,
+    );
+    expect(await captureResultPending(ctx.sender, op.id, 2)).toBe(false);
+    // Another operation's result releases nothing.
+    expect(order.release("other-op")).toEqual([]);
+    // The result is recorded (operation.result): the held begin is handled after it.
+    await db.inspect.sandboxTemplateCapture.update({
+      where: { operationId: op.id },
+      data: { state: "CAPTURED", architecture: "x86_64", capturedAt: new Date() },
+    });
+    expect(await captureResultPending(ctx.sender, op.id, 1)).toBe(false);
+    const released = order.release(op.id);
+    expect(released).toEqual([early]);
+    expect(order.size).toBe(0);
+    // Land round 1: the begin paid its grant budget before it was held; its
+    // handler does not spend it again (over budget now, it is still granted).
+    grantBudget.exhausted = true;
+    try {
+      await handleImageUploadBegin({ ...ctx, beginBudgetSpent: true }, released[0]!);
+    } finally {
+      grantBudget.exhausted = false;
+    }
+    expect(replies.at(-1)).toMatchObject({
+      type: "image.upload.grant",
+      requestId: early.requestId,
+    });
+    // A begin whose result is already recorded is never held.
+    expect(await order.hold(ctx.sender, begin(op.id, 1))).toBe("handle");
+  });
+
+  it("holds a bounded number of begins per connection; a re-sent begin replaces its held one", async () => {
+    const { CaptureBeginOrder, CAPTURE_BEGINS_HELD_MAX } = await import("./capture-begin-order");
+    const f = await fixture();
+    const order = new CaptureBeginOrder();
+    const { ctx } = frameCtx(f);
+    const ops = [];
+    for (let i = 0; i <= CAPTURE_BEGINS_HELD_MAX; i++) {
+      const op = await capture(f, 1);
+      await db.inspect.sandboxTemplateCapture.update({
+        where: { operationId: op.id },
+        data: { state: "PENDING", architecture: null },
+      });
+      ops.push(op);
+    }
+    for (const op of ops.slice(0, CAPTURE_BEGINS_HELD_MAX))
+      expect(await order.hold(ctx.sender, begin(op.id, 1))).toBe("held");
+    expect(await order.hold(ctx.sender, begin(ops.at(-1)!.id, 1))).toBe("handle");
+    const again = begin(ops[0]!.id, 1);
+    expect(await order.hold(ctx.sender, again)).toBe("held");
+    expect(order.size).toBe(CAPTURE_BEGINS_HELD_MAX);
+    expect(order.release(ops[0]!.id)).toEqual([again]);
+  });
+});
+
 describe("each upload owns an immutable session (round-5 P2-2)", () => {
   const SIZE = 4096;
   const STORED = encryptedImageLength(SIZE);
@@ -1057,6 +1138,32 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
     }
   });
 
+  it("a completion report is retried while its upload is open on another connection, done once handled", async () => {
+    const f = await fixture();
+    const { transferId } = await begun(f);
+    const { ctx } = frameCtx(f);
+    fakeS3.listed = [{ n: 1, size: 4096, etag: '"e1"' }];
+    const verified: string[] = [];
+    const complete = (c: typeof ctx) =>
+      handleImageUploadComplete(
+        c,
+        { type: "image.upload.complete", transferId, reportId: "0123456789abcdef0123456789abcdef" },
+        async (id) => {
+          verified.push(id);
+        },
+      );
+    // A connection the transfer is not bound to (a resume did not rebind it):
+    // the upload is still open, so the report is retried, never acked.
+    expect(await complete({ ...ctx, sender: { ...ctx.sender, connectionEpoch: 2 } })).toBe("retry");
+    expect(verified).toEqual([]);
+    // Its own connection claims it.
+    expect(await complete(ctx)).toBe("done");
+    expect(verified).toHaveLength(1);
+    // A repeat after the claim: answered stale, done, nothing more.
+    expect(await complete(ctx)).toBe("done");
+    expect(verified).toHaveLength(1);
+  });
+
   it("an operation-ref failure counts only from the capture's host, epoch and attempt", async () => {
     const f = await fixture();
     fakeS3.on = true;
@@ -1074,19 +1181,30 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
       refusal: "image_quota_exceeded",
     };
     const base = frameCtx(f).ctx;
-    for (const ctx of [
-      { ...base, sender: { ...base.sender, hostId: f.source.id } },
-      { ...base, sender: { ...base.sender, connectionEpoch: 2 } },
-    ]) {
-      await handleImageFailure(ctx, refused);
+    // Report outcomes (`report.ack`): a host that runs no live capture of
+    // it is done (nothing of that host to end); a fenced connection retries.
+    for (const [ctx, outcome] of [
+      [{ ...base, sender: { ...base.sender, hostId: f.source.id } }, "done"],
+      [{ ...base, sender: { ...base.sender, connectionEpoch: 2 } }, "retry"],
+    ] as const) {
+      expect(await handleImageFailure(ctx, refused)).toBe(outcome);
       expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
     }
-    await handleImageFailure(base, { ...refused, attempt: 2 });
+    // Another dispatch attempt's report: no effect, nothing left for it.
+    expect(await handleImageFailure(base, { ...refused, attempt: 2 })).toBe("done");
     expect(await captureOf(op.id)).toMatchObject({ state: "STORING", errorDetail: null });
-    await handleImageFailure(base, refused);
+    expect(await handleImageFailure(base, refused)).toBe("done");
     expect(await captureOf(op.id)).toMatchObject({
       state: "FAILED",
       errorCode: "capture_store_failed",
+      errorDetail: "upload_refused.image_quota_exceeded",
+    });
+    // A repeat (re-sent after a lost ack): done, nothing changes.
+    expect(
+      await handleImageFailure(base, { ...refused, reportId: "0123456789abcdef0123456789abcdef" }),
+    ).toBe("done");
+    expect(await captureOf(op.id)).toMatchObject({
+      state: "FAILED",
       errorDetail: "upload_refused.image_quota_exceeded",
     });
   });

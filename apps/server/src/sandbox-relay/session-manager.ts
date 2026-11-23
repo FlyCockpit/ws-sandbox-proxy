@@ -62,6 +62,7 @@ import { negotiatedOutputChunkBytes } from "./command-output.js";
 import { ConnectAuditRecorder } from "./connect-audit.js";
 import { ConnectManager, type HostChannelControl } from "./connect-manager.js";
 import { CredentialSessionRelay, offerReturnKey } from "./credential-handlers.js";
+import { grantDiskLiveness } from "./disk-liveness.js";
 import { deploymentEgressBlocklist, egressBlocklistFrame } from "./egress-blocklist.js";
 import { EgressHintThrottle, handleEgressRefused } from "./egress-hints.js";
 import { acknowledgeExecutionConfig } from "./execution-config-ack.js";
@@ -293,8 +294,13 @@ type SessionState = {
   tunnelPorts?: boolean;
   /** When reconciliation completed (ms): tunnel applies wait briefly after it. */
   reconciledAt?: number;
-  /** `disk.offload.inventory` pages this session sent (bounded). */
-  diskInventoryPages?: number;
+  /** `disk.offload.inventory` pages of this connection in its current budget window. */
+  diskInventory?: import("./disk-handlers.js").DiskInventoryBudget;
+  /** Disk upload liveness tries outside the grant budget, by transfer
+   * (`takeDiskLivenessSlot`), this connection only. */
+  diskLiveness?: Map<string, number>;
+  /** Capture begins held until their operation's result (post-landing #4). */
+  captureBegins?: import("./capture-begin-order.js").CaptureBeginOrder;
   /** Census keys seen on this connection until the complete page. */
   imageCensus?: import("./image-handlers.js").ImageCensusRun;
   /** Hello `egressRefusedHints` (B12); false/absent refuses `egress.refused`. */
@@ -2635,6 +2641,7 @@ export class SandboxRelaySessionManager {
                 session.protocolVersion,
               ),
             );
+          await this.releaseCaptureBegins(session, socket, sender, message.operationId);
           return;
         }
         case "sandbox.inventory": {
@@ -2920,6 +2927,43 @@ export class SandboxRelaySessionManager {
           // Image requests and replies require image-cache runtime support.
           if (!session.imageFeatures) throw new Error("unnegotiated image frame");
           if (!session.reconciled) throw new Error("image frame before reconciliation");
+          // A capture's begin that overtook its own result waits for it.
+          if (message.type === "image.upload.begin" && message.operationId !== undefined) {
+            const refuse = (reason: string) => {
+              if (this.isCurrentRegistered(session, socket))
+                socket.send(
+                  encodeServerControlMessage(
+                    {
+                      type: "image.job.cancel",
+                      transferId: message.transferId ?? "none",
+                      reason,
+                      ...(message.requestId !== undefined ? { requestId: message.requestId } : {}),
+                    },
+                    session.protocolVersion,
+                  ),
+                );
+            };
+            // The ordering lookup reads the database: the begin spends its
+            // grant budget first (land round 1), exactly once; its handler,
+            // now or once released, does not spend it again.
+            const { spendImageGrantBudget } = await import("./image-handlers.js");
+            if (!(await spendImageGrantBudget(sender.hostId))) return refuse("rate_limited");
+            const { CaptureBeginOrder } = await import("./capture-begin-order.js");
+            session.captureBegins ??= new CaptureBeginOrder();
+            const order = await session.captureBegins
+              .hold(sender, message)
+              .catch(() => "retry" as const);
+            if (order === "held") return;
+            // The daemon retries a begin refused `store_unavailable`.
+            if (order === "retry") return refuse("store_unavailable");
+            return this.handleImageMessage(session, socket, sender, message, {
+              budgetSpent: true,
+            }).catch((error) => {
+              console.error(
+                `[sandbox-relay] image frame ${message.type} failed (${error instanceof Error ? error.constructor.name : typeof error})`,
+              );
+            });
+          }
           // Image frames are advisory to the relay: a failed handler is logged
           // (class only) and answered where a reply is owed, never a dropped session.
           await this.handleImageMessage(session, socket, sender, message).catch((error) => {
@@ -3037,6 +3081,7 @@ export class SandboxRelaySessionManager {
           this.releaseDroppedCapture(sender, resultOutcome.releaseImage);
           if (resultOutcome.written && resultOutcome.allocationUnknown)
             await session.allocationAttestation?.request(message.operationId);
+          await this.releaseCaptureBegins(session, socket, sender, message.operationId);
         }
       }
     });
@@ -3522,17 +3567,42 @@ export class SandboxRelaySessionManager {
     }
   }
 
+  /** Handle the capture begins held for `operationId`, now that its result
+   * (or receipt) was handled on this connection (post-landing #4). */
+  private async releaseCaptureBegins(
+    session: SessionState,
+    socket: SandboxRelaySocket,
+    sender: RelaySender,
+    operationId: string,
+  ): Promise<void> {
+    // Each spent its grant budget when it was held.
+    for (const begin of session.captureBegins?.release(operationId) ?? [])
+      await this.handleImageMessage(session, socket, sender, begin, {
+        budgetSpent: true,
+      }).catch((error) => {
+        console.error(
+          `[sandbox-relay] image frame ${begin.type} failed (${error instanceof Error ? error.constructor.name : typeof error})`,
+        );
+      });
+  }
+
   private async handleImageMessage(
     session: SessionState,
     socket: SandboxRelaySocket,
     sender: RelaySender,
     message: import("@wssp/sandbox-contracts").DaemonImageMessage,
+    /** A capture begin whose grant budget was spent before its ordering
+     * lookup: its handler does not spend it again. */
+    options: { budgetSpent?: boolean } = {},
   ): Promise<void> {
     const images = await import("./image-handlers.js");
     const { imageRelaySpool } = await import("../sandbox-image-relay/index.js");
+    session.diskLiveness ??= new Map();
     const ctx: import("./image-handlers.js").ImageFrameContext = {
       sender,
       spool: imageRelaySpool(),
+      diskLiveness: session.diskLiveness,
+      ...(options.budgetSpent ? { beginBudgetSpent: true } : {}),
       reply: (frame) => {
         if (this.isCurrentRegistered(session, socket))
           socket.send(encodeServerControlMessage(frame, session.protocolVersion));
@@ -3557,8 +3627,15 @@ export class SandboxRelaySessionManager {
       case "image.evicted":
         return images.handleImageEvicted(ctx, message);
       case "image.fetch.failed":
+        await images.handleImageFailure(ctx, message);
+        return;
       case "image.job.failed":
-        return images.handleImageFailure(ctx, message);
+        return this.ackReport(
+          session,
+          socket,
+          message,
+          await images.handleImageFailure(ctx, message),
+        );
       case "image.cache.census":
         // A page 0 starts a new run (the daemon also sends a periodic census).
         if (message.page === 0 || !session.imageCensus)
@@ -3586,7 +3663,12 @@ export class SandboxRelaySessionManager {
         return images.handleImageUploadRenew(ctx, message);
       case "image.upload.complete": {
         const { enqueueImageVerify } = await import("@wssp/api/sandbox/image-store/jobs");
-        return images.handleImageUploadComplete(ctx, message, enqueueImageVerify);
+        return this.ackReport(
+          session,
+          socket,
+          message,
+          await images.handleImageUploadComplete(ctx, message, enqueueImageVerify),
+        );
       }
       case "image.job.resume": {
         await images.handleImageJobResume(ctx, message);
@@ -3598,8 +3680,9 @@ export class SandboxRelaySessionManager {
           {
             sender,
             reply: (frame) => {
-              if (this.isCurrentRegistered(session, socket))
-                socket.send(encodeServerControlMessage(frame, session.protocolVersion));
+              if (!this.isCurrentRegistered(session, socket)) return;
+              this.noteDiskGrant(session, frame);
+              socket.send(encodeServerControlMessage(frame, session.protocolVersion));
             },
           },
           message.transferId,
@@ -3620,8 +3703,9 @@ export class SandboxRelaySessionManager {
     const ctx: import("./disk-handlers.js").DiskFrameContext = {
       sender,
       reply: (frame) => {
-        if (this.isCurrentRegistered(session, socket))
-          socket.send(encodeServerControlMessage(frame, session.protocolVersion));
+        if (!this.isCurrentRegistered(session, socket)) return;
+        this.noteDiskGrant(session, frame);
+        socket.send(encodeServerControlMessage(frame, session.protocolVersion));
       },
     };
     switch (message.type) {
@@ -3634,7 +3718,12 @@ export class SandboxRelaySessionManager {
         return disks.handleDiskUploadComplete(ctx, message, enqueueDiskVerify);
       }
       case "disk.offload.failed":
-        return disks.handleDiskOffloadFailed(ctx, message);
+        return this.ackReport(
+          session,
+          socket,
+          message,
+          await disks.handleDiskOffloadFailed(ctx, message),
+        );
       case "disk.evict.request":
         return disks.handleDiskEvictRequest(ctx, message);
       case "disk.evicted":
@@ -3642,13 +3731,49 @@ export class SandboxRelaySessionManager {
       case "disk.discarded":
         return disks.handleDiskDiscarded(ctx, message);
       case "disk.offload.released":
-        return disks.handleDiskOffloadReleased(ctx, message);
-      case "disk.offload.inventory":
-        // Bounded per session; the daemon sends at most that many pages.
-        session.diskInventoryPages = (session.diskInventoryPages ?? 0) + 1;
-        if (session.diskInventoryPages > disks.DISK_INVENTORY_PAGES_PER_SESSION) return;
+        return this.ackReport(
+          session,
+          socket,
+          message,
+          await disks.handleDiskOffloadReleased(ctx, message),
+        );
+      case "disk.offload.inventory": {
+        // Bounded per window of the connection (it replenishes, so the
+        // daemon's periodic pass keeps getting verdicts).
+        const admitted = disks.admitDiskInventoryPage(session.diskInventory, Date.now());
+        session.diskInventory = admitted.budget;
+        if (!admitted.admitted) return;
         return disks.handleDiskOffloadInventory(ctx, message);
+      }
     }
+  }
+
+  /** A disk upload grant this connection sends: its transfer holds a disk
+   * liveness slot from now on (`grantDiskLiveness`), so unproven heartbeat
+   * ids never crowd out its first heartbeat (round 4). */
+  private noteDiskGrant(session: SessionState, frame: { type: string; transferId?: string }) {
+    if (frame.type !== "disk.upload.grant" || frame.transferId === undefined) return;
+    session.diskLiveness ??= new Map();
+    grantDiskLiveness(session.diskLiveness, frame.transferId);
+  }
+
+  /** A durable host report (one carrying `reportId`) the server is done
+   * with: `report.ack` on the socket it came on, so the host stops re-sending
+   * it. Never for `retry` (a fence refused it) nor when the handler threw. */
+  private ackReport(
+    session: SessionState,
+    socket: SandboxRelaySocket,
+    message: { reportId?: string },
+    outcome: import("./disk-handlers.js").ReportOutcome,
+  ): void {
+    if (outcome !== "done" || message.reportId === undefined) return;
+    if (!this.isCurrentRegistered(session, socket)) return;
+    socket.send(
+      encodeServerControlMessage(
+        { type: "report.ack", reportId: message.reportId },
+        session.protocolVersion,
+      ),
+    );
   }
 
   private senderOf(session: SessionState): RelaySender {

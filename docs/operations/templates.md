@@ -779,7 +779,27 @@ sandbox into a new revision of its template (or another template you own).
   outcome decides. A storage cause the host reported before its result (an
   export failure) also names a `build_capture_failed`. A build that
   stored nothing ends `build_store_failed` with the capture's detail, shown
-  as a sentence on the build page (an unknown detail is shown raw).
+  as a sentence on the build page (an unknown detail is shown raw). A
+  **Save as template** capture that failed `capture_store_failed` carries
+  the same detail as `captureDetail` on its `/v1` operation (only for that
+  code; always a code, never message text), and its operation page shows
+  the same sentence.
+- **Lost completion or failure.** The host keeps a capture upload's
+  `image.upload.complete` or `image.job.failed` until the server
+  acknowledges it (`report.ack`). It sends the report again, behind the
+  job's resume, after every reconnect, and after 2 minutes without an ack
+  on a live connection, for at most 1 hour
+  ([hosts](../guide/hosts.md#disk-offload-on-a-host)). A repeat of a handled
+  report changes nothing. The 10-minute stall rule still ends an upload whose
+  report never arrived.
+- **Result before upload.** A capture's `image.upload.begin` needs the
+  architecture its operation result records. When the export is instant,
+  the begin can reach the server before that result. The server then holds
+  the begin, for this host, connection and dispatch attempt while the
+  capture is still pending, and handles it right after the operation's
+  result or receipt on the same connection. A held begin is dropped with the
+  connection; the host sends it again once resumed. Each connection holds
+  at most 16.
 - **Slow uplinks.** An upload is sized and paced for slow, flaky links
   (docs/guide/hosts.md#image-cache):
   - **Part size** is chosen per upload session: whole 1 MiB records,
@@ -805,8 +825,13 @@ sandbox into a new revision of its template (or another template you own).
     that re-send interval, never past the 180 s). A
     reconnect between parts is resumed inside the renew that follows it. So
     a moving upload is silent at most 30 s (heartbeat interval) + 300 s
-    (part response wait) + 180 s (renew) = 510 s, inside the 10 min stall
-    window.
+    (the longest part response wait) + 180 s (renew) = 510 s, inside the
+    10 min stall window. The response wait is 120 s plus what the part's
+    last bytes may still need to drain: at most 8 MiB at the measured upload
+    rate, or at 45 KB/s before one is known, capped at 300 s
+    (docs/guide/hosts.md#image-cache). A store that never answers ends the
+    upload `upload_timeout` after about 4 × 120 s plus the retry pauses
+    (about 9 minutes) on a small part or a fast link.
   - **Rate limits are not failures**: over the host's grant budget a parts
     report, heartbeat or renew is dropped without a reply and changes
     nothing; the host asks again, and re-reports a part a renewed grant
@@ -820,9 +845,9 @@ sandbox into a new revision of its template (or another template you own).
     out waiting). A publish begin is never retried by the host: the refusal
     ends the publish (a store refusal also fails its artifact with
     `store_unavailable`), and server backfill asks again.
-  - **Relay reconnects**: from its start until its last frame (the failure
-    report or `image.upload.complete`) was written to a connection's socket
-    and flushed, every new
+  - **Relay reconnects**: from its start until the server acknowledged its
+    last frame (the failure report or `image.upload.complete`, kept until
+    its `report.ack`, for at most 1 hour and 32 reports), every new
     connection carries the upload's `image.job.resume` before any other frame
     of it: by transfer, or by operation and attempt before the first grant
     (begin in flight or in retry backoff; a begin that had already been sent
@@ -832,8 +857,10 @@ sandbox into a new revision of its template (or another template you own).
     resumes (the server takes each of them idempotently); every other frame
     of it is dropped: a begin the server may already have taken (a lost
     capture begin is sent again once resumed), census and disk inventory
-    pages (restarted on every connection) and disk offload frames (which
-    keep their own resume and re-grant). The upload sends nothing more until the
+    pages (restarted on every connection) and disk upload parts reports
+    (the offload keeps its own resume and re-grant; its completion, failure,
+    release and eviction reports are sent again). The upload sends nothing
+    more until the
     answer on the current connection (an answer that comes while it still
     exports is kept). Its waits count only connected time (at most 30 min of
     wall time each, one deadline per wait across reconnects), so a failure that happened while the

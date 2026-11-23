@@ -506,6 +506,13 @@ type DiskSessionRow = Prisma.SandboxImageUploadSessionGetPayload<{
  * this epoch and still authorized (`OFFLOAD_UPLOAD`: offload uploadable,
  * sandbox STOPPED at the source generation on this host). Locks host →
  * sandbox → session and runs `then` in the same transaction.
+ *
+ * `rebind` (Complete only): a transfer of this host and owner still bound to
+ * an older epoch is first moved to the current one, exactly as an accepted
+ * `image.job.resume` would move it (same host, owner, OPEN transfer, and
+ * the authority check on the rebound row), so a completion re-sent after a
+ * reconnect needs no resume (which would re-send the session's key in a
+ * grant). Parts reports never rebind.
  */
 async function withDiskSession<T>(
   sender: RelaySender,
@@ -514,6 +521,7 @@ async function withDiskSession<T>(
     tx: Prisma.TransactionClient,
     session: DiskSessionRow & { uploadId: string },
   ) => Promise<T>,
+  rebind = false,
 ): Promise<T | null> {
   return relayTransaction(async (tx) => {
     await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
@@ -534,15 +542,28 @@ async function withDiskSession<T>(
             purpose: "OFFLOAD_UPLOAD",
             sourceHostId: sender.hostId,
             sourceHostOwnerId: sender.userId,
-            sourceEpoch: sender.connectionEpoch,
+            ...(rebind
+              ? { sourceEpoch: { lte: sender.connectionEpoch } }
+              : { sourceEpoch: sender.connectionEpoch }),
           },
         },
       },
-      select: { ...diskSessionSelect, Transfer: { select: transferAuthoritySelect } },
+      select: {
+        ...diskSessionSelect,
+        Transfer: { select: { id: true, ...transferAuthoritySelect } },
+      },
     });
     if (!session?.uploadId) return null;
-    if (!(await transferAuthorized(tx, session.Transfer, await hostDatabaseNow(tx)))) return null;
-    const { Transfer: _transfer, ...row } = session;
+    const { Transfer: transfer, ...row } = session;
+    const bound = { ...transfer, sourceEpoch: sender.connectionEpoch };
+    if (!(await transferAuthorized(tx, bound, await hostDatabaseNow(tx)))) return null;
+    if (transfer.sourceEpoch !== sender.connectionEpoch) {
+      const moved = await tx.sandboxImageTransfer.updateMany({
+        where: { id: transfer.id, state: "OPEN", sourceEpoch: transfer.sourceEpoch },
+        data: { sourceEpoch: sender.connectionEpoch },
+      });
+      if (moved.count !== 1) return null;
+    }
     return then(tx, { ...row, uploadId: session.uploadId });
   }, null);
 }
@@ -669,7 +690,10 @@ export async function handleDiskUploadResume(
  * move exactly one session (OPEN → COMPLETE, wrap nulled) and exactly one
  * offload (UPLOADING → VERIFYING, taking the wrap, object key and sizes).
  * Otherwise the call is refused. After CompleteMultipartUpload the worker
- * verifies the object (decrypt, hash, size) before `markStored`.
+ * verifies the object (decrypt, hash, size) before `markStored`. A session
+ * whose transfer is still bound to an older epoch of this host is rebound
+ * first (`withDiskSession`'s `rebind`): the host re-sends a completion lost
+ * with a relay connection until its offload has a verdict.
  */
 export async function handleDiskUploadComplete(
   ctx: DiskFrameContext,
@@ -678,7 +702,7 @@ export async function handleDiskUploadComplete(
 ): Promise<void> {
   const store = imageStore();
   const stale = () => ctx.reply(cancelFrame(m, "stale"));
-  const session = store ? await withDiskSession(ctx.sender, m, async (_tx, s) => s) : null;
+  const session = store ? await withDiskSession(ctx.sender, m, async (_tx, s) => s, true) : null;
   if (!store || !session) return stale();
   const expected = partCount(session.storedBytes, session.partSize);
   let listed: { n: number; size: number; etag: string }[];
@@ -708,7 +732,8 @@ export async function handleDiskUploadComplete(
       requireRelayFence(await lockSandboxRow(tx, m.sandboxId));
       const [offload] = await tx.$queryRaw<{ sourceGeneration: number }[]>`SELECT "sourceGeneration"
         FROM sandbox_disk_offload WHERE id = ${m.offloadId} AND "sandboxId" = ${m.sandboxId}
-          AND seq = ${m.seq} AND "sourceHostId" = ${sender.hostId} FOR UPDATE`;
+          AND seq = ${m.seq} AND "sourceHostId" = ${sender.hostId}
+          AND "sourceHostOwnerId" = ${sender.userId} FOR UPDATE`;
       if (!offload) return "refused";
       const stopped = await tx.sandbox.count({
         where: {
@@ -723,10 +748,13 @@ export async function handleDiskUploadComplete(
         return { ended: await endLiveOffload(tx, m.offloadId, "SUPERSEDED", "superseded") };
       if (!(await completeDiskSession(tx, { offloadId: m.offloadId, sessionId: session.id })))
         return "refused";
-      await tx.sandboxImageTransfer.updateMany({
+      // The transfer may have ended while ListParts ran (expired, cancelled):
+      // the claim then rolls back whole (round 1 L3 #3).
+      const moved = await tx.sandboxImageTransfer.updateMany({
         where: { id: session.transferId, state: "OPEN" },
         data: { state: "COMPLETE", endReason: "uploaded", bytesDone: session.storedBytes },
       });
+      requireRelayFence(moved.count === 1);
       return "claimed";
     },
     "refused",
@@ -791,20 +819,31 @@ export async function handleDiskUploadComplete(
 }
 
 /**
+ * How the server took a durable host report (a frame carrying `reportId`):
+ * `done` when it took effect, or when nothing is left for it to end (no such
+ * attempt of this host, or that attempt already ended), so the host stops
+ * re-sending (`report.ack`); `retry` when a fence refused it or it could not
+ * be decided now (no ack: the host sends it again).
+ */
+export type ReportOutcome = "done" | "retry";
+
+/**
  * `disk.offload.failed`: the source host could not export or upload. Only
  * its own live, still-uploadable attempt ends FAILED(code) (a VERIFYING
- * object is the server's to judge); the disk stays local.
+ * object is the server's to judge); the disk stays local. A repeat, or a
+ * report naming no row of this host and owner, changes nothing (`done`).
  */
 export async function handleDiskOffloadFailed(
   ctx: DiskFrameContext,
   m: Extract<DaemonDiskMessage, { type: "disk.offload.failed" }>,
-): Promise<void> {
+): Promise<ReportOutcome> {
   const store = imageStore();
-  const ended = await relayTransaction(async (tx) => {
+  const taken = await relayTransaction<{ ended: EndedOffload | null } | null>(async (tx) => {
     const sender = ctx.sender;
     await lockHostByEpoch(tx, sender.hostId, sender.connectionEpoch, sender.userId);
     requireRelayFence(sender.isCurrent?.() !== false);
-    requireRelayFence(await lockSandboxRow(tx, m.sandboxId));
+    // No sandbox row: no offload of it is left to end (a definite no-op).
+    if (!(await lockSandboxRow(tx, m.sandboxId))) return { ended: null };
     const owned = await tx.sandboxDiskOffload.count({
       where: {
         id: m.offloadId,
@@ -814,22 +853,25 @@ export async function handleDiskOffloadFailed(
         sourceHostOwnerId: sender.userId,
       },
     });
-    if (owned !== 1) return null;
-    return endLiveOffload(tx, m.offloadId, "FAILED", m.code, UPLOADABLE_STATES);
+    if (owned !== 1) return { ended: null };
+    return { ended: await endLiveOffload(tx, m.offloadId, "FAILED", m.code, UPLOADABLE_STATES) };
   }, null);
-  await finishEndedOffload(store, ended);
+  if (!taken) return "retry";
+  await finishEndedOffload(store, taken.ended);
+  return "done";
 }
 
 /**
  * `image.job.failed` on a disk upload transfer (`transferId` of a disk
  * grant): its offload, if still uploading from that host, ends FAILED.
- * Returns false when the transfer is not a disk upload of that host.
+ * Its outcome is the offload report's (`done` when the transfer is not a
+ * disk upload of that host: nothing of an offload is left for it).
  */
 export async function handleDiskTransferFailure(
   ctx: Pick<DiskFrameContext, "sender">,
   transferId: string,
   code: string,
-): Promise<boolean> {
+): Promise<ReportOutcome> {
   const transfer = await prisma.sandboxImageTransfer.findFirst({
     where: {
       id: transferId,
@@ -840,8 +882,8 @@ export async function handleDiskTransferFailure(
     select: { DiskOffload: { select: { id: true, sandboxId: true, seq: true } } },
   });
   const offload = transfer?.DiskOffload;
-  if (!offload) return transfer !== null;
-  await handleDiskOffloadFailed(
+  if (!offload) return "done";
+  return handleDiskOffloadFailed(
     { sender: ctx.sender, reply: () => {} },
     {
       type: "disk.offload.failed",
@@ -851,7 +893,6 @@ export async function handleDiskTransferFailure(
       code: code === "cancelled" ? "cancelled" : "io",
     },
   );
-  return true;
 }
 
 /**
@@ -1068,8 +1109,8 @@ export async function handleRestoreFetchRequest(
 export async function handleDiskOffloadReleased(
   ctx: DiskFrameContext,
   m: Extract<DaemonDiskMessage, { type: "disk.offload.released" }>,
-): Promise<void> {
-  if (ctx.sender.isCurrent?.() === false) return;
+): Promise<ReportOutcome> {
+  if (ctx.sender.isCurrent?.() === false) return "retry";
   const { count } = await prisma.sandboxDiskOffload.updateMany({
     where: {
       id: m.offloadId,
@@ -1083,11 +1124,35 @@ export async function handleDiskOffloadReleased(
     data: { sourceReleasedAt: new Date() },
   });
   if (count > 0) wakeImageScheduler();
+  // Recorded now, or already (a repeat), or no verified row of this host
+  // and owner: nothing is left for this report to do.
+  return "done";
 }
 
-/** `disk.offload.inventory` pages one session may send (the daemon sends at
- * most this many; more are ignored). */
-export const DISK_INVENTORY_PAGES_PER_SESSION = 16;
+/** `disk.offload.inventory` pages one inventory run may send (the daemon
+ * sends at most this many per run). */
+const DISK_INVENTORY_PAGES_PER_SESSION = 16;
+/** The inventory budget's window: the daemon runs its completion and
+ * inventory pass after every reconnect and every 10 minutes on a live
+ * connection (post-landing #1). */
+export const DISK_INVENTORY_WINDOW_MS = 10 * 60_000;
+/** Pages accepted per window: one full run plus as many one-entry verdict
+ * asks; more are ignored until the window rolls over. */
+export const DISK_INVENTORY_PAGES_PER_WINDOW = 2 * DISK_INVENTORY_PAGES_PER_SESSION;
+
+export type DiskInventoryBudget = { pages: number; since: number };
+
+/** Whether one more inventory page fits this connection's budget (a
+ * window replenishes it, so a long-lived connection keeps its verdicts). */
+export function admitDiskInventoryPage(
+  budget: DiskInventoryBudget | undefined,
+  now: number,
+): { admitted: boolean; budget: DiskInventoryBudget } {
+  const current =
+    budget && now - budget.since < DISK_INVENTORY_WINDOW_MS ? budget : { pages: 0, since: now };
+  const next = { pages: current.pages + 1, since: current.since };
+  return { admitted: next.pages <= DISK_INVENTORY_PAGES_PER_WINDOW, budget: next };
+}
 /** Offload states still in flight: an inventory entry of one is unanswered. */
 const INVENTORY_IN_FLIGHT = new Set(["PENDING", "EXPORTING", "UPLOADING", "VERIFYING", "EVICTING"]);
 /** `disk.offload.cancel` reason that releases an over or foreign offload. */

@@ -631,6 +631,14 @@ pub(crate) fn valid_uploaded_parts(parts: &[ImageUploadedPartV11]) -> bool {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageTransferRefV11 {
     pub transfer_id: String,
+    /// Report id (32 lowercase hex): the daemon keeps the report until the
+    /// server's `report.ack` of this id and re-sends it after a reconnect.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub report_id: Option<String>,
 }
 
 /// After a relay reconnect a background job re-binds itself to the new
@@ -806,6 +814,14 @@ pub struct ImageJobFailedV11 {
         deserialize_with = "crate::egress::present"
     )]
     pub refusal: Option<String>,
+    /// Report id (32 lowercase hex): the daemon keeps the report until the
+    /// server's `report.ack` of this id and re-sends it after a reconnect.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub report_id: Option<String>,
 }
 
 /// The largest integer a JSON number carries exactly (the server's bound).
@@ -824,6 +840,7 @@ impl ImageJobFailedV11 {
             && self.part.is_none_or(|p| (1..=10_000).contains(&p))
             && self.refusal.is_some() == (self.cause == ImageFailureCause::Refused)
             && self.refusal.as_deref().is_none_or(valid_code)
+            && self.report_id.as_deref().is_none_or(valid_report_id)
     }
 }
 
@@ -1188,6 +1205,24 @@ pub struct ImageCacheCensusAckV11 {
     pub page: u64,
 }
 
+/// The server handled a daemon report (`reportId` on `disk.offload.failed`,
+/// `disk.offload.released`, `image.job.failed`, `image.upload.complete`):
+/// applied, or proven to have nothing left to end. The daemon stops
+/// re-sending it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReportAckV11 {
+    pub report_id: String,
+}
+
+/// A report id: exactly 32 lowercase hex characters.
+pub fn valid_report_id(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// Validation of server→daemon image frames (both encode and parse).
 pub(crate) fn valid_server_image(message: &crate::ServerControlMessage) -> bool {
     use crate::ServerControlMessage as M;
@@ -1229,6 +1264,7 @@ pub(crate) fn valid_server_image(message: &crate::ServerControlMessage) -> bool 
             valid_image_fingerprint(&r.fingerprint) && valid_id(&r.image_owner_id)
         }
         M::ImageCacheCensusAck(a) => a.page <= 4096,
+        M::ReportAck(a) => valid_report_id(&a.report_id),
         _ => true,
     }
 }
@@ -1266,7 +1302,9 @@ pub(crate) fn valid_daemon_image(message: &crate::DaemonControlMessage) -> bool 
         M::ImagePartAck(r) => r.is_valid(),
         M::ImageUploadBegin(r) => r.is_valid(),
         M::ImageUploadParts(r) => r.is_valid(),
-        M::ImageUploadComplete(r) => valid_id(&r.transfer_id),
+        M::ImageUploadComplete(r) => {
+            valid_id(&r.transfer_id) && r.report_id.as_deref().is_none_or(valid_report_id)
+        }
         M::ImageJobResume(r) => r.is_valid(),
         M::ImageJobFailed(r) => r.is_valid(),
         M::ImageUploadProgress(r) => r.is_valid(),

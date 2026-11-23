@@ -142,6 +142,9 @@
     "./sandbox/disk-offload/store": {
       "default": "./src/sandbox/disk-offload/store.ts"
     },
+    "./sandbox/disk-offload/upload-stall": {
+      "default": "./src/sandbox/disk-offload/upload-stall.ts"
+    },
     "./sandbox/image-placement": {
       "default": "./src/sandbox/image-placement.ts"
     },

@@ -256,6 +256,47 @@ it("keeps every new identity/content/negotiation field out of generic DTOs", asy
   for (const key of Object.keys(privateFields)) expect(projected).not.toHaveProperty(key);
 });
 
+it("projects a failed capture's code-shaped storage detail, as builds show it (post-landing #6)", async () => {
+  const { toOperationDto } = await import("./sdk-reads");
+  const { operationSchema } = await import("@wssp/sandbox-contracts");
+  const row = {
+    id: "op",
+    sandboxId: "sandbox",
+    kind: "CAPTURE_TEMPLATE" as const,
+    state: "FAILED" as const,
+    generation: 1,
+    errorCode: "capture_store_failed",
+    createdAt: T,
+    updatedAt: T,
+    dispatchedAt: T,
+    completedAt: T,
+    Capture: { revisionId: null, errorDetail: "upload_timeout" },
+  };
+  const projected = toOperationDto(row);
+  expect(projected).toMatchObject({
+    errorCode: "capture_store_failed",
+    captureDetail: "upload_timeout",
+  });
+  // Never under the operation's own (private, free-text) `errorDetail` key.
+  expect(projected).not.toHaveProperty("errorDetail");
+  expect(operationSchema.parse(projected)).toEqual(projected);
+  expect(
+    toOperationDto({
+      ...row,
+      Capture: { revisionId: null, errorDetail: "upload_refused.image_quota_exceeded" },
+    }).captureDetail,
+  ).toBe("upload_refused.image_quota_exceeded");
+  // Never message text, another code or another kind.
+  for (const other of [
+    { ...row, Capture: { revisionId: null, errorDetail: "Upload failed: https://s3/x?X-Amz=1" } },
+    { ...row, errorCode: "capture_failed" },
+    { ...row, kind: "CREATE_SANDBOX" as const },
+    { ...row, Capture: null },
+  ])
+    expect(toOperationDto(other)).not.toHaveProperty("captureDetail");
+  expect(() => operationSchema.parse({ ...projected, errorCode: "capture_failed" })).toThrow();
+});
+
 it("projects only the fixed readiness label of a guest_unavailable operation", async () => {
   const { toOperationDto } = await import("./sdk-reads");
   const { operationSchema } = await import("@wssp/sandbox-contracts");

@@ -36896,6 +36896,10 @@
                   "root_disk_not_grown"
                 ]
               },
+              "captureDetail": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.]{1,64}$"
+              },
               "createdAt": {
                 "type": "string",
                 "format": "date-time",

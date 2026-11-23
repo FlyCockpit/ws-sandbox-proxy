@@ -902,7 +902,10 @@ export const operationProgressSchema = z
   .strict();
 export type OperationProgressDto = z.infer<typeof operationProgressSchema>;
 
-/** Status metadata only: never result, output, error detail, payload or idempotency key. */
+/** A code-shaped failure detail (never message text), as the database CHECK allows. */
+export const operationErrorDetailSchema = z.string().regex(/^[a-z0-9_.]{1,64}$/);
+
+/** Status metadata only: never result, output, free-text error detail, payload or idempotency key. */
 export const operationSchema = z
   .object({
     id: resourceIdSchema,
@@ -916,6 +919,13 @@ export const operationSchema = z
     errorCode: z.enum(OPERATION_ERROR_CODES).nullable(),
     /** `guest_unavailable` only: which guest readiness check failed (a fixed label). */
     readinessReason: readinessFailureReasonSchema.optional(),
+    /**
+     * `capture_store_failed` of a CAPTURE_TEMPLATE only: the capture's
+     * storage cause, the same code a template build shows as its
+     * `errorDetail` (for example `upload_timeout`, `upload_http_503`,
+     * `upload_refused.image_quota_exceeded`).
+     */
+    captureDetail: operationErrorDetailSchema.optional(),
     createdAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
     dispatchedAt: isoDateTimeSchema.nullable(),
@@ -937,6 +947,12 @@ export const operationSchema = z
     (operation) =>
       operation.readinessReason === undefined || operation.errorCode === "guest_unavailable",
     { message: "Readiness reasons require guest_unavailable", path: ["readinessReason"] },
+  )
+  .refine(
+    (operation) =>
+      operation.captureDetail === undefined ||
+      (operation.kind === "CAPTURE_TEMPLATE" && operation.errorCode === "capture_store_failed"),
+    { message: "Capture details require a capture store failure", path: ["captureDetail"] },
   )
   .refine((operation) => operation.outcome === operationOutcome(operation.state), {
     message: "outcome must be derived from state",

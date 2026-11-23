@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  mode: "peer" as "peer" | "s3",
+  mode: "peer" as "peer" | "s3" | "off",
   sweep: vi.fn(),
   queryRaw: vi.fn(),
   createTransfer: vi.fn(),
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   failUndeliveredOffload: vi.fn(async () => {}),
   storedAckFrame: vi.fn(),
   storedOffloads: vi.fn(async () => [] as { id: string }[]),
+  stalled: vi.fn(async () => [] as unknown[]),
   lost: [] as Array<{
     hostId: string;
     hostOwnerId: string;
@@ -37,6 +38,9 @@ vi.mock("@wssp/api/sandbox/disk-offload/enqueue", () => ({
   OFFLOAD_RELEASE_WAIT_MS: 10 * 60_000,
 }));
 vi.mock("@wssp/api/sandbox/disk-offload/store", () => ({ storedAckFrame: mocks.storedAckFrame }));
+vi.mock("@wssp/api/sandbox/disk-offload/upload-stall", () => ({
+  endStalledOffloadUploads: mocks.stalled,
+}));
 vi.mock("@wssp/api/sandbox/image-store/access", () => ({
   foreignImageAccessLost: vi.fn(async () => mocks.lost),
 }));
@@ -60,6 +64,7 @@ const {
   publishBackfill,
   offloadScheduling,
   sendStoredAcks,
+  stallOffloadUploads,
 } = await import("./scheduler.js");
 
 describe("image scheduler — unit (mocked sweep and DB; real-DB finalizer: captures.pg.test.ts)", () => {
@@ -231,6 +236,58 @@ describe("image scheduler — unit (mocked sweep and DB; real-DB finalizer: capt
       expect(mocks.failUndeliveredOffload).toHaveBeenCalledWith(
         expect.objectContaining({ offloadId: "o-s2" }),
       );
+    });
+    it("a stalled offload upload the stall rule ended tells its source host on its current epoch", async () => {
+      mocks.hosts.set("h1", { connectionEpoch: 9, userId: "owner" });
+      mocks.hosts.delete("h-gone");
+      mocks.stalled.mockResolvedValueOnce([
+        { sandboxId: "s1", offloadId: "o1", seq: 2, sourceHostId: "h1" },
+        { sandboxId: "s2", offloadId: "o2", seq: 1, sourceHostId: "h-gone" },
+      ]);
+      const sendDisk = vi.fn((_h: string, _e: number, _f: unknown) => true);
+      expect(await stallOffloadUploads(sendDisk)).toBe(2);
+      expect(sendDisk.mock.calls).toEqual([
+        [
+          "h1",
+          9,
+          {
+            type: "disk.offload.cancel",
+            sandboxId: "s1",
+            offloadId: "o1",
+            seq: 2,
+            reason: "upload_stalled",
+          },
+        ],
+      ]);
+    });
+    it("the 15 s tick runs the stall rule before scheduling, so the freed host gets its cancel then its next export", async () => {
+      // Round 1 (L2 #5): the tick's own wiring, not only the helper.
+      mocks.mode = "off";
+      mocks.hosts.set("h1", { connectionEpoch: 9, userId: "owner" });
+      mocks.storedOffloads.mockResolvedValue([]);
+      mocks.stalled.mockResolvedValueOnce([
+        { sandboxId: "s1", offloadId: "o1", seq: 2, sourceHostId: "h1" },
+      ]);
+      mocks.offloadCandidates.mockResolvedValue([candidate("s9", "h1")]);
+      mocks.enqueueOffload.mockImplementation(async (c: ReturnType<typeof candidate>) => ({
+        offloadId: "o9",
+        sandboxId: c.sandboxId,
+        seq: 1,
+        generation: c.generation,
+        hostId: c.hostId,
+        epoch: 9,
+      }));
+      const sendDisk = vi.fn((_h: string, _e: number, _f: unknown) => true);
+      const controller = new AbortController();
+      try {
+        startImageScheduler(() => true, controller.signal, sendDisk)();
+        await vi.waitFor(() => expect(sendDisk.mock.calls.length).toBeGreaterThanOrEqual(2));
+      } finally {
+        controller.abort();
+      }
+      expect(
+        sendDisk.mock.calls.slice(0, 2).map(([, , f]) => (f as { type: string }).type),
+      ).toEqual(["disk.offload.cancel", "disk.offload.request"]);
     });
     it("unreleased STORED offloads tell their source host on its current epoch", async () => {
       mocks.hosts.set("src", { connectionEpoch: 9, userId: "owner" });

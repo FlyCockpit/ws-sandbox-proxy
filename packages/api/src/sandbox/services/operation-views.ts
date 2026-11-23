@@ -9,6 +9,7 @@ import { findOwnedOrThrow } from "../../lib/ownership";
 import { cursorPage, pageTake, withCursor } from "../../lib/pagination";
 import { serviceProcedure } from "../../lib/sdk-key-access";
 import type { ListOperationsInput, OperationIdInput, Principal } from "../contracts";
+import { captureErrorDetail } from "../public-dto";
 import { safeOperationError } from "../sensitive-errors";
 import { ACTIVE_OPERATION_STATES } from "../state-transitions";
 
@@ -50,7 +51,7 @@ const operationRowSelect = {
   progressBytesTotal: true,
   // The owner's own sandbox name (session only; the /v1 operation DTO has none).
   Sandbox: { select: { state: true, name: true } },
-  Capture: { select: { revisionId: true } },
+  Capture: { select: { revisionId: true, errorDetail: true } },
 } satisfies Prisma.SandboxOperationSelect;
 
 type OperationRow = Prisma.SandboxOperationGetPayload<{ select: typeof operationRowSelect }>;
@@ -98,6 +99,7 @@ function toOperationRow(
     ...progressFields({ progressPhase, progressBytesDone, progressBytesTotal, Capture }),
     failure: failureSchema.safeParse(row.failure).data ?? null,
     errorCode: publicOperationErrorCode(errorCode),
+    captureDetail: captureErrorDetail({ kind: row.kind, errorCode, Capture }),
     exitCode,
     sandboxState: Sandbox.state,
     sandboxName: Sandbox.name,
@@ -230,6 +232,7 @@ export const getOperationView = serviceProcedure(
       failure: failureSchema.safeParse(row.failure).data ?? null,
       errorCode: error?.code ?? null,
       errorMessage: error?.message ?? null,
+      captureDetail: captureErrorDetail({ kind: row.kind, errorCode, Capture }),
       exitCode,
       sandboxState: sandbox.state,
       sandbox: { ...sandbox, host: hostOwnerId === owner.ownerId ? SandboxHost : null },

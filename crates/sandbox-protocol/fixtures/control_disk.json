@@ -1,6 +1,21 @@
 {
   "daemon": [
     {
+      "type": "disk.offload.failed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "io",
+      "reportId": "0123456789abcdef0123456789abcdef"
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "reportId": "0123456789abcdef0123456789abcdef"
+    },
+    {
       "type": "disk.upload.begin",
       "sandboxId": "sbx-1",
       "generation": 3,
@@ -404,6 +419,28 @@
     }
   ],
   "rejectedDaemon": [
+    {
+      "type": "disk.offload.failed",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "code": "io",
+      "reportId": "0123456789ABCDEF0123456789ABCDEF"
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "reportId": "0123456789abcdef0123456789abcde"
+    },
+    {
+      "type": "disk.offload.released",
+      "sandboxId": "sbx-1",
+      "offloadId": "off-1",
+      "seq": 1,
+      "reportId": null
+    },
     {
       "type": "disk.upload.begin",
       "sandboxId": "sbx-1",

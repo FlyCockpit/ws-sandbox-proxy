@@ -1407,6 +1407,16 @@ fn install_relay_test_timing(timing: Option<super::test_timing::RelayTestTiming>
     let _ = RELAY_TEST_TIMING.set(timing);
 }
 
+/// How often the connect loop runs the disk offload periodic pass
+/// (`OffloadService::tick`).
+pub(super) const DISK_TICK_EVERY: Duration = Duration::from_secs(60);
+
+/// `DISK_TICK_EVERY`, or a debug test daemon's shorter period
+/// (`WSSP_TEST_DISK_TIMING`).
+fn disk_tick_every() -> Duration {
+    super::test_timing::disk_test_timing().map_or(DISK_TICK_EVERY, |t| t.tick)
+}
+
 /// The process's `WSSP_TEST_RUNTIME_TIMING` widening, set once by
 /// [`run_connect_with_config`]; always `None` in release builds.
 static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<super::test_timing::RuntimeTestTiming>> =
@@ -2490,6 +2500,10 @@ fn relay_session_loop(
     // census so the server's view converges without a reconnect.
     let mut last_image_reconcile = Instant::now();
     let mut last_image_census = Instant::now();
+    // Disk offload reconciliation after `hello.ok` (`disk_ready`) and its
+    // periodic pass on a live connection (`OffloadService::tick`).
+    let mut disk_ready = false;
+    let mut last_disk_tick = Instant::now();
     // Every registered session uses the exact 1.0 vocabulary.
     let mut wire = WireCodes::CURRENT;
     let mut admission_epoch: Option<u64> = None;
@@ -2817,6 +2831,7 @@ fn relay_session_loop(
                 send_image_batch(socket, wire, images)?;
                 if last_image_sweep.elapsed() >= Duration::from_secs(5) {
                     last_image_sweep = Instant::now();
+                    images.resend_reports();
                     images.sweep_foreign();
                     images.sweep_staging();
                     images.poll_prune_request();
@@ -2830,6 +2845,13 @@ fn relay_session_loop(
                     last_image_census = Instant::now();
                     images.begin_periodic_census();
                 }
+            }
+            if disk_ready
+                && last_disk_tick.elapsed() >= disk_tick_every()
+                && let Some(offload) = relay.offload()
+            {
+                last_disk_tick = Instant::now();
+                offload.tick();
             }
             drain_finished(
                 socket,
@@ -3378,7 +3400,9 @@ fn relay_session_loop(
                         if hello_disk_offload(&hello)
                             && let Some(offload) = relay.offload()
                         {
-                            offload.begin_inventory();
+                            offload.on_connection();
+                            disk_ready = true;
+                            last_disk_tick = Instant::now();
                         }
                         if let Some(credentials) = relay.credentials() {
                             credentials.begin_census();
@@ -3537,7 +3561,10 @@ fn relay_session_loop(
                     | ServerControlMessage::ImageJobResumeResult(_)
                     | ServerControlMessage::ImageJobCancel(_)
                     | ServerControlMessage::ImageRelease(_)
-                    | ServerControlMessage::ImageCacheCensusAck(_)) => {
+                    | ServerControlMessage::ImageCacheCensusAck(_)
+                    // Acks of terminal reports, which the image outbox keeps
+                    // (disk offload reports included).
+                    | ServerControlMessage::ReportAck(_)) => {
                         if !registered {
                             bail!("image frame before hello.ok");
                         }

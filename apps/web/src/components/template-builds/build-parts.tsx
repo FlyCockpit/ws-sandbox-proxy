@@ -101,14 +101,23 @@ export function BuildErrorDetailText({
 }) {
   const { t } = useTranslation(["templates"]);
   if (!build.errorDetail) return null;
-  const message = carriesCaptureDetail(build.errorCode)
-    ? storeDetailMessage(build.errorDetail)
-    : null;
-  if (message === null)
+  if (!carriesCaptureDetail(build.errorCode))
     return (
       <span className="break-all font-mono">
         {t("templates:builds.errorDetail", { detail: build.errorDetail })}
       </span>
+    );
+  return <StoreDetailText detail={build.errorDetail} />;
+}
+
+/** A capture's storage cause (a build's or a "Save as template"
+ * operation's) as its sentence; an unknown one is shown raw. */
+export function StoreDetailText({ detail }: { detail: string }) {
+  const { t } = useTranslation(["templates"]);
+  const message = storeDetailMessage(detail);
+  if (message === null)
+    return (
+      <span className="break-all font-mono">{t("templates:builds.errorDetail", { detail })}</span>
     );
   return (
     <span data-store-detail={message.key}>

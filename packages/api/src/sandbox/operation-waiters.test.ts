@@ -437,10 +437,6 @@ describe("operation writers are reviewed for long-poll wakes", () => {
     "apps/server/src/sandbox-relay/inventory-reconcile.ts",
     "apps/server/src/sandbox-relay/operation-handlers.ts",
     "apps/server/src/sandbox-relay/outbox-processor.ts",
-    // The recorded-capture adoption (relayTransaction) moves only
-    // dispatchedConnectionEpoch of an ACCEPTED/RUNNING capture operation, never
-    // its state or result: nothing a long-poll waiter observes.
-    "apps/server/src/sandbox-relay/image-handlers.ts",
     // Download acceptance creates an operation (no waiter can hold a new id).
     "apps/server/src/sandbox-transfers/store.ts",
     // Helpers that receive a transaction from an observed caller.
@@ -475,9 +471,45 @@ describe("operation writers are reviewed for long-poll wakes", () => {
     "packages/api/src/template-builds/testing/build-fixtures.ts",
     "packages/db/src/account-deletion.ts",
   ]);
+  /**
+   * Files reviewed call by call: every writer in the file is one of these
+   * exact lines, each occurring exactly `count` times, so a further writer
+   * in the same file still fails until it is reviewed.
+   */
+  const REVIEWED_CALLS: Record<string, { text: string; count: number; why: string }[]> = {
+    "apps/server/src/sandbox-relay/image-handlers.ts": [
+      {
+        text: "const adopted = await tx.sandboxOperation.updateMany({",
+        count: 1,
+        why: "recorded-capture adoption (relayTransaction): moves only dispatchedConnectionEpoch of an ACCEPTED/RUNNING capture operation, never its state or result, so nothing a long-poll waiter observes",
+      },
+    ],
+  };
   const root = join(__dirname, "../../../..");
   const WRITE =
     /\.sandboxOperation(?:Result)?\.(?:update|updateMany|upsert|create|createMany|delete|deleteMany)\(/;
+  const WRITES = new RegExp(WRITE.source, "g");
+
+  /** The unreviewed writers of a call-by-call reviewed file (none when it matches). */
+  function unreviewedCalls(
+    text: string,
+    calls: readonly { text: string; count: number }[],
+  ): string[] {
+    const problems: string[] = [];
+    const lines = text.split("\n");
+    const writers = lines.filter((line) => WRITE.test(line)).map((line) => line.trim());
+    for (const call of calls) {
+      const found = writers.filter((line) => line === call.text).length;
+      if (found !== call.count) problems.push(`${call.text} ×${found}, reviewed ×${call.count}`);
+    }
+    for (const line of writers)
+      if (!calls.some((call) => call.text === line)) problems.push(`unreviewed: ${line}`);
+    // One writer per line: a second call on a reviewed line is still found.
+    const total = [...text.matchAll(WRITES)].length;
+    const reviewed = calls.reduce((sum, call) => sum + call.count, 0);
+    if (total !== reviewed) problems.push(`${total} writer call(s), reviewed ${reviewed}`);
+    return problems;
+  }
 
   function sources(dir: string, out: string[] = []): string[] {
     for (const name of readdirSync(dir)) {
@@ -495,6 +527,24 @@ describe("operation writers are reviewed for long-poll wakes", () => {
       .filter((path) => WRITE.test(readFileSync(path, "utf8")))
       .map((path) => relative(root, path));
     expect(writers).toContain("apps/server/src/sandbox-relay/operation-handlers.ts");
-    expect(writers.filter((path) => !REVIEWED.has(path))).toEqual([]);
+    expect(writers.filter((path) => !REVIEWED.has(path) && !(path in REVIEWED_CALLS))).toEqual([]);
+    for (const [path, calls] of Object.entries(REVIEWED_CALLS))
+      expect({
+        path,
+        problems: unreviewedCalls(readFileSync(join(root, path), "utf8"), calls),
+      }).toEqual({ path, problems: [] });
+  });
+
+  it("a call-by-call reviewed file with a further writer fails (self-check)", () => {
+    const calls = REVIEWED_CALLS["apps/server/src/sandbox-relay/image-handlers.ts"]!;
+    const reviewed = `  ${calls[0]!.text}\n    where: {},\n  });\n`;
+    expect(unreviewedCalls(reviewed, calls)).toEqual([]);
+    expect(
+      unreviewedCalls(`${reviewed}  await tx.sandboxOperationResult.upsert({\n`, calls),
+    ).not.toEqual([]);
+    expect(unreviewedCalls(`${reviewed}${reviewed}`, calls)).not.toEqual([]);
+    expect(
+      unreviewedCalls(`  ${calls[0]!.text} await tx.sandboxOperation.update({\n`, calls),
+    ).not.toEqual([]);
   });
 });

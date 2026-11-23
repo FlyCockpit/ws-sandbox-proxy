@@ -27,6 +27,7 @@ import {
 import { PageHeader } from "@/components/page-shell";
 import { StatePill } from "@/components/sandboxes/sandbox-parts";
 import { SkeletonList } from "@/components/skeleton-list";
+import { StoreDetailText } from "@/components/template-builds/build-parts";
 import type { OutputTiming } from "@/hooks/use-command-output";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
@@ -433,6 +434,11 @@ function OperationDetail({
                   className="mt-1 block whitespace-pre-wrap break-words font-mono text-xs"
                 >
                   {operation.errorMessage}
+                </span>
+              ) : null}
+              {operation.captureDetail ? (
+                <span data-error-detail="" className="mt-1 block text-xs text-muted-foreground">
+                  <StoreDetailText detail={operation.captureDetail} />
                 </span>
               ) : null}
             </Field>

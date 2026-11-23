@@ -22,6 +22,7 @@ import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
 import enHosts from "@wssp/locales/src/en-US/hosts.json";
 import enOperations from "@wssp/locales/src/en-US/operations.json";
 import enSandboxes from "@wssp/locales/src/en-US/sandboxes.json";
+import enTemplates from "@wssp/locales/src/en-US/templates.json";
 import { createInstance, type i18n as I18n } from "i18next";
 import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
@@ -114,7 +115,7 @@ beforeAll(async () => {
   await i18n.init({
     lng: "en-US",
     fallbackLng: false,
-    ns: ["common", "dashboard", "operations", "sandboxes", "hosts"],
+    ns: ["common", "dashboard", "operations", "sandboxes", "hosts", "templates"],
     defaultNS: "common",
     resources: {
       "en-US": {
@@ -123,6 +124,7 @@ beforeAll(async () => {
         operations: enOperations,
         sandboxes: enSandboxes,
         hosts: enHosts,
+        templates: enTemplates,
       },
     },
     interpolation: { escapeValue: false },
@@ -232,6 +234,25 @@ describe("reading an operation", () => {
     expect(document.querySelector("[data-output-status]")).toBeNull();
     await sleep(60);
     expect(calls("getCommandOutput")).toEqual([]);
+  });
+});
+
+describe("capture storage cause", () => {
+  it("explains a failed Save as template's storage cause as the build page does (post-landing #6)", async () => {
+    server.current.operations = [
+      operationRow({
+        kind: "CAPTURE_TEMPLATE",
+        state: "FAILED",
+        errorCode: "capture_store_failed",
+        captureDetail: "upload_timeout",
+        completedAt: new Date(),
+      }),
+    ];
+    mount();
+    expect(await screen.findByText(enOperations.error.capture_store_failed)).toBeTruthy();
+    const detail = document.querySelector("[data-error-detail] [data-store-detail]")!;
+    expect(detail.getAttribute("data-store-detail")).toBe("upload_timeout");
+    expect(detail.textContent).toBe(enTemplates.builds.storeDetail.upload_timeout);
   });
 });
 

@@ -46,6 +46,28 @@ const BATCH_MAX: usize = 32;
 /// census and inventory pages and other traffic.
 const PROTECTED_MAX: usize = OUTBOX_MAX / 4;
 const _: () = assert!(PROTECTED_MAX + BATCH_MAX <= OUTBOX_MAX / 2);
+/// Reports kept until the server's `report.ack` (`PendingReport`), both
+/// kinds together; the oldest goes beyond this (the server's stall and
+/// expiry rules are the backstop). Each may bring its job's resume, and
+/// admission reserves both (`admits`).
+const REPORTS_MAX: usize = 32;
+const _: () = assert!(2 * REPORTS_MAX + OFFLOAD_PROTECTED < PROTECTED_MAX);
+/// A report is forgotten this long after it was made, acked or not.
+const REPORT_MAX_AGE: Duration = Duration::from_secs(3600);
+/// On a live connection a report sent this long ago and not acked yet is
+/// sent again (its handler may have failed; the server acks only a handled
+/// one).
+const REPORT_RESEND_EVERY: Duration = Duration::from_secs(120);
+/// Cancels kept at most (`Inner::cancelled`).
+const CANCELLED_MAX: usize = 1024;
+/// Acknowledged report transfers remembered (`Inner::acked_transfers`).
+const ACKED_TRANSFERS_MAX: usize = 256;
+/// Protected frames the disk offload slot may queue without admission
+/// (post-landing #3): its job's one `image.job.resume` (deduplicated per
+/// transfer), one `disk.offload.failed` and one `disk.offload.released`
+/// (the server sends a host one export at a time, and holds its slot until
+/// the release). Reserved in every admission.
+const OFFLOAD_PROTECTED: usize = 3;
 /// How long a new upload job waits for the protected backlog to drain
 /// before it ends without starting (no frame: the server's own stall and
 /// deadline rules end it).
@@ -69,10 +91,30 @@ pub const HTTP_HEADERS_TIMEOUT: Duration = Duration::from_secs(90);
 /// (`stalled`) once no byte moves, in either direction, for this long. A slow
 /// transfer that keeps moving never fails for slowness.
 pub const HTTP_IDLE: Duration = Duration::from_secs(120);
-/// Wait for an image-store part PUT's response after its body: the last
-/// writes only fill the kernel send buffer, and draining it on a slow uplink
-/// (45 KB/s) takes longer than `HTTP_HEADERS_TIMEOUT`.
+/// The longest wait for an image-store part PUT's response after its body:
+/// the last writes only fill the kernel send buffer, and draining it on a
+/// slow uplink (45 KB/s) takes longer than `HTTP_HEADERS_TIMEOUT`. Each
+/// attempt waits only as long as its body can still be draining
+/// (`put_response_wait`, post-landing #5), so a store that took the body
+/// and never answers costs about `HTTP_IDLE` per attempt on a fast link.
 const PUT_RESPONSE_WAIT: Duration = Duration::from_secs(300);
+/// Send buffer a part body may still sit in once written (Linux autotuned
+/// `tcp_wmem` reaches 4 MiB; doubled for its accounting and any proxy hop).
+const SEND_BUFFER_ASSUMED: u64 = 8 << 20;
+/// The slow-uplink design rate (bytes/s) assumed while no rate was measured.
+const SLOW_UPLINK_BYTES_PER_SEC: u64 = 45_000;
+
+/// How long one part attempt waits for the store's response after its
+/// body: the time the unsent rest (at most `SEND_BUFFER_ASSUMED` of the
+/// body) needs at `rate` (the measured upload rate, else the slow-uplink
+/// design rate), plus `idle` (`HTTP_IDLE`: the store then has that long to
+/// answer), at most `PUT_RESPONSE_WAIT`.
+pub(crate) fn put_response_wait(body: u64, rate: Option<u64>, idle: Duration) -> Duration {
+    let rate = rate.unwrap_or(SLOW_UPLINK_BYTES_PER_SEC).max(1);
+    let draining = Duration::from_secs_f64(body.min(SEND_BUFFER_ASSUMED) as f64 / rate as f64);
+    idle.saturating_add(draining)
+        .min(PUT_RESPONSE_WAIT.max(idle))
+}
 /// How long an upload waits for the server's next grant (or refusal).
 const UPLOAD_GRANT_WAIT: Duration = Duration::from_secs(300);
 /// At most one `image.upload.progress` heartbeat per upload this often, and
@@ -107,6 +149,9 @@ pub(crate) struct UploadTimings {
     pub(crate) url_margin: Duration,
     /// Uploaded parts are reported at least this often.
     pub(crate) flush_every: Duration,
+    /// After a part body has drained, how long its response is awaited
+    /// (`put_response_wait`).
+    pub(crate) response_idle: Duration,
 }
 
 impl UploadTimings {
@@ -131,6 +176,7 @@ impl UploadTimings {
         ],
         url_margin: Duration::from_secs(60),
         flush_every: Duration::from_secs(30),
+        response_idle: HTTP_IDLE,
     };
 }
 
@@ -332,6 +378,10 @@ struct Inner {
     staging: PathBuf,
     journal: Mutex<CacheJournal>,
     outbox: Mutex<VecDeque<DaemonControlMessage>>,
+    /// Terminal reports kept until the server acknowledges them
+    /// (`report.ack`), oldest first; see `PendingReport`. Lock order: the
+    /// resume registry, then this, then the outbox.
+    reports: Mutex<VecDeque<PendingReport>>,
     waiters: Mutex<HashMap<String, Waiter>>,
     inflight: Mutex<HashSet<String>>,
     inflight_cv: Condvar,
@@ -341,7 +391,22 @@ struct Inner {
     host_secret: String,
     host_owner: Mutex<Option<String>>,
     census: Mutex<CensusState>,
-    cancelled: Mutex<HashSet<String>>,
+    /// Transfers the server cancelled (`image.job.cancel`). A job removes
+    /// its own when it ends; a cancel of a job that already ended here
+    /// (its report kept, or acked recently: `acked_transfers`) is not
+    /// recorded, so entries do not accumulate; cancels no job consumes
+    /// (e.g. after a successful serve) are bounded by `CANCELLED_MAX`,
+    /// oldest first. A cancel of a transfer a job runs (`running`) is never
+    /// the one dropped (land round 1): those are bounded by admission. Lock
+    /// order: this, then `running`.
+    cancelled: Mutex<VecDeque<String>>,
+    /// Transfers a job of this service runs now (serve, template upload once
+    /// granted, disk offload upload), with how many jobs hold each.
+    running: Mutex<HashMap<String, usize>>,
+    /// Transfers whose terminal report the server acknowledged lately
+    /// (bounded, oldest first): a delayed answer to a repeat of it (a stale
+    /// cancel) is not recorded as a cancel.
+    acked_transfers: Mutex<VecDeque<String>>,
     seq: AtomicU64,
     /// Staging bytes reserved before any write (P1-4), keyed by the staging
     /// entry name they cover (`<hex>.part`, `export-<hex>`).
@@ -389,6 +454,12 @@ struct Inner {
     /// left the outbox (`ResumeEntry`), by job number: each gets an
     /// `image.job.resume` ahead of its frames on every new connection.
     resumable: Mutex<HashMap<u64, ResumeEntry>>,
+    /// Peer serve jobs running (`serve`): each may still queue one
+    /// protected `image.job.failed` (post-landing #3).
+    serving: std::sync::atomic::AtomicUsize,
+    /// The two latest measured part-body send rates (bytes/s), of bodies at
+    /// least `SEND_BUFFER_ASSUMED` long; the slower one sizes response waits.
+    upload_rates: Mutex<[Option<u64>; 2]>,
 }
 
 /// How a server frame reaches the job waiting for it.
@@ -460,9 +531,18 @@ impl JobRef {
         }
     }
 
-    /// A frame `push` never evicts: a resume or a terminal upload frame.
+    /// A frame `push` never evicts: a resume, a terminal upload frame, or
+    /// a disk offload's failure or release report (nothing else would end
+    /// the server's attempt before its transfer expires, or free the host's
+    /// export slot before its 10-minute backstop).
     fn protected_frame(message: &DaemonControlMessage) -> bool {
-        Self::resumed_by(message).is_some() || Self::ended_by(message).is_some()
+        Self::resumed_by(message).is_some()
+            || Self::ended_by(message).is_some()
+            || matches!(
+                message,
+                DaemonControlMessage::DiskOffloadFailed(_)
+                    | DaemonControlMessage::DiskOffloadReleased(_)
+            )
     }
 
     /// A queued frame of this job that only matters while the job is in
@@ -504,10 +584,108 @@ struct ResumeEntry {
     /// That begin had already left the outbox when a new connection came:
     /// its answer may be lost with the old one, so it is sent again.
     begin_lost: bool,
-    /// The job has ended and its terminal frame is queued: the entry goes
-    /// once that frame is drained, or when the server answers a resume of
-    /// it `continue: false` (the job is gone there).
+    /// The job has ended and its terminal frame (a `PendingReport` of this
+    /// job) is kept: the entry goes once the server acknowledges that report
+    /// (`report.ack`), when it answers a resume of the job `continue: false`
+    /// (the job is gone there), or with the report (age or count bound).
     terminal: bool,
+}
+
+/// A terminal report (`disk.offload.failed`, `disk.offload.released`,
+/// `image.job.failed`, `image.upload.complete`) kept from its push until the
+/// server acknowledges its `reportId` (`report.ack`: handled, or proven to
+/// have nothing left to end). A frame written and flushed to a socket the
+/// server then discards on close is so sent again: on every new connection
+/// (behind its job's `image.job.resume`, which the resume registry queues
+/// first) and on a live connection every `REPORT_RESEND_EVERY`. Bounded:
+/// `REPORTS_MAX` (oldest goes) and `REPORT_MAX_AGE`.
+#[derive(Debug, Clone)]
+struct PendingReport {
+    id: String,
+    frame: DaemonControlMessage,
+    /// The upload job (resume registry number) this report ends: re-sent
+    /// behind that job's resume, and the job's entry goes with it.
+    job: Option<u64>,
+    created: Instant,
+    /// When a socket last wrote and flushed it.
+    last_sent: Option<Instant>,
+}
+
+/// Before one more frame is queued: at `OUTBOX_MAX`, evict one advisory
+/// frame (operation progress, then an upload heartbeat), else the oldest
+/// unprotected one. Every queueing path goes through it (`push`, and the
+/// re-queues of resumes and kept reports), so the outbox stays bounded.
+fn make_room(outbox: &mut VecDeque<DaemonControlMessage>) {
+    if outbox.len() < OUTBOX_MAX {
+        return;
+    }
+    let victim = outbox
+        .iter()
+        .position(|m| matches!(m, DaemonControlMessage::OperationProgress { .. }))
+        .or_else(|| {
+            outbox
+                .iter()
+                .position(|m| matches!(m, DaemonControlMessage::ImageUploadProgress(_)))
+        })
+        .or_else(|| outbox.iter().position(|m| !JobRef::protected_frame(m)));
+    if let Some(index) = victim {
+        outbox.remove(index);
+    }
+}
+
+/// The report id a frame carries.
+fn report_id(message: &DaemonControlMessage) -> Option<&str> {
+    use DaemonControlMessage as M;
+    match message {
+        M::DiskOffloadFailed(r) => r.report_id.as_deref(),
+        M::DiskOffloadReleased(r) => r.report_id.as_deref(),
+        M::ImageJobFailed(r) => r.report_id.as_deref(),
+        M::ImageUploadComplete(r) => r.report_id.as_deref(),
+        _ => None,
+    }
+}
+
+/// The report-id slot of a terminal report frame (`None`: not a report).
+fn report_slot(message: &mut DaemonControlMessage) -> Option<&mut Option<String>> {
+    use DaemonControlMessage as M;
+    match message {
+        M::DiskOffloadFailed(r) => Some(&mut r.report_id),
+        M::DiskOffloadReleased(r) => Some(&mut r.report_id),
+        M::ImageJobFailed(r) => Some(&mut r.report_id),
+        M::ImageUploadComplete(r) => Some(&mut r.report_id),
+        _ => None,
+    }
+}
+
+/// The wire type of a report frame, for logs.
+fn report_kind(message: &DaemonControlMessage) -> &'static str {
+    use DaemonControlMessage as M;
+    match message {
+        M::DiskOffloadFailed(_) => "disk.offload.failed",
+        M::DiskOffloadReleased(_) => "disk.offload.released",
+        M::ImageJobFailed(_) => "image.job.failed",
+        M::ImageUploadComplete(_) => "image.upload.complete",
+        _ => "other",
+    }
+}
+
+/// A fresh report id: 128 random bits, lowercase hex.
+fn new_report_id() -> String {
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 16];
+    if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
+        // No system randomness: unique within this process is enough (ids
+        // only need to tell this daemon's reports apart).
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        bytes[..8].copy_from_slice(&nanos.to_be_bytes());
+        bytes[8..].copy_from_slice(&n.to_be_bytes());
+    }
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// How an upload wait ended.
@@ -673,7 +851,8 @@ pub struct ImageService {
 
 /// Image frames taken from the outbox for one socket write
 /// (`ImageService::take_batch`). Sent means written and flushed: `sent`
-/// retires the jobs whose terminal frame it carries; dropped without
+/// stamps the terminal reports it carries (kept until acknowledged);
+/// dropped without
 /// `sent` (a write or the flush failed), only the frames
 /// `replayed_after_failed_write` allows go back to the front of the outbox,
 /// in order; every other frame is dropped, as any frame of a failed write
@@ -690,16 +869,27 @@ impl ImageBatch {
         &self.frames
     }
 
-    /// The socket wrote and flushed every frame.
+    /// The socket wrote and flushed every frame. A terminal report stays
+    /// kept (and its job in the resume registry) until the server's
+    /// `report.ack`: the server may still discard it with the connection.
     pub fn sent(mut self) {
         self.sent = true;
-        let ended: Vec<JobRef> = self.frames.iter().filter_map(JobRef::ended_by).collect();
-        if !ended.is_empty() {
-            self.inner
-                .resumable
+        let ids: Vec<&str> = self.frames.iter().filter_map(report_id).collect();
+        if !ids.is_empty() {
+            let now = ImageService {
+                inner: self.inner.clone(),
+            }
+            .now();
+            for report in self
+                .inner
+                .reports
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .retain(|_, e| !(e.terminal && ended.contains(&e.reference)));
+                .iter_mut()
+                .filter(|r| ids.contains(&r.id.as_str()))
+            {
+                report.last_sent = Some(now);
+            }
         }
     }
 }
@@ -715,6 +905,13 @@ impl Drop for ImageBatch {
             .rev()
             .filter(replayed_after_failed_write)
         {
+            // A report already queued again (`resend_reports`) goes once.
+            if let Some(id) = report_id(&unsent)
+                && outbox.iter().any(|m| report_id(m) == Some(id))
+            {
+                continue;
+            }
+            make_room(&mut outbox);
             outbox.push_front(unsent);
         }
     }
@@ -731,8 +928,9 @@ fn replayed_after_failed_write(message: &DaemonControlMessage) -> bool {
     match message {
         // Template upload progress and terminal frames: repeated parts
         // reports and heartbeats are idempotent, a repeated terminal frame
-        // is answered stale; the job stays in the resume registry until its
-        // terminal frame is flushed.
+        // ends only a still-open attempt; the job stays in the resume
+        // registry until its terminal report is acknowledged (and the next
+        // connection queues each kept report once).
         M::ImageJobFailed(_)
         | M::ImageUploadComplete(_)
         | M::ImageUploadParts(_)
@@ -754,16 +952,22 @@ fn replayed_after_failed_write(message: &DaemonControlMessage) -> bool {
         M::ImageCacheCensus(_) | M::DiskOffloadInventory(_) => false,
         // Cache reports are re-derived by the next census.
         M::ImageCached(_) | M::ImageEvicted(_) | M::ImageFetchFailed(_) => false,
-        // Disk offload frames keep their own resume / regrant; a replayed
-        // completion would be answered with a stale cancel that removes the
-        // uploaded journal entry (r4 #3).
-        M::DiskUploadBegin(_)
-        | M::DiskUploadParts(_)
-        | M::DiskUploadComplete(_)
+        // Disk offload reports the server takes idempotently (post-landing
+        // #1): a completion (rebound to the new connection; a repeated one
+        // is answered `stale`, which keeps the uploaded entry and asks the
+        // verdict), a failure (ends only a still-uploadable attempt), a
+        // release (recorded once) and an eviction report (a repeated one is
+        // acked again).
+        M::DiskUploadComplete(_)
         | M::DiskOffloadFailed(_)
         | M::DiskOffloadReleased(_)
+        | M::DiskEvicted(_) => true,
+        // The upload job re-begins or resumes and regrants itself; a lost
+        // eviction request stops blocking after `EVICT_ANSWER_WAIT` (or the
+        // next connection); a discard is asked again by the server.
+        M::DiskUploadBegin(_)
+        | M::DiskUploadParts(_)
         | M::DiskEvictRequest(_)
-        | M::DiskEvicted(_)
         | M::DiskDiscarded(_) => false,
         // Advisory.
         M::OperationProgress { .. } => false,
@@ -903,6 +1107,7 @@ impl ImageService {
                 staging,
                 journal: Mutex::new(journal),
                 outbox: Mutex::new(VecDeque::new()),
+                reports: Mutex::new(VecDeque::new()),
                 waiters: Mutex::new(HashMap::new()),
                 inflight: Mutex::new(HashSet::new()),
                 inflight_cv: Condvar::new(),
@@ -912,7 +1117,9 @@ impl ImageService {
                 host_secret: host_secret.to_owned(),
                 host_owner: Mutex::new(None),
                 census: Mutex::new(CensusState::default()),
-                cancelled: Mutex::new(HashSet::new()),
+                cancelled: Mutex::new(VecDeque::new()),
+                acked_transfers: Mutex::new(VecDeque::new()),
+                running: Mutex::new(HashMap::new()),
                 seq: AtomicU64::new(0),
                 reserved: Mutex::new(HashMap::new()),
                 admission: Mutex::new(()),
@@ -945,6 +1152,8 @@ impl ImageService {
                 connections: AtomicU64::new(0),
                 connected: std::sync::atomic::AtomicBool::new(false),
                 resumable: Mutex::new(HashMap::new()),
+                serving: std::sync::atomic::AtomicUsize::new(0),
+                upload_rates: Mutex::new([None, None]),
             }),
         }))
     }
@@ -1312,18 +1521,27 @@ impl ImageService {
     fn next_connection(&self, resumable: &mut HashMap<u64, ResumeEntry>) {
         self.inner.connections.fetch_add(1, Ordering::SeqCst);
         self.inner.connected.store(true, Ordering::SeqCst);
+        let mut reports = self.inner.reports.lock().unwrap_or_else(|e| e.into_inner());
+        let gone = self.prune_reports(&mut reports);
+        let retired = Self::retire_unreported(resumable, &reports);
         let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
-        // Disk offload continuations queued for an older connection's
+        // Frames of forgotten reports and retired jobs go unsent.
+        outbox.retain(|m| !Self::forgotten(m, &gone, &retired));
+        // Every kept report goes again on this connection (the old one may
+        // have discarded it unhandled): its queued copies go first, then it
+        // is queued once behind the resumes below, oldest first.
+        outbox.retain(|m| report_id(m).is_none_or(|id| !reports.iter().any(|r| r.id == id)));
+        for report in reports.iter() {
+            make_room(&mut outbox);
+            outbox.push_back(report.frame.clone());
+        }
+        drop(reports);
+        // Disk upload parts reports queued for an older connection's
         // transfer (r5 #2) would reach this one unbound and be answered
-        // `stale`: they go, as a failed batch's do, and the offload's own
-        // resume / regrant or its inventory verdict decides.
-        outbox.retain(|m| {
-            !matches!(
-                m,
-                DaemonControlMessage::DiskUploadParts(_)
-                    | DaemonControlMessage::DiskUploadComplete(_)
-            )
-        });
+        // `stale`: they go, and the offload's own resume / regrant decides.
+        // A queued completion stays: the server rebinds its session's
+        // transfer to this connection (post-landing #1).
+        outbox.retain(|m| !matches!(m, DaemonControlMessage::DiskUploadParts(_)));
         for entry in resumable.values_mut() {
             if let Some(request) = &entry.begin {
                 entry.begin_lost = !outbox.iter().any(|m| {
@@ -1332,12 +1550,190 @@ impl ImageService {
                 });
             }
             outbox.retain(|m| JobRef::resumed_by(m).as_ref() != Some(&entry.reference));
+            make_room(&mut outbox);
             outbox.push_front(
                 entry
                     .reference
                     .resume(entry.reported.load(Ordering::SeqCst)),
             );
         }
+    }
+
+    /// Keep a new report (see `PendingReport`), within `REPORT_MAX_AGE` and
+    /// `REPORTS_MAX` (the oldest go, with their queued copies; a job whose
+    /// report went retires at the next connection or live re-send). Never
+    /// takes the resume registry's lock (callers may hold it).
+    fn keep_report(&self, report: PendingReport) {
+        let mut reports = self.inner.reports.lock().unwrap_or_else(|e| e.into_inner());
+        reports.push_back(report);
+        let gone = self.prune_reports(&mut reports);
+        drop(reports);
+        if !gone.is_empty() {
+            self.purge_queued(|m| report_id(m).is_some_and(|id| gone.iter().any(|g| g == id)));
+        }
+    }
+
+    /// Drop reports past `REPORT_MAX_AGE` and the oldest beyond
+    /// `REPORTS_MAX`; returns their ids.
+    fn prune_reports(&self, reports: &mut VecDeque<PendingReport>) -> Vec<String> {
+        let now = self.now();
+        let mut gone = Vec::new();
+        reports.retain(|r| {
+            let keep = now.saturating_duration_since(r.created) < REPORT_MAX_AGE;
+            if !keep {
+                tracing::warn!(
+                    kind = report_kind(&r.frame),
+                    "terminal report never acknowledged within an hour; forgotten"
+                );
+                gone.push(r.id.clone());
+            }
+            keep
+        });
+        while reports.len() > REPORTS_MAX {
+            if let Some(r) = reports.pop_front() {
+                tracing::warn!(
+                    kind = report_kind(&r.frame),
+                    "too many unacknowledged terminal reports; the oldest is forgotten"
+                );
+                gone.push(r.id);
+            }
+        }
+        gone
+    }
+
+    /// Ended jobs whose report is no longer kept leave the registry; their
+    /// references (the caller purges their queued resumes and frames).
+    fn retire_unreported(
+        resumable: &mut HashMap<u64, ResumeEntry>,
+        reports: &VecDeque<PendingReport>,
+    ) -> Vec<JobRef> {
+        let retired: Vec<u64> = resumable
+            .iter()
+            .filter(|(number, e)| e.terminal && !reports.iter().any(|r| r.job == Some(**number)))
+            .map(|(number, _)| *number)
+            .collect();
+        retired
+            .iter()
+            .filter_map(|number| resumable.remove(number))
+            .map(|e| e.reference)
+            .collect()
+    }
+
+    /// Whether a queued frame belongs to a forgotten report or a retired
+    /// job (`prune_reports`, `retire_unreported`): it goes unsent.
+    fn forgotten(message: &DaemonControlMessage, gone: &[String], retired: &[JobRef]) -> bool {
+        report_id(message).is_some_and(|id| gone.iter().any(|g| g == id))
+            || retired.iter().any(|job| job.names(message))
+    }
+
+    /// `report.ack`: the server handled this report; it is no longer kept,
+    /// its queued copies go, and its job (if any) leaves the registry with
+    /// its queued resume. An unknown id changes nothing.
+    fn acknowledge(&self, id: &str) {
+        let mut resumable = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut reports = self.inner.reports.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(index) = reports.iter().position(|r| r.id == id) else {
+            return;
+        };
+        let report = reports.remove(index);
+        drop(reports);
+        if let Some(transfer) = report.as_ref().and_then(|r| match &r.frame {
+            DaemonControlMessage::ImageUploadComplete(c) => Some(c.transfer_id.clone()),
+            DaemonControlMessage::ImageJobFailed(f) => f.transfer_id.clone(),
+            _ => None,
+        }) {
+            let mut acked = self
+                .inner
+                .acked_transfers
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            acked.push_back(transfer);
+            while acked.len() > ACKED_TRANSFERS_MAX {
+                acked.pop_front();
+            }
+        }
+        let job = report
+            .and_then(|r| r.job)
+            .and_then(|number| resumable.remove(&number));
+        self.purge_queued(|m| {
+            report_id(m) == Some(id) || job.as_ref().is_some_and(|e| e.reference.names(m))
+        });
+    }
+
+    /// On a live connection (the connect loop's image sweep): a kept report
+    /// sent at least `REPORT_RESEND_EVERY` ago and not queued now is queued
+    /// again, a job's behind its resume (a repeat is handled idempotently;
+    /// the server acknowledges only a handled report). Also applies the
+    /// age and count bounds.
+    pub fn resend_reports(&self) {
+        let mut resumable = self
+            .inner
+            .resumable
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let mut reports = self.inner.reports.lock().unwrap_or_else(|e| e.into_inner());
+        let gone = self.prune_reports(&mut reports);
+        let retired = Self::retire_unreported(&mut resumable, &reports);
+        let now = self.now();
+        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        outbox.retain(|m| !Self::forgotten(m, &gone, &retired));
+        for report in reports.iter_mut() {
+            let due = report
+                .last_sent
+                .is_some_and(|at| now.saturating_duration_since(at) >= REPORT_RESEND_EVERY);
+            if !due
+                || outbox
+                    .iter()
+                    .any(|m| report_id(m) == Some(report.id.as_str()))
+            {
+                continue;
+            }
+            if let Some(entry) = report.job.and_then(|n| resumable.get(&n)) {
+                outbox.retain(|m| JobRef::resumed_by(m).as_ref() != Some(&entry.reference));
+                make_room(&mut outbox);
+                outbox.push_back(
+                    entry
+                        .reference
+                        .resume(entry.reported.load(Ordering::SeqCst)),
+                );
+            }
+            make_room(&mut outbox);
+            outbox.push_back(report.frame.clone());
+            // Due again only once this copy is flushed and ages.
+            report.last_sent = None;
+        }
+    }
+
+    /// Whether a kept report names `transfer` (its job has ended here).
+    fn reported_transfer(&self, transfer: &str) -> bool {
+        self.inner
+            .reports
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .any(|r| match &r.frame {
+                DaemonControlMessage::ImageUploadComplete(c) => c.transfer_id == transfer,
+                DaemonControlMessage::ImageJobFailed(f) => {
+                    f.transfer_id.as_deref() == Some(transfer)
+                }
+                _ => false,
+            })
+    }
+
+    /// Tests only: the ids of the kept reports, oldest first.
+    #[cfg(test)]
+    pub(crate) fn kept_reports(&self) -> Vec<String> {
+        self.inner
+            .reports
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .map(|r| r.id.clone())
+            .collect()
     }
 
     /// Tests only: the queued frames, left queued.
@@ -1376,30 +1772,33 @@ impl ImageService {
     /// they leave when flushed or when their job is retired otherwise, and
     /// new upload jobs wait while they are backlogged (`PROTECTED_MAX`), so
     /// they hold less than half of `OUTBOX_MAX`.
-    fn push(&self, message: DaemonControlMessage) {
-        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
-        if outbox.len() >= OUTBOX_MAX {
-            let protected = JobRef::protected_frame;
-            let victim = outbox
-                .iter()
-                .position(|m| matches!(m, DaemonControlMessage::OperationProgress { .. }))
-                .or_else(|| {
-                    outbox
-                        .iter()
-                        .position(|m| matches!(m, DaemonControlMessage::ImageUploadProgress(_)))
-                })
-                .or_else(|| outbox.iter().position(|m| !protected(m)));
-            if let Some(index) = victim {
-                outbox.remove(index);
-            }
+    fn push(&self, mut message: DaemonControlMessage) {
+        // A terminal report without an id is new: it is kept until acked.
+        // (A job's report comes with its id from `finish_job`, re-sent ones
+        // with theirs.)
+        if let Some(slot) = report_slot(&mut message)
+            && slot.is_none()
+        {
+            let id = new_report_id();
+            *slot = Some(id.clone());
+            self.keep_report(PendingReport {
+                id,
+                frame: message.clone(),
+                job: None,
+                created: self.now(),
+                last_sent: None,
+            });
         }
+        let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        make_room(&mut outbox);
         outbox.push_back(message);
     }
 
     /// Take the next queued frames (bounded per call) for one socket write
     /// (W1, a#1): the connect loop writes each, flushes the socket, then
-    /// calls `ImageBatch::sent`. Only then does a frame count as sent and a
-    /// terminal upload frame retire its job from the resume registry. Of a
+    /// calls `ImageBatch::sent`. Only then does a frame count as sent (a
+    /// terminal report stays kept until the server acknowledges it,
+    /// `PendingReport`). Of a
     /// batch dropped unsent (a write or the flush failed), the upload
     /// progress and terminal frames (`replayed_after_failed_write`) go back
     /// to the front of the outbox in order (the next connection's resumes
@@ -1593,11 +1992,37 @@ impl ImageService {
                     self.deliver(&format!("upload-req:{request}"), frame);
                     return;
                 }
-                self.inner
-                    .cancelled
+                // A cancel of a job that already ended here (e.g. a repeated
+                // completion answered stale, even after its ack) is not
+                // recorded: nothing runs to stop.
+                let acked = self
+                    .inner
+                    .acked_transfers
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .insert(c.transfer_id.clone());
+                    .contains(&c.transfer_id);
+                if !acked && !self.reported_transfer(&c.transfer_id) {
+                    let mut cancelled = self
+                        .inner
+                        .cancelled
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    if !cancelled.contains(&c.transfer_id) {
+                        cancelled.push_back(c.transfer_id.clone());
+                        // Over the cap the oldest cancel no running job
+                        // holds goes (a running job's cancel stays until the
+                        // job ends, however many others arrive meanwhile).
+                        let running = self.inner.running.lock().unwrap_or_else(|e| e.into_inner());
+                        while cancelled.len() > CANCELLED_MAX {
+                            let Some(oldest) =
+                                cancelled.iter().position(|t| !running.contains_key(t))
+                            else {
+                                break;
+                            };
+                            cancelled.remove(oldest);
+                        }
+                    }
+                }
                 // Waiters keyed by exactly this transfer (`upload:`, `links:`,
                 // `resume:`), never by a substring of another id.
                 let keys: Vec<String> = self
@@ -1619,21 +2044,11 @@ impl ImageService {
                 else {
                     return;
                 };
-                if !r.proceed {
-                    // The server has no such job any more: an ended job
-                    // retires, and its queued resume and terminal frame go
-                    // with it (r5 #3; they would only be answered stale).
-                    let mut resumable = self
-                        .inner
-                        .resumable
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner());
-                    let before = resumable.len();
-                    resumable.retain(|_, e| !(e.terminal && e.reference == job));
-                    if resumable.len() != before {
-                        self.purge_queued(|m| job.names(m));
-                    }
-                }
+                // An ended job's kept report is not retired by a
+                // `continue: false` answer: the server also refuses a resume
+                // it could not fence right now (round 1 L1 #1), while the
+                // upload is still open. Only the report's own `report.ack`
+                // (handled, or nothing left to end) or its bounds retire it.
                 self.deliver(&job.resume_key(), frame);
             }
             ServerControlMessage::ImageServeRequest(request) => {
@@ -1655,6 +2070,7 @@ impl ImageService {
                 &release.image_owner_id,
                 release.reason,
             ),
+            ServerControlMessage::ReportAck(ack) => self.acknowledge(&ack.report_id),
             ServerControlMessage::ImageCacheCensusAck(_) => {
                 let next = {
                     let mut census = self.inner.census.lock().unwrap_or_else(|e| e.into_inner());
@@ -3110,18 +3526,73 @@ impl ImageService {
         Ok((file.clone(), size))
     }
 
+    /// A job of `transfer` ended: its cancel goes.
+    fn forget_cancel(&self, transfer: &str) {
+        self.inner
+            .cancelled
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|t| t != transfer);
+    }
+
+    /// A job runs `transfer` from now until the returned guard drops: its
+    /// cancel is never the one the `CANCELLED_MAX` cap drops.
+    pub(crate) fn run_transfer(&self, transfer: &str) -> RunningTransfer {
+        *self
+            .inner
+            .running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(transfer.to_owned())
+            .or_insert(0) += 1;
+        RunningTransfer(self.inner.clone(), transfer.to_owned())
+    }
+
     fn cancelled(&self, transfer: &str) -> bool {
         self.inner
             .cancelled
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .contains(transfer)
+            .iter()
+            .any(|t| t == transfer)
     }
 
     /// Peer source: upload relay parts as links arrive (the server only
     /// grants within the destination's ACK window).
     fn serve(&self, request: sandbox_protocol::ImageServeRequestV11) {
         let transfer = request.transfer_id.clone();
+        // Admission (post-landing #3): a serve may queue one protected
+        // failure report, so it reserves one. Over capacity it ends
+        // unstarted with no frame (that frame would itself be unreserved):
+        // the server's link window and transfer rules end the copy.
+        struct Serving(Arc<Inner>, String);
+        impl Drop for Serving {
+            fn drop(&mut self) {
+                self.0.serving.fetch_sub(1, Ordering::SeqCst);
+                // Its cancel, if any, was for this serve, which has ended.
+                self.0
+                    .cancelled
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .retain(|t| *t != self.1);
+            }
+        }
+        let _serving = {
+            let resumable = self
+                .inner
+                .resumable
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if !self.admits(&resumable, 1) {
+                tracing::warn!(transfer = %transfer, "image serve not started: the relay outbox stayed backlogged");
+                return;
+            }
+            self.inner.serving.fetch_add(1, Ordering::SeqCst);
+            Serving(self.inner.clone(), transfer.clone())
+        };
+        // Its cancel is kept while it runs (dropped before `_serving`, which
+        // then removes that cancel).
+        let _running = self.run_transfer(&transfer);
         let fail = |failure: UploadFailure| {
             failure.log("image serve ended", Some(&transfer));
             if let Some(frame) = failure.frame(Some(&transfer), None) {
@@ -3303,6 +3774,7 @@ impl ImageService {
             Ok(()) => transfer_id.as_ref().map(|transfer| {
                 DaemonControlMessage::ImageUploadComplete(ImageTransferRefV11 {
                     transfer_id: transfer.clone(),
+                    report_id: None,
                 })
             }),
             Err(UploadEnd::Failed(failure)) => {
@@ -3317,13 +3789,18 @@ impl ImageService {
             Err(UploadEnd::Silent) => None,
         };
         self.finish_job(number, terminal);
+        // Its cancel, if any, was for this job, which has ended.
+        if let Some(transfer) = &transfer_id {
+            self.forget_cancel(transfer);
+        }
         #[cfg(test)]
         self.inner.uploads_finished.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Queue a job's terminal frame; the job stays in the resume registry
-    /// until `drain` hands that frame to a connection (every connection
-    /// carries the job's resume first). Without one the job leaves now.
+    /// Queue a job's terminal frame, kept as a report of the job: the job
+    /// stays in the resume registry until the server acknowledges it (every
+    /// connection carries the job's resume first). Without one the job
+    /// leaves now.
     fn finish_job(&self, number: u64, terminal: Option<DaemonControlMessage>) {
         let mut resumable = self
             .inner
@@ -3331,11 +3808,26 @@ impl ImageService {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         match terminal {
-            Some(frame) => {
-                if let Some(entry) = resumable.get_mut(&number) {
-                    entry.terminal = true;
-                    entry.begin = None;
+            Some(mut frame) => {
+                let id = new_report_id();
+                if let Some(slot) = report_slot(&mut frame) {
+                    *slot = Some(id.clone());
                 }
+                let job = match resumable.get_mut(&number) {
+                    Some(entry) => {
+                        entry.terminal = true;
+                        entry.begin = None;
+                        Some(number)
+                    }
+                    None => None,
+                };
+                self.keep_report(PendingReport {
+                    id,
+                    frame: frame.clone(),
+                    job,
+                    created: self.now(),
+                    last_sent: None,
+                });
                 self.push(frame);
             }
             None => {
@@ -3357,21 +3849,38 @@ impl ImageService {
             .retain(|m| !unwanted(m));
     }
 
-    /// Whether a new upload job may start now (r5 #3): the queued
-    /// protected frames plus two per live job stay below `PROTECTED_MAX`.
-    /// Called under the resume registry's lock, which the caller then
-    /// inserts the job under.
-    fn admits_upload(&self, resumable: &HashMap<u64, ResumeEntry>) -> bool {
+    /// Whether a job that may queue `needs` more protected frames may start
+    /// now (r5 #3, post-landing #3): the queued protected frames plus
+    /// every reservation (two per live upload job, its resume and its
+    /// terminal frame; one per running serve job; `OFFLOAD_PROTECTED` for
+    /// the disk offload slot) plus `needs` stay within `PROTECTED_MAX`.
+    /// Called under the resume registry's lock, which upload jobs then
+    /// insert themselves under (serve jobs count themselves under it too).
+    fn admits(&self, resumable: &HashMap<u64, ResumeEntry>, needs: usize) -> bool {
         let live = resumable.values().filter(|e| !e.terminal).count();
-        let queued = self
-            .inner
-            .outbox
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        let reports = self.inner.reports.lock().unwrap_or_else(|e| e.into_inner());
+        let outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
+        let queued = outbox.iter().filter(|m| JobRef::protected_frame(m)).count();
+        // Kept reports not queued now may come back (a reconnect, a live
+        // re-send): one frame each, plus its job's resume.
+        let kept: usize = reports
             .iter()
-            .filter(|m| JobRef::protected_frame(m))
-            .count();
-        queued + 2 * live < PROTECTED_MAX
+            .filter(|r| !outbox.iter().any(|m| report_id(m) == Some(r.id.as_str())))
+            .map(|r| if r.job.is_some() { 2 } else { 1 })
+            .sum();
+        drop(outbox);
+        drop(reports);
+        queued
+            + kept
+            + 2 * live
+            + self.inner.serving.load(Ordering::SeqCst)
+            + OFFLOAD_PROTECTED
+            + needs
+            <= PROTECTED_MAX
+    }
+
+    fn admits_upload(&self, resumable: &HashMap<u64, ResumeEntry>) -> bool {
+        self.admits(resumable, 2)
     }
 
     /// Record (or clear) the capture begin in flight of job `number`.
@@ -3682,6 +4191,8 @@ impl ImageService {
             return Err(protocol().into());
         }
         *transfer_id = Some(tid.clone());
+        // Its cancel is kept while this job runs (`run_transfer`).
+        let _running = self.run_transfer(&tid);
         // Grants, refusals and cancels of the transfer (a capture re-keys
         // its waiter from the begin's request id); resume answers.
         let key = format!("upload:{tid}");
@@ -3729,6 +4240,7 @@ impl ImageService {
             if granted_on != self.inner.connections.load(Ordering::SeqCst) {
                 let mut outbox = self.inner.outbox.lock().unwrap_or_else(|e| e.into_inner());
                 outbox.retain(|m| JobRef::resumed_by(m).as_ref() != Some(&reference));
+                make_room(&mut outbox);
                 outbox.push_front(reference.resume(0));
             }
         }
@@ -3934,6 +4446,25 @@ impl ImageService {
         }
     }
 
+    /// The slower of the two latest measured upload rates.
+    fn upload_rate(&self) -> Option<u64> {
+        let rates = *self
+            .inner
+            .upload_rates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        rates.into_iter().flatten().min()
+    }
+
+    fn note_upload_rate(&self, rate: u64) {
+        let mut rates = self
+            .inner
+            .upload_rates
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *rates = [Some(rate.max(1)), rates[0]];
+    }
+
     /// PUT one part; its ETag.
     #[allow(clippy::too_many_arguments)]
     fn put_part(
@@ -3966,7 +4497,15 @@ impl ImageService {
             // Where this part starts in the stored object.
             base: u64::from(part.n - 1).saturating_mul(part_size),
             heartbeat,
+            done_at: None,
+            stop,
         };
+        let wait = put_response_wait(
+            body.len() as u64,
+            self.upload_rate(),
+            self.timings().response_idle,
+        );
+        let started = Instant::now();
         let mut send = || {
             self.inner
                 .http
@@ -3974,15 +4513,30 @@ impl ImageService {
                 .header("Content-Type", "application/octet-stream")
                 .header("Content-Length", body.len().to_string())
                 .config()
-                .timeout_recv_response(Some(PUT_RESPONSE_WAIT))
+                .timeout_recv_response(Some(wait))
                 .build()
                 .send(ureq::SendBody::from_reader(&mut reader))
         };
-        let response = match heartbeat {
+        let sent = match heartbeat {
             Some(heartbeat) => heartbeat.sending(send),
             None => send(),
+        };
+        // The body was read to its end (all but its last buffer is in the
+        // kernel): a long one measures the uplink, answered or not.
+        if let Some(done) = reader.done_at
+            && body.len() as u64 >= SEND_BUFFER_ASSUMED
+        {
+            let secs = done.saturating_duration_since(started).as_secs_f64();
+            if secs > 0.0 {
+                self.note_upload_rate((body.len() as f64 / secs) as u64);
+            }
         }
-        .map_err(|e| UploadFailure::transport(&e))?;
+        // A cancel while the body was still going out ends the PUT at the
+        // next buffer (the reader refuses it), not when the part is done.
+        if sent.is_err() && stop() {
+            return Err(UploadFailure::refused("cancelled"));
+        }
+        let response = sent.map_err(|e| UploadFailure::transport(&e))?;
         let status = response.status().as_u16();
         if status != 200 {
             return Err(UploadFailure::status(status, false));
@@ -3993,6 +4547,12 @@ impl ImageService {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
             .ok_or_else(|| UploadFailure::new(ImageFailureCode::Io, ImageFailureCause::Protocol))
+    }
+
+    /// The heartbeat of a disk offload upload of `transfer` (see
+    /// `put_parts`).
+    pub(crate) fn upload_heartbeat(&self, transfer: &str) -> UploadHeartbeat {
+        self.heartbeat(transfer)
     }
 
     /// Queue a frame for the server (disk offload frames share the image
@@ -4291,6 +4851,11 @@ struct HeartbeatState {
 }
 
 impl UploadHeartbeat {
+    /// The transfer this heartbeat reports.
+    pub(crate) fn transfer_id(&self) -> &str {
+        &self.transfer_id
+    }
+
     /// The body reached stored `offset`, after `moved` more bytes went out.
     fn reach(&self, offset: u64, moved: u64) {
         self.state.reach(offset, moved);
@@ -4601,6 +5166,21 @@ fn no_grant() -> UploadEnd {
     UploadFailure::new(ImageFailureCode::Timeout, ImageFailureCause::NoGrant).into()
 }
 
+/// A transfer a job runs (`ImageService::run_transfer`), until dropped.
+pub(crate) struct RunningTransfer(Arc<Inner>, String);
+
+impl Drop for RunningTransfer {
+    fn drop(&mut self) {
+        let mut running = self.0.running.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = running.get_mut(&self.1) {
+            *count -= 1;
+            if *count == 0 {
+                running.remove(&self.1);
+            }
+        }
+    }
+}
+
 /// A part body that reports the stored-object offset ureq has read from it
 /// (logical progress; the bytes on the wire are counted as the socket takes
 /// them, `UploadHeartbeat::sending`).
@@ -4609,14 +5189,25 @@ struct CountingBody<'a> {
     pos: usize,
     base: u64,
     heartbeat: Option<&'a UploadHeartbeat>,
+    /// When the last byte was read (the send rate's end).
+    done_at: Option<Instant>,
+    /// The job was cancelled: the next read fails, ending the PUT (a slow
+    /// part does not hold its job, staging and slot until it is sent).
+    stop: &'a dyn Fn() -> bool,
 }
 
 impl std::io::Read for CountingBody<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if (self.stop)() {
+            return Err(std::io::Error::other("upload cancelled"));
+        }
         let rest = self.bytes.get(self.pos..).unwrap_or_default();
         let n = rest.len().min(buf.len());
         buf[..n].copy_from_slice(&rest[..n]);
         self.pos += n;
+        if n > 0 && self.pos == self.bytes.len() {
+            self.done_at = Some(Instant::now());
+        }
         if let Some(heartbeat) = self.heartbeat
             && n > 0
         {

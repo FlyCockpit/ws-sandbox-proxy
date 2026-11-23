@@ -17,7 +17,6 @@
 //! for two runtime waits and the storage poll; it only ever lengthens them.
 
 use std::ffi::OsString;
-#[cfg(debug_assertions)]
 use std::time::Duration;
 
 /// The variable a debug daemon reads at startup. Release builds never
@@ -316,6 +315,88 @@ pub(crate) fn runtime_test_timing_from(
 /// The process environment's runtime override (read once at daemon start).
 pub(crate) fn runtime_test_timing(server_url: &str) -> anyhow::Result<Option<RuntimeTestTiming>> {
     runtime_test_timing_from(|name| std::env::var_os(name), server_url)
+}
+
+/// Debug-build-only disk offload timing for test daemons
+/// (`pnpm test:cancel-wire`): how often the connect loop runs the offload
+/// service's periodic pass, and how often that pass re-runs the completion
+/// and inventory pass, in milliseconds:
+///
+/// ```text
+/// WSSP_TEST_DISK_TIMING=<tick_ms>,<reconcile_ms>
+/// ```
+///
+/// Each may only shorten its production period (60 s and 10 min), to at
+/// least 100 ms, and `reconcile_ms` is at least `tick_ms`. A malformed value
+/// is ignored with a warning. Release builds compile [`disk_test_timing`]
+/// to a constant `None` without reading it.
+#[cfg(any(debug_assertions, test))]
+pub(crate) const DISK_TIMING_ENV: &str = "WSSP_TEST_DISK_TIMING";
+
+/// Shortened disk offload periods (see [`DISK_TIMING_ENV`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DiskTestTiming {
+    pub tick: Duration,
+    pub reconcile: Duration,
+}
+
+/// Parse `<tick_ms>,<reconcile_ms>` (see [`DISK_TIMING_ENV`]).
+#[cfg(any(debug_assertions, test))]
+pub(crate) fn parse_disk_test_timing(
+    text: &str,
+    tick_max: Duration,
+    reconcile_max: Duration,
+) -> Result<DiskTestTiming, String> {
+    let fields: Vec<&str> = text.split(',').map(str::trim).collect();
+    let [tick, reconcile] = fields.as_slice() else {
+        return Err(format!("{DISK_TIMING_ENV} needs <tick_ms>,<reconcile_ms>"));
+    };
+    let ms = |name: &str, field: &str, max: Duration| -> Result<Duration, String> {
+        let value = field
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .map_err(|_| format!("{name}: `{field}` is not a whole number of milliseconds"))?;
+        if !(Duration::from_millis(100)..=max).contains(&value) {
+            return Err(format!(
+                "{name}: `{field}` must be within 100 ms and {max:?}"
+            ));
+        }
+        Ok(value)
+    };
+    let tick = ms("tick_ms", tick, tick_max)?;
+    let reconcile = ms("reconcile_ms", reconcile, reconcile_max)?;
+    if reconcile < tick {
+        return Err("reconcile_ms must be at least tick_ms".into());
+    }
+    Ok(DiskTestTiming { tick, reconcile })
+}
+
+/// The process environment's disk timing override, read once; always `None`
+/// in release builds.
+pub(crate) fn disk_test_timing() -> Option<DiskTestTiming> {
+    #[cfg(debug_assertions)]
+    {
+        static TIMING: std::sync::OnceLock<Option<DiskTestTiming>> = std::sync::OnceLock::new();
+        *TIMING.get_or_init(|| {
+            let text = std::env::var(DISK_TIMING_ENV).ok()?;
+            match parse_disk_test_timing(
+                &text,
+                super::connect::DISK_TICK_EVERY,
+                super::offload::RECONCILE_EVERY,
+            ) {
+                Ok(timing) => {
+                    tracing::warn!(?timing, "TEST-ONLY OVERRIDE `{DISK_TIMING_ENV}`: disk offload passes run more often than production; never set it in production");
+                    Some(timing)
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "ignoring a malformed `{DISK_TIMING_ENV}`");
+                    None
+                }
+            }
+        })
+    }
+    #[cfg(not(debug_assertions))]
+    None
 }
 
 #[cfg(test)]
@@ -623,5 +704,37 @@ mod tests {
                 .is_none()
         );
         assert!(relay_test_timing().unwrap().is_none());
+    }
+
+    #[test]
+    fn disk_timing_parses_and_only_shortens() {
+        let max = (Duration::from_secs(60), Duration::from_secs(600));
+        assert_eq!(
+            parse_disk_test_timing("200, 1000", max.0, max.1),
+            Ok(DiskTestTiming {
+                tick: Duration::from_millis(200),
+                reconcile: Duration::from_secs(1),
+            })
+        );
+        for bad in [
+            "",
+            "200",
+            "200,1000,5",
+            "99,1000",
+            "200,600001",
+            "61000,61000",
+            "1000,200",
+            "x,1",
+        ] {
+            assert!(parse_disk_test_timing(bad, max.0, max.1).is_err(), "{bad}");
+        }
+    }
+
+    /// Release builds never read the variable (the function is a constant
+    /// `None` there).
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn disk_timing_is_inert_in_release_builds() {
+        assert_eq!(disk_test_timing(), None);
     }
 }

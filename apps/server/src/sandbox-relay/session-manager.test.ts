@@ -1,8 +1,10 @@
 import { capacityFixture, helloFixture } from "./capacity-fixtures";
 
+const budgets = vi.hoisted(() => ({ imageGrant: vi.fn(async (_hostId: string) => {}) }));
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
   consumeSandboxWriteBudget: async () => {},
+  consumeImageGrantBudget: budgets.imageGrant,
 }));
 
 import { createHash } from "node:crypto";
@@ -72,6 +74,31 @@ import {
   sandboxRelaySessionManager,
   UNPARSED_CONTROL_FRAME_MESSAGE,
 } from "./session-manager.js";
+
+// The report handlers delegate to the real ones unless a test overrides an
+// outcome (report acks, terminal-frame redelivery).
+vi.mock("./disk-handlers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./disk-handlers.js")>();
+  return {
+    ...actual,
+    handleDiskOffloadFailed: vi.fn(actual.handleDiskOffloadFailed),
+    handleDiskOffloadReleased: vi.fn(actual.handleDiskOffloadReleased),
+  };
+});
+vi.mock("./image-handlers.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./image-handlers.js")>();
+  return {
+    ...actual,
+    handleImageFailure: vi.fn(actual.handleImageFailure),
+    handleImageUploadComplete: vi.fn(actual.handleImageUploadComplete),
+  };
+});
+
+// The image relay spool needs a spool directory the unit env has none of.
+vi.mock("../sandbox-image-relay/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../sandbox-image-relay/index.js")>()),
+  imageRelaySpool: () => ({}),
+}));
 
 vi.mock("@wssp/env/server", () => ({
   env: {
@@ -4388,5 +4415,261 @@ describe("WP7 graceful quiesce (D9)", () => {
     expect(host.closes).toEqual([{ code: 1002, reason: "protocol_error" }]);
     expect(frames(host).some((f) => f.type === "hello.ok")).toBe(false);
     expect(manager.isHostQuiescing("host-1")).toBe(false);
+  });
+});
+
+describe("capture begin ordering (post-landing #4)", () => {
+  const imageCaps = {
+    image: {
+      fetch: true,
+      serve: true,
+      publish: true,
+      capture: true,
+      acceptForeign: false,
+      leaseFromReady: true,
+      formats: ["unified"],
+      build: false,
+      acceptForeignBuilds: false,
+    },
+  };
+  const beginFrame = (requestId: string) =>
+    JSON.stringify({
+      type: "image.upload.begin",
+      operationId: "op-1",
+      requestId,
+      attempt: 1,
+      fingerprint: `sha256:${"a".repeat(64)}`,
+      sizeBytes: 4096,
+      format: "unified",
+    });
+
+  it("handles a capture begin that overtook its result only after that result", async () => {
+    const host = await registered(false, true, imageCaps);
+    const handled: string[] = [];
+    const options: unknown[] = [];
+    const spy = vi
+      .spyOn(
+        SandboxRelaySessionManager.prototype as unknown as {
+          handleImageMessage: (...args: unknown[]) => Promise<void>;
+        },
+        "handleImageMessage",
+      )
+      .mockImplementation(async (...args: unknown[]) => {
+        handled.push((args[3] as { requestId: string }).requestId);
+        options.push(args[4]);
+      });
+    const spentBefore = budgets.imageGrant.mock.calls.length;
+    try {
+      // The capture's host result is still pending: the begin is held.
+      db.sandboxTemplateCapture.count.mockResolvedValueOnce(1);
+      manager.handleTextFrame(host, beginFrame("req-held"));
+      await manager.drain(host);
+      expect(host.closes).toEqual([]);
+      expect(handled).toEqual([]);
+      // Its operation's result (or receipt): the held begin is handled after it.
+      manager.handleTextFrame(host, resultFrame);
+      await manager.drain(host);
+      expect(handled).toEqual(["req-held"]);
+      // A begin whose result is already recorded is handled at once.
+      db.sandboxTemplateCapture.count.mockResolvedValueOnce(0);
+      manager.handleTextFrame(host, beginFrame("req-now"));
+      await manager.drain(host);
+      expect(handled).toEqual(["req-held", "req-now"]);
+      // A result that arrives as a receipt releases its held begin too.
+      db.sandboxTemplateCapture.count.mockResolvedValueOnce(1);
+      manager.handleTextFrame(host, beginFrame("req-receipt"));
+      await manager.drain(host);
+      expect(handled).toEqual(["req-held", "req-now"]);
+      manager.handleTextFrame(
+        host,
+        JSON.stringify({
+          sandboxOwnerId: "user-1",
+          type: "operation.receipt",
+          operationId: "op-1",
+          sandboxId: "sbx-1",
+          generation: 1,
+          attempt: 1,
+          bodyHash: "a".repeat(64),
+          idempotencyKey: "key",
+          kind: "command.run",
+          state: "cancelled",
+          error: { code: "cancelled", message: "command was cancelled" },
+          result: null,
+        }),
+      );
+      await manager.drain(host);
+      expect(handled).toEqual(["req-held", "req-now", "req-receipt"]);
+      // A failed lookup (rounds 2 A #1, 3 A #1): neither handled now (it
+      // would be refused for good) nor held (nothing might release it), but
+      // refused `store_unavailable`, which the daemon retries.
+      db.sandboxTemplateCapture.count.mockRejectedValueOnce(new Error("unavailable"));
+      manager.handleTextFrame(host, beginFrame("req-retry"));
+      await manager.drain(host);
+      expect(handled).toEqual(["req-held", "req-now", "req-receipt"]);
+      expect(JSON.parse(host.sends.at(-1)!)).toMatchObject({
+        type: "image.job.cancel",
+        reason: "store_unavailable",
+        requestId: "req-retry",
+      });
+      // Land round 1: over the grant budget the begin is refused
+      // `rate_limited` before the ordering lookup (no database read for
+      // it), as its handler would refuse it; each begin spent one point.
+      const lookups = db.sandboxTemplateCapture.count.mock.calls.length;
+      const spent = budgets.imageGrant.mock.calls.length;
+      expect(spent - spentBefore).toBe(4);
+      // Land round 1: every handled begin (released or at once) had spent
+      // its grant budget before the lookup; its handler is told so.
+      expect(options).toEqual([
+        { budgetSpent: true },
+        { budgetSpent: true },
+        { budgetSpent: true },
+      ]);
+      expect(budgets.imageGrant.mock.calls.at(-1)).toEqual([expect.any(String)]);
+      budgets.imageGrant.mockRejectedValueOnce(new Error("over budget"));
+      manager.handleTextFrame(host, beginFrame("req-over"));
+      await manager.drain(host);
+      expect(db.sandboxTemplateCapture.count.mock.calls.length).toBe(lookups);
+      expect(handled).toEqual(["req-held", "req-now", "req-receipt"]);
+      expect(JSON.parse(host.sends.at(-1)!)).toMatchObject({
+        type: "image.job.cancel",
+        reason: "rate_limited",
+        requestId: "req-over",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe("durable host reports (report.ack) and the disk inventory budget", () => {
+  const imageCaps = {
+    image: {
+      fetch: true,
+      serve: true,
+      publish: true,
+      capture: true,
+      acceptForeign: false,
+      leaseFromReady: true,
+      formats: ["unified"],
+      build: false,
+      acceptForeignBuilds: false,
+    },
+  };
+  const reportId = "0123456789abcdef0123456789abcdef";
+  const acks = (host: FakeSocket) =>
+    host.sends.map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "report.ack");
+  const withDisk = (host: FakeSocket) => {
+    const sessions = Reflect.get(manager, "sessionsBySocket") as Map<
+      FakeSocket,
+      { diskOffload?: boolean }
+    >;
+    sessions.get(host)!.diskOffload = true;
+  };
+
+  it("acks a report only once its handler is done, and only a frame that carried a reportId", async () => {
+    const disks = await import("./disk-handlers.js");
+    const images = await import("./image-handlers.js");
+    const host = await registered(false, true, imageCaps);
+    withDisk(host);
+    const failed = {
+      type: "disk.offload.failed",
+      sandboxId: "sbx-1",
+      offloadId: "off-1",
+      seq: 1,
+      code: "io",
+    };
+    // A fence refused it: no ack (the host sends it again).
+    vi.mocked(disks.handleDiskOffloadFailed).mockResolvedValueOnce("retry");
+    manager.handleTextFrame(host, JSON.stringify({ ...failed, reportId }));
+    await manager.drain(host);
+    expect(acks(host)).toEqual([]);
+    // The handler threw: no ack, and the session stays up.
+    vi.mocked(disks.handleDiskOffloadFailed).mockRejectedValueOnce(new Error("db down"));
+    manager.handleTextFrame(host, JSON.stringify({ ...failed, reportId }));
+    await manager.drain(host);
+    expect(acks(host)).toEqual([]);
+    expect(host.closes).toEqual([]);
+    // Done without a reportId (an older daemon): never an ack.
+    vi.mocked(disks.handleDiskOffloadFailed).mockResolvedValueOnce("done");
+    manager.handleTextFrame(host, JSON.stringify(failed));
+    await manager.drain(host);
+    expect(acks(host)).toEqual([]);
+    // Done with one: acked on its socket.
+    vi.mocked(disks.handleDiskOffloadFailed).mockResolvedValueOnce("done");
+    manager.handleTextFrame(host, JSON.stringify({ ...failed, reportId }));
+    await manager.drain(host);
+    expect(acks(host)).toEqual([{ type: "report.ack", reportId }]);
+    // The other durable kinds go the same way.
+    const other = "fedcba9876543210fedcba9876543210";
+    vi.mocked(disks.handleDiskOffloadReleased).mockResolvedValueOnce("done");
+    manager.handleTextFrame(
+      host,
+      JSON.stringify({
+        type: "disk.offload.released",
+        sandboxId: "sbx-1",
+        offloadId: "off-1",
+        seq: 1,
+        reportId: other,
+      }),
+    );
+    vi.mocked(images.handleImageUploadComplete).mockResolvedValueOnce("retry");
+    manager.handleTextFrame(
+      host,
+      JSON.stringify({ type: "image.upload.complete", transferId: "tr-1", reportId: other }),
+    );
+    vi.mocked(images.handleImageFailure).mockResolvedValueOnce("done");
+    manager.handleTextFrame(
+      host,
+      JSON.stringify({
+        type: "image.job.failed",
+        transferId: "tr-2",
+        code: "io",
+        cause: "export",
+        reportId,
+      }),
+    );
+    await manager.drain(host);
+    await manager.drain(host);
+    expect(acks(host)).toEqual([
+      { type: "report.ack", reportId },
+      { type: "report.ack", reportId: other },
+      { type: "report.ack", reportId },
+    ]);
+    expect(host.closes).toEqual([]);
+  });
+
+  it("admits 32 disk inventory pages per 10-minute window of a connection", async () => {
+    const host = await registered(false, true, imageCaps);
+    withDisk(host);
+    db.sandboxDiskOffload.findMany.mockResolvedValue([] as never);
+    const page = JSON.stringify({
+      type: "disk.offload.inventory",
+      entries: [{ sandboxId: "sbx-1", offloadId: "off-1", seq: 1 }],
+    });
+    const asked = () =>
+      db.sandboxDiskOffload.findMany.mock.calls.filter(
+        ([args]) => (args as { where?: { id?: unknown } })?.where?.id !== undefined,
+      ).length;
+    const before = asked();
+    const start = Date.now();
+    const now = vi.spyOn(Date, "now").mockReturnValue(start);
+    try {
+      for (let i = 0; i < 33; i++) manager.handleTextFrame(host, page);
+      await manager.drain(host);
+      expect(asked() - before).toBe(32);
+      // Within the window: still refused.
+      now.mockReturnValue(start + 9 * 60_000);
+      manager.handleTextFrame(host, page);
+      await manager.drain(host);
+      expect(asked() - before).toBe(32);
+      // The window rolled over: answered again.
+      now.mockReturnValue(start + 10 * 60_000 + 1);
+      manager.handleTextFrame(host, page);
+      await manager.drain(host);
+      expect(asked() - before).toBe(33);
+    } finally {
+      now.mockRestore();
+    }
+    expect(host.closes).toEqual([]);
   });
 });

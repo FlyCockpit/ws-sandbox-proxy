@@ -246,6 +246,7 @@ fn journal_round_trips_privately_and_refuses_unknown_fields() {
         cloud_init_instance_id: Some("5f1c2a9e-1b2c-4d3e-8f90-0a1b2c3d4e5f".into()),
         evict_grant_id: None,
         evict_expires_at_unix_ms: None,
+        upload_session_id: None,
     };
     journal.put(SBX, entry.clone()).unwrap();
     let reopened = OffloadJournal::open(dir.path()).unwrap();
@@ -575,6 +576,7 @@ fn entry(phase: OffloadPhase, id: &str) -> OffloadEntry {
         cloud_init_instance_id: None,
         evict_grant_id: None,
         evict_expires_at_unix_ms: None,
+        upload_session_id: None,
     }
 }
 
@@ -2060,18 +2062,145 @@ impl std::io::Write for FlushFails {
     }
 }
 
-/// Fix 4 (r4 #3): the disk parts and completion of a finished upload were in
-/// an image batch whose flush failed, after the server had taken them (its
-/// offload is verifying). They are not replayed on the next connection, so
-/// no stale cancel answers a repeated completion (as the server would, the
-/// test plays it for any) and the `uploaded` journal entry, its alias and
-/// staging are kept until the stored ack stores it.
-#[test]
-fn a_disk_completion_in_a_failed_batch_is_not_replayed_and_the_entry_is_kept() {
-    let f = fixture();
+/// The server's disk offload rows for one offload, as `disk-handlers.ts`
+/// answers each daemon frame (post-landing #1: the tests drive the daemon
+/// with these answers, never an injected ack):
+/// - `disk.upload.parts` on a connection other than its transfer's: `stale`;
+/// - `disk.upload.complete` of the live session while UPLOADING: the
+///   transfer is rebound to the current connection and the upload claimed
+///   (VERIFYING; the verify job then stores it and the scheduler sends the
+///   stored ack); anything else `stale`;
+/// - `disk.offload.inventory`: STORED → the stored ack, in flight → nothing,
+///   ended → `released`;
+/// - `disk.offload.released` is recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Row {
+    Uploading,
+    Verifying,
+    Stored,
+    Failed,
+}
+
+struct DiskServer {
+    row: Row,
+    session: String,
+    fingerprint: String,
+    /// The current connection and the one the transfer is bound to.
+    epoch: u64,
+    transfer_epoch: u64,
+    /// Verify finishes as soon as a completion is claimed.
+    verify_at_once: bool,
+    /// Answer the next completion `store_unavailable` (ListParts failed).
+    store_down: bool,
+    released: bool,
+    completions: usize,
+}
+
+impl DiskServer {
+    fn new(session: &str, fingerprint: &str) -> Self {
+        Self {
+            row: Row::Uploading,
+            session: session.into(),
+            fingerprint: fingerprint.into(),
+            epoch: 1,
+            transfer_epoch: 1,
+            verify_at_once: true,
+            store_down: false,
+            released: false,
+            completions: 0,
+        }
+    }
+
+    /// A new relay connection (`hello.ok`), as the connect loop runs it.
+    fn reconnect(&mut self, f: &Fixture) {
+        self.epoch += 1;
+        f.images.on_disconnect();
+        f.images.on_registered("host-owner");
+        f.offload.on_connection();
+    }
+
+    fn answer(&mut self, frame: &DaemonControlMessage) -> Vec<ServerControlMessage> {
+        match frame {
+            DaemonControlMessage::DiskUploadParts(p) if p.offload_id == "off-1" => {
+                if self.transfer_epoch != self.epoch || self.row != Row::Uploading {
+                    vec![cancel("off-1", "stale")]
+                } else {
+                    vec![]
+                }
+            }
+            DaemonControlMessage::DiskUploadComplete(c) if c.offload_id == "off-1" => {
+                self.completions += 1;
+                if self.store_down {
+                    self.store_down = false;
+                    return vec![cancel("off-1", "store_unavailable")];
+                }
+                if self.row != Row::Uploading || c.session_id != self.session {
+                    return vec![cancel("off-1", "stale")];
+                }
+                self.transfer_epoch = self.epoch;
+                self.row = Row::Verifying;
+                if self.verify_at_once {
+                    self.row = Row::Stored;
+                    vec![stored_ack("off-1", &self.fingerprint)]
+                } else {
+                    vec![]
+                }
+            }
+            DaemonControlMessage::DiskOffloadInventory(i) => i
+                .entries
+                .iter()
+                .filter(|e| e.offload_id == "off-1")
+                .flat_map(|_| match self.row {
+                    Row::Stored => vec![stored_ack("off-1", &self.fingerprint)],
+                    Row::Uploading | Row::Verifying => vec![],
+                    Row::Failed => vec![cancel("off-1", "released")],
+                })
+                .collect(),
+            DaemonControlMessage::DiskOffloadReleased(r) if r.offload_id == "off-1" => {
+                self.released = true;
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Deliver every queued frame and answer it, until nothing moves.
+    fn serve(&mut self, f: &Fixture) {
+        let mut quiet = 0;
+        while quiet < 20 {
+            let frames = f.images.drain();
+            if frames.is_empty() {
+                quiet += 1;
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            quiet = 0;
+            for frame in &frames {
+                for answer in self.answer(frame) {
+                    f.offload.handle_server(answer);
+                }
+            }
+        }
+    }
+}
+
+/// An upload of `off-1` to its last part, its completion queued (31 filler
+/// frames first, so it lies behind the first batch), the job over.
+fn uploaded_with_completion_queued(f: &Fixture, fillers: usize) -> DiskUploadBeginV11 {
     f.offload.handle_server(request("off-1"));
     let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
     let begin = begin_of(&begin).unwrap().clone();
+    for i in 0..fillers {
+        f.images
+            .push_frame(DaemonControlMessage::DiskOffloadReleased(
+                DiskOffloadReleasedV11 {
+                    sandbox_id: format!("sbx-filler-{i}"),
+                    offload_id: format!("off-filler-{i}"),
+                    seq: 1,
+                    report_id: None,
+                },
+            ));
+    }
     let (url, seen) = s3(1);
     f.offload
         .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
@@ -2082,13 +2211,15 @@ fn a_disk_completion_in_a_failed_batch_is_not_replayed_and_the_entry_is_kept() {
             .is_some_and(|e| e.phase == OffloadPhase::Uploaded)
             && f.offload.lock_jobs().active.is_empty()
     });
-    let queued = f.images.queued();
-    assert!(
-        queued
-            .iter()
-            .any(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_))),
-        "{queued:?}"
+    assert_eq!(
+        f.offload.entry(SBX).unwrap().upload_session_id.as_deref(),
+        Some("ses-1")
     );
+    begin
+}
+
+fn fail_one_batch(f: &Fixture) -> Vec<DaemonControlMessage> {
+    let before = f.images.queued();
     let mut socket = tungstenite::WebSocket::from_raw_socket(
         FlushFails,
         tungstenite::protocol::Role::Client,
@@ -2102,116 +2233,198 @@ fn a_disk_completion_in_a_failed_batch_is_not_replayed_and_the_entry_is_kept() {
         )
         .is_err()
     );
-    f.images.on_disconnect();
-    f.images.on_registered("host-owner");
-    let replayed = f.images.drain();
-    assert!(
-        replayed.iter().all(|m| !matches!(
-            m,
-            DaemonControlMessage::DiskUploadParts(_) | DaemonControlMessage::DiskUploadComplete(_)
-        )),
-        "{replayed:?}"
-    );
-    for frame in &replayed {
-        if matches!(frame, DaemonControlMessage::DiskUploadComplete(_)) {
-            f.offload.handle_server(cancel("off-1", "stale"));
-        }
-    }
-    std::thread::sleep(Duration::from_millis(100));
-    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
-    assert!(f.runtime.alias_target(&al("off-1")).is_some());
-    f.offload
-        .handle_server(stored_ack("off-1", &begin.fingerprint));
-    wait_for_frame(&f.images, |m| released_of(m) == Some("off-1"));
-    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+    before
 }
 
-/// Fix 5 (r5 #2): the finished upload's parts fill the last slot of an image
-/// batch whose write fails and its completion is queued behind it. On the
-/// next connection the completion (an older connection's continuation) is
-/// purged, not sent unbound; and a `stale` answer to a completion (as the
-/// server gives one that reached a newer connection) keeps the `uploaded`
-/// entry, its alias and staging, and asks for the verdict: the stored ack
-/// still settles the offload.
+fn settled_stored(f: &Fixture, server: &DiskServer) {
+    assert_eq!(server.row, Row::Stored);
+    assert!(server.released, "never released");
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+    assert!(f.runtime.alias_target(&al("off-1")).is_none());
+    assert!(staging_dirs(f).is_empty(), "{:?}", staging_dirs(f));
+}
+
+/// Post-landing #1 (fails on 5c91540): the finished upload's completion is
+/// queued behind an image batch whose write fails. The server never got
+/// it (UPLOADING, its transfer bound to the old connection), the upload
+/// worker is gone, and the reconnect's inventory gets no answer for an
+/// in-flight offload. The completion still reaches the new connection, the
+/// server rebinds and claims it, and the stored ack settles the entry:
+/// alias, staging and reservation are gone and `released` is sent.
 #[test]
-fn a_queued_disk_completion_across_a_reconnect_is_purged_and_a_stale_answer_keeps_the_entry() {
+fn a_disk_completion_lost_behind_a_failed_batch_reaches_the_next_connection() {
     let f = fixture();
-    f.offload.handle_server(request("off-1"));
-    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
-    let begin = begin_of(&begin).unwrap().clone();
-    let filler = |i: usize| {
-        DaemonControlMessage::DiskOffloadReleased(DiskOffloadReleasedV11 {
-            sandbox_id: format!("sbx-filler-{i}"),
-            offload_id: format!("off-filler-{i}"),
-            seq: 1,
-        })
-    };
-    for i in 0..31 {
-        f.images.push_frame(filler(i));
-    }
-    let (url, seen) = s3(1);
-    f.offload
-        .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
-    seen.join().unwrap();
-    wait_until("uploaded and the job over", || {
-        f.offload
-            .entry(SBX)
-            .is_some_and(|e| e.phase == OffloadPhase::Uploaded)
-            && f.offload.lock_jobs().active.is_empty()
-    });
+    let begin = uploaded_with_completion_queued(&f, 31);
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
     let queued = f.images.queued();
     let complete = queued
         .iter()
         .position(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_)))
         .expect("completion queued");
     assert!(complete >= 32, "beyond the first batch: {queued:?}");
-    let mut socket = tungstenite::WebSocket::from_raw_socket(
-        FlushFails,
-        tungstenite::protocol::Role::Client,
-        None,
-    );
-    assert!(
-        crate::sandbox_relay::connect::send_image_batch(
-            &mut socket,
-            sandbox_protocol::WireCodes::CURRENT,
-            &f.images,
-        )
-        .is_err()
-    );
-    assert!(
-        f.images
-            .queued()
-            .iter()
-            .any(|m| matches!(m, DaemonControlMessage::DiskUploadComplete(_))),
-        "the completion was behind the failed batch"
-    );
-    f.images.on_disconnect();
-    f.images.on_registered("host-owner");
-    let sent = f.images.drain();
-    assert!(
-        sent.iter().all(|m| !matches!(
-            m,
-            DaemonControlMessage::DiskUploadParts(_) | DaemonControlMessage::DiskUploadComplete(_)
-        )),
-        "{sent:?}"
-    );
-    // A stale answer to a completion: the entry stays, the verdict is asked.
-    f.offload.handle_server(cancel("off-1", "stale"));
-    let (verdict, _) = wait_for_frame(&f.images, |m| {
-        matches!(m, DaemonControlMessage::DiskOffloadInventory(i)
-            if i.entries.iter().any(|e| e.offload_id == "off-1"))
-    });
-    assert!(matches!(
-        verdict,
-        DaemonControlMessage::DiskOffloadInventory(_)
-    ));
-    std::thread::sleep(Duration::from_millis(100));
+    fail_one_batch(&f);
+    server.reconnect(&f);
+    server.serve(&f);
+    settled_stored(&f, &server);
+}
+
+/// Post-landing #1 (r4 #3 kept): the completion was in the failed batch and
+/// had reached the server (VERIFYING, the verify job still running). Its
+/// replay on the next connection is answered `stale`: the `uploaded` entry,
+/// its alias and staging stay, and the verdict is asked (nothing while
+/// verifying). The later stored ack (the reconnect's or the scheduler's)
+/// settles it.
+#[test]
+fn a_replayed_disk_completion_the_server_had_taken_keeps_the_entry_until_stored() {
+    let f = fixture();
+    let begin = uploaded_with_completion_queued(&f, 0);
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
+    server.verify_at_once = false;
+    // The batch reached the server before its flush failed.
+    for frame in fail_one_batch(&f) {
+        for answer in server.answer(&frame) {
+            f.offload.handle_server(answer);
+        }
+    }
+    assert_eq!(server.row, Row::Verifying);
+    server.reconnect(&f);
+    server.serve(&f);
     assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
     assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    let sent = server.completions;
+    // A periodic pass while it verifies: the completion again (answered
+    // `stale`, r3 #2) and the inventory; the entry stays.
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    assert_eq!(server.completions, sent + 1);
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    // The verify job stores it; the next pass's inventory gets the ack.
+    server.row = Row::Stored;
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    settled_stored(&f, &server);
+}
+
+/// Post-landing #1: on a stable connection a completion that never got an
+/// answer (lost from a full outbox) is sent again by the periodic pass; a
+/// completion refused `store_unavailable` keeps the entry and is retried.
+#[test]
+fn a_lost_or_deferred_disk_completion_is_retried_on_a_stable_connection() {
+    let f = fixture();
+    let begin = uploaded_with_completion_queued(&f, 0);
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
+    // Lost: drained, never answered.
+    let _ = f.images.drain();
+    server.store_down = true;
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    assert_eq!(server.completions, 1);
+    assert_eq!(server.row, Row::Uploading);
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    // The pass is not due again yet: nothing is sent.
+    f.offload.tick();
+    server.serve(&f);
+    assert_eq!(server.completions, 1);
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    settled_stored(&f, &server);
+}
+
+/// Post-landing r1 #2: a completion answered `store_unavailable` (or
+/// `stale`) while its job has not left `active` yet keeps the `uploaded`
+/// entry (journaled before the completion was sent), its alias and
+/// staging; the next pass completes it.
+#[test]
+fn a_completion_deferral_while_the_job_settles_keeps_the_uploaded_entry() {
+    let f = fixture();
+    let (reached_tx, reached) = mpsc::channel::<()>();
+    let (go, go_rx) = mpsc::channel::<()>();
+    let go_rx = Mutex::new(go_rx);
+    *f.offload.inner.before_settle.lock().unwrap() = Some(Box::new(move || {
+        let _ = reached_tx.send(());
+        let _ = go_rx.lock().unwrap().recv();
+    }));
+    f.offload.handle_server(request("off-1"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let (url, seen) = s3(1);
     f.offload
-        .handle_server(stored_ack("off-1", &begin.fingerprint));
-    wait_for_frame(&f.images, |m| released_of(m) == Some("off-1"));
-    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+        .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
+    seen.join().unwrap();
+    reached.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(f.offload.lock_jobs().active.contains_key(SBX));
+    let entry = f.offload.entry(SBX).unwrap();
+    assert_eq!(entry.phase, OffloadPhase::Uploaded);
+    assert_eq!(entry.upload_session_id.as_deref(), Some("ses-1"));
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
+    server.store_down = true;
+    for frame in f.images.drain() {
+        for answer in server.answer(&frame) {
+            f.offload.handle_server(answer);
+        }
+    }
+    assert_eq!(server.completions, 1);
+    go.send(()).unwrap();
+    wait_until("the job over", || f.offload.lock_jobs().active.is_empty());
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    assert!(!staging_dirs(&f).is_empty());
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    settled_stored(&f, &server);
+}
+
+/// Post-landing r3 #2: a reconnect while the last part uploads. The parts
+/// report reaches the new connection unbound and is answered `stale` (a
+/// cancel names no frame, so it reads like a completion's answer); the
+/// completion then rebinds but the store is briefly unavailable. Neither
+/// stops the next pass from completing the upload.
+#[test]
+fn a_stale_parts_answer_then_a_deferred_completion_still_completes() {
+    let f = fixture();
+    let begin = uploaded_with_completion_queued(&f, 0);
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
+    // The new connection; the transfer is still bound to the old one.
+    server.epoch += 1;
+    f.images.on_disconnect();
+    f.images.on_registered("host-owner");
+    // The parts report's `stale` answer comes first.
+    f.offload.handle_server(cancel("off-1", "stale"));
+    server.store_down = true;
+    server.serve(&f);
+    assert_eq!(server.row, Row::Uploading);
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Uploaded);
+    assert!(f.runtime.alias_target(&al("off-1")).is_some());
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    settled_stored(&f, &server);
+}
+
+/// Post-landing #1: the server's maintenance ended the attempt without
+/// telling the host (its transfer expired). The periodic pass's completion
+/// is answered `stale`, its inventory `released`: alias, export, staging
+/// and the entry go, on a stable connection.
+#[test]
+fn an_offload_the_server_ended_silently_is_released_by_the_periodic_pass() {
+    let f = fixture();
+    let begin = uploaded_with_completion_queued(&f, 0);
+    let mut server = DiskServer::new("ses-1", &begin.fingerprint);
+    let _ = f.images.drain();
+    server.row = Row::Failed;
+    f.offload.force_reconcile_due();
+    f.offload.tick();
+    server.serve(&f);
+    wait_until("released and forgotten", || f.offload.entry(SBX).is_none());
+    assert!(f.runtime.alias_target(&al("off-1")).is_none());
+    assert!(staging_dirs(&f).is_empty(), "{:?}", staging_dirs(&f));
 }
 
 /// Fix 5 (r5 #1): an older connection's disk inventory page still queued is
@@ -2240,4 +2453,138 @@ fn an_old_disk_inventory_page_is_purged_by_the_next_inventory() {
         ),
         "{frames:?}"
     );
+}
+
+/// Post-landing #1 (class): an eviction request whose answer was lost
+/// stops blocking its sandbox at the next connection, or after
+/// `EVICT_ANSWER_WAIT` on a live one (before: forever).
+#[test]
+fn a_lost_eviction_request_stops_blocking_its_sandbox() {
+    let (f, _disks) = stored_fixture();
+    let suggest = || {
+        f.offload
+            .handle_server(ServerControlMessage::DiskEvictSuggest(
+                sandbox_protocol::DiskEvictSuggestV11 {
+                    sandbox_id: SBX.into(),
+                    offload_id: "off-1".into(),
+                    seq: 1,
+                },
+            ))
+    };
+    let requests = |f: &Fixture| {
+        f.images
+            .drain()
+            .into_iter()
+            .filter(|m| matches!(m, DaemonControlMessage::DiskEvictRequest(_)))
+            .count()
+    };
+    suggest();
+    assert_eq!(requests(&f), 1);
+    // Lost: no answer ever comes. Still blocking now…
+    suggest();
+    assert_eq!(requests(&f), 0);
+    // …until a new connection.
+    f.images.on_registered("host-owner");
+    f.offload.on_connection();
+    suggest();
+    assert_eq!(requests(&f), 1);
+    // On a live connection it expires.
+    if let Some(past) = Instant::now().checked_sub(EVICT_ANSWER_WAIT) {
+        for since in f.offload.inner.evict_pending.lock().unwrap().values_mut() {
+            *since = past;
+        }
+    }
+    suggest();
+    assert_eq!(requests(&f), 1);
+}
+
+/// Post-landing #1 (class): a `disk.evicted` whose ack never came is sent
+/// again by the periodic pass (and on a new connection) until acked, for
+/// at most `EVICTED_RESEND_FOR` on a live connection.
+#[test]
+fn an_unacked_eviction_report_is_sent_again_until_acked() {
+    let (f, _disks) = stored_fixture();
+    f.offload.note_server_time(&iso(wall_ms()));
+    f.offload
+        .handle_server(evict_grant("g-1", wall_ms() + 600_000));
+    wait_for_frame(&f.images, |m| evicted_of(m).is_some());
+    let reports = |f: &Fixture| {
+        f.images
+            .drain()
+            .into_iter()
+            .filter(|m| evicted_of(m).is_some())
+            .count()
+    };
+    // Lost (drained, never acked). Not due yet: nothing.
+    f.offload.tick();
+    assert_eq!(reports(&f), 0);
+    let age = |last: Duration, first: Duration| {
+        for r in f.offload.inner.evicted_sent.lock().unwrap().values_mut() {
+            r.last = Instant::now().checked_sub(last).unwrap_or(r.last);
+            r.first = Instant::now().checked_sub(first).unwrap_or(r.first);
+        }
+    };
+    age(EVICTED_RESEND_EVERY, EVICTED_RESEND_EVERY);
+    f.offload.tick();
+    assert_eq!(reports(&f), 1);
+    // A new connection sends it once more, whatever its age.
+    age(EVICTED_RESEND_EVERY, EVICTED_RESEND_FOR);
+    f.offload.on_connection();
+    assert_eq!(reports(&f), 1);
+    // r2 #2: past its window it can no longer be acked (e.g. restored
+    // elsewhere meanwhile): the periodic pass forgets the entry for good.
+    f.offload.tick();
+    assert_eq!(reports(&f), 0);
+    assert!(
+        f.offload.entry(SBX).is_none(),
+        "the evicted entry stays forever"
+    );
+    f.offload.on_connection();
+    assert_eq!(reports(&f), 0);
+}
+
+/// The ack drops an evicted entry (T16) and with it its re-sends.
+#[test]
+fn an_acked_eviction_report_is_never_sent_again() {
+    let (f, _disks) = stored_fixture();
+    f.offload.note_server_time(&iso(wall_ms()));
+    f.offload
+        .handle_server(evict_grant("g-1", wall_ms() + 600_000));
+    wait_for_frame(&f.images, |m| evicted_of(m).is_some());
+    f.offload
+        .handle_server(ServerControlMessage::DiskOffloadCancel(
+            DiskOffloadCancelV11 {
+                sandbox_id: SBX.into(),
+                offload_id: "off-1".into(),
+                seq: 1,
+                reason: evict::EVICTED_ACK.into(),
+            },
+        ));
+    assert!(f.offload.entry(SBX).is_none());
+    f.offload.on_connection();
+    assert!(f.images.drain().iter().all(|m| evicted_of(m).is_none()));
+}
+
+/// capture-fix-d: a disk upload sends `image.upload.progress` heartbeats
+/// for its transfer while bytes move (the server's stall rule needs
+/// liveness between the per-window parts reports).
+#[test]
+fn a_disk_upload_sends_heartbeats_for_its_transfer() {
+    let f = fixture();
+    f.images.set_heartbeat_for_test(Duration::ZERO);
+    f.offload.handle_server(request("off-1"));
+    let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+    let begin = begin_of(&begin).unwrap().clone();
+    let (url, seen) = s3(1);
+    f.offload
+        .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
+    let (beat, _) = wait_for_frame(
+        &f.images,
+        |m| matches!(m, DaemonControlMessage::ImageUploadProgress(p) if p.transfer_id == "tr-ses-1"),
+    );
+    seen.join().unwrap();
+    let DaemonControlMessage::ImageUploadProgress(beat) = beat else {
+        unreachable!()
+    };
+    assert!(beat.wire_bytes > 0 || beat.bytes_sent > 0, "{beat:?}");
 }

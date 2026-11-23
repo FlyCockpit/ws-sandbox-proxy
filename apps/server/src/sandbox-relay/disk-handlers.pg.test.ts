@@ -20,8 +20,11 @@ vi.mock("@wssp/queue", () => ({
   imageStoreMaintenanceQueue: { add: vi.fn() },
   ensureRunnableJob: vi.fn(),
 }));
+const budgets = vi.hoisted(() => ({ grantsExhausted: false }));
 vi.mock("@wssp/api/sandbox/budgets", () => ({
-  consumeImageGrantBudget: async () => {},
+  consumeImageGrantBudget: async () => {
+    if (budgets.grantsExhausted) throw new Error("budget exhausted");
+  },
   consumeSandboxWriteBudget: async () => {},
 }));
 
@@ -33,6 +36,8 @@ const s3 = vi.hoisted(() => ({
   calls: [] as string[],
   /** Thrown by the next Complete (then cleared). */
   completeError: null as unknown,
+  /** Runs inside the next ListParts (then cleared). */
+  duringList: null as null | (() => Promise<void>),
 }));
 vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
   const real = await importOriginal<typeof import("@wssp/api/sandbox/image-store/s3")>();
@@ -55,7 +60,12 @@ vi.mock("@wssp/api/sandbox/image-store/s3", async (importOriginal) => {
     },
     presignUploadPart: async (key: string, uploadId: string, n: number) =>
       `http://127.0.0.1:9/${key}?uploadId=${uploadId}&partNumber=${n}`,
-    listParts: async (_key: string, uploadId: string) => s3.listed.get(uploadId) ?? [],
+    listParts: async (_key: string, uploadId: string) => {
+      const during = s3.duringList;
+      s3.duringList = null;
+      await during?.();
+      return s3.listed.get(uploadId) ?? [];
+    },
     completeMultipart: async (_key: string, uploadId: string) => {
       s3.calls.push(`complete ${uploadId}`);
       const error = s3.completeError;
@@ -527,6 +537,56 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect((await w.row()).state).toBe("UPLOADING");
   });
 
+  it("a Complete re-sent on a newer connection rebinds its transfer and claims the upload; parts never rebind", async () => {
+    const w = await opened();
+    listAll(w.session, [3 * (MIB + 16)]);
+    // The relay dropped after the last part: the transfer is still bound to epoch 1.
+    await db.inspect.sandboxHost.update({ where: { id: w.host.id }, data: { connectionEpoch: 2 } });
+    await handlers.handleDiskUploadParts(w.ctx(2), {
+      type: "disk.upload.parts",
+      ...w.ref,
+      sessionId: w.session.id,
+      parts: [{ n: 1, etag: '"e1"' }],
+    });
+    expect(w.last()).toMatchObject({ type: "disk.offload.cancel", reason: "stale" });
+    expect(
+      (
+        await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+          where: { id: w.session.transferId },
+        })
+      ).sourceEpoch,
+    ).toBe(1);
+    // Another host (or another owner) never rebinds or claims it.
+    const other = await user();
+    await handlers.handleDiskUploadComplete(
+      w.ctx(2, w.host.id, other),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      async () => {},
+    );
+    expect((await w.row()).state).toBe("UPLOADING");
+    const enqueue = vi.fn(async () => {});
+    await handlers.handleDiskUploadComplete(
+      w.ctx(2),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      enqueue,
+    );
+    expect(enqueue).toHaveBeenCalledWith(w.offload.id);
+    expect(await w.row()).toMatchObject({ state: "VERIFYING", completedSessionId: w.session.id });
+    expect(
+      await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+        where: { id: w.session.transferId },
+      }),
+    ).toMatchObject({ sourceEpoch: 2, state: "COMPLETE" });
+    // A copy of it that was still queued is answered stale and changes nothing.
+    await handlers.handleDiskUploadComplete(
+      w.ctx(2),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      enqueue,
+    );
+    expect(w.last()).toMatchObject({ reason: "stale" });
+    expect(enqueue).toHaveBeenCalledTimes(1);
+  });
+
   it("parts with a wrong size fail the attempt (upload_invalid) and abort the upload", async () => {
     const w = await opened();
     listAll(w.session, [123]);
@@ -540,6 +600,28 @@ describe("disk.upload.parts / complete (S1)", () => {
     const [session] = await sessions(w.offload.id);
     expect(session).toMatchObject({ state: "ABORTED", wrapped: false });
     expect(s3.calls).toContain(`abort ${w.session.uploadId}`);
+  });
+
+  it("a transfer that ended while ListParts ran is not claimed", async () => {
+    // Round 1 (L3 #3): the claim re-checks the transfer, not only the session.
+    const w = await opened();
+    listAll(w.session, [3 * (MIB + 16)]);
+    const transferId = (await sessions(w.offload.id))[0]!.transferId!;
+    s3.duringList = async () => {
+      await db.inspect.sandboxImageTransfer.update({
+        where: { id: transferId },
+        data: { state: "EXPIRED", endReason: "expired" },
+      });
+    };
+    await handlers.handleDiskUploadComplete(
+      w.ctx(),
+      { type: "disk.upload.complete", ...w.ref, sessionId: w.session.id },
+      async () => {},
+    );
+    expect(w.last()).toMatchObject({ reason: "stale" });
+    expect((await w.row()).state).toBe("UPLOADING");
+    expect(s3.calls.filter((c) => c.startsWith("complete"))).toEqual([]);
+    expect((await sessions(w.offload.id))[0]).toMatchObject({ state: "OPEN" });
   });
 
   it("a sandbox that moved on before Complete supersedes the attempt", async () => {
@@ -556,21 +638,277 @@ describe("disk.upload.parts / complete (S1)", () => {
     expect(s3.calls.filter((c) => c.startsWith("complete"))).toEqual([]);
   });
 
+  it("the stall rule ends an upload that moved no bytes for 30 min and frees the export slot; heartbeats keep a live one", async () => {
+    const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
+      "@wssp/api/sandbox/disk-offload/upload-stall"
+    );
+    const { hostExportBusy } = await import("@wssp/api/sandbox/disk-offload/enqueue");
+    const { handleImageUploadProgress } = await import("./image-handlers");
+    const now = new Date();
+    const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
+    const stalled = await opened();
+    const live = await opened();
+    const transferOf = async (w: typeof stalled) => (await sessions(w.offload.id))[0]!.transferId!;
+    for (const w of [stalled, live])
+      await db.inspect.sandboxImageTransfer.update({
+        where: { id: await transferOf(w) },
+        data: { lastProgressAt: old },
+      });
+    const heartbeat = (
+      transferId: string,
+      ctx: ReturnType<typeof stalled.ctx>,
+      wireBytes: number,
+    ) =>
+      handleImageUploadProgress(
+        { ...ctx, spool: {} as never, sendTo: () => true, isHostCurrent: () => true } as never,
+        { type: "image.upload.progress", transferId, bytesSent: 0, wireBytes },
+        now,
+      );
+    const liveTransfer = await transferOf(live);
+    const progress = async (id: string) =>
+      (await db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id } })).lastProgressAt;
+    // Another host's heartbeat for this transfer moves nothing.
+    await heartbeat(liveTransfer, stalled.ctx(), 5 * MIB);
+    expect(await progress(liveTransfer)).toEqual(old);
+    // Its own host's heartbeat (more bytes on the wire) keeps it alive.
+    await heartbeat(liveTransfer, live.ctx(), 5 * MIB);
+    expect(await progress(liveTransfer)).toEqual(now);
+    expect(
+      await db.inspect.sandboxDiskOffload.count({ where: hostExportBusy(stalled.host.id, now) }),
+    ).toBe(1);
+    const ended = await endStalledOffloadUploads(null, now);
+    expect(ended).toEqual([
+      {
+        sandboxId: stalled.sandbox.id,
+        offloadId: stalled.offload.id,
+        seq: 1,
+        sourceHostId: stalled.host.id,
+      },
+    ]);
+    expect(await stalled.row()).toMatchObject({ state: "FAILED", failureCode: "upload_stalled" });
+    expect((await live.row()).state).toBe("UPLOADING");
+    // The ended attempt no longer holds its host's export slot.
+    expect(
+      await db.inspect.sandboxDiskOffload.count({ where: hostExportBusy(stalled.host.id, now) }),
+    ).toBe(0);
+    // A second pass ends nothing more.
+    expect(await endStalledOffloadUploads(null, now)).toEqual([]);
+  });
+
+  it("a disk heartbeat keeps its upload alive while the shared grant budget is exhausted, once per interval", async () => {
+    // Rounds 1 (L2 #1), 2 (B #2) and 3: template ids on the same connection
+    // never crowd out the disk upload's liveness.
+    const { OFFLOAD_UPLOAD_STALL_MS } = await import("@wssp/api/sandbox/disk-offload/upload-stall");
+    const { handleImageUploadProgress } = await import("./image-handlers");
+    const now = new Date();
+    const later = new Date(now.getTime() + 10_001);
+    const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
+    const w = await opened();
+    const transferId = (await sessions(w.offload.id))[0]!.transferId!;
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transferId },
+      data: { lastProgressAt: old },
+    });
+    const allowance = new Map<string, number>();
+    const beat = (id: string, at: Date, wireBytes: number) =>
+      handleImageUploadProgress(
+        {
+          ...w.ctx(),
+          spool: {} as never,
+          sendTo: () => true,
+          isHostCurrent: () => true,
+          diskLiveness: allowance,
+        } as never,
+        { type: "image.upload.progress", transferId: id, bytesSent: 0, wireBytes },
+        at,
+      );
+    const transfer = () =>
+      db.inspect.sandboxImageTransfer.findUniqueOrThrow({ where: { id: transferId } });
+    budgets.grantsExhausted = true;
+    try {
+      await beat(transferId, now, 5 * MIB);
+      expect(await transfer()).toMatchObject({ lastProgressAt: now, wireBytes: BigInt(5 * MIB) });
+      // A second one within the interval is absorbed.
+      await beat(transferId, new Date(now.getTime() + 1000), 6 * MIB);
+      expect((await transfer()).wireBytes).toBe(BigInt(5 * MIB));
+      // Four template uploads' heartbeats fill the probes of the next interval ...
+      for (let i = 0; i < 4; i++) await beat(`tr-template-${i}`, later, 1);
+      // ... and the proven disk upload still moves.
+      await beat(transferId, later, 7 * MIB);
+      expect(await transfer()).toMatchObject({ lastProgressAt: later, wireBytes: BigInt(7 * MIB) });
+    } finally {
+      budgets.grantsExhausted = false;
+    }
+  });
+
+  it("a cleanup failure after the stall rule committed loses no ended row's cancel", async () => {
+    // Round 4: cleanup is best effort; every committed end is returned.
+    const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
+      "@wssp/api/sandbox/disk-offload/upload-stall"
+    );
+    const now = new Date();
+    const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
+    const stalled = [await opened(), await opened()];
+    for (const w of stalled)
+      await db.inspect.sandboxImageTransfer.update({
+        where: { id: (await sessions(w.offload.id))[0]!.transferId! },
+        data: { lastProgressAt: old },
+      });
+    // The multipart upload is already gone: cleanup then clears its id in
+    // the database, which fails once.
+    const store = {
+      abortMultipart: async () => {
+        throw Object.assign(new Error("gone"), { name: "NoSuchUpload" });
+      },
+      deleteObject: async () => {},
+    } as never;
+    // Its first session write outside the ending transaction is cleanup's.
+    const cleanup = db.pauseAt("stall", { before: "sandboxImageUploadSession.updateMany" });
+    const stall = db.run("stall", () => endStalledOffloadUploads(store, now));
+    await cleanup.waitReached();
+    cleanup.fail(new Error("cleanup failed"));
+    const ended = await stall;
+    expect(ended.map((e) => e.offloadId).sort()).toEqual(stalled.map((w) => w.offload.id).sort());
+    for (const w of stalled)
+      expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "upload_stalled" });
+  });
+
+  it("a heartbeat racing the stall rule waits for its locked re-check and moves nothing after it", async () => {
+    // Round 1 (L2 #2): the decision and the end are one locked step; a
+    // heartbeat that arrives meanwhile cannot commit fresh progress under
+    // an upload the rule is about to fail.
+    const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
+      "@wssp/api/sandbox/disk-offload/upload-stall"
+    );
+    const { handleImageUploadProgress } = await import("./image-handlers");
+    const now = new Date();
+    const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
+    const w = await opened();
+    const transferId = (await sessions(w.offload.id))[0]!.transferId!;
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transferId },
+      data: { lastProgressAt: old },
+    });
+    const rechecked = db.pauseAt("stall", { after: /FOR UPDATE OF t/ });
+    const stall = db.run("stall", () => endStalledOffloadUploads(null, now));
+    let beat: Promise<void> | undefined;
+    try {
+      await rechecked.waitReached();
+      beat = db.run("heartbeat", () =>
+        handleImageUploadProgress(
+          {
+            ...w.ctx(),
+            spool: {} as never,
+            sendTo: () => true,
+            isHostCurrent: () => true,
+          } as never,
+          { type: "image.upload.progress", transferId, bytesSent: 0, wireBytes: 5 * MIB },
+          now,
+        ),
+      );
+      // The heartbeat waits on the transfer row the rule holds.
+      await db.waitUntilBlocked("heartbeat", { by: "stall" });
+    } finally {
+      rechecked.release();
+    }
+    expect(await stall).toHaveLength(1);
+    await beat;
+    expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "upload_stalled" });
+    const transfer = await db.inspect.sandboxImageTransfer.findUniqueOrThrow({
+      where: { id: transferId },
+    });
+    expect(transfer).toMatchObject({ state: "CANCELLED", lastProgressAt: old });
+  });
+
+  it("a disk resume racing the stall rule takes the session before the transfer as it does: no deadlock", async () => {
+    // Round 2 (A #2 / B #1): sandbox → offload → session → transfer.
+    const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
+      "@wssp/api/sandbox/disk-offload/upload-stall"
+    );
+    const { handleImageJobResume } = await import("./image-handlers");
+    const now = new Date();
+    const old = new Date(now.getTime() - OFFLOAD_UPLOAD_STALL_MS - 60_000);
+    const w = await opened();
+    const transferId = (await sessions(w.offload.id))[0]!.transferId!;
+    await db.inspect.sandboxImageTransfer.update({
+      where: { id: transferId },
+      data: { lastProgressAt: old },
+    });
+    const lockedSession = db.pauseAt("resume", {
+      after: /FROM sandbox_image_upload_session\s+WHERE "transferId" = .* FOR UPDATE/s,
+    });
+    const resume = db.run("resume", () =>
+      handleImageJobResume(
+        { ...w.ctx(), spool: {} as never, sendTo: () => true, isHostCurrent: () => true } as never,
+        { type: "image.job.resume", transferId, role: "SOURCE", bytesDone: 0 },
+      ),
+    );
+    let stall: Promise<unknown[]> | undefined;
+    try {
+      await lockedSession.waitReached();
+      // The rule waits on the session the resume holds, holding no transfer.
+      stall = db.run("stall", () => endStalledOffloadUploads(null, now));
+      await db.waitUntilBlocked("stall", { by: "resume" });
+    } finally {
+      lockedSession.release();
+    }
+    await resume;
+    // The resume committed; the rule then still saw no progress and ended it.
+    expect(await stall).toHaveLength(1);
+    expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "upload_stalled" });
+  });
+
   it("disk.offload.failed ends only the host's own uploadable attempt", async () => {
     const w = await opened();
     const other = await user();
     const { host: otherHost } = await seedStoppedOnHost(db.inspect, { userId: other });
-    await handlers.handleDiskOffloadFailed(w.ctx(1, otherHost.id, other), {
-      type: "disk.offload.failed",
-      ...w.ref,
-      code: "io",
-    });
+    // Another host's report: no effect, and nothing of that host is left for
+    // it (`done`: its report store stops re-sending).
+    expect(
+      await handlers.handleDiskOffloadFailed(w.ctx(1, otherHost.id, other), {
+        type: "disk.offload.failed",
+        ...w.ref,
+        code: "io",
+      }),
+    ).toBe("done");
     expect((await w.row()).state).toBe("UPLOADING");
-    await handlers.handleDiskOffloadFailed(w.ctx(), {
-      type: "disk.offload.failed",
-      ...w.ref,
-      code: "staging_full",
-    });
+    // A fenced report (a connection epoch the host no longer has): `retry`.
+    expect(
+      await handlers.handleDiskOffloadFailed(w.ctx(7), {
+        type: "disk.offload.failed",
+        ...w.ref,
+        code: "io",
+      }),
+    ).toBe("retry");
+    expect((await w.row()).state).toBe("UPLOADING");
+    // A sandbox the server has no row for (the host's answer to a request
+    // naming one): nothing can be left to end, `done`.
+    expect(
+      await handlers.handleDiskOffloadFailed(w.ctx(), {
+        type: "disk.offload.failed",
+        ...w.ref,
+        sandboxId: "sbx-never-existed",
+        code: "instance_missing",
+      }),
+    ).toBe("done");
+    expect((await w.row()).state).toBe("UPLOADING");
+    expect(
+      await handlers.handleDiskOffloadFailed(w.ctx(), {
+        type: "disk.offload.failed",
+        ...w.ref,
+        code: "staging_full",
+      }),
+    ).toBe("done");
+    expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "staging_full" });
+    // A repeat (the report re-sent after a lost ack): done, nothing changes.
+    expect(
+      await handlers.handleDiskOffloadFailed(w.ctx(), {
+        type: "disk.offload.failed",
+        ...w.ref,
+        code: "io",
+        reportId: "0123456789abcdef0123456789abcdef",
+      }),
+    ).toBe("done");
     expect(await w.row()).toMatchObject({ state: "FAILED", failureCode: "staging_full" });
     expect(await sessions(w.offload.id)).toEqual([
       expect.objectContaining({ state: "ABORTED", wrapped: false }),
@@ -952,10 +1290,13 @@ describe("disk.offload.released (export slot release)", () => {
         ).sourceReleasedAt;
       // Another host, another owner identity, a wrong seq, a stale session:
       // nothing recorded.
-      await released(theirs.ctx());
-      await released(mine.ctx(1, mine.host.id, theirs.owner));
-      await released(mine.ctx(), { ...ref, seq: 3 });
-      await released({ ...mine.ctx(), sender: { ...mine.ctx().sender, isCurrent: () => false } });
+      expect(await released(theirs.ctx())).toBe("done");
+      expect(await released(mine.ctx(1, mine.host.id, theirs.owner))).toBe("done");
+      expect(await released(mine.ctx(), { ...ref, seq: 3 })).toBe("done");
+      // A superseded session's report is retried on the next one.
+      expect(
+        await released({ ...mine.ctx(), sender: { ...mine.ctx().sender, isCurrent: () => false } }),
+      ).toBe("retry");
       expect(await at()).toBeNull();
       expect(wake).not.toHaveBeenCalled();
       // An unverified offload (this one failed at upload) is never released
@@ -968,7 +1309,7 @@ describe("disk.offload.released (export slot release)", () => {
       expect(first).toBeInstanceOf(Date);
       expect(wake).toHaveBeenCalledTimes(1);
       // A repeated release (a re-offered ack) keeps the first time.
-      await released();
+      expect(await released()).toBe("done");
       expect(await at()).toEqual(first);
       expect(wake).toHaveBeenCalledTimes(1);
       expect(mine.replies).toEqual([]);

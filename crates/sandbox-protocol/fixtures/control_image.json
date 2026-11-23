@@ -1,6 +1,18 @@
 {
   "daemon": [
     {
+      "type": "image.upload.complete",
+      "transferId": "tr-2",
+      "reportId": "0123456789abcdef0123456789abcdef"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "export",
+      "reportId": "0123456789abcdef0123456789abcdef"
+    },
+    {
       "type": "image.fetch.request",
       "requestId": "req-1",
       "operationId": "op-1",
@@ -186,6 +198,10 @@
   ],
   "server": [
     {
+      "type": "report.ack",
+      "reportId": "0123456789abcdef0123456789abcdef"
+    },
+    {
       "type": "image.fetch.grant",
       "requestId": "req-1",
       "transferId": "tr-1",
@@ -318,6 +334,18 @@
     }
   ],
   "rejectedDaemon": [
+    {
+      "type": "image.upload.complete",
+      "transferId": "tr-2",
+      "reportId": "gggggggggggggggggggggggggggggggg"
+    },
+    {
+      "type": "image.job.failed",
+      "transferId": "tr-1",
+      "code": "io",
+      "cause": "export",
+      "reportId": ""
+    },
     {
       "type": "image.fetch.request",
       "requestId": "req-1",
@@ -663,6 +691,13 @@
     }
   ],
   "rejectedServer": [
+    {
+      "type": "report.ack",
+      "reportId": "0123456789abcdef0123456789abcdef0"
+    },
+    {
+      "type": "report.ack"
+    },
     {
       "type": "image.job.resume.result",
       "transferId": "tr-1",

@@ -154,6 +154,7 @@ impl UploadFailure {
             http_status: self.http_status,
             part: self.part,
             refusal: self.refusal.clone(),
+            report_id: None,
         })
     }
 

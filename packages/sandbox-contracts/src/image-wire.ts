@@ -65,6 +65,9 @@ const totalBytesSchema = z
   .max(IMAGE_SIZE_MAX * 8);
 const partNumberSchema = z.number().int().min(1).max(10_000);
 const codeSchema = z.string().regex(/^[a-z_.]{1,64}$/);
+/** A host report that stays durable until acknowledged (`report.ack`):
+ * random per report, so a repeat names the same report. */
+const reportIdSchema = z.string().regex(/^[0-9a-f]{32}$/);
 const urlSchema = z
   .string()
   .max(8192)
@@ -398,7 +401,11 @@ export const daemonImageMessageSchemas = [
       .min(1)
       .max(IMAGE_UPLOAD_PARTS_MAX),
   }),
-  z.strictObject({ type: z.literal("image.upload.complete"), transferId: idSchema }),
+  z.strictObject({
+    type: z.literal("image.upload.complete"),
+    transferId: idSchema,
+    reportId: reportIdSchema.optional(),
+  }),
   // Exactly one reference: the transfer, or (a capture upload before its
   // first grant) its operation and dispatch attempt, as SOURCE with nothing
   // done.
@@ -433,6 +440,7 @@ export const daemonImageMessageSchemas = [
       httpStatus: z.number().int().min(100).max(599).optional(),
       part: partNumberSchema.optional(),
       refusal: codeSchema.optional(),
+      reportId: reportIdSchema.optional(),
     })
     .refine(
       (frame) =>
@@ -558,6 +566,9 @@ export const serverImageMessageSchema = z.union([
     reason: z.enum(["stored", "replicated", "gc", "access_lost", "released"]),
   }),
   z.strictObject({ type: z.literal("image.cache.census.ack"), page: z.number().int().min(0) }),
+  /** The server handled the report carrying this `reportId` (it took
+   * effect, or nothing is left for it to end): the host stops re-sending. */
+  z.strictObject({ type: z.literal("report.ack"), reportId: reportIdSchema }),
 ]);
 export type ServerImageMessage = z.infer<typeof serverImageMessageSchema>;
 export const SERVER_IMAGE_MESSAGE_TYPES = new Set<string>([
@@ -571,6 +582,7 @@ export const SERVER_IMAGE_MESSAGE_TYPES = new Set<string>([
   "image.job.cancel",
   "image.release",
   "image.cache.census.ack",
+  "report.ack",
 ]);
 
 /**
@@ -798,13 +810,18 @@ export const daemonDiskMessageSchemas = [
     type: z.literal("disk.offload.failed"),
     ...offloadRef,
     code: z.enum(DISK_OFFLOAD_FAILURE_CODES),
+    reportId: reportIdSchema.optional(),
   }),
   z.strictObject({ type: z.literal("disk.evict.request"), ...offloadRef }),
   /**
    * The host dropped this stored offload's alias image, export and staging;
    * only now is its export slot free.
    */
-  z.strictObject({ type: z.literal("disk.offload.released"), ...offloadRef }),
+  z.strictObject({
+    type: z.literal("disk.offload.released"),
+    ...offloadRef,
+    reportId: reportIdSchema.optional(),
+  }),
   z.strictObject({
     type: z.literal("disk.evicted"),
     sandboxId: idSchema,

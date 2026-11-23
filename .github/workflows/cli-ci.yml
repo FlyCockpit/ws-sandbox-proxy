@@ -118,8 +118,9 @@ jobs:
             echo "release wssp references WSSP_TEST_RUNTIME_TIMING" >&2
             exit 1
           fi
-          # `wssp ssh --stdio` note-log and uncounted-window test hooks: debug builds only.
-          for knob in WSSP_TEST_SSH_NOTE_LOG WSSP_TEST_SSH_UNCOUNTED_WINDOW; do
+          # `wssp ssh --stdio` note-log and uncounted-window test hooks and
+          # the disk offload timing knob: debug builds only.
+          for knob in WSSP_TEST_SSH_NOTE_LOG WSSP_TEST_SSH_UNCOUNTED_WINDOW WSSP_TEST_DISK_TIMING; do
             if grep -q "$knob" target/release/wssp; then
               echo "release wssp references $knob" >&2
               exit 1

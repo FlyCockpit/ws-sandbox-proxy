@@ -219,6 +219,15 @@ let refuseConnections = false;
 let rejectAdoption = false;
 // Live finding B-1: a dispatch frame dies in transit (written, never read).
 let loseDispatches = false;
+// Report redelivery: the next daemon frame `loseDaemonFrame` matches is read
+// but never handled, and its connection dies (the server's queue discards
+// it on close); likewise the next server frame `loseServerFrame` matches is
+// never written. Each is one-shot. `serverFrames` records what the server
+// wrote; `hostEnv` adds daemon environment (debug timing knobs).
+let loseDaemonFrame: ((frame: Record<string, unknown>) => boolean) | undefined;
+let loseServerFrame: ((frame: Record<string, unknown>) => boolean) | undefined;
+const serverFrames: Record<string, unknown>[] = [];
+let hostEnv: Record<string, string> = {};
 
 // A case that hit its vitest timeout keeps running in the background; its
 // polls must not act on the next case's daemon, store or directory. The
@@ -267,9 +276,12 @@ async function startHost() {
     args: (await exists("one-slot")) ? ["--sandbox-vcpu-budget", "1"] : [],
     // Debug-build-only hold (apps/cli supervisor.rs): a create waits in
     // Effect, before any runtime call, until this file exists.
-    env: (await exists("hold-create-effect"))
-      ? { WSSP_TEST_BARRIER_CREATE_EFFECT: join(dir, "release-create-effect") }
-      : {},
+    env: {
+      ...hostEnv,
+      ...((await exists("hold-create-effect"))
+        ? { WSSP_TEST_BARRIER_CREATE_EFFECT: join(dir, "release-create-effect") }
+        : {}),
+    },
   });
   host.stderr!.on("data", (chunk) => failures.push(String(chunk)));
   host.on("error", (error) => failures.push(String(error)));
@@ -309,6 +321,10 @@ async function setup(
   refuseConnections = false;
   rejectAdoption = false;
   loseDispatches = false;
+  loseDaemonFrame = undefined;
+  loseServerFrame = undefined;
+  serverFrames.length = 0;
+  hostEnv = {};
   frames.length = 0;
   failures.length = 0;
   dropConfirmation = true;
@@ -431,6 +447,15 @@ async function setup(
           JSON.parse(data).type === "operation.dispatch"
         )
           return;
+        if (typeof data === "string") {
+          const frame = JSON.parse(data);
+          if (loseServerFrame?.(frame)) {
+            loseServerFrame = undefined;
+            socket.terminate();
+            return;
+          }
+          serverFrames.push(frame);
+        }
         socket.send(data);
       },
       close(code?: number, reason?: string) {
@@ -465,6 +490,11 @@ async function setup(
       }
       frames.push(frame);
       receivedFrames.emit("frame", frame);
+      if (loseDaemonFrame?.(frame)) {
+        loseDaemonFrame = undefined;
+        socket.terminate();
+        return;
+      }
       if (rejectAdoption && frame.type === "operation.adopt") {
         socket.send(
           JSON.stringify({
@@ -1688,6 +1718,7 @@ it("offload wire: a stored ack is answered disk.offload.released once the host d
     sandboxId: "sbx-1",
     offloadId: "off-9",
     seq: 1,
+    reportId: expect.stringMatching(/^[0-9a-f]{32}$/),
   });
   const entries = JSON.parse(await readFile(journal(), "utf8")).entries;
   expect(entries["sbx-1"]).toMatchObject({ offloadId: "off-9", phase: "stored" });
@@ -1705,6 +1736,147 @@ it("offload wire: a stored ack is answered disk.offload.released once the host d
   });
   expect(failures.some((line) => line.includes("disk offload frame"))).toBe(false);
   expect(manager.isHostConnected("host-1")).toBe(true);
+});
+
+/** The ghost offload request of the offload wire cases: the real host
+ * answers it `disk.offload.failed` (`instance_missing`). */
+function requestGhostOffload() {
+  peer!.send(
+    encodeServerControlMessage(
+      {
+        type: "disk.offload.request",
+        sandboxId: "sbx-ghost",
+        generation: 1,
+        offloadId: "off-2",
+        seq: 1,
+      },
+      "1.0",
+    ),
+  );
+}
+const ghostFailure = (f: Record<string, unknown>) =>
+  f.type === "disk.offload.failed" && f.offloadId === "off-2";
+const reconciles = () => frames.filter((f) => f.type === "reconcile.complete").length;
+async function reconnected(before: number) {
+  await until(
+    () => reconciles() > before && manager.isHostConnected("host-1"),
+    "daemon reconnected and reconciled",
+    SESSION_TIMEOUT_MS,
+  );
+}
+/** The image outbox of the newest connection has drained past its re-sent
+ * reports: they are queued at `hello.ok`, ahead of its census. */
+async function censusAfter(index: number) {
+  await until(
+    () => frames.slice(index).some((f) => f.type === "image.cache.census" && f.complete === true),
+    "image census of the new connection",
+    SESSION_TIMEOUT_MS,
+  );
+}
+
+it("offload wire: a failure report lost with its connection is sent again on the next one and acked once", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
+  await setup("stat-missing");
+  await until(() => store.operations.get("op-1")!.state === "FAILED", "stat failure published");
+  const before = reconciles();
+  // Read off the socket but never handled: the connection dies with it.
+  loseDaemonFrame = ghostFailure;
+  requestGhostOffload();
+  await until(() => frames.some(ghostFailure), "offload request answered");
+  const reportId = frames.find(ghostFailure)!.reportId;
+  expect(reportId).toMatch(/^[0-9a-f]{32}$/);
+  await reconnected(before);
+  await until(() => frames.filter(ghostFailure).length === 2, "the lost report sent again");
+  expect(frames.filter(ghostFailure).map((f) => f.reportId)).toEqual([reportId, reportId]);
+  const acked = (f: Record<string, unknown>) => f.type === "report.ack" && f.reportId === reportId;
+  await until(() => serverFrames.some(acked), "the repeat acknowledged by the real manager");
+  // Acknowledged: the next connection carries it no more.
+  const settled = reconciles();
+  const mark = frames.length;
+  peer!.terminate();
+  await reconnected(settled);
+  await censusAfter(mark);
+  expect(frames.filter(ghostFailure)).toHaveLength(2);
+  expect(serverFrames.filter(acked)).toHaveLength(1);
+  expect(failures.some((line) => line.includes("disk offload frame"))).toBe(false);
+});
+
+it("offload wire: a failure report whose ack was lost is sent once more and acked as a repeat", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
+  await setup("stat-missing");
+  await until(() => store.operations.get("op-1")!.state === "FAILED", "stat failure published");
+  const before = reconciles();
+  // Handled, but its acknowledgement never written: the connection dies.
+  loseServerFrame = (f) => f.type === "report.ack";
+  requestGhostOffload();
+  await reconnected(before);
+  await until(() => frames.filter(ghostFailure).length === 2, "the unacked report sent again");
+  const [first, second] = frames.filter(ghostFailure);
+  expect(second!.reportId).toBe(first!.reportId);
+  const acked = (f: Record<string, unknown>) =>
+    f.type === "report.ack" && f.reportId === first!.reportId;
+  await until(() => serverFrames.some(acked), "the repeat acknowledged");
+  expect(serverFrames.filter(acked)).toHaveLength(1);
+  expect(failures.some((line) => line.includes("disk offload frame"))).toBe(false);
+});
+
+it("offload wire: on one live connection the disk tick runs the inventory pass again", {
+  timeout: CASE_BUDGET.oneSession,
+}, async () => {
+  // r5 minor #2: the connect loop's periodic disk tick, end to end (its
+  // interval and the pass's cadence shortened by the debug knob).
+  const journal = () =>
+    join(
+      dir,
+      "data",
+      "relay",
+      createHash("sha256").update("host-1").digest("hex"),
+      "images",
+      "disk-offload.json",
+    );
+  await setup("stat-missing", false, undefined, async () => {
+    hostEnv = { WSSP_TEST_DISK_TIMING: "200,1000" };
+    await mkdir(dirname(journal()), { recursive: true });
+    const tag = createHash("sha256").update("host-1").digest("hex").slice(0, 12);
+    await writeFile(
+      journal(),
+      JSON.stringify({
+        version: 1,
+        entries: {
+          "sbx-1": {
+            offloadId: "off-9",
+            seq: 1,
+            generation: 3,
+            phase: "uploaded",
+            alias: `wssp-off-${tag}-off-9`,
+            stagedSha256: "d".repeat(64),
+          },
+        },
+      }),
+      { mode: 0o600 },
+    );
+    // Still in flight on the server: no answer, so the entry stays.
+    db.sandboxDiskOffload.findMany.mockResolvedValue([
+      {
+        id: "off-9",
+        sandboxId: "sbx-1",
+        seq: 1,
+        state: "UPLOADING",
+        fingerprint: `sha256:${"d".repeat(64)}`,
+        sourceGeneration: 3,
+      },
+    ] as never);
+  });
+  const hellos = frames.filter((f) => f.type === "hello").length;
+  const inventories = () => frames.filter((f) => f.type === "disk.offload.inventory").length;
+  await until(() => inventories() >= 1, "first inventory pass");
+  await until(() => inventories() >= 2, "periodic inventory pass", SESSION_TIMEOUT_MS);
+  expect(frames.filter((f) => f.type === "hello")).toHaveLength(hellos);
+  expect(manager.isHostConnected("host-1")).toBe(true);
+  const entries = JSON.parse(await readFile(journal(), "utf8")).entries;
+  expect(entries["sbx-1"]).toMatchObject({ offloadId: "off-9", phase: "uploaded" });
 });
 
 it("keyed 1.0 command env reaches the guest and retains separate private receipt MACs", async () => {

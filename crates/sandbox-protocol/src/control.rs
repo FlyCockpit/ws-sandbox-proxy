@@ -1243,6 +1243,8 @@ pub enum ServerControlMessage {
     ImageRelease(crate::ImageReleaseV11),
     #[serde(rename = "image.cache.census.ack")]
     ImageCacheCensusAck(crate::ImageCacheCensusAckV11),
+    #[serde(rename = "report.ack")]
+    ReportAck(crate::ReportAckV11),
     // Disk offload; only to `diskOffload` sessions.
     #[serde(rename = "disk.offload.request")]
     DiskOffloadRequest(crate::DiskOffloadRequestV11),

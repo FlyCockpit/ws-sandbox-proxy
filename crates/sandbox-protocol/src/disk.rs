@@ -276,6 +276,14 @@ pub struct DiskOffloadFailedV11 {
     pub offload_id: String,
     pub seq: u64,
     pub code: DiskOffloadFailureCode,
+    /// Report id (32 lowercase hex): the daemon keeps the report until the
+    /// server's `report.ack` of this id and re-sends it after a reconnect.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub report_id: Option<String>,
 }
 
 /// The host dropped this stored offload's alias image, export and staging
@@ -287,6 +295,14 @@ pub struct DiskOffloadReleasedV11 {
     pub sandbox_id: String,
     pub offload_id: String,
     pub seq: u64,
+    /// Report id (32 lowercase hex): the daemon keeps the report until the
+    /// server's `report.ack` of this id and re-sends it after a reconnect.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::egress::present"
+    )]
+    pub report_id: Option<String>,
 }
 
 /// Ask to delete the local copy of a stored offload (LRU pressure or a
@@ -574,9 +590,19 @@ pub(crate) fn valid_daemon_disk(message: &crate::DaemonControlMessage) -> bool {
         M::DiskUploadComplete(r) => {
             valid_disk_session(&r.sandbox_id, &r.offload_id, r.seq, &r.session_id)
         }
-        M::DiskOffloadFailed(r) => valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq),
+        M::DiskOffloadFailed(r) => {
+            valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq)
+                && r.report_id
+                    .as_deref()
+                    .is_none_or(crate::image::valid_report_id)
+        }
         M::DiskEvictRequest(r) => valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq),
-        M::DiskOffloadReleased(r) => valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq),
+        M::DiskOffloadReleased(r) => {
+            valid_offload_ref(&r.sandbox_id, &r.offload_id, r.seq)
+                && r.report_id
+                    .as_deref()
+                    .is_none_or(crate::image::valid_report_id)
+        }
         M::DiskEvicted(r) => r.is_valid(),
         M::DiskDiscarded(r) => r.is_valid(),
         M::DiskOffloadInventory(r) => r.is_valid(),

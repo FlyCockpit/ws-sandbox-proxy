@@ -292,7 +292,7 @@ const operationPublicSelect = {
   progressBytesDone: true,
   progressBytesTotal: true,
   progressAt: true,
-  Capture: { select: { revisionId: true } },
+  Capture: { select: { revisionId: true, errorDetail: true } },
   dispatchedAt: true,
   completedAt: true,
   createdAt: true,

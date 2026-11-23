@@ -1611,9 +1611,14 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
   upload that keeps moving never fails for slowness down to a floor of
   16 KiB per 10 minutes (about 27 B/s: progress is counted per 16 KiB
   socket chunk, and the server ends an upload with no progress for
-  10 minutes `upload_stalled`), and the response to a
-  part is awaited up to 300 s (the last bytes may still be draining from the
-  kernel buffer).
+  10 minutes `upload_stalled`). The response to a part is awaited for
+  120 s plus the time the part's last bytes may still need to drain from the
+  kernel send buffer. That time is at most 8 MiB of the part at the upload
+  rate measured on this host, or at 45 KB/s before one is known, capped at
+  300 s. So a store that takes every body and never answers fails a small
+  part, or any part on a fast link, in about 9 minutes over its 4 attempts
+  (about 12 minutes when it hits the host's first large part), while a slow
+  uplink keeps its full drain time.
   - **Retries.** Each part gets up to 4 attempts, 2, 8 and 30 s apart (plus
     up to 25 % jitter), for `timeout`, `stalled`, `reset`, `connect` and
     store answers 5xx, 408 and 429; every other failure is final at once. A
@@ -1648,8 +1653,10 @@ quiesce_max = "10m"             # wait for running commands before a reload rest
     happened meanwhile is sent, with its cause, after the resume; so is a
     failure or completion whose socket write or flush failed (it counts as
     sent only once written and flushed), with the parts reports and
-    heartbeats of that write; its other frames (begins, census pages, disk
-    offload frames) are not sent again. A resume wait inside a renew or a begin retry spends that
+    heartbeats of that write, and a disk offload's completion, failure,
+    release or eviction report (the server takes each of those again
+    without harm); its other frames (begins, census pages, disk parts
+    reports, eviction requests) are not sent again. A resume wait inside a renew or a begin retry spends that
     wait's own budget, never one of its own.
   - Every failure is logged as `image store part upload failed` / `image
     upload ended` with its cause, `io_kind`, `http_status`, part and attempt,
@@ -1724,6 +1731,52 @@ offload_fetch_mbps = 0    # cap restore downloads (0 = unlimited)
   booting, and the next start has the server discard the local copy and
   restore the stored copy instead. The same happens when the daemon refuses
   a server eviction grant and lets it expire.
+- **Lost answers.** No lost frame or answer leaves an offload, its
+  temporary image or its staging waiting. After every reconnect, and every
+  10 minutes on a live connection, the daemon:
+  - sends the completion of every upload still waiting for a verdict
+    again. The server moves that upload's transfer to the current connection
+    itself, so a completion lost with a connection, or dropped from a full
+    outbox, still counts;
+  - lists every unfinished offload. The server answers stored, released (it
+    ended the offload, for example in its hourly maintenance), or nothing
+    while the offload is still in flight.
+- **Lost eviction frames.** An eviction report without an ack is sent again
+  every minute, and once more on each new connection. After 15 minutes it
+  can no longer be acked (the server has cleared the grant), so the entry is
+  forgotten. The VM is already deleted, and the server's census decides from
+  the roots the host reports. An eviction request without an answer stops
+  blocking after 10 minutes, or at the next connection. A failure or release
+  report is never dropped from a full outbox.
+- **Reports kept until acknowledged.** A frame the daemon wrote and flushed
+  can still be lost: the server drops the frames it has not yet handled when
+  their connection closes. So the daemon keeps its terminal reports (a disk
+  offload's failure or release, and a template upload's completion or
+  failure) until the server acknowledges each one (`report.ack`). Each
+  report carries a random `reportId`. The daemon sends every report still
+  without an ack again after each new connection, behind its job's resume
+  where the server needs the upload rebound first. On a live connection it
+  sends one again after 2 minutes without an ack. The server acknowledges a
+  report once it took effect, or once nothing is left for it to end (a
+  repeat, or an attempt that ended otherwise). It never acknowledges one a
+  fence refused, or whose handler failed. A refused resume of the ended
+  job does not drop its report either (the refusal may be momentary). The daemon keeps at most 32
+  reports, each for at most 1 hour. Past that, the server's backstops end
+  the attempt: the stall rules below, the 10-minute release wait, and the
+  capture upload stall rule (10 minutes).
+- **Upload stall rule.** A disk upload sends a byte heartbeat every 30
+  seconds (`image.upload.progress` on its transfer; it only proves the
+  upload is alive). An upload whose transfer moved no bytes for 30 minutes
+  ends `upload_stalled`. The server checks this every 15 seconds (a
+  heartbeat is taken even when the host's shared grant budget is spent, at
+  most one per 10 seconds). The host's export slot is then free, and a
+  connected host is told to stop the upload (at its next buffer, even inside
+  a part) and drop its staging before the same pass sends it its next
+  export. A host that was away gets the verdict from its next inventory
+  pass. A host away for 30 minutes during an upload
+  loses that attempt.
+- **Upgrades.** Update the server before the daemons: an older server
+  refuses the `reportId` field.
 - **Rate caps.** `offload_upload_mbps` and `offload_fetch_mbps` are in
   megabits per second (1 Mbps = 125 000 bytes/s); 0 or unset is unlimited.
   A daemon restart applies a change.
