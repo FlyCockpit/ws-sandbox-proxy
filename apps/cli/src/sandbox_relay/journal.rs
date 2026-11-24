@@ -17,11 +17,12 @@ use serde::{Deserialize, Serialize};
 mod configs;
 pub mod storage;
 pub(super) use configs::ConfigInstallIo;
+mod lease_record;
 mod leases;
 mod retire;
+pub use lease_record::{LeaseGuest, LeaseRecord};
 pub(super) use leases::StaleEnforcementLossAuthority;
 pub use leases::{LEASE_CEILING_SKEW_MS, LeaseCeilingExceeded, lease_within_ceiling};
-pub use leases::{LeaseGuest, LeaseRecord};
 pub(super) use retire::{COMMAND_STOP_UNPROVEN_EXT, CommandRetirement, RetirePacing, RetireSettle};
 pub const JOURNAL_VERSION: u32 = 1;
 /// Bounded extension fields preserved by every record rewrite.
@@ -761,7 +762,7 @@ impl HostJournal {
         private_dir(&configs_dir)?;
         File::open(dir)?.sync_all()?;
         let configs = configs::load(&configs_dir, binding)?;
-        let leases = leases::load(&leases_dir, binding, &receipts)?;
+        let leases = lease_record::load(&leases_dir, binding, &receipts)?;
         let io = IoLatch::default();
         prune_completed(&io, &receipts_dir, &mut receipts)?;
         let storage_path = dir.join("storage.json");

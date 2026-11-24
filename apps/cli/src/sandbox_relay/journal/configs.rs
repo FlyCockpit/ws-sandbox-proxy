@@ -415,7 +415,7 @@ impl HostJournal {
                 self.maybe_crash(CrashPoint::AfterDigestPrune)?;
                 // Every env-covering receipt is now removed or already pruned.
                 // Strip the checkpoint binding before unlinking the config.
-                leases::prune_private_config(&self.io, &self.leases_dir, state, &sandbox_id)?;
+                lease_record::prune_private_config(&self.io, &self.leases_dir, state, &sandbox_id)?;
                 self.maybe_crash(CrashPoint::BeforeConfigUnlink)?;
                 if state.configs.contains_key(&sandbox_id) {
                     remove_durably(
