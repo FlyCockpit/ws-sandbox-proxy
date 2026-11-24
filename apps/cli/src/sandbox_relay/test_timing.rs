@@ -687,7 +687,8 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn storage_poll_override_reaches_the_host_reports() {
-        use super::super::host_reports::{STORAGE_POLL_MS, storage_poll_ms_for};
+        use super::super::host_reports::storage_poll_ms_for;
+        use super::STORAGE_POLL_MS;
         assert_eq!(storage_poll_ms_for(None), STORAGE_POLL_MS);
         let keeps = parse_runtime_test_timing("30s,,").unwrap();
         assert_eq!(storage_poll_ms_for(Some(keeps)), STORAGE_POLL_MS);
