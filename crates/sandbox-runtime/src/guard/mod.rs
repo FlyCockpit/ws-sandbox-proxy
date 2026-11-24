@@ -11,10 +11,9 @@
 //! - [`sources`]: root-file and deployment policy sources with provenance;
 //! - [`protocol`]: the `SO_PEERCRED`-authenticated socket protocol;
 //! - [`status`]: maps source provenance onto the shared `GuardStatus`;
-//! - [`client`]: the real `GuardProbe` (socket client).
-//!
-//! The status format, `GuardProbe` trait and lease rule live in
-//! [`crate::guard_probe`].
+//! - [`client`]: the real `GuardProbe` (socket client);
+//! - [`probe`]: the status format, the `GuardProbe` trait and the lease rule
+//!   the daemon side evaluates.
 //!
 //! The guard never accepts; every chain contains only `return` and `drop`.
 
@@ -25,6 +24,7 @@ pub mod ceiling;
 pub mod client;
 pub mod net;
 pub mod path;
+pub mod probe;
 pub mod protocol;
 pub mod routes;
 pub mod ruleset;

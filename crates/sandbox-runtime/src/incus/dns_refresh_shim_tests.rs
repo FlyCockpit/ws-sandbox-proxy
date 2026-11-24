@@ -2549,7 +2549,7 @@ fn a_refresh_over_the_byte_budget_keeps_the_last_good_rules() {
         assert_eq!(reports.len(), 1);
         assert_eq!(
             reports[0].warning,
-            Some(crate::egress::EgressRefusal::RefreshOverBudget)
+            Some(crate::EgressRefusal::RefreshOverBudget)
         );
         assert_eq!(
             reports[0].warning.unwrap().as_str(),

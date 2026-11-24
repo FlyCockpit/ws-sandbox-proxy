@@ -1334,10 +1334,10 @@ pub struct FakeRuntime {
     advertise_egress_enforcement: bool,
     /// Synthetic egress guard (§2.0.6 "Fake runtime"): healthy unless a test
     /// says otherwise; shared by clones.
-    guard: crate::guard_probe::FakeGuardProbe,
+    guard: crate::guard::probe::FakeGuardProbe,
     /// The probe the create / cold-reconnect checks consult: `guard` unless
     /// a test installs another (e.g. a socket client of a fake guard).
-    guard_probe: std::sync::Arc<dyn crate::guard_probe::GuardProbe>,
+    guard_probe: std::sync::Arc<dyn crate::guard::probe::GuardProbe>,
     /// Local-stack failure injection: while this file exists, every new
     /// create fails definitively before any state change.
     create_failure_switch: Option<std::path::PathBuf>,
@@ -1365,7 +1365,7 @@ impl Default for FakeRuntime {
             request.template_digest,
             ("x86_64".into(), crate::GuestIdentity::default(), true),
         );
-        let guard = crate::guard_probe::FakeGuardProbe::healthy();
+        let guard = crate::guard::probe::FakeGuardProbe::healthy();
         Self {
             policy: Default::default(),
             policy_health: Default::default(),
@@ -1452,14 +1452,14 @@ impl FakeRuntime {
 
     /// The synthetic egress guard (healthy by default); tests flip it to
     /// exercise the create, cold-reconnect and start-fence refusals.
-    pub fn guard(&self) -> &crate::guard_probe::FakeGuardProbe {
+    pub fn guard(&self) -> &crate::guard::probe::FakeGuardProbe {
         &self.guard
     }
 
     /// Replace the guard the create / cold-reconnect checks consult (the
     /// same hook as `IncusKvmRuntime::set_guard_probe`). `guard()` then no
     /// longer decides.
-    pub fn set_guard_probe(&mut self, probe: std::sync::Arc<dyn crate::guard_probe::GuardProbe>) {
+    pub fn set_guard_probe(&mut self, probe: std::sync::Arc<dyn crate::guard::probe::GuardProbe>) {
         self.guard_probe = probe;
     }
 
@@ -2127,7 +2127,7 @@ impl SandboxRuntime for FakeRuntime {
     }
     fn import_image(&self, path: &std::path::Path) -> Result<String, RuntimeError> {
         // Like the Incus runtime: no import while the server is shared.
-        crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
         let bytes = std::fs::read(path)
             .map_err(|_| RuntimeError::new(SandboxErrorCode::Internal, "image file unreadable"))?;
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -2152,7 +2152,7 @@ impl SandboxRuntime for FakeRuntime {
         disk: &std::path::Path,
         expected: &str,
     ) -> Result<String, RuntimeError> {
-        crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
         crate::validate_split_image(meta, disk, crate::SPLIT_VIRTUAL_SIZE_MAX)?;
         let unreadable = || RuntimeError::new(SandboxErrorCode::Internal, "image file unreadable");
         let mut bytes = std::fs::read(meta).map_err(|_| unreadable())?;
@@ -2735,12 +2735,12 @@ impl SandboxRuntime for FakeRuntime {
         Ok(self.advertise_egress_enforcement)
     }
 
-    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard_probe::GuardProbe>> {
+    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard::probe::GuardProbe>> {
         Some(self.guard_probe.clone())
     }
 
     fn egress_guard_check(&self) -> Result<(), RuntimeError> {
-        crate::guard_probe::check_guard(self.guard_probe.as_ref())
+        crate::guard::probe::check_guard(self.guard_probe.as_ref())
     }
 
     fn egress_enforcement_unavailable_reason(&self) -> Option<String> {

@@ -3,11 +3,11 @@
 use std::net::Ipv4Addr;
 
 use super::*;
-use crate::guard::sources::{PolicyContent, parse_entries};
-use crate::guard_probe::{
+use crate::guard::probe::{
     FakeGuardProbe, GuardExpectations, GuardGateway, GuardSources, GuardUnhealthy, attest_bridge,
     evaluate_guard,
 };
+use crate::guard::sources::{PolicyContent, parse_entries};
 
 const BOOT: &str = "4f1c7a1e-0000-4000-8000-000000000001";
 const NOW: u64 = 500_000_000_000;
@@ -47,7 +47,7 @@ fn pushed(entries: &[&str]) -> (Source, String) {
 
 #[test]
 fn our_version_is_accepted_by_the_runtime_rule() {
-    const { assert!(crate::guard::GUARD_VERSION >= crate::guard_probe::MIN_GUARD_VERSION) };
+    const { assert!(crate::guard::GUARD_VERSION >= crate::guard::probe::MIN_GUARD_VERSION) };
 }
 
 #[test]

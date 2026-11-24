@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 
 use sandbox_protocol::HostEgressStateV11;
 use sandbox_runtime::egress::{EgressAdmission, EgressSettings};
+use sandbox_runtime::guard::probe::{GuardProbe, GuardStatus, GuardUnhealthy, evaluate_guard};
 use sandbox_runtime::guard::status::GenerationFence;
-use sandbox_runtime::guard_probe::{GuardProbe, GuardStatus, GuardUnhealthy, evaluate_guard};
 use sandbox_runtime::{RuntimeError, SandboxRuntime};
 
 /// `host.egress-state` period while connected (§2.5): the server's lease is
@@ -371,7 +371,7 @@ impl NodeEgress {
         let mut settings = self.node_settings();
         if let Some(probe) = &self.probe {
             settings.domain_blocklist = probe.domain_blocklist().map_err(|err| {
-                sandbox_runtime::egress::EgressRefusal::GuardUnavailable.error(format!(
+                sandbox_runtime::EgressRefusal::GuardUnavailable.error(format!(
                     "the network guard did not return its blocklist: {}",
                     err.message
                 ))

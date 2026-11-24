@@ -310,8 +310,8 @@ fn a_crashed_daemons_expired_marker_is_replaced() {
 fn a_conflict_found_while_running_degrades_and_recovers_without_stopping() {
     let fx = Fixture::new();
     let a = fx.acquire(&daemon("host-a", "/s/a")).unwrap();
-    let probe = a.fence_probe(Arc::new(crate::guard_probe::FakeGuardProbe::healthy()));
-    assert!(crate::guard_probe::check_guard(&probe).is_ok());
+    let probe = a.fence_probe(Arc::new(crate::guard::probe::FakeGuardProbe::healthy()));
+    assert!(crate::guard::probe::check_guard(&probe).is_ok());
     // A cannot renew for over a lease (partition), so B starts and removes
     // A's expired marker.
     fx.advance(61);
@@ -340,7 +340,7 @@ fn a_conflict_found_while_running_degrades_and_recovers_without_stopping() {
             .contains("host `host-b`")
     );
     // New sandboxes are refused like an unhealthy guard.
-    let err = crate::guard_probe::check_guard(&probe).expect_err("refused");
+    let err = crate::guard::probe::check_guard(&probe).expect_err("refused");
     assert!(
         err.message.contains("another wssp daemon"),
         "{}",
@@ -350,12 +350,12 @@ fn a_conflict_found_while_running_degrades_and_recovers_without_stopping() {
     assert!(!status.ok);
     assert_eq!(
         status.reasons[0],
-        crate::guard_probe::INCUS_SERVER_SHARED_REASON
+        crate::guard::probe::INCUS_SERVER_SHARED_REASON
     );
     // Running sandboxes keep their host sockets: the ceiling is the inner one.
     assert_eq!(
         probe.egress_ceiling().is_ok(),
-        crate::guard_probe::FakeGuardProbe::healthy()
+        crate::guard::probe::FakeGuardProbe::healthy()
             .egress_ceiling()
             .is_ok()
     );
@@ -370,7 +370,7 @@ fn a_conflict_found_while_running_degrades_and_recovers_without_stopping() {
     fx.advance(61);
     assert_eq!(a.renew_once().unwrap().health, LeaseHealth::Sole);
     assert!(a.conflict().is_none());
-    assert!(crate::guard_probe::check_guard(&probe).is_ok());
+    assert!(crate::guard::probe::check_guard(&probe).is_ok());
     assert!(probe.shared_incus_server().is_none());
     // B released by removing its markers; A keeps only its newest.
     assert_eq!(fx.profiles(), vec![a.profile_name()]);
@@ -607,7 +607,7 @@ fn plant(fx: &Fixture, generation: u64, host: &str, expires_at: &str) -> PathBuf
 fn a_daemon_that_cannot_rewrite_its_marker_still_degrades_on_another_live_one() {
     let fx = Fixture::new();
     let a = fx.acquire(&daemon("host-a", "/s/a")).unwrap();
-    let probe = a.fence_probe(Arc::new(crate::guard_probe::FakeGuardProbe::healthy()));
+    let probe = a.fence_probe(Arc::new(crate::guard::probe::FakeGuardProbe::healthy()));
     fx.flag("refuse-write", true);
     fx.advance(61);
     // A's marker expired; B started meanwhile.
@@ -618,15 +618,15 @@ fn a_daemon_that_cannot_rewrite_its_marker_still_degrades_on_another_live_one() 
         other => panic!("{other:?}"),
     }
     assert!(renewal.problem.is_some());
-    assert!(crate::guard_probe::check_guard(&probe).is_err());
-    assert!(crate::guard_probe::refuse_shared_incus_server(&probe).is_err());
+    assert!(crate::guard::probe::check_guard(&probe).is_err());
+    assert!(crate::guard::probe::refuse_shared_incus_server(&probe).is_err());
     // No other live marker, still unable to write: admitted, with a warning.
     std::fs::remove_file(b).unwrap();
     fx.advance(121);
     let renewal = a.renew_once().unwrap();
     assert_eq!(renewal.health, LeaseHealth::Sole);
     assert!(renewal.problem.unwrap().contains("403"));
-    assert!(crate::guard_probe::check_guard(&probe).is_ok());
+    assert!(crate::guard::probe::check_guard(&probe).is_ok());
     fx.flag("refuse-write", false);
 }
 
@@ -699,7 +699,7 @@ fn image_imports_and_captures_are_refused_while_the_server_is_shared() {
     ));
     let mut runtime = super::super::IncusKvmRuntime::from_test_client(fx.client.clone());
     runtime.set_guard_probe(Arc::new(
-        a.fence_probe(Arc::new(crate::guard_probe::FakeGuardProbe::healthy())),
+        a.fence_probe(Arc::new(crate::guard::probe::FakeGuardProbe::healthy())),
     ));
     let before = fx.log();
     let shared = |err: RuntimeError| {
@@ -739,7 +739,7 @@ fn image_imports_and_captures_are_refused_while_the_server_is_shared() {
 
 /// Always reports another daemon on the Incus server (otherwise healthy).
 #[derive(Debug)]
-struct AlwaysShared(crate::guard_probe::FakeGuardProbe);
+struct AlwaysShared(crate::guard::probe::FakeGuardProbe);
 impl GuardProbe for AlwaysShared {
     fn status(&self) -> Result<GuardStatus, RuntimeError> {
         self.0.status()
@@ -760,7 +760,7 @@ fn stop_and_destroy_are_never_fenced_and_the_refusal_is_a_guard_outage() {
     use crate::SandboxRuntime as _;
     let (mut runtime, log) = super::super::shim_tests::runtime_for("running");
     runtime.set_guard_probe(Arc::new(AlwaysShared(
-        crate::guard_probe::FakeGuardProbe::healthy(),
+        crate::guard::probe::FakeGuardProbe::healthy(),
     )));
     let stopped = runtime
         .stop_sandbox(&crate::StopSandboxRequest {
@@ -779,7 +779,7 @@ fn stop_and_destroy_are_never_fenced_and_the_refusal_is_a_guard_outage() {
     assert!(super::super::shim_tests::log_invoked(&log, "stop"));
     let (mut runtime, log) = super::super::shim_tests::runtime_for("running");
     runtime.set_guard_probe(Arc::new(AlwaysShared(
-        crate::guard_probe::FakeGuardProbe::healthy(),
+        crate::guard::probe::FakeGuardProbe::healthy(),
     )));
     runtime
         .kill_bound(&crate::KillSandboxRequest {
@@ -832,7 +832,7 @@ fn a_max_generation_marker_refuses_starts_and_degrades_without_adopting_it() {
 
     let fx = Fixture::new();
     let a = fx.acquire(&daemon("host-a", "/s/a")).unwrap();
-    let probe = a.fence_probe(Arc::new(crate::guard_probe::FakeGuardProbe::healthy()));
+    let probe = a.fence_probe(Arc::new(crate::guard::probe::FakeGuardProbe::healthy()));
     let mine = a.profile_name();
     plant(&fx, max, "host-z", "1");
     let renewal = a.renew_once().unwrap();
@@ -840,7 +840,7 @@ fn a_max_generation_marker_refuses_starts_and_degrades_without_adopting_it() {
         LeaseHealth::Conflict(why) => assert!(why.contains(&profile), "{why}"),
         other => panic!("{other:?}"),
     }
-    assert!(crate::guard_probe::refuse_shared_incus_server(&probe).is_err());
+    assert!(crate::guard::probe::refuse_shared_incus_server(&probe).is_err());
     // The planted marker was neither adopted nor touched.
     assert_eq!(a.profile_name(), mine);
     assert_eq!(fx.expires(&profile), "1");
@@ -851,7 +851,7 @@ fn a_max_generation_marker_refuses_starts_and_degrades_without_adopting_it() {
     // Recovery: the operator deletes it; the next renewal is sole again.
     std::fs::remove_file(fx.dir.join("profiles").join(format!("{profile}.json"))).unwrap();
     assert_eq!(a.renew_once().unwrap().health, LeaseHealth::Sole);
-    assert!(crate::guard_probe::refuse_shared_incus_server(&probe).is_ok());
+    assert!(crate::guard::probe::refuse_shared_incus_server(&probe).is_ok());
 }
 
 /// A create that fails because its exact name was just taken is settled by
@@ -1131,7 +1131,7 @@ fn a_slow_renewal_round_trip_degrades_until_a_fast_one() {
 /// conflict is published while the start's configuration I/O runs.
 #[derive(Debug)]
 struct SharedOnceConfigured {
-    inner: crate::guard_probe::FakeGuardProbe,
+    inner: crate::guard::probe::FakeGuardProbe,
     log: PathBuf,
 }
 impl GuardProbe for SharedOnceConfigured {
@@ -1162,7 +1162,7 @@ fn a_conflict_published_during_start_configuration_refuses_the_start() {
         .apply_sandbox_network(&super::super::network::test_plan("sbx-1"))
         .expect("apply");
     runtime.set_guard_probe(Arc::new(SharedOnceConfigured {
-        inner: crate::guard_probe::FakeGuardProbe::healthy(),
+        inner: crate::guard::probe::FakeGuardProbe::healthy(),
         log: log.clone(),
     }));
     let err = runtime

@@ -10,8 +10,9 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use sandbox_protocol::{EgressMode, EgressPolicy, SandboxErrorCode};
 
+use crate::EgressRefusal;
 use crate::RuntimeError;
-use crate::egress::{EgressRefusal, EgressSettings};
+use crate::egress::EgressSettings;
 
 /// Bridge names are Linux interface names, so they must fit IFNAMSIZ (15
 /// characters): `wsn-` plus 10 hex chars of the sandbox-id digest = 14.

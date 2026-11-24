@@ -1298,7 +1298,7 @@ pub struct DnsRefreshReport {
     pub next_refresh_unix_secs: u64,
     /// Typed refresh warning: the pass completed WITHOUT publishing (e.g.
     /// `EgressRefusal::RefreshOverBudget`); the last-good rules stay.
-    pub warning: Option<crate::egress::EgressRefusal>,
+    pub warning: Option<crate::EgressRefusal>,
 }
 
 pub trait SandboxRuntime: Send + Sync {
@@ -1445,15 +1445,14 @@ pub trait SandboxRuntime: Send + Sync {
     /// for the daemon's heartbeat, deployment push and domain blocklist. The
     /// daemon and the fence share it so they never disagree about which
     /// guard they trust. `None`: this runtime has no guard.
-    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard_probe::GuardProbe>> {
+    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard::probe::GuardProbe>> {
         None
     }
 
     /// One fresh egress-guard check (§2.0.5 `guard_ok`), the daemon's early
     /// create / cold-reconnect input. Never cached. Fail-closed default.
     fn egress_guard_check(&self) -> Result<(), RuntimeError> {
-        Err(crate::egress::EgressRefusal::GuardUnavailable
-            .error("this runtime has no egress guard"))
+        Err(crate::EgressRefusal::GuardUnavailable.error("this runtime has no egress guard"))
     }
 
     /// Operator diagnosis for an unavailable egress capability: why this host

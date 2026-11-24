@@ -71,24 +71,6 @@ impl SourceError {
     }
 }
 
-/// Exact lowercase DNS name with at least two labels (the same
-/// post-conditions as the runtime's `valid_domain_name`).
-pub fn valid_domain_name(domain: &str) -> bool {
-    !domain.is_empty()
-        && domain.len() <= 253
-        && domain.parse::<Ipv4Addr>().is_err()
-        && domain.split('.').count() >= 2
-        && domain.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && label
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-        })
-}
-
 enum Entry {
     Cidr(Ipv4Net),
     Domain(String),
@@ -129,7 +111,7 @@ fn parse_entry(raw: &str) -> Result<Option<Entry>, String> {
     }
     let lower = entry.to_ascii_lowercase();
     let domain = lower.strip_suffix('.').unwrap_or(&lower);
-    if valid_domain_name(domain) {
+    if crate::egress::valid_domain_name(domain) {
         Ok(Some(Entry::Domain(domain.to_string())))
     } else {
         Err("not an IPv4 CIDR or a domain name".into())

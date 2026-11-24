@@ -1,7 +1,7 @@
 use super::*;
 use crate::sandbox_relay::test_support::FakeGuardServer;
 use sandbox_runtime::FakeRuntime;
-use sandbox_runtime::guard_probe::FakeGuardProbe;
+use sandbox_runtime::guard::probe::FakeGuardProbe;
 
 fn node(probe: Option<Arc<dyn GuardProbe>>) -> NodeEgress {
     NodeEgress::new(probe, &crate::config::Config::default())
@@ -224,7 +224,7 @@ fn create_settings_carry_node_config_and_the_guard_blocklist_or_refuse() {
     let refused = gone.create_settings().unwrap_err();
     assert_eq!(
         refused.egress_refusal(),
-        Some(sandbox_runtime::egress::EgressRefusal::GuardUnavailable)
+        Some(sandbox_runtime::EgressRefusal::GuardUnavailable)
     );
 }
 
@@ -383,7 +383,7 @@ fn guard_refusals_carry_their_typed_wire_reason() {
         Some(sandbox_protocol::EgressRefusalReason::EgressGuardUnavailable.into())
     );
     // Size refusals keep their code alone.
-    let too_large = sandbox_runtime::egress::EgressRefusal::PolicyTooLarge.error("too large");
+    let too_large = sandbox_runtime::EgressRefusal::PolicyTooLarge.error("too large");
     assert_eq!(too_large.wire_reason(), None);
 }
 

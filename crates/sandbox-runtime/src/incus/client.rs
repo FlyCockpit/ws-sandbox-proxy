@@ -546,7 +546,7 @@ pub struct IncusClient {
     /// Egress guard attestation for the start fence (§2.0.5): one fresh
     /// `status` per start. Fails closed until a guard client is installed
     /// (`IncusKvmRuntime::set_guard_probe`); unit tests use a healthy fake.
-    pub(crate) guard_probe: std::sync::Arc<dyn crate::guard_probe::GuardProbe>,
+    pub(crate) guard_probe: std::sync::Arc<dyn crate::guard::probe::GuardProbe>,
     /// How long the start fence waits for a just-created bridge to appear
     /// in the guard's sets (§2.0.5: up to 5 s).
     pub(crate) guard_fence_wait: std::time::Duration,
@@ -1096,9 +1096,9 @@ impl IncusClient {
             expected_root: None,
             dns_clock: std::sync::Arc::new(super::dns::RealDnsClock),
             #[cfg(not(test))]
-            guard_probe: std::sync::Arc::new(crate::guard_probe::UnavailableGuardProbe),
+            guard_probe: std::sync::Arc::new(crate::guard::probe::UnavailableGuardProbe),
             #[cfg(test)]
-            guard_probe: std::sync::Arc::new(crate::guard_probe::FakeGuardProbe::healthy()),
+            guard_probe: std::sync::Arc::new(crate::guard::probe::FakeGuardProbe::healthy()),
             #[cfg(not(test))]
             guard_fence_wait: std::time::Duration::from_secs(5),
             #[cfg(test)]
@@ -2218,7 +2218,7 @@ impl IncusClient {
                 // One wssp daemon per Incus server: no VM start of any kind
                 // while another daemon's marker is live, checked here at
                 // the start itself (not only at the operation's entry).
-                crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+                crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
                 pre::bound(&before, self, bound)?;
                 pre::name(&before, name)?;
                 // C37 R1: the launch-config audit runs at THIS boundary on
@@ -2238,7 +2238,7 @@ impl IncusClient {
                 self.config_set(bound, "boot.autostart", "false")?;
                 // And again after all configuration I/O, right before the
                 // start: a conflict published while it ran refuses it.
-                crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+                crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
                 before.issue(|| self.run_effect(&["start", name], false))
             },
             |issued| effect_completion::running(self, bound, Some(&issued)),

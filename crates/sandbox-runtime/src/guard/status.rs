@@ -1,12 +1,12 @@
 //! Guard status production.
 //!
 //! The status FORMAT and the `guard_ok` lease rule are owned by
-//! [`crate::guard_probe`] (`GuardStatus`, `evaluate_guard`,
+//! [`crate::guard::probe`] (`GuardStatus`, `evaluate_guard`,
 //! `attest_bridge`): the guard emits exactly that object on the socket and
 //! in `/run/wssp-guard/status.json`. This module maps the guard's internal
 //! source provenance onto it and holds the per-instance helpers.
 
-use crate::guard_probe::{GuardSourceState, GuardSourceStatus, GuardStatus};
+use crate::guard::probe::{GuardSourceState, GuardSourceStatus, GuardStatus};
 
 use super::sources::{Source, SourceState};
 

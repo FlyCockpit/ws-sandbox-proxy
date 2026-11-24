@@ -6,11 +6,11 @@
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use sandbox_runtime::guard::protocol::{Reply, Request, call};
-use sandbox_runtime::guard_probe::{
+use sandbox_runtime::guard::probe::{
     GuardExpectations, GuardSourceState, GuardStatus, GuardUnhealthy, boottime_now_ns,
     evaluate_guard, read_boot_id,
 };
+use sandbox_runtime::guard::protocol::{Reply, Request, call};
 use serde::Serialize;
 
 use super::StatusArgs;

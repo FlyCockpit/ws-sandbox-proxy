@@ -924,7 +924,7 @@ impl IncusClient {
                     "no recorded egress plan to attest the guard against",
                 )
             })?;
-        crate::guard_probe::attest_sandbox_bridge(
+        crate::guard::probe::attest_sandbox_bridge(
             self.guard_probe.as_ref(),
             &recorded.network_name,
             recorded.gateway,

@@ -1714,7 +1714,7 @@ fn an_expansion_beyond_the_acl_body_bound_is_refused_before_host_io() {
     };
     assert_eq!(
         err.egress_refusal(),
-        Some(crate::egress::EgressRefusal::PolicyTooLarge)
+        Some(crate::EgressRefusal::PolicyTooLarge)
     );
     assert!(
         !log_lines(&log)

@@ -197,7 +197,7 @@ exit 1
     .unwrap();
     // Shim host: a synthetic healthy egress guard for the start fence.
     runtime.set_guard_probe(std::sync::Arc::new(
-        sandbox_runtime::guard_probe::FakeGuardProbe::healthy(),
+        sandbox_runtime::guard::probe::FakeGuardProbe::healthy(),
     ));
     (dir, runtime)
 }
@@ -442,18 +442,18 @@ impl sandbox_runtime::guard::protocol::Handler for FakeGuardHandler {
         &self,
         request: sandbox_runtime::guard::protocol::Request,
     ) -> sandbox_runtime::guard::protocol::Reply {
+        use sandbox_runtime::guard::probe::{GuardSourceState, GuardSourceStatus};
         use sandbox_runtime::guard::protocol::{Reply, Request, SourcePolicy};
         use sandbox_runtime::guard::sources::SourceState;
-        use sandbox_runtime::guard_probe::{GuardSourceState, GuardSourceStatus};
         let mut state = self.0.lock().unwrap();
         match request {
             Request::Status {} => {
                 state.generation += 1;
-                let now = sandbox_runtime::guard_probe::boottime_now_ns().unwrap();
-                let mut status = sandbox_runtime::guard_probe::FakeGuardProbe::healthy_status(&[]);
+                let now = sandbox_runtime::guard::probe::boottime_now_ns().unwrap();
+                let mut status = sandbox_runtime::guard::probe::FakeGuardProbe::healthy_status(&[]);
                 status.instance_id = state.instance_id.clone();
                 status.generation = state.generation;
-                status.boot_id = sandbox_runtime::guard_probe::read_boot_id().unwrap();
+                status.boot_id = sandbox_runtime::guard::probe::read_boot_id().unwrap();
                 status.verified_boottime_ns = now;
                 status.lease_until_boottime_ns = now + 15_000_000_000;
                 status.ok = state.healthy;
@@ -561,7 +561,7 @@ impl FakeGuardServer {
             _dir: dir,
         }
     }
-    pub(crate) fn probe(&self) -> std::sync::Arc<dyn sandbox_runtime::guard_probe::GuardProbe> {
+    pub(crate) fn probe(&self) -> std::sync::Arc<dyn sandbox_runtime::guard::probe::GuardProbe> {
         std::sync::Arc::new(sandbox_runtime::guard::client::SocketGuardProbe::new(
             &self.path,
         ))

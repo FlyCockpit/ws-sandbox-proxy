@@ -46,6 +46,9 @@ use sandbox_runtime::guard::net::protected4;
 use sandbox_runtime::guard::path::{
     ExcludedBridge, HOST_FIREWALL_REASON, PathInputs, PathReport, SandboxLink, sandbox_links,
 };
+use sandbox_runtime::guard::probe::{
+    GuardGateway, GuardSourceState, GuardSourceStatus, GuardSources, GuardStatus,
+};
 use sandbox_runtime::guard::protocol::{
     ErrorCode, Handler, PolicyAnswer, Reply, Request, ServerConfig, SourcePolicy,
 };
@@ -54,9 +57,6 @@ use sandbox_runtime::guard::sources::{self, PolicyContent, Source, deny4, domain
 use sandbox_runtime::guard::status::{new_instance_id, source_reason, source_status};
 use sandbox_runtime::guard::{
     CHILD_TIMEOUT, GUARD_VERSION, LEASE, LIVE_TIMEOUT, RESYNC_INTERVAL, TABLE,
-};
-use sandbox_runtime::guard_probe::{
-    GuardGateway, GuardSourceState, GuardSourceStatus, GuardSources, GuardStatus,
 };
 
 use super::paths::Paths;
@@ -1054,7 +1054,7 @@ impl Daemon {
 }
 
 fn boottime_ns() -> Result<u64> {
-    sandbox_runtime::guard_probe::boottime_now_ns().map_err(anyhow::Error::msg)
+    sandbox_runtime::guard::probe::boottime_now_ns().map_err(anyhow::Error::msg)
 }
 
 fn bind_socket(path: &Path) -> Result<UnixListener> {
@@ -1115,7 +1115,7 @@ pub fn run() -> Result<()> {
     let paths = Paths::system();
     preflight::check_service(&paths)?;
     let config = GuardConfig::load(&paths.config())?;
-    let boot_id = sandbox_runtime::guard_probe::read_boot_id().map_err(anyhow::Error::msg)?;
+    let boot_id = sandbox_runtime::guard::probe::read_boot_id().map_err(anyhow::Error::msg)?;
     let instance_id = new_instance_id().context("instance id")?;
     std::fs::create_dir_all(paths.state_dir()).context("state directory")?;
 
