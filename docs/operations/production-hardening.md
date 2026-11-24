@@ -9,7 +9,9 @@ Walk this checklist before taking real traffic. Pair it with
   it invalidates all sessions and all product credentials (host tokens, device
   credentials, SDK keys).
 - `BETTER_AUTH_URL` is the public HTTPS origin, no path.
-- `ADMIN_EMAILS` lists the first admin mailbox.
+- `ADMIN_EMAILS` lists the first admin mailbox, or the first admin was created
+  with `SETUP_KEY` ([deployment](./deployment.md#first-admin-without-email))
+  and `SETUP_KEY` has been removed since.
 - SMTP is configured in production (`SMTP_*`). The server refuses to boot
   without it when signup or verification needs email.
 - Rate limiters stay enabled (`apps/server/src/rate-limit.ts` and
@@ -89,7 +91,10 @@ SDK `/v1` is bearer-only and uses no cookie auth.
 
 `ADMIN_EMAILS` (case-insensitive) is the bootstrap admin list. Signup with a
 listed address receives the admin role; everyone else is `user`. Admin
-procedures require a verified email.
+procedures require a verified email. Without email, `SETUP_KEY` creates the
+first administrator through a one-time link and is refused once an active
+administrator exists ([deployment](./deployment.md#first-admin-without-email));
+remove it afterwards.
 
 Every admin surface decides access with one function,
 `isAdminSessionAuthorized` (live, non-impersonated session; not banned or

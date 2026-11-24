@@ -14,8 +14,9 @@ vi.mock("@wssp/db", async () => {
 
 // Mock @wssp/env/server so settings.ts (ADMIN_EMAILS) and adminOr404Procedure
 // (via index.ts) can load without a real .env.
+const serverEnv = vi.hoisted(() => ({}) as { SETUP_KEY?: string });
 vi.mock("@wssp/env/server", () => ({
-  env: {},
+  env: serverEnv,
   SIGNUP_ENABLED: false,
   ADMIN_EMAILS: new Set<string>(),
 }));
@@ -422,6 +423,7 @@ it("projects admin settings without arbitrary stored values or environment secre
     "imageStoreMode",
     "limits",
     "offloadConsumedGraceSeconds",
+    "setupKeySet",
     "signupEnabled",
   ]);
   // The image store is reported by mode only.
@@ -441,6 +443,22 @@ it("projects admin settings without arbitrary stored values or environment secre
     "transferOwnerActive",
   ]);
   expect(JSON.stringify(result)).not.toContain("must-not-leak");
+});
+
+it("tells admins whether SETUP_KEY is still set, as a boolean only", async () => {
+  const client = createRouterClient(settingsRouter, {
+    context: buildContext({ user: { role: "admin", twoFactorEnabled: true } }),
+  });
+  db.appSetting.findMany.mockResolvedValue([]);
+  try {
+    expect((await client.adminGet()).setupKeySet).toBe(false);
+    serverEnv.SETUP_KEY = "setup-key-must-not-leak-0123456789";
+    const result = await client.adminGet();
+    expect(result.setupKeySet).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("must-not-leak");
+  } finally {
+    delete serverEnv.SETUP_KEY;
+  }
 });
 
 it("reports the image store mode from the deployment environment, never its settings", async () => {

@@ -207,6 +207,7 @@ export function generateDokployConfig(options: Options) {
       ...WEBHOOK_KEYS,
       "BETTER_AUTH_URL",
       "ADMIN_EMAILS",
+      "SETUP_KEY",
       "SMTP_HOST",
       "SMTP_PORT",
       "SMTP_USER",
@@ -419,6 +420,8 @@ const OPTIONAL_FORWARDED: Record<string, string> = {
     "Define it with an empty value outside an encryption-root rotation (Dokploy rejects a reference to an undefined variable); use the same previous root on server and worker during rotation.",
   CREDENTIALS_ENABLED:
     "Define it with an empty value for the existing CLI-login default (Dokploy rejects a reference to an undefined variable); set false on both server and worker to disable.",
+  SETUP_KEY:
+    "Server only. Define it with an empty value (Dokploy rejects a reference to an undefined variable); the first-admin setup route then does not exist. To create the first admin without email, set a key (pnpm generate:secret), redeploy, run pnpm deploy:generate-admin, then empty it again and redeploy. See docs/operations/deployment.md#first-admin-without-email.",
   MCP_ENABLED:
     "Server only. Define it with an empty value for the default (true: the built-in MCP endpoint and its OAuth provider are on; Dokploy rejects a reference to an undefined variable); set false to turn MCP off (its routes then return 404).",
 };
@@ -474,6 +477,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
         "SANDBOX_REQUEST_HMAC_SECRET",
         ...WEBHOOK_KEYS,
         "ADMIN_EMAILS",
+        "SETUP_KEY",
         "SMTP_HOST",
         "SMTP_USER",
         "SMTP_PASS",

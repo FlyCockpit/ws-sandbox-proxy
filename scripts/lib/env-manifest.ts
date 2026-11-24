@@ -661,6 +661,24 @@ export const ENV_VARS: EnvVar[] = [
     example: "admin@example.com,other@example.com",
   },
   {
+    key: "SETUP_KEY",
+    // One-shot bootstrap credential: documented in
+    // docs/operations/environment-variables.md § First-admin setup key and
+    // docs/operations/deployment.md, not in the budgeted .env.example.
+    hidden: true,
+    group: "admin",
+    source: "manual",
+    secret: true,
+    comment: [
+      "First-admin bootstrap without email (optional; unset by default). While",
+      "set, `pnpm deploy:generate-admin` prints a one-time set-password link that",
+      "creates the FIRST admin when it is opened; once an admin exists it is",
+      "refused. 32 to 512 characters (`pnpm generate:secret` makes one). REMOVE",
+      "IT after the first admin has signed in; the admin overview's deployment",
+      "setup card says so until you do.",
+    ],
+  },
+  {
     key: "MCP_ENABLED",
     hidden: true,
     group: "admin",

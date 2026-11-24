@@ -94,6 +94,7 @@ import { createDashboardTransferApi } from "./sandbox-transfers/dashboard-routes
 import { mountSecurityHeaders } from "./security-headers.js";
 import { registerSeoRoutes } from "./seo.js";
 import { sessionMiddleware } from "./session-middleware.js";
+import { mountSetupRoutes } from "./setup-routes.js";
 import { SIGNIN_FAILURE_PATH, signinFailureLimit } from "./signin-failure-limit.js";
 import { adminBootstrapMarker } from "./signup-gate.js";
 import { handleSsrRequest } from "./ssr-cache.js";
@@ -241,6 +242,14 @@ export async function createApp(
     );
     return c.json({ error: "Something didn't work on our end. Try again in a moment." }, 500);
   });
+
+  // SETUP_KEY first-admin bootstrap (`pnpm deploy:generate-admin`). 404 unless
+  // SETUP_KEY is set; refuses once an administrator exists; the key is the
+  // only credential it reads. Mounted here — after request id + logging,
+  // before CORS — so CORS cannot answer for it: an unset key 404s every
+  // method (preflights included), and every request is limited and audited
+  // by the route itself. See setup-routes.ts.
+  mountSetupRoutes(app, { setupKey: env.SETUP_KEY });
 
   // Shared oRPC error logger: client errors log at warn; every server error
   // (including upstream failures) and unexpected exception logs at error.

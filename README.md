@@ -214,9 +214,11 @@ addresses. After `pnpm run setup`:
 ## Usage
 
 1. Deploy the server ([deployment](docs/operations/deployment.md)) with email
-   (SMTP) configured: every account, the first admin's included, confirms its
-   address by email before it can sign in. Sign up with an `ADMIN_EMAILS`
-   address and enable 2FA. **Admin → Overview → Deployment setup** shows which
+   (SMTP) configured: every account confirms its address by email before it
+   can sign in. Sign up with an `ADMIN_EMAILS` address and enable 2FA. No SMTP
+   yet? Set `SETUP_KEY` and run `pnpm deploy:generate-admin` for a one-time
+   first-admin link
+   ([first admin without email](docs/operations/deployment.md#first-admin-without-email)). **Admin → Overview → Deployment setup** shows which
    optional features (S3 image store, data encryption key, backups, preview
    tunnels) are configured.
 2. Enroll a Linux host with Incus and KVM: install `wssp` from your server

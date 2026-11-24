@@ -88,6 +88,17 @@ export const serverVars = {
   // a proxy with 0, every client shares the proxy's single bucket.
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).optional(),
   ADMIN_EMAILS: z.string().optional(),
+  // First-admin bootstrap key (docs/operations/deployment.md § First admin
+  // without email). While set, POST /api/setup/admin exists and lets `pnpm
+  // deploy:generate-admin` hand out one set-password link for the first
+  // admin until an administrator exists. Unset it after setup. A short key is
+  // a config error, not a warning; the maximum keeps every valid key inside
+  // the route's 4 KB request body.
+  SETUP_KEY: z
+    .string()
+    .min(32, "SETUP_KEY must be at least 32 characters")
+    .max(512, "SETUP_KEY must be at most 512 characters")
+    .optional(),
   // TTL (seconds) for the in-memory SSR HTML cache of public pages
   // (apps/server/src/ssr-cache.ts). 0 disables the cache entirely; the
   // default keeps a cached public render for up to a minute. Edits to a live

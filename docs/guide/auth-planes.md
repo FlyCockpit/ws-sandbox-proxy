@@ -23,7 +23,9 @@ sandbox, operation and transfer belongs to exactly one user account.
   creation to enroll and sees the deadline above every page until then.
   Owner pages and the device-approval page use the same 2FA-gated procedures.
 - Public signup is off by default (`SIGNUP_ENABLED=false`); addresses in
-  `ADMIN_EMAILS` may sign up to bootstrap the first administrator.
+  `ADMIN_EMAILS` may sign up to bootstrap the first administrator. Without
+  email, a one-time `SETUP_KEY` link creates it instead
+  ([deployment](../operations/deployment.md#first-admin-without-email)).
 - An administrator can invite a person from `/{lang}/admin/users`. The
   invitation mail's **Accept invitation** link confirms the invited address
   (it is Better Auth's own verification link, valid for seven days); signing

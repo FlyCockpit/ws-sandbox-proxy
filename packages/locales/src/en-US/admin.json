@@ -51,6 +51,10 @@
       "title": "Preview tunnels",
       "ok": "Configured to use {{url}}.",
       "optional": "Off (optional). Lets sandboxes share declared ports through short-lived links."
+    },
+    "setupKey": {
+      "title": "First-admin setup key",
+      "set": "SETUP_KEY is still set. It is only needed to create the first admin: remove it from the server's environment and redeploy."
     }
   },
   "users": {

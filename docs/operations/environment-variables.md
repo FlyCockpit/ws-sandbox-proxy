@@ -365,6 +365,17 @@ Local Postgres/Valkey host ports may be selected with `DEV_POSTGRES_PORT` and
 `DEV_REDIS_PORT`; use matching local `DATABASE_URL` and `REDIS_URL`. Production
 Compose publishes no host ports.
 
+## First-admin setup key
+
+| Variable    | Default | Meaning                                                                                                                                                                                                                                               |
+| ----------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SETUP_KEY` | unset   | Server only. While set, `pnpm deploy:generate-admin` can create the first administrator without email; refused once an administrator exists. 32–512 characters, refused at boot in production when weak. Not in `.env.example`: it is a one-shot key. |
+
+Unset, the setup route and its link claim return 404. Remove the key once the
+first admin has signed in; the admin overview's deployment setup card and the
+server log remind you until you do. Steps:
+[deployment](./deployment.md#first-admin-without-email).
+
 ## MCP endpoint
 
 | Variable      | Default | Meaning                                                                                                                                                                                                                                            |

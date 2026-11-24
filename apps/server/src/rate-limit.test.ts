@@ -340,6 +340,18 @@ describe("rate-limit budget families", () => {
     expect(l.credentialLimiter.points).toBe(10);
   });
 
+  it("keeps the first-admin setup limiter code-only: no family budget moves it", async () => {
+    envMock.RATE_LIMIT_AUTH_POINTS = 60;
+    envMock.RATE_LIMIT_AUTH_WINDOW_SECONDS = 120;
+    const l = await importLimiters();
+    expect(l.setupLimiter).toHaveProperty("keyPrefix", "rl:setup");
+    expect(l.setupLimiter.points).toBe(l.SETUP_POINTS);
+    expect(l.SETUP_POINTS).toBe(5);
+    expect(l.setupLimiter).toHaveProperty("duration", l.SETUP_WINDOW_SECONDS);
+    expect(l.setupLimiter).toHaveProperty("blockDuration", l.SETUP_BLOCK_SECONDS);
+    expect([l.SETUP_WINDOW_SECONDS, l.SETUP_BLOCK_SECONDS]).toEqual([900, 900]);
+  });
+
   it("RATE_LIMIT_EMAIL_POINTS=0 disables the whole recipient family", async () => {
     envMock.RATE_LIMIT_EMAIL_POINTS = 0;
     const l = await importLimiters();

@@ -33,7 +33,10 @@ const queryMeta = { meta: { skipGlobalErrorToast: true } };
  * First-run checklist for whoever deploys this server: which deployment
  * features are configured. Read-only and built from the admin reads the
  * other admin pages already use (no values, only states). Each row says what
- * the feature enables and where it is configured.
+ * the feature enables and where it is configured. A SETUP_KEY that is still
+ * set after the first admin exists gets its own row, shown only then: this
+ * card is where wssp tells admins about deployment setup (there is no
+ * banner), so the "remove it" reminder lives here.
  */
 export function DeploymentSetupCard({ lang }: { lang: string }) {
   const { t } = useTranslation("admin");
@@ -121,6 +124,15 @@ export function DeploymentSetupCard({ lang }: { lang: string }) {
       </CardHeader>
       <CardContent>
         <ul className="flex min-w-0 flex-col divide-y">
+          {settings.data?.setupKeySet ? (
+            <SetupRow
+              id="setup-key"
+              state="problem"
+              failed={false}
+              title={t("setup.setupKey.title")}
+              status={t("setup.setupKey.set")}
+            />
+          ) : null}
           <SetupRow
             id="email"
             state={emailState}

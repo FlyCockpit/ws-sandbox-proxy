@@ -31,6 +31,9 @@
     "./lib/auth-token-retention": {
       "default": "./src/lib/auth-token-retention.ts"
     },
+    "./lib/admin-bootstrap": {
+      "default": "./src/lib/admin-bootstrap.ts"
+    },
     "./lib/device-code-transitions": {
       "default": "./src/lib/device-code-transitions.ts"
     },

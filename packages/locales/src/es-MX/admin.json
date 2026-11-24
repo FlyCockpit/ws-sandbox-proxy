@@ -336,6 +336,10 @@
       "title": "Túneles de vista previa",
       "ok": "Configurado para usar {{url}}.",
       "optional": "Desactivados (opcional). Permiten que los sandboxes compartan puertos declarados mediante enlaces de corta duración."
+    },
+    "setupKey": {
+      "title": "Clave de configuración del primer administrador",
+      "set": "SETUP_KEY sigue configurada. Solo se necesita para crear el primer administrador: quítala del entorno del servidor y vuelve a desplegar."
     }
   },
   "problems": {

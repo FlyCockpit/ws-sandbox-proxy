@@ -8,6 +8,7 @@
   "settings.myNotificationPreferences": "authenticated",
   "settings.updateMyNotificationPreferences": "authenticated",
   "settings.update": "admin",
+  "setup.claimFirstAdmin": "public",
   "push.subscribe": "authenticated",
   "push.unsubscribe": "authenticated",
   "push.send": "admin",

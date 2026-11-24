@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { toast } from "@wssp/ui/components/sileo";
@@ -21,6 +21,10 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
   validateSearch: (search: Record<string, unknown>) => ({
     token: typeof search.token === "string" ? search.token : undefined,
     error: typeof search.error === "string" ? search.error : undefined,
+    // Set by the SETUP_KEY first-admin link (packages/api/src/lib/admin-bootstrap.ts):
+    // its token is spent by `setup.claimFirstAdmin`, not by Better-Auth. The
+    // search parser may hand `1` back as a number.
+    setup: search.setup === 1 || search.setup === "1" ? (1 as const) : undefined,
   }),
   beforeLoad: async ({ params }) => {
     const decision = decideAnonymousOnlyRouteAccess(await getRouteSession());
@@ -34,7 +38,8 @@ export const Route = createFileRoute("/$lang/_app/reset-password")({
 
 function ResetPasswordPage() {
   const { lang } = Route.useParams();
-  const { token, error } = Route.useSearch();
+  const { token, error, setup } = Route.useSearch();
+  const isSetup = setup === 1;
   const {
     isPending: configPending,
     isError: configError,
@@ -55,27 +60,49 @@ function ResetPasswordPage() {
       fields={2}
     >
       {isInvalid ? (
-        <AuthCard
-          title={t("auth:resetPassword.invalidTitle")}
-          description={t("auth:resetPassword.invalidDescription")}
-        >
-          <Link
-            to="/$lang/forgot-password"
-            params={{ lang }}
-            search={{ redirectTo: undefined }}
-            className={cn(buttonVariants(), "min-h-[44px] w-full")}
+        isSetup ? (
+          // A setup link is re-issued from the deployment, not by email.
+          <AuthCard
+            title={t("auth:resetPassword.setup.invalidTitle")}
+            description={t("auth:resetPassword.setup.invalidDescription")}
           >
-            {t("auth:resetPassword.requestNewLink")}
-          </Link>
-        </AuthCard>
+            <Link
+              to="/$lang/login"
+              params={{ lang }}
+              search={{ redirectTo: undefined }}
+              className={cn(buttonVariants({ variant: "outline" }), "min-h-[44px] w-full")}
+            >
+              {t("auth:forgotPassword.backToLogin")}
+            </Link>
+          </AuthCard>
+        ) : (
+          <AuthCard
+            title={t("auth:resetPassword.invalidTitle")}
+            description={t("auth:resetPassword.invalidDescription")}
+          >
+            <Link
+              to="/$lang/forgot-password"
+              params={{ lang }}
+              search={{ redirectTo: undefined }}
+              className={cn(buttonVariants(), "min-h-[44px] w-full")}
+            >
+              {t("auth:resetPassword.requestNewLink")}
+            </Link>
+          </AuthCard>
+        )
       ) : (
         <AuthCard
-          title={t("auth:resetPassword.title")}
-          description={t("auth:resetPassword.description")}
+          title={isSetup ? t("auth:resetPassword.setup.title") : t("auth:resetPassword.title")}
+          description={
+            isSetup
+              ? t("auth:resetPassword.setup.description")
+              : t("auth:resetPassword.description")
+          }
         >
           <ResetPasswordForm
             lang={lang}
             token={token}
+            isSetup={isSetup}
             onTokenRejected={() => setTokenRejected(true)}
           />
         </AuthCard>
@@ -84,21 +111,61 @@ function ResetPasswordPage() {
   );
 }
 
+/** `setup.claimFirstAdmin` refused the link itself (expired, replaced, used). */
+function isSetupLinkInvalid(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "SETUP_LINK_INVALID"
+  );
+}
+
 function ResetPasswordForm({
   lang,
   token,
+  isSetup,
   onTokenRejected,
 }: {
   lang: string;
   token: string;
+  isSetup: boolean;
   onTokenRejected: () => void;
 }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["auth", "validation"]);
+  // Errors are toasted below (a dead link also swaps in the invalid-link card),
+  // so the global mutation toast would only repeat them.
+  const claimSetupLink = useMutation(
+    orpc.setup.claimFirstAdmin.mutationOptions({ meta: { skipGlobalErrorToast: true } }),
+  );
+
+  /** The SETUP_KEY link: spent by our own procedure. True when the admin exists. */
+  async function claimFirstAdmin(newPassword: string): Promise<boolean> {
+    try {
+      await claimSetupLink.mutateAsync({ token, newPassword });
+      return true;
+    } catch (err) {
+      console.error("[reset-password.setup]", err);
+      if (isSetupLinkInvalid(err)) {
+        toast.error(t("auth:resetPassword.setup.invalidTitle"));
+        onTokenRejected();
+        return false;
+      }
+      toast.error(friendly(err));
+      return false;
+    }
+  }
 
   const form = useForm({
     defaultValues: { newPassword: "", confirmPassword: "" },
     onSubmit: async ({ value }) => {
+      if (isSetup) {
+        if (!(await claimFirstAdmin(value.newPassword))) return;
+        toast.success(t("auth:resetPassword.setup.success"));
+        navigate({ to: "/$lang/login", params: { lang }, search: { redirectTo: undefined } });
+        return;
+      }
       const result = await authClient.resetPassword({
         newPassword: value.newPassword,
         token,
@@ -174,7 +241,11 @@ function ResetPasswordForm({
             className="min-h-[44px] w-full"
             disabled={!canSubmit || isSubmitting}
           >
-            {isSubmitting ? t("auth:resetPassword.resetting") : t("auth:resetPassword.submit")}
+            {isSubmitting
+              ? t("auth:resetPassword.resetting")
+              : isSetup
+                ? t("auth:resetPassword.setup.submit")
+                : t("auth:resetPassword.submit")}
           </Button>
         )}
       </form.Subscribe>

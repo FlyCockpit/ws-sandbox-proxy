@@ -71,4 +71,5 @@ await lifecycle.start(
 void logAdminSetupHint({
   hasActiveAdministrator: () => hasActiveAdministrator(prisma),
   adminEmailsConfigured: ADMIN_EMAILS.size > 0,
+  setupKeyConfigured: Boolean(env.SETUP_KEY),
 });

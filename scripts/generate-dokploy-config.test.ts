@@ -450,6 +450,23 @@ test("MCP_ENABLED is an optional server-only key: empty keeps the app default (o
   }
 });
 
+test("SETUP_KEY is an optional server-only key: empty (unset) means the first-admin setup route does not exist", () => {
+  for (const topology of ["app", "app-worker"] as const) {
+    const config = generateDokployConfig({ ...defaults, topology });
+    assert.equal(config.applications[0]!.environment.SETUP_KEY, `\${{environment.SETUP_KEY}}`);
+    if (topology === "app-worker")
+      assert.equal(config.applications[1]!.environment.SETUP_KEY, undefined);
+    // Never on the fill-in checklist: empty is its correct production value.
+    assert.equal(config.environmentVariablesToSetOnce.SETUP_KEY, undefined);
+    assert.match(config.environmentVariablesOptional.SETUP_KEY ?? "", /deploy:generate-admin/);
+    assert.ok(config.compose.optionalEnvironmentVariables.server?.SETUP_KEY);
+    assert.ok(!config.compose.environmentVariables.server?.includes("SETUP_KEY"));
+    const compose = generateDokployCompose({ ...defaults, topology });
+    assert.match(block(compose, "server"), /SETUP_KEY: "\$\{SETUP_KEY:-\}"/);
+    if (topology === "app-worker") assert.doesNotMatch(block(compose, "worker"), /SETUP_KEY/);
+  }
+});
+
 test("--env forwards optional runtime keys with an empty default: every key to the server, shared keys to the worker", () => {
   const env = ["RATE_LIMIT_RPC_POINTS", "IMAGE_S3_BUCKET", "SANDBOX_OFFLOAD"];
   for (const topology of ["app", "app-worker"] as const) {

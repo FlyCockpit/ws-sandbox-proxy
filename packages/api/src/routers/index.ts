@@ -23,6 +23,7 @@ import { sandboxTerminalsRouter } from "./sandbox-terminals";
 import { sandboxesRouter } from "./sandboxes";
 import { sdkKeysRouter } from "./sdk-keys";
 import { settingsRouter } from "./settings";
+import { setupRouter } from "./setup";
 import { templateBuildsRouter } from "./template-builds";
 import { userLoginsRouter } from "./user-logins";
 import { usersRouter } from "./users";
@@ -53,6 +54,8 @@ export const appRouter = {
   }),
   auth: authRouter,
   settings: settingsRouter,
+  // First-admin setup link (SETUP_KEY) — lib/admin-bootstrap.ts.
+  setup: setupRouter,
   push: pushRouter,
   queue: queueRouter,
   users: usersRouter,

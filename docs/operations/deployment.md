@@ -58,7 +58,9 @@ Regenerate with `--backups true` to add the optional backup profile and volume. 
 For the default Compose deployment, set only `POSTGRES_PASSWORD`, `REDIS_PASSWORD`,
 `BETTER_AUTH_SECRET` and `SANDBOX_REQUEST_HMAC_SECRET` (strong URL-safe secrets).
 The generator sets the HTTPS auth origin. SMTP, data encryption and backups
-are optional; add `ADMIN_EMAILS` and SMTP to bootstrap the first admin.
+are optional; add `ADMIN_EMAILS` and SMTP to bootstrap the first admin, or
+set `SETUP_KEY` for a first admin without email
+([First admin without email](#first-admin-without-email)).
 Inject secrets as complete literal values on the platform.
 
 Choose a unique `--project` stem (1–32 lowercase letters/digits/hyphens),
@@ -173,15 +175,47 @@ retention and alert policy. Run a restore drill before storing real data:
    committed history. A first install starts with an empty database.
 4. Deploy the matching worker in `app-worker`; its follower wait must succeed.
 5. Run `pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha>`. Sign up with an `ADMIN_EMAILS` address and
-   verify email. Email (SMTP) must be configured by then: sign-in requires a
-   verified address, and the server has no other way to verify one, the first
-   admin's included. **Admin → Overview → Deployment setup** then shows what
+   verify email. Email (SMTP) must be configured for that: sign-in requires a
+   verified address. Without SMTP, create the first admin with `SETUP_KEY`
+   instead ([First admin without email](#first-admin-without-email)).
+   **Admin → Overview → Deployment setup** then shows what
    else is configured (S3 image store, data encryption key, backups, preview
    tunnels).
 6. Optionally enable backups and run a restore drill. The deployment runs without them.
 
 `pnpm dokploy:config` topologies: `app` (default) and `app-worker`. Omitting the worker container never removes jobs — it
 only moves them (`WORKER_MODE`).
+
+## First admin without email
+
+`SETUP_KEY` creates the first administrator without SMTP. It is optional and
+unset by default; the generated Compose forwards it to the server as
+`${SETUP_KEY:-}`.
+
+1. Set `SETUP_KEY` on the server to 32–512 random characters
+   (`pnpm generate:secret`; a weak key refuses to boot in production) and
+   redeploy. The server log says the key is set.
+2. From any checkout, run `pnpm deploy:generate-admin` and answer the server
+   URL (`BETTER_AUTH_URL`), the key (not echoed; scripted use pipes it on
+   stdin, never argv) and the admin's email. It prints a one-time link that
+   expires in an hour. Re-running prints a fresh link; the earlier one stops
+   working.
+3. Open the link, choose the password (12+ characters) and sign in. The
+   account is created only now, as a verified administrator, so nothing exists
+   for anyone to race before the link is spent. Enrol two-factor
+   authentication when asked, like every admin.
+4. Remove `SETUP_KEY` and redeploy. Until you do, **Admin → Overview →
+   Deployment setup** shows a "remove it" row and the server log repeats it.
+
+The route (`POST /api/setup/admin`) and the link's claim do not exist while
+`SETUP_KEY` is unset (404, before any input is read), so removing the key also
+kills an unspent link. Both refuse once an active administrator exists, and
+neither ever promotes an existing account: an address that already has an
+account is refused. The route compares the key in constant time, allows five
+attempts per client IP per 15 minutes (fail-closed), and writes one `[audit]`
+line per attempt (`setup.first_admin`, `setup.first_admin_claim`) without the
+key, email or link. Issuing and claiming take the admin governance lock, so
+they serialize with each other and with every admin role change.
 
 ## Branding: logo, icons and name
 

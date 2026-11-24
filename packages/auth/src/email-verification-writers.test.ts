@@ -57,6 +57,12 @@ const reviewed: Record<string, string> = {
   // `wssp login` mint: reads the owner's emailVerified for the credential policy (read only).
   "packages/api/src/lib/user-login-credential-access.ts":
     "c31f23df0cdfa739d5e27306c9b79ab7e26d664386ccf6e4c52f3084564aa086",
+  // SETUP_KEY first-admin claim: the one non-Better-Auth writer. It creates the
+  // first administrator with emailVerified=true on the word of the SETUP_KEY
+  // holder (the operator typed the address into deploy:generate-admin), only
+  // while no administrator exists, and never for an existing account.
+  "packages/api/src/lib/admin-bootstrap.ts":
+    "d107cf7c8ae4aba6990fae7d4156e42601ef1cef79415e3911e1b096b42ec063",
 };
 function unsafeProofWriters(source: string, reviewedDigest?: string) {
   if (/emailVerified|changeEmail|socialProviders/.test(source) && digest(source) !== reviewedDigest)

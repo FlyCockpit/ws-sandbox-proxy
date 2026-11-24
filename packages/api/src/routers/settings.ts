@@ -71,6 +71,11 @@ export const settingsRouter = {
       // for the overview's deployment setup card. The mode only: no bucket,
       // endpoint or key ever leaves the server.
       imageStoreMode: imageDistributionMode(),
+      // Whether SETUP_KEY (the first-admin bootstrap key) is still set, so the
+      // deployment setup card tells admins to remove it. A boolean only: the
+      // key never leaves the server. Admin-only: to anyone else it would only
+      // advertise an open bootstrap route (apps/server/src/setup-routes.ts).
+      setupKeySet: Boolean(env.SETUP_KEY),
       limits: {
         commandPayloadMaxBytes: SANDBOX_COMMAND_PAYLOAD_MAX_BYTES,
         commandTimeoutDefaultMs: SANDBOX_COMMAND_TIMEOUT_DEFAULT_MS,

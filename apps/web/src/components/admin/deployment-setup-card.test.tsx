@@ -122,3 +122,21 @@ it.each([
   ).toBeTruthy();
   if (rowState === "problem") expect(screen.getByText(enAdmin.setup.maintenanceLink)).toBeTruthy();
 });
+
+it("tells an admin to remove a SETUP_KEY that is still set, and says nothing otherwise", async () => {
+  server.dataKey = { configured: true };
+  server.backups = { configured: false, status: null };
+  server.adminGet = { imageStoreMode: "s3", setupKeySet: false };
+  const quiet = await mount();
+  expect(state(quiet.container, "setup-key")).toBeUndefined();
+  cleanup();
+
+  server.adminGet = { imageStoreMode: "s3", setupKeySet: true };
+  const { container } = await mount();
+  expect(state(container, "setup-key")).toBe("problem");
+  expect(screen.getByText(enAdmin.setup.setupKey.set)).toBeTruthy();
+  // It leads the list: it is the one thing to do after the first sign-in.
+  expect(container.querySelector("[data-setup-row]")?.getAttribute("data-setup-row")).toBe(
+    "setup-key",
+  );
+});
