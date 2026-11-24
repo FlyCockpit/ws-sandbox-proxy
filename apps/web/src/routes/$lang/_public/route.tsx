@@ -1,6 +1,7 @@
 import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
-import { env } from "@wssp/env/web";
+import { buttonVariants } from "@wssp/ui/components/button";
 import { useTranslation } from "react-i18next";
+import { AppNameLink } from "@/components/app-name-link";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ModeToggle } from "@/components/mode-toggle";
 import { SkipToContent } from "@/components/skip-to-content";
@@ -38,7 +39,6 @@ function PublicLayout() {
 }
 
 function PublicHeader() {
-  const appName = env.VITE_APP_NAME;
   const { lang } = Route.useParams();
   const { t } = useTranslation("nav");
   // Deliberately always the logged-out nav: public pages stay fully static —
@@ -54,18 +54,15 @@ function PublicHeader() {
   return (
     <header>
       <div className="flex min-w-0 flex-row flex-wrap items-center gap-4 px-4 py-2">
-        <Link
-          to="/$lang"
-          params={{ lang }}
-          className="inline-flex min-h-11 items-center min-w-0 max-w-40 truncate font-semibold text-lg sm:max-w-56 lg:max-w-none"
-        >
-          <span className="min-w-0 truncate">{appName}</span>
-        </Link>
-        {/* Visible on every viewport — the public branch has no BottomNav, so
-            this scrollable row is the only navigation mobile visitors get. */}
+        {/* Gives way first, like the app header's (see AppNameLink). */}
+        <AppNameLink lang={lang} />
+        {/* The public branch has no BottomNav, so from `sm:` up this
+            scrollable row is its navigation. Below `sm:` there is no room for
+            it next to the controls (it pushed them to a second row), and the
+            app name already links home; hidden, it costs no gap either. */}
         <nav
           aria-label={t("mainNav.ariaLabel")}
-          className="min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar"
+          className="hidden min-w-0 flex-1 overflow-x-auto overflow-y-hidden overscroll-x-contain no-scrollbar sm:block"
         >
           <div className="flex w-max items-center gap-1">
             {items.map((item) => (
@@ -92,7 +89,9 @@ function PublicHeader() {
             to="/$lang/login"
             params={{ lang }}
             search={{ redirectTo: undefined }}
-            className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            // The app header's Sign In metrics (`touch`, 44px tall), filled:
+            // it is this page's entry point.
+            className={buttonVariants({ size: "touch" })}
           >
             {t("userMenu.signIn")}
           </Link>
