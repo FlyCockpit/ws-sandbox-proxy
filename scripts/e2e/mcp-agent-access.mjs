@@ -179,14 +179,15 @@ async function signup(label) {
   const password = secret();
   const email = `${label}-${randomBytes(5).toString("hex")}@example.test`;
   // Sign-up answers every address with the same neutral body, so the id comes
-  // from the row it created.
+  // from the row it created (Better Auth stores the address lowercased).
   await p.auth("sign-up/email", { name: label, email, password });
   // Test-only mail delivery affordance: this exact disposable DB, no auth gate
   // is changed. The real login and TOTP enrollment still run over HTTP.
   const verified = await database.query(
     'UPDATE "user" SET "emailVerified" = true WHERE email = $1 RETURNING id',
-    [email],
+    [email.toLowerCase()],
   );
+  if (verified.rowCount !== 1) throw new Error(`sign-up created no user for ${label}`);
   await p.auth("sign-in/email", { email, password });
   const enrollment = await p.auth("two-factor/enable", { password });
   await p.auth("two-factor/verify-totp", { code: totp(enrollment.totpURI) });
