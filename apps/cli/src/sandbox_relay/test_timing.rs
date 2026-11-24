@@ -428,37 +428,13 @@ pub(super) const RECONCILE_EVERY: Duration = Duration::from_secs(600);
 
 /// The process's `WSSP_TEST_RELAY_TIMING` override (WP1), set once by
 /// `connect::run_connect_with_config`; always `None` in release builds.
-static RELAY_TEST_TIMING: std::sync::OnceLock<Option<RelayTestTiming>> = std::sync::OnceLock::new();
-
-pub(super) fn install_relay_test_timing(timing: Option<RelayTestTiming>) {
-    #[cfg(debug_assertions)]
-    if let Some(timing) = &timing {
-        tracing::warn!(
-            ?timing,
-            "relay test timing override in effect (debug build)"
-        );
-    }
-    let _ = RELAY_TEST_TIMING.set(timing);
-}
+pub(super) static RELAY_TEST_TIMING: std::sync::OnceLock<Option<RelayTestTiming>> =
+    std::sync::OnceLock::new();
 
 /// The process's `WSSP_TEST_RUNTIME_TIMING` widening, set once by
 /// `connect::run_connect_with_config`; always `None` in release builds.
-static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<RuntimeTestTiming>> =
+pub(super) static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<RuntimeTestTiming>> =
     std::sync::OnceLock::new();
-
-pub(super) fn install_runtime_test_timing(timing: Option<RuntimeTestTiming>) {
-    #[cfg(debug_assertions)]
-    if let Some(timing) = &timing {
-        tracing::warn!(
-            ?timing,
-            "TEST-ONLY OVERRIDE `{}`: this daemon waits longer than production for the guest \
-             terminate helper and the connected expiry observation, and may poll storage \
-             less often; never set it in production",
-            RUNTIME_TIMING_ENV
-        );
-    }
-    let _ = RUNTIME_TEST_TIMING.set(timing);
-}
 
 #[cfg(debug_assertions)]
 pub(super) fn installed_runtime_test_timing() -> Option<RuntimeTestTiming> {

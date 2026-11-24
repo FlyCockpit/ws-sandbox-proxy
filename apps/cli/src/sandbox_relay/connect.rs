@@ -423,10 +423,10 @@ pub fn run_connect_with_config(
     // Only the per-command host supervisors are subreapers. Adopting
     // runtime/PTY orphans here would take them from their existing reapers.
     // WP1 chaos knob: read once, debug builds only (release: always None).
-    super::test_timing::install_relay_test_timing(super::test_timing::relay_test_timing()?);
+    install_relay_test_timing(super::test_timing::relay_test_timing()?);
     // Widen-only runtime waits for test daemons on an Incus double; debug
     // builds only (release: always None).
-    super::test_timing::install_runtime_test_timing(super::test_timing::runtime_test_timing(
+    install_runtime_test_timing(super::test_timing::runtime_test_timing(
         &options.server_url,
     )?);
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
@@ -1391,6 +1391,31 @@ fn carry_policy(config: &crate::config::Config) -> Result<super::carry::CarryPol
     }
     Ok(policy)
 }
+fn install_relay_test_timing(timing: Option<super::test_timing::RelayTestTiming>) {
+    #[cfg(debug_assertions)]
+    if let Some(timing) = &timing {
+        tracing::warn!(
+            ?timing,
+            "relay test timing override in effect (debug build)"
+        );
+    }
+    let _ = super::test_timing::RELAY_TEST_TIMING.set(timing);
+}
+
+fn install_runtime_test_timing(timing: Option<super::test_timing::RuntimeTestTiming>) {
+    #[cfg(debug_assertions)]
+    if let Some(timing) = &timing {
+        tracing::warn!(
+            ?timing,
+            "TEST-ONLY OVERRIDE `{}`: this daemon waits longer than production for the guest \
+             terminate helper and the connected expiry observation, and may poll storage \
+             less often; never set it in production",
+            super::test_timing::RUNTIME_TIMING_ENV
+        );
+    }
+    let _ = super::test_timing::RUNTIME_TEST_TIMING.set(timing);
+}
+
 /// `DISK_TICK_EVERY`, or a debug test daemon's shorter period
 /// (`WSSP_TEST_DISK_TIMING`).
 fn disk_tick_every() -> Duration {
