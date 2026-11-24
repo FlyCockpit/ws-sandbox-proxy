@@ -6,7 +6,7 @@
  * lives only in scripts/lib/disposable-postgres.mjs).
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -20,7 +20,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -573,6 +573,218 @@ writeFileSync(process.env.EXITED, String(await exited));
     { worker: alive(workerPid), child: alive(childPid) },
     { worker: false, child: false },
   );
+});
+
+/**
+ * The forced hand-off fixtures (and the harness itself: a zombie keeps its
+ * process group alive) need orphans to be reaped. Fails with a clear message
+ * where the init process never reaps adopted children (a container without
+ * an init, e.g. `docker run` without `--init`).
+ */
+async function needsOrphanReaping() {
+  const orphan = Number(
+    execFileSync(
+      process.execPath,
+      [
+        "-e",
+        "const c = require('node:child_process').spawn(process.execPath, ['-e', ''], { stdio: 'ignore', detached: true }); process.stdout.write(String(c.pid)); c.unref();",
+      ],
+      { encoding: "utf8" },
+    ),
+  );
+  for (let attempt = 0; attempt < 250; attempt++) {
+    if (!existsSync(`/proc/${orphan}`)) return;
+    await delay(20);
+  }
+  reap(orphan);
+  throw new Error(
+    `needs an init or subreaper that reaps orphans: orphan ${orphan} was never reaped (run under an init, e.g. docker --init or tini)`,
+  );
+}
+
+test("groups handed off between a scan's /proc listing and its liveness check, twice in a row, are still terminated", async (t) => {
+  // Forced interleaving of the race the test above hits only under load: a
+  // fake `ps` (each scan runs it after listing /proc) holds two consecutive
+  // scans. The first, once the worker took SIGTERM, until the worker has
+  // started a detached successor and been reaped; the second (the
+  // confirming scan, which lists that successor) until the successor has
+  // started a detached child of its own and been reaped, like a double
+  // fork. Both scans then see nothing alive; only a scan that listed no
+  // marked process at all may end the teardown.
+  await needsOrphanReaping();
+  const dir = await mkdtemp(join(tmpdir(), "owned-scan-race-test-"));
+  const pids = [];
+  // Registered before anything can fail: whatever started is reaped.
+  t.after(async () => {
+    for (const file of ["worker.pid", "successor.pid", "child.pid"])
+      try {
+        pids.push(Number(await readFile(join(dir, file), "utf8")));
+      } catch {
+        /* never started */
+      }
+    reap(...pids.filter(Boolean));
+    await rm(dir, { recursive: true, force: true });
+  });
+  const realPs = execFileSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).trim();
+  const bin = join(dir, "bin");
+  await mkdir(bin);
+  const files = {
+    WORKER_READY: join(dir, "worker.pid"),
+    SIGNALLED: join(dir, "signalled"),
+    HELD_1: join(dir, "held-1"),
+    HELD_2: join(dir, "held-2"),
+    SUCCESSOR_PID: join(dir, "successor.pid"),
+    CHILD_PID: join(dir, "child.pid"),
+    EXITED: join(dir, "exited"),
+  };
+  // Until the process in pid file $1 is reaped, not just a zombie: a zombie
+  // keeps its group alive. At most 4 s, below processTable()'s 5 s timeout.
+  await writeFile(
+    join(bin, "ps"),
+    `#!/bin/sh
+reaped() { pid=$(cat "$1"); i=0; while [ -e "/proc/$pid" ] && [ $i -lt 400 ]; do sleep 0.01; i=$((i + 1)); done; }
+if [ -e "$SIGNALLED" ] && mkdir "$HELD_1" 2>/dev/null; then reaped "$WORKER_READY"
+elif [ -e "$SUCCESSOR_PID" ] && mkdir "$HELD_2" 2>/dev/null; then reaped "$SUCCESSOR_PID"
+fi
+exec ${JSON.stringify(realPs)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  const child = `setInterval(() => {}, 1000);`;
+  // Each generation starts its detached successor only once the scan it
+  // must escape is held past its /proc listing, then exits at once (the
+  // program it runs in requires `cp` and `fs`).
+  const requires = `const cp = require('node:child_process'); const fs = require('node:fs');`;
+  const handOff = (held, pidFile, next) => `
+const wait = setInterval(() => {
+  if (!fs.existsSync(process.env.${held})) return;
+  clearInterval(wait);
+  const c = cp.spawn(process.execPath, ['-e', ${JSON.stringify(next)}], { stdio: 'ignore', env: process.env, detached: true });
+  fs.writeFileSync(process.env.${pidFile}, String(c.pid));
+  process.exit(0);
+}, 5);`;
+  const successor = requires + handOff("HELD_2", "CHILD_PID", child);
+  const worker = `${requires}
+process.on('SIGTERM', () => {
+  fs.writeFileSync(process.env.SIGNALLED, '');
+  ${handOff("HELD_1", "SUCCESSOR_PID", successor)}
+});
+fs.writeFileSync(process.env.WORKER_READY, String(process.pid));
+setInterval(() => {}, 1000);`;
+  const leader = `
+const cp = require('node:child_process');
+const fs = require('node:fs');
+cp.spawn(process.execPath, ['-e', ${JSON.stringify(worker)}], { stdio: 'ignore', env: process.env, detached: true });
+setInterval(() => { if (fs.existsSync(process.env.WORKER_READY)) process.exit(0); }, 10);`;
+  const owner = join(dir, "owner.mjs");
+  await writeFile(
+    owner,
+    `import { spawnOwnedProcessGroup } from ${JSON.stringify(join(root, "scripts/lib/disposable-postgres.mjs"))};
+import { writeFileSync } from "node:fs";
+const { exited } = spawnOwnedProcessGroup(process.execPath, ["-e", ${JSON.stringify(leader)}], { stdio: "ignore" });
+writeFileSync(process.env.EXITED, String(await exited));
+`,
+  );
+  const run = spawn(process.execPath, [owner], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, ...files, PATH: `${bin}:${process.env.PATH}` },
+  });
+  let stderr = "";
+  run.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const code = await new Promise((resolveExit) => run.once("exit", resolveExit));
+  assert.deepEqual(
+    { first: existsSync(files.HELD_1), second: existsSync(files.HELD_2) },
+    { first: true, second: true },
+    `both scans were held; owner stderr: ${stderr}`,
+  );
+  const childPid = Number(await readFile(files.CHILD_PID, "utf8"));
+  assert.equal(code, 0, `owner stderr: ${stderr}`);
+  assert.equal(await readFile(files.EXITED, "utf8"), "0");
+  assert.equal(alive(childPid), false, "the second generation's child");
+});
+
+test("a tree that keeps handing off on every scan fails the teardown within its bound", {
+  timeout: 60_000,
+}, async (t) => {
+  // Forced: a fake `ps` holds every scan after the worker took SIGTERM until
+  // the generation it listed has started the next one (detached) and been
+  // reaped, so every scan sees nothing alive yet a marked process listed.
+  // The teardown must give up at its bound and report it, never spin.
+  await needsOrphanReaping();
+  const dir = await mkdtemp(join(tmpdir(), "owned-endless-test-"));
+  const stop = join(dir, "stop");
+  t.after(async () => {
+    await writeFile(stop, "");
+    const pids = [];
+    for (const name of await readdir(dir))
+      if (/^gen-\d+\.pid$/.test(name)) pids.push(Number(await readFile(join(dir, name), "utf8")));
+    reap(...pids.filter(Boolean));
+    await rm(dir, { recursive: true, force: true });
+  });
+  const realPs = execFileSync("sh", ["-c", "command -v ps"], { encoding: "utf8" }).trim();
+  const bin = join(dir, "bin");
+  await mkdir(bin);
+  // Generation n (the worker is 0) waits for held-n, starts n + 1, exits; the
+  // fake waits at most 4 s (below processTable()'s 5 s timeout) for its reaping.
+  await writeFile(
+    join(bin, "ps"),
+    `#!/bin/sh
+if [ -e "$HOPS/signalled" ] && [ ! -e "$HOPS/stop" ]; then
+  n=0; while ! mkdir "$HOPS/held-$n" 2>/dev/null; do n=$((n + 1)); done
+  pid=$(cat "$HOPS/gen-$n.pid"); i=0
+  while [ -e "/proc/$pid" ] && [ $i -lt 400 ]; do sleep 0.01; i=$((i + 1)); done
+fi
+exec ${JSON.stringify(realPs)} "$@"
+`,
+    { mode: 0o755 },
+  );
+  const generation = `
+const cp = require('node:child_process'); const fs = require('node:fs'); const path = require('node:path');
+const n = Number(process.env.GEN);
+const hop = () => { const wait = setInterval(() => {
+  if (!fs.existsSync(path.join(process.env.HOPS, 'held-' + n))) return;
+  clearInterval(wait);
+  const c = cp.spawn(process.execPath, ['-e', process.env.GENERATION], { stdio: 'ignore', env: { ...process.env, GEN: String(n + 1) }, detached: true });
+  fs.writeFileSync(path.join(process.env.HOPS, 'gen-' + (n + 1) + '.pid'), String(c.pid));
+  process.exit(0);
+}, 5); };
+if (n === 0) {
+  process.on('SIGTERM', () => { fs.writeFileSync(path.join(process.env.HOPS, 'signalled'), ''); hop(); });
+  fs.writeFileSync(path.join(process.env.HOPS, 'gen-0.pid'), String(process.pid));
+  setInterval(() => {}, 1000);
+} else hop();`;
+  const leader = `
+const cp = require('node:child_process');
+const fs = require('node:fs');
+cp.spawn(process.execPath, ['-e', process.env.GENERATION], { stdio: 'ignore', env: { ...process.env, GEN: '0' }, detached: true });
+setInterval(() => { if (fs.existsSync(process.env.HOPS + '/gen-0.pid')) process.exit(0); }, 10);`;
+  const owner = join(dir, "owner.mjs");
+  await writeFile(
+    owner,
+    `import { spawnOwnedProcessGroup } from ${JSON.stringify(join(root, "scripts/lib/disposable-postgres.mjs"))};
+const { exited } = spawnOwnedProcessGroup(process.execPath, ["-e", ${JSON.stringify(leader)}], { stdio: "ignore" });
+await exited;
+`,
+  );
+  const started = Date.now();
+  const run = spawn(process.execPath, [owner], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: { ...process.env, HOPS: dir, GENERATION: generation, PATH: `${bin}:${process.env.PATH}` },
+  });
+  let stderr = "";
+  run.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  const code = await new Promise((resolveExit) => run.once("exit", resolveExit));
+  const took = Date.now() - started;
+  const held = (await readdir(dir)).filter((name) => name.startsWith("held-")).length;
+  assert.ok(held >= 3, `the scans were held (${held}); owner stderr: ${stderr}`);
+  assert.notEqual(code, 0, "an unconfirmed teardown fails the run");
+  assert.match(stderr, /kept handing off to new process groups/);
+  // The bound is 15 s (TERM grace + KILL grace); the exit handler adds one scan.
+  assert.ok(took < 40_000, `bounded: ${took} ms`);
 });
 
 /**

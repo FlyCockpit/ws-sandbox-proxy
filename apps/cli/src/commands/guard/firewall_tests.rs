@@ -1,7 +1,6 @@
 //! Fake `ufw` / `firewall-cmd` binaries on the child PATH; the real tools
 //! never run.
 
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 
 use super::*;
@@ -25,9 +24,13 @@ impl Fake {
         }
     }
     fn tool(&self, name: &str, body: &str) {
-        let path = self.file(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Never written by this process: a concurrent test's fork would keep
+        // a write descriptor and the exec fail with ETXTBSY.
+        crate::sandbox_relay::test_support::install_executable(
+            &self.file(name),
+            format!("#!/bin/sh\n{body}\n"),
+            0o755,
+        );
     }
     fn read(&self, name: &str) -> String {
         std::fs::read_to_string(self.file(name)).unwrap_or_default()

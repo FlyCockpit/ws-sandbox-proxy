@@ -611,8 +611,12 @@ mod tests {
         out
     }
 
-    fn ask(port: u16, id: u16, name: &str) -> Vec<u8> {
+    /// One query from a fresh client socket that `proc`'s socket table
+    /// shows as the resolver's (uid `test_uid()`).
+    fn ask(proc: &FakeProc, port: u16, id: u16, name: &str) -> Vec<u8> {
         let client = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let source = client.local_addr().unwrap().port();
+        proc.sockets(&[("udp", &loopback_hex(), source, test_uid())]);
         client
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
@@ -626,11 +630,12 @@ mod tests {
         buf[..read].to_vec()
     }
 
-    /// Stubs that trust this test's own sockets as the bridge resolver of
+    /// Stubs that trust `ask`'s sockets as the bridge resolver of
     /// `sandbox_id`: a fake Incus pid file names a fake dnsmasq running as
-    /// the test's uid, over the host's real socket tables.
+    /// the test's uid, and the fake socket table shows each client socket
+    /// as its (hermetic: no kernel socket diag needed).
     fn trusting(tag: &str, sandbox_id: &str) -> (FakeProc, DnsStubs) {
-        let proc = FakeProc::with_real_sockets(tag);
+        let proc = FakeProc::new(tag);
         proc.resolver(12, sandbox_id, test_uid());
         let stubs = DnsStubs::with_peer_roots(proc.roots());
         (proc, stubs)
@@ -638,12 +643,12 @@ mod tests {
 
     #[test]
     fn the_stub_answers_at_once_and_records_only_non_granted_names() {
-        let (_proc, stubs) = trusting("answers", "sbx-1");
+        let (proc, stubs) = trusting("answers", "sbx-1");
         let port = stubs
             .prepare("sbx-1", granted(&["pypi.org"]), None)
             .unwrap();
         assert_ne!(port, 0);
-        let answer = ask(port, 0x1234, "Evil.Example");
+        let answer = ask(&proc, port, 0x1234, "Evil.Example");
         assert_eq!(&answer[..2], &[0x12, 0x34]);
         assert_eq!(answer[2] & 0x80, 0x80, "a response");
         assert_eq!(answer[3] & 0x0f, RCODE_NXDOMAIN);
@@ -654,7 +659,7 @@ mod tests {
             &q[12..q.len() - 11],
             "the question is echoed"
         );
-        ask(port, 2, "pypi.org");
+        ask(&proc, port, 2, "pypi.org");
         assert_eq!(
             stubs.drain(),
             vec![("sbx-1".to_string(), "evil.example".to_string())]
@@ -948,13 +953,14 @@ mod tests {
             return;
         };
         // F6: the hint path authenticates this very dnsmasq through an
-        // Incus-shaped pid file (pid + kernel start time) and the real
-        // `/proc`; only the "root" owner of the fake Incus dir is the test's.
+        // Incus-shaped pid file (pid + kernel start time), the real `/proc`
+        // and the kernel's socket diag (as in production); only the "root"
+        // owner of the fake Incus dir is the test's.
+        super::super::dns_stub_peer::fake_proc::needs_kernel_udp_diag();
         let incus = FakeProc::new("dnsmasq-incus");
         let stubs = DnsStubs::with_peer_roots(PeerRoots {
             proc_root: std::path::PathBuf::from("/proc"),
-            incus_dir: incus.incus_dir(),
-            trusted_owner: test_uid(),
+            ..incus.kernel_roots()
         });
         let stub_port = stubs
             .prepare("sbx-dnsmasq", granted(&["granted.example"]), None)
@@ -1283,7 +1289,7 @@ mod tests {
                 Some((port, blocker))
             })
             .expect("a freed stub port can be re-bound");
-        let (_proc, mut second) = trusting("restart", "sbx-1");
+        let (proc, mut second) = trusting("restart", "sbx-1");
         second.retry = Duration::ZERO;
         let recorded = || {
             vec![RecordedStub {
@@ -1305,7 +1311,7 @@ mod tests {
         }
         assert!(second.recovery_failures().is_empty());
         assert_eq!(second.port("sbx-1"), Some(port));
-        ask(port, 7, "after.restart.example");
+        ask(&proc, port, 7, "after.restart.example");
         assert_eq!(
             second.drain(),
             vec![("sbx-1".to_string(), "after.restart.example".to_string())]

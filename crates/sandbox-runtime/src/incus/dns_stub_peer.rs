@@ -18,9 +18,15 @@
 //!    argv is never the evidence).
 //! 3. That process's effective uid (`/proc/<pid>/status`) must own every UDP
 //!    socket bound to the query's source port on a loopback or wildcard
-//!    address (`/proc/net/udp{,6}`, world-readable). Incus runs dnsmasq as
-//!    its own system user (`-u incus`); a local user who is not that uid (or
-//!    root) cannot own such a socket.
+//!    address. Incus runs dnsmasq as its own system user (`-u incus`); a
+//!    local user who is not that uid (or root) cannot own such a socket. The
+//!    owners come from the kernel's `sock_diag` UDP dump filtered by that
+//!    port: every socket on one port sits in one hash slot, dumped under that
+//!    slot's lock, so the answer is consistent. `/proc/net/udp{,6}` is not:
+//!    it is read a page at a time and resumes by position, so sockets created
+//!    or closed elsewhere meanwhile can drop a row (seen on a busy host: the
+//!    resolver's own socket missing, or, in principle, another uid's sharing
+//!    its port). The tables are read only where the kernel has no UDP diag.
 //!
 //! The identity is re-read at most once a second, so a dnsmasq restart
 //! (new pid, new start time) is picked up. It FAILS CLOSED: when the
@@ -50,6 +56,15 @@ pub(crate) struct PeerRoots {
     pub(crate) incus_dir: PathBuf,
     /// The uid that must own the pid file and its directory (root).
     pub(crate) trusted_owner: u32,
+    /// Where the owners of a port's UDP sockets are read.
+    pub(crate) sockets: SocketTable,
+    /// Where the trusted chain starts: this directory and every one below
+    /// it on the way to the pid file must be trusted. `/` in production
+    /// (the whole chain). A test's fake Incus dir starts at its own private
+    /// directory: the host's directories above it (`TMPDIR` under a
+    /// group-writable home on a `umask 002` host) are not the fake's to vouch
+    /// for, and the product correctly distrusts them.
+    pub(crate) chain_root: PathBuf,
 }
 
 impl Default for PeerRoots {
@@ -60,8 +75,22 @@ impl Default for PeerRoots {
                 .filter(|dir| !dir.is_empty())
                 .map_or_else(|| PathBuf::from("/var/lib/incus"), PathBuf::from),
             trusted_owner: 0,
+            sockets: SocketTable::Kernel(kernel_socket_owners),
+            chain_root: PathBuf::from("/"),
         }
     }
+}
+
+/// Where the owners of a port's UDP sockets are read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SocketTable {
+    /// The kernel's `sock_diag` UDP dump through this lookup
+    /// (`kernel_socket_owners`; a test may stand in for the kernel), and
+    /// `<proc_root>/net/udp{,6}` only when the kernel has no UDP diag.
+    Kernel(fn(u16) -> Result<Vec<u32>, DiagError>),
+    /// `<proc_root>/net/udp{,6}` (the tests' fake tables).
+    #[cfg(test)]
+    Proc,
 }
 
 /// Per-stub source check: the build bridge's resolver uid, established
@@ -73,6 +102,10 @@ pub(crate) struct ResolverPeer {
     uid: Option<u32>,
     scanned_at: Option<Instant>,
     warned_at: Option<Instant>,
+    /// The kernel has no UDP diag (reported once).
+    diag_warned: bool,
+    /// A kernel lookup failed (reported at most every `WARN_EVERY`).
+    diag_failed_at: Option<Instant>,
 }
 
 impl ResolverPeer {
@@ -83,6 +116,8 @@ impl ResolverPeer {
             uid: None,
             scanned_at: None,
             warned_at: None,
+            diag_warned: false,
+            diag_failed_at: None,
         }
     }
 
@@ -107,9 +142,303 @@ impl ResolverPeer {
             }
             return false;
         };
-        let owners = socket_owners(&self.roots.proc_root, from.port());
+        let owners = match self.roots.sockets {
+            #[cfg(test)]
+            SocketTable::Proc => socket_owners(&self.roots.proc_root, from.port()),
+            SocketTable::Kernel(lookup) => match lookup(from.port()) {
+                Ok(owners) => owners,
+                // Only a kernel without UDP diag falls back to the tables.
+                Err(DiagError::Unsupported(error)) => {
+                    if !self.diag_warned {
+                        self.diag_warned = true;
+                        eprintln!(
+                            "wssp: the kernel's UDP socket diag is unavailable ({error}); \
+                             blocked-name hints for bridge {} read /proc/net/udp, which can \
+                             miss a socket on a busy host",
+                            self.bridge
+                        );
+                    }
+                    socket_owners(&self.roots.proc_root, from.port())
+                }
+                // Any other failure is no evidence: answered, never recorded.
+                Err(DiagError::Failed(error)) => {
+                    if self
+                        .diag_failed_at
+                        .is_none_or(|at| at.elapsed() >= WARN_EVERY)
+                    {
+                        self.diag_failed_at = Some(Instant::now());
+                        eprintln!(
+                            "wssp: a blocked-name hint for bridge {} was dropped: the kernel's \
+                             UDP socket lookup failed ({error})",
+                            self.bridge
+                        );
+                    }
+                    Vec::new()
+                }
+            },
+        };
         !owners.is_empty() && owners.iter().all(|owner| *owner == uid)
     }
+}
+
+/// A datagram from `ip` can come over loopback: a loopback or wildcard bind.
+fn loopback_source(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_loopback() || ip.is_unspecified(),
+        IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+        }
+    }
+}
+
+/// `SOCK_DIAG_BY_FAMILY` (linux/sock_diag.h).
+const SOCK_DIAG_BY_FAMILY: u16 = 20;
+/// `struct nlmsghdr`.
+const NLMSG_HEADER: usize = 16;
+/// `struct inet_diag_req_v2`.
+const INET_DIAG_REQ: usize = 56;
+/// `struct inet_diag_msg`: family, state, timer, retrans, the 48-byte
+/// `inet_diag_sockid`, expires, rqueue, wqueue, uid, inode.
+const INET_DIAG_MSG: usize = 72;
+
+/// One `SOCK_DIAG_BY_FAMILY` dump request: every UDP socket of `family`
+/// whose local port is `port`, in any state.
+fn diag_request(family: u8, port: u16, seq: u32) -> Vec<u8> {
+    let mut request = Vec::with_capacity(NLMSG_HEADER + INET_DIAG_REQ);
+    let flags = (libc::NLM_F_REQUEST | libc::NLM_F_DUMP) as u16;
+    request.extend_from_slice(&((NLMSG_HEADER + INET_DIAG_REQ) as u32).to_ne_bytes());
+    request.extend_from_slice(&SOCK_DIAG_BY_FAMILY.to_ne_bytes());
+    request.extend_from_slice(&flags.to_ne_bytes());
+    request.extend_from_slice(&seq.to_ne_bytes());
+    request.extend_from_slice(&0u32.to_ne_bytes());
+    // sdiag_family, sdiag_protocol, idiag_ext, pad, idiag_states (all).
+    request.extend_from_slice(&[family, libc::IPPROTO_UDP as u8, 0, 0]);
+    request.extend_from_slice(&u32::MAX.to_ne_bytes());
+    // inet_diag_sockid: the source port (network order) filters the dump
+    // in the kernel; destination, addresses, interface and cookie are 0.
+    request.extend_from_slice(&port.to_be_bytes());
+    request.resize(NLMSG_HEADER + INET_DIAG_REQ, 0);
+    request
+}
+
+/// Why the kernel's lookup gave no answer.
+#[derive(Debug)]
+pub(crate) enum DiagError {
+    /// This kernel has no UDP sock_diag (no netlink family or UDP handler).
+    Unsupported(std::io::Error),
+    /// Anything else (a timeout, a split or interrupted dump, a malformed
+    /// reply): no evidence either way.
+    Failed(std::io::Error),
+}
+
+impl DiagError {
+    fn from_errno(error: std::io::Error) -> Self {
+        match error.raw_os_error() {
+            Some(libc::ENOENT | libc::EOPNOTSUPP | libc::EPROTONOSUPPORT | libc::EAFNOSUPPORT) => {
+                Self::Unsupported(error)
+            }
+            _ => Self::Failed(error),
+        }
+    }
+}
+
+fn diag_invalid(what: &str) -> DiagError {
+    DiagError::Failed(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        what.to_string(),
+    ))
+}
+
+/// What one received datagram of a dump held.
+#[derive(Debug, PartialEq, Eq)]
+struct DiagBatch {
+    /// Socket messages for this request.
+    sockets: usize,
+    /// The dump's `NLMSG_DONE` arrived (successfully).
+    done: bool,
+}
+
+/// Appends the `(local address, uid)` of each socket in one datagram of a
+/// dump's replies to `out`. A failed or interrupted dump is an error: its
+/// `NLMSG_DONE` carries a negative errno, `NLM_F_DUMP_INTR` marks a dump the
+/// kernel knows to be inconsistent.
+fn diag_replies(
+    replies: &[u8],
+    family: u8,
+    port: u16,
+    seq: u32,
+    out: &mut Vec<(IpAddr, u32)>,
+) -> Result<DiagBatch, DiagError> {
+    let u32_at = |at: usize| -> u32 {
+        u32::from_ne_bytes(replies[at..at + 4].try_into().unwrap_or_default())
+    };
+    let status = |body: &[u8]| -> Result<i32, DiagError> {
+        body.get(..4)
+            .map(|code| i32::from_ne_bytes(code.try_into().unwrap_or_default()))
+            .ok_or_else(|| diag_invalid("a truncated sock_diag status"))
+    };
+    let mut batch = DiagBatch {
+        sockets: 0,
+        done: false,
+    };
+    let mut at = 0;
+    while at + NLMSG_HEADER <= replies.len() {
+        let len = u32_at(at) as usize;
+        if len < NLMSG_HEADER || at + len > replies.len() {
+            return Err(diag_invalid("a truncated sock_diag reply"));
+        }
+        let kind = u16::from_ne_bytes([replies[at + 4], replies[at + 5]]);
+        let flags = u16::from_ne_bytes([replies[at + 6], replies[at + 7]]);
+        let body = &replies[at + NLMSG_HEADER..at + len];
+        if u32_at(at + 8) == seq {
+            if flags & libc::NLM_F_DUMP_INTR as u16 != 0 {
+                return Err(diag_invalid("an interrupted sock_diag dump"));
+            }
+            match kind {
+                kind if kind == libc::NLMSG_DONE as u16 => {
+                    let code = status(body)?;
+                    if code < 0 {
+                        return Err(DiagError::from_errno(std::io::Error::from_raw_os_error(
+                            -code,
+                        )));
+                    }
+                    batch.done = true;
+                    return Ok(batch);
+                }
+                kind if kind == libc::NLMSG_ERROR as u16 => {
+                    let code = status(body)?;
+                    return Err(DiagError::from_errno(std::io::Error::from_raw_os_error(
+                        -code,
+                    )));
+                }
+                SOCK_DIAG_BY_FAMILY => {
+                    if body.len() < INET_DIAG_MSG || body[0] != family {
+                        return Err(diag_invalid("an unexpected sock_diag message"));
+                    }
+                    // id: sport, dport (network order), src[16], dst[16], ...
+                    let sport = u16::from_be_bytes([body[4], body[5]]);
+                    let src = &body[8..24];
+                    let ip = if family == libc::AF_INET as u8 {
+                        IpAddr::V4(Ipv4Addr::new(src[0], src[1], src[2], src[3]))
+                    } else {
+                        let bytes: [u8; 16] = src.try_into().unwrap_or_default();
+                        IpAddr::V6(Ipv6Addr::from(bytes))
+                    };
+                    let uid = u32::from_ne_bytes(body[64..68].try_into().unwrap_or_default());
+                    batch.sockets += 1;
+                    if sport == port {
+                        out.push((ip, uid));
+                    }
+                }
+                _ => {}
+            }
+        }
+        at += (len + 3) & !3;
+    }
+    Ok(batch)
+}
+
+/// The longest datagram of socket messages accepted as a whole hash slot.
+/// The kernel stops walking a slot (and later resumes it by position, which
+/// can drop a row) only when its reply buffer cannot take the next message;
+/// that buffer is at least `NLMSG_GOODSIZE` (about 3.7 KiB with 4 KiB pages),
+/// and one UDP message with every attribute is a few hundred bytes. A reply
+/// of at most 2 KiB therefore left room for another message: the walk
+/// finished. A longer one may have stopped for space and is refused.
+const DIAG_WHOLE_SLOT_BYTES: usize = 2048;
+
+/// One dump's datagrams from `receive` (which fills the buffer and returns
+/// the length) until its `NLMSG_DONE`, appended to `out`. The port's sockets
+/// must arrive in one datagram short enough to prove the kernel walked their
+/// hash slot in one go (`DIAG_WHOLE_SLOT_BYTES`).
+fn collect_dump(
+    family: u8,
+    port: u16,
+    seq: u32,
+    out: &mut Vec<(IpAddr, u32)>,
+    mut receive: impl FnMut(&mut [u8]) -> Result<usize, DiagError>,
+) -> Result<(), DiagError> {
+    let mut buf = vec![0u8; 32 * 1024];
+    let mut batches_with_sockets = 0;
+    loop {
+        let read = receive(&mut buf)?;
+        let datagram = &buf[..read.min(buf.len())];
+        let batch = diag_replies(datagram, family, port, seq, out)?;
+        if batch.sockets > 0 {
+            batches_with_sockets += 1;
+            if datagram.len() > DIAG_WHOLE_SLOT_BYTES {
+                return Err(diag_invalid(
+                    "the port's sockets may not have fit one sock_diag reply",
+                ));
+            }
+        }
+        if batches_with_sockets > 1 {
+            return Err(diag_invalid(
+                "the port's sockets did not fit one sock_diag reply",
+            ));
+        }
+        if batch.done {
+            return Ok(());
+        }
+    }
+}
+
+/// The owners of every UDP socket bound to `port` on an address a loopback
+/// datagram can come from, from the kernel's `sock_diag` dump (IPv4, then
+/// IPv6). The kernel filters by port, and every socket on one port sits in
+/// one hash slot that it walks under that slot's lock, so an answer that
+/// arrives whole in one reply is a consistent snapshot. Only when the port's
+/// sockets overflow a reply does the kernel unlock and resume the slot by
+/// position, which can drop a row: an answer that may have been split is
+/// refused (`collect_dump`).
+fn kernel_socket_owners(port: u16) -> Result<Vec<u32>, DiagError> {
+    use rustix::io::Errno;
+    use rustix::net::{
+        AddressFamily, RecvFlags, SendFlags, SocketFlags, SocketType, netlink, recv, sendto,
+        socket_with, sockopt,
+    };
+    let fd = socket_with(
+        AddressFamily::NETLINK,
+        SocketType::DGRAM,
+        SocketFlags::CLOEXEC,
+        Some(netlink::SOCK_DIAG),
+    )
+    .map_err(|errno| DiagError::from_errno(errno.into()))?;
+    sockopt::set_socket_timeout(&fd, sockopt::Timeout::Recv, Some(Duration::from_secs(2)))
+        .map_err(|errno| DiagError::Failed(errno.into()))?;
+    let kernel = netlink::SocketAddrNetlink::new(0, 0);
+    let mut sockets = Vec::new();
+    for (seq, family) in [(1, libc::AF_INET as u8), (2, libc::AF_INET6 as u8)] {
+        let request = diag_request(family, port, seq);
+        loop {
+            match sendto(&fd, &request, SendFlags::empty(), &kernel) {
+                Err(Errno::INTR) => continue,
+                result => {
+                    result.map_err(|errno| DiagError::Failed(errno.into()))?;
+                    break;
+                }
+            }
+        }
+        collect_dump(family, port, seq, &mut sockets, |buf| {
+            loop {
+                match recv(&fd, &mut *buf, RecvFlags::empty()) {
+                    Err(Errno::INTR) => continue,
+                    result => {
+                        break result
+                            .map(|(read, _)| read)
+                            .map_err(|errno| DiagError::Failed(errno.into()));
+                    }
+                }
+            }
+        })?;
+    }
+    Ok(sockets
+        .into_iter()
+        .filter(|(ip, _)| loopback_source(*ip))
+        .map(|(_, uid)| uid)
+        .collect())
 }
 
 /// Owned by root or `owner`, and no one else can replace its entries:
@@ -122,14 +451,32 @@ fn trusted_dir(meta: &std::fs::Metadata, owner: u32) -> bool {
         && (meta.mode() & 0o022 == 0 || meta.mode() & 0o1000 != 0)
 }
 
-/// F6 review: every directory from `/` down to `dir`, both as written and
-/// as resolved, is trusted, so nothing unprivileged can swap a component
-/// (or the pid file) between this check and the read that follows.
-fn trusted_chain(dir: &Path, owner: u32) -> bool {
-    let Ok(resolved) = std::fs::canonicalize(dir) else {
+/// `path` and its ancestors up to and including `root`; every ancestor
+/// when `root` is not one of them (`/` for a relative path).
+fn ancestors_to<'a>(path: &'a Path, root: &'a Path) -> impl Iterator<Item = &'a Path> {
+    let mut reached = false;
+    path.ancestors().take_while(move |ancestor| {
+        let take = !reached;
+        reached = *ancestor == root;
+        take
+    })
+}
+
+/// F6 review: every directory from `root` (`/` in production) down to
+/// `dir`, both as written and as resolved, is trusted, so nothing
+/// unprivileged can swap a component (or the pid file) between this check
+/// and the read that follows. A `dir` that does not resolve below `root` is
+/// not trusted.
+fn trusted_chain(dir: &Path, root: &Path, owner: u32) -> bool {
+    let (Ok(resolved), Ok(resolved_root)) =
+        (std::fs::canonicalize(dir), std::fs::canonicalize(root))
+    else {
         return false;
     };
-    let lexical_ok = dir.ancestors().all(|path| {
+    if !resolved.starts_with(&resolved_root) {
+        return false;
+    }
+    let lexical_ok = ancestors_to(dir, root).all(|path| {
         path.as_os_str().is_empty()
             || std::fs::symlink_metadata(path).is_ok_and(|meta| {
                 use std::os::unix::fs::MetadataExt;
@@ -141,8 +488,7 @@ fn trusted_chain(dir: &Path, owner: u32) -> bool {
             })
     });
     lexical_ok
-        && resolved
-            .ancestors()
+        && ancestors_to(&resolved, &resolved_root)
             .all(|path| std::fs::symlink_metadata(path).is_ok_and(|meta| trusted_dir(&meta, owner)))
 }
 
@@ -194,7 +540,7 @@ fn proc_start_time(stat: &str) -> Option<u64> {
 /// from the root-owned pid file (never from a process's own argv).
 fn resolver_uid(roots: &PeerRoots, bridge: &str) -> Option<u32> {
     let dir = roots.incus_dir.join("networks").join(bridge);
-    if !trusted_chain(&dir, roots.trusted_owner) {
+    if !trusted_chain(&dir, &roots.chain_root, roots.trusted_owner) {
         return None;
     }
     let (pid, start_time) = parse_pid_file(&read_pid_file(
@@ -244,15 +590,9 @@ fn socket_owners(proc_root: &Path, port: u16) -> Vec<u32> {
             if u16::from_str_radix(local_port, 16).ok() != Some(port) {
                 continue;
             }
-            let loopback_source = proc_address(address).is_some_and(|ip| match ip {
-                IpAddr::V4(ip) => ip.is_loopback() || ip.is_unspecified(),
-                IpAddr::V6(ip) => {
-                    ip.is_loopback()
-                        || ip.is_unspecified()
-                        || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
-                }
-            });
-            if loopback_source && let Ok(uid) = uid.parse() {
+            if proc_address(address).is_some_and(loopback_source)
+                && let Ok(uid) = uid.parse()
+            {
                 owners.push(uid);
             }
         }
@@ -313,14 +653,6 @@ pub(crate) mod fake_proc {
             Self(dir)
         }
 
-        /// A fake `/proc` whose socket tables are this host's real ones.
-        pub(crate) fn with_real_sockets(tag: &str) -> Self {
-            let proc = Self::new(tag);
-            std::fs::remove_dir_all(proc.0.join("net")).unwrap();
-            std::os::unix::fs::symlink("/proc/net", proc.0.join("net")).unwrap();
-            proc
-        }
-
         pub(crate) fn path(&self) -> &Path {
             &self.0
         }
@@ -336,6 +668,18 @@ pub(crate) mod fake_proc {
                 proc_root: self.0.clone(),
                 incus_dir: self.incus_dir(),
                 trusted_owner: test_uid(),
+                sockets: SocketTable::Proc,
+                // The fake's own 0755 directory: the chain the fake builds.
+                chain_root: self.0.clone(),
+            }
+        }
+
+        /// Roots reading this fake `/proc` and Incus dir, with the owners of
+        /// real sockets from the kernel (as in production).
+        pub(crate) fn kernel_roots(&self) -> PeerRoots {
+            PeerRoots {
+                sockets: SocketTable::Kernel(kernel_socket_owners),
+                ..self.roots()
             }
         }
 
@@ -422,6 +766,21 @@ pub(crate) mod fake_proc {
         let uid = std::fs::metadata(&probe).unwrap().uid();
         let _ = std::fs::remove_file(&probe);
         uid
+    }
+
+    /// Fails with a clear message unless this kernel answers the UDP socket
+    /// diag: the tests that exercise the real kernel lookup need it (the
+    /// Halo `cargo test --workspace` and Ubuntu CI have `udp_diag`).
+    pub(crate) fn needs_kernel_udp_diag() {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        match kernel_socket_owners(port) {
+            Ok(owners) if owners == [test_uid()] => {}
+            other => panic!(
+                "needs the kernel's UDP sock_diag (netlink NETLINK_SOCK_DIAG with the udp_diag \
+                 module) to report this test's own socket; got {other:?}"
+            ),
+        }
     }
 
     /// `127.0.0.1` as `/proc/net/udp` prints it on this host.
@@ -605,6 +964,404 @@ mod tests {
         std::fs::set_permissions(&networks, std::fs::Permissions::from_mode(0o755)).unwrap();
         peer.scanned_at = None;
         assert!(peer.may_hint(from(40001)), "trusted again");
+    }
+
+    /// The chain is checked from `chain_root` down, the root included, and
+    /// only for a directory that resolves below it; production starts at
+    /// `/`. Hermetic: every mode that matters is set here, whatever the
+    /// host's own `TMPDIR` chain or umask.
+    #[test]
+    fn the_chain_is_checked_from_its_root_down() {
+        assert_eq!(PeerRoots::default().chain_root, PathBuf::from("/"));
+        let proc = FakeProc::new("root");
+        let uid = super::fake_proc::test_uid();
+        let mode = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        // outer (writable by anyone) / root / networks / bridge.
+        let outer = proc.path().join("outer");
+        let root = outer.join("root");
+        let bridge = root.join("networks").join("wssp-br");
+        std::fs::create_dir_all(&bridge).unwrap();
+        for dir in [&root, &root.join("networks"), &bridge] {
+            mode(dir, 0o755);
+        }
+        mode(&outer, 0o777);
+        assert!(
+            trusted_chain(&bridge, &root, uid),
+            "trusted from its root down"
+        );
+        assert!(
+            !trusted_chain(&bridge, &outer, uid),
+            "the root itself is checked"
+        );
+        assert!(
+            !trusted_chain(&bridge, Path::new("/"), uid),
+            "from `/`, the replaceable ancestor is found"
+        );
+        let elsewhere = proc.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        mode(&elsewhere, 0o755);
+        assert!(
+            !trusted_chain(&bridge, &elsewhere, uid),
+            "a directory outside the root"
+        );
+        // A replaceable directory below the root is still found.
+        mode(&root.join("networks"), 0o775);
+        assert!(
+            !trusted_chain(&bridge, &root, uid),
+            "group-writable below the root"
+        );
+        mode(&root.join("networks"), 0o1777);
+        assert!(trusted_chain(&bridge, &root, uid), "sticky, like /tmp");
+        // A symlink below the root that someone else could own is checked
+        // as written, and the target as resolved.
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&outer, &link).unwrap();
+        std::fs::create_dir(outer.join("networks")).unwrap();
+        assert!(
+            !trusted_chain(&link.join("networks"), &root, uid),
+            "resolves outside the root"
+        );
+        mode(&outer, 0o755);
+    }
+
+    /// One `SOCK_DIAG_BY_FAMILY` reply as the kernel frames it.
+    fn diag_msg(seq: u32, family: u8, port: u16, src: &[u8], uid: u32) -> Vec<u8> {
+        let mut body = vec![family, 7, 0, 0];
+        body.extend_from_slice(&port.to_be_bytes());
+        body.extend_from_slice(&[0, 0]);
+        let mut address = src.to_vec();
+        address.resize(16, 0);
+        body.extend_from_slice(&address);
+        body.resize(64, 0);
+        body.extend_from_slice(&uid.to_ne_bytes());
+        body.extend_from_slice(&77u32.to_ne_bytes());
+        nl(SOCK_DIAG_BY_FAMILY, seq, &body)
+    }
+
+    fn nl(kind: u16, seq: u32, body: &[u8]) -> Vec<u8> {
+        nl_flags(kind, libc::NLM_F_MULTI as u16, seq, body)
+    }
+
+    fn nl_flags(kind: u16, flags: u16, seq: u32, body: &[u8]) -> Vec<u8> {
+        let mut out = ((NLMSG_HEADER + body.len()) as u32).to_ne_bytes().to_vec();
+        out.extend_from_slice(&kind.to_ne_bytes());
+        out.extend_from_slice(&flags.to_ne_bytes());
+        out.extend_from_slice(&seq.to_ne_bytes());
+        out.extend_from_slice(&0u32.to_ne_bytes());
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn done(seq: u32, status: i32) -> Vec<u8> {
+        nl(libc::NLMSG_DONE as u16, seq, &status.to_ne_bytes())
+    }
+
+    fn errno_of(error: &DiagError) -> (bool, Option<i32>) {
+        match error {
+            DiagError::Unsupported(error) => (true, error.raw_os_error()),
+            DiagError::Failed(error) => (false, error.raw_os_error()),
+        }
+    }
+
+    #[test]
+    fn sock_diag_requests_and_replies_have_the_kernel_layout() {
+        let request = diag_request(libc::AF_INET as u8, 0x1234, 9);
+        assert_eq!(request.len(), 72);
+        assert_eq!(&request[0..4], &72u32.to_ne_bytes());
+        assert_eq!(&request[4..6], &20u16.to_ne_bytes());
+        assert_eq!(&request[6..8], &0x301u16.to_ne_bytes(), "REQUEST | DUMP");
+        assert_eq!(&request[8..12], &9u32.to_ne_bytes());
+        assert_eq!(&request[16..20], &[libc::AF_INET as u8, 17, 0, 0]);
+        assert_eq!(&request[20..24], &[0xff; 4], "every state");
+        assert_eq!(&request[24..26], &[0x12, 0x34], "sport, network order");
+        assert!(request[26..].iter().all(|byte| *byte == 0));
+
+        let v4 = libc::AF_INET as u8;
+        let mut replies = diag_msg(1, v4, 5353, &[127, 0, 0, 1], 998);
+        replies.extend(diag_msg(1, v4, 5353, &[0, 0, 0, 0], 999));
+        // Another request's reply, and a socket on another port: ignored.
+        replies.extend(diag_msg(7, v4, 5353, &[127, 0, 0, 1], 1));
+        replies.extend(diag_msg(1, v4, 5354, &[127, 0, 0, 1], 2));
+        let mut out = Vec::new();
+        assert_eq!(
+            diag_replies(&replies, v4, 5353, 1, &mut out).unwrap(),
+            DiagBatch {
+                sockets: 3,
+                done: false
+            }
+        );
+        assert_eq!(
+            diag_replies(&done(1, 0), v4, 5353, 1, &mut out).unwrap(),
+            DiagBatch {
+                sockets: 0,
+                done: true
+            }
+        );
+        assert_eq!(
+            out,
+            vec![
+                (IpAddr::V4(Ipv4Addr::LOCALHOST), 998),
+                (IpAddr::V4(Ipv4Addr::UNSPECIFIED), 999)
+            ]
+        );
+
+        let v6 = libc::AF_INET6 as u8;
+        let mut out = Vec::new();
+        let loopback = Ipv6Addr::LOCALHOST.octets();
+        diag_replies(&diag_msg(2, v6, 53, &loopback, 5), v6, 53, 2, &mut out).unwrap();
+        assert_eq!(out, vec![(IpAddr::V6(Ipv6Addr::LOCALHOST), 5)]);
+
+        // No UDP handler: NLMSG_ERROR, or a DONE carrying the errno.
+        let error = nl(libc::NLMSG_ERROR as u16, 2, &(-libc::ENOENT).to_ne_bytes());
+        let error = diag_replies(&error, v6, 53, 2, &mut out).unwrap_err();
+        assert_eq!(errno_of(&error), (true, Some(libc::ENOENT)));
+        let error = diag_replies(&done(2, -libc::ENOENT), v6, 53, 2, &mut out).unwrap_err();
+        assert_eq!(
+            errno_of(&error),
+            (true, Some(libc::ENOENT)),
+            "a failed DONE"
+        );
+        // Any other failure is no evidence, never a fallback.
+        let error = diag_replies(&done(2, -libc::ENOBUFS), v6, 53, 2, &mut out).unwrap_err();
+        assert_eq!(errno_of(&error), (false, Some(libc::ENOBUFS)));
+        let error = nl(libc::NLMSG_ERROR as u16, 2, &(-libc::EPERM).to_ne_bytes());
+        let error = diag_replies(&error, v6, 53, 2, &mut out).unwrap_err();
+        assert_eq!(errno_of(&error), (false, Some(libc::EPERM)));
+        // An interrupted dump, a DONE without its status, a truncated
+        // reply, a wrong family, a short socket message.
+        let interrupted = nl_flags(
+            SOCK_DIAG_BY_FAMILY,
+            (libc::NLM_F_MULTI | libc::NLM_F_DUMP_INTR) as u16,
+            2,
+            &diag_msg(2, v6, 53, &loopback, 5)[NLMSG_HEADER..],
+        );
+        let error = diag_replies(&interrupted, v6, 53, 2, &mut out).unwrap_err();
+        assert_eq!(errno_of(&error), (false, None));
+        let bare_done = nl(libc::NLMSG_DONE as u16, 2, &[]);
+        assert!(matches!(
+            diag_replies(&bare_done, v6, 53, 2, &mut out),
+            Err(DiagError::Failed(_))
+        ));
+        let whole = diag_msg(2, v6, 53, &loopback, 5);
+        assert!(diag_replies(&whole[..whole.len() - 1], v6, 53, 2, &mut out).is_err());
+        let v4_reply = diag_msg(2, v4, 53, &[127, 0, 0, 1], 5);
+        assert!(diag_replies(&v4_reply, v6, 53, 2, &mut out).is_err());
+        let mut short = nl(SOCK_DIAG_BY_FAMILY, 2, &[v6; 8]);
+        assert!(diag_replies(&short, v6, 53, 2, &mut out).is_err());
+        short.truncate(10);
+        assert_eq!(
+            diag_replies(&short, v6, 53, 2, &mut out).unwrap(),
+            DiagBatch {
+                sockets: 0,
+                done: false
+            }
+        );
+    }
+
+    /// The port's sockets in one datagram are one locked snapshot of their
+    /// hash slot; spread over two, the kernel resumed the slot by position
+    /// (it can drop a row then), so the answer is refused.
+    #[test]
+    fn a_dump_split_across_datagrams_is_no_evidence() {
+        let v4 = libc::AF_INET as u8;
+        let run = |datagrams: Vec<Vec<u8>>| {
+            let mut datagrams = datagrams.into_iter();
+            let mut out = Vec::new();
+            let result = collect_dump(v4, 53, 1, &mut out, |buf| {
+                let datagram = datagrams.next().expect("the dump ended without DONE");
+                buf[..datagram.len()].copy_from_slice(&datagram);
+                Ok(datagram.len())
+            });
+            result.map(|()| out)
+        };
+        let row = |uid| diag_msg(1, v4, 53, &[127, 0, 0, 1], uid);
+        let together = [row(998), row(999)].concat();
+        assert_eq!(run(vec![together.clone(), done(1, 0)]).unwrap().len(), 2);
+        assert_eq!(
+            run(vec![[together.clone(), done(1, 0)].concat()])
+                .unwrap()
+                .len(),
+            2,
+            "DONE in the same datagram"
+        );
+        assert!(run(vec![done(1, 0)]).unwrap().is_empty(), "no socket");
+        assert!(matches!(
+            run(vec![row(998), row(999), done(1, 0)]),
+            Err(DiagError::Failed(_))
+        ));
+        // Another request's datagram in between does not count.
+        let other = diag_msg(9, v4, 53, &[127, 0, 0, 1], 1);
+        assert_eq!(run(vec![other, together, done(1, 0)]).unwrap().len(), 2);
+        // A reply long enough that the kernel may have stopped the slot walk
+        // for space, followed by DONE alone (the walk resumed by position and
+        // may have skipped a row): refused, though no second datagram held
+        // a socket.
+        let rows = row(998).len();
+        let fits = DIAG_WHOLE_SLOT_BYTES / rows;
+        let whole = (0..fits).map(|_| row(998)).collect::<Vec<_>>().concat();
+        assert_eq!(run(vec![whole.clone(), done(1, 0)]).unwrap().len(), fits);
+        let saturated = [whole, row(998)].concat();
+        assert!(saturated.len() > DIAG_WHOLE_SLOT_BYTES);
+        assert!(matches!(
+            run(vec![saturated, done(1, 0)]),
+            Err(DiagError::Failed(_))
+        ));
+    }
+
+    /// Through `ResolverPeer`: the kernel's answer is the evidence; a kernel
+    /// without UDP diag falls back to the socket tables; any other failure
+    /// records no hint, whatever the tables say.
+    #[test]
+    fn only_a_kernel_without_udp_diag_falls_back_to_the_tables() {
+        let proc = FakeProc::new("fallback");
+        proc.resolver(12, "sbx-1", 998);
+        proc.sockets(&[
+            ("udp", &loopback_hex(), 40001, 998),
+            ("udp", &loopback_hex(), 40002, 1000),
+        ]);
+        let peer = |lookup: fn(u16) -> Result<Vec<u32>, DiagError>| {
+            ResolverPeer::new(
+                PeerRoots {
+                    sockets: SocketTable::Kernel(lookup),
+                    ..proc.roots()
+                },
+                "sbx-1",
+            )
+        };
+        // The kernel's answer, not the tables', decides.
+        let mut kernel = peer(|port| Ok(if port == 40002 { vec![998] } else { vec![1000] }));
+        assert!(kernel.may_hint(from(40002)), "the kernel says the resolver");
+        assert!(!kernel.may_hint(from(40001)), "the kernel says another uid");
+        let mut unsupported = peer(|_| {
+            Err(DiagError::Unsupported(std::io::Error::from_raw_os_error(
+                libc::ENOENT,
+            )))
+        });
+        assert!(
+            unsupported.may_hint(from(40001)),
+            "the tables: the resolver"
+        );
+        assert!(
+            !unsupported.may_hint(from(40002)),
+            "the tables: another uid"
+        );
+        assert!(unsupported.diag_warned, "reported");
+        let mut failed = peer(|_| {
+            Err(DiagError::Failed(std::io::Error::from_raw_os_error(
+                libc::ETIMEDOUT,
+            )))
+        });
+        assert!(!failed.may_hint(from(40001)), "no evidence, no hint");
+        assert!(failed.diag_failed_at.is_some(), "reported");
+    }
+
+    /// The kernel names this test's own sockets, on loopback and on the
+    /// wildcard, with this uid.
+    #[test]
+    fn the_kernel_reports_who_owns_a_ports_sockets() {
+        super::fake_proc::needs_kernel_udp_diag();
+        let uid = super::fake_proc::test_uid();
+        for bind in [Ipv4Addr::LOCALHOST, Ipv4Addr::UNSPECIFIED] {
+            let socket = std::net::UdpSocket::bind((bind, 0)).unwrap();
+            let port = socket.local_addr().unwrap().port();
+            assert_eq!(
+                kernel_socket_owners(port)
+                    .expect("needs the kernel's UDP sock_diag (the udp_diag module)"),
+                vec![uid],
+                "{bind}"
+            );
+        }
+    }
+
+    /// Threads binding and closing UDP sockets on 127.0.0.1 until dropped
+    /// (also when the test panics).
+    struct Churn {
+        stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        threads: Vec<std::thread::JoinHandle<()>>,
+    }
+
+    impl Drop for Churn {
+        fn drop(&mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            for thread in self.threads.drain(..) {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// 2048 unprivileged ports outside `ip_local_port_range`, so binding
+    /// them never takes a port a parallel test freed and binds again (with
+    /// port 0, the kernel hands out only ports inside the range).
+    fn non_ephemeral_band() -> u16 {
+        let range = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+            .expect("needs /proc/sys/net/ipv4/ip_local_port_range");
+        let mut bounds = range.split_whitespace().map(|bound| bound.parse::<u32>());
+        let (Some(Ok(low)), Some(Ok(high))) = (bounds.next(), bounds.next()) else {
+            panic!("unreadable ip_local_port_range: {range:?}");
+        };
+        if low >= 1024 + 2048 {
+            return (low - 2048) as u16;
+        }
+        if high + 2048 <= 65535 {
+            return (high + 1) as u16;
+        }
+        panic!(
+            "needs 2048 unprivileged ports outside ip_local_port_range ({low}-{high}) to churn \
+             sockets without taking ephemeral ports"
+        );
+    }
+
+    /// Forced race: other threads create and close UDP sockets without
+    /// pause (as the parallel stub tests and a busy host do) while one bound
+    /// socket's owners are looked up. `/proc/net/udp`, read a page at a time,
+    /// drops that row here; the kernel's dump of the port's slot never does.
+    /// The churn binds explicit ports outside the ephemeral range.
+    #[test]
+    fn the_kernel_lookup_holds_under_socket_churn() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        super::fake_proc::needs_kernel_udp_diag();
+        let uid = super::fake_proc::test_uid();
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let band = non_ephemeral_band();
+        let binds = std::sync::Arc::new(AtomicUsize::new(0));
+        let started = std::sync::Arc::new(std::sync::Barrier::new(5));
+        let mut churn = Churn {
+            stop: std::sync::Arc::new(AtomicBool::new(false)),
+            threads: Vec::new(),
+        };
+        for thread in 0..4u16 {
+            let (stop, binds, started) = (churn.stop.clone(), binds.clone(), started.clone());
+            let band = band + thread * 512;
+            churn.threads.push(std::thread::spawn(move || {
+                started.wait();
+                let mut ring = std::collections::VecDeque::new();
+                let mut next = 0;
+                while !stop.load(Ordering::Relaxed) {
+                    next = (next + 1) % 512;
+                    if let Ok(socket) =
+                        std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, band + next))
+                    {
+                        ring.push_back(socket);
+                        binds.fetch_add(1, Ordering::Relaxed);
+                    }
+                    if ring.len() > 64 {
+                        ring.pop_front();
+                    }
+                }
+            }));
+        }
+        started.wait();
+        let missed = (0..2000)
+            .filter(|_| kernel_socket_owners(port).expect("the kernel's UDP sock_diag") != [uid])
+            .count();
+        let churned = binds.load(Ordering::Relaxed);
+        drop(churn);
+        assert_eq!(missed, 0, "lookups that missed the bound socket");
+        // The race was exercised: sockets came and went throughout.
+        assert!(churned >= 1000, "only {churned} sockets churned");
     }
 
     /// F6: a dnsmasq restart (new pid, new uid) is picked up at the next

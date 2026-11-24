@@ -26,6 +26,10 @@ thiserror.workspace = true
 libc = "0.2.191"
 nix.workspace = true
 portable-pty.workspace = true
+# The DNS stub's source check reads UDP socket owners from the kernel's
+# `sock_diag` netlink dump without `unsafe`. rustix is already in Cargo.lock
+# with these features (apps/cli); no new crate.
+rustix = { version = "1.1.6", default-features = false, features = ["std", "net"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 # `fs` for the PTY test that clears FD_CLOEXEC on a sentinel (safe `fcntl`).

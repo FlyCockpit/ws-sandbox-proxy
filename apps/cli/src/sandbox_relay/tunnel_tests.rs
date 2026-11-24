@@ -3,6 +3,7 @@
 //! exit 3 for a gone tunnel). The token picks its behaviour.
 
 use super::*;
+use crate::sandbox_relay::test_support::install_executable;
 use sandbox_runtime::FakeRuntime;
 
 const FAKE_CLIENT: &str = r#"#!/usr/bin/env python3
@@ -50,8 +51,14 @@ while True:
     conn.close()
 "#;
 
+/// The longest `sun_path` an AF_UNIX socket can bind (108 bytes with the NUL).
+const MAX_SOCKET_PATH: usize = 107;
+/// A production sandbox id is a 24-character cuid2; the tests' are shorter.
+const LONGEST_TEST_SANDBOX_ID: usize = 24;
+
 struct Fixture {
     _dir: tempfile::TempDir,
+    _run: tempfile::TempDir,
     key: String,
     base: PathBuf,
     /// Sandboxes whose lease here has lapsed.
@@ -62,18 +69,98 @@ struct Fixture {
     manager: TunnelManager,
 }
 
+/// Threads that fork and exec `true` without pause until dropped (also when
+/// the test panics).
+struct Forkers {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for Forkers {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for thread in self.threads.drain(..) {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// Forced race for `install_executable`: other threads fork and exec without
+/// pause while stand-ins are installed and executed at once, as the parallel
+/// tunnel tests do. A stand-in written by this process (`std::fs::write`, as
+/// this fixture did) fails here with ETXTBSY.
+#[test]
+fn a_stand_in_executes_at_once_while_other_threads_fork() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let forks = Arc::new(AtomicUsize::new(0));
+    let started = Arc::new(std::sync::Barrier::new(3));
+    let mut forkers = Forkers {
+        stop: Arc::new(AtomicBool::new(false)),
+        threads: Vec::new(),
+    };
+    for _ in 0..2 {
+        let (stop, forks, started) = (forkers.stop.clone(), forks.clone(), started.clone());
+        forkers.threads.push(std::thread::spawn(move || {
+            started.wait();
+            while !stop.load(Ordering::Relaxed) {
+                if std::process::Command::new("true").status().is_ok() {
+                    forks.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }));
+    }
+    started.wait();
+    let dir = tempfile::tempdir().unwrap();
+    let mut failures = Vec::new();
+    for i in 0..200 {
+        let path = dir.path().join(format!("stand-in-{i}"));
+        install_executable(&path, "#!/bin/sh\nexit 0\n", 0o555);
+        match std::process::Command::new(&path).status() {
+            Ok(status) if status.success() => {}
+            other => failures.push(format!("{i}: {other:?}")),
+        }
+    }
+    let forked = forks.load(Ordering::Relaxed);
+    drop(forkers);
+    assert!(
+        failures.is_empty(),
+        "stand-ins that did not run: {failures:?}"
+    );
+    // The race was exercised: the other threads forked throughout.
+    assert!(forked >= 50, "only {forked} concurrent forks");
+}
+
 fn fixture(tamper: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let client = dir.path().join("tunnel-client");
-    std::fs::write(&client, FAKE_CLIENT).unwrap();
-    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Installed, never written by this process: a concurrent fork would
+    // keep a write descriptor and the client's exec fail with ETXTBSY.
+    install_executable(&client, FAKE_CLIENT, 0o555);
     let mut sha = file_sha256(&client).unwrap();
     if tamper {
         sha = "0".repeat(64);
     }
     // Unique per fixture: a sweep never touches another test's clients.
     let key = node_key(dir.path());
-    let base = node_base(&dir.path().join("run"), &key);
+    // The stand-in for `$XDG_RUNTIME_DIR` (`/run/user/<uid>` in production):
+    // short and private, NOT under `TMPDIR`, because each client's
+    // `daemon.sock` lives below it and an AF_UNIX path holds at most 107
+    // bytes. Under a long `TMPDIR` (`~/orch/<run>/tmp` on the Halos) the
+    // socket could not be bound and the client stayed Connecting.
+    let run = tempfile::Builder::new()
+        .prefix("wssp-tun-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let base = node_base(run.path(), &key);
+    let longest_socket = base
+        .join("x".repeat(LONGEST_TEST_SANDBOX_ID))
+        .join(STATE_SUBDIR)
+        .join("daemon.sock");
+    assert!(
+        longest_socket.as_os_str().len() <= MAX_SOCKET_PATH,
+        "the fixture's client sockets must fit an AF_UNIX path: {}",
+        longest_socket.display()
+    );
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -110,6 +197,7 @@ fn fixture(tamper: bool) -> Fixture {
     );
     Fixture {
         _dir: dir,
+        _run: run,
         key,
         base,
         lapsed,

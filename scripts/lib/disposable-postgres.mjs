@@ -19,10 +19,13 @@
  * exits. Each owned tree is spawned with a unique `WSSP_OWNED_PROCESS_TREE`
  * marker in its environment; on Linux, teardown also finds every process that
  * inherited it (via /proc), so a group orphaned the instant its creator exits
- * is still owned. Limits: a descendant that starts with a scrubbed
+ * is still owned, as is a chain of such handoffs (a double fork) that a scan
+ * catches midway. Limits: a descendant that starts with a scrubbed
  * environment (`env -i`, a runner that drops unlisted variables) carries no
- * marker and is found only while it is still below the tree; off Linux there
- * is no /proc, so only the live ancestry is followed.
+ * marker and is found only while it is still below the tree; a process that
+ * exits between its /proc listing and the read of its environment, after
+ * handing off, is not seen in that scan; off Linux there is no /proc, so only
+ * the live ancestry is followed.
  *
  * Docker failures never echo argv: `--env` values are redacted from every
  * error this module throws. The container password never reaches
@@ -346,7 +349,7 @@ function markedGroups(marker) {
  * and the failure is reported loudly (the process exits non-zero), never
  * silently degraded.
  */
-function treeGroups(group, reported = new Set()) {
+function treeGroups(group, reported = new Set(), found = {}) {
   // Teardown rescans repeatedly; each kind of listing failure is reported once.
   const report = (kind, message) => {
     if (reported.has(kind)) return;
@@ -354,8 +357,11 @@ function treeGroups(group, reported = new Set()) {
     teardownFailure(message);
   };
   const seeds = new Set([group.pgid]);
+  found.marked = 0;
   try {
-    for (const pgid of markedGroups(group.marker) ?? []) seeds.add(pgid);
+    const marked = markedGroups(group.marker) ?? new Set();
+    found.marked = marked.size;
+    for (const pgid of marked) seeds.add(pgid);
   } catch (error) {
     report(
       "proc",
@@ -377,8 +383,10 @@ function treeGroups(group, reported = new Set()) {
 
 /**
  * Terminates one owned tree and returns true once it is gone. The tree is
- * rescanned until a scan finds nothing alive, because a process handling the
- * signal may create a new group (or orphan one) that no earlier scan held:
+ * rescanned until a scan that finds nothing alive is followed by one that
+ * finds nothing alive and no marked process at all, because a process
+ * handling the signal may create a new group (or orphan one) that no earlier
+ * scan held, even while that scan runs:
  * every group seen for the first time gets `signal`, and once the TERM grace
  * has passed every group still alive gets SIGKILL. Past the total bound the
  * survivors are reported loudly (the process exits non-zero) and it returns false.
@@ -390,16 +398,35 @@ async function terminateGroup(group, signal = "SIGTERM") {
   const reported = new Set();
   const signalled = new Map();
   let leaderAwaited = false;
+  let confirming = false;
   for (;;) {
-    const alive = [...treeGroups(group, reported)].filter(groupAlive);
-    if (alive.length === 0) return true;
+    const found = {};
+    const alive = [...treeGroups(group, reported, found)].filter(groupAlive);
+    // A scan lists /proc, then runs ps, then checks liveness. A process that
+    // hands off to a new detached group after the listing and exits before
+    // the check is seen dead while its successor is in neither listing. So
+    // an empty scan is final only once a scan started after it finds nothing
+    // alive AND listed no process carrying the marker at all: a marked
+    // process it listed may have handed off again meanwhile (a double fork),
+    // and the next scan finds the successor.
+    if (alive.length === 0 && confirming && found.marked === 0) return true;
     const now = Date.now();
+    // Every path is bounded: a tree that keeps handing off is a failure too.
     if (now >= giveUpAt) {
       teardownFailure(
-        `process group(s) ${alive.join(", ")} of the tree led by ${group.pgid} survived SIGKILL for ${GROUP_KILL_GRACE_MS} ms; they may still be using a database that is about to be removed`,
+        alive.length > 0
+          ? `process group(s) ${alive.join(", ")} of the tree led by ${group.pgid} survived SIGKILL for ${GROUP_KILL_GRACE_MS} ms; they may still be using a database that is about to be removed`
+          : `the tree led by ${group.pgid} kept handing off to new process groups for ${now - started} ms, so its end could not be confirmed; a descendant may still be using a database that is about to be removed`,
       );
       return false;
     }
+    if (alive.length === 0) {
+      confirming = true;
+      // Yield (signal handlers, timers) before the confirming scan.
+      await delay(10);
+      continue;
+    }
+    confirming = false;
     const next = now >= killAt ? "SIGKILL" : signal;
     for (const pgid of alive) {
       if (signalled.get(pgid) === next || signalled.get(pgid) === "SIGKILL") continue;

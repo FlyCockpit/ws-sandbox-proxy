@@ -411,11 +411,11 @@ mod tests {
     fn the_command_reaches_the_guest_shell_as_one_untouched_argument() {
         let dir = tempfile::tempdir().unwrap();
         let shell = dir.path().join("shell");
-        std::fs::write(&shell, "#!/bin/sh\nprintf '%s\\0' \"$@\"\n").unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::sandbox_relay::test_support::install_executable(
+            &shell,
+            "#!/bin/sh\nprintf '%s\\0' \"$@\"\n",
+            0o755,
+        );
         let mut generator = Gen(0x5eed_1234_abcd_0001);
         let mut checked = 0;
         for round in 0..96 {
@@ -457,11 +457,11 @@ mod tests {
     fn the_sftp_probe_runs_the_first_server_or_names_the_package() {
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("sftp-server");
-        std::fs::write(&fake, "#!/bin/sh\necho fake-sftp\n").unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::sandbox_relay::test_support::install_executable(
+            &fake,
+            "#!/bin/sh\necho fake-sftp\n",
+            0o755,
+        );
         let fake = fake.to_str().unwrap().to_owned();
         let run = |paths: &[&str]| {
             let argv = sftp_argv(paths);
