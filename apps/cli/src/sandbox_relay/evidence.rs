@@ -47,7 +47,6 @@ pub(super) type PoolHealth = Vec<(String, String, bool)>;
 /// this long means the transport is gone.
 pub(super) const EXPIRY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// One digest arm per sandbox: `(generation, revision, state)`.
 /// Last published state of a sandbox's lease arm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ExpiryArmState {
@@ -61,6 +60,7 @@ pub(super) enum ExpiryArmState {
 /// Last published expiry arm per sandbox: (generation, revision, state).
 pub(super) type ExpiryReported = std::collections::BTreeMap<String, (u64, u64, ExpiryArmState)>;
 
+/// One digest arm per sandbox: `(generation, revision, state)`.
 type Arm = (u64, u64, ExpiryArmState);
 
 /// The journal's pool binding of an entry's root: `(name, marker)`.
