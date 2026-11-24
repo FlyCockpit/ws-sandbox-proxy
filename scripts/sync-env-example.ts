@@ -11,7 +11,7 @@
  * key or group that doesn't exist, a variable declared inline in a createEnv
  * call instead of in packages/env/src/vars/, a stale generated .env.example,
  * and a root .env.example whose documented-key count blew the presentation
- * budget (70).
+ * budget (71).
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -210,7 +210,7 @@ function renderFile(spec: FileSpec): string {
 
 /**
  * Lines that assign a key, commented or not — the "documented keys" count the
- * ≤70 budget is measured against. Prose comments never match: an assignment
+ * ≤71 budget is measured against. Prose comments never match: an assignment
  * line is `KEY=` optionally under a single leading `#`.
  */
 function countDocumentedKeys(content: string): number {
@@ -218,7 +218,7 @@ function countDocumentedKeys(content: string): number {
 }
 
 /** Ceiling on documented keys in the root .env.example — the collapse budget. */
-const ROOT_EXAMPLE_KEY_BUDGET = 70;
+const ROOT_EXAMPLE_KEY_BUDGET = 71;
 
 // ---------------------------------------------------------------------------
 // Main

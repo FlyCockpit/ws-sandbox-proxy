@@ -662,13 +662,10 @@ export const ENV_VARS: EnvVar[] = [
   },
   {
     key: "SETUP_KEY",
-    // One-shot bootstrap credential: documented in
-    // docs/operations/environment-variables.md § First-admin setup key and
-    // docs/operations/deployment.md, not in the budgeted .env.example.
-    hidden: true,
     group: "admin",
     source: "manual",
     secret: true,
+    example: "",
     comment: [
       "First-admin bootstrap without email (optional; unset by default). While",
       "set, `pnpm deploy:generate-admin` prints a one-time set-password link that",
