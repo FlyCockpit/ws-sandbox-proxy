@@ -2,10 +2,10 @@
 //! what the server says about its key (`GET /v1/key`).
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::api::Client;
-use crate::commands::login::Granted;
+use crate::commands::login::{Granted, KeyInfo};
 use crate::output;
 use crate::user_state::{CredentialSource, require_credential};
 
@@ -18,30 +18,6 @@ pub struct Args {
     /// Emit JSON instead of human-readable text.
     #[arg(long)]
     pub json: bool,
-}
-
-/// `GET /v1/key` (packages/sandbox-contracts/src/keys.ts `keyInfoSchema`).
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyInfo {
-    pub id: String,
-    pub name: String,
-    pub origin: String,
-    pub scopes: Vec<String>,
-    pub resource_mode: String,
-    pub pool_mode: String,
-    pub pools: Vec<KeyPool>,
-    pub own_sandboxes_only: bool,
-    pub expires_at: Option<String>,
-    pub max_live_sandboxes: Option<u32>,
-    pub live_sandboxes: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct KeyPool {
-    pub id: String,
-    pub slug: String,
-    pub label: String,
 }
 
 #[derive(Serialize)]

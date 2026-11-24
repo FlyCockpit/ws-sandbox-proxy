@@ -11,9 +11,10 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::auth::canonical_control_plane_origin;
-use crate::config::Config;
+
 use crate::output;
 use crate::slug::validate_host_slug;
+use crate::state::{load_config, update_config};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -154,7 +155,7 @@ pub fn run(args: &Args) -> Result<()> {
             if matches!(value, OnOff::On) {
                 confirm_host_access_raise()?;
             }
-            Config::update(|cfg| cfg.set_agent_host_commands(matches!(value, OnOff::On)))?;
+            update_config(|cfg| cfg.set_agent_host_commands(matches!(value, OnOff::On)))?;
             set_bool(
                 args.json,
                 "allowAgentHostCommands",
@@ -167,12 +168,12 @@ pub fn run(args: &Args) -> Result<()> {
                 .checked_mul(1000)
                 .filter(|v| sandbox_protocol::valid_host_command_max_ms(*v))
                 .context("host command time must be 1..86400 seconds")?;
-            let current = Config::load()?;
+            let current = load_config()?;
             let confirmed = ms > current.host_command_max_ms;
             if confirmed {
                 confirm_host_access_raise()?;
             }
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 anyhow::ensure!(
                     confirmed || ms <= cfg.host_command_max_ms,
                     "policy changed; retry the local command"
@@ -189,9 +190,9 @@ pub fn run(args: &Args) -> Result<()> {
             }
         }
         Sub::SetHostFileRoots { paths } => {
-            let mut proposed = Config::load()?;
+            let mut proposed = load_config()?;
             proposed.set_host_file_roots(paths)?;
-            let current = Config::load()?;
+            let current = load_config()?;
             let confirmed = proposed
                 .host_file_roots
                 .iter()
@@ -199,7 +200,7 @@ pub fn run(args: &Args) -> Result<()> {
             if confirmed {
                 confirm_host_access_raise()?;
             }
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 anyhow::ensure!(
                     confirmed
                         || proposed
@@ -213,14 +214,14 @@ pub fn run(args: &Args) -> Result<()> {
             set_bool(args.json, "hostFiles", !paths.is_empty(), "host file roots")?;
         }
         Sub::ClearHostFileRoots => {
-            Config::update(|cfg| cfg.set_host_file_roots(&[]))?;
+            update_config(|cfg| cfg.set_host_file_roots(&[]))?;
             set_bool(args.json, "hostFiles", false, "host file roots")?;
         }
         Sub::SetHostTerminal { value } => {
             if matches!(value, OnOff::On) {
                 confirm_host_access_raise()?;
             }
-            Config::update(|cfg| cfg.set_host_terminal(matches!(value, OnOff::On)))?;
+            update_config(|cfg| cfg.set_host_terminal(matches!(value, OnOff::On)))?;
             if args.json {
                 output::json(&SetValue {
                     key: "allowHostTerminal",
@@ -234,7 +235,7 @@ pub fn run(args: &Args) -> Result<()> {
             if !matches!(value, TotpMode::Required) {
                 confirm_host_access_raise()?;
             }
-            Config::update(|cfg| cfg.set_host_terminal_totp(matches!(value, TotpMode::Required)))?;
+            update_config(|cfg| cfg.set_host_terminal_totp(matches!(value, TotpMode::Required)))?;
             if args.json {
                 output::json(&SetValue {
                     key: "hostTerminalRequireTotp",
@@ -246,7 +247,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetMaxLease { value } => {
             let parsed = crate::config::MaxLease::parse(value)?;
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.set_max_lease(parsed);
                 Ok(())
             })?;
@@ -266,7 +267,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetCarryIntentWindow { value } => {
             let parsed = crate::config::CarryIntentWindow::parse_setting(value)?;
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.set_carry_intent_window(parsed);
                 Ok(())
             })?;
@@ -284,7 +285,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetMaxCarry { value } => {
             let parsed = crate::config::MaxCarry::parse_setting(value)?;
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.set_max_carry(parsed);
                 Ok(())
             })?;
@@ -306,7 +307,7 @@ pub fn run(args: &Args) -> Result<()> {
                 BuilderMode::Off => Some(false),
                 BuilderMode::Default => None,
             };
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.set_builder(builder);
                 Ok(())
             })?;
@@ -324,7 +325,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetAcceptForeignBuilds { value } => {
             let accept = matches!(value, OnOff::On);
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.set_accept_foreign_builds(accept);
                 Ok(())
             })?;
@@ -341,7 +342,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetOpenEgressForOthers { value } => {
             let on = matches!(value, OnOff::On);
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.allow_open_egress_for_others = Some(on);
                 Ok(())
             })?;
@@ -363,7 +364,7 @@ pub fn run(args: &Args) -> Result<()> {
                 BuilderMode::Off => Some(false),
                 BuilderMode::Default => None,
             };
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.allow_guest_sudo_for_others = setting;
                 Ok(())
             })?;
@@ -382,7 +383,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetEgressBlockSmtp { value } => {
             let on = matches!(value, OnOff::On);
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.egress_block_smtp = on;
                 Ok(())
             })?;
@@ -395,7 +396,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetEgressBlockExternalDns { value } => {
             let on = matches!(value, OnOff::On);
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.egress_block_external_dns = on;
                 Ok(())
             })?;
@@ -412,7 +413,7 @@ pub fn run(args: &Args) -> Result<()> {
                 (Some(text), false) => crate::config::parse_dns_upstreams(text)?,
                 (None, false) => anyhow::bail!("give the upstream addresses or `--clear`"),
             };
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.egress_dns_upstreams = parsed.clone();
                 Ok(())
             })?;
@@ -579,9 +580,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::Init => {
             let path = crate::paths::config_file()?;
-            let created = Config::default()
-                .save_new()
-                .context("writing the default config file")?;
+            let created = crate::state::init_config().context("writing the default config file")?;
 
             if args.json {
                 output::json(&ConfigInit::new(&path, created))?;
@@ -593,7 +592,7 @@ pub fn run(args: &Args) -> Result<()> {
         }
         Sub::SetServer { url } => {
             let saved = canonical_control_plane_origin(url)?;
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.server_url = Some(saved.clone());
                 Ok(())
             })?;
@@ -609,7 +608,7 @@ pub fn run(args: &Args) -> Result<()> {
         Sub::SetCaFile { path } => {
             let trust = crate::tls::Trust::load(Some(path))?;
             let saved = trust.ca_file;
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.ca_file = saved.clone();
                 Ok(())
             })?;
@@ -622,7 +621,7 @@ pub fn run(args: &Args) -> Result<()> {
             }
         }
         Sub::ClearCaFile => {
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.ca_file = None;
                 Ok(())
             })?;
@@ -635,7 +634,7 @@ pub fn run(args: &Args) -> Result<()> {
         Sub::SetSlug { slug } => {
             validate_host_slug(slug)?;
             let saved = slug.clone();
-            Config::update(|cfg| {
+            update_config(|cfg| {
                 cfg.host_slug = Some(saved.clone());
                 Ok(())
             })?;
