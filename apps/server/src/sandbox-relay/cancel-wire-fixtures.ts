@@ -6,7 +6,17 @@ import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -455,7 +465,7 @@ process.stdin.resume();
  * `fixtureProcesses`). `stopWireHost`/`crashWireHost` retire it once the
  * daemon's group is gone; `removeWireDir` still owns the normal teardown.
  */
-function watchWireHost(child: ChildProcess, dir: string) {
+export function watchWireHost(child: ChildProcess, dir: string) {
   if (!child.pid) return;
   // Synchronously, before Node can reap the child (see WATCHDOG_SCRIPT).
   let start = "";
@@ -522,14 +532,145 @@ export async function stopWireHost(child: ChildProcess | undefined) {
   retireWatchdog(child);
 }
 
-/** SIGKILL the daemon's process group; false when it had already exited. */
-export async function crashWireHost(child: ChildProcess | undefined): Promise<boolean> {
+/**
+ * Crash the daemon as its supervisor restarts it. Every daemon spawn (each
+ * `incus` call and helper) leads its own process group, so a SIGKILL of the
+ * daemon's group misses a child still between spawn and exec, and that child
+ * shares the journal lock's open file description until exec closes it
+ * (O_CLOEXEC). The production unit's cgroup kill ends such a child before any
+ * restart; a group kill alone let a restart here find the lock held and
+ * refuse the journal ("would block"). So: stop the daemon (it spawns nothing
+ * more), kill each child of it still running the daemon's image, kill the
+ * group, and require the journal lock of `dir` to be free. False when the
+ * daemon had already exited.
+ *
+ * Only the daemon process is stopped, never its group: a vfork child before
+ * its `setpgid` is still in that group, and stopping it would leave the
+ * spawning thread waiting for its exec, unstoppable.
+ */
+export async function crashWireHost(
+  child: ChildProcess | undefined,
+  dir: string,
+): Promise<boolean> {
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return false;
+  const pid = child.pid;
   const stopped = once(child, "exit");
-  process.kill(-child.pid, "SIGKILL");
+  // Readable only while the daemon is dumpable (the real one is not).
+  const image = await readlink(`/proc/${pid}/exe`).catch(() => undefined);
+  process.kill(pid, "SIGSTOP");
+  // A thread blocked in vfork stops only once its child is past exec's mm
+  // switch; after that no thread of the daemon spawns anything.
+  await untilEvery(
+    async () => (await readdir(`/proc/${pid}/task`).catch(() => [])).map((t) => `${pid}/task/${t}`),
+    "daemon threads stopped",
+  );
+  const unexeced: number[] = [];
+  for (const spawned of await childrenOf(pid)) {
+    // Stopped, it cannot finish an exec between the check and the kill.
+    try {
+      process.kill(spawned, "SIGSTOP");
+    } catch {
+      continue;
+    }
+    await untilEvery(async () => [String(spawned)], "daemon child stopped");
+    // A daemon child before exec still runs the daemon's image. The daemon is
+    // non-dumpable (`harden_process`) and so is that child until exec, so its
+    // image cannot be read at all; an exec'd child is readable again.
+    const exe = await readlink(`/proc/${spawned}/exe`).then(
+      (target) => target,
+      (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? null : undefined),
+    );
+    if (exe === null) continue;
+    if (exe === undefined || exe === image) {
+      unexeced.push(spawned);
+      signalPid(spawned, "SIGKILL");
+    } else signalPid(spawned, "SIGCONT");
+  }
+  process.kill(-pid, "SIGKILL");
   await stopped;
+  // A killed process releases its descriptors before it becomes a zombie.
+  await untilEvery(async () => unexeced.map(String), "unexeced daemon children exited", "ZX");
+  // Every other process let go of the lock at exec: still held means a
+  // descriptor leak in the daemon, a product bug this crash must not hide.
+  // The watchdog stays until then: a failed crash leaves the case's fixture
+  // processes to it (worker death) or to `stopEveryWireHost` (teardown).
+  if (await journalLockHeld(dir))
+    throw new Error("journal lock still held after the crash: a descriptor leak survived exec");
   retireWatchdog(child);
   return true;
+}
+
+/** The daemon's journal lock: <data>/relay/<sha256(hostId)>/LOCK. */
+export function wireJournalLock(dir: string) {
+  return join(dirname(wireRuntimeDir(dir)), "LOCK");
+}
+
+/** Whether another open file description holds the journal lock of `dir`. */
+export async function journalLockHeld(dir: string) {
+  const lock = wireJournalLock(dir);
+  // No lock file: no daemon ever opened this journal. Any other error fails.
+  const present = await access(lock).then(
+    () => true,
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    },
+  );
+  if (!present) return false;
+  // `flock` exits 75 on conflict only, so a failed probe is never "held".
+  return execFileAsync("flock", ["-n", "-E", "75", lock, "true"]).then(
+    () => false,
+    (error: { code?: unknown }) => {
+      if (error.code === 75) return true;
+      throw error;
+    },
+  );
+}
+
+function signalPid(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(pid, signal);
+  } catch {
+    /* already exited */
+  }
+}
+
+/** `/proc/<pid>/stat` state letter, or undefined once the process is gone. */
+async function procState(path: string) {
+  const stat = await readFile(`/proc/${path}/stat`, "utf8").catch(() => "");
+  return stat ? stat.slice(stat.lastIndexOf(")") + 2, stat.lastIndexOf(")") + 3) : undefined;
+}
+
+/**
+ * Until every listed /proc entry is gone or in one of `states` (default:
+ * stopped). The bound only turns a hang into a labelled failure.
+ */
+async function untilEvery(list: () => Promise<string[]>, label: string, states = "TtZX") {
+  const until = Date.now() + 30_000;
+  for (;;) {
+    const pending: string[] = [];
+    for (const path of await list()) {
+      const state = await procState(path);
+      if (state !== undefined && !states.includes(state)) pending.push(`${path}:${state}`);
+    }
+    if (pending.length === 0) return;
+    if (Date.now() > until) throw new Error(`${label}: still running ${pending.join(", ")}`);
+    await delay(5);
+  }
+}
+
+/**
+ * Live children of `parent`, in any process group: a fork child can still
+ * be in the parent's group, before its own `setpgid`.
+ */
+async function childrenOf(parent: number): Promise<number[]> {
+  const children: number[] = [];
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = await readFile(`/proc/${entry}/stat`, "utf8").catch(() => "");
+    if (stat && statIds(stat).ppid === parent) children.push(Number(entry));
+  }
+  return children;
 }
 
 /** `/proc/<pid>/stat` fields after the command name: ppid, pgid, sid. */

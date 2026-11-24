@@ -1368,13 +1368,50 @@ describe("D-20 timerless command consumers", () => {
     expect(calls.filter((c) => c.init.method === "POST")).toHaveLength(1);
     expect(calls.some((c) => c.url.pathname.endsWith("/cancel"))).toBe(false);
   });
+  // One wait budget covers the submission and the observation. Time moves
+  // only once the observation read is in flight, so the deadline lands on the
+  // phase each case names, never on whichever one the scheduler reached first.
+  function observedHarness(receiptDelayMs: number) {
+    vi.useFakeTimers();
+    let observing!: () => void;
+    const observed = new Promise<void>((resolve) => {
+      observing = resolve;
+    });
+    const h = harness(
+      receiptDelayMs === 0
+        ? receipt()
+        : () =>
+            new Promise<Response>((resolve) =>
+              setTimeout(() => resolve(receipt()), receiptDelayMs),
+            ),
+      () => {
+        observing();
+        return new Promise<Response>(() => {});
+      },
+    );
+    return { h, observed };
+  }
   it("finite observation timeout detaches a timerless command without cancel", async () => {
     zeroPolicy.enabled = true;
-    const h = harness(receipt(), () => new Promise<Response>(() => {}));
-    expect(
-      await rejected(h.client.commands.run("sbx", "true", { timeoutMs: 0, waitTimeoutMs: 20 })),
-    ).toMatchObject({ kind: "timeout", operationId: "op" });
+    const { h, observed } = observedHarness(0);
+    const pending = rejected(
+      h.client.commands.run("sbx", "true", { timeoutMs: 0, waitTimeoutMs: 20 }),
+    );
+    await observed;
+    await vi.advanceTimersByTimeAsync(20);
+    expect(await pending).toMatchObject({ kind: "timeout", operationId: "op" });
     expect(h.calls.filter((c) => c.init.method === "POST")).toHaveLength(1);
+    expect(h.calls.some((c) => c.url.pathname.endsWith("/cancel"))).toBe(false);
+  });
+  it("a receipt slower than the wait budget leaves a timerless submission unknown", async () => {
+    zeroPolicy.enabled = true;
+    const { h } = observedHarness(21);
+    const pending = rejected(
+      h.client.commands.run("sbx", "true", { timeoutMs: 0, waitTimeoutMs: 20 }),
+    );
+    await vi.advanceTimersByTimeAsync(21);
+    expect(await pending).toMatchObject({ kind: "unknown", reason: "timeout", operationId: null });
+    expect(h.calls).toHaveLength(1);
     expect(h.calls.some((c) => c.url.pathname.endsWith("/cancel"))).toBe(false);
   });
 });

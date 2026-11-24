@@ -18,7 +18,18 @@ vi.mock("@wssp/api/lib/host-token-access", async (importOriginal) => ({
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -51,6 +62,7 @@ import {
   crashWireHost,
   type FakeGuard,
   installWireDelegates,
+  journalLockHeld,
   readListedFile,
   releaseWireFixture,
   removeWireDir,
@@ -61,6 +73,8 @@ import {
   WIRE_EXPIRY_OBSERVATION_MS,
   WIRE_GUEST_TERMINATE_MS,
   WIRE_STORAGE_POLL_MS,
+  watchWireHost,
+  wireJournalLock,
   pinnedSize as wirePinnedSize,
   wireStore,
   writeBootstrapVm,
@@ -292,7 +306,7 @@ async function stopHost() {
   await stopWireHost(child);
 }
 async function crashHost() {
-  if (await crashWireHost(host)) host = undefined;
+  if (await crashWireHost(host, dir)) host = undefined;
 }
 const execFileAsync = promisify(execFile);
 async function armHostLease(
@@ -1475,6 +1489,169 @@ it.each(["normal", "blocked", "failed"])(
   },
   CASE_BUDGET.oneSession + HELD_HELPER_BOUND_MS,
 );
+
+// A daemon double that hardens itself as the daemon does (non-dumpable) and
+// takes the journal lock the daemon's way (flock on an O_CLOEXEC descriptor).
+// "unexeced": a fork child leads its own process group and never reaches exec
+// (the window between spawn and exec, held open). "leaked": the descriptor is
+// made inheritable and that child execs another image, as a daemon
+// descriptor leak would. "vfork": a thread spawns through glibc posix_spawn
+// (vfork, as the daemon's std::process::Command does) with no process group
+// of its own; the child waits in an open of the `release` FIFO before exec,
+// so it is in the daemon's group and the spawning thread cannot stop.
+const LOCK_HOLDER_DOUBLE = `
+import ctypes, fcntl, os, sys, threading, time
+lock, ready, mode = sys.argv[1], sys.argv[2], sys.argv[3]
+assert ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) == 0  # PR_SET_DUMPABLE
+fd = os.open(lock, os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+def publish(pid):
+    with open(ready + ".tmp", "w") as f:
+        f.write(str(pid))
+    os.rename(ready + ".tmp", ready)
+if mode == "vfork":
+    release = os.path.join(os.path.dirname(ready), "release")
+    os.mkfifo(release)
+    open_release = [(os.POSIX_SPAWN_OPEN, 3, release, os.O_RDONLY, 0)]
+    spawn = lambda: os.posix_spawn("/bin/sleep", ["sleep", "600"], os.environ, file_actions=open_release)
+    publish(os.getpid())  # first: the vfork wait keeps the GIL
+    threading.Thread(target=spawn, daemon=True).start()
+elif os.fork() == 0:
+    os.setpgid(0, 0)
+    publish(os.getpid())
+    if mode == "leaked":
+        os.set_inheritable(fd, True)
+        os.execv("/bin/sh", ["sh", "-c", "sleep 600; :", lock])
+    time.sleep(600)
+    os._exit(0)
+time.sleep(600)
+`;
+async function lockHolderDouble(mode: "unexeced" | "leaked" | "vfork") {
+  dir = await mkdtemp(join(tmpdir(), "wssp-c10-wire-"));
+  await mkdir(dirname(wireJournalLock(dir)), { recursive: true });
+  host = spawn(
+    "python3",
+    ["-c", LOCK_HOLDER_DOUBLE, wireJournalLock(dir), join(dir, "holder-pid"), mode],
+    { detached: true, stdio: "ignore" },
+  );
+  // A worker that dies mid-case still takes the double and its children.
+  watchWireHost(host, dir);
+  await until(() => exists("holder-pid"), "double published its holder");
+  const pid = Number(await readFile(join(dir, "holder-pid"), "utf8"));
+  // The leaked child must have finished its exec before the crash reads it.
+  if (mode === "leaked")
+    await until(
+      async () => (await readFile(`/proc/${pid}/cmdline`, "utf8")).startsWith("sh"),
+      "leaked holder exec'd",
+    );
+  if (mode === "vfork")
+    await until(async () => (await childOf(pid)) !== undefined, "vfork child waits before exec");
+  expect(await journalLockHeld(dir)).toBe(true);
+  return pid;
+}
+
+/** `/proc/<pid>/stat` fields after the command name (state first). */
+async function procFields(pid: number | string) {
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => "");
+  return stat ? stat.slice(stat.lastIndexOf(")") + 2).split(" ") : undefined;
+}
+async function procAlive(pid: number) {
+  const state = (await procFields(pid))?.[0];
+  return state !== undefined && state !== "Z" && state !== "X";
+}
+/** Live worker-death watchdogs (`watchWireHost`) guarding `daemon`. */
+async function watchdogsOf(daemon: number) {
+  const found: number[] = [];
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/.test(entry)) continue;
+    const argv = (await readFile(`/proc/${entry}/cmdline`, "utf8").catch(() => "")).split("\0");
+    if (
+      argv[1] === "-e" &&
+      argv[2]?.includes("WSSP_WIRE_WATCHDOG_ROOT") &&
+      argv[3] === String(daemon)
+    )
+      found.push(Number(entry));
+  }
+  return found;
+}
+async function childOf(parent: number) {
+  for (const entry of await readdir("/proc"))
+    if (/^\d+$/.test(entry) && Number((await procFields(entry))?.[1]) === parent)
+      return Number(entry);
+  return undefined;
+}
+/**
+ * Once the double is stopped, open the release FIFO's write end so its vfork
+ * child goes on to exec. While nothing waits to read (a stopped child left its
+ * open), the non-blocking open fails with ENXIO and is retried.
+ */
+async function releaseOnceStopped(pid: number, settled: () => boolean) {
+  while (!settled()) {
+    if ((await procFields(pid))?.[0] === "T") {
+      const writer = await open(
+        join(dir, "release"),
+        constants.O_WRONLY | constants.O_NONBLOCK,
+      ).catch(() => undefined);
+      if (writer) {
+        await writer.close();
+        return true;
+      }
+    }
+    await delay(5);
+  }
+  return false;
+}
+
+it("crash fixture: a process-group kill leaves a spawn child before exec holding the journal lock", async () => {
+  await lockHolderDouble("unexeced");
+  const child = host!;
+  host = undefined;
+  const exited = once(child, "exit");
+  process.kill(-child.pid!, "SIGKILL");
+  await exited;
+  expect(await journalLockHeld(dir)).toBe(true);
+});
+
+it("crash fixture: a crash also ends a non-dumpable spawn child before exec, so the restart finds the journal lock free", async () => {
+  const pid = await lockHolderDouble("unexeced");
+  const daemon = host!.pid!;
+  await expect(readlink(`/proc/${pid}/exe`)).rejects.toMatchObject({ code: "EACCES" });
+  expect(await watchdogsOf(daemon)).toHaveLength(1);
+  expect(await crashWireHost(host, dir)).toBe(true);
+  host = undefined;
+  expect(await journalLockHeld(dir)).toBe(false);
+  await until(async () => (await watchdogsOf(daemon)).length === 0, "watchdog retired");
+});
+
+it("crash fixture: a crash stops only the daemon, so a vfork child before its setpgid still execs and the crash completes", async () => {
+  const pid = await lockHolderDouble("vfork");
+  let settled = false;
+  const crash = crashWireHost(host, dir).finally(() => {
+    settled = true;
+  });
+  const released = releaseOnceStopped(pid, () => settled);
+  expect(await crash).toBe(true);
+  host = undefined;
+  expect(await released).toBe(true);
+  expect(await journalLockHeld(dir)).toBe(false);
+});
+
+it("crash fixture: an exec'd process keeping the journal lock fails the crash and is never killed", async () => {
+  const pid = await lockHolderDouble("leaked");
+  const daemon = host!.pid!;
+  try {
+    await expect(crashWireHost(host, dir)).rejects.toThrow(
+      "journal lock still held after the crash: a descriptor leak survived exec",
+    );
+    host = undefined;
+    expect(await procAlive(pid)).toBe(true);
+    expect(await journalLockHeld(dir)).toBe(true);
+    // A worker dying now must still take the surviving holder with it.
+    expect(await watchdogsOf(daemon)).toHaveLength(1);
+  } finally {
+    process.kill(-pid, "SIGKILL");
+  }
+});
 
 it("1.0 wire: a precise missing-path stat keeps the session open", async () => {
   await setup("stat-missing");
