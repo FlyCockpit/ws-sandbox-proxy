@@ -24,6 +24,8 @@ URL, because the file is stored in Dokploy. `--git-url local` writes
 `BUILD_VERSION` (the image never reads `.git`, which `.dockerignore` excludes):
 production defaults it to the tag's SHA; for development set `BUILD_VERSION` to
 the deployed `main` SHA in Dokploy's environment, or `/ready` reports no commit.
+No public IP (a home server)? Put a Cloudflare Tunnel in front instead:
+[Home server behind a Cloudflare Tunnel](#home-server-behind-a-cloudflare-tunnel).
 
 `MCP_ENABLED` is forwarded to the server as an optional key: leave it empty for
 the default (MCP on) or set `false` in Dokploy's environment to turn the MCP
@@ -418,6 +420,21 @@ ingress:
   - service: http_status:404
 ```
 
+Keep `config.yml` and the tunnel's credentials JSON outside the checkout, for
+example in `/etc/cloudflared` on the host: `--git-url local` builds from
+`context: .`, and a credentials file inside the checkout is one `git add` from
+the repository. The `cloudflare/cloudflared` image runs as the unprivileged
+UID 65532 and `cloudflared tunnel create` writes the credentials file readable
+by its owner only, so hand both to that UID, naming the file (a `*.json` glob
+cannot expand once the directory is locked):
+`sudo chmod 400 /etc/cloudflared/<tunnel-uuid>.json`, then
+`sudo chown -R 65532:65532 /etc/cloudflared` and
+`sudo chmod 700 /etc/cloudflared`. Otherwise the container cannot read the file
+and the tunnel never connects. A remotely managed tunnel (created in the Zero
+Trust dashboard, with the public hostname's service set there) needs no files:
+run the connector with `tunnel run` and its token in `TUNNEL_TOKEN`, kept with
+your other deployment secrets.
+
 To run `cloudflared` on the host instead, publish the server on loopback only
 with a Compose override (`ports: ["127.0.0.1:13000:3000"]` on `server`) and use
 `service: http://127.0.0.1:13000`.
@@ -610,6 +627,8 @@ Cloudflare can close long-lived connections when its edge restarts.
   needs UDP, so it needs a host with a public IP (a small VPS) and inbound
   ports 80 and 443; it does not run behind a Cloudflare Tunnel. Without one,
   leave tunnels unconfigured: everything else works.
+- **Static IP, router ports and DDNS.** The tunnel follows the machine
+  wherever it connects from; forward no router port to it.
 
 ## Schema and resource continuity
 
