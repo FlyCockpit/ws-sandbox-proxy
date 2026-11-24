@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 
 use crate::auth::canonical_control_plane_origin;
-use crate::config::Config;
+
 use crate::output;
 use crate::slug::validate_host_slug;
 use crate::state::{load_config, update_config};

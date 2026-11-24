@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Serialize;
 
-use crate::config::{Config, TunnelConfig};
+use crate::config::TunnelConfig;
 use crate::output;
 use crate::state::{load_config, update_config};
 
