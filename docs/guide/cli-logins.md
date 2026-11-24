@@ -158,6 +158,14 @@ curl -sS https://wssp.example.com/v1/sandboxes \
 force one at resume, pass it on the resume call.** It is a placement hint,
 not a stored pin.
 
+If the host's relay connection drops while a create waits for its login, the
+host asks again on its new connection, within the same 60-second wait. The
+server sends the login again only to that host on its current connection, for
+that create, while the login is still being installed. A repeated request
+from another host or session, or after the install, a cancel or an expiry, is
+refused. Both outcomes are login events (`bundle_redelivered`,
+`bundle_redelivery_refused`).
+
 ### Resume and pins
 
 A cold start (`POST /v1/sandboxes/{id}/reconnect` with mode `cold`, or SDK
@@ -398,8 +406,9 @@ the instance `NEEDS_LOGIN` (`files_missing`).
 `GET /v1/credentials/{id}/events` (or the login's page) lists the login's
 events, newest first: settings, account and instance changes, pauses,
 uploads, sign-ins, captures that were rejected, failed or lost, recoveries,
-force-releases and discards. Events carry identifiers, a type, an optional
-reason, storage sequence and size; never a value or a path.
+force-releases, discards and logins sent again after a host reconnect. Events
+carry identifiers, a type, an optional reason, storage sequence and size; never
+a value or a path.
 
 Four of them are also [webhook events](./webhooks.md):
 

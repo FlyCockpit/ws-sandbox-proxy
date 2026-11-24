@@ -678,3 +678,103 @@ fn live_attach_result_repeats_the_installed_report() {
     drop(wire);
     client.join().unwrap().unwrap();
 }
+
+/// The relay connection breaks right after the create's bundle request was
+/// handed to the socket (no answer). The daemon reconnects, the new session
+/// reconciles, and the same request (same id, same operation) is re-sent on
+/// it: the login installs once and the create succeeds within its deadline.
+#[test]
+fn bundle_request_lost_with_the_connection_is_re_sent_after_reconnect() {
+    let _staging = crate::sandbox_relay::test_support::staging_quota();
+    let dir = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+    let address = listener.local_addr().expect("address");
+    let fake = sandbox_runtime::FakeRuntime::new();
+    fake.fixture_root().unwrap();
+    let opts = options(dir.path(), address);
+    let shutdown = opts.shutdown.clone();
+    let daemon_fake = fake.clone();
+    let client = thread::spawn(move || {
+        run_connect_with_credentials(&opts, |_| Ok((Box::new(daemon_fake), None)))
+    });
+    let mut wire = register(&listener, address);
+    serve(
+        &mut wire,
+        |m| matches!(m, DaemonControlMessage::CredentialCensus(p) if p.complete),
+    );
+    let started = Instant::now();
+    send(&mut wire, create_dispatch());
+    // Serve the spec, then drop the connection on the bundle request.
+    let lost = loop {
+        let frame = wire.read().expect("frame");
+        let Ok(text) = frame.to_text() else { continue };
+        match parse_daemon_control(text).expect("control") {
+            DaemonControlMessage::CredentialSpecRequest(request) => {
+                for (seq, chunk) in spec_bytes().chunks(CREDENTIAL_CHUNK_RAW_BYTES).enumerate() {
+                    send(
+                        &mut wire,
+                        json!({"type":"credential.spec.chunk","operationId":request.operation_id,
+                            "seq":seq,"data":encode_chunk_data(chunk)}),
+                    );
+                }
+            }
+            DaemonControlMessage::CredentialBundleRequest(request) => break request,
+            DaemonControlMessage::CredentialCensus(page) => send(
+                &mut wire,
+                json!({"type":"credential.census.ack","page":page.page}),
+            ),
+            _ => {}
+        }
+    };
+    drop(wire);
+
+    let mut wire = register(&listener, address);
+    let mut resent = Vec::new();
+    let mut result = None;
+    let seen = serve(&mut wire, |m| {
+        if let DaemonControlMessage::CredentialBundleRequest(r) = m {
+            resent.push(r.clone());
+        }
+        let hit = matches!(m, DaemonControlMessage::OperationResult { operation_id, .. } if operation_id == "create");
+        if hit {
+            result = Some(m.clone());
+        }
+        hit
+    });
+    assert!(
+        started.elapsed() < crate::sandbox_relay::credentials::service::BUNDLE_WAIT,
+        "within the first deadline"
+    );
+    assert_eq!(resent.len(), 1, "{seen:?}");
+    assert_eq!(resent[0].request_id, lost.request_id);
+    assert_eq!(resent[0].operation_id.as_deref(), Some("create"));
+    assert_eq!(resent[0].reason, BundleRequestReason::Install);
+    assert_eq!(
+        seen.iter().filter(|s| s.as_str() == "installed").count(),
+        1,
+        "{seen:?}"
+    );
+    assert_eq!(
+        seen.last().map(String::as_str),
+        Some("result:create:Succeeded")
+    );
+    let Some(DaemonControlMessage::OperationResult { result, .. }) = result else {
+        unreachable!()
+    };
+    assert_eq!(
+        result.expect("result payload")["credentialInstalled"][0]["bindingId"],
+        json!("bind-1")
+    );
+    assert_eq!(
+        fake.credential_calls()
+            .iter()
+            .filter(|(op, _)| op == "restore")
+            .count(),
+        1,
+        "installed once"
+    );
+    shutdown.request();
+    while wire.read().is_ok_and(|f| !matches!(f, Message::Close(_))) {}
+    drop(wire);
+    client.join().unwrap().unwrap();
+}

@@ -39,6 +39,8 @@ export const CREDENTIAL_EVENT_TYPES = [
   "login_saved",
   "login_failed",
   "login_cancelled",
+  "bundle_redelivered",
+  "bundle_redelivery_refused",
 ] as const;
 const KNOWN_EVENTS: ReadonlySet<string> = new Set(CREDENTIAL_EVENT_TYPES);
 

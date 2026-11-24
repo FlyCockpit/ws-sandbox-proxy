@@ -181,6 +181,8 @@ describe("instance recovery", () => {
       "login_saved",
       "login_failed",
       "login_cancelled",
+      "bundle_redelivered",
+      "bundle_redelivery_refused",
     ])
       expect(CREDENTIAL_EVENT_TYPES).toContain(type);
     const labels = enLogins.events.type as Record<string, string>;

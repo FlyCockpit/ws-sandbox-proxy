@@ -118,7 +118,9 @@
       "login_started": "Inicio de sesión comenzado",
       "login_saved": "Inicio de sesión guardado",
       "login_failed": "Inicio de sesión incompleto",
-      "login_cancelled": "Inicio de sesión cancelado"
+      "login_cancelled": "Inicio de sesión cancelado",
+      "bundle_redelivered": "Inicio de sesión reenviado tras reconectar el host",
+      "bundle_redelivery_refused": "Solicitud repetida de inicio de sesión rechazada"
     }
   },
   "form": {

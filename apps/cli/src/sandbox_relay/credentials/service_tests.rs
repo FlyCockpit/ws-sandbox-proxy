@@ -1485,3 +1485,275 @@ fn disconnect_cancels_transient_restore_retry_backoff() {
     assert!(daemon.drain().is_empty());
     assert!(daemon.env_for(SANDBOX, Duration::ZERO).is_err());
 }
+
+/// How the scripted relay connection breaks: the first `times` requests of
+/// `kind` are each handed to the socket and lost with it (optionally after a
+/// partial answer: a bundle `begin` with no chunks), the session ends at
+/// once, and the next session drains frames only `reconnect_after` later.
+#[derive(Clone, Copy)]
+struct Loss {
+    kind: &'static str,
+    partial: bool,
+    reconnect_after: Duration,
+    times: usize,
+}
+
+fn request_kind(message: &DaemonControlMessage) -> &'static str {
+    match message {
+        DaemonControlMessage::CredentialSpecRequest(_) => "spec.request",
+        DaemonControlMessage::CredentialBundleRequest(_) => "bundle.request",
+        _ => "other",
+    }
+}
+
+impl FakeServer {
+    /// [`Self::start`] over a connection that breaks once as `loss` says.
+    fn start_lossy(service: &CredentialService, script: Script, loss: Loss) -> Self {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let envelopes = Arc::new(Mutex::new(Vec::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (l, e, s, service) = (
+            log.clone(),
+            envelopes.clone(),
+            stop.clone(),
+            service.clone(),
+        );
+        let handle = std::thread::spawn(move || {
+            let mut capture = None;
+            let mut lost = 0;
+            while !s.load(Ordering::SeqCst) {
+                'batch: for message in service.drain() {
+                    lock(&l).push(message.clone());
+                    if lost < loss.times && request_kind(&message) == loss.kind {
+                        lost += 1;
+                        if loss.partial
+                            && let DaemonControlMessage::CredentialBundleRequest(request) = &message
+                        {
+                            let lease = script
+                                .leases
+                                .iter()
+                                .find(|l| l.lease_id == request.lease_id)
+                                .unwrap();
+                            let bytes = bundle_bytes(lease, true);
+                            service.handle_server(ServerControlMessage::CredentialBundleBegin(
+                                CredentialBundleBeginV11 {
+                                    request_id: request.request_id.clone(),
+                                    binding_id: format!("bind-{}", request.lease_id),
+                                    storage_seq: 1,
+                                    file_count: 2,
+                                    env_count: 1,
+                                    bundle_len: bytes.len() as u64,
+                                    chunk_count: bytes.len().div_ceil(CREDENTIAL_CHUNK_RAW_BYTES)
+                                        as u32,
+                                },
+                            ));
+                        }
+                        // The socket broke: the rest of this batch died with it.
+                        service.on_disconnect();
+                        std::thread::sleep(loss.reconnect_after);
+                        break 'batch;
+                    }
+                    respond(&service, &script, &e, &mut capture, message);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        Self {
+            log,
+            envelopes,
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    fn bundle_requests(&self) -> Vec<CredentialBundleRequestV11> {
+        self.frames()
+            .into_iter()
+            .filter_map(|m| match m {
+                DaemonControlMessage::CredentialBundleRequest(r) => Some(r),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+fn one_lease_launch() -> (CredentialSpecV11, Script, Vec<u8>) {
+    let s = spec(
+        vec![lease("lease-1", SpecLeaseAction::Inject, None)],
+        vec![],
+    );
+    let script = Script::new(&s);
+    let bytes = script.spec.clone();
+    (s, script, bytes)
+}
+
+/// The bundle request went out on a socket that broke before any answer:
+/// the same request (same id) is re-sent on the next session, the login
+/// installs once and the launch reports it once.
+#[test]
+fn bundle_request_lost_with_its_socket_is_re_sent_on_the_next_session() {
+    for partial in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeRuntime::default();
+        let (s, script, bytes) = one_lease_launch();
+        let daemon = service(dir.path());
+        let server = FakeServer::start_lossy(
+            &daemon,
+            script,
+            Loss {
+                kind: "bundle.request",
+                partial,
+                reconnect_after: Duration::from_millis(300),
+                times: 1,
+            },
+        );
+        let receipt = daemon.launch(&fake, &target(&bytes), &s, &always).unwrap();
+        let requests = server.bundle_requests();
+        assert_eq!(requests.len(), 2, "partial={partial}");
+        assert_eq!(requests[0].request_id, requests[1].request_id);
+        assert_eq!(requests[0].operation_id, requests[1].operation_id);
+        assert_eq!(
+            server.kinds(),
+            vec!["bundle.request", "bundle.request", "installed"]
+        );
+        assert_eq!(receipt.len(), 1);
+        assert_eq!(receipt[0].binding_id, "bind-lease-1");
+        assert_eq!(
+            guest_calls(&fake)
+                .iter()
+                .filter(|op| *op == "restore")
+                .count(),
+            1,
+            "installed once"
+        );
+        assert_eq!(
+            daemon.env_for(SANDBOX, Duration::ZERO).unwrap()[0]
+                .1
+                .as_bytes(),
+            SENTINEL
+        );
+        assert_frames_redacted(&server.frames());
+        assert_nothing_at_rest(dir.path());
+    }
+}
+
+/// A request still queued when the session ended was never on the dead
+/// socket: it goes out on the next session once, not twice.
+#[test]
+fn bundle_request_still_queued_at_a_disconnect_is_not_duplicated() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeRuntime::default();
+    let (s, script, bytes) = one_lease_launch();
+    let daemon = service(dir.path());
+    let launcher = {
+        let daemon = daemon.clone();
+        let (fake, s, bytes) = (fake.clone(), s.clone(), bytes.clone());
+        std::thread::spawn(move || daemon.launch(&fake, &target(&bytes), &s, &always))
+    };
+    wait_until(|| !lock(&daemon.inner.frames).queue.is_empty());
+    daemon.on_disconnect();
+    std::thread::sleep(Duration::from_millis(250));
+    let server = FakeServer::start(&daemon, script);
+    assert_eq!(launcher.join().unwrap().unwrap().len(), 1);
+    assert_eq!(server.kinds(), vec!["bundle.request", "installed"]);
+}
+
+/// The first send's deadline bounds every attempt: a reconnect after it
+/// does not extend the wait, and the launch fails `credential_install_failed`.
+#[test]
+fn bundle_request_lost_and_reconnected_after_the_deadline_fails_the_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeRuntime::default();
+    let (s, script, bytes) = one_lease_launch();
+    let wait = Duration::from_millis(800);
+    let daemon = CredentialService::start_with_bundle_wait(dir.path(), "host-1", wait).unwrap();
+    daemon.on_registered(OWNER);
+    let server = FakeServer::start_lossy(
+        &daemon,
+        script,
+        Loss {
+            kind: "bundle.request",
+            partial: false,
+            reconnect_after: wait * 3,
+            times: 1,
+        },
+    );
+    let started = Instant::now();
+    assert_eq!(
+        daemon.launch(&fake, &target(&bytes), &s, &always),
+        Err(LaunchFailure::Install)
+    );
+    assert!(started.elapsed() < wait * 2, "deadline not extended");
+    assert!(!guest_calls(&fake).iter().any(|op| op == "restore"));
+    assert_eq!(daemon.env_for(SANDBOX, Duration::ZERO), Ok(vec![]));
+    // The re-send queued while disconnected was retired with its wait: the
+    // next session never carries a request nobody awaits.
+    wait_until(|| lock(&daemon.inner.frames).queue.is_empty());
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(server.bundle_requests().len(), 1);
+    assert_eq!(
+        lock(&daemon.inner.frames).drained,
+        2,
+        "retired, still counted"
+    );
+}
+
+/// Spec requests follow the same rule: lost with the socket → re-sent, and
+/// the stream is assembled from the new session's chunks only.
+#[test]
+fn spec_request_lost_with_its_socket_is_re_sent_on_the_next_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, script, bytes) = one_lease_launch();
+    let daemon = service(dir.path());
+    let server = FakeServer::start_lossy(
+        &daemon,
+        script,
+        Loss {
+            kind: "spec.request",
+            partial: false,
+            reconnect_after: Duration::from_millis(300),
+            times: 1,
+        },
+    );
+    let fetched = daemon
+        .fetch_spec("op-create-1", &reference(&bytes), &always)
+        .unwrap();
+    assert_eq!(fetched, s);
+    assert_eq!(server.kinds(), vec!["spec.request", "spec.request"]);
+}
+
+/// A connection that keeps breaking: the request is re-sent at most
+/// `MAX_REREQUESTS` times, then the wait runs out at the first deadline.
+#[test]
+fn bundle_re_requests_are_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeRuntime::default();
+    let (s, script, bytes) = one_lease_launch();
+    let wait = Duration::from_secs(3);
+    let daemon = CredentialService::start_with_bundle_wait(dir.path(), "host-1", wait).unwrap();
+    daemon.on_registered(OWNER);
+    let server = FakeServer::start_lossy(
+        &daemon,
+        script,
+        Loss {
+            kind: "bundle.request",
+            partial: false,
+            reconnect_after: Duration::from_millis(50),
+            times: usize::MAX,
+        },
+    );
+    let started = Instant::now();
+    assert_eq!(
+        daemon.launch(&fake, &target(&bytes), &s, &always),
+        Err(LaunchFailure::Install)
+    );
+    assert!(started.elapsed() < wait * 2, "one deadline");
+    let requests = server.bundle_requests();
+    assert_eq!(requests.len(), 1 + MAX_REREQUESTS as usize);
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.request_id == requests[0].request_id)
+    );
+    assert!(!guest_calls(&fake).iter().any(|op| op == "restore"));
+}

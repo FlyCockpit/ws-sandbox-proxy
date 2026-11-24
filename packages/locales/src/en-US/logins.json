@@ -402,7 +402,9 @@
       "login_started": "Login started",
       "login_saved": "Login saved",
       "login_failed": "Login incomplete",
-      "login_cancelled": "Login cancelled"
+      "login_cancelled": "Login cancelled",
+      "bundle_redelivered": "Login sent again after a host reconnect",
+      "bundle_redelivery_refused": "Repeated login request refused"
     }
   }
 }

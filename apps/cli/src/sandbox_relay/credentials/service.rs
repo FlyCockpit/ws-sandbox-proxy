@@ -61,6 +61,10 @@ pub const ENV_WAIT: Duration = Duration::from_secs(10);
 /// Credential frames precede the operation result on the socket.
 const FLUSH_WAIT: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(100);
+/// A spec or bundle request lost with its socket is re-sent on the next
+/// session at most this often (only a disconnect triggers one; the first
+/// send's deadline bounds every attempt).
+const MAX_REREQUESTS: u32 = 4;
 /// Env restore after a daemon restart retries a transient failure (busy,
 /// vault unavailable, internal, timeout) with exponential backoff between
 /// these bounds; it ends only on success or an authoritative refusal.
@@ -153,6 +157,48 @@ struct Frames {
     queue: VecDeque<DaemonControlMessage>,
     pushed: u64,
     drained: u64,
+    /// Relay sessions that ended, and `drained` when the last one ended:
+    /// a frame with `seq <= lost_upto` may have died with that socket.
+    disconnects: u64,
+    lost_upto: u64,
+    /// Queued requests whose wait ended before they were sent: `drain`
+    /// skips them (still counting them as drained, so `flush` holds).
+    retired: BTreeSet<u64>,
+}
+
+/// A spec / bundle request frame handed to the queue, re-sent unchanged
+/// (same id) when the socket it went out on broke before the answer.
+struct Sent {
+    message: DaemonControlMessage,
+    seq: u64,
+    disconnects: u64,
+    resends: u32,
+}
+
+/// A [`Sent`] request while its wait lasts: dropping it (answer, deadline,
+/// cancellation or error) retires a copy still queued.
+struct Pending<'a> {
+    service: &'a CredentialService,
+    sent: Sent,
+}
+
+impl Drop for Pending<'_> {
+    fn drop(&mut self) {
+        self.service.retire(&self.sent);
+    }
+}
+
+impl std::ops::Deref for Pending<'_> {
+    type Target = Sent;
+    fn deref(&self) -> &Sent {
+        &self.sent
+    }
+}
+
+impl std::ops::DerefMut for Pending<'_> {
+    fn deref_mut(&mut self) -> &mut Sent {
+        &mut self.sent
+    }
 }
 
 #[derive(Debug, Default)]
@@ -199,6 +245,8 @@ struct Inner {
     /// env insert lands only under an [`Authority`] taken before its bundle
     /// wait and not revoked since.
     revocations: Arc<LeaseRevocations>,
+    /// [`BUNDLE_WAIT`] (shorter in deadline tests).
+    bundle_wait: Duration,
 }
 
 #[derive(Clone)]
@@ -274,12 +322,55 @@ impl Waiter<'_> {
             }
         }
     }
+
+    /// [`Self::next`] for the answer to `sent`: when the socket the request
+    /// went out on broke, the frames of its partial answer are discarded
+    /// and the same request is queued again for the next session (bounded
+    /// by [`MAX_REREQUESTS`]); `None` tells the caller to restart its
+    /// stream. Every frame of the old session was routed before its
+    /// disconnect was recorded, so nothing of the old answer arrives after
+    /// the discard.
+    fn answer(
+        &self,
+        sent: &mut Sent,
+        deadline: Instant,
+        still_wanted: &dyn Fn() -> bool,
+    ) -> Result<Option<ServerControlMessage>, LaunchFailure> {
+        loop {
+            if self.service.request_lost(sent) {
+                // The old answer goes before the retry can be answered.
+                while self.rx.try_recv().is_ok() {}
+                self.service.resend(sent);
+                return Ok(None);
+            }
+            let slice = deadline.min(Instant::now() + POLL);
+            match self.next(slice, still_wanted) {
+                Ok(frame) => return Ok(Some(frame)),
+                Err(LaunchFailure::Install) if Instant::now() < deadline => {}
+                Err(failure) => return Err(failure),
+            }
+        }
+    }
 }
 
 impl CredentialService {
     /// Opens `<state>/credentials`. Bindings that were ACTIVE with env when
     /// the daemon stopped are marked env-pending until their restore.
     pub fn start(state_dir: &Path, host_id: &str) -> anyhow::Result<Self> {
+        Self::start_with(state_dir, host_id, BUNDLE_WAIT)
+    }
+
+    /// [`Self::start`] with a shorter bundle wait (deadline tests).
+    #[cfg(test)]
+    pub fn start_with_bundle_wait(
+        state_dir: &Path,
+        host_id: &str,
+        bundle_wait: Duration,
+    ) -> anyhow::Result<Self> {
+        Self::start_with(state_dir, host_id, bundle_wait)
+    }
+
+    fn start_with(state_dir: &Path, host_id: &str, bundle_wait: Duration) -> anyhow::Result<Self> {
         let store = CredentialStore::open(state_dir)?;
         let mut env: HashMap<String, SandboxEnv> = HashMap::new();
         for b in store.journal().state().bindings.values() {
@@ -309,6 +400,7 @@ impl CredentialService {
                 checkpoints: Mutex::default(),
                 proxy: Mutex::new(None),
                 revocations: Arc::default(),
+                bundle_wait,
             }),
         })
     }
@@ -458,12 +550,69 @@ impl CredentialService {
         frames.pushed
     }
 
+    /// Queues a request whose answer [`Waiter::answer`] awaits. The queue
+    /// position and the disconnect count are taken under one lock.
+    fn send_request(&self, message: DaemonControlMessage) -> Pending<'_> {
+        let mut frames = lock(&self.inner.frames);
+        frames.queue.push_back(message.clone());
+        frames.pushed += 1;
+        Pending {
+            service: self,
+            sent: Sent {
+                message,
+                seq: frames.pushed,
+                disconnects: frames.disconnects,
+                resends: 0,
+            },
+        }
+    }
+
+    /// Whether `sent` was handed to a socket that broke since it was
+    /// (re-)sent and may be re-sent. A request still queued at a disconnect
+    /// goes out on the next session as it is and is not duplicated.
+    fn request_lost(&self, sent: &mut Sent) -> bool {
+        let frames = lock(&self.inner.frames);
+        if frames.disconnects == sent.disconnects {
+            return false;
+        }
+        sent.disconnects = frames.disconnects;
+        frames.lost_upto >= sent.seq && sent.resends < MAX_REREQUESTS
+    }
+
+    /// Queues `sent` again (same frame, same id) for the next session.
+    fn resend(&self, sent: &mut Sent) {
+        let mut frames = lock(&self.inner.frames);
+        sent.resends += 1;
+        frames.queue.push_back(sent.message.clone());
+        frames.pushed += 1;
+        sent.seq = frames.pushed;
+        sent.disconnects = frames.disconnects;
+    }
+
+    /// The wait for `sent` ended: a copy still queued is never sent (no
+    /// server work, and no value, for a request nobody awaits any more).
+    fn retire(&self, sent: &Sent) {
+        let mut frames = lock(&self.inner.frames);
+        if sent.seq > frames.drained {
+            frames.retired.insert(sent.seq);
+        }
+    }
+
     /// Frames for the connect loop to send now, in order.
     pub fn drain(&self) -> Vec<DaemonControlMessage> {
         let mut frames = lock(&self.inner.frames);
         let n = frames.queue.len().min(DRAIN_BATCH);
-        let out: Vec<_> = frames.queue.drain(..n).collect();
-        frames.drained += out.len() as u64;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            let Some(message) = frames.queue.pop_front() else {
+                break;
+            };
+            frames.drained += 1;
+            let seq = frames.drained;
+            if !frames.retired.remove(&seq) {
+                out.push(message);
+            }
+        }
         drop(frames);
         self.inner.flushed.notify_all();
         out
@@ -601,6 +750,11 @@ impl CredentialService {
     /// Ends detached retry work as soon as its relay session ends.
     pub fn on_disconnect(&self) {
         self.inner.session_epoch.fetch_add(1, Ordering::SeqCst);
+        // Frames handed to the socket that just ended may be lost: a spec or
+        // bundle request among them is re-sent on the next session.
+        let mut frames = lock(&self.inner.frames);
+        frames.disconnects += 1;
+        frames.lost_upto = frames.drained;
     }
 
     fn on_census_ack(&self, page: u32) {
@@ -641,10 +795,11 @@ impl CredentialService {
         reference: &CredentialSpecRefV11,
         still_wanted: &dyn Fn() -> bool,
     ) -> Result<CredentialSpecV11, LaunchFailure> {
-        let mut assembler =
-            SpecAssembler::new(operation_id, reference).map_err(|_| LaunchFailure::SpecInvalid)?;
+        let new_assembler =
+            || SpecAssembler::new(operation_id, reference).map_err(|_| LaunchFailure::SpecInvalid);
+        let mut assembler = new_assembler()?;
         let waiter = self.wait_for(format!("spec:{operation_id}"));
-        self.push(DaemonControlMessage::CredentialSpecRequest(
+        let mut sent = self.send_request(DaemonControlMessage::CredentialSpecRequest(
             CredentialSpecRequestV11 {
                 operation_id: operation_id.to_owned(),
                 digest: reference.digest.clone(),
@@ -652,10 +807,12 @@ impl CredentialService {
         ));
         let deadline = Instant::now() + SPEC_WAIT;
         while !assembler.is_complete() {
-            match waiter.next(deadline, still_wanted) {
-                Ok(ServerControlMessage::CredentialSpecChunk(chunk)) => assembler
+            match waiter.answer(&mut sent, deadline, still_wanted) {
+                Ok(Some(ServerControlMessage::CredentialSpecChunk(chunk))) => assembler
                     .push(chunk.seq, &chunk.data)
                     .map_err(|_| LaunchFailure::SpecInvalid)?,
+                // Lost with its socket: the stream restarts at chunk 0.
+                Ok(None) => assembler = new_assembler()?,
                 Ok(_) => return Err(LaunchFailure::SpecInvalid),
                 Err(LaunchFailure::Cancelled) => return Err(LaunchFailure::Cancelled),
                 Err(_) => return Err(LaunchFailure::SpecInvalid),
@@ -943,43 +1100,54 @@ impl CredentialService {
             return Err(BundleFailure::Cancelled);
         }
         let waiter = self.wait_for(format!("bundle:{}", request.request_id));
-        self.push(DaemonControlMessage::CredentialBundleRequest(request));
-        let deadline = Instant::now() + BUNDLE_WAIT;
-        let next = |deadline| {
+        // A request lost with its socket is re-sent with the same id: the
+        // server re-opens the same binding's bundle only while the lease is
+        // still installing on this host, for this launch.
+        let mut sent = self.send_request(DaemonControlMessage::CredentialBundleRequest(request));
+        // One deadline for every attempt: a reconnect never extends it.
+        let deadline = Instant::now() + self.inner.bundle_wait;
+        let mut next = || {
             waiter
-                .next(deadline, still_wanted)
+                .answer(&mut sent, deadline, still_wanted)
                 .map_err(|failure| match failure {
                     LaunchFailure::Cancelled => BundleFailure::Cancelled,
                     // The deadline passed or the socket went away.
                     _ => BundleFailure::Timeout,
                 })
         };
-        let (mut receiver, chunk_count) = match next(deadline)? {
-            ServerControlMessage::CredentialBundleBegin(begin) => {
-                let count = begin.chunk_count;
-                (
-                    BundleReceiver::new(begin).map_err(|_| BundleFailure::Invalid)?,
-                    count,
-                )
-            }
-            ServerControlMessage::CredentialBundleRefused(refused) => {
-                return Err(BundleFailure::Refused(refused.code));
-            }
-            _ => return Err(BundleFailure::Invalid),
-        };
-        for expected in 0..chunk_count {
-            match next(deadline)? {
-                ServerControlMessage::CredentialBundleChunk(chunk) if chunk.seq == expected => {
-                    receiver
-                        .push(chunk.seq, &chunk.data)
-                        .map_err(|_| BundleFailure::Invalid)?;
+        'attempt: loop {
+            let (mut receiver, chunk_count) = match next()? {
+                None => continue 'attempt,
+                Some(ServerControlMessage::CredentialBundleBegin(begin)) => {
+                    let count = begin.chunk_count;
+                    (
+                        BundleReceiver::new(begin).map_err(|_| BundleFailure::Invalid)?,
+                        count,
+                    )
                 }
-                _ => return Err(BundleFailure::Invalid),
+                Some(ServerControlMessage::CredentialBundleRefused(refused)) => {
+                    return Err(BundleFailure::Refused(refused.code));
+                }
+                Some(_) => return Err(BundleFailure::Invalid),
+            };
+            for expected in 0..chunk_count {
+                match next()? {
+                    // The partial stream is dropped (and zeroed) with `receiver`.
+                    None => continue 'attempt,
+                    Some(ServerControlMessage::CredentialBundleChunk(chunk))
+                        if chunk.seq == expected =>
+                    {
+                        receiver
+                            .push(chunk.seq, &chunk.data)
+                            .map_err(|_| BundleFailure::Invalid)?;
+                    }
+                    Some(_) => return Err(BundleFailure::Invalid),
+                }
             }
+            return receiver
+                .finish(lease, restore)
+                .map_err(|_| BundleFailure::Invalid);
         }
-        receiver
-            .finish(lease, restore)
-            .map_err(|_| BundleFailure::Invalid)
     }
 
     /// `credential.capture.begin` + chunks of the self-verified envelope, then

@@ -26,15 +26,20 @@ const { seedOwner, seedSandbox } = await import("../webhooks/testing/fixtures");
 const service = await import("./service");
 const { commitCapture } = await import("./captures");
 const { forceReleaseLease, finishLease } = await import("./leases");
-const { grantInstallBundle, grantRestoreBundle, recordInstalled, recordScrubbed } = await import(
-  "./grants"
-);
+const {
+  applyInstalledReceipt,
+  grantInstallBundle,
+  grantRestoreBundle,
+  recordInstalled,
+  recordScrubbed,
+} = await import("./grants");
 const { applyReturnKeyAck, destroyReturnKey, issueCurrentReturnKey, rotateReturnKey } =
   await import("./return-keys");
 const { applyCompleteCensus, newCensusAccumulator, accumulateCensusPage } = await import(
   "./census"
 );
 const { readOperationSpecChunks, writeOperationSpec } = await import("./specs");
+const { settleCredentialLaunch } = await import("./launch");
 const { sealToReturnKey } = await import("./vault/sealed-box");
 const { buildEnvelope } = await import("./vault/envelope");
 afterAll(() => db.close());
@@ -864,6 +869,239 @@ describe("C7a bundle grants (pg)", () => {
     expect(await grant(reserved.operationId, "b")).toEqual({ kind: "refused", code: "stale" });
     await db.inspect.sandbox.update({ where: { id: w.sandbox.id }, data: { generation: 1 } });
     expect(await grant(reserved.operationId, "c")).toMatchObject({ kind: "granted" });
+  });
+});
+
+describe("bundle re-request after a reconnect (pg)", () => {
+  /** Re-request audit rows, sorted by type and reason (`at` may tie). */
+  const redeliveryEvents = async (leaseId: string) =>
+    (
+      await db.inspect.credentialEvent.findMany({
+        where: { leaseId, type: { in: ["bundle_redelivered", "bundle_redelivery_refused"] } },
+        take: 50,
+        select: { type: true, reason: true, hostId: true, storageSeq: true, sandboxId: true },
+      })
+    ).sort((a, b) => `${a.type}|${a.reason ?? ""}`.localeCompare(`${b.type}|${b.reason ?? ""}`));
+
+  /** A RESERVED lease of a running create, granted once at epoch 1 (`req-1`). */
+  async function granted() {
+    const w = await world();
+    const reserved = await activeLease(w, "RESERVED");
+    const install = (over: Partial<Parameters<typeof grantInstallBundle>[0]> = {}) =>
+      grantInstallBundle({
+        hostId: w.host.id,
+        connectionEpoch: 1,
+        requestId: "req-1",
+        sandboxId: w.sandbox.id,
+        leaseId: reserved.leaseId,
+        operationId: reserved.operationId,
+        ...over,
+      });
+    const first = await install();
+    if (first.kind !== "granted") throw new Error("first grant refused");
+    // The relay connection dropped; the host registered a new session.
+    await db.inspect.sandboxHost.update({
+      where: { id: w.host.id },
+      data: { connectionEpoch: 2 },
+    });
+    return { w, reserved, install, first };
+  }
+
+  it("the same host on its new session re-receives the same binding's bundle while installing; audited; installs once", async () => {
+    const { w, reserved, install, first } = await granted();
+    expect(await redeliveryEvents(reserved.leaseId)).toEqual([]);
+    const again = await install({ connectionEpoch: 2 });
+    expect(again).toMatchObject({
+      kind: "granted",
+      bindingId: first.bindingId,
+      storageSeq: first.storageSeq,
+      fileCount: first.fileCount,
+      envCount: first.envCount,
+    });
+    if (again.kind === "granted") expect(Buffer.compare(again.bytes, first.bytes)).toBe(0);
+    expect(await db.inspect.credentialBinding.count({ where: { leaseId: reserved.leaseId } })).toBe(
+      1,
+    );
+    expect(await db.inspect.credentialResidue.count({ where: { leaseId: reserved.leaseId } })).toBe(
+      1,
+    );
+    expect(await redeliveryEvents(reserved.leaseId)).toEqual([
+      {
+        type: "bundle_redelivered",
+        reason: null,
+        hostId: w.host.id,
+        storageSeq: 1,
+        sandboxId: w.sandbox.id,
+      },
+    ]);
+    // The duplicate delivery installs once: the second report applies nothing.
+    const report = {
+      hostId: w.host.id,
+      connectionEpoch: 2,
+      leaseId: reserved.leaseId,
+      bindingId: first.bindingId,
+      storageSeq: 1,
+    };
+    expect(await recordInstalled(report)).toBe(true);
+    expect(await recordInstalled(report)).toBe(false);
+    expect((await leaseRow(reserved.leaseId)).state).toBe("ACTIVE");
+  });
+
+  it("another host, an older session, another operation or a new requestId is refused; each re-request refusal is audited, unknown ids are not", async () => {
+    const { w, reserved, install } = await granted();
+    const other = await db.inspect.sandboxHost.create({
+      data: { userId: w.owner, slug: randomUUID(), label: "Other", connectionEpoch: 1 },
+      select: { id: true },
+    });
+    const otherOp = await operation(w);
+    expect(await install({ hostId: other.id })).toEqual({
+      kind: "refused",
+      code: "not_authorized",
+    });
+    expect(await install({ connectionEpoch: 1 })).toEqual({ kind: "refused", code: "stale" });
+    expect(await install({ connectionEpoch: 2, operationId: otherOp.id })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+    // A fresh requestId names no binding: refused, nothing audited.
+    expect(await install({ connectionEpoch: 2, requestId: "req-2" })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+    expect(await redeliveryEvents(reserved.leaseId)).toEqual([
+      {
+        type: "bundle_redelivery_refused",
+        reason: "other_host",
+        hostId: null,
+        storageSeq: null,
+        sandboxId: w.sandbox.id,
+      },
+      {
+        type: "bundle_redelivery_refused",
+        reason: "stale",
+        hostId: w.host.id,
+        storageSeq: null,
+        sandboxId: w.sandbox.id,
+      },
+      {
+        type: "bundle_redelivery_refused",
+        reason: "stale",
+        hostId: w.host.id,
+        storageSeq: null,
+        sandboxId: w.sandbox.id,
+      },
+    ]);
+    expect(await db.inspect.credentialBinding.count({ where: { leaseId: reserved.leaseId } })).toBe(
+      1,
+    );
+    expect((await leaseRow(reserved.leaseId)).state).toBe("INSTALLING");
+    // Still deliverable to the right session afterwards.
+    expect(await install({ connectionEpoch: 2 })).toMatchObject({ kind: "granted" });
+    // A host replaying the pair keeps being refused, but the audit is bounded.
+    for (let i = 0; i < 20; i++) await install({ connectionEpoch: 1 });
+    expect(
+      (await redeliveryEvents(reserved.leaseId)).filter(
+        (e) => e.type === "bundle_redelivery_refused",
+      ),
+    ).toHaveLength(16);
+  });
+
+  it("after credential.installed or its receipt, a cancelled create, a terminal create or a moved sandbox generation, a re-request is refused and audited", async () => {
+    const installed = await granted();
+    expect(
+      await recordInstalled({
+        hostId: installed.w.host.id,
+        connectionEpoch: 2,
+        leaseId: installed.reserved.leaseId,
+        bindingId: installed.first.bindingId,
+        storageSeq: 1,
+      }),
+    ).toBe(true);
+    expect(await installed.install({ connectionEpoch: 2 })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+
+    const cancelled = await granted();
+    await db.inspect.sandboxOperation.update({
+      where: { id: cancelled.reserved.operationId },
+      data: { state: "CANCELLED" },
+    });
+    await db.inspect.$transaction((tx) =>
+      settleCredentialLaunch(tx, {
+        sandboxId: cancelled.w.sandbox.id,
+        operationId: cancelled.reserved.operationId,
+        succeeded: false,
+      }),
+    );
+    expect(await leaseRow(cancelled.reserved.leaseId)).toMatchObject({ state: "RELEASED" });
+    expect(await cancelled.install({ connectionEpoch: 2 })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+
+    // The launch went terminal before its leases settled: refused all the same.
+    const terminal = await granted();
+    await db.inspect.sandboxOperation.update({
+      where: { id: terminal.reserved.operationId },
+      data: { state: "FAILED" },
+    });
+    expect((await leaseRow(terminal.reserved.leaseId)).state).toBe("INSTALLING");
+    expect(await terminal.install({ connectionEpoch: 2 })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+
+    // The READY result's receipt (its frame lost) settled the install instead.
+    const receipted = await granted();
+    expect(
+      await db.inspect.$transaction((tx) =>
+        applyInstalledReceipt(tx, {
+          hostId: receipted.w.host.id,
+          sandboxId: receipted.w.sandbox.id,
+          result: {
+            credentialInstalled: [
+              {
+                leaseId: receipted.reserved.leaseId,
+                bindingId: receipted.first.bindingId,
+                storageSeq: 1,
+                fileCount: receipted.first.fileCount,
+                envCount: receipted.first.envCount,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toBe(1);
+    expect((await leaseRow(receipted.reserved.leaseId)).state).toBe("ACTIVE");
+    expect(await receipted.install({ connectionEpoch: 2 })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+
+    // The sandbox moved on (an expiry, stop or new create bumps the generation)
+    // before its leases settled: the old launch's binding is never re-opened.
+    const moved = await granted();
+    await db.inspect.sandbox.update({
+      where: { id: moved.w.sandbox.id },
+      data: { generation: { increment: 1 } },
+    });
+    expect((await leaseRow(moved.reserved.leaseId)).state).toBe("INSTALLING");
+    expect(await moved.install({ connectionEpoch: 2 })).toEqual({
+      kind: "refused",
+      code: "stale",
+    });
+
+    for (const r of [installed, cancelled, terminal, receipted, moved])
+      expect(await redeliveryEvents(r.reserved.leaseId)).toEqual([
+        {
+          type: "bundle_redelivery_refused",
+          reason: "stale",
+          hostId: r.w.host.id,
+          storageSeq: null,
+          sandboxId: r.w.sandbox.id,
+        },
+      ]);
   });
 });
 

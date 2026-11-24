@@ -27,6 +27,10 @@ type Tx = Prisma.TransactionClient;
 
 const TERMINAL_OPERATION_STATES = ["SUCCEEDED", "FAILED", "CANCELLED", "UNKNOWN_OUTCOME"];
 const UNCLEARED_RESIDUE_MAX = 16;
+/** Refused re-request audit rows kept per lease; later refusals only refuse. */
+const REDELIVERY_REFUSAL_AUDIT_MAX = 16;
+/** Availability refusals (budget, vault) decide nothing about authority. */
+const UNAUDITED_REFUSALS: readonly GrantRefusalCode[] = ["busy", "unavailable"];
 
 type GrantRefusalCode =
   | "busy"
@@ -158,8 +162,70 @@ async function recoveryResolved(tx: Tx, leaseId: string): Promise<{ bindingId: s
  * sandbox's CURRENT generation, so a superseded create/attach/reconnect never
  * fetches a value. Creates the INSTALL binding (and residue for files), sets
  * the lease write baseline, and is idempotent per `(leaseId, requestId)`.
+ *
+ * Re-request (the daemon re-sends a request lost with its socket, same
+ * `requestId`): the same bundle is re-opened from the vault at the binding's
+ * `baseSeq` only for the binding's own host on its current relay epoch, for
+ * the binding's own launch (same operation, still non-terminal, same
+ * sandbox generation) while the lease is still INSTALLING on that binding —
+ * never after `credential.installed`, a cancel, failure, expiry or destroy.
+ * Every re-request outcome is audited (metadata only).
  */
-export function grantInstallBundle(request: InstallGrantRequest): Promise<GrantResult> {
+export async function grantInstallBundle(request: InstallGrantRequest): Promise<GrantResult> {
+  const result = await grantInstall(request);
+  if (result.kind === "refused") await auditRefusedRedelivery(request, result.code);
+  return result;
+}
+
+/**
+ * A refused request whose `(leaseId, requestId)` already names a binding is
+ * a refused re-request: audited on the lease owner's login in its own
+ * transaction (the grant's rolled back). A request naming unknown ids is a
+ * plain refusal, so a stranger cannot write events; availability refusals
+ * (`busy`, `unavailable`) are not audited, and at most
+ * {@link REDELIVERY_REFUSAL_AUDIT_MAX} rows are kept per lease, so a host
+ * replaying a closed binding cannot grow the table. Another host is
+ * recorded as `other_host` without its id (it may be another owner's).
+ */
+async function auditRefusedRedelivery(request: InstallGrantRequest, code: GrantRefusalCode) {
+  if (UNAUDITED_REFUSALS.includes(code)) return;
+  const binding = await prisma.credentialBinding.findUnique({
+    where: { leaseId_requestId: { leaseId: request.leaseId, requestId: request.requestId } },
+    select: {
+      leaseId: true,
+      instanceId: true,
+      sandboxId: true,
+      hostId: true,
+      Lease: { select: { userId: true, credentialId: true } },
+    },
+  });
+  if (!binding) return;
+  const kept = await prisma.credentialEvent.count({
+    where: {
+      userId: binding.Lease.userId,
+      credentialId: binding.Lease.credentialId,
+      leaseId: binding.leaseId,
+      type: "bundle_redelivery_refused",
+    },
+  });
+  if (kept >= REDELIVERY_REFUSAL_AUDIT_MAX) return;
+  const sameHost = binding.hostId === request.hostId;
+  await prisma.credentialEvent.create({
+    data: {
+      userId: binding.Lease.userId,
+      credentialId: binding.Lease.credentialId,
+      instanceId: binding.instanceId,
+      leaseId: binding.leaseId,
+      sandboxId: binding.sandboxId,
+      hostId: sameHost ? request.hostId : null,
+      type: "bundle_redelivery_refused",
+      reason: sameHost ? code : "other_host",
+    },
+    select: { id: true },
+  });
+}
+
+function grantInstall(request: InstallGrantRequest): Promise<GrantResult> {
   return runGrant(request.hostId, async (tx) => {
     await lockHostByEpoch(tx, request.hostId, request.connectionEpoch);
     const sandbox = await readSandbox(tx, request.sandboxId);
@@ -182,20 +248,54 @@ export function grantInstallBundle(request: InstallGrantRequest): Promise<GrantR
     const login = await loadVerifiedLogin(tx, lease.credentialId);
     if (!login) return refuse("unavailable");
 
-    // A lost response is retried with the same requestId: same binding.
+    // A request lost with its socket is re-sent with the same requestId:
+    // same binding, same launch, same host, still installing.
     const existing = await tx.credentialBinding.findUnique({
       where: { leaseId_requestId: { leaseId: lease.id, requestId: request.requestId } },
-      select: { id: true, hostId: true, baseSeq: true, closedAt: true },
+      select: {
+        id: true,
+        hostId: true,
+        baseSeq: true,
+        closedAt: true,
+        operationId: true,
+        grantGeneration: true,
+      },
     });
     if (existing) {
+      const launch = existing.operationId
+        ? await tx.sandboxOperation.findUnique({
+            where: { id: existing.operationId },
+            select: { sandboxId: true, state: true, generation: true },
+          })
+        : null;
       if (
         existing.closedAt ||
         existing.hostId !== request.hostId ||
+        existing.operationId !== request.operationId ||
+        existing.grantGeneration !== sandbox.generation ||
+        !launch ||
+        launch.sandboxId !== sandbox.id ||
+        TERMINAL_OPERATION_STATES.includes(launch.state) ||
+        launch.generation !== sandbox.generation ||
         lease.state !== "INSTALLING" ||
         lease.currentBindingId !== existing.id ||
         existing.baseSeq === null
       )
         return refuse("stale");
+      // Before the plaintext exists: a failed insert never strands a bundle.
+      await tx.credentialEvent.create({
+        data: {
+          userId: lease.userId,
+          credentialId: lease.credentialId,
+          instanceId: lease.instanceId,
+          leaseId: lease.id,
+          sandboxId: sandbox.id,
+          hostId: request.hostId,
+          storageSeq: existing.baseSeq,
+          type: "bundle_redelivered",
+        },
+        select: { id: true },
+      });
       const bundle = await openGrantBundle(tx, login, lease.instanceId, existing.baseSeq, {
         envOnly: false,
       });
