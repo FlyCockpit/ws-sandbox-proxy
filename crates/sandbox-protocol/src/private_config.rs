@@ -27,7 +27,7 @@ pub fn valid_key_id(id: &str) -> bool {
 
 impl PrivateConfigRef {
     pub fn is_valid(&self) -> bool {
-        crate::terminal::valid_terminal_id(&self.config_id)
+        crate::ids::valid_terminal_id(&self.config_id)
             && self.binding_scheme == "hmac-sha256-v1"
             && valid_key_id(&self.binding_key_id)
             && crate::canonical_body_hash(&self.binding_mac)
@@ -65,7 +65,7 @@ impl PrivateConfigInstall {
             && self.server.len() <= crate::RECEIPT_LIMITS.server_bytes
             && [&self.host_owner_id, &self.host_id, &self.sandbox_id]
                 .iter()
-                .all(|id| crate::terminal::valid_terminal_id(id))
+                .all(|id| crate::ids::valid_terminal_id(id))
             && self.generation > 0
             && self.generation <= i32::MAX as u64
             && crate::valid_terminal_id(&self.sandbox_owner_id)
@@ -73,7 +73,7 @@ impl PrivateConfigInstall {
             && self
                 .refusal_token
                 .as_ref()
-                .is_some_and(|token| crate::terminal::valid_terminal_id(token))
+                .is_some_and(|token| crate::ids::valid_terminal_id(token))
             && crate::validate_env(&self.env).is_ok()
             && self
                 .env
@@ -103,7 +103,7 @@ impl PrivateConfigAck {
     pub fn is_valid(&self) -> bool {
         self.connection_epoch > 0
             && self.connection_epoch <= i32::MAX as u64
-            && crate::terminal::valid_terminal_id(&self.sandbox_id)
+            && crate::ids::valid_terminal_id(&self.sandbox_id)
             && self.generation > 0
             && self.generation <= i32::MAX as u64
             && crate::valid_terminal_id(&self.sandbox_owner_id)
@@ -150,7 +150,7 @@ impl PrivateConfigRefused {
                 &self.refusal_token,
             ]
             .iter()
-            .all(|id| crate::terminal::valid_terminal_id(id))
+            .all(|id| crate::ids::valid_terminal_id(id))
     }
 }
 

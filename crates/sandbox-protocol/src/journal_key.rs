@@ -30,8 +30,8 @@ impl JournalKeyInstall {
             && crate::canonical_body_hash(&self.key_hex)
             && !self.server.is_empty()
             && self.server.len() <= 2048
-            && crate::terminal::valid_terminal_id(&self.host_owner_id)
-            && crate::terminal::valid_terminal_id(&self.host_id)
+            && crate::ids::valid_terminal_id(&self.host_owner_id)
+            && crate::ids::valid_terminal_id(&self.host_id)
     }
 }
 

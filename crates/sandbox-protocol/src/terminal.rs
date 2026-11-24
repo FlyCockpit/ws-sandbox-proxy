@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::command_limits::json_control_max_bytes;
 use crate::frame::FrameError;
+use crate::ids::valid_terminal_id;
 
 /// Terminal uses the sole supported relay version. Runtime capability and
 /// session authority still gate every terminal attachment.
@@ -76,14 +77,6 @@ pub const TERMINAL_MAX_COLS: u16 = 1024;
 
 /// Live relay consumers use the sole strict typed-target fence.
 pub type TerminalFence = TerminalFenceV11;
-
-pub fn valid_terminal_id(id: &str) -> bool {
-    (1..=128).contains(&id.len())
-        && id.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
 
 pub fn valid_terminal_size(rows: u16, cols: u16) -> bool {
     (TERMINAL_MIN_DIMENSION..=TERMINAL_MAX_ROWS).contains(&rows)
