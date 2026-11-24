@@ -281,11 +281,10 @@ export const CLONE_DATABASE = /^wssp_t_[0-9a-f]{32}$/;
  * `<clone>_<suffix>`, within PostgreSQL's 63-byte identifier limit. */
 export const SATELLITE_DATABASE = /^wssp_t_[0-9a-f]{32}_[a-z0-9_]{1,23}$/;
 /** `startDisposablePostgres` names the `pnpm test:pg` container
- * `<prefix>-test-pg-<uuid>` (prefix `wssp`, or TEST_CONTAINER_PREFIX; see
+ * `<prefix>-test-pg-<16 hex>` (prefix `wssp`, or TEST_CONTAINER_PREFIX; see
  * scripts/lib/test-container-prefix.mjs) and sets its server's
- * `cluster_name` to that name. */
-const TEST_PG_CONTAINER =
-  /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*-test-pg-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+ * `cluster_name` to that name, which always fits its 63 bytes. */
+const TEST_PG_CONTAINER = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*-test-pg-[0-9a-f]{16}$/;
 
 /**
  * Why `adminUrl` may not be used to drop `clone`, or undefined when it may.

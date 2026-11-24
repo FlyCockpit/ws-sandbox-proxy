@@ -140,7 +140,7 @@ describe("per-file database drop", () => {
     const port = container.slice(container.lastIndexOf(":") + 1);
     // Same URL and port, but another (well-formed) container identity: only
     // the live cluster_name check can tell, and it must refuse.
-    const impostor = `wssp-test-pg-00000000-0000-4000-8000-000000000000:${port}`;
+    const impostor = `wssp-test-pg-0000000000000000:${port}`;
     await expect(dropFileDatabases(adminUrl, impostor, clone)).rejects.toThrow(
       /the server is not the test container/,
     );

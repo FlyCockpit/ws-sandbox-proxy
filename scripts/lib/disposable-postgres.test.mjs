@@ -27,12 +27,16 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import {
+  CLUSTER_NAME_MAX,
   canonicalApplyFixture,
+  disposablePostgresName,
   execRedacted,
+  MAX_OWNER,
   missingImageReason,
   POSTGRES_IMAGE,
   redactDockerArgs,
 } from "./disposable-postgres.mjs";
+import { MAX_TEST_CONTAINER_PREFIX } from "./test-container-prefix.mjs";
 
 const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const workflows = join(root, ".github/workflows");
@@ -351,6 +355,20 @@ test("a failing docker command never echoes an --env value (argv or stderr)", ()
     redacted: ["run", "-e", "A=<redacted>", "--env=B=<redacted>", "-e=C=<redacted>", "img"],
     secrets: ["1", "2", "3"],
   });
+});
+
+test("the container name fits PostgreSQL's 63-byte cluster_name at the longest prefix and owner", () => {
+  // PostgreSQL truncates a longer cluster_name, and test:pg's per-file drop
+  // then refuses every clone because the server no longer matches its name.
+  const env = { TEST_CONTAINER_PREFIX: "a".repeat(MAX_TEST_CONTAINER_PREFIX) };
+  for (const owner of ["test-pg", "runtime-pg", "o".repeat(MAX_OWNER)]) {
+    const name = disposablePostgresName(owner, env);
+    assert.match(name, new RegExp(`^a{${MAX_TEST_CONTAINER_PREFIX}}-${owner}-[0-9a-f]{16}$`));
+    assert.ok(Buffer.byteLength(name) <= CLUSTER_NAME_MAX, name);
+  }
+  assert.notEqual(disposablePostgresName("test-pg", env), disposablePostgresName("test-pg", env));
+  for (const bad of ["", "Bad", "a-", "a_b", "o".repeat(MAX_OWNER + 1)])
+    assert.throws(() => disposablePostgresName(bad, env), /owner .* at most 16 characters/, bad);
 });
 
 test("the missing-image reason names pnpm test:pg:pull-image, never a literal pull", () => {

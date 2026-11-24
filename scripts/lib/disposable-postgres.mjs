@@ -40,7 +40,7 @@
  * `ps` rather than degrade to signalling the leader's group alone.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   cpSync,
   mkdirSync,
@@ -55,7 +55,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { testContainerPrefix } from "./test-container-prefix.mjs";
+import { MAX_TEST_CONTAINER_PREFIX, testContainerPrefix } from "./test-container-prefix.mjs";
 
 /**
  * The single pin. CI pulls it via `pnpm test:pg:pull-image`; a workflow service
@@ -541,6 +541,34 @@ export function dockerAvailability() {
   return missing ? { ok: false, reason: missing } : { ok: true };
 }
 
+/** PostgreSQL keeps `cluster_name` to NAMEDATALEN - 1 bytes and truncates a
+ * longer one, after which the server can no longer prove it is its container
+ * (test:pg's per-file drop compares the two). */
+export const CLUSTER_NAME_MAX = 63;
+const OWNER = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const MAX_OWNER = 16;
+/** 16 hex digits: 64 random bits, unique enough for one machine's fixtures. */
+const NAME_SUFFIX_HEX = 16;
+// `<prefix>-<owner>-<suffix>`: the longest accepted prefix and owner still fit.
+if (MAX_TEST_CONTAINER_PREFIX + 1 + MAX_OWNER + 1 + NAME_SUFFIX_HEX > CLUSTER_NAME_MAX)
+  throw new Error("disposable PostgreSQL names can exceed the 63-byte cluster_name");
+
+/**
+ * The container name, `<prefix>-<owner>-<16 hex>` (TEST_CONTAINER_PREFIX
+ * namespaces it, scripts/lib/test-container-prefix.mjs). The server sets its
+ * `cluster_name` to it, so it is at most CLUSTER_NAME_MAX bytes.
+ *
+ * @param {string} owner
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function disposablePostgresName(owner, env = process.env) {
+  if (!OWNER.test(owner) || owner.length > MAX_OWNER)
+    throw new Error(
+      `disposable PostgreSQL owner ${JSON.stringify(owner)} must be lowercase words joined by "-", at most ${MAX_OWNER} characters`,
+    );
+  return `${testContainerPrefix({ env })}-${owner}-${randomBytes(NAME_SUFFIX_HEX / 2).toString("hex")}`;
+}
+
 /**
  * Starts one disposable PostgreSQL 18 container and waits until it accepts TCP
  * connections on its loopback-published port.
@@ -552,8 +580,7 @@ export async function startDisposablePostgres(options) {
   // Fail fast with the pull command, before any container exists.
   const missing = missingImageReason();
   if (missing) throw new Error(`Disposable PostgreSQL unavailable: ${missing}`);
-  // TEST_CONTAINER_PREFIX namespaces it (scripts/lib/test-container-prefix.mjs).
-  const name = `${testContainerPrefix()}-${options.owner}-${randomUUID()}`;
+  const name = disposablePostgresName(options.owner);
   const password = randomUUID();
   // The password never rides argv (visible to every local user via /proc):
   // a 0600 env file in a private 0700 directory, removed right after

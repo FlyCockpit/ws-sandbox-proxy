@@ -223,6 +223,9 @@ digits joined by `.`, `_`, `__` or `-`, at most 24 characters), so a shared
 machine or a chained run (`pnpm verify`, CI) keeps its own namespace without
 passing flags through. `--container-prefix <name>` on `backup:test` and
 `db:test-migrations` overrides the variable (`scripts/lib/test-container-prefix.mjs`).
+The disposable PostgreSQL container is `<prefix>-<owner>-<16 hex>`; its server
+uses that name as `cluster_name`, which PostgreSQL limits to 63 bytes, and the
+longest prefix and owner still fit.
 
 ### Isolation
 
