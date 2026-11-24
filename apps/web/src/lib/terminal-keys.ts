@@ -374,7 +374,12 @@ export class SwipeTracker {
 
 // -- text size --------------------------------------------------------------
 
-export const FONT_SIZE_MIN = 9;
+/**
+ * 1 px (owner 11-24): a phone can shrink the text far enough to fit a wide
+ * program. The cols × rows that follow are clamped to the relay contract's
+ * PTY bounds (`clampTerminalSize`: 1024 × 512) before anything is sent.
+ */
+export const FONT_SIZE_MIN = 1;
 export const FONT_SIZE_MAX = 20;
 /** The view's default (`TERMINAL_OPTIONS.fontSize` in `xterm-view.ts`). */
 export const FONT_SIZE_DEFAULT = 14;
@@ -384,12 +389,15 @@ export function clampFontSize(size: number): number {
 }
 
 /**
- * Two-finger pinch → font size, whole px. Square-root damping: a full-hand
- * spread is about ±5 px instead of doubling the size.
+ * Two-finger pinch → font size, whole px. Additive with square-root damping
+ * (the demo's curve): doubling the finger distance adds 5 px and closing it
+ * fully takes at most 5 px off, whatever the start size, so a pinch still
+ * works at 1 px, where a multiplicative zoom would barely move.
  */
 export function pinchFontSize(startSize: number, startDistance: number, distance: number): number {
-  const ratio = Math.sqrt(Math.max(distance, 1) / Math.max(startDistance, 1));
-  return clampFontSize(startSize * ratio);
+  const ratio = Math.max(distance, 0) / Math.max(startDistance, 1);
+  const delta = Math.sign(ratio - 1) * Math.sqrt(Math.abs(ratio - 1)) * 5;
+  return clampFontSize(startSize + delta);
 }
 
 // -- photo paths ------------------------------------------------------------

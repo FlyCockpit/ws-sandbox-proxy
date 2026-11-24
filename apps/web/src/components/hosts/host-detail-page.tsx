@@ -57,6 +57,7 @@ export function HostDetailPage({ hostId, lang }: { hostId: string; lang: string 
       <HostTerminal
         key={`${hostId}:${host.data.terminalPolicy?.policyRevision ?? "offline"}`}
         hostId={hostId}
+        name={host.data.label}
         lang={lang}
         policy={host.data.terminalPolicy}
       />
@@ -133,8 +134,14 @@ export function HostTerminal({
   policy,
   typeCommand,
   pretypeOnAttach,
+  name,
+  maximizable,
 }: {
+  /** False inside a dialog (see TerminalPanel). */
+  maximizable?: boolean;
   hostId: string;
+  /** The picker's label on phones (the host's label). */
+  name?: string;
   lang: string;
   policy: Policy;
   typeCommand?: string;
@@ -189,6 +196,8 @@ export function HostTerminal({
       ) : null}
       {raise.isError ? <p role="alert">{t("terminal:host.raiseFailed")}</p> : null}
       <TerminalPanel
+        name={name}
+        maximizable={maximizable}
         typeCommand={typeCommand}
         pretypeOnAttach={pretypeOnAttach}
         hostId={hostId}

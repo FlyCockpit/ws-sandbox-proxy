@@ -154,27 +154,51 @@ export function useTerminalPinch(
   }, [ref, enabled]);
 }
 
+/** The layout viewport's hidden bands while the keyboard is open (px). */
+export type KeyboardInset = {
+  /** Covered by the on-screen keyboard at the bottom. */
+  bottom: number;
+  /** Panned out of view at the top (the visual viewport's `offsetTop`). */
+  top: number;
+};
+const NO_INSET: KeyboardInset = { bottom: 0, top: 0 };
+
 /**
- * How far the on-screen keyboard covers the bottom of the layout viewport
- * (px), while the app's proven mobile-keyboard rule says it is open and the
- * focus is inside `ref` (the terminal). 0 otherwise. A key row pinned with
- * `bottom: <inset>` then sits right above the keyboard.
+ * How far the on-screen keyboard covers the bottom of the layout viewport,
+ * and how far the visible area is panned down from its top (px), while the
+ * app's proven mobile-keyboard rule says it is open and the focus is inside
+ * `ref` (the terminal). Zero otherwise. A key row pinned with
+ * `bottom: <bottom>` then sits right above the keyboard; a fixed panel with
+ * `top: <top>; bottom: <bottom>` fills exactly the visible area.
  */
-export function useKeyboardInset(ref: RefObject<HTMLElement | null>, enabled: boolean): number {
+export function useKeyboardInset(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean,
+): KeyboardInset {
   const keyboardOpen = useMobileKeyboard();
-  const [inset, setInset] = useState(0);
+  const [inset, setInset] = useState<KeyboardInset>(NO_INSET);
 
   useEffect(() => {
     const element = ref.current;
     const viewport = window.visualViewport;
     if (!enabled || !keyboardOpen || !element || !viewport) {
-      setInset(0);
+      setInset(NO_INSET);
       return;
     }
     const measure = () => {
       const focused = element.contains(document.activeElement);
-      const covered = window.innerHeight - (viewport.offsetTop + viewport.height);
-      setInset(focused ? Math.max(0, Math.round(covered)) : 0);
+      const top = Math.max(0, Math.round(viewport.offsetTop));
+      const bottom = Math.max(
+        0,
+        Math.round(window.innerHeight - (viewport.offsetTop + viewport.height)),
+      );
+      setInset((previous) =>
+        !focused
+          ? NO_INSET
+          : previous.top === top && previous.bottom === bottom
+            ? previous
+            : { top, bottom },
+      );
     };
     measure();
     viewport.addEventListener("resize", measure);
@@ -189,5 +213,5 @@ export function useKeyboardInset(ref: RefObject<HTMLElement | null>, enabled: bo
     };
   }, [ref, enabled, keyboardOpen]);
 
-  return enabled && keyboardOpen ? inset : 0;
+  return enabled && keyboardOpen ? inset : NO_INSET;
 }

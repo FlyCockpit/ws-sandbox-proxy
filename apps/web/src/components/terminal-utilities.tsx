@@ -49,27 +49,10 @@ export type UtilitiesTerminal = {
 /** Where a photo goes: the sandbox and its guest user's home. */
 export type PhotoTarget = { sandboxId: string; guestHome: string };
 
-type DialogKind = "paste" | "photo" | null;
+export type UtilityDialog = "paste" | "photo" | null;
 
-/**
- * The terminal's Utilities button: Show/Hide keys, Paste…, Photo / camera…
- * and the text size (A− / A+ / Reset, which keep the menu open). Every send
- * goes through the session's own paths (bracketed paste and its size cap for
- * text, typed input for keys).
- */
-export function TerminalUtilities({
-  terminal,
-  attached,
-  keysShown,
-  onKeysShown,
-  fontSize,
-  fontSizeIsDefault,
-  onFontSize,
-  size,
-  photo,
-  onOutcome,
-}: {
-  terminal: UtilitiesTerminal;
+/** The Type & view controls: shared by the wide Utilities button and the phone ⋯ menu. */
+export type UtilityItemsProps = {
   attached: boolean;
   keysShown: boolean;
   onKeysShown: (shown: boolean) => void;
@@ -78,143 +61,203 @@ export function TerminalUtilities({
   /** A size in px, or null for the default. */
   onFontSize: (size: number | null) => void;
   size: { rows: number; cols: number } | null;
-  /** Sandbox terminals only: where photos are uploaded. */
-  photo?: PhotoTarget;
-  /** A paste or photo's result, shown in the panel's status line. */
-  onOutcome: (outcome: ClipboardOutcome) => void;
-}) {
-  const { t } = useTranslation(["terminal"]);
-  const [dialog, setDialog] = useState<DialogKind>(null);
-  // Whether the terminal had focus (phone keyboard up) before the menu took it.
-  const refocus = useRef(false);
-  const finish = () => {
-    if (refocus.current) terminal.focus();
-  };
+  /** Sandbox terminals only: whether Photo is offered. */
+  photo: boolean;
+  onDialog: (dialog: Exclude<UtilityDialog, null>) => void;
+  /** Called after Show/Hide keys (puts the phone keyboard back when it was up). */
+  onDone: () => void;
+};
 
+/**
+ * Show/Hide keys, Paste…, Photo / camera… and the text size (A− / A+ /
+ * Reset, which keep the menu open), as items of an open dropdown menu.
+ */
+export function UtilityMenuItems({
+  attached,
+  keysShown,
+  onKeysShown,
+  fontSize,
+  fontSizeIsDefault,
+  onFontSize,
+  size,
+  photo,
+  onDialog,
+  onDone,
+}: UtilityItemsProps) {
+  const { t } = useTranslation(["terminal"]);
   return (
     <>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              type="button"
-              size="touch"
-              variant="outline"
-              data-terminal-utilities=""
-              onPointerDown={() => {
-                refocus.current = terminal.hasFocus();
-              }}
-            />
-          }
+      <DropdownMenuItem
+        data-utility="keys"
+        onClick={() => {
+          onKeysShown(!keysShown);
+          onDone();
+        }}
+      >
+        <Keyboard aria-hidden="true" />
+        <span className="flex-1">
+          {t(keysShown ? "terminal:utilities.hideKeys" : "terminal:utilities.showKeys")}
+        </span>
+      </DropdownMenuItem>
+      <DropdownMenuItem data-utility="paste" disabled={!attached} onClick={() => onDialog("paste")}>
+        <ClipboardPaste aria-hidden="true" />
+        {t("terminal:utilities.paste")}
+      </DropdownMenuItem>
+      {photo ? (
+        <DropdownMenuItem
+          data-utility="photo"
+          disabled={!attached}
+          onClick={() => onDialog("photo")}
         >
-          <Wrench aria-hidden="true" className="size-4" />
-          {t("terminal:utilities.button")}
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          className="w-72 max-w-[calc(100vw-1rem)]"
-          finalFocus={() => !refocus.current}
-        >
+          <Camera aria-hidden="true" />
+          {t("terminal:utilities.photo")}
+        </DropdownMenuItem>
+      ) : null}
+      <DropdownMenuSeparator />
+      <DropdownMenuGroup>
+        <DropdownMenuLabel>{t("terminal:utilities.textSize")}</DropdownMenuLabel>
+        <div className="flex min-w-0 items-center gap-1 px-1 pb-1">
           <DropdownMenuItem
-            data-utility="keys"
-            onClick={() => {
-              onKeysShown(!keysShown);
-              finish();
-            }}
+            closeOnClick={false}
+            data-utility="smaller"
+            aria-label={t("terminal:utilities.smaller")}
+            disabled={fontSize <= FONT_SIZE_MIN}
+            className="justify-center border px-3"
+            onClick={() => onFontSize(fontSize - 1)}
           >
-            <Keyboard aria-hidden="true" />
-            <span className="flex-1">
-              {t(keysShown ? "terminal:utilities.hideKeys" : "terminal:utilities.showKeys")}
-            </span>
+            {t("terminal:utilities.smallerShort")}
+          </DropdownMenuItem>
+          <p
+            aria-live="polite"
+            data-utility-size=""
+            className="flex min-w-0 flex-1 flex-col items-center text-sm font-medium"
+          >
+            <span>{t("terminal:utilities.px", { size: fontSize })}</span>
+            {size ? (
+              <span className="text-xs font-normal text-muted-foreground">
+                {size.cols}×{size.rows}
+              </span>
+            ) : null}
+          </p>
+          <DropdownMenuItem
+            closeOnClick={false}
+            data-utility="larger"
+            aria-label={t("terminal:utilities.larger")}
+            disabled={fontSize >= FONT_SIZE_MAX}
+            className="justify-center border px-3"
+            onClick={() => onFontSize(fontSize + 1)}
+          >
+            {t("terminal:utilities.largerShort")}
           </DropdownMenuItem>
           <DropdownMenuItem
-            data-utility="paste"
-            disabled={!attached}
-            onClick={() => setDialog("paste")}
+            closeOnClick={false}
+            data-utility="reset"
+            disabled={fontSizeIsDefault}
+            className="justify-center border px-3"
+            onClick={() => onFontSize(null)}
           >
-            <ClipboardPaste aria-hidden="true" />
-            {t("terminal:utilities.paste")}
+            {t("terminal:utilities.reset")}
           </DropdownMenuItem>
-          {photo ? (
-            <DropdownMenuItem
-              data-utility="photo"
-              disabled={!attached}
-              onClick={() => setDialog("photo")}
-            >
-              <Camera aria-hidden="true" />
-              {t("terminal:utilities.photo")}
-            </DropdownMenuItem>
-          ) : null}
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>{t("terminal:utilities.textSize")}</DropdownMenuLabel>
-            <div className="flex min-w-0 items-center gap-1 px-1 pb-1">
-              <DropdownMenuItem
-                closeOnClick={false}
-                data-utility="smaller"
-                aria-label={t("terminal:utilities.smaller")}
-                disabled={fontSize <= FONT_SIZE_MIN}
-                className="justify-center border px-3"
-                onClick={() => onFontSize(fontSize - 1)}
-              >
-                {t("terminal:utilities.smallerShort")}
-              </DropdownMenuItem>
-              <p
-                aria-live="polite"
-                data-utility-size=""
-                className="flex min-w-0 flex-1 flex-col items-center text-sm font-medium"
-              >
-                <span>{t("terminal:utilities.px", { size: fontSize })}</span>
-                {size ? (
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {size.cols}×{size.rows}
-                  </span>
-                ) : null}
-              </p>
-              <DropdownMenuItem
-                closeOnClick={false}
-                data-utility="larger"
-                aria-label={t("terminal:utilities.larger")}
-                disabled={fontSize >= FONT_SIZE_MAX}
-                className="justify-center border px-3"
-                onClick={() => onFontSize(fontSize + 1)}
-              >
-                {t("terminal:utilities.largerShort")}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                closeOnClick={false}
-                data-utility="reset"
-                disabled={fontSizeIsDefault}
-                className="justify-center border px-3"
-                onClick={() => onFontSize(null)}
-              >
-                {t("terminal:utilities.reset")}
-              </DropdownMenuItem>
-            </div>
-            <p className="px-1.5 pb-1 text-xs text-muted-foreground">
-              {t("terminal:utilities.pinchHint")}
-            </p>
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
-      {dialog === "paste" ? (
-        <PasteDialog
-          terminal={terminal}
-          refocus={refocus.current}
-          onClose={() => setDialog(null)}
-          onOutcome={onOutcome}
-        />
-      ) : null}
-      {dialog === "photo" && photo ? (
-        <PhotoDialog
-          terminal={terminal}
-          target={photo}
-          refocus={refocus.current}
-          onClose={() => setDialog(null)}
-          onOutcome={onOutcome}
-        />
-      ) : null}
+        </div>
+        <p className="px-1.5 pb-1 text-xs text-muted-foreground">
+          {t("terminal:utilities.pinchHint")}
+        </p>
+      </DropdownMenuGroup>
     </>
+  );
+}
+
+/** The Paste and Photo dialogs, opened from either menu. */
+export function UtilityDialogs({
+  dialog,
+  terminal,
+  photo,
+  refocus,
+  onClose,
+  onOutcome,
+}: {
+  dialog: UtilityDialog;
+  terminal: UtilitiesTerminal;
+  photo?: PhotoTarget;
+  /** Whether the terminal had focus (phone keyboard up) before the menu took it. */
+  refocus: boolean;
+  onClose: () => void;
+  /** A paste or photo's result, reported by the panel. */
+  onOutcome: (outcome: ClipboardOutcome) => void;
+}) {
+  // Closed any way (Cancel, Escape, ×, done): the terminal gets its focus,
+  // and the phone keyboard, back when it had them. After the dialog has let
+  // go of focus, so its own restore cannot take it again.
+  const close = () => {
+    onClose();
+    if (refocus) requestAnimationFrame(() => terminal.focus());
+  };
+  if (dialog === "paste")
+    return (
+      <PasteDialog terminal={terminal} refocus={refocus} onClose={close} onOutcome={onOutcome} />
+    );
+  if (dialog === "photo" && photo)
+    return (
+      <PhotoDialog
+        terminal={terminal}
+        target={photo}
+        refocus={refocus}
+        onClose={close}
+        onOutcome={onOutcome}
+      />
+    );
+  return null;
+}
+
+/**
+ * The terminal's Utilities button (wide layout): the Type & view items in
+ * their own menu. Its Paste/Photo dialogs open in the panel's one
+ * `UtilityDialogs`, so crossing the phone breakpoint (rotation) keeps them.
+ */
+export function TerminalUtilities({
+  terminal,
+  onDialog,
+  ...items
+}: Omit<UtilityItemsProps, "onDialog" | "onDone"> & {
+  terminal: Pick<UtilitiesTerminal, "focus" | "hasFocus">;
+  /** `refocus`: the terminal had focus (phone keyboard up) before the menu opened. */
+  onDialog: (dialog: Exclude<UtilityDialog, null>, refocus: boolean) => void;
+}) {
+  const { t } = useTranslation(["terminal"]);
+  const refocus = useRef(false);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            type="button"
+            size="touch"
+            variant="outline"
+            data-terminal-utilities=""
+            onPointerDown={() => {
+              refocus.current = terminal.hasFocus();
+            }}
+          />
+        }
+      >
+        <Wrench aria-hidden="true" className="size-4" />
+        {t("terminal:utilities.button")}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-72 max-w-[calc(100vw-1rem)]"
+        finalFocus={() => !refocus.current}
+      >
+        <UtilityMenuItems
+          {...items}
+          onDialog={(dialog) => onDialog(dialog, refocus.current)}
+          onDone={() => {
+            if (refocus.current) terminal.focus();
+          }}
+        />
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

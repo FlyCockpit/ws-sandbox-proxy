@@ -2,7 +2,7 @@
   "actions": {
     "attach": "Conectar la terminal",
     "reattach": "Volver a conectar",
-    "detach": "Desconectar",
+    "endSession": "Terminar sesión",
     "copy": "Copiar selección",
     "paste": "Pegar",
     "type": "Escríbelo por mí"
@@ -20,7 +20,7 @@
   "description": "Una shell en este sandbox. Solo se conecta cuando tú lo pides, y no se guarda nada de lo que escribes o ves.",
   "host": {
     "title": "Terminal del host",
-    "warning": "Este shell usa los permisos locales del daemon. Puede acceder a las VM con privilegios de administrador local. Desconectar termina este PTY; reconectar inicia otro shell.",
+    "warning": "Este shell usa los permisos locales del daemon. Puede acceder a las VM con privilegios de administrador local. Terminar sesión termina este PTY; reconectar inicia otro shell.",
     "enabled": "Las terminales locales están habilitadas.",
     "disabled": "Las terminales están deshabilitadas localmente. Actívalas con wssp host config set-host-terminal on en el host.",
     "offline": "No hay política actual del host. Conéctalo antes de abrir terminal o exigir TOTP.",
@@ -203,5 +203,41 @@
     "send": "Subir y escribir la ruta",
     "placed": "La imagen está en el sandbox, pero la terminal no pudo recibir su ruta (no está conectada). Presiona Escribir ruta cuando vuelva a conectarse, o copia la ruta:",
     "typePath": "Escribir ruta"
+  },
+  "header": {
+    "picker": "Terminal: {{name}}, {{state}}. Cambiar de terminal",
+    "openTerminals": "Terminales abiertas",
+    "newTerminal": "Nueva terminal…",
+    "newTerminalSandboxes": "Elige un sandbox y conecta su terminal",
+    "newTerminalHosts": "Elige un host y conecta su terminal",
+    "newTerminalLeaves": "Sale de esta página, lo que termina esta terminal",
+    "state": {
+      "typing": "Conectada · escribiendo",
+      "viewing": "Reconectando · solo vista",
+      "opening": "Abriendo…",
+      "refused": "Rechazada",
+      "ended": "Terminada"
+    },
+    "more": "Más acciones",
+    "typeView": "Escribir y ver",
+    "selectText": "Seleccionar texto",
+    "session": "Sesión",
+    "endSession": "Terminar sesión…",
+    "close": "Cerrar terminal",
+    "maximize": "Maximizar terminal",
+    "restore": "Restaurar terminal"
+  },
+  "endDialog": {
+    "title": "¿Terminar esta sesión?",
+    "description": "El shell de {{name}} se detiene y todo lo que se esté ejecutando en él termina. Al volver a conectar se inicia un shell nuevo.",
+    "hostDescription": "El shell en {{name}} se detiene y todo lo que se esté ejecutando en él termina. Al volver a conectar se inicia un shell nuevo.",
+    "cancel": "Cancelar",
+    "confirm": "Terminar sesión"
+  },
+  "selectText": {
+    "label": "Texto de la terminal",
+    "hint": "El texto de la terminal en este momento. Selecciona una parte y pulsa Copiar.",
+    "copy": "Copiar",
+    "done": "Listo"
   }
 }

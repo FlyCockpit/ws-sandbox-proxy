@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -292,5 +293,55 @@ describe("native clipboard events", () => {
     const event = new Event("paste", { bubbles: true, cancelable: true });
     element.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("bufferText gives the scrollback and screen as lines, a wrapped row joined to its line", async () => {
+    const view = createTerminalView();
+    view.open(container());
+    view.write(new TextEncoder().encode(`one\r\n${"x".repeat(100)}\r\nthree`));
+    // xterm parses written data asynchronously.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(view.bufferText()).toBe(`one\n${"x".repeat(100)}\nthree`);
+    view.dispose();
+  });
+
+  it("bufferText keeps a space that falls on a wrap boundary", async () => {
+    const view = createTerminalView();
+    view.open(container());
+    // 80 columns: the space is the last cell of the first row.
+    view.write(new TextEncoder().encode(`${"a".repeat(79)} b`));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(view.bufferText()).toBe(`${"a".repeat(79)} b`);
+    view.dispose();
+  });
+
+  it("bufferText does not invent a space where a wide character wrapped", async () => {
+    const view = createTerminalView();
+    view.open(container());
+    // 79 + a 2-cell character: it wraps, leaving the 80th cell empty.
+    view.write(new TextEncoder().encode(`${"a".repeat(79)}你`));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(view.bufferText()).toBe(`${"a".repeat(79)}你`);
+    view.dispose();
+  });
+
+  it("at 1 px a huge measured fit is clamped to 1024 × 512 and the real terminal takes that size", async () => {
+    const propose = vi
+      .spyOn(FitAddon.prototype, "proposeDimensions")
+      .mockReturnValue({ cols: 9000, rows: 5000 });
+    try {
+      const view = createTerminalView();
+      const element = container();
+      view.open(element);
+      view.setFontSize(1);
+      expect(view.fit()).toEqual({ cols: 1024, rows: 512 });
+      // The full grid works: a write across it is parsed and read back.
+      view.write(new TextEncoder().encode(`${"y".repeat(2000)}\r\nend`));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(view.bufferText()).toBe(`${"y".repeat(2000)}\nend`);
+      view.dispose();
+    } finally {
+      propose.mockRestore();
+    }
   });
 });

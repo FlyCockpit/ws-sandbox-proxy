@@ -195,6 +195,10 @@ export class FakeTerminalView implements TerminalView {
     return this.nextFit ? { ...this.nextFit } : null;
   }
 
+  bufferText() {
+    return this.written.join("");
+  }
+
   selection() {
     return this.selectionText;
   }

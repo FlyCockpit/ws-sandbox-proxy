@@ -135,6 +135,14 @@ export function useTerminalSession({
     clientRef.current?.detach();
   }, []);
 
+  /** Close an ended terminal: its view and scrollback go, the panel is idle again. */
+  const close = useCallback(() => {
+    if (clientRef.current?.state.status !== "ended") return;
+    clientRef.current.dispose();
+    clientRef.current = null;
+    setSnapshot(IDLE_TERMINAL);
+  }, []);
+
   /** Copy the terminal selection: the explicit Copy button only. */
   const copySelection = useCallback(async (): Promise<ClipboardOutcome> => {
     const text = clientRef.current?.selection() ?? "";
@@ -192,6 +200,9 @@ export function useTerminalSession({
     [],
   );
 
+  /** The terminal's text for Select text (read only). */
+  const bufferText = useCallback(() => clientRef.current?.bufferText() ?? "", []);
+
   const focus = useCallback(() => clientRef.current?.focus(), []);
   const hasFocus = useCallback(() => clientRef.current?.hasFocus() ?? false, []);
   const applicationCursorKeys = useCallback(
@@ -205,7 +216,9 @@ export function useTerminalSession({
     snapshot,
     attach,
     detach,
+    close,
     copySelection,
+    bufferText,
     paste,
     typeText,
     sendKeys,

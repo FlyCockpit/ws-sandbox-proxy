@@ -368,6 +368,7 @@ export function QueuedHostCommands({
                   policy={policy}
                   typeCommand={handoff.typedCommand}
                   pretypeOnAttach
+                  maximizable={false}
                 />
               ) : (
                 <>

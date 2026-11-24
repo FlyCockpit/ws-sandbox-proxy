@@ -177,6 +177,8 @@ export type TerminalView = {
   /** Fit to the container; the resulting clamped size, or `null` when it cannot be measured. */
   fit(): TerminalSize | null;
   selection(): string;
+  /** The scrollback and screen as plain text, one line per row (Select text). */
+  bufferText(): string;
   paste(text: string): void;
   focus(): void;
   /** Whether the terminal's input element has focus (the phone keyboard is up for it). */
@@ -443,6 +445,11 @@ export class TerminalClient {
 
   selection(): string {
     return this.view?.selection() ?? "";
+  }
+
+  /** The buffer as text for Select text: read only, never sent anywhere. */
+  bufferText(): string {
+    return this.view?.bufferText() ?? "";
   }
 
   /**

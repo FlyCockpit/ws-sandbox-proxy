@@ -5,6 +5,10 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 
 // @vitest-environment jsdom
 
+import {
+  BROWSER_TERMINAL_MAX_COLS,
+  BROWSER_TERMINAL_MAX_ROWS,
+} from "@wssp/config/browser-terminal";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import {
@@ -1377,6 +1381,42 @@ describe("terminal utilities", () => {
       expect(resizes.length).toBe(before + 1);
       expect(resizes.at(-1)).toMatchObject({ rows: 25, cols: 80 });
       expect(fitted).toEqual([{ rows: 25, cols: 80 }]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("at 1 px a huge fit is clamped to the relay contract's PTY bounds before it is sent", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const { client, socket, view } = await attached();
+      const fitted: unknown[] = [];
+      // A maximized wide screen at 1 px measures thousands of cells.
+      view.nextFit = { rows: 5000, cols: 9000 };
+      client.setFontSize(1, (size) => fitted.push(size));
+      expect(view.fontSize).toBe(1);
+      for (const frame of frames.splice(0)) frame(0);
+      const resizes = socket.sentText.filter((frame) => frame.type === "resize");
+      expect(resizes.at(-1)).toMatchObject({
+        rows: BROWSER_TERMINAL_MAX_ROWS,
+        cols: BROWSER_TERMINAL_MAX_COLS,
+      });
+      expect(fitted).toEqual([
+        { rows: BROWSER_TERMINAL_MAX_ROWS, cols: BROWSER_TERMINAL_MAX_COLS },
+      ]);
+      // Within the bounds, a 1 px fit goes out unchanged.
+      view.nextFit = { rows: 400, cols: 650 };
+      client.setFontSize(1);
+      for (const frame of frames.splice(0)) frame(0);
+      expect(socket.sentText.filter((frame) => frame.type === "resize").at(-1)).toMatchObject({
+        rows: 400,
+        cols: 650,
+      });
     } finally {
       vi.unstubAllGlobals();
     }

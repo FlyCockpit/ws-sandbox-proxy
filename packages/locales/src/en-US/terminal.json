@@ -7,7 +7,7 @@
   "actions": {
     "attach": "Attach terminal",
     "reattach": "Attach again",
-    "detach": "Disconnect",
+    "endSession": "End session",
     "copy": "Copy selection",
     "paste": "Paste",
     "type": "Type it for me"
@@ -78,7 +78,7 @@
   },
   "host": {
     "title": "Host terminal",
-    "warning": "This shell runs with the daemon user’s local powers. It can reach guests through local administrator privileges. Detach ends this PTY; attaching again starts a new shell.",
+    "warning": "This shell runs with the daemon user’s local powers. It can reach guests through local administrator privileges. End session ends this PTY; attaching again starts a new shell.",
     "enabled": "Local host terminals are enabled.",
     "disabled": "Host terminals are disabled locally. Enable with wssp host config set-host-terminal on on the host.",
     "offline": "No current host policy is available. Connect the host before attaching or raising TOTP.",
@@ -203,5 +203,41 @@
     "send": "Upload and type path",
     "placed": "The image is in the sandbox, but the terminal could not take its path (it is not attached). Press Type path once it is attached again, or copy the path:",
     "typePath": "Type path"
+  },
+  "header": {
+    "picker": "Terminal: {{name}}, {{state}}. Switch terminal",
+    "openTerminals": "Open terminals",
+    "newTerminal": "New terminal…",
+    "newTerminalSandboxes": "Choose a sandbox, then attach its terminal",
+    "newTerminalHosts": "Choose a host, then attach its terminal",
+    "newTerminalLeaves": "Leaves this page, which ends this terminal",
+    "state": {
+      "typing": "Connected · typing",
+      "viewing": "Reconnecting · viewing",
+      "opening": "Opening…",
+      "refused": "Refused",
+      "ended": "Ended"
+    },
+    "more": "More actions",
+    "typeView": "Type & view",
+    "selectText": "Select text",
+    "session": "Session",
+    "endSession": "End session…",
+    "close": "Close terminal",
+    "maximize": "Maximize terminal",
+    "restore": "Restore terminal"
+  },
+  "endDialog": {
+    "title": "End this session?",
+    "description": "The shell in {{name}} stops, and anything running in it ends. Attaching again starts a new shell.",
+    "hostDescription": "The shell on {{name}} stops, and anything running in it ends. Attaching again starts a new shell.",
+    "cancel": "Cancel",
+    "confirm": "End session"
+  },
+  "selectText": {
+    "label": "Terminal text",
+    "hint": "The terminal's text as of now. Select some, then Copy.",
+    "copy": "Copy",
+    "done": "Done"
   }
 }

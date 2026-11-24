@@ -120,6 +120,7 @@ const view: TerminalView = {
   onNativePaste: () => ({ dispose: () => {} }),
   fit: () => (nextFit ? { ...nextFit } : null),
   selection: () => "",
+  bufferText: () => "",
   paste: () => {},
   focus: () => {},
   hasFocus: () => false,

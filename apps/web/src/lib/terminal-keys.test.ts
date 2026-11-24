@@ -226,19 +226,32 @@ describe("SwipeTracker", () => {
 });
 
 describe("text size", () => {
-  it("clamps to 9–20 px in whole px", () => {
-    expect(clampFontSize(8)).toBe(FONT_SIZE_MIN);
+  it("clamps to 1–20 px in whole px (owner 11-24: minimum 1 px)", () => {
+    expect(FONT_SIZE_MIN).toBe(1);
+    expect(clampFontSize(0)).toBe(1);
+    expect(clampFontSize(-4)).toBe(1);
+    expect(clampFontSize(1)).toBe(1);
+    expect(clampFontSize(1.4)).toBe(1);
+    expect(clampFontSize(8)).toBe(8);
     expect(clampFontSize(25)).toBe(FONT_SIZE_MAX);
     expect(clampFontSize(14.6)).toBe(15);
   });
 
-  it("damps a pinch with a square root", () => {
+  it("damps a pinch with a square root, additively", () => {
     expect(pinchFontSize(14, 100, 100)).toBe(14);
-    // Twice the spread is √2 ≈ 1.41× the size, not 2×.
-    expect(pinchFontSize(14, 100, 200)).toBe(20);
-    expect(pinchFontSize(14, 100, 150)).toBe(17);
+    // Twice the spread adds 5 px; closing the fingers takes at most 5 px off.
+    expect(pinchFontSize(14, 100, 200)).toBe(19);
+    expect(pinchFontSize(14, 100, 150)).toBe(18);
     expect(pinchFontSize(14, 200, 100)).toBe(10);
-    expect(pinchFontSize(14, 100, 0)).toBe(FONT_SIZE_MIN);
+    expect(pinchFontSize(14, 100, 0)).toBe(9);
+    expect(pinchFontSize(20, 100, 400)).toBe(FONT_SIZE_MAX);
+  });
+
+  it("pinches at 1 px: never below it, and spreading grows it again", () => {
+    expect(pinchFontSize(1, 100, 0)).toBe(1);
+    expect(pinchFontSize(3, 100, 0)).toBe(1);
+    expect(pinchFontSize(1, 100, 200)).toBe(6);
+    expect(pinchFontSize(1, 100, 125)).toBe(4);
   });
 });
 

@@ -18,7 +18,7 @@ command/file tools follow [ADR-006](../design/adr-006-agent-host-access.md).
 - **One attachment per sandbox.** Attaching from a second tab or device
   **replaces** the first: the old one ends with "replaced" and its shell is
   closed. Input from a replaced attachment reaches nothing.
-- **A new shell every time, except a short reattach.** Detaching, closing the
+- **A new shell every time, except a short reattach.** End session, closing the
   tab, the shell exiting, or any other end is final; **Attach again** starts a
   new shell process. The one exception: when the node daemon supports it
   (`terminalResume`), a sandbox terminal survives
@@ -41,9 +41,40 @@ command/file tools follow [ADR-006](../design/adr-006-agent-host-access.md).
   socket opens are classified by one fresh ticket request and are not retried
   in a loop.
 
+## Header and End session
+
+- **End session** ends the shell (the CloseIntent above) and always asks
+  first in a dialog. There is no "stop viewing" that leaves the shell
+  running: every end is final, and **Attach again** starts a new shell.
+- **Maximize / Restore** lets the terminal fill the screen (inside the
+  phone's safe areas, above the phone's bottom navigation, and above the
+  on-screen keyboard while it is open) and puts it back; the terminal
+  refits, so the shell gets the new size.
+- **On phones (640 px wide or less)** the actions become one fixed row once
+  the terminal is shown: the **terminal picker**, **⋯**, and Maximize/Restore
+  in the corner. Nothing moves into an overflow as the screen narrows.
+  - The picker shows a status icon and the sandbox (or host) name. The icon
+    is a **keyboard** when what you type reaches the shell and an **eye**
+    while it is view only (reconnecting: the scrollback stays, input stops).
+    Its colour is green when connected, amber while opening or reconnecting,
+    red when the terminal was refused and grey when it ended. The list shows
+    this page's terminal and **New terminal…**, which goes to Sandboxes (or
+    Hosts), where terminals are attached; leaving the page ends this terminal.
+  - **⋯** has two groups. **Type & view**: Show/Hide keys, Paste…, Photo /
+    camera…, text size, **Select text**, Copy selection and (on a CLI login)
+    Type it for me. **Session**: End session… (red, asks first), or on an
+    ended terminal Attach again and **Close terminal** (clears the ended view).
+  - There is no status line: the reason a terminal ended (with Attach again)
+    and warnings appear inside the terminal area, and copy/paste results as
+    a toast.
+- **Select text** shows the terminal's text as of now in a box where it can
+  be selected by touch. Copy stays an explicit button there too (native copy
+  is cancelled, as on the terminal), and nothing in the box is sent.
+
 ## Utilities (phones and touch screens)
 
-The **Utilities** button in the terminal actions opens:
+The **Utilities** button in the terminal actions (in **⋯ › Type & view** on
+phones) opens:
 
 - **Show keys / Hide keys**: a key row under the terminal with Esc, Tab, Ctrl,
   Alt and a swipe pad. It is hidden until you show it, and the choice is
@@ -67,11 +98,15 @@ The **Utilities** button in the terminal actions opens:
   into `<guest home>/.uploads/paste-<time>-<id>.<ext>`; once the sandbox has
   written it, its path and a space are typed as a paste, which is how coding
   agents such as Claude Code and Codex take images in a terminal.
-- **Text size**: A− / A+ in 1 px steps (9–20 px) and Reset, remembered on
+- **Text size**: A− / A+ in 1 px steps (1–20 px) and Reset, remembered on
   this device. Pinching the terminal with two fingers changes it too (the
-  page itself does not zoom there; one finger still scrolls and selects).
-  A size change refits the terminal, so the shell gets the new columns and
-  rows like a window resize.
+  page itself does not zoom there; one finger still scrolls and selects);
+  spreading the fingers to twice their distance adds about 5 px, closing
+  them takes off up to 5 px. A size change refits the terminal, so the shell
+  gets the new columns and rows like a window resize. At very small sizes
+  the columns and rows are capped at the relay contract's PTY bounds
+  (1024 columns × 512 rows); a screen that would fit more leaves the rest
+  of the box empty.
 
 ## Security properties
 

@@ -5,6 +5,8 @@ import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unav
 
 type SandboxTerminalProps = {
   sandboxId: string;
+  /** The picker's label on phones (the sandbox's name). */
+  name?: string;
   lang: string;
   available: boolean;
   /** The login page's "Type it for me" text. */

@@ -7,11 +7,13 @@ export const DESKTOP_MEDIA_QUERY = `(min-width: ${MOBILE_BREAKPOINT_PX}px)`;
 export function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
     (callback) => {
+      // Absent in some test DOMs: nothing ever matches there.
+      if (typeof window.matchMedia !== "function") return () => {};
       const mql = window.matchMedia(query);
       mql.addEventListener("change", callback);
       return () => mql.removeEventListener("change", callback);
     },
-    () => window.matchMedia(query).matches,
+    () => typeof window.matchMedia === "function" && window.matchMedia(query).matches,
     () => false,
   );
 }

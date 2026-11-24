@@ -61,7 +61,41 @@ vi.mock("@/lib/sandbox-transfers", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sandbox-transfers")>()),
   uploadToSandbox,
 }));
+// The keyboard inset the real hook measures from visualViewport (0: no keyboard).
+const keyboard = vi.hoisted(() => ({ inset: 0, top: 0 }));
+vi.mock("@/hooks/use-terminal-utilities", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/use-terminal-utilities")>();
+  return {
+    ...actual,
+    useKeyboardInset: (...args: Parameters<typeof actual.useKeyboardInset>) => {
+      const measured = actual.useKeyboardInset(...args);
+      return args[1] && keyboard.inset > 0
+        ? { bottom: keyboard.inset, top: keyboard.top }
+        : measured;
+    },
+  };
+});
+const toastMessage = vi.hoisted(() => vi.fn());
+vi.mock("@wssp/ui/components/sileo", () => ({
+  toast: {
+    message: toastMessage,
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    warning: vi.fn(),
+  },
+}));
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirect: () => redirect }));
+// The phone picker's "New terminal…" is a router Link; a plain anchor here.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    to,
+    params,
+    ...rest
+  }: { to: string; params?: { lang?: string } } & Record<string, unknown>) => (
+    <a href={to.replace("$lang", params?.lang ?? "")} {...rest} />
+  ),
+}));
 vi.mock("@/lib/xterm-view", async () => {
   const { FakeTerminalView: View } = await import("@/test/terminal-fakes");
   loadedView.count += 1;
@@ -130,6 +164,8 @@ beforeEach(() => {
   clipboard.readText.mockImplementation(async () => "");
   queryClient = new QueryClient();
   useTerminalPreferences.setState({ keysShown: false, fontSize: null });
+  keyboard.inset = 0;
+  keyboard.top = 0;
   localStorage.clear();
   sessionStorage.clear();
 });
@@ -152,7 +188,15 @@ function renderTerminal(available = true, strict = false) {
   return render(strict ? <StrictMode>{tree}</StrictMode> : tree);
 }
 
-const toggle = () => screen.getByRole("button", { name: /attach|disconnect/i });
+const toggle = () => screen.getByRole("button", { name: /attach|end session/i });
+
+/** End session asks first: the confirmation dialog, then its End session button. */
+async function endSession(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: enTerminal.actions.endSession }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog.textContent).toContain(enTerminal.endDialog.title);
+  await user.click(screen.getByRole("button", { name: enTerminal.endDialog.confirm }));
+}
 
 async function attach(user = userEvent.setup()) {
   await user.click(screen.getByRole("button", { name: enTerminal.actions.attach }));
@@ -244,10 +288,24 @@ describe("the ticket (C53-CO-6)", () => {
 });
 
 describe("detach and re-attach", () => {
-  it("disconnect sends CloseIntent, tears the socket down, and the backend sees the close", async () => {
+  it("End session asks first; Cancel keeps the shell", async () => {
+    renderTerminal();
+    const { user, socket } = await attach();
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.endSession }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    expect(socket.sentText.some((frame) => (frame as { type?: string }).type === "close")).toBe(
+      false,
+    );
+    await user.click(screen.getByRole("button", { name: enTerminal.endDialog.cancel }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(socket.sessionClosed).toBe(false);
+    expect(screen.getByText("Attached (100 × 30).")).toBeTruthy();
+  });
+
+  it("End session sends CloseIntent, tears the socket down, and the backend sees the close", async () => {
     renderTerminal();
     const { user, socket, view } = await attach();
-    await user.click(screen.getByRole("button", { name: enTerminal.actions.detach }));
+    await endSession(user);
     expect(socket.sentText.at(-1)).toMatchObject({ type: "close" });
     expect(socket.closedByClient).toEqual({ code: 1000 });
     expect(socket.sessionClosed).toBe(true);
@@ -265,7 +323,7 @@ describe("detach and re-attach", () => {
     expect(view.disposed).toBe(true);
   });
 
-  it("a relay drop shows Reconnecting and keeps the view; Disconnect cancels it (WP8)", async () => {
+  it("a relay drop shows Reconnecting and keeps the view; End session cancels it (WP8)", async () => {
     renderTerminal();
     const { socket, view, user } = await attach();
     const terminalId = `t${"0".repeat(31)}1`;
@@ -276,8 +334,8 @@ describe("detach and re-attach", () => {
     });
     expect(await screen.findByText(enTerminal.status.reconnecting)).toBeTruthy();
     expect(view.disposed).toBe(false);
-    await user.click(screen.getByRole("button", { name: enTerminal.actions.detach }));
-    expect(screen.getByText(enTerminal.notice.client)).toBeTruthy();
+    await endSession(user);
+    expect(await screen.findByText(enTerminal.notice.client)).toBeTruthy();
     expect(createSession).toHaveBeenCalledTimes(1);
   });
 
@@ -405,7 +463,7 @@ describe("lifecycle", () => {
 });
 
 describe("keyboard and focus", () => {
-  it("attach and disconnect work from the keyboard, and focus stays on the toggle", async () => {
+  it("attach and End session work from the keyboard, and focus comes back to the toggle", async () => {
     renderTerminal();
     const user = userEvent.setup();
     await user.tab();
@@ -421,9 +479,20 @@ describe("keyboard and focus", () => {
     expect(FakeTerminalView.last().focused).toBeGreaterThan(0);
     toggle().focus();
     await user.keyboard("{Enter}");
+    await screen.findByRole("alertdialog");
+    // The dialog starts on Cancel; Tab reaches End session.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: enTerminal.endDialog.cancel }),
+      ),
+    );
+    await user.tab();
+    await user.keyboard("{Enter}");
     expect(socket.sessionClosed).toBe(true);
-    expect(document.activeElement).toBe(
-      screen.getByRole("button", { name: enTerminal.actions.reattach }),
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: enTerminal.actions.reattach }),
+      ),
     );
   });
 });
@@ -876,4 +945,458 @@ it("a paste the terminal cannot take keeps the dialog and the draft", async () =
     (screen.getByRole("textbox", { name: enTerminal.pasteDialog.text }) as HTMLTextAreaElement)
       .value,
   ).toBe("keep me");
+});
+
+describe("phone header (owner 11-24: one row, one menu)", () => {
+  const PHONE = "(max-width: 640px)";
+  beforeEach(() => {
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          matches: query === PHONE,
+          media: query,
+          onchange: null,
+          addListener() {},
+          removeListener() {},
+          addEventListener() {},
+          removeEventListener() {},
+          dispatchEvent: () => false,
+        }) as unknown as MediaQueryList,
+    );
+  });
+
+  const renderPhone = (props: Partial<Parameters<typeof SandboxTerminal>[0]> = {}) =>
+    render(
+      wrap(
+        <SandboxTerminal sandboxId="sbx_1" name="build-box" lang="en-US" available {...props} />,
+      ),
+    );
+  const indicator = () =>
+    document
+      .querySelector("[data-terminal-picker] [data-terminal-indicator]")
+      ?.getAttribute("data-terminal-indicator");
+  const openMore = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: enTerminal.header.more }));
+    return screen.findByRole("menu");
+  };
+  const decode = (bytes: Uint8Array | undefined) => new TextDecoder().decode(bytes);
+
+  it("before attach shows only Attach; once shown, one row: picker, ⋯, Maximize, and no status line", async () => {
+    renderPhone();
+    expect(document.querySelector("[data-terminal-header]")).toBeNull();
+    expect(screen.getByRole("button", { name: enTerminal.actions.attach })).toBeTruthy();
+    await attach();
+    const row = document.querySelector("[data-terminal-header]") as HTMLElement;
+    expect(row).not.toBeNull();
+    const buttons = [...row.querySelectorAll("button")].map(
+      (button) =>
+        button.getAttribute("data-terminal-picker") ??
+        (button.hasAttribute("data-terminal-more")
+          ? "more"
+          : button.getAttribute("data-terminal-maximize")),
+    );
+    expect(buttons).toEqual(["", "more", "maximize"]);
+    expect(row.textContent).toContain("build-box");
+    // No old actions row: no End session / Copy / Utilities buttons outside the menus.
+    expect(screen.queryByRole("button", { name: enTerminal.actions.endSession })).toBeNull();
+    expect(screen.queryByRole("button", { name: enTerminal.utilities.button })).toBeNull();
+    expect(document.querySelector("[data-terminal-copy]")).toBeNull();
+    // The status is for screen readers only.
+    expect(document.querySelector("[data-terminal-state]")?.className).toBe("sr-only");
+    expect(indicator()).toBe("typing-connected");
+  });
+
+  it("the picker lists this terminal with its state and offers New terminal… where wssp opens terminals", async () => {
+    renderPhone();
+    const { user } = await attach();
+    const picker = document.querySelector("[data-terminal-picker]") as HTMLElement;
+    expect(picker.getAttribute("aria-label")).toBe(
+      "Terminal: build-box, Connected · typing. Switch terminal",
+    );
+    await user.click(picker);
+    const menu = await screen.findByRole("menu");
+    expect(menu.textContent).toContain(enTerminal.header.openTerminals);
+    const current = menu.querySelector('[data-terminal-picker-item="current"]') as HTMLElement;
+    expect(current.getAttribute("aria-checked")).toBe("true");
+    expect(current.textContent).toContain("build-box");
+    expect(current.textContent).toContain(enTerminal.header.state.typing);
+    const create = menu.querySelector("[data-terminal-new]") as HTMLAnchorElement;
+    expect(create.getAttribute("href")).toBe("/en-US/dashboard/sandboxes");
+    expect(create.textContent).toContain(enTerminal.header.newTerminal);
+    // Leaving the page ends this terminal: said before you go.
+    expect(create.textContent).toContain(enTerminal.header.newTerminalLeaves);
+    // Picking the current terminal just closes the list.
+    await user.click(current);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(FakeWebSocket.live()).toHaveLength(1);
+  });
+
+  it("inside a dialog (maximizable=false) there is no Maximize, on phones or wide", async () => {
+    render(wrap(<TerminalPanel sandboxId="sbx_1" lang="en-US" available maximizable={false} />));
+    await attach();
+    expect(document.querySelector("[data-terminal-header]")).not.toBeNull();
+    expect(document.querySelector("[data-terminal-maximize]")).toBeNull();
+  });
+
+  it("a host terminal's New terminal… goes to Hosts", async () => {
+    render(wrap(<TerminalPanel hostId="host-1" name="halo-0" lang="en-US" available />));
+    createSession.mockClear();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.attach }));
+    // The host mint is refused here (no host mock): the header shows the red refusal.
+    await waitFor(() => expect(document.querySelector("[data-terminal-header]")).not.toBeNull());
+    await user.click(document.querySelector("[data-terminal-picker]") as HTMLElement);
+    const menu = await screen.findByRole("menu");
+    expect(menu.querySelector("[data-terminal-new]")?.getAttribute("href")).toBe(
+      "/en-US/settings/hosts",
+    );
+  });
+
+  it("⋯ has the Type & view group, then the Session group with End session last (red)", async () => {
+    renderPhone({ photo: { sandboxId: "sbx_1", guestHome: "/home/user" }, typeCommand: "claude" });
+    const { user } = await attach();
+    const menu = await openMore(user);
+    const typeView = menu.querySelector('[data-menu-group="type-view"]') as HTMLElement;
+    const session = menu.querySelector('[data-menu-group="session"]') as HTMLElement;
+    expect(typeView.textContent).toContain(enTerminal.header.typeView);
+    expect(session.textContent).toContain(enTerminal.header.session);
+    const items = (group: HTMLElement) =>
+      [...group.querySelectorAll("[data-utility],[data-session]")].map(
+        (item) => item.getAttribute("data-utility") ?? item.getAttribute("data-session"),
+      );
+    expect(items(typeView)).toEqual([
+      "keys",
+      "paste",
+      "photo",
+      "smaller",
+      "larger",
+      "reset",
+      "select",
+      "copy",
+      "type",
+    ]);
+    expect(items(session)).toEqual(["end"]);
+    const end = session.querySelector('[data-session="end"]') as HTMLElement;
+    expect(end.hasAttribute("data-danger")).toBe(true);
+    // Important classes: the shared menu recolours focused items and their icons.
+    expect(end.className).toContain("text-destructive!");
+    expect(end.className).toContain("*:[svg]:text-destructive!");
+    // Groups come in order: Type & view first.
+    expect(
+      typeView.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("every Type & view item works from ⋯: keys, paste, text size, select, copy, type", async () => {
+    renderPhone({ typeCommand: "claude login" });
+    const { user, view, socket } = await attach();
+    // Show keys.
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.showKeys }));
+    expect(await screen.findByRole("toolbar", { name: enTerminal.keys.label })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: enTerminal.keys.name.esc }));
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x1b");
+    // Paste… dialog.
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.paste }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(dialog.querySelector("textarea") as HTMLTextAreaElement, "ls");
+    await user.click(screen.getByRole("button", { name: enTerminal.pasteDialog.send }));
+    await waitFor(() => expect(view.pasted).toEqual(["ls"]));
+    // Text size.
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.larger }));
+    await waitFor(() => expect(view.fontSize).toBe(15));
+    await user.keyboard("{Escape}");
+    // Type it for me.
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.actions.type }));
+    await waitFor(() => expect(view.pasted.at(-1)).toBe("claude login"));
+    // Copy selection.
+    view.selectionText = "picked";
+    installClipboard();
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.actions.copy }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("picked"));
+  });
+
+  it("Select text shows the terminal's text; Copy takes only a selection inside it, native copy stays blocked", async () => {
+    renderPhone();
+    const { user, view } = await attach();
+    act(() => view.write(new TextEncoder().encode("hello world")));
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.header.selectText }));
+    const box = (await screen.findByLabelText(enTerminal.selectText.label)) as HTMLElement;
+    expect(box.textContent).toBe("hello world");
+    installClipboard();
+    // Nothing selected: says so, copies nothing.
+    window.getSelection()?.removeAllRanges();
+    await user.click(screen.getByRole("button", { name: enTerminal.selectText.copy }));
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(document.querySelector("[data-terminal-select] [role=status]")?.textContent).toBe(
+      enTerminal.clipboard.copyEmpty,
+    );
+    // A selection inside the box is copied by the button.
+    const range = document.createRange();
+    const textNode = box.firstChild as Text;
+    range.setStart(textNode, 0);
+    range.setEnd(textNode, 5);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    await user.click(screen.getByRole("button", { name: enTerminal.selectText.copy }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("hello"));
+    const copy = new Event("copy", { bubbles: true, cancelable: true });
+    box.dispatchEvent(copy);
+    expect(copy.defaultPrevented).toBe(true);
+    await user.click(screen.getByRole("button", { name: enTerminal.selectText.done }));
+    expect(document.querySelector("[data-terminal-select]")).toBeNull();
+  });
+
+  it("End session from ⋯ asks first; then grey, the reason and Attach again inside the terminal area", async () => {
+    renderPhone();
+    const { user, socket, view } = await attach();
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.header.endSession }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("build-box");
+    expect(socket.sessionClosed).toBe(false);
+    await user.click(screen.getByRole("button", { name: enTerminal.endDialog.confirm }));
+    await waitFor(() => expect(socket.sessionClosed).toBe(true));
+    expect(socket.sentText.some((frame) => (frame as { type?: string }).type === "close")).toBe(
+      true,
+    );
+    await waitFor(() => expect(indicator()).toBe("typing-ended"));
+    // The notice sits inside the terminal area, with Attach again.
+    const notice = document.querySelector('[data-terminal-notice="client"]') as HTMLElement;
+    expect(notice.closest(".relative")?.querySelector("[data-terminal-view]")).not.toBeNull();
+    expect(notice.textContent).toContain(enTerminal.notice.client);
+    // Session on an ended terminal: Attach again and Close, no End session.
+    const menu = await openMore(user);
+    const session = menu.querySelector('[data-menu-group="session"]') as HTMLElement;
+    expect(session.querySelector('[data-session="end"]')).toBeNull();
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.header.close }));
+    // Close: the ended view goes and the panel is idle again.
+    await waitFor(() => expect(document.querySelector("[data-terminal-header]")).toBeNull());
+    expect(view.disposed).toBe(true);
+    expect(screen.getByRole("button", { name: enTerminal.actions.attach })).toBeTruthy();
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("Attach again inside the terminal area starts a new session", async () => {
+    renderPhone();
+    const { socket } = await attach();
+    act(() => socket.serverCloseIntent({ intent: "replaced" }));
+    const notice = await waitFor(() => {
+      const element = document.querySelector('[data-terminal-notice="replaced"]');
+      if (!element) throw new Error("no notice yet");
+      return element as HTMLElement;
+    });
+    expect(notice.getAttribute("role")).toBe("alert");
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.reattach }));
+    await waitFor(() => expect(createSession).toHaveBeenCalledTimes(2));
+  });
+
+  it("reconnecting is the eye (view only, amber), and typing reaches nothing", async () => {
+    renderPhone();
+    const { socket, view } = await attach();
+    const terminalId = `t${"0".repeat(31)}1`;
+    act(() => {
+      socket.serverText({ type: "ready", rows: 30, cols: 100, terminalId, outputSeq: 0 });
+      socket.serverText({ type: "reconnecting", terminalId, graceMs: 120_000 });
+      socket.serverClose(4402);
+    });
+    await waitFor(() => expect(indicator()).toBe("viewing-opening"));
+    const sent = socket.sentBinary.length;
+    view.type("rm -rf x\r");
+    expect(socket.sentBinary.length).toBe(sent);
+    expect(
+      (document.querySelector("[data-terminal-picker]") as HTMLElement).getAttribute("aria-label"),
+    ).toContain(enTerminal.header.state.viewing);
+  });
+
+  it("a refused terminal is red", async () => {
+    createSession.mockImplementationOnce(async () => {
+      throw Object.assign(new Error("not found"), { code: "NOT_FOUND" });
+    });
+    renderPhone();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.attach }));
+    await waitFor(() => expect(indicator()).toBe("typing-refused"));
+  });
+
+  it("Maximize fills the screen and Restore puts it back, at every width", async () => {
+    renderPhone();
+    const { user } = await attach();
+    const section = document.querySelector("[data-terminal-status]") as HTMLElement;
+    expect(section.hasAttribute("data-terminal-maximized")).toBe(false);
+    await user.click(screen.getByRole("button", { name: enTerminal.header.maximize }));
+    expect(section.hasAttribute("data-terminal-maximized")).toBe(true);
+    expect(section.className).toContain("fixed");
+    expect(section.className).toContain("inset-0");
+    const restore = screen.getByRole("button", { name: enTerminal.header.restore });
+    expect(restore.getAttribute("aria-pressed")).toBe("true");
+    await user.click(restore);
+    expect(section.hasAttribute("data-terminal-maximized")).toBe(false);
+  });
+
+  it("maximized with the phone keyboard up, the panel ends at the keyboard and the key row stays inside it", async () => {
+    useTerminalPreferences.setState({ keysShown: true });
+    renderPhone();
+    const { user } = await attach();
+    const section = document.querySelector("[data-terminal-status]") as HTMLElement;
+    // The row's outer element (what is pinned).
+    const keys = () =>
+      screen.getByRole("toolbar", { name: enTerminal.keys.label }).parentElement as HTMLElement;
+    keyboard.inset = 300;
+    // Not maximized: the key row is pinned above the keyboard (design D).
+    await user.click(screen.getByRole("button", { name: enTerminal.header.maximize }));
+    expect(section.style.bottom).toBe("300px");
+    expect(section.style.top).toBe("0px");
+    expect(keys().className).not.toContain("fixed");
+    expect(document.querySelector("[data-terminal-keys-placeholder]")).toBeNull();
+    await user.click(screen.getByRole("button", { name: enTerminal.header.restore }));
+    expect(section.style.bottom).toBe("");
+    expect(keys().className).toContain("fixed");
+    expect(keys().style.bottom).toBe("300px");
+  });
+
+  it("maximized while the browser pans the visible area down, the panel follows it (top and bottom), keys hidden too", async () => {
+    renderPhone();
+    const { user } = await attach();
+    const section = document.querySelector("[data-terminal-status]") as HTMLElement;
+    keyboard.inset = 300;
+    keyboard.top = 100;
+    await user.click(screen.getByRole("button", { name: enTerminal.header.maximize }));
+    expect(section.style.top).toBe("100px");
+    expect(section.style.bottom).toBe("300px");
+    expect(document.querySelector("[data-terminal-keys]")).toBeNull();
+  });
+
+  it("text size goes down to 1 px and no further, from ⋯ as from Utilities", async () => {
+    useTerminalPreferences.setState({ fontSize: 2 });
+    renderPhone();
+    const { user, view } = await attach();
+    expect(view.fontSize).toBe(2);
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.smaller }));
+    await waitFor(() => expect(view.fontSize).toBe(1));
+    expect(useTerminalPreferences.getState().fontSize).toBe(1);
+    const smaller = screen.getByRole("menuitem", { name: enTerminal.utilities.smaller });
+    expect(
+      smaller.getAttribute("aria-disabled") ?? smaller.getAttribute("data-disabled"),
+    ).not.toBeNull();
+    expect(await screen.findByText("1 px · 100×30")).toBeTruthy();
+  });
+
+  it("a dialog opened from ⋯ while typing gives the terminal its focus back when cancelled, not ⋯", async () => {
+    renderPhone();
+    const { user, view } = await attach();
+    const more = screen.getByRole("button", { name: enTerminal.header.more });
+    view.hasFocusValue = true;
+    await openMore(user);
+    view.hasFocusValue = false;
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.paste }));
+    await screen.findByRole("dialog");
+    const before = view.focused;
+    await user.click(screen.getByRole("button", { name: enTerminal.pasteDialog.cancel }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(view.focused).toBeGreaterThan(before));
+    expect(document.activeElement).not.toBe(more);
+  });
+
+  it("a clipboard result is a toast on phones, not a status line", async () => {
+    renderPhone();
+    const { user, view } = await attach();
+    view.selectionText = "";
+    await openMore(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.actions.copy }));
+    await waitFor(() => expect(toastMessage).toHaveBeenCalledWith(enTerminal.clipboard.copyEmpty));
+    expect(document.querySelector("[data-terminal-state]")?.textContent).not.toContain(
+      enTerminal.clipboard.copyEmpty,
+    );
+  });
+});
+
+describe("crossing the phone breakpoint (rotation)", () => {
+  it("an open Paste dialog and its draft survive the switch from the wide row to the phone header", async () => {
+    let phone = false;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal(
+      "matchMedia",
+      (query: string) =>
+        ({
+          get matches() {
+            return query === "(max-width: 640px)" && phone;
+          },
+          media: query,
+          addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+          removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+        }) as unknown as MediaQueryList,
+    );
+    renderTerminal();
+    const { user, view } = await attach();
+    await user.click(screen.getByRole("button", { name: enTerminal.utilities.button }));
+    await user.click(await screen.findByRole("menuitem", { name: enTerminal.utilities.paste }));
+    const textarea = (await screen.findByRole("dialog")).querySelector(
+      "textarea",
+    ) as HTMLTextAreaElement;
+    await user.type(textarea, "draft");
+    // Rotate to portrait.
+    phone = true;
+    act(() => {
+      for (const listener of listeners) listener();
+    });
+    await waitFor(() => expect(document.querySelector("[data-terminal-header]")).not.toBeNull());
+    const dialog = screen.getByRole("dialog");
+    expect((dialog.querySelector("textarea") as HTMLTextAreaElement).value).toBe("draft");
+    await user.click(screen.getByRole("button", { name: enTerminal.pasteDialog.send }));
+    await waitFor(() => expect(view.pasted).toEqual(["draft"]));
+  });
+});
+
+describe("wide layout (> 640 px)", () => {
+  it("no Maximize in the actions row where the panel cannot be maximized", async () => {
+    render(wrap(<TerminalPanel sandboxId="sbx_1" lang="en-US" available maximizable={false} />));
+    await attach();
+    expect(screen.getByRole("button", { name: enTerminal.actions.endSession })).toBeTruthy();
+    expect(document.querySelector("[data-terminal-maximize]")).toBeNull();
+  });
+
+  it("an End session confirmation left open when the session ends by itself is gone, and stays gone on the next attach", async () => {
+    renderTerminal();
+    const { user, socket } = await attach();
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.endSession }));
+    await screen.findByRole("alertdialog");
+    act(() => socket.serverCloseIntent({ intent: "replaced" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.reattach }));
+    await waitFor(() => expect(FakeWebSocket.instances).toHaveLength(2));
+    act(() => {
+      FakeWebSocket.last().serverOpen();
+      FakeWebSocket.last().serverText({ type: "ready", rows: 30, cols: 100 });
+    });
+    await screen.findByText("Attached (100 × 30).");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("keeps the actions row; End session asks first and Maximize sits at its end", async () => {
+    renderTerminal();
+    const { user } = await attach();
+    expect(document.querySelector("[data-terminal-header]")).toBeNull();
+    const row = screen.getByRole("group", { name: enTerminal.actionsLabel });
+    const labels = [...row.querySelectorAll("button")].map(
+      (button) => button.textContent || button.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual([
+      enTerminal.actions.endSession,
+      enTerminal.actions.copy,
+      enTerminal.actions.paste,
+      enTerminal.utilities.button,
+      enTerminal.header.maximize,
+    ]);
+    await user.click(screen.getByRole("button", { name: enTerminal.actions.endSession }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+  });
 });

@@ -115,6 +115,22 @@ export function createTerminalView(): TerminalView {
     selection() {
       return terminal.getSelection();
     },
+    bufferText() {
+      const buffer = terminal.buffer.active;
+      const lines: string[] = [];
+      for (let row = 0; row < buffer.length; row += 1) {
+        const line = buffer.getLine(row);
+        if (!line) continue;
+        // Trimming drops only never-written cells (a typed space at a wrap
+        // boundary is kept, the gap left before a wrapped wide character is not);
+        // a wrapped row is joined to its line.
+        const text = line.translateToString(true);
+        if (line.isWrapped && lines.length > 0) lines[lines.length - 1] += text;
+        else lines.push(text);
+      }
+      while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+      return lines.join("\n");
+    },
     paste(text) {
       terminal.paste(text);
     },

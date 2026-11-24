@@ -703,6 +703,7 @@ function SandboxDetail({
         <SandboxTerminal
           key={sandbox.id}
           sandboxId={sandbox.id}
+          name={sandbox.name}
           lang={lang}
           available={sandbox.state === "READY"}
           photo={
