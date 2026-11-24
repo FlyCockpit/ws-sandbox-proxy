@@ -279,7 +279,7 @@ export class FakeNodeDaemon {
    * `egress_guard_unavailable`. Repeats the last report on this link only.
    *
    * Storage health likewise: the real daemon observes and publishes it every
-   * 5 s (`STORAGE_POLL_MS`, apps/cli/src/sandbox_relay/host_reports.rs), and
+   * 5 s (`STORAGE_POLL_MS`, apps/cli/src/sandbox_relay/test_timing.rs), and
    * placement drops a pool whose report is older than STORAGE_HEALTH_STALE_MS
    * (15 s). A double that reported only at admission and on outbox pump steps
    * left a test that spent 15 s between pumps (a loaded machine) with no
