@@ -34,13 +34,14 @@ export function parseEnvContents(contents: string): Record<string, string> {
 }
 
 /**
- * Files that only exist at the monorepo root. Checked as a set rather than a
+ * The file that only exists at the monorepo root. Searched for rather than a
  * fixed `../../..` hop from `import.meta.dirname` because that relative depth
  * is only correct for unbundled source under `packages/env/src` — it is wrong
  * for tsdown output, for a Vite SSR chunk, and for anything else that moves the
- * module relative to the root.
+ * module relative to the root. Not `turbo.json`: workspace packages carry
+ * their own (`packages/env/turbo.json`), which would stop the walk there.
  */
-const ROOT_MARKERS = ["pnpm-workspace.yaml", "turbo.json"] as const;
+const ROOT_MARKER = "pnpm-workspace.yaml";
 
 export interface LoadRootDotenvResult {
   /** Absolute path to the monorepo root, or `null` if it could not be found. */
@@ -61,11 +62,11 @@ export interface LoadRootDotenvResult {
   parsed: Record<string, string>;
 }
 
-/** Walk up from `startDir` until a directory contains a root marker. */
+/** Walk up from `startDir` until a directory contains `pnpm-workspace.yaml`. */
 export function findRepoRoot(startDir: string): string | null {
   let dir = path.resolve(startDir);
   for (;;) {
-    if (ROOT_MARKERS.some((marker) => fs.existsSync(path.join(dir, marker)))) {
+    if (fs.existsSync(path.join(dir, ROOT_MARKER))) {
       return dir;
     }
     const parent = path.dirname(dir);
@@ -114,7 +115,7 @@ export function loadRootDotenv(): LoadRootDotenvResult {
     if (!warnedNoRoot && process.env.NODE_ENV !== "production") {
       warnedNoRoot = true;
       console.warn(
-        "[env] Could not find the monorepo root (no pnpm-workspace.yaml / turbo.json " +
+        "[env] Could not find the monorepo root (no pnpm-workspace.yaml " +
           "above this module or process.cwd()). Root .env was not loaded — set env " +
           "vars in the process environment, or run from the repository tree.",
       );
