@@ -44,7 +44,10 @@ describe("setup.claimFirstAdmin", () => {
   it("does not exist while SETUP_KEY is unset, so removing the key kills unspent links", async () => {
     delete env.SETUP_KEY;
     await expect(client.claimFirstAdmin(input)).rejects.toSatisfy(
-      (error) => code(error) === "NOT_FOUND",
+      (error) =>
+        error instanceof ORPCError &&
+        error.code === "NOT_FOUND" &&
+        (error.data as { code?: unknown } | undefined)?.code === "SETUP_KEY_UNSET",
     );
     expect(claimFirstAdmin).not.toHaveBeenCalled();
     expect(consumeBudget).not.toHaveBeenCalled();

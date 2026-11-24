@@ -13,6 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { authClient } from "@/lib/auth-client";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
+import { isSetupLinkInvalid } from "@/lib/setup-link";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
@@ -108,16 +109,6 @@ function ResetPasswordPage() {
         </AuthCard>
       )}
     </AuthConfigGate>
-  );
-}
-
-/** `setup.claimFirstAdmin` refused the link itself (expired, replaced, used). */
-function isSetupLinkInvalid(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === "SETUP_LINK_INVALID"
   );
 }
 

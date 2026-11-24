@@ -9,6 +9,13 @@ import { createProcedureBudget } from "../lib/procedure-budget";
 /** Error code the web reset-password page treats as "this link is dead". */
 const SETUP_LINK_INVALID = "SETUP_LINK_INVALID";
 
+/**
+ * `data.code` of the NOT_FOUND the claim answers while SETUP_KEY is unset. The
+ * web page treats it as a dead link too; a bare NOT_FOUND (an unknown procedure
+ * during a version skew, a proxy 404) stays an ordinary error.
+ */
+const SETUP_KEY_UNSET = "SETUP_KEY_UNSET";
+
 /** `[audit]` event name for claim attempts (the issuing route logs `setup.first_admin`). */
 const SETUP_CLAIM_AUDIT_EVENT = "setup.first_admin_claim";
 
@@ -64,7 +71,7 @@ export const setupRouter = {
   claimFirstAdmin: publicProcedure
     .input(type<z.input<typeof claimInput>>())
     .handler(async ({ input: rawInput, context }) => {
-      if (!env.SETUP_KEY) throw new ORPCError("NOT_FOUND");
+      if (!env.SETUP_KEY) throw new ORPCError("NOT_FOUND", { data: { code: SETUP_KEY_UNSET } });
       const ip = context.clientIp ?? "unknown";
       try {
         await consumeClaimBudget(`ip:${ip}`);
