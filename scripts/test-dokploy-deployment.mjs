@@ -908,6 +908,32 @@ test("BACKUP_ENABLED is strict, and a failing startup check stops the migration"
   assert.equal(worker.notices.length, 0);
 });
 
+test("the empty-ADMIN_EMAILS warnings match the env guard: a set SETUP_KEY silences both", async (t) => {
+  const { run } = await entrypointFixture(t);
+  for (const setupKey of [undefined, "fixture-setup-key"]) {
+    for (const signup of ["true", "false"]) {
+      const result = await run(["node", "apps/server/dist/index.mjs"], {
+        DATABASE_URL: "postgresql://fixture:fixture@localhost/fixture",
+        REDIS_URL: "redis://localhost",
+        BETTER_AUTH_SECRET: "fixture-only",
+        NODE_ENV: "production",
+        SIGNUP_ENABLED: signup,
+        ...(setupKey === undefined ? {} : { SETUP_KEY: setupKey }),
+      });
+      assert.equal(result.code, 0, result.output);
+      const label = `SETUP_KEY ${setupKey ? "set" : "unset"}, SIGNUP_ENABLED=${signup}`;
+      if (setupKey) {
+        assert.doesNotMatch(result.output, /WARNING: ADMIN_EMAILS/, label);
+      } else if (signup === "true") {
+        assert.match(result.output, /WARNING: ADMIN_EMAILS is empty\. No users/, label);
+      } else {
+        assert.match(result.output, /no new admin can be bootstrapped/, label);
+        assert.match(result.output, /SETUP_KEY and run pnpm deploy:generate-admin/, label);
+      }
+    }
+  }
+});
+
 test("server apply and worker wait precede app execution, with fresh per-start identity and stripped writer keys", async (t) => {
   const { run, dir } = await entrypointFixture(t);
   const env = {
