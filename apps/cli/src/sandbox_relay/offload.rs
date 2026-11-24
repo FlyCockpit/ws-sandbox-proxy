@@ -76,17 +76,11 @@ const JOB_ANSWERS: [&str; 4] = [STALE, RATE_LIMITED, STORE_UNAVAILABLE, RESUME_R
 /// per 10 minutes); a longer inventory continues on the
 /// next session after the last entry reported.
 const INVENTORY_PAGES_MAX: usize = 16;
-/// Completion and inventory reconciliation on a live connection
-/// ([`OffloadService::tick`]): a verdict lost on a stable connection (an
-/// answer that never came, a frame evicted from a full outbox, an offload
-/// the server's maintenance ended without telling the host) is asked again
-/// this often, until local cleanup is done.
-pub(super) const RECONCILE_EVERY: Duration = Duration::from_secs(600);
-
 /// `RECONCILE_EVERY`, or a debug test daemon's shorter period
 /// (`WSSP_TEST_DISK_TIMING`).
 fn reconcile_every() -> Duration {
-    super::test_timing::disk_test_timing().map_or(RECONCILE_EVERY, |t| t.reconcile)
+    super::test_timing::disk_test_timing()
+        .map_or(super::test_timing::RECONCILE_EVERY, |t| t.reconcile)
 }
 /// A `disk.evicted` with no ack is re-sent this often (the server clears an
 /// outlived grant 2 min after its 10 min lifetime).
@@ -1888,7 +1882,7 @@ impl OffloadService {
             .last_reconcile
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if let Some(past) = Instant::now().checked_sub(RECONCILE_EVERY) {
+        if let Some(past) = Instant::now().checked_sub(super::test_timing::RECONCILE_EVERY) {
             *last = past;
         }
     }

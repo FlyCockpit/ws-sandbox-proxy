@@ -462,7 +462,7 @@ pub(super) struct Quiesce {
 fn quiesce_max(config: &crate::config::Config) -> Result<Duration> {
     #[cfg(debug_assertions)]
     if let Some(max) =
-        super::connect::installed_relay_test_timing().and_then(|timing| timing.quiesce_max)
+        super::test_timing::installed_relay_test_timing().and_then(|timing| timing.quiesce_max)
     {
         return Ok(max);
     }

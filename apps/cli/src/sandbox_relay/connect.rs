@@ -423,10 +423,10 @@ pub fn run_connect_with_config(
     // Only the per-command host supervisors are subreapers. Adopting
     // runtime/PTY orphans here would take them from their existing reapers.
     // WP1 chaos knob: read once, debug builds only (release: always None).
-    install_relay_test_timing(super::test_timing::relay_test_timing()?);
+    super::test_timing::install_relay_test_timing(super::test_timing::relay_test_timing()?);
     // Widen-only runtime waits for test daemons on an Incus double; debug
     // builds only (release: always None).
-    install_runtime_test_timing(super::test_timing::runtime_test_timing(
+    super::test_timing::install_runtime_test_timing(super::test_timing::runtime_test_timing(
         &options.server_url,
     )?);
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
@@ -1391,75 +1391,20 @@ fn carry_policy(config: &crate::config::Config) -> Result<super::carry::CarryPol
     }
     Ok(policy)
 }
-/// The process's `WSSP_TEST_RELAY_TIMING` override (WP1), set once by
-/// [`run_connect_with_config`]; always `None` in release builds.
-static RELAY_TEST_TIMING: std::sync::OnceLock<Option<super::test_timing::RelayTestTiming>> =
-    std::sync::OnceLock::new();
-
-fn install_relay_test_timing(timing: Option<super::test_timing::RelayTestTiming>) {
-    #[cfg(debug_assertions)]
-    if let Some(timing) = &timing {
-        tracing::warn!(
-            ?timing,
-            "relay test timing override in effect (debug build)"
-        );
-    }
-    let _ = RELAY_TEST_TIMING.set(timing);
-}
-
-/// How often the connect loop runs the disk offload periodic pass
-/// (`OffloadService::tick`).
-pub(super) const DISK_TICK_EVERY: Duration = Duration::from_secs(60);
-
 /// `DISK_TICK_EVERY`, or a debug test daemon's shorter period
 /// (`WSSP_TEST_DISK_TIMING`).
 fn disk_tick_every() -> Duration {
-    super::test_timing::disk_test_timing().map_or(DISK_TICK_EVERY, |t| t.tick)
+    super::test_timing::disk_test_timing().map_or(super::test_timing::DISK_TICK_EVERY, |t| t.tick)
 }
-
-/// The process's `WSSP_TEST_RUNTIME_TIMING` widening, set once by
-/// [`run_connect_with_config`]; always `None` in release builds.
-static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<super::test_timing::RuntimeTestTiming>> =
-    std::sync::OnceLock::new();
-
-fn install_runtime_test_timing(timing: Option<super::test_timing::RuntimeTestTiming>) {
-    #[cfg(debug_assertions)]
-    if let Some(timing) = &timing {
-        tracing::warn!(
-            ?timing,
-            "TEST-ONLY OVERRIDE `{}`: this daemon waits longer than production for the guest \
-             terminate helper and the connected expiry observation, and may poll storage \
-             less often; never set it in production",
-            super::test_timing::RUNTIME_TIMING_ENV
-        );
-    }
-    let _ = RUNTIME_TEST_TIMING.set(timing);
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn installed_runtime_test_timing() -> Option<super::test_timing::RuntimeTestTiming> {
-    RUNTIME_TEST_TIMING.get().copied().flatten()
-}
-
-/// Permit of one connected expiry observation (host census of expiring
-/// sandboxes). Debug test daemons may widen it (`WSSP_TEST_RUNTIME_TIMING`).
-pub(super) const EXPIRY_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(4);
 
 fn expiry_observation_timeout() -> Duration {
     #[cfg(debug_assertions)]
-    if let Some(timeout) =
-        installed_runtime_test_timing().and_then(|timing| timing.expiry_observation)
+    if let Some(timeout) = super::test_timing::installed_runtime_test_timing()
+        .and_then(|timing| timing.expiry_observation)
     {
         return timeout;
     }
-    EXPIRY_OBSERVATION_TIMEOUT
-}
-
-/// The override [`run_connect_with_config`] read once at start; WP3 carry,
-/// WP7 quiesce and WP8 terminal grace take their fields from here, never
-/// from the environment again. `None` in release builds and fixture daemons.
-pub(super) fn installed_relay_test_timing() -> Option<super::test_timing::RelayTestTiming> {
-    RELAY_TEST_TIMING.get().copied().flatten()
+    super::test_timing::EXPIRY_OBSERVATION_TIMEOUT
 }
 
 pub(super) fn server_silence_deadline(heartbeat: Duration) -> Duration {
@@ -1468,7 +1413,9 @@ pub(super) fn server_silence_deadline(heartbeat: Duration) -> Duration {
         return floor.max(heartbeat.saturating_mul(6));
     }
     #[cfg(debug_assertions)]
-    if let Some(floor) = installed_relay_test_timing().and_then(|timing| timing.silence) {
+    if let Some(floor) =
+        super::test_timing::installed_relay_test_timing().and_then(|timing| timing.silence)
+    {
         return floor.max(session_heartbeat(heartbeat).saturating_mul(6));
     }
     SERVER_SILENCE_MIN.max(heartbeat.saturating_mul(6))
@@ -1482,7 +1429,9 @@ pub(super) fn server_silence_deadline(heartbeat: Duration) -> Duration {
 /// unchanged.
 pub(super) fn session_heartbeat(heartbeat: Duration) -> Duration {
     #[cfg(debug_assertions)]
-    if let Some(floor) = installed_relay_test_timing().and_then(|timing| timing.silence) {
+    if let Some(floor) =
+        super::test_timing::installed_relay_test_timing().and_then(|timing| timing.silence)
+    {
         return heartbeat_within_silence(heartbeat, floor);
     }
     heartbeat
@@ -5049,7 +4998,7 @@ fn shared_incus_override(value: Option<std::ffi::OsString>, server_url: &str) ->
              a normal daemon"
         );
     }
-    let loopback = loopback_control_plane(server_url).with_context(|| {
+    let loopback = super::test_timing::loopback_control_plane(server_url).with_context(|| {
         format!("`{SHARED_INCUS_TEST_ENV}` needs a valid loopback control-plane URL")
     })?;
     if !loopback {
@@ -5060,19 +5009,6 @@ fn shared_incus_override(value: Option<std::ffi::OsString>, server_url: &str) ->
         );
     }
     Ok(true)
-}
-
-/// Whether `server_url` names a loopback control plane (`localhost`,
-/// 127.0.0.0/8 or `::1`): the gate of every debug-only test override.
-#[cfg(debug_assertions)]
-pub(super) fn loopback_control_plane(server_url: &str) -> Result<bool, url::ParseError> {
-    let url = Url::parse(server_url)?;
-    Ok(match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    })
 }
 
 /// Start as this Incus server's only wssp daemon, and keep checking. A
@@ -5170,8 +5106,8 @@ fn init_runtime(
             // Debug test daemons on an Incus double only (gated at start);
             // set before `exec_supervisor` below clones the client.
             #[cfg(debug_assertions)]
-            if let Some(timeout) =
-                installed_runtime_test_timing().and_then(|timing| timing.guest_terminate)
+            if let Some(timeout) = super::test_timing::installed_runtime_test_timing()
+                .and_then(|timing| timing.guest_terminate)
             {
                 runtime.set_guest_terminate_timeout(timeout);
             }

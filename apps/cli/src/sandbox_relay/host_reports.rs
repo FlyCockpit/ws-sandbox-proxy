@@ -25,9 +25,6 @@ use sandbox_protocol::capacity_v11::{StorageHealthV11, StoragePoolV11};
 use sandbox_protocol::{DaemonControlMessage, HostInventorySnapshot, WireCodes};
 use std::sync::{Arc, mpsc};
 
-/// How often storage health is observed (start to start). Debug test
-/// daemons may widen it (`WSSP_TEST_RUNTIME_TIMING`, see [`storage_poll_ms`]).
-pub(super) const STORAGE_POLL_MS: u64 = 5_000;
 /// An observation older than this is never published, and local admission
 /// treats storage health as unknown once the last fresh one is this old. The
 /// server's `STORAGE_HEALTH_STALE_MS` uses the same bound.
@@ -37,9 +34,9 @@ pub(super) const STORAGE_FRESH_MS: u64 = 15_000;
 /// widening (5-10 s, validated by `test_timing`).
 fn storage_poll_ms() -> u64 {
     #[cfg(debug_assertions)]
-    return storage_poll_ms_for(super::connect::installed_runtime_test_timing());
+    return storage_poll_ms_for(super::test_timing::installed_runtime_test_timing());
     #[cfg(not(debug_assertions))]
-    STORAGE_POLL_MS
+    super::test_timing::STORAGE_POLL_MS
 }
 
 /// [`storage_poll_ms`] for the given `WSSP_TEST_RUNTIME_TIMING` override.
@@ -47,8 +44,8 @@ fn storage_poll_ms() -> u64 {
 pub(super) fn storage_poll_ms_for(timing: Option<super::test_timing::RuntimeTestTiming>) -> u64 {
     timing
         .and_then(|timing| timing.storage_poll)
-        .map_or(STORAGE_POLL_MS, |poll| {
-            u64::try_from(poll.as_millis()).unwrap_or(STORAGE_POLL_MS)
+        .map_or(super::test_timing::STORAGE_POLL_MS, |poll| {
+            u64::try_from(poll.as_millis()).unwrap_or(super::test_timing::STORAGE_POLL_MS)
         })
 }
 

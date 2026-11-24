@@ -143,7 +143,7 @@ impl DetachedTable {
 pub(super) fn resume_grace(config: &crate::config::Config) -> Result<Duration> {
     #[cfg(debug_assertions)]
     if let Some(grace) =
-        super::connect::installed_relay_test_timing().and_then(|timing| timing.terminal_grace)
+        super::test_timing::installed_relay_test_timing().and_then(|timing| timing.terminal_grace)
     {
         return Ok(clamp_resume_grace(grace));
     }
