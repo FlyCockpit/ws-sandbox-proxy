@@ -28,7 +28,12 @@ import {
   sessionRevocationsFor,
 } from "./session-revocation-scope.js";
 import { resolveSignupLocale } from "./signup-locale.js";
-import { getSignupEnabled, poolInviteSignup } from "./signup-policy";
+import { signupAdmission } from "./signup-policy";
+import {
+  markUserCreatedInRequest,
+  neutralizeSignUpResponse,
+  SIGN_UP_EMAIL_PATH,
+} from "./signup-response.js";
 import { createTerminalAuthHooks } from "./terminal-hooks.js";
 import { TWO_FACTOR_ALLOW_PASSWORDLESS_ENROLLMENT } from "./two-factor-policy.js";
 import {
@@ -281,6 +286,13 @@ export const auth = betterAuth({
       return passwordChangeGuard.before(ctx);
     }),
     after: createAuthMiddleware(async (ctx) => {
+      // Sign-up answers byte-identically for a free and a registered address,
+      // so it is no account-existence oracle (signup-response.ts).
+      if (ctx.path === SIGN_UP_EMAIL_PATH) {
+        return neutralizeSignUpResponse(ctx, {
+          signupEnabled: async () => (await signupAdmission(ctx.path, ctx.body)).signupEnabled,
+        });
+      }
       await terminalHooks.after(ctx);
       await passwordChangeGuard.after(ctx);
     }),
@@ -365,9 +377,7 @@ export const auth = betterAuth({
           const creationMode = getAllowedUserCreationMode();
           // Runs after Better Auth validation/password hashing on HTTP and direct API.
           // Bad/missing invite credentials follow the ordinary disabled-signup path.
-          const invitation =
-            context?.path === "/sign-up/email" ? await poolInviteSignup(context.body) : null;
-          const signupEnabled = await getSignupEnabled();
+          const { invitation, signupEnabled } = await signupAdmission(context?.path, context?.body);
           const blockReason = invitation
             ? await runWithAllowedUserCreation("pool-invite", () =>
                 getUserCreationBlockReason({ signupEnabled }),
@@ -399,6 +409,9 @@ export const auth = betterAuth({
             },
           };
         },
+        // Unless this fired, the sign-up after-hook answers a closed sign-up
+        // with the same 422 a free address gets (signup-response.ts).
+        after: async (_user, context) => markUserCreatedInRequest(context),
       },
     },
   },

@@ -48,3 +48,12 @@ export async function poolInviteSignup(body: unknown) {
   });
   return invite;
 }
+
+// The closed-signup inputs of one request: the invitation preflight, then the
+// setting. The user.create hook decides with them; the sign-up after-hook runs
+// the same reads for a request that created nothing, so a registered address
+// costs exactly what a free one does (signup-response.ts).
+export async function signupAdmission(path: string | undefined, body: unknown) {
+  const invitation = path === "/sign-up/email" ? await poolInviteSignup(body) : null;
+  return { invitation, signupEnabled: await getSignupEnabled() };
+}

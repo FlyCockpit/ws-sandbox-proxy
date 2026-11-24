@@ -28,13 +28,16 @@ const reviewed: Record<string, string> = {
     "84f1c7a6909f76ae8ab6bb036a5c3e8d57ce45b6bd148f3b6777f76053ab12a8",
   "apps/worker/src/operational-alerts.ts":
     "c60c93d8c519bfb0a69f84a088a27b57799a4f7e368070a872d7673cc9497d59",
+  // Reviewed 11-24: comment only (sign-up answers are address-independent).
   "apps/server/src/signup-gate.ts":
-    "fdefe353a9bec8bbe260b57df4f043f53a8d4decb0eda5cde2c510da068a56f9",
+    "c985a44c9f84b407f19dd33a1d6c5a09c6b69eaaadf7422c9d534d88cf82fb79",
   "packages/db/src/admin-governance.ts":
     "8dfdfe8c74e4776dff92c9a32c4bae6e4f233b389632c5c5afe3e7666f72071e",
   // Reviewed 11-23: adds the temporary-password guard to hooks.before/after and
   // revokeSessionsOnPasswordReset; no mailbox proof input or write.
-  "packages/auth/src/index.ts": "cd048f1401ae2398f4ac9ae95e03ad0ffe8e330b6afac796ca6290d6d2b959e7",
+  // Reviewed 11-24: adds the neutral sign-up after-hook and a user.create.after
+  // mark (signup-response.ts); no mailbox proof input or write.
+  "packages/auth/src/index.ts": "ab7c0b4273f8f739994adee9bcfac3b2b8546d390ba03fcfbc976417f040d226",
   // Invites: no proof write. The mailed accept link is Better Auth's own
   // verify-email link (admin-invite-verification.ts mints its signed token, as
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.

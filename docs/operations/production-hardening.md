@@ -113,6 +113,38 @@ anonymous-only route helper. If a product genuinely requires verification
 for all access, add an explicit verified-email gate that renders a
 "check your inbox" page rather than bouncing back to login.
 
+### No account-existence oracle on the anonymous auth endpoints
+
+An anonymous caller cannot tell whether an address has an account. Sign-up,
+resend verification, password-reset request and wrong-password sign-in
+answer byte-identically (status, headers, body) for an unknown, a
+registered-unverified and a registered-verified address.
+
+- **Sign-up** needs our own hook. Better Auth answers a registered address
+  with a synthetic user that lacks plugin defaults (`role: null` instead of
+  `"user"`), and returns it before user creation, so with sign-up closed a
+  registered address got 200 where a free one got 422. The after-hook in
+  `packages/auth/src/signup-response.ts` answers every success with
+  `{"token":null,"user":null}`. With sign-up closed, a 200 stands only when
+  the request really created the user (an `ADMIN_EMAILS` bootstrap or a valid
+  pool invitation of a new address); every duplicate, admin-listed or
+  invited or not, gets the 422 a free address gets.
+  `packages/auth/src/signup-response.pg.test.ts` pins both modes and the
+  work each outcome does. Clients read only `error` from this call. Do not
+  patch the synthetic user instead: a later plugin field would reopen it.
+- **Resend, reset request, wrong-password sign-in** are uniform in Better
+  Auth already. The per-recipient budget counts requests, not accounts.
+- **Intended differences:** the right password on an unverified account
+  answers 403 `EMAIL_NOT_VERIFIED` and re-sends the link; a new
+  `ADMIN_EMAILS` address or a valid invitation can sign up while sign-up is
+  closed.
+- **What a sign-up of a free address still reveals:** that sign-up creates
+  the account and mails its owner, so the caller can learn the address _was_
+  free (the 403 above, the extra time a new account and its mail cost, or a
+  422 when two concurrent sign-ups race). Nothing is learned about an
+  address that already has an account. Do not add work that only one
+  outcome pays for.
+
 ## Forced two-factor authentication
 
 `FORCE_2FA_DEFAULTS` requires a second factor of internal (admin) users when

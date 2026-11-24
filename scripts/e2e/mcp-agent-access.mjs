@@ -178,14 +178,19 @@ async function signup(label) {
   const p = person();
   const password = secret();
   const email = `${label}-${randomBytes(5).toString("hex")}@example.test`;
-  const signed = await p.auth("sign-up/email", { name: label, email, password });
+  // Sign-up answers every address with the same neutral body, so the id comes
+  // from the row it created.
+  await p.auth("sign-up/email", { name: label, email, password });
   // Test-only mail delivery affordance: this exact disposable DB, no auth gate
   // is changed. The real login and TOTP enrollment still run over HTTP.
-  await database.query('UPDATE "user" SET "emailVerified" = true WHERE id = $1', [signed.user.id]);
+  const verified = await database.query(
+    'UPDATE "user" SET "emailVerified" = true WHERE email = $1 RETURNING id',
+    [email],
+  );
   await p.auth("sign-in/email", { email, password });
   const enrollment = await p.auth("two-factor/enable", { password });
   await p.auth("two-factor/verify-totp", { code: totp(enrollment.totpURI) });
-  p.id = signed.user.id;
+  p.id = verified.rows[0].id;
   p.email = email;
   return p;
 }
