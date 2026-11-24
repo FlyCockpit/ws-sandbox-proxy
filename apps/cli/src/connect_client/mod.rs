@@ -97,9 +97,12 @@ impl std::fmt::Display for SessionEnded {
                 intent.name(),
                 intent.describe()
             )?,
+            // A drop (a proxy or Cloudflare edge restart, a network change)
+            // ends the session for good: say how to get a new one.
             None => write!(
                 f,
-                "the connection to the server was lost: {}",
+                "the connection to the server was lost ({}); the session cannot be resumed, \
+                 so run the command again to start a new one",
                 self.detail
                     .as_deref()
                     .unwrap_or("closed without an end frame")
@@ -1208,6 +1211,10 @@ mod tests {
         assert_eq!(ended.code(), "connect.revoked");
         let lost = SessionEnded::lost("reset");
         assert_eq!(lost.code(), "connect.lost");
-        assert!(lost.to_string().contains("reset"));
+        assert_eq!(
+            lost.to_string(),
+            "the connection to the server was lost (reset); the session cannot be resumed, \
+             so run the command again to start a new one"
+        );
     }
 }

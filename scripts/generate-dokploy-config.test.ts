@@ -293,6 +293,19 @@ test("only the server trusts exactly one proxy hop (Traefik) for client IPs", ()
     assert.doesNotMatch(block(compose, role), /TRUST_PROXY_HOPS/);
 });
 
+test("--trust-proxy-hops counts a proxy in front of Traefik (cloudflared at home)", () => {
+  const options = { ...defaults, topology: "app-worker" as const, trustProxyHops: 2 };
+  assert.equal(generateDokployConfig(options).applications[0]!.environment.TRUST_PROXY_HOPS, "2");
+  const compose = generateDokployCompose(options);
+  assert.match(block(compose, "server"), /\n\s+TRUST_PROXY_HOPS: "2"\n/);
+  assert.doesNotMatch(block(compose, "worker"), /TRUST_PROXY_HOPS/);
+  for (const trustProxyHops of [0, -1, 1.5, 9, Number.NaN])
+    assert.throws(
+      () => generateDokployCompose({ ...defaults, trustProxyHops }),
+      /--trust-proxy-hops must be a whole number from 1 to 8/,
+    );
+});
+
 test("checklist reflects the actual roles and explicit backup configuration", () => {
   const config = generateDokployConfig(defaults);
   assert.equal(config.compose.file, "docker-compose.dokploy.yml");

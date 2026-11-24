@@ -264,7 +264,9 @@ sessions safely. Workers and one-shot migration jobs do not mount transfer conte
 
 The generated config and Compose set `TRUST_PROXY_HOPS=1` on the server
 (client → Traefik → server). Add one per extra proxy that the next one trusts
-(for example Cloudflare in front of Traefik). A deployment with no proxy keeps
+with `--trust-proxy-hops N` at generation (for example `2` for a Cloudflare
+Tunnel in front of Traefik, see
+[home server behind a Cloudflare Tunnel](#home-server-behind-a-cloudflare-tunnel)). A deployment with no proxy keeps
 it unset (`0`): the socket peer is the key. A proxied deployment left at `0`
 puts every client in one shared rate-limit bucket. See
 [client IP and reverse proxies](./environment-variables.md#client-ip-and-reverse-proxies).
@@ -328,6 +330,252 @@ Downloads (`GET`/`HEAD /v1/operations/{id}/content` and
 `Repr-Digest` and `Content-Length`; disable response buffering and compression for
 these paths, and allow long response times. The application ends a stream after
 60 seconds without the client reading.
+
+## Home server behind a Cloudflare Tunnel
+
+A machine at home with no public IP can serve wssp through a
+[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+(a named tunnel run by `cloudflared`, Free or Pro plan). wssp needs no inbound
+TCP or UDP: `cloudflared` dials out to Cloudflare, Cloudflare terminates TLS for
+your hostname, and requests reach the server as plain HTTP. Node daemons,
+`wssp ssh`, `wssp sandbox shell`/`forward`, browser terminals and SDK clients
+all connect to that hostname over HTTPS/WSS, so they work through the tunnel
+unchanged, and sandbox hosts can sit behind NAT too.
+
+Pick one of two topologies. The hop count differs between them:
+
+- **Tunnel to the server.** Browser, CLI, daemon or SDK → Cloudflare edge (TLS)
+  → `cloudflared` → `http://server:3000`. One proxy hop: `TRUST_PROXY_HOPS=1`,
+  which the generated Compose already sets. No Traefik is involved.
+- **Tunnel to Traefik (Dokploy at home).** Client → Cloudflare edge →
+  `cloudflared` → Dokploy's Traefik → server. Two hops: generate with
+  `pnpm dokploy:config … --trust-proxy-hops 2`, which sets
+  `TRUST_PROXY_HOPS=2` on the server. Traefik must trust `cloudflared`'s
+  address for forwarded headers, or it replaces the client's
+  `X-Forwarded-For` entry with `cloudflared`'s and every user shares one
+  rate-limit bucket.
+
+### Tunnel to the server
+
+Generate the Compose with your tunnel hostname and a network of its own for
+`cloudflared` (production: an immutable `release/<sha>` tag, as above):
+
+```sh
+docker network create wssp-edge
+pnpm dokploy:config --environment production --git-ref <immutable-tag> --url https://sandbox.example.com --project wssp --proxy-network wssp-edge
+```
+
+Start it with `docker compose -f docker-compose.dokploy.yml up -d` and the
+variables listed under [Blessed Compose path](#blessed-compose-path) in its
+environment. The server joins `wssp-edge` and publishes no host port. Run `cloudflared` as
+a container on that network (for example `cloudflare/cloudflared` with
+`tunnel run`, the credentials file and this config mounted read-only), so the
+tunnel is the only way in. The Traefik labels in the file are inert without
+Traefik. A sample `config.yml` (create the tunnel and its DNS route with
+`cloudflared tunnel create` and `cloudflared tunnel route dns`, then substitute
+your tunnel id and hostname):
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<tunnel-uuid>.json
+ingress:
+  - hostname: sandbox.example.com
+    service: http://server:3000
+  - service: http_status:404
+```
+
+To run `cloudflared` on the host instead, publish the server on loopback only
+with a Compose override (`ports: ["127.0.0.1:13000:3000"]` on `server`) and use
+`service: http://127.0.0.1:13000`.
+Use Docker Engine 28 or newer: older releases let other machines on the LAN
+reach a port published on `127.0.0.1`. Never publish the server on `0.0.0.0` or
+forward a router port to it: `TRUST_PROXY_HOPS` trusts the rightmost
+`X-Forwarded-For` entries, so a caller who reaches the server directly can pick
+their own rate-limit key.
+
+### Tunnel to Traefik
+
+Generate with `--trust-proxy-hops 2`. Traefik may trust exactly one address,
+`cloudflared`'s, so run `cloudflared` as a container with a fixed address on a
+small network of its own that Traefik joins (Dokploy's Traefik container is
+`dokploy-traefik` on a standard install). `--ip-range` keeps Docker's
+automatic addresses (Traefik's) in `.4`–`.7`, so `.2` stays free for
+`cloudflared`:
+
+```sh
+docker network create --subnet 172.30.53.0/29 --ip-range 172.30.53.4/30 wssp-cf
+docker network connect wssp-cf dokploy-traefik
+docker run -d --name wssp-cloudflared --restart unless-stopped \
+  --network wssp-cf --ip 172.30.53.2 -v /etc/cloudflared:/etc/cloudflared:ro \
+  cloudflare/cloudflared:<version> tunnel --config /etc/cloudflared/config.yml run
+```
+
+Reconnect `dokploy-traefik` to `wssp-cf` whenever Dokploy recreates it (for
+example after you change its Traefik settings). Point the tunnel at Traefik's
+HTTPS entry point, keeping your hostname for SNI:
+
+```yaml
+tunnel: <tunnel-uuid>
+credentials-file: /etc/cloudflared/<tunnel-uuid>.json
+ingress:
+  - hostname: sandbox.example.com
+    service: https://dokploy-traefik:443
+    originRequest:
+      originServerName: sandbox.example.com
+      noTLSVerify: true
+  - service: http_status:404
+```
+
+In Traefik's static configuration (`traefik.yml`, editable in Dokploy's
+Traefik settings) set the `websecure` entry point's
+`forwardedHeaders.trustedIPs` to `["172.30.53.2/32"]`, never
+`forwardedHeaders.insecure`. Do not trust a Docker network gateway (such as
+`172.17.0.1`) or a whole subnet, and do not run `cloudflared` on the host for
+this topology: connections that Docker's userland proxy forwards to a
+published port, including LAN clients over IPv6, arrive from the gateway too,
+and Traefik would keep their forged `X-Forwarded-For`. Any connection to
+Traefik that does not come from `172.30.53.2` is untrusted: Traefik replaces
+its `X-Forwarded-For`, and the server keys it on Traefik's own address (one
+shared bucket), never on a value the caller chose.
+
+The generated router uses `websecure` with the `letsencrypt` resolver. Without
+inbound ports Let's Encrypt's HTTP and TLS-ALPN challenges cannot reach
+Traefik, so it serves its default certificate, which `noTLSVerify` accepts.
+That is acceptable only because `cloudflared` reaches Traefik on this
+machine's private Docker network. For a verified hop, give Traefik a DNS-01
+resolver instead and drop `noTLSVerify`. Do not point the tunnel at Traefik's
+plain-HTTP entry point: the generated router does not listen there, and
+Dokploy redirects it to HTTPS.
+
+### Settings for both topologies
+
+| Setting                     | Tunnel to the server                       | Tunnel to Traefik             |
+| --------------------------- | ------------------------------------------ | ----------------------------- |
+| `--url` / `BETTER_AUTH_URL` | `https://sandbox.example.com`              | `https://sandbox.example.com` |
+| `TRUST_PROXY_HOPS`          | `1` (generated default)                    | `2` (`--trust-proxy-hops 2`)  |
+| `CORS_ORIGIN`               | unset                                      | unset                         |
+| `PUBLIC_APP_URL`            | unset, or the tunnel origin                | unset, or the tunnel origin   |
+| `SMTP_HOST` / `SMTP_PORT`   | a relay on `587` (STARTTLS) or `465` (TLS) | same                          |
+
+`BETTER_AUTH_URL` (the generator writes it from `--url`) is the public origin:
+sign-in, cookies, emailed links, the browser `Origin` the terminal, transfer
+and JSON routes accept exactly, the OAuth/MCP issuer and the URL hosts enrol
+against all come from it, so it must be the tunnel hostname, `https://` with no
+port. `cloudflared` keeps the browser's `Origin` and the original `Host`
+header; leave `httpHostHeader` unset, because `/mcp` and OAuth refuse a `Host`
+other than the `BETTER_AUTH_URL` host and Traefik routes by it. `CORS_ORIGIN`
+is only for a dashboard served from a different origin. `PUBLIC_APP_URL` is
+translation-provider metadata, not used for authentication. Home connections
+usually block outbound port 25, so send mail through a relay's submission port:
+`587` (STARTTLS) or `465` (the mailer switches to implicit TLS for 465 by
+itself). `pnpm doctor` warns when `TRUST_PROXY_HOPS` is `0` on a deployment
+(`NODE_ENV=production`, or an `https` `BETTER_AUTH_URL` on a non-local host),
+and the server logs one `[client-ip]` warning when a private peer such as
+`cloudflared` sends `X-Forwarded-For` while it is `0`.
+
+**Client address.** Cloudflare appends the address that connected to it to
+`X-Forwarded-For` and `cloudflared` forwards the header unchanged, so with the
+hop counts above the server keys anonymous and `/v1` rate limits, sign-in
+failures and audit records on the real client. wssp does not read
+`CF-Connecting-IP`: it names the same address, but trusting it is safe only
+while nothing but the tunnel can reach the server, and it would stay trusted
+if the deployment later moved behind another proxy. One rule, counting the
+hops in `X-Forwarded-For` ([client IP](./environment-variables.md#client-ip-and-reverse-proxies)),
+covers every topology.
+
+### Cloudflare limits and what they touch
+
+- **Request bodies (100 MB on Free and Pro).** No wssp request comes near it.
+  Transfer uploads are 1 MiB `Content-Range` chunks
+  ([transfer bodies](#reverse-proxy-transfer-bodies)), relayed image copies
+  between hosts are 32 MiB parts, and every other request is refused over
+  10 MB. The one exception is outside the tunnel: with the S3 image store,
+  daemons upload image parts straight to presigned S3 URLs, and a part grows
+  past 100 MB only for an image near the 1 TiB maximum, so do not put your
+  object store behind Cloudflare's proxy.
+- **Silent responses (524).** Cloudflare answers 524 when the origin sends
+  nothing for its Proxy Read Timeout: 125 s by default on Free and Pro,
+  changeable only on Enterprise (it was 100 s for years, so plan for 100 s).
+  Sandbox work is asynchronous and its waits are bounded well below that: an
+  operation read holds at most 25 s (`waitMs`), an MCP tool waits at most
+  60 s, a host's read of a relayed image part waits at most 60 s for the part,
+  and an upload chunk's body read has a 60 s deadline. Two requests hash a
+  file of up to 1 GiB before they answer: an upload commit and a template
+  build's context seal (`POST /v1/template-builds/{id}/context/seal`). That
+  takes seconds on local disk, but very slow or contended storage could hold
+  them past the limit. Both are safe to repeat after a 524: send the commit
+  again with the same `Idempotency-Key`, and a repeated seal returns the
+  context already sealed. The CLI retries 429, 503 and 504 by itself, not
+  524, so run its command again. Downloads (`/v1/operations/{id}/content`, up to 1 GiB) stream from
+  the server's spool, so headers and bytes start at once; the server ends a
+  stream only after 60 s in which the client read nothing. The exception is
+  mail: a request that sends or checks email (verification and
+  password-reset mail, the email second factor, pool invitations and access
+  notices, the welcome mail of a user an admin creates) waits for the SMTP
+  relay, and a relay that hangs can hold it past the limit, so the browser
+  sees a 524. Use a relay that answers promptly. Mail is the other exception
+  to the bounded waits above. Do not add a "Cache
+  Everything" rule for the hostname: downloads carry `Authorization` or a
+  session cookie and must reach the server.
+- **WebSockets.** Keep WebSockets on for the zone (the default). Browser
+  terminals, `wssp sandbox shell`/`forward`/`ssh` and the host relay never go
+  quiet: the server pings browsers and CLI sessions every 20 s, and daemons
+  heartbeat every 5 s.
+- **No challenges on the wssp hostname.** The CLI (including
+  `wssp host drain`), node daemons, SDKs and coding agents cannot pass a
+  challenge or a login page. Turn Bot Fight Mode off for the zone (on Free it
+  cannot be skipped for a hostname or path), and put no managed challenge,
+  Super Bot Fight Mode action or Cloudflare Access application on the wssp
+  hostname.
+
+### When Cloudflare drops a connection
+
+Cloudflare can close long-lived connections when its edge restarts.
+
+- **Node daemons** reconnect by themselves with jittered backoff from 250 ms
+  to 30 s ([connection loss](../guide/hosts.md#stopping-signals-and-reconnects)).
+  Sandboxes keep running.
+- **Browser terminals** end, and **Attach again** starts a new shell. The
+  server closes the shell when the browser's socket drops. On a daemon with
+  `terminalResume` the page first tries to reattach ("Reconnecting to the
+  terminal…") and, after an edge restart, usually ends with "Could not
+  reattach to the terminal. Attach again to start a new session."; otherwise
+  it says "The connection to the terminal was lost, and the session ended."
+  Keep long work in `tmux` or a command (`commands.start`). (Shells do survive
+  a host relay reconnect or a server restart on daemons with
+  `terminalResume`; see the [terminal guide](../guide/terminal.md).)
+- **`wssp sandbox shell`, `forward` and `ssh`** have no resume.
+  `sandbox shell` and `forward` exit 125 with `connect.lost` and say so:
+  `the connection to the server was lost (…); the session cannot be resumed,
+  so run the command again to start a new one`. For `wssp ssh`, `ssh`, `scp`
+  and `rsync` the ProxyCommand prints that line and OpenSSH exits 255; VS
+  Code Remote-SSH reconnects on its own.
+- **Uploads and downloads** recover: the CLI re-sends an upload chunk whose
+  connection dropped ([retries](../guide/cli.md)), and the SDK's
+  `resumeDownload` continues a download by byte range while its capture is
+  kept.
+
+### What does not apply
+
+- **ACME and certificates.** In the tunnel-to-the-server topology the
+  generated Traefik labels (`entrypoints=websecure`,
+  `tls.certresolver=letsencrypt`) are inert, and nothing behind the tunnel
+  needs a certificate: Cloudflare holds the one for your hostname. With
+  Traefik, see the TLS note above.
+- **Response compression.** Without Traefik the compress middleware in
+  [response compression](#enable-response-compression-dont-skip) is absent;
+  Cloudflare compresses pages and JSON for the browser itself and leaves
+  `application/octet-stream` downloads alone, so their `Content-Length` and
+  byte ranges are kept.
+- **Preview tunnels.** They run on the separate
+  [tunnel server](../guide/tunnels.md), not through Cloudflare. A home wssp
+  server only calls the tunnel server's HTTPS API, and each node's tunnel
+  client dials it over one outbound WSS connection, so both work from behind
+  NAT. The tunnel server itself terminates TLS for its wildcard preview zone
+  (`https://<port>-<id>.<zone>/`, a DNS-01 certificate) and its WebRTC relay
+  needs UDP, so it needs a host with a public IP (a small VPS) and inbound
+  ports 80 and 443; it does not run behind a Cloudflare Tunnel. Without one,
+  leave tunnels unconfigured: everything else works.
 
 ## Schema and resource continuity
 

@@ -15,6 +15,7 @@ import { connect } from "node:net";
 import { resolve } from "node:path";
 
 import { claudeHooksStatus } from "./install-claude-hooks.js";
+import { checkTrustProxyHops } from "./lib/trust-proxy-hops-env.js";
 
 const ROOT = resolve(import.meta.dirname!, "..");
 
@@ -272,6 +273,11 @@ function checkPreMigrationBackup() {
       "BACKUP_SCHEDULE=daily default on). See docs/operations/backup-and-restore.md.",
     required: false,
   });
+}
+
+/** Warn when a deployment keys every client on its proxy's address. */
+function checkProxyHops() {
+  record({ name: "trust proxy hops", ...checkTrustProxyHops(process.env), required: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -592,6 +598,7 @@ async function main() {
   checkPortless();
   await checkEnv();
   checkPreMigrationBackup();
+  checkProxyHops();
   // Stop further checks if env failed — they would all fail with confusing
   // messages and the user needs to fix env first.
   const envOk = results.find((r) => r.name === "env (zod schema)")?.status === "ok";

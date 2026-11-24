@@ -86,7 +86,7 @@
     "test:e2e:onboarding": "node --import tsx scripts/e2e/onboarding.mjs",
     "test:offload:live": "node --import tsx scripts/offload-live.ts",
     "test:relay-chaos:live": "node --import tsx scripts/relay-chaos-live.ts",
-    "test:setup": "node --import tsx --test scripts/lib/admin-email-env.test.ts scripts/lib/env-file.test.mjs scripts/dev-docker.test.mjs scripts/theme-apply.test.ts scripts/lib/drift-test-packages.test.ts scripts/lib/relay-chaos-live.test.ts scripts/lib/relay-chaos-front-door.test.ts scripts/offload-live.test.ts scripts/install-pnpm.test.mjs scripts/lib/wire-affected.test.ts",
+    "test:setup": "node --import tsx --test scripts/lib/admin-email-env.test.ts scripts/lib/env-file.test.mjs scripts/dev-docker.test.mjs scripts/theme-apply.test.ts scripts/lib/drift-test-packages.test.ts scripts/lib/relay-chaos-live.test.ts scripts/lib/relay-chaos-front-door.test.ts scripts/offload-live.test.ts scripts/install-pnpm.test.mjs scripts/lib/wire-affected.test.ts scripts/lib/trust-proxy-hops-env.test.ts",
     "check:lazy-xterm": "node scripts/check-lazy-xterm.mjs",
     "doctor": "tsx scripts/doctor.ts",
     "data-key:status": "tsx packages/api/src/crypto/data-key.cli.ts status",

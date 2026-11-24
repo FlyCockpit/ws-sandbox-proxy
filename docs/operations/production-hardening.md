@@ -49,7 +49,8 @@ in seconds. Redis failures refuse admission with
 503 and `Retry-After: 5`; there is no in-memory insurance fallback.
 
 Set `TRUST_PROXY_HOPS` to the exact number of trusted reverse proxies (the
-generated Dokploy config sets `1` for Traefik). Unset or `0` keys on the socket
+generated Dokploy config sets `1` for Traefik; `--trust-proxy-hops N` counts
+more, such as `2` for a Cloudflare Tunnel in front of Traefik). Unset or `0` keys on the socket
 peer and ignores `X-Forwarded-For`; behind a proxy that puts every client in
 one shared bucket. A port appended to the selected entry (`1.2.3.4:5678`,
 `[2001:db8::1]:5678`) is stripped before validation. A short or malformed chain

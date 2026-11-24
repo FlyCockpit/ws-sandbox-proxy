@@ -93,11 +93,13 @@ Anonymous rate limits and audit records key on the client IP. The server never
 trusts `X-Forwarded-For` by itself: `TRUST_PROXY_HOPS` is the exact number of
 reverse proxies you run between the client and the server.
 
-| Topology                                                                  | `TRUST_PROXY_HOPS`         |
-| ------------------------------------------------------------------------- | -------------------------- |
-| Generated Dokploy config or Compose (client → Traefik → server)           | `1` (set by the generator) |
-| Cloudflare → Traefik → server, with Traefik trusting Cloudflare's ranges  | `2`                        |
-| No proxy: the server port is reached directly (LAN, bare host, local dev) | unset or `0` (default)     |
+| Topology                                                                  | `TRUST_PROXY_HOPS`           |
+| ------------------------------------------------------------------------- | ---------------------------- |
+| Generated Dokploy config or Compose (client → Traefik → server)           | `1` (set by the generator)   |
+| Cloudflare proxy → Traefik → server, Traefik trusting Cloudflare's ranges | `2` (`--trust-proxy-hops 2`) |
+| Cloudflare Tunnel: `cloudflared` → server                                 | `1` (set by the generator)   |
+| Cloudflare Tunnel: `cloudflared` → Traefik → server, Traefik trusting it  | `2` (`--trust-proxy-hops 2`) |
+| No proxy: the server port is reached directly (LAN, bare host, local dev) | unset or `0` (default)       |
 
 - **Unset or `0`:** the key is the TCP socket peer; `X-Forwarded-For` is
   ignored, so a LAN client cannot pick its own key. If a proxy is in front and

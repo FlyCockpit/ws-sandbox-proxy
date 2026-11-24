@@ -81,7 +81,10 @@ that goes silent without closing (a dropped NAT mapping, a host that lost
 power, a laptop resumed from sleep) counts as lost too: the server pings every
 20 seconds, and when nothing at all, not even a ping, arrives for 60 seconds
 (three pings, never less than the server's idle timeout) the CLI ends the
-session and exits 125 (`connect.lost`).
+session and exits 125 (`connect.lost`). Its line then says that the session
+cannot be resumed and to run the command again for a new one; that is also
+what a proxy or Cloudflare edge restart looks like
+([Cloudflare Tunnel](../operations/deployment.md#when-cloudflare-drops-a-connection)).
 
 The bytes are not journaled (no command operation, no retained output). A
 shared node's owner can see them, as for browser terminals.

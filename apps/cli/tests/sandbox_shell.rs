@@ -1709,10 +1709,12 @@ fn a_kill_close_of_the_channel_exits_125_and_a_lost_socket_too() {
         None,
     );
     assert_eq!(output.status.code(), Some(125));
+    // A drop (a proxy or Cloudflare edge restart) says how to get a new session.
+    let stderr = text(&output.stderr);
     assert!(
-        text(&output.stderr).contains("lost"),
-        "{}",
-        text(&output.stderr)
+        stderr.contains("the connection to the server was lost")
+            && stderr.contains("run the command again to start a new one"),
+        "{stderr}"
     );
 }
 

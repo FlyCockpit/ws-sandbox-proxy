@@ -31,7 +31,17 @@ type Options = {
    * allows (`assertPassthroughKeys`). Empty or unset keeps the app default.
    */
   env?: readonly string[];
+  /**
+   * `--trust-proxy-hops N` (default 1): the server's `TRUST_PROXY_HOPS`, the
+   * exact number of reverse proxies in front of it (client-ip.ts). 1 is
+   * client -> Traefik -> server; 2 adds one proxy Traefik trusts, such as
+   * `cloudflared` in front of Traefik on a home server.
+   */
+  trustProxyHops?: number;
 };
+/** Highest `--trust-proxy-hops`; a longer chain is a mistake, not a topology. */
+const MAX_TRUST_PROXY_HOPS = 8;
+const trustProxyHops = (options: Options) => String(options.trustProxyHops ?? 1);
 const keys = new Set(ENV_VARS.map((variable) => variable.key));
 const sharedKeys = new Set(Object.keys(sharedVars));
 const serverKeys = new Set([...sharedKeys, ...Object.keys(serverVars)]);
@@ -162,6 +172,15 @@ export function generateDokployConfig(options: Options) {
       "URL must be an HTTPS origin with a DNS hostname, without credentials, port, query, or path.",
     );
   validateNames(options);
+  if (
+    options.trustProxyHops !== undefined &&
+    (!Number.isInteger(options.trustProxyHops) ||
+      options.trustProxyHops < 1 ||
+      options.trustProxyHops > MAX_TRUST_PROXY_HOPS)
+  )
+    throw new Error(
+      `--trust-proxy-hops must be a whole number from 1 to ${MAX_TRUST_PROXY_HOPS} (Traefik counts as 1).`,
+    );
   if (options.gitUrl !== undefined) assertGitUrl(options.gitUrl);
   if (options.env?.length) {
     const base = composeEnvironments({ ...options, env: [] });
@@ -196,8 +215,9 @@ export function generateDokployConfig(options: Options) {
       "MCP_ENABLED",
     ]),
     NODE_ENV: "production",
-    // Client -> Traefik -> server: exactly one trusted proxy (client-ip.ts).
-    TRUST_PROXY_HOPS: "1",
+    // Client -> Traefik -> server: one trusted proxy unless --trust-proxy-hops
+    // counts more (client-ip.ts).
+    TRUST_PROXY_HOPS: trustProxyHops(options),
     WORKER_MODE: worker ? "external" : "embedded",
     MIGRATE_ON_START: "true",
     BACKUP_S3_PREFIX: prefix,
@@ -462,7 +482,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
       ]),
       SMTP_PORT: composeVar("SMTP_PORT", "587"),
       BETTER_AUTH_URL: new URL(options.url).origin,
-      TRUST_PROXY_HOPS: "1",
+      TRUST_PROXY_HOPS: trustProxyHops(options),
       WORKER_MODE: worker ? "external" : "embedded",
       MIGRATE_ON_START: "true",
       ...refsForCompose(writerKeys),
@@ -732,18 +752,22 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
           "--backups",
           "--git-url",
           "--env",
+          "--trust-proxy-hops",
         ].includes(key) ||
         fields[key] ||
         !value ||
         value.startsWith("--")
       )
         throw new Error(
-          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--git-url <repository URL, default the origin remote>|local] [--project <stem>] [--proxy-network <name>] [--backups true|false] [--env KEY,KEY…].",
+          "Use --environment development|production --git-ref <ref> --topology app|app-worker --url <https-origin> [--git-url <repository URL, default the origin remote>|local] [--project <stem>] [--proxy-network <name>] [--backups true|false] [--env KEY,KEY…] [--trust-proxy-hops N, default 1].",
         );
       fields[key] = value;
     }
     if (fields["--backups"] && !["true", "false"].includes(fields["--backups"]))
       throw new Error("--backups must be true or false.");
+    const hops = fields["--trust-proxy-hops"];
+    if (hops !== undefined && !/^[0-9]+$/.test(hops))
+      throw new Error("--trust-proxy-hops must be a whole number.");
     const options = {
       environment: fields["--environment"],
       gitRef: fields["--git-ref"],
@@ -753,6 +777,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       proxyNetwork: fields["--proxy-network"],
       backups: fields["--backups"] === "true",
       env: fields["--env"]?.split(",").map((key) => key.trim()),
+      trustProxyHops: hops === undefined ? undefined : Number(hops),
       gitUrl: resolveGitUrl(fields["--git-url"], () => {
         const remote = spawnSync("git", ["remote", "get-url", "origin"], {
           cwd: fileURLToPath(new URL("..", import.meta.url)),
