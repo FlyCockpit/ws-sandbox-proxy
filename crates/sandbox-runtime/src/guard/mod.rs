@@ -1,7 +1,7 @@
 //! The root-owned egress guard (see docs/guide/hosts.md#egress-guard).
 //!
 //! Pure, security-critical building blocks shared by the `wssp host guard`
-//! service (apps/cli) and the daemon-side client ([`crate::GuardProbe`]):
+//! service (apps/cli) and the daemon-side client ([`probe::GuardProbe`]):
 //!
 //! - [`ceiling`]: the egress ceiling host sockets obey (credential proxy);
 //! - [`ruleset`]: the `inet wssp_guard` compiler (drops only) and the

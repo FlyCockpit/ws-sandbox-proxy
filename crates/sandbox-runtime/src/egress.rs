@@ -300,9 +300,8 @@ fn valid_digest(digest: &str) -> bool {
 }
 
 /// Exact lowercase DNS name with at least two labels. One implementation,
-/// shared with the guard's source parser and `validate_policy_domain`.
-/// Exact lowercase DNS name with at least two labels: the one domain rule
-/// the egress settings and the guard's policy sources share.
+/// shared by the egress settings, the guard's policy-source parser and
+/// `validate_policy_domain`.
 pub fn valid_domain_name(domain: &str) -> bool {
     !domain.is_empty()
         && domain.len() <= 253
