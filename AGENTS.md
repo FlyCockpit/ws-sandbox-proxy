@@ -255,6 +255,9 @@ Safe alternatives:
 - Schema: `packages/db/prisma/schema/`; committed history and fixtures:
   `packages/db/prisma/{migrations,fixtures}/`. Generate with `pnpm db:migrate`,
   review SQL, apply locally with `pnpm db:migrate:apply`; never edit applied SQL.
+  Merged migrations are immutable except via the release squash
+  (`pnpm db:release-squash`, `pnpm db:check-release`); the runner reconciles
+  replaced per-PR migrations onto their release.
 - Query projections are disclosure boundaries (`satisfies Prisma.<Model>Select`).
 - Server startup defaults `MIGRATE_ON_START=true`; workers default false and
   wait for compatible migration history. Image command `migrate` runs once.

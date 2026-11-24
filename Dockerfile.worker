@@ -195,7 +195,7 @@ COPY --from=builder /app/apps/worker/dist ./apps/worker/dist
 # Runtime migration/backup commands and their owned-child dependency closure.
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY scripts/db/migrate-runtime.mjs ./scripts/db/
-COPY scripts/db/lib/contracts.mjs scripts/db/lib/migration-state.mjs scripts/db/lib/prisma.mjs scripts/db/lib/sql.mjs scripts/db/lib/prisma-owner.mjs ./scripts/db/lib/
+COPY scripts/db/lib/contracts.mjs scripts/db/lib/migration-state.mjs scripts/db/lib/prisma.mjs scripts/db/lib/replaces.mjs scripts/db/lib/sql.mjs scripts/db/lib/prisma-owner.mjs ./scripts/db/lib/
 COPY scripts/lib/bounded-child.mjs ./scripts/lib/
 COPY scripts/backup-heartbeat.mjs ./scripts/
 COPY scripts/backup/pre-migrate.sh \
