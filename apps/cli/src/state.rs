@@ -183,6 +183,21 @@ fn bump_config_generation(dir: &Path) -> Result<u64> {
 /// The host device credential file inside the data directory.
 pub const DEVICE_CREDENTIAL_FILE: &str = "device-auth.json";
 
+/// The effective config under the store lock (what connect would select).
+pub fn load_config() -> Result<Config> {
+    Ok(AuthStore::open(None)?.snapshot()?.0)
+}
+
+/// Read, mutate and save the config under the store lock.
+pub fn update_config<T>(mutate: impl FnOnce(&mut Config) -> Result<T>) -> Result<T> {
+    AuthStore::open(None)?.update_config(mutate)
+}
+
+/// Write the default config unless a config file exists; true when written.
+pub fn init_config() -> Result<bool> {
+    AuthStore::open(None)?.init_config()
+}
+
 impl AuthStore {
     pub fn open(deadline: Option<Instant>) -> Result<Self> {
         Self::at(

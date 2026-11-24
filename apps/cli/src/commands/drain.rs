@@ -48,7 +48,7 @@ pub fn run(args: &Args, draining: bool) -> Result<()> {
         .context(CodedError::new(ExitCode::Failure));
     }
     let offload = draining && args.offload;
-    let trust = args.tls.load(&crate::config::Config::load()?)?;
+    let trust = args.tls.load(&crate::state::load_config()?)?;
     let resolved = resolve_connect(
         args.server.as_deref(),
         args.host_id.as_deref(),

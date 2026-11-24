@@ -106,7 +106,7 @@ pub fn run(args: &RunArgs) -> Result<()> {
     if let Err(err) = crate::sandbox_relay::credentials::harden_process() {
         tracing::warn!(error = %err, "could not mark the daemon non-dumpable");
     }
-    let config = crate::config::Config::load()?;
+    let config = crate::state::load_config()?;
     let trust = args.tls.load(&config)?;
     let resolved = resolve_connect(
         args.server.as_deref(),

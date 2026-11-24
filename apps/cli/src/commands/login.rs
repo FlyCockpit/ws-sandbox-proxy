@@ -139,6 +139,30 @@ impl<'a> Granted<'a> {
     }
 }
 
+/// `GET /v1/key` (packages/sandbox-contracts/src/keys.ts `keyInfoSchema`).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeyInfo {
+    pub id: String,
+    pub name: String,
+    pub origin: String,
+    pub scopes: Vec<String>,
+    pub resource_mode: String,
+    pub pool_mode: String,
+    pub pools: Vec<KeyPool>,
+    pub own_sandboxes_only: bool,
+    pub expires_at: Option<String>,
+    pub max_live_sandboxes: Option<u32>,
+    pub live_sandboxes: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KeyPool {
+    pub id: String,
+    pub slug: String,
+    pub label: String,
+}
+
 /// The `pools:` value: slugs when known, the saved ids otherwise.
 fn pools_line(pool_mode: &str, pool_ids: &[String], pool_slugs: Option<&[String]>) -> String {
     if !pool_mode.eq_ignore_ascii_case("selected") {
@@ -168,7 +192,7 @@ fn lookup_pool_slugs(login: &UserLogin, ca_file: Option<PathBuf>) -> Option<Vec<
         login: None,
         ca_file,
     };
-    let key: crate::commands::whoami::KeyInfo = crate::api::Client::new(&credential)
+    let key: KeyInfo = crate::api::Client::new(&credential)
         .and_then(|client| {
             client.request(
                 crate::api::Method::Get,

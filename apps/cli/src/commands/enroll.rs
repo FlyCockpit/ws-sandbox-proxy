@@ -60,7 +60,7 @@ pub fn run(args: &Args) -> Result<()> {
 
 fn enroll_token_env(args: &Args, env_var: &str) -> Result<()> {
     crate::auth::host_token_from_env(env_var)?;
-    crate::config::Config::update(|cfg| {
+    crate::state::update_config(|cfg| {
         cfg.host_token_env = Some(env_var.to_owned());
         Ok(())
     })?;
@@ -76,11 +76,10 @@ fn enroll_token_env(args: &Args, env_var: &str) -> Result<()> {
             "recorded host token environment variable `{env_var}`"
         ))?;
         print_guard_hint(&guard)?;
-        let server = args.server.clone().or_else(|| {
-            crate::config::Config::load()
-                .ok()
-                .and_then(|c| c.server_url)
-        });
+        let server = args
+            .server
+            .clone()
+            .or_else(|| crate::state::load_config().ok().and_then(|c| c.server_url));
         output::line(token_next_step(server.as_deref(), env_var))?;
     }
     Ok(())
@@ -187,7 +186,7 @@ const OPEN_EGRESS_QUESTION: &str =
 /// stdin without a terminal on both stdin and stdout.
 fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
     use std::io::IsTerminal;
-    let current = crate::config::Config::load()?.allow_open_egress_for_others;
+    let current = crate::state::load_config()?.allow_open_egress_for_others;
     let interactive =
         !args.json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
     let answer = match (args.open_egress_for_others, current) {
@@ -196,7 +195,7 @@ fn node_setup(args: &Args, host_slug: &str) -> Result<()> {
         (None, _) => None,
     };
     if let Some(value) = answer {
-        crate::config::Config::update(|cfg| {
+        crate::state::update_config(|cfg| {
             cfg.allow_open_egress_for_others = Some(value);
             Ok(())
         })?;

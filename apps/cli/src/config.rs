@@ -937,15 +937,6 @@ impl Config {
         }
         Ok((config, diagnostics))
     }
-    pub fn load() -> Result<Self> {
-        Ok(crate::state::AuthStore::open(None)?.snapshot()?.0)
-    }
-    pub fn update<T>(mutate: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        crate::state::AuthStore::open(None)?.update_config(mutate)
-    }
-    pub fn save_new(&self) -> Result<bool> {
-        crate::state::AuthStore::open(None)?.init_config()
-    }
 }
 
 /// Hide source snippets and values while retaining the original TOML location.

@@ -10,6 +10,7 @@ use serde::Serialize;
 
 use crate::config::{Config, TunnelConfig};
 use crate::output;
+use crate::state::{load_config, update_config};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -64,7 +65,7 @@ pub fn run(args: &Args) -> Result<()> {
         TunnelCommand::Install(install) => run_install(install),
         TunnelCommand::Status { json } => run_status(*json),
         TunnelCommand::Remove => {
-            Config::update(|config| {
+            update_config(|config| {
                 config.tunnel = None;
                 Ok(())
             })?;
@@ -74,7 +75,7 @@ pub fn run(args: &Args) -> Result<()> {
 }
 
 fn run_status(json: bool) -> Result<()> {
-    let config = Config::load()?;
+    let config = load_config()?;
     let status = match &config.tunnel {
         Some(tunnel) => Status {
             configured: true,
@@ -147,7 +148,7 @@ fn run_install(args: &InstallArgs) -> Result<()> {
         allow_for_others: args.allow_for_others,
     };
     tunnel.validate()?;
-    Config::update(|config| {
+    update_config(|config| {
         config.tunnel = Some(tunnel);
         Ok(())
     })?;
