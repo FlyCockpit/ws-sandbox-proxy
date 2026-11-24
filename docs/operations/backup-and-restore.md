@@ -42,7 +42,7 @@ Explicit operations work whatever the switch says: the `backup` command and the 
 
 **Container platforms:** the infra workflow takes a provider snapshot before the `migrate` job (RDS manual snapshot; Azure on-demand backup where the service supports it). `BACKUP_ENABLED` is normally left `false` there; set it (with `BACKUP_S3_*`) on the `migrate` job only if that job should dump too.
 
-`pnpm doctor` reports the switch and recommends turning it on with a destination. It is strongly encouraged before any migration that drops or rewrites data.
+`pnpm doctor:app` reports the switch and recommends turning it on with a destination. It is strongly encouraged before any migration that drops or rewrites data.
 
 **Pre-drop backup.** With `BACKUP_ENABLED=true`, the same hook also runs right before a scheduled deletion (`contract.sql`, [schema-migrations.md § Expand and contract](../schema-migrations.md#expand-and-contract)), labelled `pre-drop`, when a deletion is due and that run took no pre-migration backup. The runner passes `--keep 5` explicitly for `pre-drop`. Direct invocations with another label default to `--keep 0` (no local pruning). The runner passes `--required` here too: a dump that fails → no deletion runs that start (the app starts normally) and the next start tries again. (With no destination at all, a migrating start already stops at the entrypoint's startup check; a start that only waits never runs deletions.) The `[migrate] DATA DELETED:` log line names the backup it took.
 

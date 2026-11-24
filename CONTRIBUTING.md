@@ -62,7 +62,7 @@ By making a contribution to this project, I certify that:
 
 Follow [local development](README.md#local-development): Node 26 LTS (26.13.1+),
 pnpm 12.18.0, Postgres 18 and Valkey 9. Install pnpm with
-`npm install -g pnpm@12.18.0`, then run `pnpm install`, `pnpm run setup` and
+`npm install -g pnpm@12.18.0`, then run `pnpm install`, `pnpm setup:app` and
 `pnpm dev`. The Rust CLI uses the workspace's pinned toolchain separately.
 
 ## Repository rules

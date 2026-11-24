@@ -37,7 +37,7 @@ adding a new script that imports `@wssp/env/*` or a package that does):
 | `apps/worker/src/bootstrap.ts`            | wrapper            | The **built** BullMQ worker entry, same reason                                                                                                           |
 | `apps/server/src/index.ts`                | side effect        | Hono process under `tsx` (`pnpm dev`), where plain ESM order applies                                                                                     |
 | `apps/worker/src/index.ts`                | side effect        | BullMQ worker under `tsx`, same reason                                                                                                                   |
-| `scripts/doctor.ts`                       | side effect        | `pnpm doctor`                                                                                                                                            |
+| `scripts/doctor.ts`                       | side effect        | `pnpm doctor:app`                                                                                                                                        |
 | `scripts/translate-locale-bundles.ts`     | side effect        | `pnpm i18n:translate`                                                                                                                                    |
 | `packages/db/prisma/seed.cli.ts`          | side effect        | `prisma db seed` / direct `tsx` of the seed CLI                                                                                                          |
 | `packages/api/src/crypto/data-key.cli.ts` | side effect        | `pnpm data-key:status` / `pnpm data-key:promote`                                                                                                         |
@@ -230,7 +230,7 @@ also have finite fail-closed procedure budgets. Fresh launches require current
 admission, inventory, key ACK and exact availability evidence.
 
 `SANDBOX_REQUEST_HMAC_SECRET` is a required server-only master secret for the
-keyed request digests and derived host journal keys. `pnpm run setup` generates
+keyed request digests and derived host journal keys. `pnpm setup:app` generates
 a local value without printing it; production supplies one externally. Use the `secret32`
 generator via `pnpm generate:secrets`: 32 cryptographically random bytes encoded
 as lowercase hex. There is no default. Examples leave the value empty:

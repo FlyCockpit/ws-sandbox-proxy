@@ -519,7 +519,7 @@ is only for a dashboard served from a different origin. `PUBLIC_APP_URL` is
 translation-provider metadata, not used for authentication. Home connections
 usually block outbound port 25, so send mail through a relay's submission port:
 `587` (STARTTLS) or `465` (the mailer switches to implicit TLS for 465 by
-itself). `pnpm doctor` warns when `TRUST_PROXY_HOPS` is `0` on a deployment
+itself). `pnpm doctor:app` warns when `TRUST_PROXY_HOPS` is `0` on a deployment
 (`NODE_ENV=production`, or an `https` `BETTER_AUTH_URL` on a non-local host),
 and the server logs one `[client-ip]` warning when a private peer such as
 `cloudflared` sends `X-Forwarded-For` while it is `0`.

@@ -55,7 +55,7 @@ For a local development stack (prerequisites under [Installation](#installation)
 ```sh
 npm install -g pnpm@12.18.0
 pnpm install
-pnpm run setup
+pnpm setup:app
 pnpm dev
 ```
 
@@ -73,12 +73,12 @@ for `https://*.localhost` names.
 ```sh
 npm install -g pnpm@12.18.0
 pnpm install
-pnpm run setup
+pnpm setup:app
 pnpm dev
 ```
 
-Use the explicit `run` form — `setup` is also a pnpm builtin. `pnpm run setup`
-creates `.env` files if missing, generates missing auth and sandbox request-HMAC
+`pnpm setup:app` (not `setup`, a pnpm built-in that wins over a same-named
+script) creates `.env` files if missing, generates missing auth and sandbox request-HMAC
 secrets, records `ADMIN_EMAILS`, starts Postgres 18 and Valkey 9, and applies the Prisma
 schema.
 
@@ -88,7 +88,7 @@ schema.
 If pnpm fails with `mkdir '/Users'` on Linux/WSL, unset a stale macOS
 `PNPM_HOME` and retry.
 
-`pnpm doctor` validates environment, database, Valkey, and optional SMTP.
+`pnpm doctor:app` validates environment, database, Valkey, and optional SMTP.
 
 ### Node daemon
 
@@ -203,7 +203,7 @@ pnpm generate:secrets  # interactive production env block
 
 Public signup defaults to disabled (`SIGNUP_ENABLED=false`); admins can override
 the effective signup setting. `ADMIN_EMAILS` permits bootstrap signup for those
-addresses. After `pnpm run setup`:
+addresses. After `pnpm setup:app`:
 
 1. Confirm `ADMIN_EMAILS` in the root `.env` is your address.
 2. Start a local mail sink (`docker run -d -p 1025:1025 -p 8025:8025 axllent/mailpit`)
@@ -304,8 +304,8 @@ cargo test --workspace --all-targets --locked -- --test-threads=1
 
 ### Scripts
 
-- `pnpm run setup` — first-run onboarding (idempotent)
-- `pnpm doctor` — environment, DB, Valkey, SMTP
+- `pnpm setup:app` — first-run onboarding (idempotent)
+- `pnpm doctor:app` — environment, DB, Valkey, SMTP
 - `pnpm dev` / `pnpm dev:raw` — portless HTTPS, or raw Turbo
 - `pnpm dev:services` — Postgres 18 + Valkey 9
 - `pnpm db:migrate <name>` / `pnpm db:migrate:apply` / `pnpm db:studio`

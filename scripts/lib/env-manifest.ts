@@ -600,7 +600,7 @@ export const ENV_VARS: EnvVar[] = [
       "existing session and all product credentials (host tokens, device",
       "credentials, SDK keys) — generate once per environment and keep it stable.",
       "",
-      "For LOCAL dev this is filled in for you by `pnpm run setup`; to mint one",
+      "For LOCAL dev this is filled in for you by `pnpm setup:app`; to mint one",
       "by hand use `pnpm generate:secret` and paste it below. For a PRODUCTION",
       "environment prefer `pnpm generate:secrets`, which generates this along",
       "with the rest of the block and validates the result.",
