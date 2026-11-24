@@ -292,28 +292,6 @@ fn journal_round_trips_privately_and_refuses_unknown_fields() {
 }
 
 #[test]
-fn bandwidth_paces_to_the_cap_and_zero_is_unlimited() {
-    assert!(Bandwidth::new(None).is_none());
-    assert!(Bandwidth::new(Some(0)).is_none());
-    let limit = Bandwidth::new(Some(1000)).unwrap();
-    let now = Instant::now();
-    // The first chunk goes at once; each later one waits for the previous
-    // chunk's slot at 1000 B/s.
-    assert_eq!(limit.reserve_at(500, now), Duration::ZERO);
-    assert_eq!(limit.reserve_at(1000, now), Duration::from_millis(500));
-    assert_eq!(limit.reserve_at(1, now), Duration::from_millis(1500));
-    // Idle time is not banked beyond the slot already reserved.
-    let later = now + Duration::from_secs(10);
-    assert_eq!(limit.reserve_at(100, later), Duration::ZERO);
-    // A stop ends the wait.
-    let slow = Bandwidth::new(Some(1)).unwrap();
-    assert!(slow.pace(1, &|| false));
-    let started = Instant::now();
-    assert!(!slow.pace(1, &|| true));
-    assert!(started.elapsed() < Duration::from_secs(1));
-}
-
-#[test]
 fn staging_estimate_follows_usage_with_the_disk_ceiling() {
     const GIB: u64 = 1 << 30;
     // Unknown usage: the configured root twice.

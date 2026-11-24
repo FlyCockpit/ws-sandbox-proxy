@@ -2,6 +2,7 @@
 //! Interrupted work stays unknown; no running process is adopted after restart.
 //! Work carried across a relay transport drop (same process, live worker) is
 //! adopted, settled by receipt, or revoked by the adoption step, before the census.
+use super::evidence::{ExpiryArmState, ExpiryReported};
 use super::journal::{HostJournal, ReceiptPhase, TransportBindingV11};
 use super::journal_key::KeyControl;
 #[cfg(test)]
@@ -908,19 +909,6 @@ fn observe_entry_root(
     }
     entry.root = root;
 }
-
-/// Last published state of a sandbox's lease arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ExpiryArmState {
-    /// The arm's expiry completed, on the first attempt or after failures.
-    Complete,
-    /// The arm's expiry is still failing; the attempt count is published so a
-    /// retry changes the digest.
-    Failing(u32),
-}
-
-/// Last published expiry arm per sandbox: (generation, revision, state).
-pub(super) type ExpiryReported = std::collections::BTreeMap<String, (u64, u64, ExpiryArmState)>;
 
 /// While connected, publish each sandbox whose expiry arm appeared, changed or
 /// cleared since `reported`, with its current instance state and lease, so the

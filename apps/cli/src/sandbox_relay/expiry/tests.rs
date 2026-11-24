@@ -1072,9 +1072,8 @@ raise RuntimeError('unexpected mutation')
 /// connected status frame publishes it, and recovery clears it.
 #[test]
 fn expiry_failure_is_published_without_blocking_and_clears_on_recovery() {
-    use crate::sandbox_relay::reconcile::{
-        ExpiryReported, expiry_digest, expiry_status_offer, inventory_census,
-    };
+    use crate::sandbox_relay::evidence::ExpiryReported;
+    use crate::sandbox_relay::reconcile::{expiry_digest, expiry_status_offer, inventory_census};
     let (_dir, j, c) = setup();
     let failing = Arc::new(AtomicBool::new(true));
     let flag = failing.clone();
