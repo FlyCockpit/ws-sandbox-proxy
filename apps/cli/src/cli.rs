@@ -5,7 +5,9 @@
 //! shape of the CLI. Keeping parsing and logic separate keeps both readable and
 //! makes commands easy to test in isolation.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
+
+use crate::logging::LogFormat;
 
 /// Top-level CLI. The `about` text is shown in `--help`.
 #[derive(Debug, Parser)]
@@ -33,15 +35,6 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Command,
-}
-
-/// Log output format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum LogFormat {
-    /// Human-readable, colored when attached to a terminal.
-    Text,
-    /// One JSON object per line.
-    Json,
 }
 
 /// The subcommands. Add new ones here, then implement them in `src/commands/`.

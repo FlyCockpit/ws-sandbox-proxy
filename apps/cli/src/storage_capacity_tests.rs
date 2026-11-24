@@ -444,7 +444,7 @@ fn shutdown_interrupted_census_is_not_reported_as_damaged_storage() {
     // the old text patterns, just like `internal: … marker is incomplete`.
     for interrupted in [true, false] {
         let (pools, logs) = crate::logging::with_subscriber(
-            crate::cli::LogFormat::Text,
+            crate::logging::LogFormat::Text,
             tracing_subscriber::EnvFilter::new("info"),
             || {
                 let dir = tempfile::tempdir().unwrap();

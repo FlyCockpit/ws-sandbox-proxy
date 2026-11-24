@@ -11440,7 +11440,7 @@ exit 1
     fn live_capacity_refusal_logs_counts_without_workload_content() {
         use std::net::{TcpListener, TcpStream};
         let (_, captured) = crate::logging::with_subscriber(
-            crate::cli::LogFormat::Json,
+            crate::logging::LogFormat::Json,
             tracing_subscriber::EnvFilter::new("trace"),
             || {
                 let dir = tempfile::tempdir().unwrap();

@@ -21,7 +21,16 @@ use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use crate::cli::LogFormat;
+use crate::output::redact_product_credentials;
+
+/// Log output format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    /// Human-readable, colored when attached to a terminal.
+    Text,
+    /// One JSON object per line.
+    Json,
+}
 
 /// Product log-filter env var. Takes precedence over `RUST_LOG`.
 pub const LOG_ENV: &str = "WSSP_LOG";
@@ -44,48 +53,6 @@ fn pass_confidentiality_ceiling(metadata: &tracing::Metadata<'_>) -> bool {
         return true;
     }
     !http_serialization_target(metadata.target())
-}
-
-fn product_credential_secret_len(rest: &str) -> usize {
-    rest.chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
-        .map(|c| c.len_utf8())
-        .sum()
-}
-
-/// Redact product credential patterns from formatted log output.
-pub fn redact_product_credentials(message: &str) -> String {
-    const PREFIXES: [(&str, &str); 4] = [
-        ("wssp_host_", "wssp_host_[REDACTED]"),
-        ("wssp_device_", "wssp_device_[REDACTED]"),
-        ("wssp_sdk_", "wssp_sdk_[REDACTED]"),
-        ("wssp_agent_", "wssp_agent_[REDACTED]"),
-    ];
-
-    let mut out = String::with_capacity(message.len());
-    let mut index = 0;
-    while index < message.len() {
-        let slice = &message[index..];
-        let mut matched = false;
-        for (prefix, replacement) in PREFIXES {
-            if let Some(rest) = slice.strip_prefix(prefix) {
-                let secret_len = product_credential_secret_len(rest);
-                if secret_len > 0 {
-                    out.push_str(replacement);
-                    index += prefix.len() + secret_len;
-                    matched = true;
-                    break;
-                }
-            }
-        }
-        if matched {
-            continue;
-        }
-        let ch = slice.chars().next().expect("char");
-        out.push(ch);
-        index += ch.len_utf8();
-    }
-    out
 }
 
 pub(crate) struct RedactingWriter<W: Write> {
@@ -312,16 +279,6 @@ mod tests {
     }
 
     #[test]
-    fn redact_product_credentials_masks_all_purposes() {
-        let token = "wssp_host_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk";
-        let line = format!("Authorization: Bearer {token}");
-        let redacted = redact_product_credentials(&line);
-        assert!(!redacted.contains(token));
-        assert!(redacted.contains("wssp_host_[REDACTED]"));
-        assert!(redacted.contains("Authorization: Bearer"));
-    }
-
-    #[test]
     fn production_logger_redacts_tungstenite_style_trace_line() {
         use std::sync::{Arc, Mutex};
 
@@ -481,16 +438,5 @@ mod tests {
         assert!(!out.contains(token));
         assert!(!out.contains("Authorization: Bearer"));
         assert!(out.contains("connect trace diagnostic"));
-    }
-}
-
-#[cfg(test)]
-mod agent_token_tests {
-    #[test]
-    fn agent_credentials_are_scrubbed() {
-        assert_eq!(
-            super::redact_product_credentials("prefix wssp_agent_fixture-token suffix"),
-            "prefix wssp_agent_[REDACTED] suffix"
-        );
     }
 }

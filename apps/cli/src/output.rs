@@ -12,23 +12,13 @@ use serde::Serialize;
 /// Write a line of human-readable command output to stdout.
 pub fn line(text: impl std::fmt::Display) -> Result<()> {
     let mut out = io::stdout().lock();
-    writeln!(
-        out,
-        "{}",
-        crate::logging::redact_product_credentials(&text.to_string())
-    )
-    .context("writing to stdout")
+    writeln!(out, "{}", redact_product_credentials(&text.to_string())).context("writing to stdout")
 }
 
 /// Write human-readable command output to stdout without appending a newline.
 pub fn text(text: impl std::fmt::Display) -> Result<()> {
     let mut out = io::stdout().lock();
-    write!(
-        out,
-        "{}",
-        crate::logging::redact_product_credentials(&text.to_string())
-    )
-    .context("writing to stdout")
+    write!(out, "{}", redact_product_credentials(&text.to_string())).context("writing to stdout")
 }
 
 /// Write raw command output to stdout.
@@ -56,7 +46,7 @@ pub fn stderr_bytes(bytes: &[u8]) -> Result<()> {
 pub fn json<T: Serialize>(value: &T) -> Result<()> {
     let json = encode(value)?;
     let mut out = io::stdout().lock();
-    out.write_all(crate::logging::redact_product_credentials(&json).as_bytes())
+    out.write_all(redact_product_credentials(&json).as_bytes())
         .context("writing JSON output")?;
     writeln!(out).context("writing to stdout")
 }
@@ -64,7 +54,7 @@ pub fn json<T: Serialize>(value: &T) -> Result<()> {
 /// One JSON object as a stdout line [`json`] would write (for a writer of
 /// its own, such as `sandbox forward`'s line writer).
 pub fn json_line<T: Serialize>(value: &T) -> Result<String> {
-    Ok(crate::logging::redact_product_credentials(&encode(value)?))
+    Ok(redact_product_credentials(&encode(value)?))
 }
 
 /// The one JSON encoder of command output (stdout documents, stderr error lines).
@@ -80,12 +70,7 @@ pub fn flush_stdout() -> Result<()> {
 /// Write a diagnostic line to stderr.
 pub fn diagnostic(text: impl std::fmt::Display) -> Result<()> {
     let mut err = io::stderr().lock();
-    writeln!(
-        err,
-        "{}",
-        crate::logging::redact_product_credentials(&text.to_string())
-    )
-    .context("writing to stderr")
+    writeln!(err, "{}", redact_product_credentials(&text.to_string())).context("writing to stderr")
 }
 
 /// Write a non-fatal warning to stderr.
@@ -95,7 +80,7 @@ pub fn warning(text: impl std::fmt::Display) -> Result<()> {
 
 /// Untrusted server text is bounded, stripped of terminal controls, and redacted.
 pub fn remote_message(text: &str) -> String {
-    crate::logging::redact_product_credentials(text)
+    redact_product_credentials(text)
         .chars()
         .filter(|c| !c.is_control())
         .take(512)
@@ -153,4 +138,67 @@ pub fn json_error_line(
             data,
         },
     })
+}
+
+fn product_credential_secret_len(rest: &str) -> usize {
+    rest.chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .map(|c| c.len_utf8())
+        .sum()
+}
+
+/// Redact product credential patterns from formatted log output.
+pub fn redact_product_credentials(message: &str) -> String {
+    const PREFIXES: [(&str, &str); 4] = [
+        ("wssp_host_", "wssp_host_[REDACTED]"),
+        ("wssp_device_", "wssp_device_[REDACTED]"),
+        ("wssp_sdk_", "wssp_sdk_[REDACTED]"),
+        ("wssp_agent_", "wssp_agent_[REDACTED]"),
+    ];
+
+    let mut out = String::with_capacity(message.len());
+    let mut index = 0;
+    while index < message.len() {
+        let slice = &message[index..];
+        let mut matched = false;
+        for (prefix, replacement) in PREFIXES {
+            if let Some(rest) = slice.strip_prefix(prefix) {
+                let secret_len = product_credential_secret_len(rest);
+                if secret_len > 0 {
+                    out.push_str(replacement);
+                    index += prefix.len() + secret_len;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if matched {
+            continue;
+        }
+        let ch = slice.chars().next().expect("char");
+        out.push(ch);
+        index += ch.len_utf8();
+    }
+    out
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    #[test]
+    fn redact_product_credentials_masks_all_purposes() {
+        let token = "wssp_host_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijk";
+        let line = format!("Authorization: Bearer {token}");
+        let redacted = super::redact_product_credentials(&line);
+        assert!(!redacted.contains(token));
+        assert!(redacted.contains("wssp_host_[REDACTED]"));
+        assert!(redacted.contains("Authorization: Bearer"));
+    }
+
+    #[test]
+    fn agent_credentials_are_scrubbed() {
+        assert_eq!(
+            super::redact_product_credentials("prefix wssp_agent_fixture-token suffix"),
+            "prefix wssp_agent_[REDACTED] suffix"
+        );
+    }
 }
