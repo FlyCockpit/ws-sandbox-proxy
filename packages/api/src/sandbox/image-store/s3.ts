@@ -289,9 +289,11 @@ export class ImageStore {
     }
   }
 
-  async getObjectStream(key: string): Promise<AsyncIterable<Uint8Array>> {
+  /** The object's body; `signal` aborts the request and its stream. */
+  async getObjectStream(key: string, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>> {
     const out = await this.client.send(
       new GetObjectCommand({ Bucket: this.settings.bucket, Key: key }),
+      { abortSignal: signal },
     );
     if (!out.Body) throw new Error("image store returned no body");
     return out.Body as AsyncIterable<Uint8Array>;

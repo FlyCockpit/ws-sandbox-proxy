@@ -17,6 +17,7 @@ vi.mock("./store", () => ({
 
 import prisma from "@wssp/db";
 import { type ImageStore } from "../image-store/s3";
+import { VerifyCancelledError } from "../image-store/verification-errors";
 import { DiskKeyError, loadDiskObjectKey } from "./keys";
 import { failLiveOffload, finishEndedOffload, markStored } from "./store";
 import { verifyDiskOffload } from "./verify";
@@ -60,6 +61,36 @@ it.each(["key read", "object read", "stream"])(
     if (stage !== "key read") expect(key).toEqual(Buffer.alloc(32));
   },
 );
+
+it("a shutdown mid-read is never a verdict: nothing is written, the wrap is kept and the key wiped", async () => {
+  const key = Buffer.alloc(32, 7);
+  vi.mocked(loadDiskObjectKey).mockResolvedValue(key);
+  const shutdown = new AbortController();
+  store.getObjectStream.mockResolvedValue(
+    (async function* () {
+      yield Buffer.alloc(2);
+      // The aborted read surfaces as an error that alone would condemn the object.
+      shutdown.abort("worker shutdown");
+      throw new Error("Unsupported state or unable to authenticate data");
+    })(),
+  );
+  await expect(verifyDiskOffload("offload-1", store, shutdown.signal)).rejects.toBeInstanceOf(
+    VerifyCancelledError,
+  );
+  expect(store.getObjectStream).toHaveBeenCalledWith("disk-key", shutdown.signal);
+  expect(db.$transaction).not.toHaveBeenCalled();
+  expect(failLiveOffload).not.toHaveBeenCalled();
+  expect(finishEndedOffload).not.toHaveBeenCalled();
+  expect(markStored).not.toHaveBeenCalled();
+  expect(store.deleteObject).not.toHaveBeenCalled();
+  expect(key).toEqual(Buffer.alloc(32));
+  // Already cancelled: not even the row is read.
+  db.sandboxDiskOffload.findFirst.mockClear();
+  await expect(verifyDiskOffload("offload-1", store, shutdown.signal)).rejects.toBeInstanceOf(
+    VerifyCancelledError,
+  );
+  expect(db.sandboxDiskOffload.findFirst).not.toHaveBeenCalled();
+});
 
 it.each([
   new DiskKeyError("key_unavailable"),

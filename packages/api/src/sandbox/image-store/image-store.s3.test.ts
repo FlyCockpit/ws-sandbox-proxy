@@ -156,6 +156,51 @@ describe("image store against a real S3 gateway", () => {
     }
   });
 
+  it("verify cancelled on shutdown: the abort signal ends the S3 read mid-body; the artifact stays VERIFYING and the object intact", async () => {
+    const image = randomBytes(8 * MIB);
+    const key = freshKey();
+    const { uploadId, parts } = await stage(key, image);
+    await store.completeMultipart(key, uploadId, parts);
+    // The SDK request itself is aborted: the body stream errors, not only our check.
+    const raw = new AbortController();
+    const body = await store.getObjectStream(key, raw.signal);
+    raw.abort("worker shutdown");
+    await expect(
+      (async () => {
+        for await (const _chunk of body);
+      })(),
+    ).rejects.toBeTruthy();
+    const id = "artifact-cancelled";
+    rows.set(id, {
+      id,
+      userId: "owner-c",
+      fingerprint: sha(image),
+      sizeBytes: BigInt(image.length),
+      objectKey: key,
+      state: "VERIFYING",
+      encryption: null,
+    });
+    const shutdown = new AbortController();
+    const reading = Object.assign(Object.create(store) as typeof store, {
+      async getObjectStream(objectKey: string, signal?: AbortSignal) {
+        const stream = await store.getObjectStream(objectKey, signal);
+        return (async function* () {
+          for await (const chunk of stream) {
+            yield chunk;
+            shutdown.abort("worker shutdown");
+          }
+        })();
+      },
+    });
+    await expect(jobs.verifyImageArtifact(id, reading, shutdown.signal)).rejects.toMatchObject({
+      name: "VerifyCancelledError",
+    });
+    expect(rows.get(id)?.state).toBe("VERIFYING");
+    expect(await stored(key)).toEqual(new Uint8Array(image));
+    // The next consumer's verify completes.
+    expect(await jobs.verifyImageArtifact(id, store)).toBe("stored");
+  });
+
   it("create-only: a multipart completion onto an existing object is refused, aborted, and the original is unchanged", async () => {
     const key = freshKey();
     const original = randomBytes(64 * 1024);

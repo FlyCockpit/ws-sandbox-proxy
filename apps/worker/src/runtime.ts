@@ -38,7 +38,7 @@ import { type Processor, Worker, type WorkerOptions } from "bullmq";
 import { syncBackupFreshnessScheduler } from "./backup-freshness-scheduler.js";
 import { handleCheckBackupFreshnessJob } from "./handlers/check-backup-freshness.js";
 import { createDeliverWebhookHandler } from "./handlers/deliver-webhook.js";
-import { handleImageStoreMaintenanceJob } from "./handlers/image-store-maintenance.js";
+import { createImageStoreMaintenanceHandler } from "./handlers/image-store-maintenance.js";
 import { handleNotifyDataDeletionsJob } from "./handlers/notify-data-deletions.js";
 import { handleReapExpiredAuthTokensJob } from "./handlers/reap-expired-auth-tokens.js";
 import { handleReapWebhookLogJob } from "./handlers/reap-webhook-log.js";
@@ -80,6 +80,32 @@ class DrainStepError extends Error {
   }
 }
 
+const SHUTDOWN_CANCEL_REASON = "worker shutdown";
+
+/**
+ * Closes every consumer: admission stops at once, then every active job whose
+ * processor takes an abort signal (the long image-store / disk verifies) is
+ * cancelled, so a drain does not wait minutes for a verify that the next
+ * consumer can simply re-run. `close()` marks the worker closing before it
+ * returns, so a cancelled job is never followed by a new fetch. A fetch already
+ * in flight can still start a job after `cancelAllJobs`; `shutdown` (handed to
+ * those processors at construction) is aborted first, so such a job sees the
+ * cancellation on entry. Resolves when each close settled; `onClosed` names
+ * the consumers that closed cleanly.
+ */
+export function closeConsumers(
+  workers: readonly Pick<Worker, "name" | "close" | "cancelAllJobs">[],
+  onClosed: (name: string) => void,
+  shutdown?: AbortController,
+): Promise<PromiseSettledResult<void>[]> {
+  const drains = Promise.allSettled(
+    workers.map((worker) => worker.close().then(() => onClosed(worker.name))),
+  );
+  shutdown?.abort(SHUTDOWN_CANCEL_REASON);
+  for (const worker of workers) worker.cancelAllJobs(SHUTDOWN_CANCEL_REASON);
+  return drains;
+}
+
 export async function startWorkerRuntime(options: {
   embedded: boolean;
   onFatal(error: unknown): void;
@@ -94,7 +120,10 @@ export async function startWorkerRuntime(options: {
     commandTimeout: 3000,
   });
   const workers: Array<
-    Pick<Worker, "name" | "close" | "run" | "isRunning" | "isPaused" | "waitUntilReady">
+    Pick<
+      Worker,
+      "name" | "close" | "cancelAllJobs" | "run" | "isRunning" | "isPaused" | "waitUntilReady"
+    >
   > = [];
   const requiredQueues = Object.values(QUEUE_NAMES);
   let stopping = false;
@@ -105,6 +134,8 @@ export async function startWorkerRuntime(options: {
   let dispatcher: WebhookDispatcher | undefined;
   let instanceHeartbeat: InstanceHeartbeat | undefined;
   const dataKeyHeartbeat = new AbortController();
+  // Aborted at drain: cancels long jobs, including one a fetch in flight starts later.
+  const jobShutdown = new AbortController();
   const heartbeat = createConsumerHeartbeat(
     heartbeatConnection,
     embedded ? "embedded" : "external",
@@ -143,8 +174,10 @@ export async function startWorkerRuntime(options: {
       // drain names the queues still waiting on an active job (deadline) or
       // whose close rejected (consumers).
       for (const worker of workers) unclosedQueues.add(worker.name);
-      const workerDrains = Promise.allSettled(
-        workers.map((worker) => worker.close().then(() => unclosedQueues.delete(worker.name))),
+      const workerDrains = closeConsumers(
+        workers,
+        (name) => unclosedQueues.delete(name),
+        jobShutdown,
       );
       const heartbeatFailure = await heartbeat.stop().then(
         () => false,
@@ -290,7 +323,7 @@ export async function startWorkerRuntime(options: {
     // distribution off.
     const imageStoreWorker = createWorker<ImageStoreMaintenanceJobData>(
       QUEUE_NAMES.imageStoreMaintenance,
-      handleImageStoreMaintenanceJob,
+      createImageStoreMaintenanceHandler(undefined, jobShutdown.signal),
       { connection, concurrency: 1 },
     );
     imageStoreWorker.on("failed", (job, err) => {

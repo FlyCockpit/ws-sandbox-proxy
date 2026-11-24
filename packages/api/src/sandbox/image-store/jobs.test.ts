@@ -15,6 +15,7 @@ vi.mock("@wssp/queue", () => queue);
 import { diskStoreObjectKey, enqueueDiskVerify } from "../disk-offload/store";
 import { enqueueImageVerify, parseImageObjectKey, verifyImageArtifact } from "./jobs";
 import { type ImageStore, imageObjectKey, newImageSessionId, wrapDataKey } from "./s3";
+import { VerifyCancelledError } from "./verification-errors";
 
 const { default: prisma } = await import("@wssp/db");
 const db = vi.mocked(prisma, true);
@@ -50,6 +51,38 @@ describe("verifyImageArtifact", () => {
       })(),
     );
     await expect(verifyImageArtifact(artifact.id, store)).rejects.toBe(failure);
+    expect(db.sandboxImageArtifact.updateMany).not.toHaveBeenCalled();
+    expect(store.deleteObject).not.toHaveBeenCalled();
+  });
+
+  it("a shutdown mid-read leaves VERIFYING and the object intact", async () => {
+    const shutdown = new AbortController();
+    store.getObjectStream.mockResolvedValue(
+      (async function* () {
+        yield plain.subarray(0, 2);
+        shutdown.abort("worker shutdown");
+        yield plain.subarray(2);
+      })(),
+    );
+    await expect(verifyImageArtifact(artifact.id, store, shutdown.signal)).rejects.toBeInstanceOf(
+      VerifyCancelledError,
+    );
+    expect(store.getObjectStream).toHaveBeenCalledWith(artifact.objectKey, shutdown.signal);
+    expect(db.sandboxImageArtifact.updateMany).not.toHaveBeenCalled();
+    expect(store.deleteObject).not.toHaveBeenCalled();
+    // An aborted read that throws a NoSuchKey-like error is still no verdict.
+    store.getObjectStream.mockRejectedValueOnce(Object.assign(new Error(), { name: "NoSuchKey" }));
+    const aborted = new AbortController();
+    store.getObjectStream.mockImplementationOnce(async () => {
+      aborted.abort();
+      throw Object.assign(new Error(), { name: "NoSuchKey" });
+    });
+    await expect(verifyImageArtifact(artifact.id, store)).resolves.toBe("corrupt");
+    db.sandboxImageArtifact.updateMany.mockClear();
+    store.deleteObject.mockClear();
+    await expect(verifyImageArtifact(artifact.id, store, aborted.signal)).rejects.toBeInstanceOf(
+      VerifyCancelledError,
+    );
     expect(db.sandboxImageArtifact.updateMany).not.toHaveBeenCalled();
     expect(store.deleteObject).not.toHaveBeenCalled();
   });

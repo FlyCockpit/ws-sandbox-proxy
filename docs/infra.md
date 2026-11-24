@@ -92,7 +92,10 @@ every branch. A draining process returns 503. Accept only the expected full SHA
 and current task generation using `pnpm dokploy:verify --server <service> --url <https-origin> --commit <full-sha>`.
 Allow 510 seconds for startup and 30 seconds for shutdown. Recovery and migration
 admission finish before listening; HTTP, relay, transfers and jobs drain before
-instance heartbeats stop and Prisma disconnects.
+instance heartbeats stop and Prisma disconnects. A drain cancels a running image
+or disk offload verify (it writes nothing until its read completes) and puts the
+job back in the queue without spending an attempt, so the next worker runs it at
+once instead of after stalled-job detection.
 
 ## Response compression is the platform's job
 

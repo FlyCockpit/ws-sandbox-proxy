@@ -14,7 +14,12 @@ import {
   unwrapDataKey,
 } from "./s3";
 import { endTemplateUpload, transferEndDetail } from "./store-failure";
-import { ImageIntegrityError, isTerminalImageVerificationError } from "./verification-errors";
+import {
+  ImageIntegrityError,
+  isTerminalImageVerificationError,
+  throwIfCancelled,
+  VerifyCancelledError,
+} from "./verification-errors";
 
 /**
  * Image store maintenance (one BullMQ queue, four job kinds): verify an
@@ -52,19 +57,23 @@ const HOUR_MS = 3_600_000;
  * compare with the fingerprint and size. Pass → STORED; fail → CORRUPT and the
  * object is deleted (the dependent capture or publish fails on its own sweep).
  * Store/stream outages rethrow for retry and leave the artifact VERIFYING.
+ * `signal` (worker shutdown) stops the read with {@link VerifyCancelledError}
+ * before any write.
  */
 export async function verifyImageArtifact(
   artifactId: string,
   store: ImageStore | null = imageStore(),
+  signal?: AbortSignal,
 ): Promise<"stored" | "corrupt" | "skipped"> {
   if (!store) return "skipped";
+  throwIfCancelled(signal);
   const artifact = await prisma.sandboxImageArtifact.findFirst({
     where: { id: artifactId, state: "VERIFYING" },
   });
   if (!artifact?.objectKey) return "skipped";
   let ok = false;
   try {
-    const body = await store.getObjectStream(artifact.objectKey);
+    const body = await store.getObjectStream(artifact.objectKey, signal);
     const hash = createHash("sha256");
     let size = 0n;
     let source: AsyncIterable<Uint8Array> = body;
@@ -82,11 +91,14 @@ export async function verifyImageArtifact(
       source = decryptImageStream(key, Number(artifact.sizeBytes), body);
     }
     for await (const chunk of source) {
+      throwIfCancelled(signal);
       hash.update(chunk);
       size += BigInt(chunk.length);
     }
     ok = size === artifact.sizeBytes && `sha256:${hash.digest("hex")}` === artifact.fingerprint;
   } catch (error) {
+    // A shutdown is never a verdict, whatever the aborted read threw.
+    if (signal?.aborted) throw new VerifyCancelledError();
     if (!isTerminalImageVerificationError(error)) throw error;
     ok = false;
   }
@@ -609,10 +621,14 @@ export async function pruneTemplateRevisions(now = new Date()): Promise<number> 
   return retired;
 }
 
-export async function handleImageStoreJob(job: ImageStoreJob): Promise<unknown> {
+/** `signal` (worker shutdown) cancels the long verifies; the sweeps run to their bound. */
+export async function handleImageStoreJob(
+  job: ImageStoreJob,
+  signal?: AbortSignal,
+): Promise<unknown> {
   switch (job.kind) {
     case "verify":
-      return verifyImageArtifact(job.artifactId);
+      return verifyImageArtifact(job.artifactId, undefined, signal);
     case "gc":
       return gcImageArtifacts();
     case "sweep":
@@ -622,7 +638,7 @@ export async function handleImageStoreJob(job: ImageStoreJob): Promise<unknown> 
     case "disk_verify":
     case "disk_maintenance": {
       const { handleDiskJob } = await import("../disk-offload/jobs");
-      return handleDiskJob(job);
+      return handleDiskJob(job, signal);
     }
   }
 }

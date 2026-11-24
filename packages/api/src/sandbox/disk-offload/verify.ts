@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import prisma from "@wssp/db";
 import { decryptImageStream, type ImageStore, imageStore } from "../image-store/s3";
-import { isTerminalImageVerificationError } from "../image-store/verification-errors";
+import {
+  isTerminalImageVerificationError,
+  throwIfCancelled,
+  VerifyCancelledError,
+} from "../image-store/verification-errors";
 import { DiskKeyError, loadDiskObjectKey } from "./keys";
 import { failLiveOffload, finishEndedOffload, markStored } from "./store";
 
@@ -11,15 +15,18 @@ import { failLiveOffload, finishEndedOffload, markStored } from "./store";
  * the declared fingerprint and the plaintext size. Pass → `markStored`
  * after verification; definite corruption → FAILED(corrupt) with a shred and
  * the object deleted. Store, stream and database outages rethrow for retry
- * without changing VERIFYING or shredding the wrap.
+ * without changing VERIFYING or shredding the wrap. `signal` (worker
+ * shutdown) stops the read with {@link VerifyCancelledError} before any write.
  */
 export type DiskVerifyOutcome = "stored" | "superseded" | "login_unsettled" | "corrupt" | "skipped";
 
 export async function verifyDiskOffload(
   offloadId: string,
   store: ImageStore | null = imageStore(),
+  signal?: AbortSignal,
 ): Promise<DiskVerifyOutcome> {
   if (!store) return "skipped";
+  throwIfCancelled(signal);
   const row = await prisma.sandboxDiskOffload.findFirst({
     where: { id: offloadId, state: "VERIFYING" },
     select: {
@@ -36,15 +43,18 @@ export async function verifyDiskOffload(
   let key: Buffer | undefined;
   try {
     key = await loadDiskObjectKey(prisma, row.id);
-    const body = await store.getObjectStream(row.objectKey);
+    const body = await store.getObjectStream(row.objectKey, signal);
     const hash = createHash("sha256");
     let size = 0n;
     for await (const chunk of decryptImageStream(key, Number(row.sizeBytes), body)) {
+      throwIfCancelled(signal);
       hash.update(chunk);
       size += BigInt(chunk.length);
     }
     ok = size === row.sizeBytes && `sha256:${hash.digest("hex")}` === row.fingerprint;
   } catch (error) {
+    // A shutdown is never a verdict, whatever the aborted read threw.
+    if (signal?.aborted) throw new VerifyCancelledError();
     if (
       !isTerminalImageVerificationError(error) &&
       !(

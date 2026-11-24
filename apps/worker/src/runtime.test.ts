@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
     emit(event: string, ...args: unknown[]): void;
     run: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
+    cancelAllJobs: ReturnType<typeof vi.fn>;
   }>,
   ping: vi.fn(),
   disconnect: vi.fn(),
@@ -91,7 +92,7 @@ vi.mock("./operational-alerts.js", () => ({
 }));
 vi.mock("./handlers/check-backup-freshness.js", () => ({ handleCheckBackupFreshnessJob: vi.fn() }));
 vi.mock("./handlers/image-store-maintenance.js", () => ({
-  handleImageStoreMaintenanceJob: vi.fn(),
+  createImageStoreMaintenanceHandler: vi.fn(() => vi.fn()),
 }));
 vi.mock("./handlers/reap-expired-auth-tokens.js", () => ({
   handleReapExpiredAuthTokensJob: vi.fn(),
@@ -124,6 +125,9 @@ vi.mock("bullmq", () => ({
     close = vi.fn(async () => {
       this.running = false;
       state.events.push("close");
+    });
+    cancelAllJobs = vi.fn(() => {
+      state.events.push("cancel");
     });
   },
 }));
@@ -342,6 +346,58 @@ describe("startWorkerRuntime", () => {
     await stopped;
     expect(runtime.isReady()).toBe(false);
     expect(state.disconnect).not.toHaveBeenCalled();
+  });
+
+  it("cancels active jobs only after every consumer stopped admission, so a verify honouring its signal ends the drain in time", async () => {
+    const { startWorkerRuntime } = await import("./runtime");
+    const runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+    vi.useFakeTimers();
+    // The image-store consumer holds an active verify: its close settles only
+    // once the verify saw the abort signal.
+    const verify = state.workers.find(
+      (worker) => worker.name === QUEUE_NAMES.imageStoreMaintenance,
+    );
+    if (!verify) throw new Error("image-store consumer missing");
+    let release: () => void = () => {};
+    verify.close.mockImplementation(() => {
+      state.events.push("close");
+      return new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+    verify.cancelAllJobs.mockImplementation(() => {
+      state.events.push("cancel");
+      release();
+    });
+    const stopped = runtime.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(stopped).resolves.toBeUndefined();
+    const closes = state.events.flatMap((event, at) => (event === "close" ? [at] : []));
+    const cancels = state.events.flatMap((event, at) => (event === "cancel" ? [at] : []));
+    expect(closes).toHaveLength(state.workers.length);
+    expect(cancels).toHaveLength(state.workers.length);
+    expect(Math.max(...closes)).toBeLessThan(Math.min(...cancels));
+    for (const worker of state.workers)
+      expect(worker.cancelAllJobs).toHaveBeenCalledExactlyOnceWith("worker shutdown");
+  });
+
+  it("hands the image-store handler the runtime's drain signal, aborted before any job is cancelled", async () => {
+    const handlers = await import("./handlers/image-store-maintenance.js");
+    const { startWorkerRuntime } = await import("./runtime");
+    const runtime = await startWorkerRuntime({ embedded: true, onFatal: vi.fn() });
+    const factory = vi.mocked(handlers.createImageStoreMaintenanceHandler);
+    expect(factory).toHaveBeenCalledOnce();
+    const shutdown = factory.mock.calls[0]?.[1];
+    if (!shutdown) throw new Error("no drain signal");
+    expect(shutdown.aborted).toBe(false);
+    let abortedAtCancel: boolean[] = [];
+    for (const worker of state.workers)
+      worker.cancelAllJobs.mockImplementation(() => {
+        abortedAtCancel = [...abortedAtCancel, shutdown.aborted];
+      });
+    await runtime.stop();
+    expect(shutdown.aborted).toBe(true);
+    expect(abortedAtCancel).toEqual(state.workers.map(() => true));
   });
 
   it("names the failed drain step and only the queues whose consumer did not close cleanly", async () => {

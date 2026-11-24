@@ -6,11 +6,11 @@
  */
 export type DiskJob = { kind: "disk_verify"; offloadId: string } | { kind: "disk_maintenance" };
 
-export async function handleDiskJob(job: DiskJob): Promise<unknown> {
+export async function handleDiskJob(job: DiskJob, signal?: AbortSignal): Promise<unknown> {
   switch (job.kind) {
     case "disk_verify": {
       const { verifyDiskOffload } = await import("./verify");
-      return verifyDiskOffload(job.offloadId);
+      return verifyDiskOffload(job.offloadId, undefined, signal);
     }
     case "disk_maintenance": {
       const { maintainDiskOffloads } = await import("./maintenance");

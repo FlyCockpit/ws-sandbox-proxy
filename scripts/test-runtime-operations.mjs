@@ -122,10 +122,131 @@ async function runtimeCheck(mode) {
   }
 }
 
+/**
+ * A drain during a long verify, against real Valkey and BullMQ: the drain path
+ * (`closeConsumers` with the runtime's shutdown controller) cancels the verify,
+ * the drain ends at once, the job is back in `wait` with no attempt spent, and
+ * the next consumer completes it immediately (no stall detection involved).
+ * Two timings: the verify is already running, and the drain lands between the
+ * fetch (`active`) and the processor's start, before BullMQ tracks the job.
+ */
+async function verifyCancelCheck() {
+  const [
+    { closeConsumers },
+    handler,
+    queues,
+    { VerifyCancelledError },
+    { default: prisma },
+    { closeOperationalAlertConnection },
+  ] = await Promise.all([
+    import("../apps/worker/src/runtime.ts"),
+    import("../apps/worker/src/handlers/image-store-maintenance.ts"),
+    import("../packages/queue/src/index.ts"),
+    import("../packages/api/src/sandbox/image-store/verification-errors.ts"),
+    import("../packages/db/src/index.ts"),
+    // Opened at import by the runtime module.
+    import("../apps/worker/src/operational-alerts.ts"),
+  ]);
+  const connections = [];
+  try {
+    for (const timing of ["running", "fetched"]) {
+      const name = `verify-cancel-${randomUUID()}`;
+      // The image-store queue's retry policy; a counted failure would wait a minute.
+      const queue = new queues.Queue(name, {
+        connection: queues.redisConnection,
+        defaultJobOptions: { attempts: 2, backoff: { type: "fixed", delay: 60_000 } },
+      });
+      const shutdown = new AbortController();
+      const consumer = (run, signal) => {
+        const connection = queues.createRedisConnection();
+        connections.push(connection);
+        return new queues.Worker(name, handler.createImageStoreMaintenanceHandler(run, signal), {
+          connection,
+          concurrency: 1,
+        });
+      };
+      let verifying;
+      const started = new Promise((resolve) => {
+        verifying = resolve;
+      });
+      // A verify that would read for two minutes unless its signal fires.
+      const slow = (_job, signal) =>
+        new Promise((resolve, reject) => {
+          verifying();
+          if (signal?.aborted) return reject(new VerifyCancelledError());
+          const timer = setTimeout(() => resolve("stored"), 120_000);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              reject(new VerifyCancelledError());
+            },
+            { once: true },
+          );
+        });
+      const first = consumer(slow, shutdown.signal);
+      try {
+        let drainStarted = 0;
+        let drain;
+        const drained = new Promise((resolve) => {
+          const begin = () => {
+            drainStarted = Date.now();
+            drain = closeConsumers([first], () => {}, shutdown);
+            resolve();
+          };
+          if (timing === "fetched") first.once("active", begin);
+          else void started.then(begin);
+        });
+        const job = await queue.add("verify", { kind: "verify", artifactId: "artifact-1" });
+        await drained;
+        const settled = await drain;
+        const drainMs = Date.now() - drainStarted;
+        assert.deepEqual(
+          settled.map((result) => result.status),
+          ["fulfilled"],
+        );
+        assert.ok(drainMs < 5_000, `${timing}: drain took ${drainMs} ms`);
+        const parked = await queue.getJob(job.id);
+        assert.equal(await parked.getState(), "waiting", timing);
+        assert.equal(parked.attemptsMade, 0, timing);
+        const second = consumer(async () => "stored");
+        try {
+          const deadline = Date.now() + 10_000;
+          while ((await job.getState()) !== "completed" && Date.now() < deadline) await delay(50);
+          const done = await queue.getJob(job.id);
+          assert.equal(await done.getState(), "completed", timing);
+          assert.equal(done.returnvalue, "stored");
+          assert.equal(done.attemptsMade, 1);
+        } finally {
+          await second.close();
+        }
+        console.log(
+          `verify cancel (${timing}): drain ${drainMs} ms, job re-queued without an attempt and completed by the next consumer.`,
+        );
+      } finally {
+        await first.close();
+        await queue.obliterate({ force: true });
+        await queue.close();
+      }
+    }
+  } finally {
+    for (const connection of connections) connection.disconnect();
+    await Promise.all(
+      Object.values(queues)
+        .filter((value) => value instanceof queues.Queue)
+        .map((value) => value.close()),
+    );
+    queues.redisConnection.disconnect();
+    closeOperationalAlertConnection();
+    await prisma.$disconnect();
+  }
+}
+
 async function main() {
   if (process.argv[2] === "--runtime-child") {
     assert.equal(process.env.RUNTIME_OPERATIONS_CHILD, "owned-disposable-services");
-    await runtimeCheck(process.argv[3]);
+    if (process.argv[3] === "verify-cancel") await verifyCancelCheck();
+    else await runtimeCheck(process.argv[3]);
     return;
   }
   if (process.argv[2] !== "--disposable-services") {
@@ -194,7 +315,7 @@ async function main() {
       migration.apply();
       console.log(`Canonical migration runner with real Prisma: ${operation} passed.`);
     }
-    for (const mode of ["embedded", "external"]) {
+    for (const mode of ["embedded", "external", "verify-cancel"]) {
       const result = execFileSync(
         process.execPath,
         ["--import", "tsx", file, "--runtime-child", mode],
