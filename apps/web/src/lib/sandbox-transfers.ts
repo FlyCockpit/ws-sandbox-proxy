@@ -1,6 +1,6 @@
 import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from "@wssp/api/sandbox/contracts";
 
-import { newIntentKey } from "@/lib/sandbox-rules";
+import { newIntentKey, sandboxProblem } from "@/lib/sandbox-rules";
 import { Sha256 } from "@/lib/sha256";
 
 /**
@@ -90,6 +90,22 @@ async function responseProblem(response: Response): Promise<TransferProblem> {
   const known = typeof code === "string" ? CODE_PROBLEM[code] : undefined;
   if (known) return known;
   return STATUS_PROBLEM[response.status] ?? "generic";
+}
+
+/** The transfer problem any failure (a transfer or an oRPC call) stands for. */
+export function toTransferProblem(error: unknown): TransferProblem {
+  if (error instanceof TransferError) return error.problem;
+  const shape = (error && typeof error === "object" ? error : {}) as {
+    code?: unknown;
+    status?: unknown;
+  };
+  if (shape.code === "UNAUTHORIZED" || shape.status === 401) return "signedOut";
+  const problem = sandboxProblem(error);
+  if (problem === "notFound") return "notFound";
+  if (problem === "stateChanged") return "conflict";
+  if (problem === "forbidden") return "forbidden";
+  if (problem === "invalid") return "invalid";
+  return "generic";
 }
 
 export type TransferDeps = {

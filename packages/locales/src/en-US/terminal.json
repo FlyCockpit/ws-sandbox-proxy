@@ -98,5 +98,110 @@
     "refused": "Host terminal refused. Check your session, local policy and fresh code before a manual retry.",
     "unavailable": "Connect the host and enable local host terminals before attaching.",
     "regionLabel": "Host terminal"
+  },
+  "utilities": {
+    "button": "Utilities",
+    "showKeys": "Show keys",
+    "hideKeys": "Hide keys",
+    "paste": "Paste…",
+    "photo": "Photo / camera…",
+    "textSize": "Text size",
+    "smaller": "Smaller text",
+    "larger": "Larger text",
+    "smallerShort": "A−",
+    "largerShort": "A+",
+    "reset": "Reset",
+    "px": "{{size}} px",
+    "badge": "{{size}} px · {{cols}}×{{rows}}",
+    "pinchHint": "You can also pinch the terminal with two fingers."
+  },
+  "keys": {
+    "label": "Terminal keys",
+    "name": {
+      "esc": "Esc",
+      "tab": "Tab",
+      "ctrl": "Ctrl",
+      "alt": "Alt"
+    },
+    "swipe": "◀ ▲ swipe ▼ ▶",
+    "swipeLabel": "Swipe pad: drag to send arrow keys",
+    "swiped": "{{direction}} × {{count}}",
+    "direction": {
+      "Up": "Up",
+      "Down": "Down",
+      "Left": "Left",
+      "Right": "Right"
+    },
+    "modifier": {
+      "ctrl": "Ctrl ({{state}})",
+      "alt": "Alt ({{state}})"
+    },
+    "latch": {
+      "off": "off",
+      "hold": "hold",
+      "once": "next key",
+      "lock": "locked"
+    },
+    "grid": {
+      "ctrl": "Ctrl + … slide to a key and lift",
+      "alt": "Alt + … slide to a key and lift"
+    },
+    "hint": {
+      "home": "home",
+      "stop": "stop",
+      "eof": "EOF",
+      "end": "end",
+      "kill": "kill",
+      "clear": "clear",
+      "search": "search",
+      "killLine": "kill",
+      "word": "word",
+      "suspend": "susp",
+      "wordBack": "word←",
+      "wordForward": "word→",
+      "deleteWord": "del wd",
+      "lastArg": "last arg"
+    }
+  },
+  "pasteDialog": {
+    "title": "Paste into the terminal",
+    "description": "Check the text before it is sent. Nothing runs until Enter is pressed, unless you choose Enter after.",
+    "close": "Close",
+    "text": "Text to paste",
+    "placeholder": "Long-press here and choose Paste, or use the button below.",
+    "fromClipboard": "Paste from clipboard",
+    "clipboardUnsupported": "This browser does not let pages read the clipboard here. Long-press the box above and choose Paste.",
+    "clipboardBlocked": "The browser blocked reading the clipboard. Long-press the box above and choose Paste instead.",
+    "clipboardEmpty": "The clipboard has no text.",
+    "clipboardLoaded": "Clipboard text loaded. Check it, then send.",
+    "nothing": "Nothing to send.",
+    "empty": "Nothing to send yet.",
+    "size_one": "{{count}} line, {{bytes}} bytes.",
+    "size_other": "{{count}} lines, {{bytes}} bytes.",
+    "bracketed": "Sent as one bracketed paste, so the lines do not run one by one.",
+    "unbracketed": "The program did not ask for bracketed paste, so each line break is a real Enter.",
+    "enterAfter": "Press Enter after sending",
+    "cancel": "Cancel",
+    "send": "Send to terminal",
+    "notAttached": "The terminal is not attached, so nothing was sent. Your text is kept: send it once the terminal is attached again."
+  },
+  "photo": {
+    "title": "Photo or image",
+    "description": "The image is uploaded into the sandbox (~/.uploads) and its path is typed into the terminal, which is how coding agents take images. PNG, JPEG, WebP or GIF, up to {{max}}.",
+    "close": "Close",
+    "choose": "Choose photo",
+    "take": "Take photo",
+    "thumbnail": "The chosen image",
+    "unnamed": "Photo",
+    "badType": "Only PNG, JPEG, WebP or GIF images can be sent.",
+    "tooLarge": "This image is larger than {{max}}.",
+    "uploading": "Uploading… {{percent}}%",
+    "writing": "Writing it into the sandbox…",
+    "writeFailed": "The sandbox could not save the image. Nothing was typed.",
+    "writeSlow": "The sandbox has not confirmed the image yet, so its path was not typed. Check the sandbox's operations.",
+    "cancel": "Cancel",
+    "send": "Upload and type path",
+    "placed": "The image is in the sandbox, but the terminal could not take its path (it is not attached). Press Type path once it is attached again, or copy the path:",
+    "typePath": "Type path"
   }
 }

@@ -122,6 +122,10 @@ const view: TerminalView = {
   selection: () => "",
   paste: () => {},
   focus: () => {},
+  hasFocus: () => false,
+  applicationCursorKeys: () => false,
+  bracketedPaste: () => false,
+  setFontSize: () => {},
   dispose: () => out({ event: "view-disposed" }),
 };
 

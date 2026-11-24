@@ -98,5 +98,110 @@
     "notReadyYet": "La terminal todavía no está lista para recibir entrada.",
     "refused": "La terminal rechazó una solicitud.",
     "outputLost": "Se perdió parte de la salida de la terminal durante la reconexión."
+  },
+  "utilities": {
+    "button": "Utilidades",
+    "showKeys": "Mostrar teclas",
+    "hideKeys": "Ocultar teclas",
+    "paste": "Pegar…",
+    "photo": "Foto / cámara…",
+    "textSize": "Tamaño del texto",
+    "smaller": "Texto más pequeño",
+    "larger": "Texto más grande",
+    "smallerShort": "A−",
+    "largerShort": "A+",
+    "reset": "Restablecer",
+    "px": "{{size}} px",
+    "badge": "{{size}} px · {{cols}}×{{rows}}",
+    "pinchHint": "También puedes pellizcar la terminal con dos dedos."
+  },
+  "keys": {
+    "label": "Teclas de la terminal",
+    "name": {
+      "esc": "Esc",
+      "tab": "Tab",
+      "ctrl": "Ctrl",
+      "alt": "Alt"
+    },
+    "swipe": "◀ ▲ desliza ▼ ▶",
+    "swipeLabel": "Panel deslizable: arrastra para enviar flechas",
+    "swiped": "{{direction}} × {{count}}",
+    "direction": {
+      "Up": "Arriba",
+      "Down": "Abajo",
+      "Left": "Izquierda",
+      "Right": "Derecha"
+    },
+    "modifier": {
+      "ctrl": "Ctrl ({{state}})",
+      "alt": "Alt ({{state}})"
+    },
+    "latch": {
+      "off": "apagado",
+      "hold": "mantén",
+      "once": "una vez",
+      "lock": "fijo"
+    },
+    "grid": {
+      "ctrl": "Ctrl + … desliza a una tecla y suelta",
+      "alt": "Alt + … desliza a una tecla y suelta"
+    },
+    "hint": {
+      "home": "inicio",
+      "stop": "parar",
+      "eof": "EOF",
+      "end": "fin",
+      "kill": "cortar",
+      "clear": "limpiar",
+      "search": "buscar",
+      "killLine": "cortar",
+      "word": "palabra",
+      "suspend": "susp",
+      "wordBack": "palabra←",
+      "wordForward": "palabra→",
+      "deleteWord": "borrar pal.",
+      "lastArg": "últ. arg"
+    }
+  },
+  "pasteDialog": {
+    "title": "Pegar en la terminal",
+    "description": "Revisa el texto antes de enviarlo. Nada se ejecuta hasta que se presione Enter, salvo que elijas Enter después.",
+    "close": "Cerrar",
+    "text": "Texto para pegar",
+    "placeholder": "Mantén presionado aquí y elige Pegar, o usa el botón de abajo.",
+    "fromClipboard": "Pegar del portapapeles",
+    "clipboardUnsupported": "Este navegador no permite que las páginas lean el portapapeles aquí. Mantén presionado el cuadro de arriba y elige Pegar.",
+    "clipboardBlocked": "El navegador bloqueó la lectura del portapapeles. Mantén presionado el cuadro de arriba y elige Pegar.",
+    "clipboardEmpty": "El portapapeles no tiene texto.",
+    "clipboardLoaded": "Texto del portapapeles cargado. Revísalo y luego envíalo.",
+    "nothing": "No hay nada que enviar.",
+    "empty": "Aún no hay nada que enviar.",
+    "size_one": "{{count}} línea, {{bytes}} bytes.",
+    "size_other": "{{count}} líneas, {{bytes}} bytes.",
+    "bracketed": "Se envía como un solo pegado delimitado, así las líneas no se ejecutan una por una.",
+    "unbracketed": "El programa no pidió pegado delimitado, así que cada salto de línea es un Enter real.",
+    "enterAfter": "Presionar Enter después de enviar",
+    "cancel": "Cancelar",
+    "send": "Enviar a la terminal",
+    "notAttached": "La terminal no está conectada, así que no se envió nada. Tu texto se conserva: envíalo cuando la terminal vuelva a conectarse."
+  },
+  "photo": {
+    "title": "Foto o imagen",
+    "description": "La imagen se sube al sandbox (~/.uploads) y su ruta se escribe en la terminal, que es como los agentes de programación reciben imágenes. PNG, JPEG, WebP o GIF, hasta {{max}}.",
+    "close": "Cerrar",
+    "choose": "Elegir foto",
+    "take": "Tomar foto",
+    "thumbnail": "La imagen elegida",
+    "unnamed": "Foto",
+    "badType": "Solo se pueden enviar imágenes PNG, JPEG, WebP o GIF.",
+    "tooLarge": "Esta imagen pesa más de {{max}}.",
+    "uploading": "Subiendo… {{percent}} %",
+    "writing": "Guardándola en el sandbox…",
+    "writeFailed": "El sandbox no pudo guardar la imagen. No se escribió nada.",
+    "writeSlow": "El sandbox aún no confirma la imagen, así que no se escribió su ruta. Revisa las operaciones del sandbox.",
+    "cancel": "Cancelar",
+    "send": "Subir y escribir la ruta",
+    "placed": "La imagen está en el sandbox, pero la terminal no pudo recibir su ruta (no está conectada). Presiona Escribir ruta cuando vuelva a conectarse, o copia la ruta:",
+    "typePath": "Escribir ruta"
   }
 }

@@ -9,6 +9,7 @@ import {
   type TerminalClientOptions,
   type TerminalSnapshot,
 } from "@/lib/terminal-client";
+import { useTerminalPreferences } from "@/stores/terminal-preferences";
 import { orpc } from "@/utils/orpc";
 
 export type ClipboardOutcome = "done" | "empty" | "unavailable" | "tooLarge" | "ended";
@@ -48,6 +49,9 @@ export function useTerminalSession({
   const onCreateErrorRef = useRef(onCreateError);
   const onPasteRef = useRef(onPaste);
   const [snapshot, setSnapshot] = useState<TerminalSnapshot>(IDLE_TERMINAL);
+  // Terminal utilities state outlives one client: a re-attach keeps them.
+  const fontSizeRef = useRef<number | null>(null);
+  const keyFilterRef = useRef<((data: string) => string) | null>(null);
   // Read by the long-lived client; synced after every render.
   useEffect(() => {
     onCreateErrorRef.current = onCreateError;
@@ -118,6 +122,10 @@ export function useTerminalSession({
       };
       const client = new TerminalClient(options);
       clientRef.current = client;
+      // The size on screen, else the one remembered on this device.
+      const fontSize = fontSizeRef.current ?? useTerminalPreferences.getState().fontSize;
+      if (fontSize !== null) client.setFontSize(fontSize);
+      client.setKeyFilter(keyFilterRef.current);
       void client.start();
     },
     [sandboxId, hostId, pretypeCommand],
@@ -156,13 +164,56 @@ export function useTerminalSession({
 
   /**
    * Type known text into the attached terminal (the login page's "Type it for
-   * me"): the same path as a paste, so nothing runs until the user presses
-   * Enter.
+   * me", the Paste dialog, a photo's path): the same path as a paste, so
+   * nothing runs until the user presses Enter.
    */
   const typeText = useCallback(
     (text: string): ClipboardOutcome => clientRef.current?.paste(text) ?? "unavailable",
     [],
   );
 
-  return { containerRef, snapshot, attach, detach, copySelection, paste, typeText };
+  /** On-screen key bytes, sent as typed input. */
+  const sendKeys = useCallback(
+    (data: string): boolean => clientRef.current?.sendKeys(data) ?? false,
+    [],
+  );
+
+  const setKeyFilter = useCallback((filter: ((data: string) => string) | null) => {
+    keyFilterRef.current = filter;
+    clientRef.current?.setKeyFilter(filter);
+  }, []);
+
+  /** Text size; refits so cols × rows follow (and the PTY is resized). */
+  const setFontSize = useCallback(
+    (size: number, onFit?: (fitted: { rows: number; cols: number } | null) => void) => {
+      fontSizeRef.current = size;
+      clientRef.current?.setFontSize(size, onFit);
+    },
+    [],
+  );
+
+  const focus = useCallback(() => clientRef.current?.focus(), []);
+  const hasFocus = useCallback(() => clientRef.current?.hasFocus() ?? false, []);
+  const applicationCursorKeys = useCallback(
+    () => clientRef.current?.applicationCursorKeys() ?? false,
+    [],
+  );
+  const bracketedPaste = useCallback(() => clientRef.current?.bracketedPaste() ?? false, []);
+
+  return {
+    containerRef,
+    snapshot,
+    attach,
+    detach,
+    copySelection,
+    paste,
+    typeText,
+    sendKeys,
+    setKeyFilter,
+    setFontSize,
+    focus,
+    hasFocus,
+    applicationCursorKeys,
+    bracketedPaste,
+  };
 }

@@ -38,8 +38,28 @@ const loadedView = vi.hoisted(() => ({ count: 0 }));
 const redirect = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("@wssp/env/web", () => ({ env: { VITE_SERVER_URL: "https://app.example.test" } }));
-vi.mock("@/utils/orpc", () => ({
-  orpc: { sandboxTerminals: { createSession: { call: createSession } } },
+const getOperation = vi.hoisted(() => vi.fn());
+const uploadToSandbox = vi.hoisted(() => vi.fn());
+vi.mock("@/utils/orpc", async () => {
+  const { skipToken } = await import("@tanstack/react-query");
+  return {
+    orpc: {
+      sandboxTerminals: { createSession: { call: createSession } },
+      sandboxes: { getOperation: { call: getOperation } },
+      sandboxTemplates: {
+        getTemplateRevision: {
+          queryOptions: ({ input }: { input: unknown }) => ({
+            queryKey: ["templateRevision", input],
+            queryFn: input === skipToken ? skipToken : async () => ({ guestHome: "/home/user" }),
+          }),
+        },
+      },
+    },
+  };
+});
+vi.mock("@/lib/sandbox-transfers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/sandbox-transfers")>()),
+  uploadToSandbox,
 }));
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirect: () => redirect }));
 vi.mock("@/lib/xterm-view", async () => {
@@ -48,6 +68,8 @@ vi.mock("@/lib/xterm-view", async () => {
   return { createTerminalView: () => new View() };
 });
 
+import { HOLD_GRID_MS } from "@/lib/terminal-keys";
+import { useTerminalPreferences } from "@/stores/terminal-preferences";
 import { TerminalPanel } from "../terminal-panel";
 import { SandboxTerminal } from "./sandbox-terminal";
 
@@ -101,10 +123,13 @@ beforeEach(() => {
     return fakeSession(input.sandboxId, fakeTicket(minted));
   });
   redirect.mockClear();
+  uploadToSandbox.mockReset();
+  getOperation.mockReset();
   clipboard.writeText.mockClear();
   clipboard.readText.mockReset();
   clipboard.readText.mockImplementation(async () => "");
   queryClient = new QueryClient();
+  useTerminalPreferences.setState({ keysShown: false, fontSize: null });
   localStorage.clear();
   sessionStorage.clear();
 });
@@ -528,4 +553,327 @@ it.each([
     socket.serverClose(4401);
   });
   expect((await screen.findByRole("alert")).textContent).toBe(message);
+});
+
+describe("utilities (design D)", () => {
+  const decode = (bytes: Uint8Array | undefined) => new TextDecoder().decode(bytes);
+  const openUtilities = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole("button", { name: enTerminal.utilities.button }));
+    return screen.findByRole("menu");
+  };
+  const pointer = (element: Element, type: string, x = 0, y = 0) => {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    act(() => {
+      element.dispatchEvent(event);
+    });
+    return event;
+  };
+
+  it("the key row is hidden by default; Show keys shows it and is remembered on this device", async () => {
+    const first = renderTerminal();
+    const { user } = await attach();
+    expect(document.querySelector("[data-terminal-keys]")).toBeNull();
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.showKeys }));
+    expect(document.querySelector("[data-terminal-keys]")).not.toBeNull();
+    expect(localStorage.getItem("terminal-preferences")).toContain('"keysShown":true');
+    first.unmount();
+    // A reload: the in-memory store starts over and reads this device's storage.
+    const stored = localStorage.getItem("terminal-preferences") ?? "";
+    useTerminalPreferences.setState({ keysShown: false });
+    localStorage.setItem("terminal-preferences", stored);
+    await useTerminalPreferences.persist.rehydrate();
+    renderTerminal();
+    await attach();
+    expect(document.querySelector("[data-terminal-keys]")).not.toBeNull();
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.hideKeys }));
+    expect(document.querySelector("[data-terminal-keys]")).toBeNull();
+  });
+
+  it("Esc, Tab and the swipe pad send their bytes, arrows following application cursor mode", async () => {
+    useTerminalPreferences.setState({ keysShown: true });
+    renderTerminal();
+    const { user, socket, view } = await attach();
+    view.hasFocusValue = true;
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x1b");
+    await user.click(screen.getByRole("button", { name: "Tab" }));
+    expect(decode(socket.sentBinary.at(-1))).toBe("\t");
+    // The keys never take focus: the terminal is focused again after a tap.
+    expect(view.focused).toBeGreaterThan(0);
+    const pad = screen.getByRole("slider", { name: enTerminal.keys.swipeLabel });
+    const before = socket.sentBinary.length;
+    pointer(pad, "pointerdown", 100, 100);
+    pointer(pad, "pointermove", 145, 102);
+    expect(socket.sentBinary.slice(before).map(decode)).toEqual(["\x1b[C", "\x1b[C"]);
+    pointer(pad, "pointerup", 145, 102);
+    view.applicationCursor = true;
+    pointer(pad, "pointerdown", 100, 100);
+    pointer(pad, "pointermove", 100, 78);
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x1bOA");
+    pointer(pad, "pointerup", 100, 78);
+  });
+
+  it("a tapped Ctrl or Alt applies to the next typed character only; a paste is never modified", async () => {
+    useTerminalPreferences.setState({ keysShown: true });
+    renderTerminal();
+    const { user, socket, view } = await attach();
+    const ctrl = screen.getByRole("button", { name: /^Ctrl/ });
+    await user.click(ctrl);
+    expect(ctrl.getAttribute("data-latch")).toBe("once");
+    act(() => view.type("c"));
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x03");
+    expect(ctrl.getAttribute("data-latch")).toBe("off");
+    act(() => view.type("c"));
+    expect(decode(socket.sentBinary.at(-1))).toBe("c");
+    await user.click(screen.getByRole("button", { name: /^Alt/ }));
+    act(() => view.nativePaste("x"));
+    expect(decode(socket.sentBinary.at(-1))).toBe("x");
+    act(() => view.type("x"));
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x1bx");
+  });
+
+  it("holding Ctrl opens the letter grid; sliding to a key and lifting sends the combination", async () => {
+    // Real time (the gesture timer itself is covered with fake timers in terminal-keys.test.ts).
+    const elementFromPoint = document.elementFromPoint;
+    try {
+      useTerminalPreferences.setState({ keysShown: true });
+      renderTerminal();
+      const { socket } = await attach();
+      const ctrl = screen.getByRole("button", { name: /^Ctrl/ });
+      pointer(ctrl, "pointerdown");
+      await act(() => new Promise((resolve) => setTimeout(resolve, HOLD_GRID_MS + 50)));
+      const cell = document.querySelector('[data-grid-key="c"]');
+      expect(cell).not.toBeNull();
+      document.elementFromPoint = () => cell;
+      pointer(ctrl, "pointermove", 10, 10);
+      pointer(ctrl, "pointerup", 10, 10);
+      expect(decode(socket.sentBinary.at(-1))).toBe("\x03");
+      expect(document.querySelector("[data-terminal-key-grid]")).toBeNull();
+      expect(ctrl.getAttribute("data-latch")).toBe("off");
+    } finally {
+      document.elementFromPoint = elementFromPoint;
+    }
+  });
+
+  it("Paste… sends the text through the bracketed paste path, then Enter when asked", async () => {
+    renderTerminal();
+    const { user, socket, view } = await attach();
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.paste }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(
+      screen.getByRole("textbox", { name: enTerminal.pasteDialog.text }),
+      "echo a{Enter}echo b",
+    );
+    expect(dialog.textContent).toContain("2 lines, 13 bytes.");
+    await user.click(screen.getByRole("checkbox"));
+    await user.click(screen.getByRole("button", { name: enTerminal.pasteDialog.send }));
+    expect(view.pasted).toEqual(["echo a\necho b"]);
+    expect(socket.sentBinary.slice(-2).map(decode)).toEqual(["echo a\necho b", "\r"]);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Paste from clipboard says clearly when the browser blocks it", async () => {
+    renderTerminal();
+    const { user } = await attach();
+    installClipboard();
+    clipboard.readText.mockImplementation(async () => {
+      throw new DOMException("denied", "NotAllowedError");
+    });
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.paste }));
+    await user.click(
+      await screen.findByRole("button", { name: enTerminal.pasteDialog.fromClipboard }),
+    );
+    expect(await screen.findByText(enTerminal.pasteDialog.clipboardBlocked)).toBeTruthy();
+  });
+
+  it("A+ / A− / Reset change the text size, refit and are remembered", async () => {
+    renderTerminal();
+    const { user, view } = await attach();
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.larger }));
+    await waitFor(() => expect(view.fontSize).toBe(15));
+    expect(localStorage.getItem("terminal-preferences")).toContain('"fontSize":15');
+    // The menu stays open for further steps.
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.smaller }));
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.smaller }));
+    await waitFor(() => expect(view.fontSize).toBe(13));
+    expect(await screen.findByText("13 px · 100×30")).toBeTruthy();
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.reset }));
+    await waitFor(() => expect(view.fontSize).toBe(14));
+    expect(localStorage.getItem("terminal-preferences")).toContain('"fontSize":null');
+  });
+
+  it("a remembered text size applies to the next attach before the first fit", async () => {
+    // As stored by an earlier visit on this device.
+    localStorage.setItem(
+      "terminal-preferences",
+      JSON.stringify({ state: { keysShown: false, fontSize: 18 }, version: 1 }),
+    );
+    await useTerminalPreferences.persist.rehydrate();
+    renderTerminal();
+    const { view } = await attach();
+    expect(view.fontSize).toBe(18);
+  });
+
+  it("Photo uploads into ~/.uploads, waits for the write, then types the path and a space", async () => {
+    uploadToSandbox.mockResolvedValue({ transferId: "t", operationId: "op_1", sha256: "" });
+    getOperation.mockResolvedValueOnce({ state: "RUNNING" }).mockResolvedValue({
+      state: "SUCCEEDED",
+    });
+    URL.createObjectURL = () => "blob:photo";
+    URL.revokeObjectURL = () => {};
+    render(
+      wrap(
+        <SandboxTerminal
+          sandboxId="sbx_1"
+          lang="en-US"
+          available
+          photo={{ sandboxId: "sbx_1", guestHome: "/home/user" }}
+        />,
+      ),
+    );
+    const { user, view } = await attach();
+    await openUtilities(user);
+    await user.click(screen.getByRole("menuitem", { name: enTerminal.utilities.photo }));
+    const take = (await screen.findByRole("dialog")).querySelector(
+      '[data-photo-input="take"]',
+    ) as HTMLInputElement;
+    expect(take.getAttribute("capture")).toBe("environment");
+    await user.upload(take, new File(["jpeg"], "IMG_1.jpg", { type: "image/jpeg" }));
+    await user.click(screen.getByRole("button", { name: enTerminal.photo.send }));
+    await waitFor(() => expect(view.pasted).toHaveLength(1), { timeout: 4000 });
+    const [call] = uploadToSandbox.mock.calls;
+    expect(call?.[1].sandboxId).toBe("sbx_1");
+    expect(call?.[1].guestPath).toMatch(/^\/home\/user\/\.uploads\/paste-\d{8}-\d{6}-\w+\.jpg$/);
+    expect(view.pasted[0]).toBe(`${call?.[1].guestPath} `);
+    expect(getOperation).toHaveBeenCalledWith({ operationId: "op_1" }, expect.anything());
+  });
+
+  it("Photo is not offered on host terminals", async () => {
+    render(wrap(<TerminalPanel hostId="host-1" lang="en-US" available={false} />));
+    const user = userEvent.setup();
+    await openUtilities(user);
+    expect(screen.queryByRole("menuitem", { name: enTerminal.utilities.photo })).toBeNull();
+  });
+});
+
+it("Photo refuses a file that is not a PNG, JPEG, WebP or GIF image", async () => {
+  URL.createObjectURL = () => "blob:photo";
+  URL.revokeObjectURL = () => {};
+  render(
+    wrap(
+      <SandboxTerminal
+        sandboxId="sbx_1"
+        lang="en-US"
+        available
+        photo={{ sandboxId: "sbx_1", guestHome: "/home/user" }}
+      />,
+    ),
+  );
+  const { user } = await attach();
+  await user.click(screen.getByRole("button", { name: enTerminal.utilities.button }));
+  await user.click(await screen.findByRole("menuitem", { name: enTerminal.utilities.photo }));
+  const choose = (await screen.findByRole("dialog")).querySelector(
+    '[data-photo-input="choose"]',
+  ) as HTMLInputElement;
+  // `image/heic` matches the picker's `image/*` but is not a type agents read.
+  await user.upload(choose, new File(["x"], "notes.heic", { type: "image/heic" }));
+  expect(await screen.findByText(enTerminal.photo.badType)).toBeTruthy();
+  expect(
+    (screen.getByRole("button", { name: enTerminal.photo.send }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(uploadToSandbox).not.toHaveBeenCalled();
+});
+
+it("a one-shot Ctrl applies to the first arrow of a multi-arrow swipe only", async () => {
+  useTerminalPreferences.setState({ keysShown: true });
+  renderTerminal();
+  const { user, socket } = await attach();
+  await user.click(screen.getByRole("button", { name: /^Ctrl/ }));
+  const pad = screen.getByRole("slider", { name: enTerminal.keys.swipeLabel });
+  const before = socket.sentBinary.length;
+  for (const [type, x] of [
+    ["pointerdown", 100],
+    ["pointermove", 145],
+    ["pointerup", 145],
+  ] as const) {
+    const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: 0 });
+    Object.defineProperty(event, "pointerId", { value: 1 });
+    act(() => {
+      pad.dispatchEvent(event);
+    });
+  }
+  expect(socket.sentBinary.slice(before).map((b) => new TextDecoder().decode(b))).toEqual([
+    "\x1b[1;5C",
+    "\x1b[C",
+  ]);
+  expect(screen.getByRole("button", { name: /^Ctrl/ }).getAttribute("data-latch")).toBe("off");
+});
+
+it("a photo written while the terminal is not attached keeps its path for Type path", async () => {
+  uploadToSandbox.mockResolvedValue({ transferId: "t", operationId: "op_2", sha256: "" });
+  let finishWrite: (value: { state: string }) => void = () => {};
+  getOperation.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishWrite = resolve;
+      }),
+  );
+  render(
+    wrap(
+      <SandboxTerminal
+        sandboxId="sbx_1"
+        lang="en-US"
+        available
+        photo={{ sandboxId: "sbx_1", guestHome: "/home/user" }}
+      />,
+    ),
+  );
+  const { user, socket, view } = await attach();
+  await user.click(screen.getByRole("button", { name: enTerminal.utilities.button }));
+  await user.click(await screen.findByRole("menuitem", { name: enTerminal.utilities.photo }));
+  const choose = (await screen.findByRole("dialog")).querySelector(
+    '[data-photo-input="choose"]',
+  ) as HTMLInputElement;
+  await user.upload(choose, new File(["png"], "a.png", { type: "image/png" }));
+  await user.click(screen.getByRole("button", { name: enTerminal.photo.send }));
+  await waitFor(() => expect(getOperation).toHaveBeenCalled());
+  // The session ends while the sandbox writes the file.
+  act(() => {
+    socket.serverText({ type: "close", code: 4401, intent: "detached" });
+    socket.serverClose(4401);
+  });
+  await act(async () => finishWrite({ state: "SUCCEEDED" }));
+  expect(await screen.findByText(enTerminal.photo.placed, { exact: false })).toBeTruthy();
+  expect(document.querySelector('[data-photo-phase="placed"] code')?.textContent).toMatch(
+    /^\/home\/user\/\.uploads\/paste-\d{8}-\d{6}-\w+\.png$/,
+  );
+  expect(screen.getByRole("button", { name: enTerminal.photo.typePath })).toBeTruthy();
+  expect(view.pasted).toEqual([]);
+});
+
+it("a paste the terminal cannot take keeps the dialog and the draft", async () => {
+  renderTerminal();
+  const { user, socket } = await attach();
+  await user.click(screen.getByRole("button", { name: enTerminal.utilities.button }));
+  await user.click(await screen.findByRole("menuitem", { name: enTerminal.utilities.paste }));
+  await user.type(
+    await screen.findByRole("textbox", { name: enTerminal.pasteDialog.text }),
+    "keep me",
+  );
+  act(() => {
+    socket.serverText({ type: "close", code: 4401, intent: "detached" });
+    socket.serverClose(4401);
+  });
+  await user.click(screen.getByRole("button", { name: enTerminal.pasteDialog.send }));
+  expect(await screen.findByText(enTerminal.pasteDialog.notAttached)).toBeTruthy();
+  expect(
+    (screen.getByRole("textbox", { name: enTerminal.pasteDialog.text }) as HTMLTextAreaElement)
+      .value,
+  ).toBe("keep me");
 });

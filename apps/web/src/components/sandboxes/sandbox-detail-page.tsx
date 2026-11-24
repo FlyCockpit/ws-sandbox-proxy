@@ -242,6 +242,13 @@ function SandboxDetail({
   const [minutes, setMinutes] = useState(String(DEFAULT_LIFETIME_MINUTES));
   const onExpire = sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop";
   const actions = sandboxActions(sandbox.state, sandbox.lastLifecycleOperation);
+  // The template card's query (shared cache): the guest's home, where terminal photos go.
+  const guestHome = useQuery({
+    ...orpc.sandboxTemplates.getTemplateRevision.queryOptions({
+      input: { id: sandbox.template.revisionId },
+    }),
+    meta: { skipGlobalErrorToast: true },
+  }).data?.guestHome;
   const hostView = sandboxHostView(sandbox.host, now);
   const labels = sandboxLabels(sandbox.metadata);
   const phase = sandboxPhase(sandbox.state);
@@ -698,6 +705,9 @@ function SandboxDetail({
           sandboxId={sandbox.id}
           lang={lang}
           available={sandbox.state === "READY"}
+          photo={
+            actions.has("files") && guestHome ? { sandboxId: sandbox.id, guestHome } : undefined
+          }
         />
       )}
 

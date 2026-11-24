@@ -41,6 +41,38 @@ command/file tools follow [ADR-006](../design/adr-006-agent-host-access.md).
   socket opens are classified by one fresh ticket request and are not retried
   in a loop.
 
+## Utilities (phones and touch screens)
+
+The **Utilities** button in the terminal actions opens:
+
+- **Show keys / Hide keys**: a key row under the terminal with Esc, Tab, Ctrl,
+  Alt and a swipe pad. It is hidden until you show it, and the choice is
+  remembered on this device (this browser), not on your account. The keys
+  never take focus from the terminal, so the phone keyboard stays open, and
+  the row sits above the on-screen keyboard while it is open.
+  - **Swipe pad**: one arrow key per 20 px of swipe; arrows follow the
+    program's application cursor mode (`ESC O A` instead of `ESC [ A`).
+  - **Ctrl / Alt**: tap to apply it to the next key you type on the phone
+    keyboard (tap twice quickly to lock it); hold for about 0.4 s to open a
+    letter grid, slide to a key and lift to send that combination
+    (Ctrl+C, Ctrl+R, Alt+B, …). Alt is sent as an ESC prefix.
+- **Paste…**: a box to check text before it is sent, with **Paste from
+  clipboard** (when the browser allows reading it; otherwise long-press the
+  box and choose Paste) and **Press Enter after sending**. It takes the same
+  path as the Paste button: bracketed when the program asked for it, markers
+  stripped, at most 64 KiB.
+- **Photo / camera…** (sandbox terminals whose files can be written):
+  **Choose photo** or **Take photo**. The image (PNG, JPEG, WebP or GIF, at
+  most 16 MiB) is uploaded through the same transfer path as the Files card
+  into `<guest home>/.uploads/paste-<time>-<id>.<ext>`; once the sandbox has
+  written it, its path and a space are typed as a paste, which is how coding
+  agents such as Claude Code and Codex take images in a terminal.
+- **Text size**: A− / A+ in 1 px steps (9–20 px) and Reset, remembered on
+  this device. Pinching the terminal with two fingers changes it too (the
+  page itself does not zoom there; one finger still scrolls and selects).
+  A size change refits the terminal, so the shell gets the new columns and
+  rows like a window resize.
+
 ## Security properties
 
 - **Ticket.** 32 random bytes, valid for 30 seconds, usable once, bound to your

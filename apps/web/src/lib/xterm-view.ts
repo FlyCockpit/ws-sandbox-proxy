@@ -121,6 +121,18 @@ export function createTerminalView(): TerminalView {
     focus() {
       terminal.focus();
     },
+    hasFocus() {
+      return terminal.textarea !== undefined && document.activeElement === terminal.textarea;
+    },
+    applicationCursorKeys() {
+      return terminal.modes.applicationCursorKeysMode;
+    },
+    bracketedPaste() {
+      return terminal.modes.bracketedPasteMode;
+    },
+    setFontSize(size) {
+      if (terminal.options.fontSize !== size) terminal.options.fontSize = size;
+    },
     dispose() {
       if (container) {
         for (const type of BLOCKED_NATIVE_EVENTS) container.removeEventListener(type, block, true);

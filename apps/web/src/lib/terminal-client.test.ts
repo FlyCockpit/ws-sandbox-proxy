@@ -1330,3 +1330,62 @@ describe("WP8 reattach (sandbox terminals, v2)", () => {
     expect(harness.notice()).toEqual({ kind: "connectionLost" });
   });
 });
+
+describe("terminal utilities", () => {
+  const decode = (bytes: Uint8Array | undefined) => new TextDecoder().decode(bytes);
+
+  it("sendKeys sends on-screen key bytes as input, only while attached", async () => {
+    const { client, socket } = await attached();
+    expect(client.sendKeys("\x1b[A")).toBe(true);
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x1b[A");
+    expect(client.sendKeys("")).toBe(false);
+    client.detach();
+    const sent = socket.sentBinary.length;
+    expect(client.sendKeys("\x03")).toBe(false);
+    expect(socket.sentBinary).toHaveLength(sent);
+  });
+
+  it("the key filter rewrites typed data but never a paste", async () => {
+    const { client, socket, view } = await attached();
+    client.setKeyFilter((data) => (data === "c" ? "\x03" : data));
+    view.type("c");
+    expect(decode(socket.sentBinary.at(-1))).toBe("\x03");
+    expect(client.paste("c")).toBe("done");
+    expect(decode(socket.sentBinary.at(-1))).toBe("c");
+    client.setKeyFilter(null);
+    view.type("c");
+    expect(decode(socket.sentBinary.at(-1))).toBe("c");
+  });
+
+  it("a text size change refits on the next frame and resizes the PTY like a container resize", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const { client, socket, view } = await attached();
+      const before = socket.sentText.filter((frame) => frame.type === "resize").length;
+      const fitted: unknown[] = [];
+      view.nextFit = { rows: 25, cols: 80 };
+      client.setFontSize(17, (size) => fitted.push(size));
+      expect(view.fontSize).toBe(17);
+      expect(fitted).toEqual([]);
+      for (const frame of frames.splice(0)) frame(0);
+      const resizes = socket.sentText.filter((frame) => frame.type === "resize");
+      expect(resizes.length).toBe(before + 1);
+      expect(resizes.at(-1)).toMatchObject({ rows: 25, cols: 80 });
+      expect(fitted).toEqual([{ rows: 25, cols: 80 }]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("a size chosen before the view exists is applied before it opens", async () => {
+    const harness = setup();
+    harness.client.setFontSize(11);
+    await harness.client.start();
+    expect(FakeTerminalView.last().fontSize).toBe(11);
+  });
+});

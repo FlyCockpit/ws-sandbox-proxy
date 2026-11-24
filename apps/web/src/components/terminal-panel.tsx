@@ -1,11 +1,19 @@
 import { Button } from "@wssp/ui/components/button";
 import { cn } from "@wssp/ui/lib/utils";
 import { ClipboardPaste, Copy, Keyboard, Plug, Unplug } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { TerminalKeyRow } from "@/components/terminal-key-row";
+import { type PhotoTarget, TerminalUtilities } from "@/components/terminal-utilities";
+import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { type ClipboardOutcome, useTerminalSession } from "@/hooks/use-terminal-session";
+import { useKeyboardInset, useTerminalPinch } from "@/hooks/use-terminal-utilities";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
+import { effectiveFontSize, useTerminalPreferences } from "@/stores/terminal-preferences";
+
+/** How long the text-size badge stays on the terminal. */
+const SIZE_BADGE_MS = 1_400;
 
 export function TerminalPanel({
   sandboxId,
@@ -18,6 +26,7 @@ export function TerminalPanel({
   onAttempt,
   typeCommand,
   pretypeOnAttach = false,
+  photo,
 }: {
   sandboxId?: string;
   hostId?: string;
@@ -31,6 +40,8 @@ export function TerminalPanel({
   typeCommand?: string;
   /** Queued host command handoff: type once after the person connects. */
   pretypeOnAttach?: boolean;
+  /** Sandbox terminals with file access: where Utilities › Photo uploads to. */
+  photo?: PhotoTarget;
 }) {
   const { t } = useTranslation(["terminal"]);
   const redirect = useTwoFactorRedirect(lang);
@@ -79,6 +90,47 @@ export function TerminalPanel({
   // The owner's own disconnect and leaving the page are not failures.
   const quiet = notice?.kind === "client" || notice?.kind === "pageLeft";
   const clipboardText = clipboard?.status === status ? clipboard.text : null;
+
+  // Terminal utilities (design D): key row, text size, pinch.
+  const keysShown = useTerminalPreferences((state) => state.keysShown);
+  const setKeysShown = useTerminalPreferences((state) => state.setKeysShown);
+  const storedFontSize = useTerminalPreferences((state) => state.fontSize);
+  const storeFontSize = useTerminalPreferences((state) => state.setFontSize);
+  const fontSize = effectiveFontSize(storedFontSize);
+  // The size on screen now, which a pinch changes before it is remembered.
+  const liveFontSize = useRef(fontSize);
+  const [badge, setBadge] = useState<{ text: string; until: number } | null>(null);
+  useRerenderAt(badge?.until ?? null);
+  const badgeText = badge && Date.now() < badge.until ? badge.text : null;
+  const applyFontSize = (size: number) => {
+    liveFontSize.current = size;
+    terminal.setFontSize(size, (fitted) =>
+      setBadge({
+        text: fitted
+          ? t("terminal:utilities.badge", { size, cols: fitted.cols, rows: fitted.rows })
+          : t("terminal:utilities.px", { size }),
+        until: Date.now() + SIZE_BADGE_MS,
+      }),
+    );
+  };
+  const chooseFontSize = (size: number | null) => {
+    storeFontSize(size);
+    applyFontSize(effectiveFontSize(useTerminalPreferences.getState().fontSize));
+  };
+  const viewRef = useRef<HTMLDivElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  useTerminalPinch(viewRef, {
+    enabled: shown,
+    currentSize: () => liveFontSize.current,
+    onPreview: applyFontSize,
+    onCommit: (size) => chooseFontSize(size),
+  });
+  const keysVisible = keysShown && shown;
+  const keyboardInset = useKeyboardInset(wrapRef, keysVisible);
+  const setViewRef = (element: HTMLDivElement | null) => {
+    viewRef.current = element;
+    terminal.containerRef.current = element;
+  };
 
   return (
     <section
@@ -162,6 +214,20 @@ export function TerminalPanel({
           <ClipboardPaste aria-hidden="true" className="size-4" />
           {t("terminal:actions.paste")}
         </Button>
+        <TerminalUtilities
+          terminal={terminal}
+          attached={attached}
+          keysShown={keysShown}
+          onKeysShown={setKeysShown}
+          fontSize={fontSize}
+          fontSizeIsDefault={storedFontSize === null}
+          onFontSize={chooseFontSize}
+          size={attached ? size : null}
+          photo={hostId ? undefined : photo}
+          onOutcome={(outcome) =>
+            report(outcome, t("terminal:clipboard.pasted"), t("terminal:clipboard.pasteEmpty"))
+          }
+        />
         {typeCommand && !pretypeOnAttach ? (
           <Button
             type="button"
@@ -210,14 +276,47 @@ export function TerminalPanel({
           {t(`terminal:warning.${warning}`)}
         </p>
       ) : null}
-      <div
-        ref={terminal.containerRef}
-        role="region"
-        aria-label={t(hostId ? "terminal:host.regionLabel" : "terminal:regionLabel")}
-        data-terminal-view=""
-        hidden={!shown}
-        className="h-[min(28rem,50svh)] min-h-40 w-full min-w-0 overflow-hidden overscroll-contain rounded-md border bg-black p-1"
-      />
+      <div ref={wrapRef} hidden={!shown} className="flex min-w-0 flex-col gap-1">
+        <div className="relative min-w-0">
+          <div
+            ref={setViewRef}
+            role="region"
+            aria-label={t(hostId ? "terminal:host.regionLabel" : "terminal:regionLabel")}
+            data-terminal-view=""
+            className={cn(
+              // Pinch on the terminal is text size, never page zoom (one finger scrolls).
+              "h-[min(28rem,50svh)] min-h-40 w-full min-w-0 touch-pan-x touch-pan-y overflow-hidden overscroll-contain rounded-md border bg-black p-1",
+              keyboardInset > 0 && "[&_textarea]:scroll-mb-16",
+            )}
+          />
+          {badgeText ? (
+            // An overlay, so it never refits the terminal (a refit resizes the PTY).
+            <p
+              role="status"
+              data-terminal-size-badge=""
+              className="pointer-events-none absolute top-2 right-2 rounded-md bg-background/90 px-2 py-1 font-mono text-xs text-foreground shadow"
+            >
+              {badgeText}
+            </p>
+          ) : null}
+        </div>
+        {keysVisible ? (
+          // One instance whether pinned or not, so its latches survive the keyboard.
+          <TerminalKeyRow
+            terminal={terminal}
+            className={
+              keyboardInset > 0
+                ? "fixed inset-x-0 z-40 border-t bg-background px-[max(0.25rem,var(--safe-area-left))] py-1"
+                : undefined
+            }
+            style={keyboardInset > 0 ? { bottom: keyboardInset } : undefined}
+          />
+        ) : null}
+        {keysVisible && keyboardInset > 0 ? (
+          // Keeps the panel's height while the row sits above the keyboard.
+          <div aria-hidden="true" data-terminal-keys-placeholder="" className="h-11" />
+        ) : null}
+      </div>
     </section>
   );
 }

@@ -208,6 +208,27 @@ export class FakeTerminalView implements TerminalView {
     this.focused += 1;
   }
 
+  hasFocusValue = false;
+  applicationCursor = false;
+  bracketed = false;
+  fontSize = 14;
+
+  hasFocus() {
+    return this.hasFocusValue;
+  }
+
+  applicationCursorKeys() {
+    return this.applicationCursor;
+  }
+
+  bracketedPaste() {
+    return this.bracketed;
+  }
+
+  setFontSize(size: number) {
+    this.fontSize = size;
+  }
+
   dispose() {
     this.disposed = true;
     this.dataListeners.clear();

@@ -179,6 +179,14 @@ export type TerminalView = {
   selection(): string;
   paste(text: string): void;
   focus(): void;
+  /** Whether the terminal's input element has focus (the phone keyboard is up for it). */
+  hasFocus(): boolean;
+  /** DECCKM: arrows are sent as `ESC O A` rather than `ESC [ A`. */
+  applicationCursorKeys(): boolean;
+  /** DECSET 2004: the program asked for bracketed paste. */
+  bracketedPaste(): boolean;
+  /** Cell font size in px; the caller refits afterwards. */
+  setFontSize(size: number): void;
   dispose(): void;
 };
 
@@ -342,6 +350,13 @@ export class TerminalClient {
   /** v2: the `reconnecting` frame of the socket now closing, if any. */
   private reconnectHint: ReconnectingFrame | null = null;
   private resume: ResumeCycle | null = null;
+  /** Set while `paste` hands text to xterm: pasted data never takes latched modifiers. */
+  private pasting = false;
+  /** The on-screen keys' latched modifiers, applied to typed data (terminal utilities). */
+  private keyFilter: ((data: string) => string) | null = null;
+  /** Text size chosen before the view existed, applied before it opens. */
+  private fontSize: number | null = null;
+  private fontFrame: number | undefined;
 
   constructor(private readonly options: TerminalClientOptions) {}
 
@@ -372,8 +387,13 @@ export class TerminalClient {
     if (!this.live()) return;
     const view = createView();
     this.view = view;
+    if (this.fontSize !== null) view.setFontSize(this.fontSize);
     view.open(this.options.container);
-    const data = view.onData((text) => this.input(this.encoder.encode(text)));
+    const data = view.onData((text) =>
+      this.input(
+        this.encoder.encode(!this.pasting && this.keyFilter ? this.keyFilter(text) : text),
+      ),
+    );
     const binary = view.onBinary((text) => {
       const bytes = new Uint8Array(text.length);
       for (let index = 0; index < text.length; index += 1) {
@@ -414,6 +434,9 @@ export class TerminalClient {
     // Set first: nothing is reported to an unmounted owner.
     this.disposed = true;
     if (wasLive) this.end({ kind: "client" });
+    if (this.fontFrame !== undefined) cancelAnimationFrame(this.fontFrame);
+    this.fontFrame = undefined;
+    this.keyFilter = null;
     this.view?.dispose();
     this.view = null;
   }
@@ -443,7 +466,12 @@ export class TerminalClient {
     if (clean.length === 0) return "empty";
     if (this.snapshot.status !== "attached" || !this.view) return "unavailable";
     if (this.encoder.encode(clean).byteLength > PASTE_MAX_BYTES) return "tooLarge";
-    this.view.paste(clean);
+    this.pasting = true;
+    try {
+      this.view.paste(clean);
+    } finally {
+      this.pasting = false;
+    }
     // The paste itself can end the session (client-side backpressure detach).
     if (this.snapshot.status !== "attached") return "ended";
     this.view.focus();
@@ -452,6 +480,56 @@ export class TerminalClient {
 
   focus(): void {
     this.view?.focus();
+  }
+
+  /** Whether the terminal holds keyboard focus (on-screen keys keep it there). */
+  hasFocus(): boolean {
+    return this.view?.hasFocus() ?? false;
+  }
+
+  /**
+   * Bytes from an on-screen key (Esc, Tab, arrows, a Ctrl/Alt combo): the
+   * same input path as typing, without the latched-modifier filter (the
+   * caller already encoded them). False when nothing could be sent.
+   */
+  sendKeys(data: string): boolean {
+    if (data.length === 0 || this.snapshot.status !== "attached") return false;
+    this.input(this.encoder.encode(data));
+    return this.snapshot.status === "attached";
+  }
+
+  /** DECCKM of the program now running (arrows from the swipe pad follow it). */
+  applicationCursorKeys(): boolean {
+    return this.view?.applicationCursorKeys() ?? false;
+  }
+
+  /** Whether a paste now would be bracketed (the program enabled it). */
+  bracketedPaste(): boolean {
+    return this.view?.bracketedPaste() ?? false;
+  }
+
+  /** Rewrites typed data (latched Ctrl/Alt); pastes are never rewritten. */
+  setKeyFilter(filter: ((data: string) => string) | null): void {
+    this.keyFilter = filter;
+  }
+
+  /**
+   * Change the text size and refit on the next frame (xterm measures the
+   * new cell then), so cols × rows follow and the PTY is resized the way a
+   * container resize does. `onFit` gets the new local size.
+   */
+  setFontSize(size: number, onFit?: (size: TerminalSize | null) => void): void {
+    this.fontSize = size;
+    const view = this.view;
+    if (!view) return;
+    view.setFontSize(size);
+    if (this.fontFrame !== undefined) cancelAnimationFrame(this.fontFrame);
+    this.fontFrame = requestAnimationFrame(() => {
+      this.fontFrame = undefined;
+      if (this.view !== view) return;
+      if (this.live() && this.snapshot.status === "attached") this.resizeNow();
+      onFit?.(clampTerminalSize(view.fit()));
+    });
   }
 
   // -- internals -------------------------------------------------------------

@@ -15,14 +15,13 @@ import {
   isGuestPath,
   isOperationActive,
   type OperationState,
-  sandboxProblem,
   TRANSFER_MAX_BYTES,
 } from "@/lib/sandbox-rules";
 import {
   downloadUrl,
   probeDownload,
-  TransferError,
   type TransferProblem,
+  toTransferProblem,
   uploadToSandbox,
 } from "@/lib/sandbox-transfers";
 import { orpc } from "@/utils/orpc";
@@ -56,21 +55,6 @@ function operationRefetch(query: {
     return false;
   const state = query.state.data?.state;
   return state == null || isOperationActive(state) ? OPERATION_POLL_MS : false;
-}
-
-function toTransferProblem(error: unknown): TransferProblem {
-  if (error instanceof TransferError) return error.problem;
-  const shape = (error && typeof error === "object" ? error : {}) as {
-    code?: unknown;
-    status?: unknown;
-  };
-  if (shape.code === "UNAUTHORIZED" || shape.status === 401) return "signedOut";
-  const problem = sandboxProblem(error);
-  if (problem === "notFound") return "notFound";
-  if (problem === "stateChanged") return "conflict";
-  if (problem === "forbidden") return "forbidden";
-  if (problem === "invalid") return "invalid";
-  return "generic";
 }
 
 export function SandboxFiles({ sandboxId, lang }: { sandboxId: string; lang: string }) {
