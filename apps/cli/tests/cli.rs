@@ -372,8 +372,40 @@ fn config_show_daemon_totals_and_overrides_match_the_shared_resolver() {
         .env("WSSP_INCUS_BINARY", &shim)
         .args(["host", "config", "show", "--json"]);
     let value = json_stdout(json);
-    assert_eq!(value["vmCapacity"]["derived"]["memoryBudgetMiB"], 12288);
-    assert_eq!(value["vmCapacity"]["effective"]["memoryBudgetMiB"], 12288);
+    // Admission uses the lower of Incus's 16 GiB and this kernel's MemTotal,
+    // which is below 16 GiB on a 16 GiB machine (12288 MiB only above it).
+    let kernel_total = std::fs::read_to_string("/proc/meminfo")
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.trim().strip_suffix(" kB"))
+        .unwrap()
+        .trim()
+        .parse::<u64>()
+        .unwrap()
+        * 1024;
+    let budget = sandbox_protocol::host_memory_budget_from_bytes(17179869184_u64.min(kernel_total))
+        .unwrap()
+        .min(u64::from(
+            sandbox_protocol::vm_size_limits()
+                .unwrap()
+                .host_memory_budget_mi_b_max,
+        ));
+    if kernel_total >= 17179869184 {
+        assert_eq!(budget, 12288);
+    }
+    // Too little RAM for one guest leaves no derived (or effective) budget.
+    let expected = sandbox_protocol::VmCapacity::new(u32::try_from(budget).unwrap(), 1)
+        .ok()
+        .map(|capacity| capacity.memory_budget_mi_b);
+    assert_eq!(
+        value["vmCapacity"]["derived"]["memoryBudgetMiB"],
+        serde_json::json!(expected)
+    );
+    assert_eq!(
+        value["vmCapacity"]["effective"]["memoryBudgetMiB"],
+        serde_json::json!(expected)
+    );
     assert_eq!(value["vmCapacity"]["detected"]["cpuThreads"], 8);
     assert!(value["vmCapacity"]["detectionError"].is_null());
 }
