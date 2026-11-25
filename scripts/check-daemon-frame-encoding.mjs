@@ -297,12 +297,12 @@ const reviewed = new Map([
   ["apps/cli/src/sandbox_relay/journal/configs.rs|to_vec ( & retained . record )", 2],
   ["apps/cli/src/sandbox_relay/journal/configs.rs|to_string ( & config . record )", 1],
   ["apps/cli/src/sandbox_relay/journal/configs.rs|to_vec ( & disk . record )", 1],
-  ["apps/cli/src/sandbox_relay/journal/leases.rs|to_vec ( record )", 1],
+  ["apps/cli/src/sandbox_relay/journal/lease_record.rs|to_vec ( record )", 1],
   [
-    "apps/cli/src/sandbox_relay/journal/leases.rs|to_vec ( & Envelope { record : record . clone ( ) , checksum , } )",
+    "apps/cli/src/sandbox_relay/journal/lease_record.rs|to_vec ( & Envelope { record : record . clone ( ) , checksum , } )",
     1,
   ],
-  ["apps/cli/src/sandbox_relay/journal/leases.rs|to_vec ( & envelope . record )", 1],
+  ["apps/cli/src/sandbox_relay/journal/lease_record.rs|to_vec ( & envelope . record )", 1],
   ["apps/cli/src/sandbox_relay/journal.rs|to_vec ( & existing )", 1],
   ["apps/cli/src/sandbox_relay/journal.rs|to_vec ( receipt )", 1],
   // WP0.5 journal records: raw-byte checksums (receipts and cleanup
