@@ -1478,7 +1478,7 @@ pub fn serve(connection: Connection, key: PrivateKey) -> Result<()> {
                 FINAL_WRITE.as_secs()
             );
             (
-                crate::exit::failure_line(&error),
+                crate::commands::failure_line(&error),
                 crate::exit::code_for(&error) as i32,
             )
         }
@@ -1487,7 +1487,7 @@ pub fn serve(connection: Connection, key: PrivateKey) -> Result<()> {
         End::Wssp(error) => {
             let error = super::super::shell::wssp_side(error);
             (
-                crate::exit::failure_line(&error),
+                crate::commands::failure_line(&error),
                 crate::exit::code_for(&error) as i32,
             )
         }

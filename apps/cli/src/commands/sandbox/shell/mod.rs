@@ -811,7 +811,7 @@ fn session(credential: &UserCredential, target: &str, request: &Request) -> Resu
         Err(error) => crate::exit::code_for(error) as i32,
     };
     let line = match &result {
-        Err(error) if !stuck => crate::exit::failure_line(error),
+        Err(error) if !stuck => crate::commands::failure_line(error),
         _ => None,
     };
     // A live writer takes the error line after the output, with the same
