@@ -1,4 +1,76 @@
 # deslop-please findings judged right to keep, one reason above each. Debt to be fixed is not listed here.
 # Check with: deslop-please --allow .deslop-please.allow
-# Revoked execs are an outbox: HostAuthority drains it so the relay cancels them outside the authority lock (no waits under it).
+# An outbox by design: the authority may not cancel an exec under its lock (no waits under it), so it queues the ids and the relay drains and cancels them after.
 field-leak wssp::sandbox_relay::authority::AuthorityState::revoked_execs
+# Config is the config.toml record (`host config show`/`set`); `accept_foreign_builds` is one of its settings, read where it applies.
+field-leak wssp::config::Config::accept_foreign_builds
+# Config is the config.toml record (`host config show`/`set`); `allow_guest_sudo_for_others` is one of its settings, read where it applies.
+field-leak wssp::config::Config::allow_guest_sudo_for_others
+# Config is the config.toml record (`host config show`/`set`); `allow_open_egress_for_others` is one of its settings, read where it applies.
+field-leak wssp::config::Config::allow_open_egress_for_others
+# Config is the config.toml record (`host config show`/`set`); `builder` is one of its settings, read where it applies.
+field-leak wssp::config::Config::builder
+# Config is the config.toml record (`host config show`/`set`); `ca_file` is one of its settings, read where it applies.
+field-leak wssp::config::Config::ca_file
+# Config is the config.toml record (`host config show`/`set`); `carry_intent_window` is one of its settings, read where it applies.
+field-leak wssp::config::Config::carry_intent_window
+# Config is the config.toml record (`host config show`/`set`); `egress_block_external_dns` is one of its settings, read where it applies.
+field-leak wssp::config::Config::egress_block_external_dns
+# Config is the config.toml record (`host config show`/`set`); `egress_block_smtp` is one of its settings, read where it applies.
+field-leak wssp::config::Config::egress_block_smtp
+# Config is the config.toml record (`host config show`/`set`); `egress_dns_upstreams` is one of its settings, read where it applies.
+field-leak wssp::config::Config::egress_dns_upstreams
+# Config is the config.toml record (`host config show`/`set`); `host_file_roots` is one of its settings, read where it applies.
+field-leak wssp::config::Config::host_file_roots
+# Config is the config.toml record (`host config show`/`set`); `host_slug` is one of its settings, read where it applies.
+field-leak wssp::config::Config::host_slug
+# Config is the config.toml record (`host config show`/`set`); `host_token_env` is one of its settings, read where it applies.
+field-leak wssp::config::Config::host_token_env
+# Config is the config.toml record (`host config show`/`set`); `image_cache_gib` is one of its settings, read where it applies.
+field-leak wssp::config::Config::image_cache_gib
+# Config is the config.toml record (`host config show`/`set`); `max_carry` is one of its settings, read where it applies.
+field-leak wssp::config::Config::max_carry
+# Config is the config.toml record (`host config show`/`set`); `max_lease` is one of its settings, read where it applies.
+field-leak wssp::config::Config::max_lease
+# Config is the config.toml record (`host config show`/`set`); `server_url` is one of its settings, read where it applies.
+field-leak wssp::config::Config::server_url
+# Config is the config.toml record (`host config show`/`set`); `storage_pools` is one of its settings, read where it applies.
+field-leak wssp::config::Config::storage_pools
+# Config is the config.toml record (`host config show`/`set`); `tunnel` is one of its settings, read where it applies.
+field-leak wssp::config::Config::tunnel
+# `CredentialSpecV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::CredentialSpecV11::leases
+# `CredentialSpecV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::CredentialSpecV11::residue
+# `SpecLeaseV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::SpecLeaseV11::checkpoint_interval_min
+# `SpecLeaseV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::SpecLeaseV11::env
+# `SpecLeaseV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::SpecLeaseV11::files
+# `SpecLeaseV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::credentials::SpecLeaseV11::proxy
+# `DiskUploadGrantV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::disk::DiskUploadGrantV11::encryption
+# `DiskUploadResumedV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::disk::DiskUploadResumedV11::parts
+# `ImageFetchGrantV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::image::ImageFetchGrantV11::encryption
+# `ImageUploadGrantV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::image::ImageUploadGrantV11::encryption
+# `ImageUploadGrantV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::image::ImageUploadGrantV11::parts
+# `HostLease` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::lease::HostLease::action
+# `HostLease` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::lease::HostLease::deadline_unix_ms
+# `HostLease` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::lease::HostLease::from_ready_ms
+# `ProcessStarted` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::results::ProcessStarted::start_ticks
+# `HostOperationResult` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::results::host::HostOperationResult::birth
+# `TerminalFenceV11` is a relay wire DTO: its fields are the frame's contract, read where the frame is handled.
+field-leak sandbox_protocol::terminal::TerminalFenceV11::target
+# The incus-surface live-check binary's harness: `report` is the output record every check appends to.
+field-leak sandbox_runtime::linux::Harness::report
