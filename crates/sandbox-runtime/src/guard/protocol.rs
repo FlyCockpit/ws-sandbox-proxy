@@ -413,5 +413,5 @@ mod server {
 pub use server::{ServerConfig, call, serve, serve_connection};
 
 #[cfg(test)]
-#[path = "protocol_tests.rs"]
+#[path = "tests/protocol.rs"]
 mod tests;

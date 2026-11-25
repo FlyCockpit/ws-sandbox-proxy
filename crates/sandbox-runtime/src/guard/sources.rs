@@ -403,5 +403,5 @@ pub fn root_state(read: RootRead) -> Result<PolicyContent, SourceState> {
 }
 
 #[cfg(test)]
-#[path = "sources_tests.rs"]
+#[path = "tests/sources.rs"]
 mod tests;

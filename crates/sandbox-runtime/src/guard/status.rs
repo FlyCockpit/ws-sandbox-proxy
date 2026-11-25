@@ -71,5 +71,5 @@ pub fn new_instance_id() -> std::io::Result<String> {
 }
 
 #[cfg(test)]
-#[path = "status_tests.rs"]
+#[path = "tests/status.rs"]
 mod tests;
