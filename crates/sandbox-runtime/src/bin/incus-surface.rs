@@ -286,6 +286,27 @@ mod linux {
             Self::claimed_under(&root, run_id)
         }
 
+        /// `cleanup <run-id>`: the run id names the probe project, so the
+        /// drain owns it (Incus still refuses a non-empty delete).
+        fn claimed_for_cleanup(run_id: String) -> Result<Self, String> {
+            let mut h = Self::claimed(run_id)?;
+            h.owns_probe_project = true;
+            Ok(h)
+        }
+
+        /// `test-all` owns the probe project only when it does not exist yet,
+        /// so a run never deletes a project it did not create. False when it
+        /// exists or cannot be checked.
+        fn claim_probe_project(&mut self) -> bool {
+            match self.raw(None, &["project", "show", &self.probe_project]) {
+                Ok(out) if !out.status.success() => {
+                    self.owns_probe_project = true;
+                    true
+                }
+                _ => false,
+            }
+        }
+
         fn claimed_under(root: &std::path::Path, run_id: String) -> Result<Self, String> {
             let mut h = Self::new(run_id);
             let (dir, lock) = Self::claim_state_dir(root, &h.run_id)?;
@@ -648,15 +669,12 @@ mod linux {
             "run id {} (manual cleanup: incus-surface cleanup {})",
             h.run_id, h.run_id
         );
-        match h.raw(None, &["project", "show", &h.probe_project]) {
-            Ok(out) if !out.status.success() => h.owns_probe_project = true,
-            _ => {
-                eprintln!(
-                    "incus-surface: probe project `{}` exists or cannot be checked; refusing to run",
-                    h.probe_project
-                );
-                return 2;
-            }
+        if !h.claim_probe_project() {
+            eprintln!(
+                "incus-surface: probe project `{}` exists or cannot be checked; refusing to run",
+                h.probe_project
+            );
+            return 2;
         }
         let mut cleanup_failed = h.cleanup() != 0;
         run_preflight(&mut h);
@@ -681,15 +699,13 @@ mod linux {
             eprintln!("usage: incus-surface cleanup <12-hex run id printed by test-all>");
             return 2;
         };
-        let mut h = match Harness::claimed(run_id.to_string()) {
+        let h = match Harness::claimed_for_cleanup(run_id.to_string()) {
             Ok(h) => h,
             Err(err) => {
                 eprintln!("incus-surface cleanup: {err}");
                 return 2;
             }
         };
-        // The run id names this project; Incus still refuses a non-empty delete.
-        h.owns_probe_project = true;
         let code = h.cleanup();
         if code == 0 {
             println!(

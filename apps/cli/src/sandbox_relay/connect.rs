@@ -560,7 +560,8 @@ fn run_connect_service_with_tls(
             }
         }),
     );
-    let authority = HostAuthority::with_journal(journal.clone());
+    let authority =
+        HostAuthority::with_effect_gate(Some(journal.clone()), carry.effect_gate_max_wait());
     // CLI-login credentials: None when its state directory is
     // unusable, in which case the capability is not advertised. Started
     // before expiry so a lease already due captures, and a refused
