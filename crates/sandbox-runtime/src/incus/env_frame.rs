@@ -7,6 +7,19 @@ use std::time::Duration;
 
 /// Guest watchdog shared with the host setup deadline.
 pub(super) const SETUP_BUDGET: Duration = Duration::from_millis(5000);
+// Tests whose setup must simply succeed widen this on a loaded host.
+#[cfg(test)]
+thread_local! { pub(super) static TEST_SETUP_BUDGET: std::cell::Cell<Duration> = const { std::cell::Cell::new(SETUP_BUDGET) }; }
+fn setup_budget() -> Duration {
+    #[cfg(test)]
+    {
+        TEST_SETUP_BUDGET.with(|v| v.get())
+    }
+    #[cfg(not(test))]
+    {
+        SETUP_BUDGET
+    }
+}
 
 pub(super) const ENV_HELPER: &str = include_str!("env-helper.py");
 
@@ -81,7 +94,7 @@ impl IncusClient {
             "/bin/sh".into(), "-c".into(),
             "set -eu; python=$(command -v python3); setsid=$(command -v setsid); case $python in /*) ;; *) exit 1;; esac; case $setsid in /*) ;; *) exit 1;; esac; [ -x \"$python\" ]; [ -x \"$setsid\" ]; printf 'WSSP_ENV_TOOLS %s\\n%s\\n%s\\n' \"$1\" \"$python\" \"$setsid\"".into(),
             "wssp-env-tools".into(), marker.clone(),
-        ], None, Some(budget.min(SETUP_BUDGET)))?;
+        ], None, Some(budget.min(setup_budget())))?;
         let invalid = || {
             RuntimeError::new(
                 SandboxErrorCode::GuestUnavailable,
@@ -133,9 +146,9 @@ fn env_argv(
     let (name, timeout_ms) = match mode {
         EnvMode::Piped(_) => (
             "piped",
-            remaining.as_millis().clamp(1, SETUP_BUDGET.as_millis()),
+            remaining.as_millis().clamp(1, setup_budget().as_millis()),
         ),
-        EnvMode::Pty(_) => ("pty", SETUP_BUDGET.as_millis()),
+        EnvMode::Pty(_) => ("pty", setup_budget().as_millis()),
     };
     let limits = env_limits();
     let mut argv = vec![

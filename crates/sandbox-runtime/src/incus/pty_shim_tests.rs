@@ -1223,12 +1223,16 @@ fn shortened(overall: Duration, handshake: Duration) {
     super::pty::env::TEST_LIMITS
         .with(|limits| limits.set(super::pty::env::Limits { overall, handshake }));
 }
-/// Production setup limits, for an open that must simply succeed: a
-/// shortened limit there only measures how fast the shim's processes start
-/// on a busy host (a 3 s / 1 s replacement open failed under load), not
-/// anything the test asserts.
-fn production_limits() {
-    shortened(super::pty::env::OVERALL, super::pty::env::HANDSHAKE);
+/// Patient setup limits, for an open that must simply succeed: any short
+/// limit there only measures how fast the shim's processes start on a busy
+/// host, not anything the test asserts. Production's 5 s tool probe, guest
+/// read and handshake budgets are such limits too (a 3 s / 1 s replacement
+/// open failed under load here, and with production limits on a 4-vCPU CI
+/// runner), so every step gets the 30 s overall cap, like the barriers.
+fn patient_limits() {
+    let patient = super::pty::env::OVERALL;
+    shortened(patient, patient);
+    super::env_frame::TEST_SETUP_BUDGET.with(|budget| budget.set(patient));
 }
 fn wait_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -1264,7 +1268,7 @@ fn output_until(session: &mut PtySession, needle: &str) -> Vec<u8> {
 fn pty_env_handshake_never_echoes_frame() {
     let _serial = PTY_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let (shim, req) = env_shim("env-normal");
-    production_limits();
+    patient_limits();
     assert!(!format!("{req:?}").contains("synthetic-pty-private"));
     let mut session = shim.runtime.open_pty(&req).unwrap();
     let mut output = output_until(&mut session, "SHELL_READY");
@@ -1477,7 +1481,7 @@ fn pty_env_handshake_takeover_cancels_opening_session() {
         replacement.guest.guest_shell =
             shim.dir.join("target-shell").to_string_lossy().into_owned();
         replacement.env = vec![("APP".into(), "replacement".into())];
-        production_limits();
+        patient_limits();
         let mut session = shim.runtime.open_pty(&replacement).unwrap();
         output_until(&mut session, "SHELL_READY");
         session.close(PtyCloseIntent::Client);
@@ -1555,7 +1559,7 @@ fn pty_env_handshake_exec_failure_after_done_is_constant_and_suppresses_helper_o
         "#!/missing/interpreter\n",
         0o755,
     );
-    production_limits();
+    patient_limits();
     let mut session = shim.runtime.open_pty(&req).unwrap();
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -1583,7 +1587,7 @@ fn pty_env_handshake_admission_close_does_not_cancel_already_admitted_setup() {
     let permit = Arc::new(crate::RuntimePermit::default());
     let runtime = shim.runtime.with_cancellation(permit.clone());
     let worker = std::thread::spawn(move || {
-        production_limits();
+        patient_limits();
         runtime.open_pty(&req)
     });
     wait_file(&shim.dir.join("starting"));
@@ -1614,7 +1618,7 @@ fn pty_env_handshake_maximal_contract_frame_reaches_only_target_environment() {
     );
     let frame = super::env_frame::encode(&req.env).unwrap().unwrap();
     assert_eq!(super::pty::env::envelope(&frame).unwrap().len(), 21873);
-    production_limits();
+    patient_limits();
     let mut session = shim.runtime.open_pty(&req).unwrap();
     output_until(&mut session, "SHELL_READY");
     let target: serde_json::Value =
