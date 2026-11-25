@@ -72,18 +72,12 @@ pub const REFUSED_PROPERTY_PREFIXES: &[&str] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageRefusal(pub &'static str);
 
-impl ImageRefusal {
-    pub fn into_error(self) -> RuntimeError {
-        RuntimeError::new(
-            SandboxErrorCode::ImageRejected,
-            format!("image refused: {}", self.0),
-        )
-    }
-}
-
 impl From<ImageRefusal> for RuntimeError {
     fn from(value: ImageRefusal) -> Self {
-        value.into_error()
+        RuntimeError::new(
+            SandboxErrorCode::ImageRejected,
+            format!("image refused: {}", value.0),
+        )
     }
 }
 

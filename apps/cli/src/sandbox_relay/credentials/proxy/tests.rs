@@ -464,7 +464,7 @@ fn upstreams_outside_the_node_egress_ceiling_are_refused() {
         Arc::new(|| None) as upstream::CeilingFn,
         upstream::guard_ceiling(None),
         upstream::guard_ceiling(Some(Arc::new(
-            sandbox_runtime::guard_probe::FakeGuardProbe::healthy(),
+            sandbox_runtime::guard::probe::FakeGuardProbe::healthy(),
         ))),
     ] {
         let connector = TlsConnector::new(&config, resolver.clone(), unavailable);

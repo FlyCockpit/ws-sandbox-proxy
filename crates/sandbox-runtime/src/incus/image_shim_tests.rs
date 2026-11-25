@@ -970,14 +970,14 @@ fn offload_alias_and_operation_reads_are_bounded_queries() {
 /// Reports another wssp daemon on the Incus server once `on` is set.
 #[derive(Debug)]
 struct SharedFrom {
-    inner: crate::guard_probe::FakeGuardProbe,
+    inner: crate::guard::probe::FakeGuardProbe,
     on: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
-impl crate::guard_probe::GuardProbe for SharedFrom {
-    fn status(&self) -> Result<crate::guard_probe::GuardStatus, crate::RuntimeError> {
+impl crate::guard::probe::GuardProbe for SharedFrom {
+    fn status(&self) -> Result<crate::guard::probe::GuardStatus, crate::RuntimeError> {
         self.inner.status()
     }
-    fn expectations(&self) -> Result<crate::guard_probe::GuardExpectations, crate::RuntimeError> {
+    fn expectations(&self) -> Result<crate::guard::probe::GuardExpectations, crate::RuntimeError> {
         self.inner.expectations()
     }
     fn shared_incus_server(&self) -> Option<String> {
@@ -997,7 +997,7 @@ fn a_capture_rechecks_the_shared_server_fence_at_its_vm_start() {
     let on = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut client = shim.client();
     client.guard_probe = std::sync::Arc::new(SharedFrom {
-        inner: crate::guard_probe::FakeGuardProbe::healthy(),
+        inner: crate::guard::probe::FakeGuardProbe::healthy(),
         on: on.clone(),
     });
     let phases = Mutex::new(Vec::new());

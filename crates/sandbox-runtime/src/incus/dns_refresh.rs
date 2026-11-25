@@ -481,10 +481,8 @@ fn refresh_one(
     // warning with the unchanged (last-good) state.
     let warning = match refreshed {
         Ok(_) => None,
-        Err(err)
-            if err.egress_refusal() == Some(crate::egress::EgressRefusal::RefreshOverBudget) =>
-        {
-            Some(crate::egress::EgressRefusal::RefreshOverBudget)
+        Err(err) if err.egress_refusal() == Some(crate::EgressRefusal::RefreshOverBudget) => {
+            Some(crate::EgressRefusal::RefreshOverBudget)
         }
         Err(err) => return Err(err),
     };

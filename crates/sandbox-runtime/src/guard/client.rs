@@ -18,7 +18,7 @@ use super::ceiling::EgressCeiling;
 use super::protocol::{PolicyAnswer, Reply, Request};
 use crate::RuntimeError;
 use crate::egress::DomainBlocklist;
-use crate::guard_probe::{
+use crate::guard::probe::{
     GuardExpectations, GuardProbe, GuardStatus, GuardUnhealthy, MIN_GUARD_VERSION, boottime_now_ns,
     evaluate_guard, read_boot_id,
 };
@@ -162,9 +162,9 @@ impl GuardProbe for SocketGuardProbe {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guard::probe::{FakeGuardProbe, check_guard};
     use crate::guard::protocol::{Handler, ServerConfig, SourcePolicy, serve_connection};
     use crate::guard::sources::SourceState;
-    use crate::guard_probe::{FakeGuardProbe, check_guard};
     use std::os::unix::net::UnixListener;
 
     struct Answer(GuardStatus);

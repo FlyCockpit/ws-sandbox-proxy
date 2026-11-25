@@ -1,7 +1,7 @@
 //! The root-owned egress guard (see docs/guide/hosts.md#egress-guard).
 //!
 //! Pure, security-critical building blocks shared by the `wssp host guard`
-//! service (apps/cli) and the daemon-side client ([`crate::GuardProbe`]):
+//! service (apps/cli) and the daemon-side client ([`probe::GuardProbe`]):
 //!
 //! - [`ceiling`]: the egress ceiling host sockets obey (credential proxy);
 //! - [`ruleset`]: the `inet wssp_guard` compiler (drops only) and the
@@ -11,10 +11,9 @@
 //! - [`sources`]: root-file and deployment policy sources with provenance;
 //! - [`protocol`]: the `SO_PEERCRED`-authenticated socket protocol;
 //! - [`status`]: maps source provenance onto the shared `GuardStatus`;
-//! - [`client`]: the real `GuardProbe` (socket client).
-//!
-//! The status format, `GuardProbe` trait and lease rule live in
-//! [`crate::guard_probe`].
+//! - [`client`]: the real `GuardProbe` (socket client);
+//! - [`probe`]: the status format, the `GuardProbe` trait and the lease rule
+//!   the daemon side evaluates.
 //!
 //! The guard never accepts; every chain contains only `return` and `drop`.
 
@@ -25,6 +24,7 @@ pub mod ceiling;
 pub mod client;
 pub mod net;
 pub mod path;
+pub mod probe;
 pub mod protocol;
 pub mod routes;
 pub mod ruleset;

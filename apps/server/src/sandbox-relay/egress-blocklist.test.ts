@@ -17,7 +17,7 @@ import { encodeServerControlMessage } from "./protocol";
 
 /**
  * E6 relay side, from the fixture the guard parser test
- * (`crates/sandbox-runtime/src/guard/sources_tests.rs`) also reads: the
+ * (`crates/sandbox-runtime/src/guard/tests/sources.rs`) also reads: the
  * relay accepts exactly what the guard accepts, normalized, and refuses
  * what it refuses at the same entry.
  */

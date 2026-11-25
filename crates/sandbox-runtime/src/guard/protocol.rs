@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use super::ceiling::EgressCeiling;
 use super::sources::SourceState;
-use crate::guard_probe::GuardStatus;
+use crate::guard::probe::GuardStatus;
 
 pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
@@ -413,5 +413,5 @@ mod server {
 pub use server::{ServerConfig, call, serve, serve_connection};
 
 #[cfg(test)]
-#[path = "protocol_tests.rs"]
+#[path = "tests/protocol.rs"]
 mod tests;

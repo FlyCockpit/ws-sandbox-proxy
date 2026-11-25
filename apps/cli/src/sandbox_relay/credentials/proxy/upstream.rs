@@ -42,7 +42,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use sandbox_runtime::guard::ceiling::EgressCeiling;
-use sandbox_runtime::guard_probe::GuardProbe;
+use sandbox_runtime::guard::probe::GuardProbe;
 
 use super::IDLE_MAX;
 

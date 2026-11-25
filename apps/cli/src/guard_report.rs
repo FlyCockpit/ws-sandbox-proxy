@@ -33,8 +33,8 @@ pub struct GuardReport {
 }
 
 #[cfg(target_os = "linux")]
-fn source_report(source: &sandbox_runtime::guard_probe::GuardSourceStatus) -> SourceReport {
-    use sandbox_runtime::guard_probe::GuardSourceState;
+fn source_report(source: &sandbox_runtime::guard::probe::GuardSourceStatus) -> SourceReport {
+    use sandbox_runtime::guard::probe::GuardSourceState;
     SourceReport {
         state: match source.state {
             GuardSourceState::Valid => "valid",

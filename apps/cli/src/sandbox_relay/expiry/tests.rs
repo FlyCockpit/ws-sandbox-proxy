@@ -1025,7 +1025,7 @@ raise RuntimeError('unexpected mutation')
     .unwrap();
     // Shim host: a synthetic healthy egress guard for the start fence.
     runtime.set_guard_probe(Arc::new(
-        sandbox_runtime::guard_probe::FakeGuardProbe::healthy(),
+        sandbox_runtime::guard::probe::FakeGuardProbe::healthy(),
     ));
     let expiry = ExpiryService::start(
         Arc::new(runtime),

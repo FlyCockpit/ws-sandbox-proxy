@@ -11,7 +11,7 @@ pub struct RuntimeError {
     storage_reason: Option<sandbox_protocol::capacity_v11::StorageReason>,
     /// Typed egress refusal reason (docs/guide/network.md#refusal-reasons): the
     /// daemon maps it onto the wire `details.reason`, never message text.
-    egress_refusal: Option<crate::egress::EgressRefusal>,
+    egress_refusal: Option<EgressRefusal>,
     /// Which readiness check failed: a constant label the daemon maps onto
     /// the wire `details.reason` of a `guest_unavailable`, never guest text.
     readiness_reason: Option<sandbox_protocol::ReadinessFailureReason>,
@@ -115,14 +115,14 @@ impl RuntimeError {
         self
     }
 
-    pub fn egress_refusal(&self) -> Option<crate::egress::EgressRefusal> {
+    pub fn egress_refusal(&self) -> Option<EgressRefusal> {
         self.egress_refusal
     }
     /// The typed wire `reason` for this error, if it is an egress refusal
     /// that travels as one and its code is the one the reason pairs with.
     pub fn wire_reason(&self) -> Option<sandbox_protocol::ProtocolErrorReason> {
         self.egress_refusal
-            .and_then(crate::egress::EgressRefusal::wire_reason)
+            .and_then(EgressRefusal::wire_reason)
             .map(sandbox_protocol::ProtocolErrorReason::from)
             .or(self
                 .readiness_reason
@@ -139,7 +139,7 @@ impl RuntimeError {
         self.readiness_reason = Some(reason);
         self
     }
-    pub(crate) fn with_egress_refusal(mut self, reason: crate::egress::EgressRefusal) -> Self {
+    pub(crate) fn with_egress_refusal(mut self, reason: EgressRefusal) -> Self {
         self.egress_refusal = Some(reason);
         self
     }
@@ -202,6 +202,58 @@ impl RuntimeError {
 
     pub(crate) fn is_refresh_owed(&self) -> bool {
         self.evidence == RuntimeEvidence::RefreshOwed
+    }
+}
+
+/// Typed egress refusal reasons (§1.4, §1.5, §2.1). Carried on the runtime
+/// error; the daemon maps them onto the wire `details.reason`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EgressRefusal {
+    /// The node's egress guard is missing, unhealthy, outdated, its lease
+    /// expired, or it does not cover this sandbox's bridge. Retryable.
+    GuardUnavailable,
+    /// An open-mode sandbox on a node whose owner does not allow open egress
+    /// for other users' sandboxes. Terminal for the sandbox.
+    OpenEgressNotPermitted,
+    /// The compiled ACL body exceeds its bound (m12).
+    PolicyTooLarge,
+    /// A DNS refresh whose recompiled ACL body would exceed the byte budget
+    /// was not published: the last-good rules stay (fails narrow).
+    RefreshOverBudget,
+}
+
+impl EgressRefusal {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GuardUnavailable => "egress_guard_unavailable",
+            Self::OpenEgressNotPermitted => "open_egress_not_permitted",
+            Self::PolicyTooLarge => "egress_policy_too_large",
+            Self::RefreshOverBudget => "egress_refresh_over_budget",
+        }
+    }
+
+    /// The typed wire reason (`details.reason` with `unsupported_capability`).
+    /// The size refusals travel as their code alone.
+    pub fn wire_reason(self) -> Option<sandbox_protocol::EgressRefusalReason> {
+        match self {
+            Self::GuardUnavailable => {
+                Some(sandbox_protocol::EgressRefusalReason::EgressGuardUnavailable)
+            }
+            Self::OpenEgressNotPermitted => {
+                Some(sandbox_protocol::EgressRefusalReason::OpenEgressNotPermitted)
+            }
+            Self::PolicyTooLarge | Self::RefreshOverBudget => None,
+        }
+    }
+
+    pub fn error(self, message: impl Into<String>) -> RuntimeError {
+        let code = match self {
+            Self::GuardUnavailable | Self::OpenEgressNotPermitted => {
+                SandboxErrorCode::UnsupportedCapability
+            }
+            Self::PolicyTooLarge | Self::RefreshOverBudget => SandboxErrorCode::RequestTooLarge,
+        };
+        RuntimeError::new(code, message).with_egress_refusal(self)
     }
 }
 

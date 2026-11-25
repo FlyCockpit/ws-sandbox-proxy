@@ -358,7 +358,7 @@ impl ImageError {
         let Some(probe) = runtime.egress_guard_probe() else {
             return Ok(());
         };
-        sandbox_runtime::guard_probe::refuse_shared_incus_server(probe.as_ref()).map_err(|err| {
+        sandbox_runtime::guard::probe::refuse_shared_incus_server(probe.as_ref()).map_err(|err| {
             Self {
                 code: err.code,
                 message: "another wssp daemon drives this Incus server; no VM may start here",

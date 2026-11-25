@@ -71,7 +71,7 @@ use super::client::{
     IncusClient, QueryEnvelope, parse_query_envelope, percent_encode, random_nonce,
 };
 use crate::RuntimeError;
-use crate::guard_probe::{GuardExpectations, GuardProbe, GuardStatus, INCUS_SERVER_SHARED_REASON};
+use crate::guard::probe::{GuardExpectations, GuardProbe, GuardStatus, INCUS_SERVER_SHARED_REASON};
 
 /// Profile-name prefix of a daemon marker (`default` project).
 pub const LEASE_PROFILE_PREFIX: &str = "wssp-daemon-lease-";

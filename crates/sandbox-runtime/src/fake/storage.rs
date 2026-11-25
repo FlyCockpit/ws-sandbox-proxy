@@ -181,7 +181,7 @@ impl FakeRuntime {
                 .egress_admission
                 .check(mode)
                 .map_err(crate::before_issue::not_issued)?;
-            crate::guard_probe::check_guard(self.guard_probe.as_ref())
+            crate::guard::probe::check_guard(self.guard_probe.as_ref())
                 .map_err(crate::before_issue::not_issued)?;
             self.lifecycle("create")?;
             let _permit = self.cancelled.as_ref().map(|c| c.admit()).transpose()?;
@@ -254,7 +254,7 @@ impl FakeRuntime {
                 .copied()
                 .unwrap_or_default();
             request.egress_admission.check(mode)?;
-            crate::guard_probe::check_guard(self.guard_probe.as_ref())?;
+            crate::guard::probe::check_guard(self.guard_probe.as_ref())?;
         }
         state
             .reconnect_sandbox(request)

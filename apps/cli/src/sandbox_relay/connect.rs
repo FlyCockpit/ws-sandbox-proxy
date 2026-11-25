@@ -5184,7 +5184,7 @@ fn init_runtime(
             // ask this one guard, fresh per decision.
             // The socket is the system path (debug builds: under
             // `WSSP_TEST_GUARD_ROOT`, the same stand-in `wssp host guard status` uses).
-            let probe: Arc<dyn sandbox_runtime::guard_probe::GuardProbe> =
+            let probe: Arc<dyn sandbox_runtime::guard::probe::GuardProbe> =
                 Arc::new(sandbox_runtime::guard::client::SocketGuardProbe::new(
                     crate::commands::guard::Paths::local().socket(),
                 ));
@@ -10935,7 +10935,7 @@ exit 1
                     // Shim host: a synthetic healthy egress guard, so the
                     // refusal under test is the existing-VM one.
                     runtime.set_guard_probe(Arc::new(
-                        sandbox_runtime::guard_probe::FakeGuardProbe::healthy(),
+                        sandbox_runtime::guard::probe::FakeGuardProbe::healthy(),
                     ));
                     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
                     let address = listener.local_addr().unwrap();

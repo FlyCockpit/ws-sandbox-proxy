@@ -20,8 +20,8 @@ use std::time::{Duration, Instant};
 
 use sandbox_protocol::SandboxErrorCode;
 
+use crate::EgressRefusal;
 use crate::RuntimeError;
-use crate::egress::EgressRefusal;
 
 /// The minimum guard protocol/ruleset version this runtime accepts. An older
 /// guard reports `guard_outdated` ("run `sudo wssp host guard install --daemon-user <user>`").

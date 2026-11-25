@@ -32,7 +32,6 @@ pub mod egress;
 mod error;
 #[cfg(all(test, target_os = "linux"))]
 mod evidence_boundary_tests;
-pub mod guard_probe;
 pub use effect::{
     AllocationKind, Completed, EffectError, EffectOutcome, allocation_refusal_for_runtime,
     allocation_refusal_state,
@@ -106,7 +105,7 @@ pub use reconcile::reconcile_effect;
 #[cfg(target_os = "linux")]
 mod incus;
 
-pub use error::{NotRunningDetail, RuntimeError};
+pub use error::{EgressRefusal, NotRunningDetail, RuntimeError};
 pub use fake::{
     FAKE_BOOT_ID, FakeChannelControl, FakeCommandScope, FakeGuestIo, FakePolicyDrift,
     FakePtyControl, FakePublishCrash, FakeRuntime, FakeUidRoots, raw_upstream_identity,

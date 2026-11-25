@@ -83,7 +83,7 @@ impl IncusKvmRuntime {
 
     /// Install the egress guard client the start fence attests through
     /// (§2.0.5). Until one is installed every start is refused.
-    pub fn set_guard_probe(&mut self, probe: std::sync::Arc<dyn crate::guard_probe::GuardProbe>) {
+    pub fn set_guard_probe(&mut self, probe: std::sync::Arc<dyn crate::guard::probe::GuardProbe>) {
         self.client.guard_probe = probe;
     }
 
@@ -535,7 +535,7 @@ impl SandboxRuntime for IncusKvmRuntime {
         Ok(!settings.dns_upstreams.is_empty() || super::dns::host_dns_servers().is_ok())
     }
 
-    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard_probe::GuardProbe>> {
+    fn egress_guard_probe(&self) -> Option<std::sync::Arc<dyn crate::guard::probe::GuardProbe>> {
         Some(self.client.guard_probe.clone())
     }
 
@@ -618,7 +618,7 @@ impl SandboxRuntime for IncusKvmRuntime {
     }
 
     fn egress_guard_check(&self) -> Result<(), RuntimeError> {
-        crate::guard_probe::check_guard(self.client.guard_probe.as_ref())
+        crate::guard::probe::check_guard(self.client.guard_probe.as_ref())
     }
 
     fn egress_enforcement_unavailable_reason(&self) -> Option<String> {
@@ -968,7 +968,7 @@ impl SandboxRuntime for IncusKvmRuntime {
     }
 
     fn import_image(&self, path: &std::path::Path) -> Result<String, RuntimeError> {
-        crate::guard_probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
         self.client.image_import(path)
     }
 
@@ -978,7 +978,7 @@ impl SandboxRuntime for IncusKvmRuntime {
         disk: &std::path::Path,
         expected: &str,
     ) -> Result<String, RuntimeError> {
-        crate::guard_probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
         self.client.image_import_split(meta, disk, expected)
     }
 
@@ -1044,7 +1044,7 @@ impl SandboxRuntime for IncusKvmRuntime {
         progress: &dyn Fn(crate::CapturePhase),
     ) -> Result<crate::CaptureOutcome, RuntimeError> {
         // A capture publishes a new template image into the shared store.
-        crate::guard_probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.client.guard_probe.as_ref())?;
         self.client.capture_template(request, progress)
     }
 

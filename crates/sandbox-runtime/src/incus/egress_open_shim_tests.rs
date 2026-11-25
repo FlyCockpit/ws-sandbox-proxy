@@ -11,8 +11,9 @@ use sandbox_protocol::{EgressMode, EgressPolicy, SandboxErrorCode};
 
 use super::network::{policy_hash_hex, sandbox_network_names};
 use super::shim_tests::{create_req, runtime_for};
-use crate::egress::{DomainBlocklist, EgressAdmission, EgressRefusal, EgressSettings};
-use crate::guard_probe::FakeGuardProbe;
+use crate::EgressRefusal;
+use crate::egress::{DomainBlocklist, EgressAdmission, EgressSettings};
+use crate::guard::probe::FakeGuardProbe;
 use crate::r#trait::SandboxRuntime;
 
 fn log_lines(log: &Path) -> Vec<String> {

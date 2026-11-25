@@ -12,15 +12,16 @@
 //!   are captured at materialization and snapshotted into the persisted plan
 //!   record, so a later node-setting change never re-derives a running
 //!   sandbox's enforcement.
-//! - `EgressRefusal` is the typed reason a create / cold reconnect / start
-//!   fence refusal carries (mapped onto the wire by the daemon).
+//! - The typed reason a create / cold reconnect / start fence refusal carries
+//!   is `crate::EgressRefusal`, beside `RuntimeError` (mapped onto the wire by
+//!   the daemon).
 
 use std::net::Ipv4Addr;
 use std::sync::OnceLock;
 
 use sandbox_protocol::SandboxErrorCode;
 
-use crate::RuntimeError;
+use crate::{EgressRefusal, RuntimeError};
 
 /// The shared contract fixture, embedded at compile time.
 const EGRESS_POLICY_CASES_JSON: &str =
@@ -299,8 +300,23 @@ fn valid_digest(digest: &str) -> bool {
 }
 
 /// Exact lowercase DNS name with at least two labels. One implementation,
-/// shared with the guard's source parser and `validate_policy_domain`.
-pub use crate::guard::sources::valid_domain_name;
+/// shared by the egress settings, the guard's policy-source parser and
+/// `validate_policy_domain`.
+pub fn valid_domain_name(domain: &str) -> bool {
+    !domain.is_empty()
+        && domain.len() <= 253
+        && domain.parse::<Ipv4Addr>().is_err()
+        && domain.split('.').count() >= 2
+        && domain.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+        })
+}
 
 impl EgressSettings {
     /// Validate before any compile or render: bounded, injection-free inputs.
@@ -382,58 +398,6 @@ pub fn domain_denied(name: &str, settings: &EgressSettings) -> bool {
                 .strip_suffix(blocked.as_str())
                 .is_some_and(|head| head.ends_with('.'))
     })
-}
-
-/// Typed egress refusal reasons (§1.4, §1.5, §2.1). Carried on the runtime
-/// error; the daemon maps them onto the wire `details.reason`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EgressRefusal {
-    /// The node's egress guard is missing, unhealthy, outdated, its lease
-    /// expired, or it does not cover this sandbox's bridge. Retryable.
-    GuardUnavailable,
-    /// An open-mode sandbox on a node whose owner does not allow open egress
-    /// for other users' sandboxes. Terminal for the sandbox.
-    OpenEgressNotPermitted,
-    /// The compiled ACL body exceeds its bound (m12).
-    PolicyTooLarge,
-    /// A DNS refresh whose recompiled ACL body would exceed the byte budget
-    /// was not published: the last-good rules stay (fails narrow).
-    RefreshOverBudget,
-}
-
-impl EgressRefusal {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::GuardUnavailable => "egress_guard_unavailable",
-            Self::OpenEgressNotPermitted => "open_egress_not_permitted",
-            Self::PolicyTooLarge => "egress_policy_too_large",
-            Self::RefreshOverBudget => "egress_refresh_over_budget",
-        }
-    }
-
-    /// The typed wire reason (`details.reason` with `unsupported_capability`).
-    /// The size refusals travel as their code alone.
-    pub fn wire_reason(self) -> Option<sandbox_protocol::EgressRefusalReason> {
-        match self {
-            Self::GuardUnavailable => {
-                Some(sandbox_protocol::EgressRefusalReason::EgressGuardUnavailable)
-            }
-            Self::OpenEgressNotPermitted => {
-                Some(sandbox_protocol::EgressRefusalReason::OpenEgressNotPermitted)
-            }
-            Self::PolicyTooLarge | Self::RefreshOverBudget => None,
-        }
-    }
-
-    pub fn error(self, message: impl Into<String>) -> RuntimeError {
-        let code = match self {
-            Self::GuardUnavailable | Self::OpenEgressNotPermitted => {
-                SandboxErrorCode::UnsupportedCapability
-            }
-            Self::PolicyTooLarge | Self::RefreshOverBudget => SandboxErrorCode::RequestTooLarge,
-        };
-        RuntimeError::new(code, message).with_egress_refusal(self)
-    }
 }
 
 /// The daemon's early admission inputs for a create / cold reconnect (§1.5):

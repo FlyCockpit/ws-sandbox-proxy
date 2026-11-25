@@ -278,7 +278,7 @@ mod files {
 #[test]
 fn e6_deployment_list_parity_and_root_union() {
     let cases: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../sandbox-protocol/fixtures/egress_blocklist_cases.json"
+        "../../../../sandbox-protocol/fixtures/egress_blocklist_cases.json"
     ))
     .unwrap();
     let tokens = |raw: &serde_json::Value| -> Vec<String> {

@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use sandbox_runtime::guard::probe::{GuardSourceState, GuardStatus};
 use sandbox_runtime::guard::protocol::{Reply, Request, call};
-use sandbox_runtime::guard_probe::{GuardSourceState, GuardStatus};
 
 use super::paths::Paths;
 use super::{GuardConfig, InstallArgs, UninstallArgs, preflight, tools};
@@ -694,7 +694,7 @@ mod tests {
     use super::*;
 
     fn status_with(deployment: GuardSourceState) -> GuardStatus {
-        let mut status = sandbox_runtime::guard_probe::FakeGuardProbe::healthy_status(&[]);
+        let mut status = sandbox_runtime::guard::probe::FakeGuardProbe::healthy_status(&[]);
         status.sources.deployment.state = deployment;
         status
     }

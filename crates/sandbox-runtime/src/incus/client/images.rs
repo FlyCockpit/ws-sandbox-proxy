@@ -661,7 +661,7 @@ impl IncusClient {
         }
         // One wssp daemon per Incus server: rechecked at the start itself;
         // the capture may have run for minutes since its entry check.
-        crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
         let out = self.image_run(&["start", vm], CAPTURE_STEP_TIMEOUT)?;
         require_success(&out, "start")?;
         self.capture_vm_settle(vm)?;
@@ -723,7 +723,7 @@ impl IncusClient {
         require_success(&out, "stop")?;
         progress(crate::CapturePhase::Publishing);
         // And again before the publish writes the shared image store.
-        crate::guard_probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
+        crate::guard::probe::refuse_shared_incus_server(self.guard_probe.as_ref())?;
         let out = self.image_run(&["publish", vm, "--compression", "zstd"], IMAGE_IO_TIMEOUT)?;
         require_success(&out, "publish")?;
         let fingerprint = fingerprint_after(&out.stdout, "fingerprint:").ok_or_else(|| {

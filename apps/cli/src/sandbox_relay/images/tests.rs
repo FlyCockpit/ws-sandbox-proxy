@@ -2352,20 +2352,20 @@ mod upstream;
 /// Reports another daemon on the Incus server while `on` is set.
 #[derive(Debug)]
 struct SharedServer {
-    inner: sandbox_runtime::guard_probe::FakeGuardProbe,
+    inner: sandbox_runtime::guard::probe::FakeGuardProbe,
     on: Arc<std::sync::atomic::AtomicBool>,
     /// The first `skip` asks answer "sole" (an entry check that passed).
     skip: std::sync::atomic::AtomicUsize,
 }
-impl sandbox_runtime::guard_probe::GuardProbe for SharedServer {
+impl sandbox_runtime::guard::probe::GuardProbe for SharedServer {
     fn status(
         &self,
-    ) -> Result<sandbox_runtime::guard_probe::GuardStatus, sandbox_runtime::RuntimeError> {
+    ) -> Result<sandbox_runtime::guard::probe::GuardStatus, sandbox_runtime::RuntimeError> {
         self.inner.status()
     }
     fn expectations(
         &self,
-    ) -> Result<sandbox_runtime::guard_probe::GuardExpectations, sandbox_runtime::RuntimeError>
+    ) -> Result<sandbox_runtime::guard::probe::GuardExpectations, sandbox_runtime::RuntimeError>
     {
         self.inner.expectations()
     }
@@ -2394,7 +2394,7 @@ fn shared_runtime_after(
     let flag = Arc::new(std::sync::atomic::AtomicBool::new(on));
     let mut runtime = FakeRuntime::default();
     runtime.set_guard_probe(Arc::new(SharedServer {
-        inner: sandbox_runtime::guard_probe::FakeGuardProbe::healthy(),
+        inner: sandbox_runtime::guard::probe::FakeGuardProbe::healthy(),
         on: flag.clone(),
         skip: std::sync::atomic::AtomicUsize::new(skip),
     }));

@@ -12,8 +12,9 @@ use super::dns::{
     render_published_dnsmasq_config,
 };
 use super::network::*;
+use crate::EgressRefusal;
 use crate::egress::{
-    DomainBlocklist, EgressRefusal, EgressSettings, MAX_ACL_BODY_BYTES, MAX_BLOCKED_DOMAINS,
+    DomainBlocklist, EgressSettings, MAX_ACL_BODY_BYTES, MAX_BLOCKED_DOMAINS,
     MAX_DNSMASQ_BODY_BYTES, sandbox_public_v4_text,
 };
 

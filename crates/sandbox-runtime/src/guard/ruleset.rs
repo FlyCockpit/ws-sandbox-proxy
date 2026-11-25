@@ -682,5 +682,5 @@ pub fn verify_readback(expected: &GuardInputs, listing: &Value) -> Result<(), Ru
 }
 
 #[cfg(test)]
-#[path = "ruleset_tests.rs"]
+#[path = "tests/ruleset.rs"]
 mod tests;

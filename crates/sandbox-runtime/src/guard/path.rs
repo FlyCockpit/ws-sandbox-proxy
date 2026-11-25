@@ -502,5 +502,5 @@ pub fn sandbox_links(links: &Value) -> Result<Vec<SandboxLink>, String> {
 }
 
 #[cfg(test)]
-#[path = "path_tests.rs"]
+#[path = "tests/path.rs"]
 mod tests;
