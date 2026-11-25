@@ -33,7 +33,6 @@
 //! The server judges non-expired evidence from an older observation
 //! `not_converged` (the result it received is newer truth); a correct daemon
 //! therefore never downgrades a sandbox whose reconnect it just reported.
-use super::reconcile::{ExpiryArmState, ExpiryReported};
 use anyhow::{Result, bail};
 use sandbox_protocol::{
     CensusEntryOutcome, CensusEntryResult, DaemonControlMessage, InventoryEntry,
@@ -47,6 +46,19 @@ pub(super) type PoolHealth = Vec<(String, String, bool)>;
 /// The server answers each batch on its serialized lane; a batch unanswered
 /// this long means the transport is gone.
 pub(super) const EXPIRY_ACK_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Last published state of a sandbox's lease arm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExpiryArmState {
+    /// The arm's expiry completed, on the first attempt or after failures.
+    Complete,
+    /// The arm's expiry is still failing; the attempt count is published so a
+    /// retry changes the digest.
+    Failing(u32),
+}
+
+/// Last published expiry arm per sandbox: (generation, revision, state).
+pub(super) type ExpiryReported = std::collections::BTreeMap<String, (u64, u64, ExpiryArmState)>;
 
 /// One digest arm per sandbox: `(generation, revision, state)`.
 type Arm = (u64, u64, ExpiryArmState);

@@ -21,7 +21,7 @@
 //! - **Preemption.** A kill or reconnect of the sandbox cancels its offload
 //!   and waits (bounded by `IMAGE_IO_TIMEOUT`) for an in-flight publish (F13).
 //! - **Bandwidth.** `offload_upload_mbps` / `offload_fetch_mbps` pace the part
-//!   loops ([`Bandwidth`]); one offload runs per host.
+//!   loops (`images::bandwidth::Bandwidth`); one offload runs per host.
 
 use anyhow::{Context, Result};
 use sandbox_protocol::{
@@ -323,54 +323,6 @@ impl OffloadJournal {
     }
 }
 
-// ---------------------------------------------------------------- bandwidth
-
-/// A token bucket with a one-part burst: each paced chunk starts no earlier
-/// than the previous chunk's slot at `bytes_per_sec` has ended, so the
-/// average rate never exceeds the cap.
-#[derive(Debug)]
-pub struct Bandwidth {
-    bytes_per_sec: u64,
-    next: Mutex<Option<Instant>>,
-}
-
-impl Bandwidth {
-    /// `None` (unlimited) for `None`.
-    pub fn new(bytes_per_sec: Option<u64>) -> Option<Arc<Self>> {
-        bytes_per_sec.filter(|&rate| rate > 0).map(|rate| {
-            Arc::new(Self {
-                bytes_per_sec: rate,
-                next: Mutex::new(None),
-            })
-        })
-    }
-
-    /// Reserve a slot for `bytes` at `now`; returns how long to wait first.
-    fn reserve_at(&self, bytes: u64, now: Instant) -> Duration {
-        let mut next = self.next.lock().unwrap_or_else(|e| e.into_inner());
-        let start = next.map_or(now, |at| at.max(now));
-        let slot = Duration::from_secs_f64(bytes as f64 / self.bytes_per_sec as f64);
-        *next = Some(start + slot);
-        start.saturating_duration_since(now)
-    }
-
-    /// Wait for `bytes`' slot; false when `stop` asked to end meanwhile.
-    pub fn pace(&self, bytes: u64, stop: &dyn Fn() -> bool) -> bool {
-        let until = Instant::now() + self.reserve_at(bytes, Instant::now());
-        while Instant::now() < until {
-            if stop() {
-                return false;
-            }
-            std::thread::sleep(
-                until
-                    .saturating_duration_since(Instant::now())
-                    .min(Duration::from_millis(250)),
-            );
-        }
-        !stop()
-    }
-}
-
 // ------------------------------------------------------------------ service
 
 /// Local settings (TOML; a restart applies them).
@@ -447,8 +399,8 @@ struct Inner {
     keys: Mutex<HashMap<String, crypto::GrantKey>>,
     /// One offload job at a time on this host.
     slot: Mutex<()>,
-    upload_limit: Option<Arc<Bandwidth>>,
-    fetch_limit: Option<Arc<Bandwidth>>,
+    upload_limit: Option<Arc<super::images::bandwidth::Bandwidth>>,
+    fetch_limit: Option<Arc<super::images::bandwidth::Bandwidth>>,
     grant_wait: Duration,
     publish_wait: Duration,
     poll: Duration,
@@ -609,8 +561,10 @@ impl OffloadService {
                 jobs_cv: Condvar::new(),
                 keys: Mutex::new(HashMap::new()),
                 slot: Mutex::new(()),
-                upload_limit: Bandwidth::new(settings.upload_bytes_per_sec),
-                fetch_limit: Bandwidth::new(settings.fetch_bytes_per_sec),
+                upload_limit: super::images::bandwidth::Bandwidth::new(
+                    settings.upload_bytes_per_sec,
+                ),
+                fetch_limit: super::images::bandwidth::Bandwidth::new(settings.fetch_bytes_per_sec),
                 grant_wait: timing.0,
                 publish_wait: timing.1,
                 poll: timing.2,
@@ -640,7 +594,7 @@ impl OffloadService {
 
     /// The restore fetch pace (`offload_fetch_mbps`; applied by the restore
     /// fetch, offload plan C6).
-    pub fn fetch_limit(&self) -> Option<Arc<Bandwidth>> {
+    pub fn fetch_limit(&self) -> Option<Arc<super::images::bandwidth::Bandwidth>> {
         self.inner.fetch_limit.clone()
     }
 

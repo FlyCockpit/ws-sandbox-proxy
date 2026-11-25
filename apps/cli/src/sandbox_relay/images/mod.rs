@@ -9,6 +9,7 @@
 //! logged, and HTTP errors are mapped to codes, never displayed (they can
 //! carry a presigned URL).
 
+pub mod bandwidth;
 pub mod crypto;
 mod failure;
 pub mod journal;
@@ -4363,7 +4364,7 @@ impl ImageService {
         part_size: u64,
         parts: &[sandbox_protocol::ImageUploadPartUrlV11],
         key: Option<&crypto::RecordKey>,
-        limit: Option<&super::offload::Bandwidth>,
+        limit: Option<&bandwidth::Bandwidth>,
         stop: &dyn Fn() -> bool,
         heartbeat: Option<&UploadHeartbeat>,
     ) -> Result<(Vec<ImageUploadedPartV11>, u64), UploadFailure> {
@@ -4412,7 +4413,7 @@ impl ImageService {
         part: &sandbox_protocol::ImageUploadPartUrlV11,
         expiry: Option<Instant>,
         key: Option<&crypto::RecordKey>,
-        limit: Option<&super::offload::Bandwidth>,
+        limit: Option<&bandwidth::Bandwidth>,
         stop: &dyn Fn() -> bool,
         heartbeat: Option<&UploadHeartbeat>,
         renew: &mut dyn FnMut(
@@ -4497,7 +4498,7 @@ impl ImageService {
         part_size: u64,
         part: &sandbox_protocol::ImageUploadPartUrlV11,
         key: Option<&crypto::RecordKey>,
-        limit: Option<&super::offload::Bandwidth>,
+        limit: Option<&bandwidth::Bandwidth>,
         stop: &dyn Fn() -> bool,
         heartbeat: Option<&UploadHeartbeat>,
     ) -> Result<String, UploadFailure> {

@@ -2538,7 +2538,7 @@ fn relay_session_loop(
     )?);
     let mut last_heartbeat = Instant::now();
     let mut heartbeat_sequence = 0u64;
-    let mut expiry_reported = super::reconcile::ExpiryReported::new();
+    let mut expiry_reported = super::evidence::ExpiryReported::new();
     /// A failed observation is retried after bounded backoff.
     enum ExpiryObservation {
         Offer(Option<super::reconcile::ExpiryOffer>),
