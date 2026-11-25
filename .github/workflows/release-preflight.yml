@@ -37,11 +37,25 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
-          arguments: ""
-          command-arguments: --config apps/cli/deny.toml
+          # cargo-deny 0.20 takes --config before the subcommand.
+          arguments: --config apps/cli/deny.toml
+          command-arguments: ""
           manifest-path: apps/cli/Cargo.toml
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
-          tool: typos-cli
+          # Pinned with cli-ci.yml's typos job.
+          tool: typos-cli@1.52.0
+      # Typos and the policy checks run from the repo root, as in cli-ci.yml:
+      # the root _typos.toml and scripts/policy-checks.sh cover the whole tree.
       - run: typos
+        working-directory: .
+      # The destructive-operation scanner parses with @babel/parser.
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
       - run: bash scripts/policy-checks.sh
+        working-directory: .
