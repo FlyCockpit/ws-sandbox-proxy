@@ -732,19 +732,46 @@ esac
  * @param {number} expectedExit
  * @param {string} label
  */
-function gitCommit(revision) {
-  const result = spawnSync("git", ["rev-parse", "--verify", `${revision}^{commit}`], {
-    encoding: "utf8",
-    cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
-  });
-  if (result.error || result.status !== 0) {
-    throw new Error(`could not resolve inert wrapper-test commit ${revision}`);
+/**
+ * A two-commit range in a throwaway bare repository, so the wrapper test needs
+ * no history from the checkout (a depth-1 CI clone has no HEAD^).
+ * @param {string} dir
+ * @returns {{ gitDir: string, base: string, head: string }}
+ */
+function scratchCommitRange(dir) {
+  const gitDir = join(dir, "range.git");
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "wrapper-test",
+    GIT_AUTHOR_EMAIL: "wrapper-test@example.invalid",
+    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+    GIT_COMMITTER_NAME: "wrapper-test",
+    GIT_COMMITTER_EMAIL: "wrapper-test@example.invalid",
+    GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  };
+  const git = (args, input = "") => {
+    const result = spawnSync("git", ["--git-dir", gitDir, ...args], {
+      env,
+      encoding: "utf8",
+      input,
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(`could not build the inert wrapper-test range: git ${args[0]}`);
+    }
+    return result.stdout.trim();
+  };
+  git(["init", "--bare", "--quiet", "--object-format=sha1"]);
+  const tree = git(["mktree"]);
+  const base = git(["commit-tree", tree, "-m", "base"]);
+  const head = git(["commit-tree", tree, "-p", base, "-m", "head"]);
+  for (const commit of [base, head]) {
+    if (!/^[0-9a-f]{40}$/.test(commit)) {
+      throw new Error("wrapper-test commit was not a lowercase full SHA");
+    }
   }
-  const commit = result.stdout.trim();
-  if (!/^[0-9a-f]{40}$/.test(commit)) {
-    throw new Error("wrapper-test commit was not a lowercase full SHA");
-  }
-  return commit;
+  return { gitDir, base, head };
 }
 
 function runWrapper(env, expectedExit, label, base, head) {
@@ -769,14 +796,15 @@ async function wrapperIntegrationTest() {
   writeFileSync(validOutput, `${reviewed.map((record) => JSON.stringify(record)).join("\n")}\n`);
 
   const pathPrefix = `${dir}:${process.env.PATH ?? ""}`;
+  const { gitDir, base, head } = scratchCommitRange(dir);
   const baseEnv = {
     PATH: pathPrefix,
+    // The wrapper resolves and counts the range in the scratch repository.
+    GIT_DIR: gitDir,
     TRUFFLEHOG_WRAPPER_SELF_TEST: "1",
     FAKE_DOCKER_TRUFFLEHOG_OUTPUT: validOutput,
     FAKE_DOCKER_TRUFFLEHOG_ARGS: argsOutput,
   };
-  const head = gitCommit("HEAD");
-  const base = gitCommit("HEAD^");
 
   try {
     runWrapper(
