@@ -469,6 +469,12 @@ it("3C1 relative lifetime contracts reject absolute leases and invalid durations
     expect(leaseTimeoutBeyondFiniteMax(value)).toBe(false);
   expect(reconnectBodySchema.safeParse({}).success).toBe(true);
   expect(reconnectBodySchema.safeParse({ onExpire: "stop" }).success).toBe(false);
+  // No schema default: an omitted lease reaches the server as omitted, which
+  // re-arms the sandbox's remembered lease (never a fixed five minutes).
+  expect(reconnectBodySchema.parse({})).not.toHaveProperty("timeoutMs");
+  const reconnectTimeout = reconnectBodySchema.shape.timeoutMs.meta();
+  expect(reconnectTimeout).not.toHaveProperty("default");
+  expect(reconnectTimeout?.description).toMatch(/remembered lease/);
   expect(
     createSandboxBodySchema.safeParse({ template: "revision/" + "t", sandboxHostId: "h" }).success,
   ).toBe(true);

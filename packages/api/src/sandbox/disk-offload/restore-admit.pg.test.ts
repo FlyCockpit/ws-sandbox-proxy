@@ -170,10 +170,12 @@ async function offloaded(
   owner: Principal,
   input: { sandboxHostId: string } | { poolId: string; template: string },
   hostId: string,
+  lease: { timeoutMs?: number; lifecycle?: { onTimeout: "stop" | "kill" } } = {},
 ) {
   const created = await createSandbox(owner, {
     template: "base",
     ...input,
+    ...lease,
     idempotencyKey: randomUUID(),
   });
   await offloadSandboxForTest(db.inspect, {
@@ -705,5 +707,86 @@ describe("restore candidate paging (§8.3, review)", () => {
       state: "PROVISIONING",
       sandboxHostId: eligible.id,
     });
+  });
+});
+
+describe("a restore without timeoutMs reuses the remembered lease", () => {
+  const H2 = 7_200_000;
+  const row = (id: string) => db.inspect.sandbox.findUniqueOrThrow({ where: { id } });
+  const operation = (id: string) =>
+    db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id } });
+
+  it("binds the create's lease and expiry action; an explicit lease wins and is remembered", async () => {
+    const f = await poolFixture(db);
+    await capable([f.host.id, f.other.id]);
+    const id = await offloaded(f.id, f.owner, { sandboxHostId: f.host.id }, f.host.id, {
+      timeoutMs: H2,
+      lifecycle: { onTimeout: "stop" },
+    });
+    const at = new Date(Date.now() + 60_000);
+    const accepted = await reconnectSandbox(
+      f.owner,
+      { id, idempotencyKey: randomUUID() },
+      () => at,
+    );
+    const bound = await row(id);
+    expect(bound).toMatchObject({ state: "PROVISIONING", leaseExpireAction: "STOP" });
+    expect(bound.leaseExpiresAt?.getTime()).toBe(at.getTime() + H2);
+    expect(await operation(accepted.operationId)).toMatchObject({
+      leaseTimeoutMs: H2,
+      leaseExpireActionAccepted: "STOP",
+    });
+    // Back to OFFLOADED; an explicit lease replaces the remembered one.
+    await db.prisma.$transaction((tx) =>
+      exitRestoreAttempt(tx, {
+        sandboxId: id,
+        userId: f.id,
+        attemptOperationId: accepted.operationId,
+        attemptGeneration: bound.generation,
+        proof: { kind: "no_effect", reason: "never_dispatched" },
+      }),
+    );
+    const explicit = await reconnectSandbox(
+      f.owner,
+      { id, idempotencyKey: randomUUID(), timeoutMs: 600_000 },
+      () => new Date(at.getTime() + 60_000),
+    );
+    expect(await row(id)).toMatchObject({ leaseExpireAction: "STOP" });
+    expect(await operation(explicit.operationId)).toMatchObject({ leaseTimeoutMs: 600_000 });
+    const rebound = await row(id);
+    await db.prisma.$transaction((tx) =>
+      exitRestoreAttempt(tx, {
+        sandboxId: id,
+        userId: f.id,
+        attemptOperationId: explicit.operationId,
+        attemptGeneration: rebound.generation,
+        proof: { kind: "no_effect", reason: "never_dispatched" },
+      }),
+    );
+    const later = new Date(at.getTime() + 120_000);
+    await reconnectSandbox(f.owner, { id, idempotencyKey: randomUUID() }, () => later);
+    expect((await row(id)).leaseExpiresAt?.getTime()).toBe(later.getTime() + 600_000);
+  });
+
+  it("a queued restore stores the resolved lease and binds it when placed", async () => {
+    const f = await poolFixture(db);
+    await capable([f.host.id, f.other.id]);
+    const id = await offloaded(f.id, f.owner, { sandboxHostId: f.host.id }, f.host.id, {
+      timeoutMs: H2,
+    });
+    await db.inspect.sandboxHostStoragePool.updateMany({
+      where: { sandboxHostId: { in: [f.host.id, f.other.id] } },
+      data: { newRootsAllowed: false },
+    });
+    const accepted = await restore(f.owner, id, { waitForCapacityMs: 60_000 });
+    expect(
+      await db.inspect.sandboxRestoreWait.findUniqueOrThrow({
+        where: { operationId: accepted.operationId },
+      }),
+    ).toMatchObject({ state: "WAITING", intent: { timeoutMs: H2 } });
+    await capable([f.host.id, f.other.id]);
+    await runRestoreWaitPass(leaseNow);
+    expect(await row(id)).toMatchObject({ state: "PROVISIONING", leaseExpireAction: "DESTROY" });
+    expect(await operation(accepted.operationId)).toMatchObject({ leaseTimeoutMs: H2 });
   });
 });

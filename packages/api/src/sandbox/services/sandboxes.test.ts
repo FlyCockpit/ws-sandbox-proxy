@@ -496,7 +496,6 @@ const replayCases: {
       sandboxId: base.id,
       action: "reconnect",
       mode: "default",
-      timeoutMs: 300_000,
     },
     run: (p) => services.reconnectSandbox(p, base),
   },

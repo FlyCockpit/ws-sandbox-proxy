@@ -357,11 +357,19 @@ action. Create defaults to **300000 ms (five minutes)** and
 `lifecycle: {onTimeout: "kill"}` (destroy VM and disk). Choose `"stop"` to keep
 the disk on timeout. Explicit stop keeps disk; it does not preserve RAM/processes.
 
-- Create/connect accept relative `timeoutMs` (default 300000). `setTimeout`
-  takes `{timeoutMs}` relative to server acceptance and may shorten. READY
-  connect only extends; STOPPED connect boots the sandbox's disk on the host
-  that holds it (OFFLOADED connect restores it onto an eligible host) with a
-  new generation. Connect keeps the existing timeout action.
+- Create/connect accept relative `timeoutMs`. Create defaults to 300000; the
+  sandbox remembers its create's `timeoutMs`, and a connect that names one
+  replaces it. A connect without `timeoutMs` reuses the remembered lease, so
+  stop then start (CLI `wssp sandbox start <id>`, SDK `connect()`) keeps the
+  lifetime chosen earlier instead of falling back to five minutes. `setTimeout`
+  takes `{timeoutMs}` relative to server acceptance, may shorten, and is not
+  remembered. READY connect only extends; STOPPED connect boots the sandbox's
+  disk on the host that holds it (OFFLOADED connect restores it onto an
+  eligible host) with a new generation. Connect keeps the existing timeout
+  action. A remembered lease is never shortened to fit a policy that was
+  lowered since: the connect fails with `lease_exceeds_policy` (a restore
+  through a pool finds no host it may use instead: `restore_no_allowed_host`,
+  or it waits when `waitForCapacityMs` is set); pass a shorter `timeoutMs`.
 - The longest lease is the smallest of four layers (see "Layered lease
   policy" below): the deployment (`SANDBOX_MAX_TIMEOUT_MS`), the host's own
   ceiling, the pool maximum and the membership maximum. A request over it fails

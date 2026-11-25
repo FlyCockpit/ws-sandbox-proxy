@@ -1061,6 +1061,9 @@ model SandboxOperation {
   // Dashboard operation list (C48): newest-first keyset pages per owner and per sandbox.
   @@index([userId, createdAt])
   @@index([sandboxId, createdAt])
+  /// The remembered lease (`rememberedLeaseTimeoutMs`): the latest accepted
+  /// create or reconnect lease of one sandbox, without scanning its commands.
+  @@index([sandboxId, leaseRevisionAccepted(sort: Desc)], map: "sandbox_operation_remembered_lease_idx", where: raw("((kind = ANY (ARRAY['CREATE_SANDBOX'::\"SandboxOperationKind\", 'RECONNECT_SANDBOX'::\"SandboxOperationKind\"])) AND (\"leaseRevisionAccepted\" IS NOT NULL) AND (\"leaseTimeoutMs\" IS NOT NULL))"))
   @@map("sandbox_mutation_operation")
 }
 

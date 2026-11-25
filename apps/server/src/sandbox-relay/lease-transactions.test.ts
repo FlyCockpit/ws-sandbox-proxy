@@ -815,7 +815,7 @@ describe("C11 service / outbox / handler lease transactions", () => {
     expect(store.sandboxes.get(id)?.state).toBe("STOPPING");
   });
 
-  it("cold re-arm defaults start after the sandbox lock wait", async () => {
+  it("cold re-arm without a lease reuses the remembered one, counted after the sandbox lock wait", async () => {
     const id = await stopped();
     const barrier = pause("beforeSandboxLock");
     const pending = reconnectSandbox(owner, { id, idempotencyKey: "default-rearm" }, clock);
@@ -825,7 +825,8 @@ describe("C11 service / outbox / handler lease transactions", () => {
     await pending;
     expect(store.sandboxes.get(id)).toMatchObject({
       leaseRevision: 2,
-      leaseExpiresAt: deadline(300_000),
+      // The create's 1000 ms, not a fixed five minutes.
+      leaseExpiresAt: deadline(1000),
       leaseExpireAction: "STOP",
       leaseExpiresAtEffective: null,
     });

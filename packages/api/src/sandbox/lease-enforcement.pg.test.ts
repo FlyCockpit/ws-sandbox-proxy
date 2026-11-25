@@ -439,3 +439,185 @@ it("review #2: deleting the host ends an unlimited own-host sandbox: stop, grace
     await db.inspect.sandboxOperation.count({ where: { sandboxId: s.id, kind: "KILL_SANDBOX" } }),
   ).toBe(1);
 });
+
+/** A READY sandbox created with `timeoutMs` and `onTimeout`; `stop` settles a host stop. */
+async function leasedSandbox(timeoutMs: number, onTimeout: "stop" | "kill") {
+  const f = await poolFixture(db);
+  const created = await createSandbox(f.owner, {
+    ...f.input,
+    timeoutMs,
+    lifecycle: { onTimeout },
+  });
+  await ready(created.id);
+  await db.prisma.$transaction((tx) => reconcileSandboxAccess(tx, created.id));
+  const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: created.id } });
+  const stop = async () => {
+    await db.inspect.sandboxOperation.updateMany({
+      where: { sandboxId: created.id },
+      data: { state: "SUCCEEDED", completedAt: new Date() },
+    });
+    await db.prisma.$transaction(async (tx) => {
+      await lockOwnerForAdmission(tx, f.id);
+      await releaseLiveResourcesOnInventoryProof(tx, {
+        hostId: created.sandboxHostId!,
+        ownerId: f.id,
+        sandboxId: created.id,
+      });
+    });
+    await db.inspect.sandbox.update({ where: { id: created.id }, data: { state: "STOPPED" } });
+  };
+  /** A reconnect at `at`; `timeoutMs` omitted reuses the remembered lease. */
+  const connect = async (
+    at: Date,
+    mode: "warm" | "cold",
+    timeoutMs?: number,
+    idempotencyKey: string = randomUUID(),
+  ) => {
+    const accepted = await reconnectSandbox(
+      f.owner,
+      { id: created.id, idempotencyKey, mode, ...(timeoutMs !== undefined ? { timeoutMs } : {}) },
+      () => at,
+    );
+    const operation = await db.inspect.sandboxOperation.findUniqueOrThrow({
+      where: { id: accepted.operationId },
+    });
+    return { row: await row(), operation };
+  };
+  const start = (at: Date, timeoutMs?: number) => connect(at, "cold", timeoutMs);
+  return { f, id: created.id, row, stop, start, connect };
+}
+
+it("a start without timeoutMs reuses the create's lease and expiry action; an explicit one wins and is remembered", async () => {
+  const s = await leasedSandbox(H2, "stop");
+  await s.stop();
+  // The CLI hint's `wssp sandbox start <id> --wait`: no lease in the body.
+  const at = new Date(Date.now() + 60_000);
+  const first = await s.start(at);
+  expect(first.row.leaseExpireAction).toBe("STOP");
+  expect(first.row.leaseExpiresAt?.getTime()).toBe(at.getTime() + H2);
+  expect(first.row.leaseExpiresAtRequested?.getTime()).toBe(at.getTime() + H2);
+  expect(first.operation).toMatchObject({ leaseTimeoutMs: H2, leaseExpireActionAccepted: "STOP" });
+  expect(first.operation.leaseExpiresAtAccepted?.getTime()).toBe(at.getTime() + H2);
+  // An explicit lease wins and becomes the remembered one.
+  await ready(s.id);
+  await s.stop();
+  const later = new Date(at.getTime() + 60_000);
+  const explicit = await s.start(later, 600_000);
+  expect(explicit.row.leaseExpireAction).toBe("STOP");
+  expect(explicit.row.leaseExpiresAt?.getTime()).toBe(later.getTime() + 600_000);
+  await ready(s.id);
+  await s.stop();
+  const last = new Date(later.getTime() + 60_000);
+  const again = await s.start(last);
+  expect(again.operation).toMatchObject({ leaseTimeoutMs: 600_000 });
+  expect(again.row).toMatchObject({ leaseExpireAction: "STOP" });
+  expect(again.row.leaseExpiresAt?.getTime()).toBe(last.getTime() + 600_000);
+});
+
+it("a renewal is not remembered: a later start without timeoutMs uses the create's lease", async () => {
+  const s = await leasedSandbox(H2, "kill");
+  await renew(s.f, s.id, 600_000);
+  await s.stop();
+  const at = new Date(Date.now() + 60_000);
+  const started = await s.start(at);
+  expect(started.row).toMatchObject({ leaseExpireAction: "DESTROY" });
+  expect(started.row.leaseExpiresAt?.getTime()).toBe(at.getTime() + H2);
+});
+
+it("a remembered lease the policy no longer allows is refused, not shortened", async () => {
+  const s = await leasedSandbox(H6, "kill");
+  await s.stop();
+  // The host ceiling drops under the remembered 6 h: nothing is clamped.
+  await db.inspect.sandboxHost.updateMany({
+    where: { userId: s.f.id },
+    data: { daemonMaxLeaseMs: H1 },
+  });
+  const before = await s.row();
+  const at = new Date(Date.now() + 60_000);
+  await expect(s.start(at)).rejects.toMatchObject(exceeds(H1));
+  expect(await s.row()).toMatchObject({
+    state: "STOPPED",
+    leaseRevision: before.leaseRevision,
+    generation: before.generation,
+  });
+  const explicit = await s.start(at, H1);
+  expect(explicit.row.leaseExpiresAt?.getTime()).toBe(at.getTime() + H1);
+});
+
+it("a warm reconnect extends by the remembered lease and never shortens; a shorter explicit one is still remembered", async () => {
+  const s = await leasedSandbox(H2, "kill");
+  const created = await s.row();
+  const at = new Date(Date.now() + 60_000);
+  const warm = await s.connect(at, "warm");
+  expect(warm.operation).toMatchObject({ leaseTimeoutMs: H2 });
+  expect(warm.row.leaseExpiresAt?.getTime()).toBe(
+    Math.max(at.getTime() + H2, created.leaseExpiresAt!.getTime()),
+  );
+  // A shorter explicit warm lease keeps the later deadline in force ...
+  const shorter = await s.connect(new Date(at.getTime() + 1000), "warm", 600_000);
+  expect(shorter.row.leaseExpiresAt?.getTime()).toBe(warm.row.leaseExpiresAt!.getTime());
+  // ... and is the lease the next start without timeoutMs re-arms.
+  await s.stop();
+  const later = new Date(at.getTime() + 60_000);
+  const started = await s.start(later);
+  expect(started.row.leaseExpiresAt?.getTime()).toBe(later.getTime() + 600_000);
+});
+
+it("an omitted lease and an explicit one are different intents for one idempotency key", async () => {
+  const s = await leasedSandbox(H2, "kill");
+  const key = randomUUID();
+  const at = new Date(Date.now() + 60_000);
+  const omitted = await s.connect(at, "warm", undefined, key);
+  // The same omitted request replays its receipt, even after the remembered lease changed.
+  await s.connect(new Date(at.getTime() + 1000), "warm", 600_000);
+  const replay = await s.connect(new Date(at.getTime() + 2000), "warm", undefined, key);
+  expect(replay.operation.id).toBe(omitted.operation.id);
+  expect(replay.operation.leaseTimeoutMs).toBe(H2);
+  await expect(s.connect(at, "warm", H2, key)).rejects.toMatchObject({
+    data: { code: "sandbox.idempotency_conflict" },
+  });
+});
+
+it("the latest lease revision wins, not the latest acceptance clock", async () => {
+  const s = await leasedSandbox(H2, "kill");
+  await s.stop();
+  const at = new Date(Date.now() + 60_000);
+  const explicit = await s.start(at, H6);
+  // A backward clock step: the later acceptance carries the earlier time.
+  await db.inspect.sandboxOperation.update({
+    where: { id: explicit.operation.id },
+    data: { leaseAcceptedAt: new Date(at.getTime() - 3_600_000) },
+  });
+  await ready(s.id);
+  await s.stop();
+  const later = new Date(at.getTime() + 60_000);
+  const started = await s.start(later);
+  expect(started.row.leaseExpiresAt?.getTime()).toBe(later.getTime() + H6);
+});
+
+it("a remembered unlimited lease (0) starts unlimited again", async () => {
+  const s = await unlimitedOwnHostSandbox();
+  await s.hostStopped();
+  await db.inspect.sandboxOperation.updateMany({
+    where: { sandboxId: s.id },
+    data: { state: "SUCCEEDED", completedAt: new Date() },
+  });
+  await reconnectSandbox(s.f.owner, { id: s.id, idempotencyKey: randomUUID(), mode: "cold" });
+  expect((await s.row()).leaseExpiresAt?.toISOString()).toBe(UNLIMITED_END);
+});
+
+it("the remembered-lease lookup is served by its partial index", async () => {
+  const plan = await db.prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+    return tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(
+      `EXPLAIN SELECT "leaseTimeoutMs" FROM sandbox_mutation_operation
+       WHERE "sandboxId" = 'sbx' AND "userId" = 'owner'
+         AND kind IN ('CREATE_SANDBOX', 'RECONNECT_SANDBOX')
+         AND "leaseRevisionAccepted" IS NOT NULL AND "leaseTimeoutMs" IS NOT NULL
+       ORDER BY "leaseRevisionAccepted" DESC LIMIT 1`,
+    );
+  });
+  const text = plan.map((row) => row["QUERY PLAN"]).join("\n");
+  expect(text).toContain("sandbox_operation_remembered_lease_idx");
+  expect(text).not.toContain("Sort");
+});

@@ -49,6 +49,9 @@ export const sandboxTimeoutSchema = z
     description: `Relative lease in milliseconds; 0 means no lease timer where policy allows it. Finite leases are capped at 24 days (${LEASE_FINITE_MAX_MS} ms) by policy, or lower by the deployment, host or pool: a larger value fails with 400 \`lease_exceeds_policy\` carrying \`maxTimeoutMs\`.`,
   });
 
+const RECONNECT_TIMEOUT_DESCRIPTION =
+  "The new relative lease, remembered for later starts. Omitted: the sandbox's remembered lease (the create's `timeoutMs`, or the last one a reconnect named), with the expiry action chosen at create.";
+
 /** A well-formed lease timeout no policy can admit (`lease_exceeds_policy`). */
 export function leaseTimeoutBeyondFiniteMax(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > LEASE_FINITE_MAX_MS;
@@ -162,7 +165,15 @@ export const updateSandboxBodySchema = z
 export const reconnectBodySchema = z
   .object({
     mode: z.enum(["warm", "cold"]).optional(),
-    timeoutMs: sandboxTimeoutSchema.optional().meta({ default: 300000 }),
+    /**
+     * The new relative lease, remembered for later starts. Omitted: the
+     * sandbox's remembered lease (the create's `timeoutMs`, or the last one
+     * a reconnect named) with its expiry action, so stop then start keeps the
+     * lifetime chosen earlier.
+     */
+    timeoutMs: sandboxTimeoutSchema.optional().meta({
+      description: `${RECONNECT_TIMEOUT_DESCRIPTION} ${sandboxTimeoutSchema.description}`,
+    }),
     /**
      * CLI logins: resume pins for a cold start. A named account or instance
      * applies to this start only and disables fallback (`credential.in_use`,

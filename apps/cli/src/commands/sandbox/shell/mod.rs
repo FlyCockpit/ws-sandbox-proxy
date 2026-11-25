@@ -427,13 +427,15 @@ fn sandbox_info(credential: &UserCredential, id: &str) -> Option<SandboxInfo> {
 fn state_message(target: &str, id: &str, state: Option<&str>) -> String {
     match state {
         Some("STOPPED") => {
-            format!("sandbox `{target}` is stopped; start it with `wssp sandbox start {id} --wait`")
+            format!(
+                "sandbox `{target}` is stopped; start it with `wssp sandbox start {id} --wait` (it keeps its lease; `--timeout <dur>` sets a new one)"
+            )
         }
         Some("OFFLOADED") => format!(
-            "sandbox `{target}` is stopped and its disk is offloaded; start it with `wssp sandbox start {id} --wait`"
+            "sandbox `{target}` is stopped and its disk is offloaded; start it with `wssp sandbox start {id} --wait` (it keeps its lease; `--timeout <dur>` sets a new one)"
         ),
         Some("STOPPING") => format!(
-            "sandbox `{target}` is stopping; once it is stopped, start it with `wssp sandbox start {id} --wait`"
+            "sandbox `{target}` is stopping; once it is stopped, start it with `wssp sandbox start {id} --wait` (it keeps its lease; `--timeout <dur>` sets a new one)"
         ),
         Some(state @ ("REQUESTED" | "SCHEDULED" | "PROVISIONING" | "WAITING_FOR_CAPACITY")) => {
             format!(

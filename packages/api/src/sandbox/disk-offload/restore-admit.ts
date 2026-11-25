@@ -35,6 +35,7 @@ import {
   acceptedLeaseFields,
   type LeaseClock,
   leaseTransactionNow,
+  rememberedLeaseTimeoutMs,
   resolveLeaseTimeout,
 } from "../lease";
 import { leaseRequestOf, readLockedPathLimit, requireLeaseWithinPolicy } from "../lease-policy";
@@ -101,13 +102,17 @@ type Tx = Prisma.TransactionClient;
 const RESTORABLE_STATE = "OFFLOADED" satisfies SandboxState;
 
 /** The normalized restore request (the private `SandboxRestoreWait.intent`). */
-export type RestoreRequest = {
+type RestoreRequest = {
   timeoutMs: number;
   credentials?: readonly CredentialClaimRequest[];
   target: { hostId: string } | { poolId: string } | null;
   waitForCapacityMs?: CapacityWaitRequest;
   overrideCreatorAllowlist: boolean;
 };
+
+/** A reconnect's restore request; omitted `timeoutMs` is the sandbox's
+ * remembered lease (`rememberedLeaseTimeoutMs`), resolved by `acceptRestore`. */
+export type RestoreRequestInput = Omit<RestoreRequest, "timeoutMs"> & { timeoutMs?: number };
 
 const intentSchema = {
   parse(value: Prisma.JsonValue | null): RestoreRequest | null {
@@ -199,15 +204,15 @@ function targetOf(input: { sandboxHostId?: string; poolId?: string }): RestoreRe
 
 /** Build the normalized request from the reconnect input. */
 export function restoreRequestOf(input: {
-  timeoutMs: number;
+  timeoutMs?: number;
   credentials?: readonly CredentialClaimRequest[];
   sandboxHostId?: string;
   poolId?: string;
   waitForCapacityMs?: CapacityWaitRequest;
   overrideCreatorAllowlist?: boolean;
-}): RestoreRequest {
+}): RestoreRequestInput {
   return {
-    timeoutMs: input.timeoutMs,
+    ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
     ...(input.credentials?.length ? { credentials: input.credentials } : {}),
     target: targetOf(input),
     ...(input.waitForCapacityMs !== undefined
@@ -217,7 +222,9 @@ export function restoreRequestOf(input: {
   };
 }
 
-function intentShape(request: RestoreRequest): RestoreIntentShape {
+function intentShape(
+  request: Pick<RestoreRequest, "target" | "overrideCreatorAllowlist">,
+): RestoreIntentShape {
   return { target: request.target, overrideCreatorAllowlist: request.overrideCreatorAllowlist };
 }
 
@@ -835,7 +842,7 @@ export async function acceptRestore(
     sandboxId: string;
     idempotencyKey: string;
     bodyHash: () => string;
-    request: RestoreRequest;
+    request: RestoreRequestInput;
     clock: LeaseClock;
   },
 ): Promise<{ id: string; state: "QUEUED" }> {
@@ -846,14 +853,21 @@ export async function acceptRestore(
     select: restoreSandboxSelect,
   });
   requireRestorable(head);
-  await requireRestorableLogins(tx, head.id, input.request);
-  const selection = await selectRestoreTarget(tx, principal, head, input.request);
+  // A start without a lease reuses the remembered one; the stored wait intent
+  // carries the resolved value. A concurrent acceptance moves the generation,
+  // which the locked re-read below refuses.
+  const request: RestoreRequest = {
+    ...input.request,
+    timeoutMs: input.request.timeoutMs ?? (await rememberedLeaseTimeoutMs(tx, head)),
+  };
+  await requireRestorableLogins(tx, head.id, request);
+  const selection = await selectRestoreTarget(tx, principal, head, request);
   const target = selection.kind === "target" ? selection.target : null;
   const sandbox = await lockRestoreSandbox(tx, ownerId, input.sandboxId);
   requireRestorable(sandbox);
   if (sandbox.generation !== head.generation || sandbox.diskOffloadId !== head.diskOffloadId)
     throw sandboxStateConflict();
-  if (!target && input.request.waitForCapacityMs === undefined) throw restoreNoAllowedHost();
+  if (!target && request.waitForCapacityMs === undefined) throw restoreNoAllowedHost();
   const operation = await tx.sandboxOperation.create({
     data: {
       authorizingKeyId: recordedKeyIdOf(principal),
@@ -878,7 +892,7 @@ export async function acceptRestore(
     select: { id: true, idempotencyKey: true },
   });
   if (target) {
-    await bindRestore(tx, principal, sandbox, target, operation, input.request, input.clock);
+    await bindRestore(tx, principal, sandbox, target, operation, request, input.clock);
     return { id: operation.id, state: "QUEUED" };
   }
   const now = await hostDatabaseNow(tx);
@@ -889,9 +903,9 @@ export async function acceptRestore(
       userId: ownerId,
       authorizingKeyId: recordedKeyIdOf(principal),
       expectedGeneration: sandbox.generation,
-      intent: intentSchema.store(input.request),
+      intent: intentSchema.store(request),
       enqueuedAt: now,
-      deadlineAt: waitDeadline(input.request.waitForCapacityMs ?? 1000, now),
+      deadlineAt: waitDeadline(request.waitForCapacityMs ?? 1000, now),
       // The acceptance's own verdict, should no later pass reach one.
       ...(selection.kind === "login" ? { lastLoginRefusal: selection.code } : {}),
     },

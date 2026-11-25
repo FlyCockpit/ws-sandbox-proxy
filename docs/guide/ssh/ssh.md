@@ -111,7 +111,7 @@ block (`wssp ssh-config --install`), since they start ssh themselves.
 ## When it fails
 
 `ssh` exits 255 and prints wssp's line starting with `error:`, for example
-``error: sandbox `web` is stopped; start it with `wssp sandbox start <id> --wait`: `sandbox.state_conflict`: the server answered HTTP 409``.
+``error: sandbox `web` is stopped; start it with `wssp sandbox start <id> --wait` (it keeps its lease; `--timeout <dur>` sets a new one): `sandbox.state_conflict`: the server answered HTTP 409``.
 The messages and their fixes are in the
 [VS Code troubleshooting table](./vscode.md#troubleshooting); every refusal and
 session end is in the [reference](../connect.md#exit-status).

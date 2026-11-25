@@ -348,7 +348,8 @@ export const reconnectSandboxInput = sandboxIdInput
   .extend({
     mode: z.enum(["warm", "cold"]).optional(),
     idempotencyKey,
-    timeoutMs: sandboxTimeoutSchema.optional().meta({ default: 300000 }),
+    /** Omitted: the sandbox's remembered lease (`rememberedLeaseTimeoutMs`). */
+    timeoutMs: sandboxTimeoutSchema.optional(),
     /** CLI logins: resume pins for a cold start (§7.2 rule 4; no fallback). */
     credentials: z
       .array(credentialRequest)

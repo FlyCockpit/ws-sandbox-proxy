@@ -607,8 +607,10 @@ if (first.nextCursor) {
   lease ACK. A later shortening does not strand an earlier waiter. The returned
   renewal `effective` describes that operation's ACK; `sandbox.lease.effective`
   may already describe a later revision. READY must be the same boot generation.
-- Create/connect default to 300000 ms; create defaults to
-  `lifecycle: {onTimeout: "kill"}`. Choose `"stop"` at create to retain disk on
+- Create defaults to 300000 ms and `lifecycle: {onTimeout: "kill"}`. Connect
+  without `leaseTimeoutMs` reuses the sandbox's remembered lease (the create's
+  `timeoutMs`, or the last `leaseTimeoutMs` a connect named), so stop then
+  connect keeps the lifetime chosen earlier. Choose `"stop"` at create to retain disk on
   timeout. Connect preserves the policy, extends only while READY, and boots the
   original disk while STOPPED. Omitted mode adapts to those states. setTimeout
   takes relative `{timeoutMs}` and may shorten or extend. `timeoutMs: 0` means no

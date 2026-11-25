@@ -122,7 +122,7 @@ import {
   cachedDiskExpectation,
   cancelRestoreWaitIfWaiting,
   detachStaleCachedCopy,
-  type RestoreRequest,
+  type RestoreRequestInput,
   requireCachedHostOnline,
   restoreRequestOf,
   supersedeOnAdmission,
@@ -162,6 +162,7 @@ import {
   type LeaseClock,
   leaseNow,
   leaseTransactionNow,
+  rememberedLeaseTimeoutMs,
   requeueRestoreCleanup,
   resolveLeaseTimeout,
 } from "../lease";
@@ -420,13 +421,14 @@ async function enqueueOwnedOperation(
     conflictMessage: string;
     skipStateUpdate?: boolean;
     advanceGeneration?: boolean | ((state: SandboxState) => boolean);
-    rearmLease?: { timeoutMs: number; clock: LeaseClock };
+    /** Omitted `timeoutMs`: the sandbox's remembered lease (`rememberedLeaseTimeoutMs`). */
+    rearmLease?: { timeoutMs?: number; clock: LeaseClock };
     /** CLI logins: resume pins passed on this cold start (§7.2 rule 4). */
     credentialPins?: readonly CredentialClaimRequest[];
     /** Staged 10.5 admission (6A callers only); see operationTransaction. */
     fsProcess?: { commandEnvironment?: boolean };
     /** Reconnect only: the restore an OFFLOADED sandbox resumes through. */
-    restore?: { request: RestoreRequest; clock: LeaseClock };
+    restore?: { request: RestoreRequestInput; clock: LeaseClock };
     /** Stop only: the offload policy written with the accepted stop (never on replay). */
     offloadPolicy?: OffloadPolicyColumns;
   },
@@ -734,13 +736,18 @@ async function enqueueOwnedOperation(
           // revision, including a no-op extension; replay never executes here.
           const now = await leaseTransactionNow(tx, spec.rearmLease.clock);
           rearmedAt = now;
+          // A reconnect without a lease reuses the remembered one (read under
+          // S); one that names a lease is remembered through its operation.
+          const timeoutMs =
+            spec.rearmLease.timeoutMs ??
+            (await rememberedLeaseTimeoutMs(tx, { id: sandbox.id, userId: owner.ownerId }));
           // G (lease path), H and S are held: the limit is stable until commit.
           // The origin path of an own-host row is unaffected by the usage clear.
           requireLeaseWithinPolicy(
-            leaseRequestOf(spec.rearmLease.timeoutMs),
+            leaseRequestOf(timeoutMs),
             await readLockedPathLimit(tx, sandbox),
           );
-          const candidate = resolveLeaseTimeout(spec.rearmLease.timeoutMs, now.getTime());
+          const candidate = resolveLeaseTimeout(timeoutMs, now.getTime());
           if (!advanceGeneration && isLeaseDeadlinePassed(sandbox.leaseExpiresAtEffective, now))
             throw sandboxStateConflict("Sandbox lease already expired on the host.");
           if (sandbox.leaseRevision >= 2_147_483_647)
@@ -776,7 +783,7 @@ async function enqueueOwnedOperation(
           if (rearmed.count !== 1) throw sandboxStateConflict();
           acceptedLease = acceptedLeaseFields({
             now,
-            timeoutMs: spec.rearmLease.timeoutMs,
+            timeoutMs,
             revision,
             expiresAt,
             action: sandbox.leaseExpireAction,
@@ -1781,7 +1788,8 @@ export const reconnectSandbox = serviceProcedure(
         // for a cold request with the same key. "default" is the deliberate
         // representation of a browser's omitted mode (any of READY/STOPPED).
         mode: input.mode ?? "default",
-        timeoutMs: input.timeoutMs ?? LEASE_DEFAULT_MS,
+        // Omitted: the sandbox's remembered lease, resolved under S.
+        ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
         // Resume pins are part of the intent only when present, so existing
         // keys keep their hash.
         ...(input.credentials?.length ? { credentials: input.credentials } : {}),
@@ -1795,7 +1803,7 @@ export const reconnectSandbox = serviceProcedure(
       },
       ...(input.credentials?.length ? { credentialPins: input.credentials } : {}),
       restore: {
-        request: restoreRequestOf({ ...input, timeoutMs: input.timeoutMs ?? LEASE_DEFAULT_MS }),
+        request: restoreRequestOf(input),
         clock,
       },
       payload: {},
@@ -1808,10 +1816,7 @@ export const reconnectSandbox = serviceProcedure(
       conflictMessage: "Sandbox cannot be reconnected from this state.",
       skipStateUpdate: true,
       advanceGeneration: (state) => state === "STOPPED",
-      rearmLease: {
-        timeoutMs: input.timeoutMs ?? LEASE_DEFAULT_MS,
-        clock,
-      },
+      rearmLease: { timeoutMs: input.timeoutMs, clock },
     });
   },
 );

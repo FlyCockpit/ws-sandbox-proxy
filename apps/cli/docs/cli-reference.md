@@ -262,7 +262,7 @@ wssp sandbox start [OPTIONS] <ID>
 | `<ID>` | Sandbox id | required |
 | `--wait` | Wait until the operation finishes (and, for `start`, the sandbox is READY) |  |
 | `--json` | Emit JSON instead of human-readable text |  |
-| `--timeout <DUR>` | New lease, counted from when the start is accepted: `30m`, `2h`, `1d` (`0`: no lease timer where policy allows it; default 5m) |  |
+| `--timeout <DUR>` | New lease, counted from when the start is accepted: `30m`, `2h`, `1d` (`0`: no lease timer where policy allows it). Later starts reuse it. Default: the sandbox's remembered lease (the create's `--timeout`, or the last one a start set) |  |
 
 ### `wssp sandbox destroy`
 

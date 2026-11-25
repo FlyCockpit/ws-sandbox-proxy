@@ -107,7 +107,7 @@ shared node's owner can see them, as for browser terminals.
 A refusal before the session starts prints one line naming the cause and what
 to do, built from the server's error code (and, for a sandbox that is not
 running, its state), for example
-``error: sandbox `web` is stopped; start it with `wssp sandbox start <id> --wait`: `sandbox.state_conflict`: the server answered HTTP 409``
+``error: sandbox `web` is stopped; start it with `wssp sandbox start <id> --wait` (it keeps its lease; `--timeout <dur>` sets a new one): `sandbox.state_conflict`: the server answered HTTP 409``
 (the explanation, then the server's code). An offloaded sandbox, or one still
 waiting for a host, is refused by authorization (403); when the saved login
 holds `sandboxes:connect`, the CLI reads the sandbox's state and exits 10 with

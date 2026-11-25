@@ -80,8 +80,10 @@ export type ConnectOptions = MutationOptions & {
   /** Omitted adapts to READY/STOPPED; explicit warm/cold constrain the state. */
   mode?: ReconnectInput["mode"];
   /**
-   * Guest-side reconnect budget sent in the request body (server maximum
-   * 24 h). Independent of `waitTimeoutMs`, the SDK wait budget.
+   * The new relative lease sent as the body's `timeoutMs` (bounded by the
+   * lease policy), remembered for later connects. Omitted: the sandbox's
+   * remembered lease (its create's `timeoutMs`, or the last one a connect
+   * named). Independent of `waitTimeoutMs`, the SDK wait budget.
    */
   leaseTimeoutMs?: ReconnectInput["timeoutMs"];
   /**

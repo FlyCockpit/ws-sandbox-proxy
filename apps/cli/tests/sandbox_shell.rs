@@ -711,7 +711,7 @@ fn bodyless_refusals_name_the_cause_and_the_fix() {
             None,
             Some((200, json!({"id": "sbx_1", "state": "STOPPED"}))),
             10,
-            "error: sandbox `sbx_1` is stopped; start it with `wssp sandbox start sbx_1 --wait`",
+            "error: sandbox `sbx_1` is stopped; start it with `wssp sandbox start sbx_1 --wait` (it keeps its lease; `--timeout <dur>` sets a new one)",
         ),
         (
             409,
@@ -720,7 +720,7 @@ fn bodyless_refusals_name_the_cause_and_the_fix() {
             None,
             Some((200, json!({"id": "sbx_1", "state": "OFFLOADED"}))),
             10,
-            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait`",
+            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait` (it keeps its lease; `--timeout <dur>` sets a new one)",
         ),
         (
             409,
@@ -729,7 +729,7 @@ fn bodyless_refusals_name_the_cause_and_the_fix() {
             None,
             Some((200, json!({"id": "sbx_1", "state": "STOPPING"}))),
             10,
-            "error: sandbox `sbx_1` is stopping; once it is stopped, start it with `wssp sandbox start sbx_1 --wait`",
+            "error: sandbox `sbx_1` is stopping; once it is stopped, start it with `wssp sandbox start sbx_1 --wait` (it keeps its lease; `--timeout <dur>` sets a new one)",
         ),
         (
             409,
@@ -903,7 +903,7 @@ fn a_forbidden_connect_names_a_missing_host_only_when_the_scope_is_known() {
             "OFFLOADED",
             None,
             10,
-            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait`",
+            "error: sandbox `sbx_1` is stopped and its disk is offloaded; start it with `wssp sandbox start sbx_1 --wait` (it keeps its lease; `--timeout <dur>` sets a new one)",
         ),
         (
             true,
@@ -1005,7 +1005,7 @@ fn a_stopped_sandbox_given_by_name_is_named_and_started_by_id() {
     assert_eq!(output.status.code(), Some(10), "{}", text(&output.stderr));
     assert!(
         text(&output.stderr).starts_with(
-            "error: sandbox `web` is stopped; start it with `wssp sandbox start sbx_9 --wait`"
+            "error: sandbox `web` is stopped; start it with `wssp sandbox start sbx_9 --wait` (it keeps its lease; `--timeout <dur>` sets a new one)"
         ),
         "{}",
         text(&output.stderr)

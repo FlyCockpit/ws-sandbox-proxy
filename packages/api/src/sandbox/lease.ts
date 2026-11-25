@@ -106,6 +106,34 @@ export function acceptedLeaseFields(input: {
   };
 }
 
+/**
+ * The relative lease a reconnect without `timeoutMs` re-arms: the one the
+ * latest accepted create or reconnect of this sandbox carried (a renewal is
+ * not remembered), else the create default. Derived from the operation rows
+ * every release writes, so it needs no column of its own. "Latest" is the
+ * lease revision, which every acceptance raises under the sandbox lock (never
+ * the acceptance clock). Read it under the locks that serialize this
+ * sandbox's lease acceptances.
+ */
+export async function rememberedLeaseTimeoutMs(
+  tx: Prisma.TransactionClient,
+  sandbox: { id: string; userId: string },
+): Promise<number> {
+  const latest = await tx.sandboxOperation.findFirst({
+    where: {
+      sandboxId: sandbox.id,
+      userId: sandbox.userId,
+      kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX"] },
+      leaseRevisionAccepted: { not: null },
+      leaseTimeoutMs: { not: null },
+    },
+    // `sandbox_operation_remembered_lease_idx`.
+    orderBy: { leaseRevisionAccepted: "desc" },
+    select: { leaseTimeoutMs: true },
+  });
+  return latest?.leaseTimeoutMs ?? LEASE_DEFAULT_MS;
+}
+
 export type LeaseClock = () => Date;
 export const leaseNow: LeaseClock = () => new Date();
 
