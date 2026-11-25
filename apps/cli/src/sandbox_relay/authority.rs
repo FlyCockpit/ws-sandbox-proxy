@@ -36,21 +36,6 @@ impl Drop for EffectAdmission {
     }
 }
 
-// Wire counterpart of the API's CANCELLABLE_OPERATION_KINDS; protocol.test.ts
-// checks parity through OPERATION_DISPATCH_KIND. Unknown kinds fail closed.
-pub(super) const CANCELLABLE_DISPATCH_KINDS: &[&str] = &[
-    "command.run",
-    "file.get",
-    "file.put",
-    "file.list",
-    "file.stat",
-    "file.mkdir",
-    "file.remove",
-    "file.move",
-    "process.list",
-    "process.signal",
-];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingWork {
     pub sandbox_id: String,
@@ -280,6 +265,32 @@ impl AuthorityState {
     }
 }
 impl HostAuthority {
+    /// Production cancel entry: release the fsync journal lock before taking
+    /// authority. A failed persistence cannot revoke a running owner's permit.
+    pub fn request_cancel(
+        &self,
+        journal: &super::journal::HostJournal,
+        operation_id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> anyhow::Result<std::result::Result<PendingWork, AuthorityReject>> {
+        self.request_cancel_for(journal, operation_id, generation, attempt, None)
+    }
+
+    /// [`Self::request_cancel`] for a cancel the host itself decided, with
+    /// its reason journaled first (`ext.cancelReason`).
+    pub fn request_cancel_for(
+        &self,
+        journal: &super::journal::HostJournal,
+        operation_id: &str,
+        generation: u64,
+        attempt: u64,
+        reason: Option<super::journal::CancelReason>,
+    ) -> anyhow::Result<std::result::Result<PendingWork, AuthorityReject>> {
+        journal.record_cancel_for(operation_id, generation, attempt, reason)?;
+        Ok(self.accept_cancel(operation_id, generation, attempt))
+    }
+
     fn lock(&self) -> MutexGuard<'_, AuthorityState> {
         self.0.lock().unwrap_or_else(|e| e.into_inner())
     }
@@ -804,7 +815,9 @@ impl AuthorityState {
                     // Lifecycle work keeps its own refusal path (teardown
                     // deferral, allocation evidence); guest work that never
                     // passed its gate has definitely issued nothing.
-                    if !issued && CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()) {
+                    if !issued
+                        && super::journal::CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str())
+                    {
                         expiry.not_issued.push((id, work.generation, work.attempt));
                     }
                 }
@@ -872,7 +885,7 @@ impl AuthorityState {
         // Retain unknown-attempt cancels for this connection, including repeated
         // dispatches. On saturation refuse new cancellable dispatches rather than
         // evicting a receipt. Lifecycle continuations must remain admissible.
-        if CANCELLABLE_DISPATCH_KINDS.contains(&kind)
+        if super::journal::CANCELLABLE_DISPATCH_KINDS.contains(&kind)
             && (self.cancel_tombstones_full
                 || self
                     .cancel_tombstones
@@ -979,11 +992,9 @@ impl AuthorityState {
         generation: u64,
         attempt: u64,
     ) -> Result<PendingWork, AuthorityReject> {
-        if self
-            .seen
-            .get(id)
-            .is_some_and(|work| !CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()))
-        {
+        if self.seen.get(id).is_some_and(|work| {
+            !super::journal::CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str())
+        }) {
             return Err(rejected(
                 "lifecycle operations cannot be cancelled; use kill",
             ));
@@ -1104,11 +1115,9 @@ impl AuthorityState {
     }
     #[cfg(test)]
     fn cancel(&mut self, id: &str) {
-        if !self
-            .pending
-            .get(id)
-            .is_some_and(|work| CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()))
-        {
+        if !self.pending.get(id).is_some_and(|work| {
+            super::journal::CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str())
+        }) {
             return;
         }
         self.cancelled.insert(id.to_string());
@@ -1779,7 +1788,7 @@ mod tests {
 
     #[test]
     fn ordinary_guest_kinds_remain_cancellable() {
-        for kind in CANCELLABLE_DISPATCH_KINDS {
+        for kind in crate::sandbox_relay::journal::CANCELLABLE_DISPATCH_KINDS {
             let authority = HostAuthority::default();
             authority
                 .accept_dispatch("op", "sbx", kind, 1, 1)

@@ -2274,7 +2274,7 @@ fn run_job(
             idempotency_key: d.idempotency_key.clone(),
             path: d.path.clone().unwrap_or_default(),
             bytes: bytes.clone(),
-            guest: guest_from_dispatch(d),
+            guest: super::journal::guest_from_dispatch(d),
         })?;
         Ok(DispatchSuccess::Effect(response.map(|response| {
             (
@@ -2472,7 +2472,7 @@ pub(super) fn command_request(
             timeout_ms: dispatch.timeout_ms,
             env: Vec::new(),
             stdin: None,
-            guest: guest_from_dispatch(dispatch),
+            guest: super::journal::guest_from_dispatch(dispatch),
             build_step,
         });
     }
@@ -2485,7 +2485,7 @@ pub(super) fn command_request(
             code: SandboxErrorCode::ProtocolError.into(),
             message: "command.run requires a canonical template fingerprint".into(),
         })?;
-    let guest = guest_from_dispatch(dispatch);
+    let guest = super::journal::guest_from_dispatch(dispatch);
     // Validate each source before merging: duplicate/malformed overrides must
     // not be hidden by collecting into a map. Commands take precedence.
     sandbox_protocol::validate_env(defaults)
@@ -2646,7 +2646,7 @@ fn restore_launch(d: &OperationDispatch) -> Option<sandbox_runtime::RestoreLaunc
 
 /// The guest account credential files belong to (the dispatch's guest).
 fn credential_guest(dispatch: &OperationDispatch) -> sandbox_runtime::CredentialGuest {
-    let guest = guest_from_dispatch(dispatch);
+    let guest = super::journal::guest_from_dispatch(dispatch);
     sandbox_runtime::CredentialGuest {
         sandbox_id: dispatch.sandbox_id.clone(),
         uid: guest.guest_uid,
@@ -2967,21 +2967,6 @@ fn credential_command_env(
     Ok(env)
 }
 
-pub(super) fn guest_from_dispatch(dispatch: &OperationDispatch) -> GuestIdentity {
-    GuestIdentity {
-        guest_uid: dispatch.guest_uid.unwrap_or(1000),
-        guest_gid: dispatch.guest_gid.unwrap_or(1000),
-        guest_home: dispatch
-            .guest_home
-            .clone()
-            .unwrap_or_else(|| "/home/user".to_string()),
-        guest_shell: dispatch
-            .guest_shell
-            .clone()
-            .unwrap_or_else(|| "/bin/bash".to_string()),
-    }
-}
-
 fn dispatch_request(job: &DispatchJob) -> DispatchRequest<'_> {
     let dispatch = &job.dispatch;
     DispatchRequest {
@@ -2993,7 +2978,7 @@ fn dispatch_request(job: &DispatchJob) -> DispatchRequest<'_> {
         idempotency_key: &dispatch.idempotency_key,
         template_digest: dispatch.template_digest.as_deref(),
         incus_fingerprint: dispatch.incus_fingerprint.as_deref(),
-        guest: guest_from_dispatch(dispatch),
+        guest: super::journal::guest_from_dispatch(dispatch),
         architecture: dispatch.architecture.as_deref(),
         path: dispatch.path.as_deref(),
         dest_path: dispatch.dest_path.as_deref(),
@@ -6660,8 +6645,8 @@ exit 1
         thread::sleep(Duration::from_millis(300));
         // The cancel arrives while the job is parked at the gate.
         assert!(
-            journal
-                .request_cancel(&authority, "cmd", 1, 1)
+            authority
+                .request_cancel(&journal, "cmd", 1, 1)
                 .unwrap()
                 .is_ok()
         );

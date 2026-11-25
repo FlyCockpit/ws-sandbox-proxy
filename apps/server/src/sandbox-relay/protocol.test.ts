@@ -258,11 +258,11 @@ describe("sandboxRelayProtocol", () => {
   });
 
   it("keeps the host cancellation allowlist aligned with the API contract", () => {
-    const authority = readFileSync(
-      join(protocolFixtures, "../../../apps/cli/src/sandbox_relay/authority.rs"),
+    const journal = readFileSync(
+      join(protocolFixtures, "../../../apps/cli/src/sandbox_relay/journal.rs"),
       "utf8",
     );
-    const declaration = authority.match(/const CANCELLABLE_DISPATCH_KINDS[^=]*= &\[([^\]]+)\]/);
+    const declaration = journal.match(/const CANCELLABLE_DISPATCH_KINDS[^=]*= &\[([^\]]+)\]/);
     expect(declaration).not.toBeNull();
     const hostKinds = [...declaration![1]!.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
     expect(hostKinds.sort()).toEqual(

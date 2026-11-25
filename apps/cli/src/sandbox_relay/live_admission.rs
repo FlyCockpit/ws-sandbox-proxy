@@ -216,7 +216,11 @@ impl LiveSandboxAdmission {
             let confirmed_cleanup = receipts.iter().any(|other| {
                 other.sandbox_id == receipt.sandbox_id
                     && other.generation >= receipt.generation
-                    && confirmed_release(&other.kind, other.state, other.result.as_ref())
+                    && super::journal::confirmed_release(
+                        &other.kind,
+                        other.state,
+                        other.result.as_ref(),
+                    )
             });
             if !confirmed_cleanup {
                 let slot = self
@@ -435,21 +439,6 @@ impl LiveSandboxAdmission {
         }
         false
     }
-}
-
-pub fn confirmed_release(
-    kind: &str,
-    state: OperationState,
-    result: Option<&serde_json::Value>,
-) -> bool {
-    state == OperationState::Succeeded
-        && matches!(
-            (
-                kind,
-                result.and_then(|v| v.get("state")).and_then(|v| v.as_str())
-            ),
-            ("sandbox.stop", Some("stopped" | "absent")) | ("sandbox.kill", Some("deleted"))
-        )
 }
 
 #[cfg(test)]

@@ -101,6 +101,7 @@ export const ROOT_SKIP_PATHS = [
   "docs/",
   "licenses/",
   ".cursorrules",
+  ".deslop-please.allow",
   ".dockerignore",
   ".editorconfig",
   ".env.docker.defaults",

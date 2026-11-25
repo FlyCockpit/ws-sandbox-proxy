@@ -299,8 +299,7 @@ impl HostJournal {
             .leases
             .get(&d.sandbox_id)
             .is_none_or(|r| r.expiry_complete)
-            && state.leases.values().filter(|r| !r.expiry_complete).count()
-                >= super::super::expiry::MAX_ACTIONS
+            && state.leases.values().filter(|r| !r.expiry_complete).count() >= super::MAX_ACTIONS
         {
             bail!("host expiry capacity");
         }
@@ -1040,11 +1039,7 @@ pub(super) fn retire_cleanup(
             .copied()
             .unwrap_or(0)
             != 0
-        || !super::super::live_admission::confirmed_release(
-            &receipt.kind,
-            receipt.state,
-            receipt.result.as_ref(),
-        )
+        || !super::confirmed_release(&receipt.kind, receipt.state, receipt.result.as_ref())
     {
         return Ok(());
     }

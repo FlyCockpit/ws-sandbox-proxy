@@ -28,10 +28,11 @@ use sandbox_runtime::{ExecSupervisor, IncusConfig, IncusKvmRuntime};
 use sandbox_runtime::{HostRuntimeKind, SandboxRuntime, resolve_managed_instance_name};
 
 use super::authority::HostAuthority;
+use super::journal::confirmed_release;
 #[cfg(test)]
 use super::journal::intent_from_dispatch;
 use super::journal::{Decision, HostJournal, HostReceipt, TransportBindingV11};
-use super::live_admission::{LiveSandboxAdmission, confirmed_release};
+use super::live_admission::LiveSandboxAdmission;
 use super::reconcile::reconcile_after_hello;
 
 #[cfg(all(test, target_os = "linux"))]
@@ -3624,8 +3625,8 @@ fn relay_session_loop(
                         ..
                     } => {
                         // Durable intent precedes revocation and every cleanup effect.
-                        let cancellation = journal.request_cancel(
-                            &authority,
+                        let cancellation = authority.request_cancel(
+                            &journal,
                             &operation_id,
                             generation,
                             attempt,
@@ -5362,9 +5363,9 @@ fn fail_stdin(
         .unwrap_or_default();
     // Stdin failure joins the same durable cancellation owner. It must not
     // revoke the exec's cleanup permit or race a user cancel with a second kill.
-    if journal
+    if authority
         .request_cancel(
-            authority,
+            journal,
             &metadata.operation_id,
             metadata.generation,
             metadata.attempt,

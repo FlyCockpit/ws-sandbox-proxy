@@ -29,7 +29,6 @@ pub(super) const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The graceful attempt's own permit: the guest timeout plus the process
 /// slack, so it never spends the forced fallback's [`ACTION_BUDGET`].
 pub(super) const GRACEFUL_STOP_BUDGET: Duration = Duration::from_secs(16);
-pub(super) const MAX_ACTIONS: usize = 64;
 /// Covers the credential phase (CLI logins, 20 s), one graceful attempt
 /// (16 s), one forced stop (5 s), one destroy attempt (5 s), and a fresh
 /// fallback absence proof (5 s) with 1 s margin. Past this the host publishes the unresolved expiry instead of
@@ -405,8 +404,8 @@ fn stop_carried_commands(
         });
         let requested = !finished
             && matches!(
-                journal.request_cancel_for(
-                    authority,
+                authority.request_cancel_for(
+                    journal,
                     id,
                     *generation,
                     *attempt,
@@ -687,7 +686,7 @@ impl ExpiryService {
                     let Some(a) = attempts.get_mut(&row.sandbox_id) else {
                         continue;
                     };
-                    if a.worker.is_some() || now < a.next || active >= MAX_ACTIONS {
+                    if a.worker.is_some() || now < a.next || active >= super::journal::MAX_ACTIONS {
                         continue;
                     }
                     let runtime = runtime.clone();

@@ -304,10 +304,7 @@ impl HostJournal {
     }
 }
 
-fn verify_key_identity(
-    config: &RetainedConfig,
-    key: &super::super::journal_key::MemoryJournalKey,
-) -> Result<()> {
+fn verify_key_identity(config: &RetainedConfig, key: &super::key::MemoryJournalKey) -> Result<()> {
     // Wrong IDs refuse before any digest work, even if values were guessed.
     if config.record.checksum_key_id != key.key_id
         || config.record.config.binding_key_id != key.key_id
@@ -318,10 +315,7 @@ fn verify_key_identity(
     Ok(())
 }
 
-fn verify(
-    config: &RetainedConfig,
-    key: &super::super::journal_key::MemoryJournalKey,
-) -> Result<()> {
+fn verify(config: &RetainedConfig, key: &super::key::MemoryJournalKey) -> Result<()> {
     verify_key_identity(config, key)?;
     if config.checksum != key.mac(LOCAL_CONFIG_DOMAIN, &serde_json::to_string(&config.record)?) {
         return Err(refused());
@@ -334,7 +328,7 @@ fn verify(
 pub(super) fn check_reference(
     dir: &Path,
     state: &JournalState,
-    key: &super::super::journal_key::MemoryJournalKey,
+    key: &super::key::MemoryJournalKey,
     binding: &TransportBindingV11,
     sandbox_id: &str,
     generation: u64,

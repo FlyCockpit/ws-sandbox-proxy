@@ -79,7 +79,7 @@ pub(super) fn run(
         timeout_ms: Some(timeout_ms),
         env: env.to_vec(),
         stdin: None,
-        guest: super::supervisor::guest_from_dispatch(d),
+        guest: super::journal::guest_from_dispatch(d),
         build_step: None,
     };
     let cancelled = |error: &RuntimeError| error.code == SandboxErrorCode::Cancelled;
