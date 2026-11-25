@@ -177,7 +177,29 @@ export function rethrowSensitiveSandboxError(error: unknown): never {
         : {}),
     });
   }
-  throw new ORPCError("INTERNAL_SERVER_ERROR", { message: SDK_ERRORS.INTERNAL_SERVER_ERROR[1] });
+  // The values-free class and code ride along as `cause` (never serialized to
+  // a client) so the HTTP layer can log what failed with the request id.
+  const cause = safeErrorLog(error);
+  if (isTransientDatabaseOverload(error))
+    throw new ORPCError("SERVICE_UNAVAILABLE", {
+      message: SDK_ERRORS.SERVICE_UNAVAILABLE[1],
+      cause,
+    });
+  throw new ORPCError("INTERNAL_SERVER_ERROR", {
+    message: SDK_ERRORS.INTERNAL_SERVER_ERROR[1],
+    cause,
+  });
+}
+
+/**
+ * A transaction that could not start or finish in time (Prisma `P2028`: the
+ * interactive transaction expired or never got a connection within maxWait;
+ * `P2024`: the connection pool timed out). It rolled back, so the request
+ * changed nothing and is safe to retry: an overloaded server, not a bug.
+ */
+export function isTransientDatabaseOverload(error: unknown): boolean {
+  const { errorClass, code } = safeErrorLog(error);
+  return errorClass === "PrismaClientKnownRequestError" && (code === "P2028" || code === "P2024");
 }
 
 // Constructor names come from a closed set: Error.name, overridden constructors

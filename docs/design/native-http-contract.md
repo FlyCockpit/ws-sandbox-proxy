@@ -318,6 +318,9 @@ Outcomes stay distinct:
   sandbox with that ID at all. `GET /v1/sandboxes/{id}` reports recorded state;
   it is not a liveness probe; use the `probe` action below.
 - 503 `SERVICE_UNAVAILABLE` is a server dependency failure, never a resource state.
+  It is also the answer, with `Retry-After`, when the server is too busy to
+  finish a request's database transaction in time: the transaction rolled
+  back, so the same request (same `Idempotency-Key`) can simply be retried.
 
 `/v1/capabilities` lists a feature only when every route that provides it is
 registered by the running server. In addition to the read features, the API exposes

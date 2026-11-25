@@ -346,3 +346,55 @@ it("classifies every capacity refusal: Retry-After only on retryable, fails clos
   expect(other.body.error).not.toHaveProperty("retryable");
   expect(other.body.error).not.toHaveProperty("retryAfterSeconds");
 });
+
+it("a transient database overload answers 503 with Retry-After and logs its cause with the request id", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  let error: unknown;
+  const app = new Hono<{ Variables: { requestId: string } }>();
+  app.use("*", async (c, next) => {
+    c.set("requestId", "req-overload");
+    await next();
+  });
+  app.onError((e, c) => sdkErrorResponse(c, e));
+  app.get("/", () => {
+    throw error;
+  });
+  class PrismaClientKnownRequestError extends Error {}
+  for (const thrown of [
+    // Mapped by the service layer (values-free cause attached).
+    new ORPCError("SERVICE_UNAVAILABLE", {
+      message: "sensitive detail",
+      cause: { errorClass: "PrismaClientKnownRequestError", code: "P2028" },
+    }),
+    // A raw expired transaction that never passed the service mapping.
+    Object.assign(new PrismaClientKnownRequestError("sensitive detail"), { code: "P2028" }),
+  ]) {
+    log.mockClear();
+    error = thrown;
+    const response = await app.request("/");
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("5");
+    const body = (await response.json()) as { error: Record<string, unknown> };
+    expect(body.error).toMatchObject({
+      code: "SERVICE_UNAVAILABLE",
+      requestId: "req-overload",
+      retryAfterSeconds: 5,
+    });
+    expect(JSON.stringify(body)).not.toContain("sensitive detail");
+    const line = String(log.mock.calls[0]?.[0]);
+    expect(line).toContain("[sandbox-api] [req-overload] SERVICE_UNAVAILABLE");
+    expect(line).toContain("PrismaClientKnownRequestError P2028");
+    expect(line).not.toContain("sensitive detail");
+  }
+  // Any other failure keeps the 500, now with its values-free cause logged.
+  log.mockClear();
+  error = new ORPCError("INTERNAL_SERVER_ERROR", {
+    cause: { errorClass: "PrismaClientKnownRequestError", code: "P2002" },
+  });
+  const internal = await app.request("/");
+  expect(internal.status).toBe(500);
+  expect(internal.headers.get("retry-after")).toBeNull();
+  expect(String(log.mock.calls[0]?.[0])).toContain(
+    "INTERNAL_SERVER_ERROR (ORPCError INTERNAL_SERVER_ERROR <- PrismaClientKnownRequestError P2002)",
+  );
+});

@@ -46,7 +46,9 @@ Background maintenance runs as BullMQ jobs in the worker runtime (embedded in
 the server unless `WORKER_MODE=external`): a daily sweep of expired auth tokens,
 an opt-in backup-freshness check every six hours (`BACKUP_ENABLED=true`), webhook
 delivery (a dispatcher polls Postgres every 2 seconds) and a daily webhook log
-prune. The
+prune. Image and disk-offload verification (re-reading a stored object,
+decrypting and hashing it) runs on a short-lived worker thread, so an embedded
+worker verifying a multi-gigabyte disk does not stall API requests. The
 sandbox relay, operation dispatch and the transfer spool run in the server
 process itself, so exactly one server replica is supported; Valkey is required
 in every topology (jobs and fail-closed rate limits).

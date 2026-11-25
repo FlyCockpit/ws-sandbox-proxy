@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
 import prisma from "@wssp/db";
-import { decryptImageStream, type ImageStore, imageStore } from "../image-store/s3";
+import { digestImageObject } from "../image-store/object-digest";
+import { type ImageStore, imageStore } from "../image-store/s3";
 import {
   isTerminalImageVerificationError,
   throwIfCancelled,
@@ -44,14 +44,13 @@ export async function verifyDiskOffload(
   try {
     key = await loadDiskObjectKey(prisma, row.id);
     const body = await store.getObjectStream(row.objectKey, signal);
-    const hash = createHash("sha256");
-    let size = 0n;
-    for await (const chunk of decryptImageStream(key, Number(row.sizeBytes), body)) {
-      throwIfCancelled(signal);
-      hash.update(chunk);
-      size += BigInt(chunk.length);
-    }
-    ok = size === row.sizeBytes && `sha256:${hash.digest("hex")}` === row.fingerprint;
+    // Off the event loop: this may run inside the API server (embedded worker).
+    const { size, fingerprint } = await digestImageObject(body, {
+      key,
+      plainSize: Number(row.sizeBytes),
+      signal,
+    });
+    ok = size === row.sizeBytes && fingerprint === row.fingerprint;
   } catch (error) {
     // A shutdown is never a verdict, whatever the aborted read threw.
     if (signal?.aborted) throw new VerifyCancelledError();

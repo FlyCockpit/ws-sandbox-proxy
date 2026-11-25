@@ -3,6 +3,7 @@ import { ORPCError } from "@orpc/server";
 import { SDK_ERRORS } from "@wssp/sandbox-contracts";
 import { describe, expect, it } from "vitest";
 import {
+  isTransientDatabaseOverload,
   rethrowSensitiveSandboxError,
   safeErrnoCode,
   safeErrorLog,
@@ -202,4 +203,44 @@ it("passes only errno tokens through safeErrnoCode", () => {
       },
     }),
   ).toBeNull();
+});
+
+describe("transient database overload", () => {
+  class PrismaClientKnownRequestError extends Error {}
+  const caught = (error: unknown) => {
+    try {
+      rethrowSensitiveSandboxError(error);
+    } catch (thrown) {
+      return thrown as ORPCError<string, unknown>;
+    }
+    throw new Error("did not throw");
+  };
+
+  it.each(["P2028", "P2024"])(
+    "%s (transaction expired or no connection in time) is a retryable SERVICE_UNAVAILABLE",
+    (code) => {
+      const raw = Object.assign(new PrismaClientKnownRequestError(sentinel), { code });
+      expect(isTransientDatabaseOverload(raw)).toBe(true);
+      const thrown = caught(raw);
+      expect(thrown.code).toBe("SERVICE_UNAVAILABLE");
+      expect(thrown.status).toBe(503);
+      expect(thrown.message).toBe(SDK_ERRORS.SERVICE_UNAVAILABLE[1]);
+      // The cause is values-free: class and code only, for the request log.
+      expect(thrown.cause).toEqual({ errorClass: "PrismaClientKnownRequestError", code });
+      expect(inspect(thrown, { depth: 10 })).not.toContain(sentinel);
+    },
+  );
+
+  it("anything else stays an internal error that still names its class and code", () => {
+    const unique = Object.assign(new PrismaClientKnownRequestError(sentinel), { code: "P2002" });
+    expect(isTransientDatabaseOverload(unique)).toBe(false);
+    expect(caught(unique)).toMatchObject({
+      code: "INTERNAL_SERVER_ERROR",
+      cause: { errorClass: "PrismaClientKnownRequestError", code: "P2002" },
+    });
+    // The same code on another class is not a Prisma transaction error.
+    const lookalike = Object.assign(new TypeError(sentinel), { code: "P2028" });
+    expect(isTransientDatabaseOverload(lookalike)).toBe(false);
+    expect(caught(lookalike).code).toBe("INTERNAL_SERVER_ERROR");
+  });
 });

@@ -1850,3 +1850,81 @@ it("POST /v1/sandboxes stores an explicit name and refuses invalid or taken name
   expect(taken.status).toBe(409);
   expect((await json(taken)).error.code).toBe("sandbox.name_taken");
 });
+
+// e2e3-wssp follow-up 02: `POST /v1/sandboxes` answered a bare 500 while
+// another sandbox's disk offload verified in the same process (the default
+// embedded worker). The inline decrypt/hash starved the event loop until the
+// create's interactive transaction expired (Prisma P2028).
+it("a create is accepted while an image verify digests in the same process", async () => {
+  const { digestImageObject } = await import(
+    "../../../../packages/api/src/sandbox/image-store/object-digest"
+  );
+  const f = await fixture();
+  const chunk = Buffer.alloc(1024 * 1024, 7);
+  // The verify is held open until the create is answered, so it is provably
+  // in progress throughout (whether creates may run beside a digest at all
+  // is pinned by object-digest.test.ts's event-loop-turn test).
+  let sent = 0;
+  let started!: () => void;
+  const inProgress = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let answered!: () => void;
+  const createAnswered = new Promise<void>((resolve) => {
+    answered = resolve;
+  });
+  const body = (async function* () {
+    for (; sent < 256; sent++) {
+      if (sent === 32) started();
+      yield chunk;
+    }
+    await createAnswered;
+    for (; sent < 512; sent++) yield chunk;
+  })();
+  let digested = false;
+  const digest = digestImageObject(body, { key: null, plainSize: 0 }).then((result) => {
+    digested = true;
+    return result;
+  });
+  await inProgress;
+  const response = await request(f, "createSandbox");
+  expect(digested).toBe(false);
+  answered();
+  expect(response.status).toBe(202);
+  expect((await digest).size).toBe(512n * 1024n * 1024n);
+});
+
+it("a create whose transaction expires answers a retryable 503 with Retry-After; the retry is accepted", async () => {
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const f = await fixture();
+    const key = randomUUID();
+    const body = bodyFor("createSandbox", f);
+    const gate = db.pauseAt("starved", { after: "sandboxOperation.create" });
+    const pending = db.run("starved", () => request(f, "createSandbox", body, key));
+    await gate.waitReached();
+    // Longer than Prisma's 5 s interactive-transaction timeout.
+    await new Promise((resolve) => setTimeout(resolve, 5_500));
+    gate.release();
+    const refused = await pending;
+    expect(refused.status).toBe(503);
+    expect(refused.headers.get("retry-after")).toBe("5");
+    expect((await json(refused)).error.code).toBe("SERVICE_UNAVAILABLE");
+    // The log names the real cause with the request id, never just "internal".
+    expect(
+      error.mock.calls.some(([line]) =>
+        /\[sandbox-api\] \[[^\]]+\] SERVICE_UNAVAILABLE \(.*<- PrismaClientKnownRequestError P2028\)/.test(
+          String(line),
+        ),
+      ),
+    ).toBe(true);
+    // Rolled back: nothing was created, so the same request can simply retry.
+    expect(
+      await db.inspect.sandboxOperation.count({ where: { userId: f.id, idempotencyKey: key } }),
+    ).toBe(0);
+    const retry = await request(f, "createSandbox", body, key);
+    expect(retry.status).toBe(202);
+  } finally {
+    error.mockRestore();
+  }
+}, 30_000);

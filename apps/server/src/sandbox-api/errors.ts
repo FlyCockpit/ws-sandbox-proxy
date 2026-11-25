@@ -1,4 +1,5 @@
 import { ORPCError } from "@orpc/server";
+import { isTransientDatabaseOverload } from "@wssp/api/sandbox/sensitive-errors";
 import { env } from "@wssp/env/server";
 import {
   CAPACITY_QUEUE_SCOPES,
@@ -241,6 +242,9 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
         retryAfterSeconds = seconds;
       }
     }
+  } else if (isTransientDatabaseOverload(error)) {
+    // A raw expired/unstartable transaction that bypassed the service mapping.
+    code = "SERVICE_UNAVAILABLE";
   }
   const requested = code;
   if (code === "host.file_error" && !hostFileData) code = "INTERNAL_SERVER_ERROR";
@@ -289,7 +293,11 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
       error instanceof Error
         ? `${error.constructor.name}${"code" in error && typeof error.code === "string" ? ` ${error.code}` : ""}`
         : typeof error;
-    console.error(`[sandbox-api] [${requestId}] ${code} (${kind.slice(0, 80)})`);
+    // The service layer's values-free cause (`safeErrorLog`): what really failed.
+    const cause = error instanceof ORPCError ? loggedCause(error.cause) : undefined;
+    console.error(
+      `[sandbox-api] [${requestId}] ${code} (${kind.slice(0, 80)}${cause ? ` <- ${cause}` : ""})`,
+    );
   }
   const body = contractEnvelope(
     {
@@ -328,6 +336,14 @@ export function sdkErrorResponse(c: Context, error: unknown): Response {
     if (body.error.reason) c.header("X-Wssp-Error-Reason", body.error.reason);
   }
   return c.json(body, sentStatus);
+}
+
+/** `safeErrorLog`'s `{ errorClass, code }`, or nothing for any other cause. */
+function loggedCause(cause: unknown): string | undefined {
+  if (!cause || typeof cause !== "object") return undefined;
+  const { errorClass, code } = cause as { errorClass?: unknown; code?: unknown };
+  if (typeof errorClass !== "string" || typeof code !== "string") return undefined;
+  return `${errorClass} ${code}`.slice(0, 80);
 }
 
 /** Stands in for the request id when checking an envelope's fields. */

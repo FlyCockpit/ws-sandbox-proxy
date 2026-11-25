@@ -449,16 +449,25 @@ export async function* decryptImageStream(
 ): AsyncGenerator<Buffer> {
   const sealedRecord = IMAGE_ENCRYPTION_RECORD_BYTES + IMAGE_ENCRYPTION_TAG_BYTES;
   const records = Math.max(1, Math.ceil(plainSize / IMAGE_ENCRYPTION_RECORD_BYTES));
-  let pending = Buffer.alloc(0);
+  // Chunks are joined once per record, never re-copied per chunk.
+  let parts: Buffer[] = [];
+  let held = 0;
+  const take = (bytes: number) => {
+    const all = parts.length === 1 ? (parts[0] as Buffer) : Buffer.concat(parts, held);
+    parts = all.length > bytes ? [all.subarray(bytes)] : [];
+    held -= bytes;
+    return all.subarray(0, bytes);
+  };
   let index = 0;
   for await (const chunk of source) {
-    pending = Buffer.concat([pending, Buffer.from(chunk)]);
-    while (pending.length >= sealedRecord && index < records - 1) {
-      yield decryptRecord(key, index, false, pending.subarray(0, sealedRecord));
-      pending = pending.subarray(sealedRecord);
+    parts.push(Buffer.from(chunk));
+    held += chunk.length;
+    while (held >= sealedRecord && index < records - 1) {
+      yield decryptRecord(key, index, false, take(sealedRecord));
       index++;
     }
   }
+  const pending = take(held);
   if (index !== records - 1) throw new ImageIntegrityError("truncated encrypted image");
   const lastPlain = plainSize - index * IMAGE_ENCRYPTION_RECORD_BYTES;
   if (pending.length !== lastPlain + IMAGE_ENCRYPTION_TAG_BYTES)

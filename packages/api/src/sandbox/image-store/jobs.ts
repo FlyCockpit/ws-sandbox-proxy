@@ -1,18 +1,12 @@
-import { createHash } from "node:crypto";
 import prisma from "@wssp/db";
 import { readImageStoreEnv } from "@wssp/env/image-store-config";
 import { ensureRunnableJob, imageStoreMaintenanceQueue } from "@wssp/queue";
 import type { DiskJob } from "../disk-offload/jobs";
 import { keptDiskObjectKeys } from "../disk-offload/store";
 import { RELEASE_RETRY_MS } from "./access";
+import { digestImageObject } from "./object-digest";
 import { ACTIVE_OPERATION_STATES, artifactReferenced, originImageReferenced } from "./references";
-import {
-  decryptImageStream,
-  type ImageStore,
-  imageMasterKey,
-  imageStore,
-  unwrapDataKey,
-} from "./s3";
+import { type ImageStore, imageMasterKey, imageStore, unwrapDataKey } from "./s3";
 import { endTemplateUpload, transferEndDetail } from "./store-failure";
 import {
   ImageIntegrityError,
@@ -74,28 +68,26 @@ export async function verifyImageArtifact(
   let ok = false;
   try {
     const body = await store.getObjectStream(artifact.objectKey, signal);
-    const hash = createHash("sha256");
-    let size = 0n;
-    let source: AsyncIterable<Uint8Array> = body;
+    let key: Buffer | null = null;
     if (artifact.encryption) {
       const master = imageMasterKey();
       if (!master) throw new Error("image encryption key unavailable");
       if (!artifact.wrappedKey || !artifact.wrappedKeyNonce)
         throw new ImageIntegrityError("invalid image key wrap");
-      const key = unwrapDataKey(
+      key = unwrapDataKey(
         master,
         { wrappedKey: artifact.wrappedKey, wrappedKeyNonce: artifact.wrappedKeyNonce },
         artifact.id,
         artifact.userId,
       );
-      source = decryptImageStream(key, Number(artifact.sizeBytes), body);
     }
-    for await (const chunk of source) {
-      throwIfCancelled(signal);
-      hash.update(chunk);
-      size += BigInt(chunk.length);
-    }
-    ok = size === artifact.sizeBytes && `sha256:${hash.digest("hex")}` === artifact.fingerprint;
+    // Off the event loop: this may run inside the API server (embedded worker).
+    const { size, fingerprint } = await digestImageObject(body, {
+      key,
+      plainSize: Number(artifact.sizeBytes),
+      signal,
+    }).finally(() => key?.fill(0));
+    ok = size === artifact.sizeBytes && fingerprint === artifact.fingerprint;
   } catch (error) {
     // A shutdown is never a verdict, whatever the aborted read threw.
     if (signal?.aborted) throw new VerifyCancelledError();
