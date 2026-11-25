@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { Button } from "@wssp/ui/components/button";
+import { Link, useLocation, useParams } from "@tanstack/react-router";
+import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { Skeleton } from "@wssp/ui/components/skeleton";
+import { cn } from "@wssp/ui/lib/utils";
 import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -34,6 +35,7 @@ export default function UserMenu() {
   const { data: configData, isPending: configPending } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation("nav");
   const [mounted, setMounted] = useState(false);
+  const pathname = useLocation().pathname.replace(/\/+$/, "");
 
   if (authSession.state.status === "pending" || authSession.state.status === "error") {
     return <Skeleton className="h-11 w-24" />;
@@ -43,17 +45,34 @@ export default function UserMenu() {
     // Default to NOT showing Sign Up until the flag is known, so it never
     // flashes when signup is disabled.
     const showSignUp = !configPending && configData?.signupEnabled === true;
+    // Below `sm:` both buttons do not fit one row next to Language and Theme
+    // (es-MX labels are long), so only the button for the *other* page shows:
+    // Sign Up on /login, Sign In everywhere else. The login and signup cards
+    // already link to each other.
+    const onLogin = pathname === `/${lang}/login`;
+    const fromSm = "hidden sm:inline-flex";
     return (
       <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
         {showSignUp && (
-          <Link to="/$lang/signup" params={{ lang }} search={{ redirectTo: undefined }}>
-            <Button size="touch">{t("userMenu.signUp")}</Button>
+          <Link
+            to="/$lang/signup"
+            params={{ lang }}
+            search={{ redirectTo: undefined }}
+            className={cn(buttonVariants({ size: "touch" }), !onLogin && fromSm)}
+          >
+            {t("userMenu.signUp")}
           </Link>
         )}
-        <Link to="/$lang/login" params={{ lang }} search={{ redirectTo: undefined }}>
-          <Button size="touch" variant="outline">
-            {t("userMenu.signIn")}
-          </Button>
+        <Link
+          to="/$lang/login"
+          params={{ lang }}
+          search={{ redirectTo: undefined }}
+          className={cn(
+            buttonVariants({ size: "touch", variant: "outline" }),
+            showSignUp && onLogin && fromSm,
+          )}
+        >
+          {t("userMenu.signIn")}
         </Link>
       </div>
     );

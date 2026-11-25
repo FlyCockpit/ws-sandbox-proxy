@@ -14,6 +14,7 @@ vi.mock("@/hooks/use-auth-session", () => ({
   }),
 }));
 vi.mock("@tanstack/react-router", () => ({
+  useLocation: () => ({ pathname: "/en-US/dashboard" }),
   useParams: () => ({ lang: "en-US" }),
   Link: ({ children }: { children: ReactNode }) => children,
 }));

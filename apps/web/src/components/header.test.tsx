@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+const route = vi.hoisted(() => ({ pathname: "/en-US/login", signupEnabled: false }));
+
 /**
  * Both header rows (the app shell's `Header` and the public pages'
  * `PublicHeader`) start with the same app name link, and it is the first
@@ -31,6 +33,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
     </a>
   ),
   Outlet: () => null,
+  useLocation: () => ({ pathname: route.pathname }),
   useParams: () => ({ lang: "en-US" }),
   createFileRoute: () => (options: Record<string, unknown>) => ({
     options,
@@ -45,7 +48,16 @@ vi.mock("@/components/language-switcher", () => ({
 }));
 vi.mock("./mode-toggle", () => ({ ModeToggle: () => <i data-control="" /> }));
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => <i data-control="" /> }));
-vi.mock("./user-menu", () => ({ default: () => <i data-control="" /> }));
+// The real signed-out UserMenu: its Sign Up / Sign In buttons are the
+// controls that must fit one row at phone widths when sign-up is open.
+vi.mock("@/hooks/use-auth-session", () => ({
+  useAuthSession: () => ({ state: { status: "anonymous" } }),
+}));
+vi.mock("@/hooks/use-orphan-owner-sync", () => ({ useOrphanOwnerSync: () => undefined }));
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => ({ data: { signupEnabled: route.signupEnabled }, isPending: false }),
+}));
+vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
 vi.mock("./main-nav", () => ({ MainNav: () => null }));
 vi.mock("@/components/skip-to-content", () => ({ SkipToContent: () => null }));
 
@@ -110,5 +122,58 @@ describe("public header row", () => {
     const classes = signIn?.split(" ") ?? [];
     expect(classes).toEqual(expect.arrayContaining(["h-11", "px-3.5", "text-xs", "shrink-0"]));
     expect(classes).not.toContain("text-sm");
+  });
+});
+
+/** `{ signup, login }`: each auth button's classes, `undefined` when absent. */
+function authButtons(pathname: string, signupEnabled: boolean) {
+  route.pathname = pathname;
+  route.signupEnabled = signupEnabled;
+  const html = renderToStaticMarkup(<Header />);
+  const classes = (to: string) =>
+    html
+      .match(new RegExp(`<a data-to="${to.replaceAll("$", "\\$")}" class="([^"]*)"`))?.[1]
+      ?.split(" ");
+  return { signup: classes("/$lang/signup"), login: classes("/$lang/login") };
+}
+
+/** Shown at every width: a 44px touch target, never hidden below `sm:`. */
+function expectAlways(classes: string[] | undefined) {
+  expect(classes).toEqual(expect.arrayContaining(["inline-flex", "h-11", "min-h-11"]));
+  expect(classes).not.toContain("hidden");
+}
+
+/** Hidden below `sm:` (no gap either), the same touch target from `sm:` up. */
+function expectFromSm(classes: string[] | undefined) {
+  expect(classes).toEqual(expect.arrayContaining(["hidden", "sm:inline-flex", "h-11"]));
+  expect(classes).not.toContain("inline-flex");
+}
+
+describe("signed-out header buttons", () => {
+  it("with sign-up closed shows only Sign In, at every width", () => {
+    for (const pathname of ["/en-US/login", "/en-US/signup", "/en-US/forgot-password"]) {
+      const { signup, login } = authButtons(pathname, false);
+      expect(signup).toBeUndefined();
+      expectAlways(login);
+    }
+  });
+
+  it("with sign-up open shows only Sign Up below sm: on /login", () => {
+    const { signup, login } = authButtons("/en-US/login", true);
+    expectAlways(signup);
+    expectFromSm(login);
+  });
+
+  it("with sign-up open shows only Sign In below sm: on /signup and elsewhere", () => {
+    for (const pathname of ["/en-US/signup", "/en-US/signup/", "/en-US/forgot-password"]) {
+      const { signup, login } = authButtons(pathname, true);
+      expectFromSm(signup);
+      expectAlways(login);
+    }
+  });
+
+  it("renders the buttons as links, not buttons nested in links", () => {
+    route.signupEnabled = true;
+    expect(renderToStaticMarkup(<Header />)).not.toMatch(/<a [^>]*><button/);
   });
 });
