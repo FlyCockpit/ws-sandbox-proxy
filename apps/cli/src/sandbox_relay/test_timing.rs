@@ -15,6 +15,11 @@
 //!
 //! `WSSP_TEST_RUNTIME_TIMING` (below) is the same kind of debug-only knob
 //! for two runtime waits and the storage poll; it only ever lengthens them.
+//!
+//! This module also owns the relay timings those overrides are bounded by
+//! (the production values) and the overrides the daemon installs once at
+//! start, so the modules that read a timing depend on this leaf, never on
+//! `connect`.
 
 use std::ffi::OsString;
 use std::time::Duration;
@@ -181,10 +186,10 @@ pub(crate) struct RuntimeTestTiming {
     /// (`sandbox_runtime::GUEST_TERMINATE_TIMEOUT`).
     pub guest_terminate: Option<Duration>,
     /// The connected expiry observation's permit
-    /// (`connect::EXPIRY_OBSERVATION_TIMEOUT`).
+    /// ([`EXPIRY_OBSERVATION_TIMEOUT`]).
     pub expiry_observation: Option<Duration>,
     /// The storage health poll period, start to start
-    /// (`host_reports::STORAGE_POLL_MS`).
+    /// ([`STORAGE_POLL_MS`]).
     pub storage_poll: Option<Duration>,
 }
 
@@ -204,7 +209,7 @@ const RUNTIME_OVERRIDE_MAX: Duration = Duration::from_secs(60);
 
 /// Production storage poll period, the floor of `storage_poll`.
 #[cfg(debug_assertions)]
-const STORAGE_POLL_FLOOR: Duration = Duration::from_millis(super::host_reports::STORAGE_POLL_MS);
+const STORAGE_POLL_FLOOR: Duration = Duration::from_millis(STORAGE_POLL_MS);
 
 /// The slowest storage poll a test daemon may use. A pool's storage record
 /// is fresh for 15 s on both sides (the daemon's `STORAGE_FRESH_MS`, the
@@ -229,7 +234,7 @@ pub(crate) fn parse_runtime_test_timing(text: &str) -> Result<RuntimeTestTiming,
         ),
         (
             "expiry_observation",
-            super::connect::EXPIRY_OBSERVATION_TIMEOUT,
+            EXPIRY_OBSERVATION_TIMEOUT,
             RUNTIME_OVERRIDE_MAX,
         ),
         ("storage_poll", STORAGE_POLL_FLOOR, STORAGE_POLL_MAX),
@@ -256,7 +261,7 @@ pub(crate) fn parse_runtime_test_timing(text: &str) -> Result<RuntimeTestTiming,
         }
     }
     let [guest_terminate, expiry_observation, storage_poll] = parsed;
-    let observation = expiry_observation.unwrap_or(super::connect::EXPIRY_OBSERVATION_TIMEOUT);
+    let observation = expiry_observation.unwrap_or(EXPIRY_OBSERVATION_TIMEOUT);
     let poll = storage_poll.unwrap_or(STORAGE_POLL_FLOOR);
     if observation >= poll {
         return Err(format!(
@@ -288,7 +293,7 @@ pub(crate) fn runtime_test_timing_from(
         .map_err(|_| anyhow::anyhow!("{RUNTIME_TIMING_ENV} is not UTF-8"))?;
     let timing = parse_runtime_test_timing(&text)
         .map_err(|error| anyhow::anyhow!("{RUNTIME_TIMING_ENV}: {error}"))?;
-    if !super::connect::loopback_control_plane(server_url).unwrap_or(false) {
+    if !loopback_control_plane(server_url).unwrap_or(false) {
         anyhow::bail!(
             "{RUNTIME_TIMING_ENV} is a test-only override accepted only with a loopback control \
              plane (`localhost`, 127.0.0.0/8 or `::1`); unset it"
@@ -381,8 +386,8 @@ pub(crate) fn disk_test_timing() -> Option<DiskTestTiming> {
             let text = std::env::var(DISK_TIMING_ENV).ok()?;
             match parse_disk_test_timing(
                 &text,
-                super::connect::DISK_TICK_EVERY,
-                super::offload::RECONCILE_EVERY,
+                DISK_TICK_EVERY,
+                RECONCILE_EVERY,
             ) {
                 Ok(timing) => {
                     tracing::warn!(?timing, "TEST-ONLY OVERRIDE `{DISK_TIMING_ENV}`: disk offload passes run more often than production; never set it in production");
@@ -397,6 +402,63 @@ pub(crate) fn disk_test_timing() -> Option<DiskTestTiming> {
     }
     #[cfg(not(debug_assertions))]
     None
+}
+
+// The relay's overridable timings: the production values the overrides
+// are bounded by, and the overrides installed once at daemon start.
+
+/// How often the connect loop runs the disk offload periodic pass
+/// (`offload::OffloadService::tick`).
+pub(super) const DISK_TICK_EVERY: Duration = Duration::from_secs(60);
+
+/// Permit of one connected expiry observation (host census of expiring
+/// sandboxes). Debug test daemons may widen it (`WSSP_TEST_RUNTIME_TIMING`).
+pub(super) const EXPIRY_OBSERVATION_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// How often storage health is observed (start to start). Debug test
+/// daemons may widen it (`WSSP_TEST_RUNTIME_TIMING`, see `host_reports::storage_poll_ms`).
+pub(super) const STORAGE_POLL_MS: u64 = 5_000;
+
+/// Completion and inventory reconciliation on a live connection
+/// (`offload::OffloadService::tick`): a verdict lost on a stable connection (an
+/// answer that never came, a frame evicted from a full outbox, an offload
+/// the server's maintenance ended without telling the host) is asked again
+/// this often, until local cleanup is done.
+pub(super) const RECONCILE_EVERY: Duration = Duration::from_secs(600);
+
+/// The process's `WSSP_TEST_RELAY_TIMING` override (WP1), set once by
+/// `connect::run_connect_with_config`; always `None` in release builds.
+pub(super) static RELAY_TEST_TIMING: std::sync::OnceLock<Option<RelayTestTiming>> =
+    std::sync::OnceLock::new();
+
+/// The process's `WSSP_TEST_RUNTIME_TIMING` widening, set once by
+/// `connect::run_connect_with_config`; always `None` in release builds.
+pub(super) static RUNTIME_TEST_TIMING: std::sync::OnceLock<Option<RuntimeTestTiming>> =
+    std::sync::OnceLock::new();
+
+#[cfg(debug_assertions)]
+pub(super) fn installed_runtime_test_timing() -> Option<RuntimeTestTiming> {
+    RUNTIME_TEST_TIMING.get().copied().flatten()
+}
+
+/// The override `connect::run_connect_with_config` read once at start; WP3 carry,
+/// WP7 quiesce and WP8 terminal grace take their fields from here, never
+/// from the environment again. `None` in release builds and fixture daemons.
+pub(super) fn installed_relay_test_timing() -> Option<RelayTestTiming> {
+    RELAY_TEST_TIMING.get().copied().flatten()
+}
+
+/// Whether `server_url` names a loopback control plane (`localhost`,
+/// 127.0.0.0/8 or `::1`): the gate of every debug-only test override.
+#[cfg(debug_assertions)]
+pub(super) fn loopback_control_plane(server_url: &str) -> Result<bool, url::ParseError> {
+    let url = url::Url::parse(server_url)?;
+    Ok(match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    })
 }
 
 #[cfg(test)]
@@ -584,8 +646,8 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn runtime_timing_floors_are_the_production_constants() {
-        let observation = super::super::connect::EXPIRY_OBSERVATION_TIMEOUT;
-        let poll = Duration::from_millis(super::super::host_reports::STORAGE_POLL_MS);
+        let observation = super::EXPIRY_OBSERVATION_TIMEOUT;
+        let poll = Duration::from_millis(super::STORAGE_POLL_MS);
         assert_eq!(observation, Duration::from_secs(4));
         assert_eq!(STORAGE_POLL_FLOOR, poll);
         assert!(observation < poll, "{observation:?} >= {poll:?}");
@@ -601,7 +663,8 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn storage_poll_override_reaches_the_host_reports() {
-        use super::super::host_reports::{STORAGE_POLL_MS, storage_poll_ms_for};
+        use super::super::host_reports::storage_poll_ms_for;
+        use super::STORAGE_POLL_MS;
         assert_eq!(storage_poll_ms_for(None), STORAGE_POLL_MS);
         let keeps = parse_runtime_test_timing("30s,,").unwrap();
         assert_eq!(storage_poll_ms_for(Some(keeps)), STORAGE_POLL_MS);

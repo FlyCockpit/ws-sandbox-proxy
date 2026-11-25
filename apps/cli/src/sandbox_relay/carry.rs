@@ -70,7 +70,7 @@ impl CarryPolicy {
             return Ok(policy);
         }
         let policy = Self::new(config.carry_intent_window(), config.max_carry());
-        Ok(policy.with_test_timing(super::connect::installed_relay_test_timing()))
+        Ok(policy.with_test_timing(super::test_timing::installed_relay_test_timing()))
     }
     /// Apply the WP1 chaos-harness knob's `intent_window` and `max_carry`.
     #[cfg(debug_assertions)]
