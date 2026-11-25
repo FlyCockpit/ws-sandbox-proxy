@@ -5,10 +5,8 @@ use sandbox_protocol::SandboxErrorCode;
 #[cfg(target_os = "linux")]
 use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
-#[cfg(target_os = "linux")]
-use std::sync::MutexGuard;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 const MAX_CANCEL_TOMBSTONES: usize = 1024;
@@ -34,9 +32,7 @@ pub struct EffectAdmission {
 }
 impl Drop for EffectAdmission {
     fn drop(&mut self) {
-        let mut state = self.authority.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.admitting.remove(&self.id);
-        state.gate.notify_all();
+        self.authority.lock().end_admission(&self.id);
     }
 }
 
@@ -92,10 +88,7 @@ impl OwnershipToken {
 }
 impl Drop for OwnershipToken {
     fn drop(&mut self) {
-        let mut state = self.authority.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(work) = state.pending.get_mut(&self.id) {
-            work.owners.remove(&self.nonce);
-        }
+        self.authority.lock().release_owner(&self.id, self.nonce);
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,11 +280,11 @@ impl AuthorityState {
     }
 }
 impl HostAuthority {
+    fn lock(&self) -> MutexGuard<'_, AuthorityState> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
     pub fn with_journal(journal: Arc<super::journal::HostJournal>) -> Self {
-        Self(Arc::new(Mutex::new(AuthorityState {
-            journal: Some(journal),
-            ..AuthorityState::default()
-        })))
+        Self(Arc::new(Mutex::new(AuthorityState::with_journal(journal))))
     }
     /// A new relay connection reopens admission. Work carried across a
     /// transport loss (`detach`) keeps its entries and `seen` records: it is
@@ -302,25 +295,12 @@ impl HostAuthority {
     /// the expiry service re-latches `shutdown()` on its next tick. Observed
     /// generations survive.
     pub fn begin_session(&self) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let AuthorityState { seen, pending, .. } = &mut *state;
-        seen.retain(|id, _| pending.contains_key(id));
-        state.revoked_execs.clear();
-        state.cancel_tombstones.clear();
-        state.cancel_tombstones_full = false;
-        state.closed = false;
+        self.lock().begin_session()
     }
     /// `hello.ok`: the session at `epoch` is attached. Carried work stays
     /// bound to its older epoch until adopted.
     pub fn attach(&self, epoch: u64) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.attached_epochs.insert(epoch);
-        while state.attached_epochs.len() > 1024 {
-            state.attached_epochs.pop_first();
-        }
-        state.session_epoch = Some(epoch);
-        state.detached = false;
-        state.gate.notify_all();
+        self.lock().attach(epoch)
     }
     /// A positive transport loss: keep in-flight work (bounded by the grace)
     /// instead of revoking it. Returns the number of carried entries.
@@ -331,77 +311,42 @@ impl HostAuthority {
     /// in-flight Intent→Effect transition finishes (or is revoked) before
     /// this returns, so carried phases are stable for adoption.
     pub fn detach(&self, now: Instant) -> usize {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.detached = true;
+        let mut state = self.lock();
+        state.mark_detached();
         let deadline = Instant::now() + ADMISSION_DRAIN;
-        while !state.admitting.is_empty() {
+        while state.admission_in_flight() {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                let stuck: Vec<String> = state.admitting.iter().cloned().collect();
-                for id in stuck {
-                    state.revoke(&id);
-                }
+                state.revoke_admitting();
                 break;
             }
-            let gate = state.gate.clone();
+            let gate = state.gate();
             state = gate
                 .wait_timeout(state, remaining)
                 .unwrap_or_else(|e| e.into_inner())
                 .0;
         }
-        let ownerless: Vec<String> = state
-            .pending
-            .iter()
-            .filter(|(_, work)| work.owners.is_empty())
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in ownerless {
-            if state.executions.contains_key(&id) {
-                state.revoked_execs.push(id.clone());
-            }
-            state.remove(&id);
-        }
-        if !state.pending.is_empty() && state.detached_at.is_none() {
-            state.detached_at = Some(now);
-        }
-        state.pending.len()
+        state.finish_detach(now)
     }
     /// This process attached `epoch` (so it owned that socket's frames).
     pub fn attached_epoch(&self, epoch: u64) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .attached_epochs
-            .contains(&epoch)
+        self.lock().attached_epoch(epoch)
     }
     /// This process attached some epoch older than `epoch`.
     pub fn attached_before(&self, epoch: u64) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .attached_epochs
-            .first()
-            .is_some_and(|first| *first < epoch)
+        self.lock().attached_before(epoch)
     }
     /// Any pending (current or carried) work exists.
     pub fn has_pending(&self) -> bool {
-        !self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .pending
-            .is_empty()
+        self.lock().has_pending()
     }
     /// When the current outage's first detach happened, if one is active.
     pub fn detached_since(&self) -> Option<Instant> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).detached_at
+        self.lock().detached_since()
     }
     /// Something currently owns this exact pending attempt.
     pub fn owned(&self, id: &str, generation: u64, attempt: u64) -> bool {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.pending.get(id).is_some_and(|w| {
-            !w.owners.is_empty() && w.generation == generation && w.attempt == attempt
-        })
+        self.lock().owned(id, generation, attempt)
     }
     /// Take ownership of this exact pending attempt. `None` when it is no
     /// longer pending (revoked, superseded, completed).
@@ -411,14 +356,8 @@ impl HostAuthority {
         generation: u64,
         attempt: u64,
     ) -> Option<OwnershipToken> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.next_owner_nonce += 1;
-        let nonce = state.next_owner_nonce;
-        let work = state.pending.get_mut(id)?;
-        if work.generation != generation || work.attempt != attempt {
-            return None;
-        }
-        work.owners.insert(nonce);
+        let mut state = self.lock();
+        let nonce = state.take_owner(id, generation, attempt)?;
         Some(OwnershipToken {
             authority: self.clone(),
             id: id.to_string(),
@@ -427,87 +366,37 @@ impl HostAuthority {
     }
     /// Entries not bound to the attached session, oldest-generation last.
     pub fn carried(&self) -> Vec<(String, PendingWork)> {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let mut carried: Vec<_> = state
-            .pending
-            .iter()
-            .filter(|(_, work)| !state.attached(work))
-            .map(|(id, work)| (id.clone(), work.clone()))
-            .collect();
-        carried.sort_by(|a, b| b.1.generation.cmp(&a.1.generation).then(a.0.cmp(&b.0)));
-        carried
+        self.lock().carried()
     }
     /// Sandboxes with pending lifecycle work (create, reconnect, stop, kill,
     /// lease renewal), which may hold the sandbox's runtime lock for long.
     pub fn pending_lifecycle_sandboxes(&self) -> HashSet<String> {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .pending
-            .values()
-            .filter(|work| {
-                matches!(
-                    work.kind.as_str(),
-                    "sandbox.create"
-                        | "sandbox.reconnect"
-                        | "sandbox.stop"
-                        | "sandbox.kill"
-                        | "sandbox.lease.renew"
-                )
-            })
-            .map(|work| work.sandbox_id.clone())
-            .collect()
+        self.lock().pending_lifecycle_sandboxes()
     }
     /// Sandboxes with any pending (carried or current) work.
     pub fn pending_sandboxes(&self) -> HashSet<String> {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .pending
-            .values()
-            .map(|work| work.sandbox_id.clone())
-            .collect()
+        self.lock().pending_sandboxes()
     }
     /// The server adopted this exact attempt for `epoch`. `false` when the
     /// entry is gone (revoked by the grace meanwhile).
     pub fn adopt(&self, id: &str, generation: u64, attempt: u64, epoch: u64) -> bool {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(work) = state.pending.get_mut(id) else {
-            return false;
-        };
-        if work.generation != generation || work.attempt != attempt {
-            return false;
-        }
-        work.epoch = Some(epoch);
-        if let Some(seen) = state.seen.get_mut(id) {
-            seen.epoch = Some(epoch);
-        }
-        state.gate.notify_all();
-        true
+        self.lock().adopt(id, generation, attempt, epoch)
     }
     /// Refused, unsupported or over-bound carried work: revoke it like a
     /// session teardown. Its next gate refusal is a session closure, so stop
     /// and kill keep their durable deferral, and its journal Result is owed
     /// one late receipt.
     pub fn revoke_carried(&self, id: &str) -> Option<PendingWork> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).revoke(id)
+        self.lock().revoke(id)
     }
     /// Revoke an entry no worker owns (a staged upload, a finished download):
     /// no completion will drain for it, so no late receipt is recorded.
     pub fn forget(&self, id: &str) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.executions.contains_key(id) {
-            state.revoked_execs.push(id.to_string());
-        }
-        state.remove(id);
+        self.lock().forget(id)
     }
     /// Pending operation ids of one dispatch kind.
     pub fn pending_of_kind(&self, kind: &str) -> Vec<String> {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .pending
-            .iter()
-            .filter(|(_, work)| work.kind == kind)
-            .map(|(id, _)| id.clone())
-            .collect()
+        self.lock().pending_of_kind(kind)
     }
     /// The carry expiry (WP3), decided per carried attempt by
     /// [`super::carry::decide`] from the time since the outage's first
@@ -525,63 +414,11 @@ impl HostAuthority {
         policy: &super::carry::CarryPolicy,
         lease_due: &HashMap<String, u64>,
     ) -> CarryExpiry {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(since) = state.detached_at else {
-            return CarryExpiry::default();
-        };
-        let outage = now.saturating_duration_since(since);
-        // Until `end_outage` (a registered session), every pending entry is
-        // work of this outage: adopted entries are bound to the reconnecting
-        // session but still answer to `max_carry` from the first drop, so a
-        // slow adoption, audit or census can never step over the cap.
-        let carried: Vec<(String, PendingWork, bool)> = state
-            .pending
-            .iter()
-            .filter(|(id, _)| !state.cancelled.contains(*id))
-            .map(|(id, work)| (id.clone(), work.clone(), state.attached(work)))
-            .collect();
-        let mut expiry = CarryExpiry::default();
-        for (id, work, adopted) in carried {
-            let lease = lease_due
-                .get(&work.sandbox_id)
-                .is_some_and(|generation| work.generation <= *generation);
-            let issued = state.issued.contains(&id);
-            // Adopted work may start its effect any moment now: only the cap
-            // applies to it, never the Intent window or the lease clamp.
-            let decision = if adopted && !issued {
-                if outage >= policy.max_carry() {
-                    super::carry::CarryDecision::Revoke
-                } else {
-                    super::carry::CarryDecision::Keep
-                }
-            } else {
-                super::carry::decide(policy, &work.kind, issued, outage, lease)
-            };
-            match decision {
-                super::carry::CarryDecision::Keep => {}
-                super::carry::CarryDecision::Stop => {
-                    expiry.stop.push((id, work.generation, work.attempt));
-                }
-                super::carry::CarryDecision::Revoke => {
-                    state.revoke(&id);
-                    expiry.revoked += 1;
-                    // Lifecycle work keeps its own refusal path (teardown
-                    // deferral, allocation evidence); guest work that never
-                    // passed its gate has definitely issued nothing.
-                    if !issued && CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()) {
-                        expiry.not_issued.push((id, work.generation, work.attempt));
-                    }
-                }
-            }
-        }
-        expiry
+        self.lock().expire_detached_work(now, policy, lease_due)
     }
     /// The effect gate's backstop follows the carry window.
     pub fn set_effect_gate_max_wait(&self, wait: Duration) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .effect_gate_max_wait = Some(wait);
+        self.lock().set_effect_gate_max_wait(wait)
     }
     /// The reconnected session is fully registered (adoption, audit and
     /// census all done): the outage is over and a later loss starts a fresh
@@ -589,20 +426,15 @@ impl HostAuthority {
     /// successful adoption is the same outage, so `max_carry` keeps counting
     /// from its first drop.
     pub fn end_outage(&self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).detached_at = None;
+        self.lock().end_outage()
     }
     /// A revoked carried attempt still owed a late receipt; taking it clears it.
     pub fn take_late(&self, id: &str, generation: u64, attempt: u64) -> bool {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .late
-            .remove(&(id.to_string(), generation, attempt))
+        self.lock().take_late(id, generation, attempt)
     }
     /// The attached session's epoch, or `None` while detached.
     pub fn session_epoch(&self) -> Option<u64> {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        (!state.detached).then_some(state.session_epoch).flatten()
+        self.lock().session_epoch()
     }
     /// M4: the Intent→Effect gate. Blocks while this attempt is carried
     /// (bound to an older epoch, or the session is detached) and returns once
@@ -614,24 +446,10 @@ impl HostAuthority {
         generation: u64,
         attempt: u64,
     ) -> Result<EffectAdmission, AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let deadline = Instant::now()
-            + state
-                .effect_gate_max_wait
-                .unwrap_or_else(|| super::carry::CarryPolicy::default().effect_gate_max_wait());
+        let mut state = self.lock();
+        let deadline = Instant::now() + state.effect_gate_max_wait();
         loop {
-            if !state.closed
-                && !state.pending.contains_key(id)
-                && state.late.contains(&(id.to_string(), generation, attempt))
-            {
-                return Err(revoked_before_effect());
-            }
-            let work = state.current(id, generation, attempt)?;
-            if state.attached(&work) {
-                // Registered under the same lock that saw the session
-                // attached: a concurrent detach waits for this transition.
-                state.admitting.insert(id.to_string());
-                state.issued.insert(id.to_string());
+            if state.admit_effect(id, generation, attempt)? {
                 return Ok(EffectAdmission {
                     authority: self.clone(),
                     id: id.to_string(),
@@ -641,7 +459,7 @@ impl HostAuthority {
             if now >= deadline {
                 return Err(session_closed());
             }
-            let gate = state.gate.clone();
+            let gate = state.gate();
             state = gate
                 .wait_timeout(state, EFFECT_GATE_SLICE.min(deadline - now))
                 .unwrap_or_else(|e| e.into_inner())
@@ -650,27 +468,13 @@ impl HostAuthority {
     }
     /// No runtime wait under this lock. Revocation closes every stream/spawn gate.
     pub fn expire_sandbox(&self, sandbox: &str, generation: u64) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let ids: Vec<_> = state
-            .pending
-            .iter()
-            .filter(|(_, work)| work.sandbox_id == sandbox && work.generation <= generation)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in ids {
-            state.remove(&id);
-        }
+        self.lock().expire_sandbox(sandbox, generation)
     }
 
     /// C52: a terminal bound to `generation` of `sandbox` lost its authority
     /// (connection closed, or a newer generation was observed).
     pub fn terminal_superseded(&self, sandbox: &str, generation: u64) -> bool {
-        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.closed
-            || state
-                .sandbox_generation
-                .get(sandbox)
-                .is_some_and(|current| generation < *current)
+        self.lock().terminal_superseded(sandbox, generation)
     }
 
     pub fn accept_dispatch(
@@ -754,24 +558,308 @@ impl HostAuthority {
         resume_teardown: bool,
         reason: &mut &'static str,
     ) -> Result<bool, AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        let current = state
+        self.lock().accept_dispatch_checked(
+            operation_id,
+            sandbox_id,
+            kind,
+            generation,
+            attempt,
+            resume_teardown,
+            reason,
+        )
+    }
+    pub fn accept_stream(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<PendingWork, AuthorityReject> {
+        self.lock().accept_stream(id, generation, attempt)
+    }
+    /// Publication gate: only work bound to the attached session publishes.
+    pub fn accept_completion(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<PendingWork, AuthorityReject> {
+        self.lock().accept_completion(id, generation, attempt)
+    }
+    pub fn accept_cancel(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<PendingWork, AuthorityReject> {
+        self.lock().accept_cancel(id, generation, attempt)
+    }
+    #[cfg(test)]
+    pub fn runtime_registered(&self, id: &str) -> bool {
+        self.0.lock().unwrap().runtime_registered(id)
+    }
+    pub fn register_runtime(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<Arc<sandbox_runtime::RuntimePermit>, AuthorityReject> {
+        self.lock().register_runtime(id, generation, attempt)
+    }
+    /// Called on the WORKER immediately before process spawn. Validation and
+    /// registration are indivisible relative to lifecycle admission/shutdown.
+    #[cfg(target_os = "linux")]
+    pub fn register_exec(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<(Arc<AtomicBool>, ExecGuard<'_>), AuthorityReject> {
+        let mut state = self.lock();
+        let cancelled = state.register_exec(id, generation, attempt)?;
+        Ok((cancelled, ExecGuard { _state: state }))
+    }
+    #[cfg(target_os = "linux")]
+    pub fn start_stdin(&self, id: &str, next: u64) {
+        self.lock().start_stdin(id, next)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn accept_stdin(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+        sequence: u64,
+        mut bytes: Vec<u8>,
+        eof: bool,
+    ) -> Result<Vec<sandbox_runtime::WriteStdinRequest>, AuthorityReject> {
+        // The chunk is freed after the guard when it is not buffered.
+        self.lock()
+            .accept_stdin(id, generation, attempt, sequence, &mut bytes, eof)
+    }
+    #[cfg(test)]
+    pub fn cancel(&self, id: &str) {
+        self.lock().cancel(id)
+    }
+    pub fn complete(&self, id: &str) -> Option<PendingWork> {
+        self.lock().remove(id)
+    }
+    pub fn pending(&self, id: &str) -> Option<PendingWork> {
+        self.lock().pending(id)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn take_revoked_execs(&self) -> Vec<String> {
+        self.lock().take_revoked_execs()
+    }
+    #[cfg(target_os = "linux")]
+    pub fn pending_ids(&self) -> HashSet<String> {
+        self.lock().pending_ids()
+    }
+    pub fn shutdown(&self) {
+        self.lock().shutdown()
+    }
+    /// Revoke-and-reconnect (a server verdict or local protocol failure while
+    /// the process continues): `shutdown`, remembering every revoked attempt
+    /// for its late receipt in the next session.
+    pub fn revoke_all(&self) -> usize {
+        self.lock().revoke_all()
+    }
+    /// The next stdin sequence a carried command expects, `None` once its
+    /// stream is closed or for non-command work.
+    #[cfg(target_os = "linux")]
+    pub fn stdin_next(&self, id: &str) -> Option<u64> {
+        self.lock().stdin_next(id)
+    }
+    #[cfg(not(target_os = "linux"))]
+    pub fn stdin_next(&self, _id: &str) -> Option<u64> {
+        None
+    }
+}
+impl AuthorityState {
+    fn begin_session(&mut self) {
+        let AuthorityState { seen, pending, .. } = self;
+        seen.retain(|id, _| pending.contains_key(id));
+        self.revoked_execs.clear();
+        self.cancel_tombstones.clear();
+        self.cancel_tombstones_full = false;
+        self.closed = false;
+    }
+    fn attach(&mut self, epoch: u64) {
+        self.attached_epochs.insert(epoch);
+        while self.attached_epochs.len() > 1024 {
+            self.attached_epochs.pop_first();
+        }
+        self.session_epoch = Some(epoch);
+        self.detached = false;
+        self.gate.notify_all();
+    }
+    fn owned(&self, id: &str, generation: u64, attempt: u64) -> bool {
+        self.pending.get(id).is_some_and(|w| {
+            !w.owners.is_empty() && w.generation == generation && w.attempt == attempt
+        })
+    }
+    fn carried(&self) -> Vec<(String, PendingWork)> {
+        let mut carried: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, work)| !self.attached(work))
+            .map(|(id, work)| (id.clone(), work.clone()))
+            .collect();
+        carried.sort_by(|a, b| b.1.generation.cmp(&a.1.generation).then(a.0.cmp(&b.0)));
+        carried
+    }
+    fn pending_lifecycle_sandboxes(&self) -> HashSet<String> {
+        self.pending
+            .values()
+            .filter(|work| {
+                matches!(
+                    work.kind.as_str(),
+                    "sandbox.create"
+                        | "sandbox.reconnect"
+                        | "sandbox.stop"
+                        | "sandbox.kill"
+                        | "sandbox.lease.renew"
+                )
+            })
+            .map(|work| work.sandbox_id.clone())
+            .collect()
+    }
+    fn pending_sandboxes(&self) -> HashSet<String> {
+        self.pending
+            .values()
+            .map(|work| work.sandbox_id.clone())
+            .collect()
+    }
+    fn adopt(&mut self, id: &str, generation: u64, attempt: u64, epoch: u64) -> bool {
+        let Some(work) = self.pending.get_mut(id) else {
+            return false;
+        };
+        if work.generation != generation || work.attempt != attempt {
+            return false;
+        }
+        work.epoch = Some(epoch);
+        if let Some(seen) = self.seen.get_mut(id) {
+            seen.epoch = Some(epoch);
+        }
+        self.gate.notify_all();
+        true
+    }
+    fn forget(&mut self, id: &str) {
+        if self.executions.contains_key(id) {
+            self.revoked_execs.push(id.to_string());
+        }
+        self.remove(id);
+    }
+    fn pending_of_kind(&self, kind: &str) -> Vec<String> {
+        self.pending
+            .iter()
+            .filter(|(_, work)| work.kind == kind)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+    fn expire_detached_work(
+        &mut self,
+        now: Instant,
+        policy: &super::carry::CarryPolicy,
+        lease_due: &HashMap<String, u64>,
+    ) -> CarryExpiry {
+        let Some(since) = self.detached_at else {
+            return CarryExpiry::default();
+        };
+        let outage = now.saturating_duration_since(since);
+        // Until `end_outage` (a registered session), every pending entry is
+        // work of this outage: adopted entries are bound to the reconnecting
+        // session but still answer to `max_carry` from the first drop, so a
+        // slow adoption, audit or census can never step over the cap.
+        let carried: Vec<(String, PendingWork, bool)> = self
+            .pending
+            .iter()
+            .filter(|(id, _)| !self.cancelled.contains(*id))
+            .map(|(id, work)| (id.clone(), work.clone(), self.attached(work)))
+            .collect();
+        let mut expiry = CarryExpiry::default();
+        for (id, work, adopted) in carried {
+            let lease = lease_due
+                .get(&work.sandbox_id)
+                .is_some_and(|generation| work.generation <= *generation);
+            let issued = self.issued.contains(&id);
+            // Adopted work may start its effect any moment now: only the cap
+            // applies to it, never the Intent window or the lease clamp.
+            let decision = if adopted && !issued {
+                if outage >= policy.max_carry() {
+                    super::carry::CarryDecision::Revoke
+                } else {
+                    super::carry::CarryDecision::Keep
+                }
+            } else {
+                super::carry::decide(policy, &work.kind, issued, outage, lease)
+            };
+            match decision {
+                super::carry::CarryDecision::Keep => {}
+                super::carry::CarryDecision::Stop => {
+                    expiry.stop.push((id, work.generation, work.attempt));
+                }
+                super::carry::CarryDecision::Revoke => {
+                    self.revoke(&id);
+                    expiry.revoked += 1;
+                    // Lifecycle work keeps its own refusal path (teardown
+                    // deferral, allocation evidence); guest work that never
+                    // passed its gate has definitely issued nothing.
+                    if !issued && CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()) {
+                        expiry.not_issued.push((id, work.generation, work.attempt));
+                    }
+                }
+            }
+        }
+        expiry
+    }
+    fn session_epoch(&self) -> Option<u64> {
+        (!self.detached).then_some(self.session_epoch).flatten()
+    }
+    fn expire_sandbox(&mut self, sandbox: &str, generation: u64) {
+        let ids: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, work)| work.sandbox_id == sandbox && work.generation <= generation)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            self.remove(&id);
+        }
+    }
+    fn terminal_superseded(&self, sandbox: &str, generation: u64) -> bool {
+        self.closed
+            || self
+                .sandbox_generation
+                .get(sandbox)
+                .is_some_and(|current| generation < *current)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn accept_dispatch_checked(
+        &mut self,
+        operation_id: &str,
+        sandbox_id: &str,
+        kind: &str,
+        generation: u64,
+        attempt: u64,
+        resume_teardown: bool,
+        reason: &mut &'static str,
+    ) -> Result<bool, AuthorityReject> {
+        let current = self
             .sandbox_generation
             .get(sandbox_id)
             .copied()
             .unwrap_or(0);
-        let refusal = if state.closed {
+        let refusal = if self.closed {
             Some("session_closed")
         } else {
-            state
-                .journal
+            self.journal
                 .as_ref()
                 .and_then(|j| j.work_refusal(sandbox_id, generation, kind))
         };
         if let Some(refusal) = refusal {
             *reason = refusal;
             return Err(AuthorityReject {
-                session_closed: state.closed,
+                session_closed: self.closed,
                 admission_unavailable: true,
                 code: SandboxErrorCode::ProtocolError,
                 message: "host refused dispatch before issue".into(),
@@ -785,8 +873,8 @@ impl HostAuthority {
         // dispatches. On saturation refuse new cancellable dispatches rather than
         // evicting a receipt. Lifecycle continuations must remain admissible.
         if CANCELLABLE_DISPATCH_KINDS.contains(&kind)
-            && (state.cancel_tombstones_full
-                || state
+            && (self.cancel_tombstones_full
+                || self
                     .cancel_tombstones
                     .contains(&(operation_id.into(), generation, attempt)))
         {
@@ -802,12 +890,12 @@ impl HostAuthority {
             *reason = "stale_generation";
             return Err(rejected("stale or invalid dispatch authority"));
         }
-        if let Some(previous) = state.seen.get(operation_id) {
+        if let Some(previous) = self.seen.get(operation_id) {
             if previous.sandbox_id != sandbox_id
                 || previous.kind != kind
                 || generation != previous.generation
                 || attempt < previous.attempt
-                || (state.pending.contains_key(operation_id) && attempt != previous.attempt)
+                || (self.pending.contains_key(operation_id) && attempt != previous.attempt)
             {
                 *reason = "operation_identity_mismatch";
                 return Err(rejected(
@@ -815,17 +903,16 @@ impl HostAuthority {
                 ));
             }
             if attempt == previous.attempt
-                && (!resume_teardown || state.pending.contains_key(operation_id))
+                && (!resume_teardown || self.pending.contains_key(operation_id))
             {
                 return Ok(false);
             }
         }
         // EVERY dispatch advances observed authority. Same-generation warm
         // reconnect changes nothing; older registered execs receive cancellation.
-        state
-            .sandbox_generation
+        self.sandbox_generation
             .insert(sandbox_id.to_string(), generation.max(current));
-        let obsolete: Vec<_> = state
+        let obsolete: Vec<_> = self
             .pending
             .iter()
             .filter(|(_, work)| {
@@ -837,66 +924,62 @@ impl HostAuthority {
             .collect();
         for id in obsolete {
             // Carried work superseded before adoption still owes its receipt.
-            if state
+            if self
                 .pending
                 .get(&id)
-                .is_some_and(|work| !state.attached(work))
+                .is_some_and(|work| !self.attached(work))
             {
-                state.revoke(&id);
+                self.revoke(&id);
                 continue;
             }
-            if state.executions.contains_key(&id) {
-                state.revoked_execs.push(id.clone());
+            if self.executions.contains_key(&id) {
+                self.revoked_execs.push(id.clone());
             }
-            state.remove(&id);
+            self.remove(&id);
         }
         let work = PendingWork {
             sandbox_id: sandbox_id.to_string(),
             generation,
             attempt,
             kind: kind.to_string(),
-            epoch: state.session_epoch,
+            epoch: self.session_epoch,
             owners: std::collections::BTreeSet::new(),
         };
-        state.issued.remove(operation_id);
-        state.pending.insert(operation_id.to_string(), work.clone());
-        state.seen.insert(operation_id.to_string(), work);
+        self.issued.remove(operation_id);
+        self.pending.insert(operation_id.to_string(), work.clone());
+        self.seen.insert(operation_id.to_string(), work);
         Ok(true)
     }
-    pub fn accept_stream(
+    fn accept_stream(
         &self,
         id: &str,
         generation: u64,
         attempt: u64,
     ) -> Result<PendingWork, AuthorityReject> {
-        let state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        if state.cancelled.contains(id) {
+        if self.cancelled.contains(id) {
             return Err(rejected("operation was cancelled"));
         }
-        state.current(id, generation, attempt)
+        self.current(id, generation, attempt)
     }
-    /// Publication gate: only work bound to the attached session publishes.
-    pub fn accept_completion(
+    fn accept_completion(
         &self,
         id: &str,
         generation: u64,
         attempt: u64,
     ) -> Result<PendingWork, AuthorityReject> {
-        let state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        let work = state.current(id, generation, attempt)?;
-        if !state.attached(&work) {
+        let work = self.current(id, generation, attempt)?;
+        if !self.attached(&work) {
             return Err(rejected("carried work is not adopted"));
         }
         Ok(work)
     }
-    pub fn accept_cancel(
-        &self,
+    fn accept_cancel(
+        &mut self,
         id: &str,
         generation: u64,
         attempt: u64,
     ) -> Result<PendingWork, AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        if state
+        if self
             .seen
             .get(id)
             .is_some_and(|work| !CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()))
@@ -905,83 +988,55 @@ impl HostAuthority {
                 "lifecycle operations cannot be cancelled; use kill",
             ));
         }
-        let work = match state.current(id, generation, attempt) {
+        let work = match self.current(id, generation, attempt) {
             Ok(work) => work,
             Err(err) => {
-                if !state.closed && generation > 0 && attempt > 0 {
+                if !self.closed && generation > 0 && attempt > 0 {
                     let key = (id.to_string(), generation, attempt);
-                    if !state.cancel_tombstones.contains(&key) {
-                        if state.cancel_tombstones.len() < MAX_CANCEL_TOMBSTONES {
-                            state.cancel_tombstones.insert(key);
+                    if !self.cancel_tombstones.contains(&key) {
+                        if self.cancel_tombstones.len() < MAX_CANCEL_TOMBSTONES {
+                            self.cancel_tombstones.insert(key);
                         } else {
-                            state.cancel_tombstones_full = true;
+                            self.cancel_tombstones_full = true;
                         }
                     }
                 }
                 return Err(err);
             }
         };
-        if !state.cancelled.insert(id.to_string()) {
+        if !self.cancelled.insert(id.to_string()) {
             return Err(rejected("operation already cancelled"));
         }
         // An exec's ordinary-work admission is revoked by its execution flag.
         // Its runtime permit remains the *cleanup* authority until lifecycle
         // supersession/shutdown revokes it. Other adapters have no cleanup owner.
-        if !state.executions.contains_key(id)
-            && let Some(permit) = state.runtime_permits.get(id)
+        if !self.executions.contains_key(id)
+            && let Some(permit) = self.runtime_permits.get(id)
         {
             permit.revoke();
         }
-        if let Some(permit) = state.executions.get(id) {
+        if let Some(permit) = self.executions.get(id) {
             permit.store(true, Ordering::Release);
         }
         Ok(work)
     }
-    #[cfg(test)]
-    pub fn runtime_registered(&self, id: &str) -> bool {
-        self.0.lock().unwrap().runtime_permits.contains_key(id)
-    }
-    pub fn register_runtime(
-        &self,
+    fn register_runtime(
+        &mut self,
         id: &str,
         generation: u64,
         attempt: u64,
     ) -> Result<Arc<sandbox_runtime::RuntimePermit>, AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.current(id, generation, attempt)?;
-        if state.cancelled.contains(id) {
+        self.current(id, generation, attempt)?;
+        if self.cancelled.contains(id) {
             return Err(rejected("operation was cancelled"));
         }
         let permit = Arc::new(sandbox_runtime::RuntimePermit::default());
-        state.runtime_permits.insert(id.into(), permit.clone());
+        self.runtime_permits.insert(id.into(), permit.clone());
         Ok(permit)
     }
-    /// Called on the WORKER immediately before process spawn. Validation and
-    /// registration are indivisible relative to lifecycle admission/shutdown.
     #[cfg(target_os = "linux")]
-    pub fn register_exec(
-        &self,
-        id: &str,
-        generation: u64,
-        attempt: u64,
-    ) -> Result<(Arc<AtomicBool>, ExecGuard<'_>), AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        state.current(id, generation, attempt)?;
-        if state.cancelled.contains(id) {
-            return Err(rejected("operation was cancelled"));
-        }
-        if state.executions.contains_key(id) {
-            return Err(rejected("exec already registered"));
-        }
-        let cancelled = Arc::new(AtomicBool::new(false));
-        state.executions.insert(id.to_string(), cancelled.clone());
-        Ok((cancelled, ExecGuard { _state: state }))
-    }
-    #[cfg(target_os = "linux")]
-    pub fn start_stdin(&self, id: &str, next: u64) {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        state
-            .stdin_sequences
+    fn start_stdin(&mut self, id: &str, next: u64) {
+        self.stdin_sequences
             .entry(id.into())
             .or_insert_with(|| StdinStream {
                 next,
@@ -989,25 +1044,24 @@ impl HostAuthority {
             });
     }
     #[cfg(target_os = "linux")]
-    pub fn accept_stdin(
-        &self,
+    fn accept_stdin(
+        &mut self,
         id: &str,
         generation: u64,
         attempt: u64,
         sequence: u64,
-        bytes: Vec<u8>,
+        bytes: &mut Vec<u8>,
         eof: bool,
     ) -> Result<Vec<sandbox_runtime::WriteStdinRequest>, AuthorityReject> {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        if state.cancelled.contains(id)
-            || !state
+        if self.cancelled.contains(id)
+            || !self
                 .current(id, generation, attempt)
                 .is_ok_and(|work| work.kind == "command.run")
         {
             return Ok(Vec::new());
         }
         // Entry follows the pending attempt identity; dispatch seeds its starting counter.
-        let stream = state.stdin_sequences.entry(id.to_string()).or_default();
+        let stream = self.stdin_sequences.entry(id.to_string()).or_default();
         if stream.closed || sequence < stream.next || stream.buffered.contains_key(&sequence) {
             return Ok(Vec::new());
         }
@@ -1025,7 +1079,9 @@ impl HostAuthority {
             });
         }
         stream.bytes += bytes.len();
-        stream.buffered.insert(sequence, (bytes, eof));
+        stream
+            .buffered
+            .insert(sequence, (std::mem::take(bytes), eof));
         let mut ready = Vec::new();
         while let Some((bytes, eof)) = stream.buffered.remove(&stream.next) {
             stream.next += 1;
@@ -1047,105 +1103,212 @@ impl HostAuthority {
         Ok(ready)
     }
     #[cfg(test)]
-    pub fn cancel(&self, id: &str) {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        if !state
+    fn cancel(&mut self, id: &str) {
+        if !self
             .pending
             .get(id)
             .is_some_and(|work| CANCELLABLE_DISPATCH_KINDS.contains(&work.kind.as_str()))
         {
             return;
         }
-        state.cancelled.insert(id.to_string());
-        if let Some(permit) = state.runtime_permits.get(id) {
+        self.cancelled.insert(id.to_string());
+        if let Some(permit) = self.runtime_permits.get(id) {
             permit.revoke();
         }
-        if let Some(permit) = state.executions.get(id) {
+        if let Some(permit) = self.executions.get(id) {
             permit.store(true, Ordering::Release);
         }
     }
-    pub fn complete(&self, id: &str) -> Option<PendingWork> {
-        self.0
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .remove(id)
-    }
-    pub fn pending(&self, id: &str) -> Option<PendingWork> {
-        self.0
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .pending
-            .get(id)
-            .cloned()
-    }
-    #[cfg(target_os = "linux")]
-    pub fn take_revoked_execs(&self) -> Vec<String> {
-        std::mem::take(
-            &mut self
-                .0
-                .lock()
-                .unwrap_or_else(|err| err.into_inner())
-                .revoked_execs,
-        )
-    }
-    #[cfg(target_os = "linux")]
-    pub fn pending_ids(&self) -> HashSet<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .pending
-            .keys()
-            .cloned()
-            .collect()
-    }
-    pub fn shutdown(&self) {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        state.closed = true;
-        let ids: Vec<_> = state.pending.keys().cloned().collect();
+    fn shutdown(&mut self) {
+        self.closed = true;
+        let ids: Vec<_> = self.pending.keys().cloned().collect();
         for id in ids {
-            state.remove(&id);
+            self.remove(&id);
         }
-        state.detached_at = None;
-        state.gate.notify_all();
+        self.detached_at = None;
+        self.gate.notify_all();
     }
-    /// Revoke-and-reconnect (a server verdict or local protocol failure while
-    /// the process continues): `shutdown`, remembering every revoked attempt
-    /// for its late receipt in the next session.
-    pub fn revoke_all(&self) -> usize {
-        let mut state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        let ids: Vec<_> = state.pending.keys().cloned().collect();
+    fn revoke_all(&mut self) -> usize {
+        let ids: Vec<_> = self.pending.keys().cloned().collect();
         for id in &ids {
-            state.revoke(id);
+            self.revoke(id);
         }
-        state.closed = true;
-        state.detached_at = None;
-        state.gate.notify_all();
+        self.closed = true;
+        self.detached_at = None;
+        self.gate.notify_all();
         ids.len()
     }
-    /// The next stdin sequence a carried command expects, `None` once its
-    /// stream is closed or for non-command work.
     #[cfg(target_os = "linux")]
-    pub fn stdin_next(&self, id: &str) -> Option<u64> {
-        let state = self.0.lock().unwrap_or_else(|err| err.into_inner());
-        if state
-            .pending
-            .get(id)
-            .is_none_or(|w| w.kind != "command.run")
-        {
+    fn stdin_next(&self, id: &str) -> Option<u64> {
+        if self.pending.get(id).is_none_or(|w| w.kind != "command.run") {
             return None;
         }
-        state
-            .stdin_sequences
+        self.stdin_sequences
             .get(id)
             .filter(|stream| !stream.closed)
             .map(|stream| stream.next)
     }
-    #[cfg(not(target_os = "linux"))]
-    pub fn stdin_next(&self, _id: &str) -> Option<u64> {
-        None
+    fn with_journal(journal: Arc<super::journal::HostJournal>) -> Self {
+        Self {
+            journal: Some(journal),
+            ..Self::default()
+        }
+    }
+    /// The session is detached: carried work stops at its effect gate.
+    fn mark_detached(&mut self) {
+        self.detached = true;
+    }
+    /// An Intent→Effect transition is between its gate and its Effect record.
+    fn admission_in_flight(&self) -> bool {
+        !self.admitting.is_empty()
+    }
+    /// Revoke every transition still in flight after the drain deadline.
+    fn revoke_admitting(&mut self) {
+        let stuck: Vec<String> = self.admitting.iter().cloned().collect();
+        for id in stuck {
+            self.revoke(&id);
+        }
+    }
+    fn gate(&self) -> Arc<Condvar> {
+        self.gate.clone()
+    }
+    /// Forget ownerless work, anchor the outage and count what is carried.
+    fn finish_detach(&mut self, now: Instant) -> usize {
+        let ownerless: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, work)| work.owners.is_empty())
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ownerless {
+            if self.executions.contains_key(&id) {
+                self.revoked_execs.push(id.clone());
+            }
+            self.remove(&id);
+        }
+        if !self.pending.is_empty() && self.detached_at.is_none() {
+            self.detached_at = Some(now);
+        }
+        self.pending.len()
+    }
+    fn attached_epoch(&self, epoch: u64) -> bool {
+        self.attached_epochs.contains(&epoch)
+    }
+    fn attached_before(&self, epoch: u64) -> bool {
+        self.attached_epochs
+            .first()
+            .is_some_and(|first| *first < epoch)
+    }
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
+    }
+    fn detached_since(&self) -> Option<Instant> {
+        self.detached_at
+    }
+    fn set_effect_gate_max_wait(&mut self, wait: Duration) {
+        self.effect_gate_max_wait = Some(wait);
+    }
+    fn end_outage(&mut self) {
+        self.detached_at = None;
+    }
+    fn take_late(&mut self, id: &str, generation: u64, attempt: u64) -> bool {
+        self.late.remove(&(id.to_string(), generation, attempt))
+    }
+    fn pending(&self, id: &str) -> Option<PendingWork> {
+        self.pending.get(id).cloned()
+    }
+    #[cfg(target_os = "linux")]
+    fn take_revoked_execs(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.revoked_execs)
+    }
+    #[cfg(target_os = "linux")]
+    fn pending_ids(&self) -> HashSet<String> {
+        self.pending.keys().cloned().collect()
+    }
+    #[cfg(test)]
+    fn runtime_registered(&self, id: &str) -> bool {
+        self.runtime_permits.contains_key(id)
+    }
+    /// Record a new owner of this exact pending attempt; its nonce.
+    fn take_owner(&mut self, id: &str, generation: u64, attempt: u64) -> Option<u64> {
+        self.next_owner_nonce += 1;
+        let nonce = self.next_owner_nonce;
+        let work = self.pending.get_mut(id)?;
+        if work.generation != generation || work.attempt != attempt {
+            return None;
+        }
+        work.owners.insert(nonce);
+        Some(nonce)
+    }
+    fn release_owner(&mut self, id: &str, nonce: u64) {
+        if let Some(work) = self.pending.get_mut(id) {
+            work.owners.remove(&nonce);
+        }
+    }
+    /// The attempt's Effect is durable or refused: the transition is over.
+    fn end_admission(&mut self, id: &str) {
+        self.admitting.remove(id);
+        self.gate.notify_all();
+    }
+    fn effect_gate_max_wait(&self) -> Duration {
+        self.effect_gate_max_wait
+            .unwrap_or_else(|| super::carry::CarryPolicy::default().effect_gate_max_wait())
+    }
+    /// One effect-gate check: `true` once the attempt may start its effect
+    /// (registered as admitting and issued), `false` while it is carried.
+    fn admit_effect(
+        &mut self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<bool, AuthorityReject> {
+        if !self.closed
+            && !self.pending.contains_key(id)
+            && self.late.contains(&(id.to_string(), generation, attempt))
+        {
+            return Err(revoked_before_effect());
+        }
+        let work = self.current(id, generation, attempt)?;
+        if self.attached(&work) {
+            // Registered under the same lock that saw the session
+            // attached: a concurrent detach waits for this transition.
+            self.admitting.insert(id.to_string());
+            self.issued.insert(id.to_string());
+            return Ok(true);
+        }
+        Ok(false)
+    }
+    #[cfg(target_os = "linux")]
+    fn register_exec(
+        &mut self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+    ) -> Result<Arc<AtomicBool>, AuthorityReject> {
+        self.current(id, generation, attempt)?;
+        if self.cancelled.contains(id) {
+            return Err(rejected("operation was cancelled"));
+        }
+        if self.executions.contains_key(id) {
+            return Err(rejected("exec already registered"));
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.executions.insert(id.to_string(), cancelled.clone());
+        Ok(cancelled)
+    }
+    #[cfg(test)]
+    fn set_cancel_tombstones_full(&mut self, full: bool) {
+        self.cancel_tombstones_full = full;
+    }
+    #[cfg(test)]
+    fn is_cancelled(&self, id: &str) -> bool {
+        self.cancelled.contains(id)
+    }
+    #[cfg(test)]
+    fn cancel_tombstone_count(&self) -> usize {
+        self.cancel_tombstones.len()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1597,12 +1760,16 @@ mod tests {
             let authority = HostAuthority::default();
             assert!(authority.accept_cancel("op", 1, 1).is_err());
             for saturated in [false, true] {
-                authority.0.lock().expect("lock").cancel_tombstones_full = saturated;
+                authority
+                    .0
+                    .lock()
+                    .expect("lock")
+                    .set_cancel_tombstones_full(saturated);
                 assert!(authority.accept_dispatch("op", "sbx", kind, 1, 1).is_ok());
                 assert!(authority.accept_cancel("op", 1, 1).is_err());
                 authority.cancel("op");
                 assert!(authority.accept_completion("op", 1, 1).is_ok());
-                assert!(!authority.0.lock().expect("lock").cancelled.contains("op"));
+                assert!(!authority.0.lock().expect("lock").is_cancelled("op"));
             }
             authority.complete("op");
             assert!(authority.accept_cancel("op", 1, 2).is_err());
@@ -1674,7 +1841,7 @@ mod tests {
             );
         }
         assert_eq!(
-            authority.0.lock().expect("lock").cancel_tombstones.len(),
+            authority.0.lock().expect("lock").cancel_tombstone_count(),
             MAX_CANCEL_TOMBSTONES
         );
         for id in ["early-0", "early-1024", "new"] {
