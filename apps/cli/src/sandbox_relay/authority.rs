@@ -297,6 +297,17 @@ impl HostAuthority {
     pub fn with_journal(journal: Arc<super::journal::HostJournal>) -> Self {
         Self(Arc::new(Mutex::new(AuthorityState::with_journal(journal))))
     }
+    /// The relay's authority: carried work waits at the effect gate at most
+    /// `effect_gate_max_wait` (the carry policy's backstop).
+    pub fn with_effect_gate(
+        journal: Option<Arc<super::journal::HostJournal>>,
+        effect_gate_max_wait: Duration,
+    ) -> Self {
+        Self(Arc::new(Mutex::new(AuthorityState::with_effect_gate(
+            journal,
+            effect_gate_max_wait,
+        ))))
+    }
     /// A new relay connection reopens admission. Work carried across a
     /// transport loss (`detach`) keeps its entries and `seen` records: it is
     /// bound to its old epoch, so it neither starts an effect nor publishes
@@ -426,10 +437,6 @@ impl HostAuthority {
         lease_due: &HashMap<String, u64>,
     ) -> CarryExpiry {
         self.lock().expire_detached_work(now, policy, lease_due)
-    }
-    /// The effect gate's backstop follows the carry window.
-    pub fn set_effect_gate_max_wait(&self, wait: Duration) {
-        self.lock().set_effect_gate_max_wait(wait)
     }
     /// The reconnected session is fully registered (adoption, audit and
     /// census all done): the outage is over and a later loss starts a fresh
@@ -1163,6 +1170,16 @@ impl AuthorityState {
             ..Self::default()
         }
     }
+    fn with_effect_gate(
+        journal: Option<Arc<super::journal::HostJournal>>,
+        effect_gate_max_wait: Duration,
+    ) -> Self {
+        Self {
+            journal,
+            effect_gate_max_wait: Some(effect_gate_max_wait),
+            ..Self::default()
+        }
+    }
     /// The session is detached: carried work stops at its effect gate.
     fn mark_detached(&mut self) {
         self.detached = true;
@@ -1213,9 +1230,6 @@ impl AuthorityState {
     }
     fn detached_since(&self) -> Option<Instant> {
         self.detached_at
-    }
-    fn set_effect_gate_max_wait(&mut self, wait: Duration) {
-        self.effect_gate_max_wait = Some(wait);
     }
     fn end_outage(&mut self) {
         self.detached_at = None;
@@ -1339,7 +1353,9 @@ mod tests {
     }
 
     fn carried_authority() -> HostAuthority {
-        let authority = HostAuthority::default();
+        carried(HostAuthority::default())
+    }
+    fn carried(authority: HostAuthority) -> HostAuthority {
         authority.attach(1);
         authority
             .accept_dispatch("op", "sbx", "sandbox.create", 1, 1)
@@ -1610,8 +1626,10 @@ mod tests {
     /// The effect gate's backstop follows the configured window.
     #[test]
     fn effect_gate_backstop_follows_the_carry_window() {
-        let authority = carried_authority();
-        authority.set_effect_gate_max_wait(Duration::from_millis(200));
+        let authority = carried(HostAuthority::with_effect_gate(
+            None,
+            Duration::from_millis(200),
+        ));
         authority.detach(Instant::now());
         let started = Instant::now();
         let refused = authority.wait_effect_admission("op", 1, 1).unwrap_err();

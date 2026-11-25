@@ -498,9 +498,10 @@ impl ExpiryService {
     }
     /// `carry`: how long work carried across a relay transport drop may stay
     /// unadopted (WP3, see `carry.rs`). This always-running tick enforces it,
-    /// connected or not, so flapping can never extend it; the effect gate's
-    /// backstop is derived from it here. The credential service is in place
-    /// before the first tick (an expiry due at startup captures).
+    /// connected or not, so flapping can never extend it (the effect gate's
+    /// backstop is the authority's, from the same policy). The credential
+    /// service is in place before the first tick (an expiry due at startup
+    /// captures).
     pub fn start_with_credentials(
         runtime: Arc<dyn SandboxRuntime>,
         journal: Arc<HostJournal>,
@@ -508,7 +509,6 @@ impl ExpiryService {
         carry: CarryPolicy,
         initial_credentials: Option<super::credentials::service::CredentialService>,
     ) -> Self {
-        authority.set_effect_gate_max_wait(carry.effect_gate_max_wait());
         let shutdown = Arc::new(AtomicBool::new(false));
         let stop = shutdown.clone();
         let refresh_gate = Arc::new(Mutex::new(RefreshGate::default()));
