@@ -2250,7 +2250,10 @@ fn a_slow_drain_of_one_buffered_write_keeps_heartbeats_flowing() {
 fn upload_failure_logs_carry_fields_and_never_a_url_or_secret() {
     const SIG: &str = "SENTINELSIGNATURE";
     const KEY: &str = "SENTINELACCESSKEY";
-    for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+    for format in [
+        crate::logging::LogFormat::Text,
+        crate::logging::LogFormat::Json,
+    ] {
         let ((), logs) = crate::logging::with_subscriber(
             format,
             tracing_subscriber::EnvFilter::new("info"),
@@ -2317,7 +2320,7 @@ fn upload_failure_logs_carry_fields_and_never_a_url_or_secret() {
         for secret in [SIG, KEY, "X-Amz", "bucket.example"] {
             assert!(!logs.contains(secret), "{secret} leaked: {logs}");
         }
-        if format == crate::cli::LogFormat::Json {
+        if format == crate::logging::LogFormat::Json {
             // Parsed records (test#10): for each URL, the retries carry
             // attempts 1-3 and the final failure attempt 4.
             for cause in ["http_status", "connect"] {

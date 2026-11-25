@@ -12,12 +12,13 @@
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
 
-use wssp::cli::{Cli, Command, LogFormat};
+use wssp::cli::{Cli, Command};
 use wssp::commands::host::{
     ABOUT_NOT_ENROLLED, NOT_ENROLLED_AFTER_HELP, NOT_ENROLLED_HOST_MESSAGE,
 };
 use wssp::exit::{CodedError, ExitCode};
 use wssp::host_role::HostRole;
+use wssp::logging::LogFormat;
 use wssp::{commands, exit, logging, output};
 
 fn main() {
@@ -193,7 +194,7 @@ fn run(cli: &Cli, role: HostRole) -> anyhow::Result<()> {
         Command::Ssh(args) => commands::sandbox::ssh::ssh(args),
         #[cfg(feature = "ssh")]
         Command::SshConfig(args) => commands::sandbox::ssh::ssh_config(args),
-        Command::Completions(args) => commands::completions::run(args),
+        Command::Completions(args) => commands::completions::run(args, Cli::command()),
         Command::Host(args) => {
             // Fail fast, before any network call or auth store.
             if !role.is_enrolled() && !args.command.allowed_without_enrollment() {

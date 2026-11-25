@@ -4519,7 +4519,7 @@ mod tests {
             "incus scrub failed: guest operation failed (1 scrub error(s), first: read_only_fs at /etc/machine-id)",
         );
         let (error, logs) = crate::logging::with_subscriber(
-            crate::cli::LogFormat::Text,
+            crate::logging::LogFormat::Text,
             tracing_subscriber::EnvFilter::new("info"),
             || super::capture_failure(&d, &cause),
         );
@@ -7472,7 +7472,10 @@ exit 1
             "/home/user/missing-secret-2d",
             "FILE-BYTES-SECRET-6a",
         ];
-        for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+        for format in [
+            crate::logging::LogFormat::Text,
+            crate::logging::LogFormat::Json,
+        ] {
             let (states, captured) = crate::logging::with_subscriber(
                 format,
                 tracing_subscriber::EnvFilter::new("trace"),
@@ -7566,8 +7569,8 @@ exit 1
             // Exact code token: the host log keeps the precise internal code
             // (B2-K-1); only peer frames are respelled for their session.
             let code = match format {
-                crate::cli::LogFormat::Text => "code=fs_not_found",
-                crate::cli::LogFormat::Json => "\"code\":\"fs_not_found\"",
+                crate::logging::LogFormat::Text => "code=fs_not_found",
+                crate::logging::LogFormat::Json => "\"code\":\"fs_not_found\"",
             };
             assert!(
                 text.lines().any(|l| l.contains("op-get")
@@ -7612,7 +7615,7 @@ exit 1
         };
         for (not_issued, level, other) in [(true, "WARN", "ERROR"), (false, "ERROR", "WARN")] {
             let ((), captured) = crate::logging::with_subscriber(
-                crate::cli::LogFormat::Text,
+                crate::logging::LogFormat::Text,
                 tracing_subscriber::EnvFilter::new("trace"),
                 || {
                     log_operation_finished(
@@ -7706,7 +7709,10 @@ exit 1
         let receipt = serde_json::to_string(&journal.lookup("op").unwrap()).unwrap();
         assert!(!receipt.contains(SENTINEL));
         assert!(!receipt.contains(ENCODED));
-        for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+        for format in [
+            crate::logging::LogFormat::Text,
+            crate::logging::LogFormat::Json,
+        ] {
             let (_, captured) = crate::logging::with_subscriber(
                 format,
                 tracing_subscriber::EnvFilter::new("trace"),
@@ -7750,7 +7756,10 @@ exit 1
         let expected =
             "readiness path validate_pass, observed status Errorx/112, last seen Running 40 ms ago";
         assert_eq!(readiness_log_detail(&finished), expected);
-        for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+        for format in [
+            crate::logging::LogFormat::Text,
+            crate::logging::LogFormat::Json,
+        ] {
             let ((), captured) = crate::logging::with_subscriber(
                 format,
                 tracing_subscriber::EnvFilter::new("trace"),

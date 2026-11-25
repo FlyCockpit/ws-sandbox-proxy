@@ -660,7 +660,10 @@ fn pruned_receipt_reconciliation_sends_only_safe_identity_and_cannot_confirm() {
 fn private_config_supervisor_logs_and_receipts_are_redacted() {
     const PRIVATE: &str = "private-config-supervisor-sentinel";
     const COMMAND: &str = "command-env-supervisor-sentinel";
-    for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+    for format in [
+        crate::logging::LogFormat::Text,
+        crate::logging::LogFormat::Json,
+    ] {
         let ((), logs) = crate::logging::with_subscriber(
             format,
             tracing_subscriber::EnvFilter::new("trace"),

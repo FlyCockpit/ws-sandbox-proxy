@@ -2030,7 +2030,10 @@ fn expiry_already_absent_and_timer_before_server_kill_are_idempotent() {
 
 #[test]
 fn dns_refresh_logs_changed_at_info_unchanged_at_debug_with_only_counts() {
-    for format in [crate::cli::LogFormat::Text, crate::cli::LogFormat::Json] {
+    for format in [
+        crate::logging::LogFormat::Text,
+        crate::logging::LogFormat::Json,
+    ] {
         let (_, captured) = crate::logging::with_subscriber(
             format,
             tracing_subscriber::EnvFilter::new("trace"),
@@ -2071,7 +2074,7 @@ fn dns_refresh_logs_changed_at_info_unchanged_at_debug_with_only_counts() {
             );
         }
         assert!(!text.contains("128.66.") && !text.contains("example.com"));
-        if matches!(format, crate::cli::LogFormat::Json) {
+        if matches!(format, crate::logging::LogFormat::Json) {
             let events: Vec<serde_json::Value> = text
                 .lines()
                 .map(|line| serde_json::from_str(line).unwrap())
