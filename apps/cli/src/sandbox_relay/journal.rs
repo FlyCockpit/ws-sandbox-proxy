@@ -15,6 +15,7 @@ use sandbox_protocol::{OperationDispatch, OperationState, SandboxErrorCode};
 use serde::{Deserialize, Serialize};
 
 mod configs;
+mod key;
 pub mod storage;
 pub(super) use configs::ConfigInstallIo;
 mod lease_record;
@@ -25,6 +26,56 @@ pub(super) use leases::StaleEnforcementLossAuthority;
 pub use leases::{LEASE_CEILING_SKEW_MS, LeaseCeilingExceeded, lease_within_ceiling};
 pub(super) use retire::{COMMAND_STOP_UNPROVEN_EXT, CommandRetirement, RetirePacing, RetireSettle};
 pub const JOURNAL_VERSION: u32 = 1;
+
+// Wire counterpart of the API's CANCELLABLE_OPERATION_KINDS; protocol.test.ts
+// checks parity through OPERATION_DISPATCH_KIND. Unknown kinds fail closed.
+pub(super) const CANCELLABLE_DISPATCH_KINDS: &[&str] = &[
+    "command.run",
+    "file.get",
+    "file.put",
+    "file.list",
+    "file.stat",
+    "file.mkdir",
+    "file.remove",
+    "file.move",
+    "process.list",
+    "process.signal",
+];
+
+/// The most leases with an unfinished expiry the journal admits, and the
+/// most expiry actions the expiry worker runs at once.
+pub(super) const MAX_ACTIONS: usize = 64;
+
+pub fn confirmed_release(
+    kind: &str,
+    state: OperationState,
+    result: Option<&serde_json::Value>,
+) -> bool {
+    state == OperationState::Succeeded
+        && matches!(
+            (
+                kind,
+                result.and_then(|v| v.get("state")).and_then(|v| v.as_str())
+            ),
+            ("sandbox.stop", Some("stopped" | "absent")) | ("sandbox.kill", Some("deleted"))
+        )
+}
+
+pub(super) fn guest_from_dispatch(dispatch: &OperationDispatch) -> sandbox_runtime::GuestIdentity {
+    sandbox_runtime::GuestIdentity {
+        guest_uid: dispatch.guest_uid.unwrap_or(1000),
+        guest_gid: dispatch.guest_gid.unwrap_or(1000),
+        guest_home: dispatch
+            .guest_home
+            .clone()
+            .unwrap_or_else(|| "/home/user".to_string()),
+        guest_shell: dispatch
+            .guest_shell
+            .clone()
+            .unwrap_or_else(|| "/bin/bash".to_string()),
+    }
+}
+
 /// Bounded extension fields preserved by every record rewrite.
 pub type JournalExt = BTreeMap<String, serde_json::Value>;
 const EXT_MAX_KEYS: usize = 16;
@@ -384,7 +435,7 @@ pub struct HostJournal {
     /// Journal-wide IO latch: every durable write goes through it.
     pub(super) io: IoLatch,
     state: Mutex<JournalState>,
-    key: Mutex<Option<super::journal_key::MemoryJournalKey>>,
+    key: Mutex<Option<key::MemoryJournalKey>>,
     crash: Mutex<Option<CrashPoint>>,
     /// Host lease ceiling (`None` = unlimited) checked when a dispatched lease
     /// will be stored. 24 hours until the daemon sets the configured value.
@@ -460,7 +511,7 @@ impl HostJournal {
         &self,
         binding: &TransportBindingV11,
         dispatch: &OperationDispatch,
-        mut mac: impl FnMut(&super::journal_key::MemoryJournalKey, &str, &str) -> String,
+        mut mac: impl FnMut(&key::MemoryJournalKey, &str, &str) -> String,
     ) -> std::result::Result<HostReceipt, SandboxErrorCode> {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if !binding.is_valid()
@@ -652,7 +703,7 @@ impl HostJournal {
         if state.configs.values().any(|config| !config.binds(binding)) {
             bail!("private config journal refused");
         }
-        let key = super::journal_key::MemoryJournalKey::install(frame, binding, epoch)?;
+        let key = key::MemoryJournalKey::install(frame, binding, epoch)?;
         *self.key.lock().unwrap_or_else(|err| err.into_inner()) = Some(key);
         Ok(())
     }
@@ -1425,11 +1476,7 @@ impl HostJournal {
         leases::retire_cleanup(&self.io, &self.leases_dir, &mut guard, &stored)?;
         prune_completed(&self.io, &self.receipts_dir, &mut guard.receipts)?;
         drop(guard);
-        if super::live_admission::confirmed_release(
-            &stored.kind,
-            stored.state,
-            stored.result.as_ref(),
-        ) {
+        if confirmed_release(&stored.kind, stored.state, stored.result.as_ref()) {
             self.release_retained(
                 &stored.sandbox_id,
                 stored.generation,
@@ -1438,34 +1485,6 @@ impl HostJournal {
         }
         self.maybe_crash(CrashPoint::AfterResult)?;
         Ok(Some(stored))
-    }
-
-    /// Production cancel entry: release the fsync journal lock before taking
-    /// authority. A failed persistence cannot revoke a running owner's permit.
-    pub fn request_cancel(
-        &self,
-        authority: &super::authority::HostAuthority,
-        operation_id: &str,
-        generation: u64,
-        attempt: u64,
-    ) -> Result<std::result::Result<super::authority::PendingWork, super::authority::AuthorityReject>>
-    {
-        self.request_cancel_for(authority, operation_id, generation, attempt, None)
-    }
-
-    /// [`Self::request_cancel`] for a cancel the host itself decided, with
-    /// its reason journaled first (`ext.cancelReason`).
-    pub fn request_cancel_for(
-        &self,
-        authority: &super::authority::HostAuthority,
-        operation_id: &str,
-        generation: u64,
-        attempt: u64,
-        reason: Option<CancelReason>,
-    ) -> Result<std::result::Result<super::authority::PendingWork, super::authority::AuthorityReject>>
-    {
-        self.record_cancel_for(operation_id, generation, attempt, reason)?;
-        Ok(authority.accept_cancel(operation_id, generation, attempt))
     }
 
     pub fn record_cancel(&self, operation_id: &str, generation: u64, attempt: u64) -> Result<()> {
@@ -1488,7 +1507,7 @@ impl HostJournal {
         };
         if existing.generation != generation
             || existing.attempt != attempt
-            || !super::authority::CANCELLABLE_DISPATCH_KINDS.contains(&existing.kind.as_str())
+            || !CANCELLABLE_DISPATCH_KINDS.contains(&existing.kind.as_str())
             || existing.cancel_requested
             || existing.is_terminal()
         {
@@ -1541,11 +1560,7 @@ impl HostJournal {
         {
             return Ok(false);
         }
-        let released = super::live_admission::confirmed_release(
-            &receipt.kind,
-            receipt.state,
-            receipt.result.as_ref(),
-        );
+        let released = confirmed_release(&receipt.kind, receipt.state, receipt.result.as_ref());
         let cleanup_generation = settled.or_else(|| released.then_some(receipt.generation));
         if let Some(generation) = cleanup_generation {
             let watermark = CleanupWatermark {
@@ -1953,7 +1968,7 @@ fn file_put_intent(dispatch: &OperationDispatch) -> Option<FilePutIntent> {
     if dispatch.kind != "file.put" {
         return None;
     }
-    let guest = super::supervisor::guest_from_dispatch(dispatch);
+    let guest = guest_from_dispatch(dispatch);
     Some(FilePutIntent {
         path: dispatch.path.clone()?,
         size: dispatch.file_size?,
@@ -3702,13 +3717,8 @@ mod tests {
             drop(guard);
             journal.inject_crash(point);
             assert!(
-                journal
-                    .request_cancel(
-                        &authority,
-                        &work.operation_id,
-                        work.generation,
-                        work.attempt
-                    )
+                authority
+                    .request_cancel(&journal, &work.operation_id, work.generation, work.attempt)
                     .is_err()
             );
             assert!(
@@ -3722,13 +3732,8 @@ mod tests {
                 journal.cancel_blocks(&work.operation_id, work.generation),
                 point == CrashPoint::AfterCancel
             );
-            journal
-                .request_cancel(
-                    &authority,
-                    &work.operation_id,
-                    work.generation,
-                    work.attempt,
-                )
+            authority
+                .request_cancel(&journal, &work.operation_id, work.generation, work.attempt)
                 .unwrap()
                 .unwrap();
             assert!(flag.load(Ordering::Acquire));

@@ -770,7 +770,7 @@ fn expiry_restart_uses_renewed_journal_and_detects_completed_checkpoint_drift() 
 #[test]
 fn expiry_arm_capacity_reserves_all_cleanup_slots_and_releases_confirmed_teardown() {
     let (_dir, j, _c) = setup();
-    for i in 0..MAX_ACTIONS {
+    for i in 0..crate::sandbox_relay::journal::MAX_ACTIONS {
         let mut d = dispatch(&j, "sandbox.create", 1, LeaseAction::Stop);
         d.sandbox_id = format!("vm-{i}");
         d.operation_id = format!("create-{i}");

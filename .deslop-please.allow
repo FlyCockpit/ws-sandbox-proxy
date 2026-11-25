@@ -1,0 +1,6 @@
+# deslop-please findings judged right to keep, one reason above each. Debt to be fixed is not listed here.
+# Check with: deslop-please --allow .deslop-please.allow
+# Revoked execs are an outbox: HostAuthority drains it so the relay cancels them outside the authority lock (no waits under it).
+field-leak wssp::sandbox_relay::authority::AuthorityState::revoked_execs
+# The carry policy's effect-gate backstop, set once when the expiry service starts; the gate falls back to the default before that.
+field-leak wssp::sandbox_relay::authority::AuthorityState::effect_gate_max_wait

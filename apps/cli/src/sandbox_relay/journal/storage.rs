@@ -485,7 +485,7 @@ impl HostJournal {
                     },
                 );
             }
-            if super::super::live_admission::confirmed_release(&r.kind, r.state, r.result.as_ref())
+            if super::confirmed_release(&r.kind, r.state, r.result.as_ref())
                 && let Some(root) = next.roots.get_mut(&r.sandbox_id)
                 && root.generation <= r.generation
                 && root.root() == allocation_root(a)
