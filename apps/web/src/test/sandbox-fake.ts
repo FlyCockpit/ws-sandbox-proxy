@@ -620,6 +620,8 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
         queryOptions: query(["sandboxes", "getSandbox"], "getSandbox", (input: { id: string }) => ({
           // The detail view's own lease-path limit (display only).
           leaseLimit: { finiteMaxMs: server.maxTimeoutMs ?? 86_400_000, unlimited: false },
+          // The lease a start without a lifetime re-arms (a row may override it).
+          rememberedLeaseTimeoutMs: 300_000,
           ...sandbox(input.id),
         })),
       },

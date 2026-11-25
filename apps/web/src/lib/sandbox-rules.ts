@@ -440,6 +440,27 @@ export function lifetimeMs(
   return ms > limit.maxTimeoutMs ? null : ms;
 }
 
+/**
+ * The Start/Restore choice that keeps the sandbox's remembered lease: the
+ * request omits `timeoutMs` and the server re-arms the lifetime and expiry
+ * action it last accepted at create or start.
+ */
+export const KEEP_LIFETIME = "keep";
+
+/**
+ * The lease part of a Start/Restore request: nothing for "keep its lifetime",
+ * else the explicit choice (which the server then remembers). Null when the
+ * choice is not allowed.
+ */
+export function startLeaseInput(
+  minutesText: string,
+  limit: LifetimeLimit,
+): { timeoutMs?: number } | null {
+  if (minutesText === KEEP_LIFETIME) return {};
+  const timeoutMs = lifetimeMs(minutesText, limit);
+  return timeoutMs === null ? null : { timeoutMs };
+}
+
 /** One entry per line, trimmed; blank lines are ignored. */
 function parseLines(text: string): string[] {
   return text

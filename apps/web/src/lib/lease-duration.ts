@@ -44,9 +44,10 @@ export function formatLeaseDuration(ms: number, locale: string): string {
       return new Intl.NumberFormat(locale, { style: "unit", unit, unitDisplay: "long" }).format(
         ms / scale,
       );
+  // Not a whole minute (a lease set through the API): exact to the second.
   return new Intl.NumberFormat(locale, {
     style: "unit",
-    unit: "minute",
+    unit: "second",
     unitDisplay: "long",
-  }).format(Math.round(ms / 60_000));
+  }).format(Math.round(ms / 1000));
 }

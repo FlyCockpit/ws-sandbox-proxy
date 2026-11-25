@@ -64,7 +64,7 @@ import {
   IntentKeys,
   isNotFound,
   isUnlimitedLeaseEnd,
-  LEASE_DEFAULT_MS,
+  KEEP_LIFETIME,
   type LeaseTerm,
   type LifetimeLimit,
   leaseView,
@@ -79,6 +79,7 @@ import {
   sandboxPhase,
   sandboxProblem,
   sandboxTitle,
+  startLeaseInput,
 } from "@/lib/sandbox-rules";
 import { revisionLabel } from "@/lib/template-rules";
 import { orpc } from "@/utils/orpc";
@@ -240,6 +241,12 @@ function SandboxDetail({
   };
   useTwoFactorRedirectOnError(lang, [limits.error]);
   const [minutes, setMinutes] = useState(String(DEFAULT_LIFETIME_MINUTES));
+  // Start/Restore keeps the sandbox's remembered lease unless the user picks
+  // one. The pick belongs to the sandbox it was made on: this component
+  // survives navigation to another cached sandbox, which starts at "keep".
+  const [startChoice, setStartChoice] = useState({ sandboxId: sandbox.id, minutes: KEEP_LIFETIME });
+  const startMinutes = startChoice.sandboxId === sandbox.id ? startChoice.minutes : KEEP_LIFETIME;
+  const setStartMinutes = (minutes: string) => setStartChoice({ sandboxId: sandbox.id, minutes });
   const onExpire = sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop";
   const actions = sandboxActions(sandbox.state, sandbox.lastLifecycleOperation);
   // The template card's query (shared cache): the guest's home, where terminal photos go.
@@ -319,6 +326,7 @@ function SandboxDetail({
   // `0` is an explicit "no time limit"; never a fallback for an empty value.
   const timeoutMs = lifetimeMs(minutes, lifetimeLimit);
   const lifetimeValid = timeoutMs !== null;
+  const startLease = startLeaseInput(startMinutes, lifetimeLimit);
 
   return (
     <>
@@ -796,25 +804,26 @@ function SandboxDetail({
           <LifetimeFields
             maxTimeoutMs={lifetimeLimit.maxTimeoutMs}
             allowUnlimited={lifetimeLimit.allowUnlimited}
-            minutes={minutes}
-            onMinutes={setMinutes}
+            minutes={startMinutes}
+            onMinutes={setStartMinutes}
             onExpire={onExpire}
+            keepTimeoutMs={sandbox.rememberedLeaseTimeoutMs}
             disabled={start.isPending}
           />
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="touch"
-              disabled={start.isPending || (!lifetimeValid && problem !== "generic")}
+              disabled={start.isPending || (startLease === null && problem !== "generic")}
               onClick={() =>
                 start.mutate(
                   intents.current.for(
                     "start",
-                    signature({ minutes, onExpire }),
+                    signature({ minutes: startMinutes, onExpire }),
                     (idempotencyKey) => ({
                       id: sandbox.id,
                       mode: "cold" as const,
-                      timeoutMs: timeoutMs ?? LEASE_DEFAULT_MS,
+                      ...(startLease ?? {}),
                       idempotencyKey,
                     }),
                   ),
@@ -855,11 +864,11 @@ function SandboxDetail({
                 start.mutate(
                   intents.current.for(
                     "restoreOverride",
-                    signature({ minutes, onExpire, override: true }),
+                    signature({ minutes: startMinutes, onExpire, override: true }),
                     (idempotencyKey) => ({
                       id: sandbox.id,
                       mode: "cold" as const,
-                      timeoutMs: timeoutMs ?? LEASE_DEFAULT_MS,
+                      ...(startLease ?? {}),
                       overrideCreatorAllowlist: true,
                       idempotencyKey,
                     }),

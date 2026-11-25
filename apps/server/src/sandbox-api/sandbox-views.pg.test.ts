@@ -239,7 +239,7 @@ const { getSandboxView } = await import(
 const { leaseWireSchema } = await import("@wssp/api/sandbox/lease-wire");
 const { applyOperationResult } = await import("../sandbox-relay/operation-handlers.js");
 
-async function fixture() {
+async function fixture(createTimeoutMs?: number) {
   const id = randomUUID();
   await db.inspect.user.create({ data: { id, name: "Lease", email: `${id}@example.test` } });
   const owner = { kind: "session" as const, ownerId: id };
@@ -267,6 +267,7 @@ async function fixture() {
     template: "revision/" + template.id,
     sandboxHostId: host.id,
     idempotencyKey: randomUUID(),
+    ...(createTimeoutMs === undefined ? {} : { timeoutMs: createTimeoutMs }),
   });
   const sender = { userId: id, hostId: host.id, connectionEpoch: 1 };
   async function dispatch(key?: string) {
@@ -323,6 +324,22 @@ it("create requires the exact lease ACK and the detail view exposes the durable 
     leaseExpiresAtEffective: new Date(ack.result.lease.deadlineUnixMs),
     leaseExpireActionEffective: "DESTROY",
   });
+});
+
+it("the detail view shows the lease a start re-arms: the create's, never a renewal's", async () => {
+  const f = await fixture(2 * 3_600_000);
+  expect(await applyOperationResult(await f.dispatch())).toEqual({ written: true });
+  expect((await getSandboxView(f.owner, { id: f.sandbox.id })).rememberedLeaseTimeoutMs).toBe(
+    2 * 3_600_000,
+  );
+  await setSandboxTimeout(f.owner, {
+    id: f.sandbox.id,
+    idempotencyKey: randomUUID(),
+    timeoutMs: 6 * 3_600_000,
+  });
+  expect((await getSandboxView(f.owner, { id: f.sandbox.id })).rememberedLeaseTimeoutMs).toBe(
+    2 * 3_600_000,
+  );
 });
 
 it("offline renewal stays queued and reversed concurrent ACKs retain the newest effective revision", async () => {

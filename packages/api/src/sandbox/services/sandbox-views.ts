@@ -11,6 +11,7 @@ import type { ListSandboxesInput, Principal, SandboxIdInput } from "../contracts
 import { sandboxDiskDto, sandboxDiskSelect } from "../disk-offload/disk-view";
 import { recordedEgressPolicy, recordedEgressRequest } from "../egress-policy";
 import { guestSudoReasonDto } from "../guest-sudo-policy";
+import { rememberedLeaseTimeoutMs as readRememberedLease } from "../lease";
 import { readLockedPathLimit } from "../lease-policy";
 import { egressModeReasonDto } from "../public-dto";
 import { sandboxListPage, sandboxListReadQuery } from "../sandbox-list";
@@ -266,9 +267,16 @@ export const getSandboxView = serviceProcedure(
       owner: { field: "userId", id: owner.ownerId },
       notFound: "Sandbox not found",
     });
-    // Display only, read without locks: the renew form's bound. The server
-    // re-checks it under G/H/S when the renewal is accepted.
-    const leaseLimit = await prisma.$transaction((tx) => readLockedPathLimit(tx, row));
+    // Display only, read without locks: the renew form's bound and the lease a
+    // start without a lifetime re-arms. The server re-reads both under its
+    // locks when it accepts a renewal or start.
+    const { leaseLimit, rememberedLeaseTimeoutMs } = await prisma.$transaction(async (tx) => ({
+      leaseLimit: await readLockedPathLimit(tx, row),
+      rememberedLeaseTimeoutMs: await readRememberedLease(tx, {
+        id: row.id,
+        userId: owner.ownerId,
+      }),
+    }));
     const capacityWait =
       row.state === "WAITING_FOR_CAPACITY"
         ? ((await capacityWaitViews(prisma, owner.ownerId, [row.id])).get(row.id) ?? null)
@@ -277,6 +285,7 @@ export const getSandboxView = serviceProcedure(
     return {
       ...toSandboxView(row, owner.ownerId),
       leaseLimit,
+      rememberedLeaseTimeoutMs,
       capacityWait,
       placementPoolLabel: placementPool,
     };

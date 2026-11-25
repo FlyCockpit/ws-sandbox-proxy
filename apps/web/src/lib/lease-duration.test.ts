@@ -20,4 +20,9 @@ describe("lease limit text (same grammar as wssp host config set-max-lease)", ()
     expect(formatLeaseDuration(21_600_000, "en-US")).toBe("6 hours");
     expect(formatLeaseDuration(604_800_000, "en-US")).toBe("7 days");
   });
+  it("shows a lease that is not a whole minute to the second, never rounded to minutes", () => {
+    expect(formatLeaseDuration(20_000, "en-US")).toBe("20 seconds");
+    expect(formatLeaseDuration(90_000, "en-US")).toBe("90 seconds");
+    expect(formatLeaseDuration(120_000, "en-US")).toBe("2 minutes");
+  });
 });

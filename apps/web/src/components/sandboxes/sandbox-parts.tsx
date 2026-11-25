@@ -11,9 +11,11 @@ import { ResourceIdentity } from "@/components/resource-identity";
 import { dateTimeTitle, formatDateTime } from "@/lib/format-date-time";
 
 import { hostConnectionState } from "@/lib/host-status";
+import { formatLeaseDuration } from "@/lib/lease-duration";
 import {
   type DiskView,
   isOperationActive,
+  KEEP_LIFETIME,
   lifetimeOptions,
   type SandboxPhase,
   type SandboxState,
@@ -183,6 +185,7 @@ export function LifetimeFields({
   onMinutes,
   onExpire,
   onOnExpire,
+  keepTimeoutMs,
   disabled,
 }: {
   maxTimeoutMs: number;
@@ -192,9 +195,14 @@ export function LifetimeFields({
   onMinutes: (value: string) => void;
   onExpire: "stop" | "destroy";
   onOnExpire?: (value: "stop" | "destroy") => void;
+  /**
+   * A start's remembered lease (`0` is no time limit): offered first as
+   * "keep its lifetime" (value `KEEP_LIFETIME`), which sends no timeout.
+   */
+  keepTimeoutMs?: number;
   disabled?: boolean;
 }) {
-  const { t } = useTranslation(["sandboxes"]);
+  const { t, i18n } = useTranslation(["sandboxes"]);
   const lifetimeId = useId();
   const hintId = useId();
   const radioName = useId();
@@ -211,6 +219,16 @@ export function LifetimeFields({
           aria-describedby={hintId}
           onValueChange={(value) => onMinutes(value)}
         >
+          {keepTimeoutMs === undefined ? null : (
+            <SelectItem value={KEEP_LIFETIME}>
+              {keepTimeoutMs === 0
+                ? t("sandboxes:lifetime.keepUnlimited")
+                : t("sandboxes:lifetime.keep", {
+                    lifetime: formatLeaseDuration(keepTimeoutMs, i18n.language),
+                    action: t(`sandboxes:expiry.action.${onExpire}`),
+                  })}
+            </SelectItem>
+          )}
           {lifetimeOptions(maxTimeoutMs, allowUnlimited).map((value) => (
             <SelectItem key={value} value={String(value)}>
               {value === 0
@@ -224,7 +242,9 @@ export function LifetimeFields({
           ))}
         </FormSelect>
         <p id={hintId} className="text-xs text-muted-foreground">
-          {t("sandboxes:lifetime.hint")}
+          {t(
+            keepTimeoutMs === undefined ? "sandboxes:lifetime.hint" : "sandboxes:lifetime.keepHint",
+          )}
         </p>
       </div>
       {onOnExpire && (

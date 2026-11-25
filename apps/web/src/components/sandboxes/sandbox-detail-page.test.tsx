@@ -1110,11 +1110,12 @@ describe("lifecycle", () => {
         within(startDialog).getByRole("button", { name: enSandboxes.start.confirm }),
       );
       await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(cycle));
+      // The default start keeps the remembered lease: no timeout is sent.
       expect(calls("reconnectSandbox")[cycle - 1]!.input).toMatchObject({
         id: "sbx-1",
         mode: "cold",
-        timeoutMs: 300_000,
       });
+      expect(calls("reconnectSandbox")[cycle - 1]!.input).not.toHaveProperty("timeoutMs");
       // Still STOPPED until the host reports the boot.
       expect(stateShown()).toBe("STOPPED");
       Object.assign(sandbox(), {
@@ -1301,6 +1302,8 @@ describe("disk offload (C8)", () => {
     await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
     expect(calls("reconnectSandbox")[0]!.input).toMatchObject({ id: "sbx-1", mode: "cold" });
     expect(calls("reconnectSandbox")[0]!.input).not.toHaveProperty("overrideCreatorAllowlist");
+    // A restore keeps the remembered lease too unless the user picks one.
+    expect(calls("reconnectSandbox")[0]!.input).not.toHaveProperty("timeoutMs");
   });
 
   it("no allowed host: offers the creator-key override, which warns and sends overrideCreatorAllowlist", async () => {
@@ -1814,12 +1817,124 @@ it.each(["READY", "STOPPED"])(
     await waitFor(() => expect(popup.queryByText(enSandboxes.lifetime.limitsFailed)).toBeNull());
     const field = popup.getByLabelText(enSandboxes.lifetime.field);
     expect((await selectChoices(user, field)).map((option) => option.textContent)).toEqual([
+      // A start offers its remembered lease first.
+      ...(state === "STOPPED" ? ["Keep its lifetime (5 minutes, then stop)"] : []),
       "5 minutes",
       "15 minutes",
     ]);
     expect(calls("getLimits")).toHaveLength(2);
   },
 );
+
+describe("Start and Restore keep the remembered lease by default", () => {
+  const twoHours = 2 * 3_600_000;
+
+  it.each([
+    ["STOPPED", enSandboxes.start.action, enSandboxes.start.confirm],
+    ["OFFLOADED", enSandboxes.start.restoreAction, enSandboxes.start.restoreConfirm],
+  ])(
+    "%s: the dialog shows the remembered lease and sends no timeout",
+    async (state, open, confirm) => {
+      server.current.sandboxes = [
+        sandboxRow({
+          state,
+          leaseExpireAction: "DESTROY",
+          rememberedLeaseTimeoutMs: twoHours,
+          ...(state === "OFFLOADED" ? { sandboxHostId: null, host: null, disk: STORED_DISK } : {}),
+        }),
+      ];
+      const user = userEvent.setup();
+      mount();
+      await user.click(await screen.findByRole("button", { name: open }));
+      const popup = within(screen.getByRole("dialog"));
+      const field = popup.getByLabelText(enSandboxes.lifetime.field);
+      expect(field.textContent).toContain("Keep its lifetime (2 hours, then destroy)");
+      expect(popup.getByText(enSandboxes.lifetime.keepHint)).toBeTruthy();
+      await user.click(popup.getByRole("button", { name: confirm }));
+      await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+      const input = calls("reconnectSandbox")[0]!.input;
+      expect(input).toMatchObject({ id: "sbx-1", mode: "cold" });
+      expect(input).not.toHaveProperty("timeoutMs");
+    },
+  );
+
+  it.each([
+    ["STOPPED", enSandboxes.start.action, enSandboxes.start.confirm],
+    ["OFFLOADED", enSandboxes.start.restoreAction, enSandboxes.start.restoreConfirm],
+  ])("%s: an explicit lifetime is sent as chosen", async (state, open, confirm) => {
+    server.current.sandboxes = [
+      sandboxRow({
+        state,
+        rememberedLeaseTimeoutMs: twoHours,
+        ...(state === "OFFLOADED" ? { sandboxHostId: null, host: null, disk: STORED_DISK } : {}),
+      }),
+    ];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: open }));
+    const popup = within(screen.getByRole("dialog"));
+    await selectOption(user, popup.getByLabelText(enSandboxes.lifetime.field), /^30 minutes$/);
+    await user.click(popup.getByRole("button", { name: confirm }));
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]!.input).toMatchObject({
+      id: "sbx-1",
+      mode: "cold",
+      timeoutMs: 30 * 60_000,
+    });
+  });
+
+  it("a lifetime picked on one sandbox never carries over to another cached sandbox", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+      sandboxRow({ id: "sbx-2", state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+    ];
+    const user = userEvent.setup();
+    const view = mount("sbx-1");
+    const page = (id: string) => (
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <SandboxDetailPage lang="en-US" sandboxId={id} />
+        </I18nextProvider>
+      </QueryClientProvider>
+    );
+    const field = () =>
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    const shows = (name: string) =>
+      waitFor(() => expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(name));
+    // Visit B once so it is cached, then come back to A.
+    await shows("quiet-otter");
+    view.rerender(page("sbx-2"));
+    await shows("sbx-2");
+    view.rerender(page("sbx-1"));
+    await shows("quiet-otter");
+    // Pick 5 minutes on A, then cancel.
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    await selectOption(user, field(), /^5 minutes$/);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enCommon.actions.cancel }),
+    );
+    // Same component, cached B: its Start keeps B's own lease.
+    view.rerender(page("sbx-2"));
+    await shows("sbx-2");
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    expect(field().textContent).toContain("Keep its lifetime (2 hours, then stop)");
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+    );
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]!.input).toMatchObject({ id: "sbx-2", mode: "cold" });
+    expect(calls("reconnectSandbox")[0]!.input).not.toHaveProperty("timeoutMs");
+  });
+
+  it("a remembered unlimited lease reads as no time limit", async () => {
+    server.current.sandboxes = [sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: 0 })];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    const field = within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    expect(field.textContent).toContain(enSandboxes.lifetime.keepUnlimited);
+  });
+});
 
 describe("S0 sensitive session unavailable", () => {
   it("an impersonated snapshot keeps metadata but mounts no file or terminal IO", async () => {
