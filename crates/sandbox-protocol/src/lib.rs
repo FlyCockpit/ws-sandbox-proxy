@@ -74,6 +74,8 @@ mod env_limits;
 mod error;
 pub use env_limits::{ENV_LIMITS, EnvLimits, canonical_env_json, env_limits, validate_env};
 mod frame;
+mod ids;
+pub use ids::valid_terminal_id;
 mod state;
 mod terminal;
 mod version;

@@ -7,8 +7,9 @@ use crate::capabilities::{DaemonCapabilities, HostInventorySnapshot, NegotiatedC
 use crate::command_limits::json_control_max_bytes;
 use crate::egress::EgressPolicy;
 use crate::error::{SandboxErrorCode, WireErrorCode};
+use crate::ids::{valid_journal_identity, valid_terminal_id};
 use crate::state::{OperationState, SandboxLifecycleState};
-use crate::terminal::{TerminalCloseIntent, TerminalFence, valid_terminal_id, valid_terminal_size};
+use crate::terminal::{TerminalCloseIntent, TerminalFence, valid_terminal_size};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1413,13 +1414,6 @@ pub fn parse_server_control_for_version(
         dispatch_vm_size(dispatch, version)?;
     }
     Ok(message)
-}
-
-pub(crate) fn valid_journal_identity(id: &str) -> bool {
-    id.len() == 32
-        && id
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 pub fn parse_daemon_control_for_version(

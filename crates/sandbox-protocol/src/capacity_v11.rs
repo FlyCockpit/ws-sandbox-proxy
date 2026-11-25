@@ -311,7 +311,7 @@ checked!(HostAdmissionV11, RawHostAdmissionV11, {
     image: Option<crate::ImageAdmissionV11>,
     vm_capacity: VmCapacityV11,
     storage_pools: Vec<StoragePoolV11>,
-}, v, v.r#type == "host.admission" && v.image.as_ref().is_none_or(crate::ImageAdmissionV11::is_valid) && crate::control::valid_journal_identity(&v.journal_id) && v.connection_epoch > 0 && v.connection_epoch <= i32::MAX as u32 && vm_size_limits().is_ok_and(|l| v.storage_pools.len() <= l.storage_pool_max) && unique_pools(v.storage_pools.iter().map(|p| (p.name.as_str(), p.marker.as_str()))));
+}, v, v.r#type == "host.admission" && v.image.as_ref().is_none_or(crate::ImageAdmissionV11::is_valid) && crate::ids::valid_journal_identity(&v.journal_id) && v.connection_epoch > 0 && v.connection_epoch <= i32::MAX as u32 && vm_size_limits().is_ok_and(|l| v.storage_pools.len() <= l.storage_pool_max) && unique_pools(v.storage_pools.iter().map(|p| (p.name.as_str(), p.marker.as_str()))));
 
 checked!(HostInventoryUpdateV11, RawHostInventoryUpdateV11, {
     r#type: String,

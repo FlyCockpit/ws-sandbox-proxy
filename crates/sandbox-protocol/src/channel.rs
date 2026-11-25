@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::command_limits::json_control_max_bytes;
 use crate::frame::FrameError;
-use crate::terminal::{valid_terminal_id, valid_terminal_size};
+use crate::ids::valid_terminal_id;
+use crate::terminal::valid_terminal_size;
 
 /// Largest channel data body (exec streams).
 pub const CHANNEL_BULK_DATA_MAX_BYTES: usize = 32 * 1024;
