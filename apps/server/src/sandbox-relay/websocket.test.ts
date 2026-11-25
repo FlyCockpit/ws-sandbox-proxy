@@ -49,12 +49,20 @@ const { sandboxRelaySessionManager } = await import("./session-manager.js");
 
 const authenticateMock = vi.mocked(authenticateSandboxHostWebsocket);
 
-function app() {
+function app(isShuttingDown?: () => boolean) {
   const hono = new Hono();
-  hono.use("/ws/sandbox-host", createSandboxRelayWebsocketMiddleware());
+  hono.use("/ws/sandbox-host", createSandboxRelayWebsocketMiddleware({ isShuttingDown }));
   hono.get("/ws/sandbox-host", (c) => c.text("ok"));
   return hono;
 }
+
+const hostIdentity = {
+  hostId: "host-1",
+  userId: "user-1",
+  tokenId: "token-1",
+  credentialKind: "hostToken",
+  expiresAt: null,
+} as const;
 
 function websocketHeaders(extra: Record<string, string> = {}) {
   return {
@@ -111,6 +119,46 @@ describe("createSandboxRelayWebsocketMiddleware", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Invalid or revoked sandbox host websocket credential.",
     });
+  });
+
+  it("refuses with 503 + Retry-After while shutting down, before any credential lookup", async () => {
+    const response = await app(() => true).request("/ws/sandbox-host", {
+      method: "GET",
+      headers: websocketHeaders({ Authorization: "Bearer host_secret" }),
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(authenticateMock).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({
+      error: "The server is restarting. Reconnect shortly.",
+    });
+  });
+
+  it("refuses an upgrade whose credential lookup outlived the start of shutdown", async () => {
+    let shuttingDown = false;
+    authenticateMock.mockImplementation(async () => {
+      shuttingDown = true;
+      return { identity: hostIdentity } as never;
+    });
+    const response = await app(() => shuttingDown).request("/ws/sandbox-host", {
+      method: "GET",
+      headers: websocketHeaders({ Authorization: "Bearer host_secret" }),
+    });
+    expect(authenticateMock).toHaveBeenCalledOnce();
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(await response.text()).not.toBe("ok");
+  });
+
+  it("admits the upgrade once the next process is not shutting down", async () => {
+    authenticateMock.mockResolvedValue({ identity: hostIdentity } as never);
+    const response = await app(() => false).request("/ws/sandbox-host", {
+      method: "GET",
+      headers: websocketHeaders({ Authorization: "Bearer host_secret" }),
+    });
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toBe("ok");
   });
 
   it.each(["credential_revoked", "owner_unavailable"] as const)(
@@ -202,5 +250,100 @@ describe("WP4 liveness through the REAL ws adapter (ping/pong)", () => {
   it("a half-open peer (pings never answered) is removed with 1001", async () => {
     const peer = await connect(false);
     expect(await peer.closed).toMatchObject({ code: 1001, reason: "session_removed" });
+  });
+});
+
+describe("graceful shutdown through the REAL ws adapter", () => {
+  let server: ReturnType<typeof serve>;
+  let base: string;
+  let shuttingDown = false;
+  afterAll(() => killBrowserClients());
+  beforeEach(async () => {
+    shuttingDown = false;
+    authenticateMock.mockImplementation(
+      async () =>
+        ({
+          identity: { ...hostIdentity, hostId: `host-${Math.random()}` },
+        }) as never,
+    );
+    const isShuttingDown = () => shuttingDown;
+    const hono = new Hono();
+    hono.use("/ws/sandbox-host", createSandboxRelayWebsocketMiddleware({ isShuttingDown }));
+    hono.get("/ws/sandbox-host", sandboxRelayUpgradeHandler({ isShuttingDown }) as never);
+    server = serve({
+      fetch: hono.fetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: { server: new WebSocketServer({ noServer: true }) },
+    });
+    await once(server, "listening");
+    base = `127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterEach(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const dial = () =>
+    upgradeBrowserTerminal({
+      base,
+      path: "/ws/sandbox-host",
+      protocols: [SANDBOX_RELAY_SUBPROTOCOL],
+      origin: null,
+      authorization: "Bearer host_secret",
+    });
+
+  it("a draining process refuses the reconnect; only the next process gets a session", async () => {
+    const before = await dial();
+    if (before.kind !== "open") throw new Error("expected an open relay socket");
+    // Shutdown begins: the existing session is removed (1001), and the
+    // daemon's prompt redial is refused without a session.
+    shuttingDown = true;
+    const refused = await dial();
+    expect(refused).toMatchObject({ kind: "refused", status: 503 });
+    before.close();
+    await before.closed;
+    // The next process admits the daemon: exactly one new session.
+    shuttingDown = false;
+    const after = await dial();
+    expect(after.kind).toBe("open");
+    if (after.kind === "open") {
+      after.close();
+      await after.closed;
+    }
+  });
+
+  it("closes a socket that opens after shutdown began with 1012 and no session", async () => {
+    // Admission passed, then shutdown began before the socket opened.
+    const isShuttingDown = () => shuttingDown;
+    const hono = new Hono<{ Variables: { sandboxRelayIdentity: unknown } }>();
+    hono.get(
+      "/ws/sandbox-host",
+      async (c, next) => {
+        c.set("sandboxRelayIdentity", hostIdentity);
+        shuttingDown = true;
+        await next();
+      },
+      sandboxRelayUpgradeHandler({ isShuttingDown }) as never,
+    );
+    const late = serve({
+      fetch: hono.fetch,
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: { server: new WebSocketServer({ noServer: true }) },
+    });
+    await once(late, "listening");
+    try {
+      const peer = await upgradeBrowserTerminal({
+        base: `127.0.0.1:${(late.address() as AddressInfo).port}`,
+        path: "/ws/sandbox-host",
+        protocols: [SANDBOX_RELAY_SUBPROTOCOL],
+        origin: null,
+      });
+      if (peer.kind !== "open") throw new Error("expected the upgrade to complete");
+      // Without the guard it would stay open (unregistered) until the hello deadline.
+      expect(await peer.closed).toEqual({ code: 1012, reason: "shutting_down" });
+    } finally {
+      await new Promise<void>((resolve) => late.close(() => resolve()));
+    }
   });
 });

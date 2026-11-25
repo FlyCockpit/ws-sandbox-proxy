@@ -4811,6 +4811,92 @@ fn refused_hello_exits_without_a_second_connection_and_always_offers_the_full_se
     assert!(matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
 }
 
+/// A draining server closes the session (1001) and answers every redial with
+/// 503 + `Retry-After: 1` until it exits. The daemon waits out each refusal and
+/// registers exactly once, with the next process: one drop per restart.
+#[test]
+fn a_draining_server_defers_the_reconnect_to_the_next_process() {
+    use std::io::{Read, Write};
+    let dir = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let fake = sandbox_runtime::FakeRuntime::new();
+    fake.fixture_root().unwrap();
+    let options = options(&listener, dir.path(), Duration::from_secs(5));
+    let shutdown = options.shutdown.clone();
+    let daemon = spawn_daemon(options, fake, None);
+    let mut wire = accept(&listener);
+    register(&mut wire, 1);
+    crate::sandbox_relay::test_support::ack_registration(&mut wire);
+    wire.close(Some(tungstenite::protocol::CloseFrame {
+        code: tungstenite::protocol::frame::coding::CloseCode::Away,
+        reason: "session_removed".into(),
+    }))
+    .unwrap();
+    let mut refused_at: Option<Instant> = None;
+    for _ in 0..3 {
+        let mut tcp = accept_tcp(&listener);
+        if let Some(at) = refused_at {
+            assert!(at.elapsed() >= Duration::from_secs(1), "{:?}", at.elapsed());
+        }
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut request = Vec::new();
+        while !request.ends_with(b"\r\n\r\n") {
+            let mut byte = [0];
+            tcp.read_exact(&mut byte).unwrap();
+            request.push(byte[0]);
+            assert!(request.len() < 8192);
+        }
+        // Stamped before the reply, so the daemon's wait cannot start earlier.
+        refused_at = Some(Instant::now());
+        tcp.write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        drop(tcp);
+    }
+    drop(wire);
+    // The next process: one registration, and the daemon dials no further.
+    let mut wire = accept(&listener);
+    let waited = refused_at.unwrap().elapsed();
+    assert!(waited >= Duration::from_secs(1), "{waited:?}");
+    // Generous for a loaded machine; the wait itself is bounded
+    // deterministically in `a_draining_servers_retry_after_keeps_redials_prompt`.
+    assert!(
+        waited < Duration::from_secs(15),
+        "no long stall: {waited:?}"
+    );
+    register(&mut wire, 2);
+    crate::sandbox_relay::test_support::ack_registration(&mut wire);
+    thread::sleep(Duration::from_millis(1500));
+    listener.set_nonblocking(true).unwrap();
+    assert!(matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock));
+    assert!(!daemon.is_finished());
+    finish(daemon, shutdown);
+    drop(wire);
+}
+
+/// The waits behind that socket test: a draining server's 503 + `Retry-After: 1`
+/// is a floor of 1 s, and the redials stay prompt (no long stall) while the
+/// old process drains and the next one starts.
+#[test]
+fn a_draining_servers_retry_after_keeps_redials_prompt() {
+    let response = tungstenite::http::Response::builder()
+        .status(503)
+        .header("Retry-After", "1")
+        .body(None)
+        .unwrap();
+    let error = relay_dial_error(
+        tungstenite::Error::Http(Box::new(response)),
+        "https://localhost",
+        true,
+    );
+    assert!(error.downcast_ref::<RetryableSession>().is_some());
+    assert!(error.downcast_ref::<ServerVerdict>().is_none());
+    let mut backoff = ReconnectBackoff::default();
+    for ceiling in [1000, 1000, 1000, 2000, 4000] {
+        let wait = reconnect_wait(backoff.next(false, None), &error);
+        assert!(wait >= Duration::from_secs(1), "{wait:?}");
+        assert!(wait <= Duration::from_millis(ceiling), "{wait:?}");
+    }
+}
+
 #[test]
 fn an_initial_rate_limited_upgrade_retries_after_the_server_delay() {
     use std::io::{Read, Write};

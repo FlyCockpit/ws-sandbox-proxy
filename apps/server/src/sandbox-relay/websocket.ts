@@ -17,15 +17,35 @@ function bearerSecret(header: string | undefined): string | null {
   return match?.[1] ?? null;
 }
 
-export function createSandboxRelayWebsocketMiddleware(): MiddlewareHandler<{
+/** How long a daemon refused by a draining server waits before redialing. */
+const SANDBOX_RELAY_SHUTDOWN_RETRY_AFTER_SECONDS = 1;
+
+type SandboxRelayUpgradeOptions = {
+  /** Graceful shutdown began: daemons register only with the next process. */
+  isShuttingDown?: () => boolean;
+};
+
+export function createSandboxRelayWebsocketMiddleware(
+  options: SandboxRelayUpgradeOptions = {},
+): MiddlewareHandler<{
   Variables: SandboxRelayVariables;
 }> {
+  const shuttingDown = () => options.isShuttingDown?.() === true;
+  // A draining process already closed (or is closing) every host session; a
+  // daemon admitted again here would lose that second session abruptly at
+  // exit. The daemon honours `Retry-After` and redials the next process.
+  const refuseShuttingDown = (c: Context) => {
+    c.header("Cache-Control", "no-store");
+    c.header("Retry-After", String(SANDBOX_RELAY_SHUTDOWN_RETRY_AFTER_SECONDS));
+    return c.json({ error: "The server is restarting. Reconnect shortly." }, 503);
+  };
   const rateLimit = createRateLimiterMiddleware(hostRelayLimiter, {
     failClosed: true,
     resolveKey: resolveClientIp,
   });
 
   return async (c, next) => {
+    if (shuttingDown()) return refuseShuttingDown(c);
     if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
       return c.json({ error: "WebSocket upgrade required." }, 426);
     }
@@ -74,6 +94,8 @@ export function createSandboxRelayWebsocketMiddleware(): MiddlewareHandler<{
         401,
       );
     }
+    // Shutdown may have begun while the credential lookup was in flight.
+    if (shuttingDown()) return refuseShuttingDown(c);
     const identity = authenticated.identity;
     c.set("sandboxRelayIdentity", identity);
     await next();
@@ -163,11 +185,17 @@ export function sandboxConnectManager() {
   return sandboxRelaySessionManager.connects;
 }
 
-export function sandboxRelayUpgradeHandler() {
+export function sandboxRelayUpgradeHandler(options: SandboxRelayUpgradeOptions = {}) {
   return upgradeWebSocket((c: Context<{ Variables: SandboxRelayVariables }>) => {
     const identity = c.get("sandboxRelayIdentity");
     return {
       onOpen(_event, ws) {
+        // An upgrade admitted just before shutdown began never gets a session
+        // (the shutdown's session removal may already have run): 1012 = restart.
+        if (options.isShuttingDown?.() === true) {
+          ws.close(1012, "shutting_down");
+          return;
+        }
         const socket = relaySocketFor(ws);
         if (sandboxRelaySessionManager.acceptAuthenticatedSocket({ socket, identity }))
           listenForPongs(ws, socket);

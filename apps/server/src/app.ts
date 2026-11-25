@@ -502,8 +502,16 @@ export async function createApp(
   }
 
   // Sandbox host relay — outbound WSS from trusted node daemons (`/ws/sandbox-host`).
-  app.use("/ws/sandbox-host", createSandboxRelayWebsocketMiddleware());
-  app.get("/ws/sandbox-host", sandboxRelayUpgradeHandler());
+  // While draining it answers 503 + Retry-After, so daemons register only
+  // with the next process (one relay drop per restart).
+  app.use(
+    "/ws/sandbox-host",
+    createSandboxRelayWebsocketMiddleware({ isShuttingDown: lifecycle.isShuttingDown }),
+  );
+  app.get(
+    "/ws/sandbox-host",
+    sandboxRelayUpgradeHandler({ isShuttingDown: lifecycle.isShuttingDown }),
+  );
 
   // ---------------------------------------------------------------------------
   // Service-worker push-subscription renewal

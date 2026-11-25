@@ -1101,6 +1101,25 @@ describe("R5-TS-01 CSRF protection without CORS_ORIGIN", () => {
   });
 });
 
+describe("host relay upgrade during graceful shutdown", () => {
+  it("answers 503 + Retry-After so daemons register only with the next process", async () => {
+    let closing = false;
+    const application = await createApp({
+      isShuttingDown: () => closing,
+      isWorkerReady: () => true,
+    });
+    const upgrade = () =>
+      application.request("/ws/sandbox-host", {
+        headers: { Upgrade: "websocket", Authorization: "Bearer wssp_host_test" },
+      });
+    expect((await upgrade()).status).not.toBe(503);
+    closing = true;
+    const refused = await upgrade();
+    expect(refused.status).toBe(503);
+    expect(refused.headers.get("retry-after")).toBe("1");
+  });
+});
+
 describe("readiness build identity", () => {
   beforeEach(async () => {
     const { redisConnection } = await import("@wssp/queue");

@@ -940,7 +940,10 @@ runtime acted is an error; other failures and unknown outcomes are warnings.
   with jittered backoff from 250 ms up to 30 s. A 1013 (try again later, for
   example the per-host connection limit) waits at least about 5 s, and a
   `Retry-After` on a refused reconnect (HTTP 429/503) is honoured, up to
-  30 s. The daemon process never exits because the server closed the
+  30 s. A server that is shutting down closes host connections with 1001 and
+  answers each reconnect with 503 and `Retry-After: 1` until it exits, so the
+  daemon registers only with the next server process: one drop per server
+  restart. The daemon process never exits because the server closed the
   connection; only a credential failure or a local shutdown ends it. A
   server that falls behind on a host's frames stops reading that connection
   until it catches up (TCP backpressure) instead of closing it.
