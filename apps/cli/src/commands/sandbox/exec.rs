@@ -471,7 +471,7 @@ fn watch_interrupt(client: &Client, operation_id: &str, interrupted: &Flag, canc
             });
         let (reported, done) = mpsc::channel();
         std::thread::spawn(move || {
-            crate::exit::report_failure(&error);
+            crate::commands::report_failure(&error);
             let _ = reported.send(());
         });
         let _ = done.recv_timeout(INTERRUPT_REPORT_BUDGET);

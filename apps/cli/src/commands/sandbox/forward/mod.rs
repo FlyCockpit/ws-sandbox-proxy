@@ -1076,7 +1076,7 @@ fn session(
         Err(error) => crate::exit::code_for(error) as i32,
     };
     if let Err(error) = &result
-        && let Some(line) = crate::exit::failure_line(error)
+        && let Some(line) = crate::commands::failure_line(error)
     {
         lines.err(line);
     }

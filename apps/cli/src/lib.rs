@@ -12,7 +12,6 @@ pub mod config;
 pub mod connect_client;
 pub mod exit;
 pub mod guard_report;
-mod host_context;
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
 pub mod host_process;

@@ -5,6 +5,8 @@
 //!   - `host config show`  print the effective config (defaults + file) as TOML
 //!   - `host config init`  write a default config file if none exists
 
+mod host_context;
+
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -744,7 +746,7 @@ pub(crate) fn confirm_host_access_raise() -> Result<()> {
         std::env::var_os("WSSP_HOST_COMMAND").is_some()
             || std::env::var_os("WSSP_HOST_TERMINAL").is_some(),
     )?;
-    crate::host_context::check()?;
+    host_context::check()?;
     let mut stderr = std::io::stderr().lock();
     writeln!(
         stderr,

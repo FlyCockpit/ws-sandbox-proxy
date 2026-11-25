@@ -83,7 +83,7 @@ fn finish(result: anyhow::Result<()>) -> ! {
         {
             ExitCode::Success
         }
-        Err(err) => exit::report_failure(&err),
+        Err(err) => commands::report_failure(&err),
     };
 
     let _ = output::flush_stdout();
