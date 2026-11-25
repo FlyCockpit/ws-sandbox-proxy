@@ -1,7 +1,7 @@
 //! Guard ruleset compiler and readback verifier.
 //!
 //! A pure function of [`GuardInputs`]. The output is the exact shape that
-//! passed live qualification on a reference host (`fixtures/guard-test.nft`):
+//! passed live qualification on a reference host (`tests/fixtures/guard-test.nft`):
 //! one `inet wssp_guard` table, priorities −310 (prerouting) and −300
 //! (input, forward), only `return`/`drop` verdicts, no `ct` expression.
 //! The whole table is replaced in one `nft -f -` transaction; the dead-man
