@@ -1790,7 +1790,7 @@ mod tests {
     }
 
     #[test]
-    fn the_repositorys_own_pins_name_key_files_of_the_vendored_tree() {
+    fn this_repository_pins_name_key_files_of_the_vendored_tree() {
         let pins = parse_pins(
             include_str!("../../../../third_party/russh-key-fixtures.sha256"),
             VERSION,
@@ -1910,7 +1910,7 @@ mod tests {
     }
 
     #[test]
-    fn the_repositorys_own_wiring_passes() {
+    fn the_wiring_of_this_repository_passes() {
         let problems = wiring_problems(
             include_str!("../../../../Cargo.lock"),
             include_str!("../../../../Cargo.toml"),

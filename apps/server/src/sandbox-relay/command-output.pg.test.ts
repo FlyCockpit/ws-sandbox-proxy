@@ -584,13 +584,13 @@ it("D3b 64 KiB chunks are stored as the same 8 KiB segments as 8 KiB chunks, tai
         small.chunk(sequence, offset, bytes(offset, 8192), { flags: flags(offset) }),
       ),
     ).toBe(true);
-  const larges: ChunkInput[] = [];
+  const largeInputs: ChunkInput[] = [];
   for (let offset = 0, sequence = 0; offset < produced; offset += block, sequence++)
-    larges.push(large.chunk(sequence, offset, bytes(offset, block), { flags: flags(offset) }));
+    largeInputs.push(large.chunk(sequence, offset, bytes(offset, block), { flags: flags(offset) }));
   // Half one at a time, half in one bounded batch.
-  for (const input of larges.slice(0, 10))
+  for (const input of largeInputs.slice(0, 10))
     expect(await acceptFencedBinaryChunk({ ...input, outputChunkBytes: block })).toBe(true);
-  expect(await acceptBatch(large, larges.slice(10), { outputChunkBytes: block })).toBe(true);
+  expect(await acceptBatch(large, largeInputs.slice(10), { outputChunkBytes: block })).toBe(true);
   const [a, b] = [await storedRows(small.operation.id), await storedRows(large.operation.id)];
   expect(b.segments).toEqual(a.segments);
   expect(b.segments).toHaveLength(128);

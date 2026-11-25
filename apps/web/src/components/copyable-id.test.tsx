@@ -24,7 +24,7 @@ async function i18nFor(lng: "en-US" | "es-MX") {
 describe("shortId", () => {
   it.each([
     ["48b1d9a0-1b2c-4d5e-8f90-1234567890ab", "48b1d9a0…"],
-    ["k9fxb5ot17abcdefghij", "k9fxb5ot…"],
+    ["k9fxb5qt17abcdefghij", "k9fxb5qt…"],
     [`sha256:${"7c".repeat(32)}`, "sha256:7c7c7c7c7c7c…"],
     ["ab".repeat(32), `${"ab".repeat(6)}…`],
     ["short-id", "short-id"],

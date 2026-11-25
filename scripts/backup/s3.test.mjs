@@ -337,7 +337,7 @@ describe("S3 transfer", () => {
 
   it("compares ETags with or without quotes", () => {
     assert.equal(sameETag('"abc"', "abc"), true);
-    assert.equal(sameETag('"abc"', '"abd"'), false);
+    assert.equal(sameETag('"abc"', '"abx"'), false);
     assert.equal(sameETag(null, "abc"), false);
   });
 

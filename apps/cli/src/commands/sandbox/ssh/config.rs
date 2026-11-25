@@ -1403,7 +1403,7 @@ mod tests {
             format!("wssp {}\n", first.public)
         );
         // Reused, and a damaged known_hosts is put back.
-        std::fs::write(&first.known_hosts, "wssp ssh-ed25519 AAAAother\n").unwrap();
+        std::fs::write(&first.known_hosts, "wssp ssh-ed25519 AAAAdamaged\n").unwrap();
         let again = host_key_in(dir.path(), false).unwrap();
         assert!(!again.created);
         assert_eq!(again.public, first.public);

@@ -306,7 +306,7 @@ mod tests {
         let own = offload_alias(TAG, "o1").unwrap();
         assert!(offload_alias_owned_by(&own, TAG));
         // Another daemon's tag, an unmarked legacy alias, a bare tag.
-        assert!(!offload_alias_owned_by(&own, "ba9876543210"));
+        assert!(!offload_alias_owned_by(&own, "fe9876543210"));
         assert!(!offload_alias_owned_by("wssp-off-o1", TAG));
         assert!(!offload_alias_owned_by("wssp-off-0123456789ab", TAG));
         assert!(!offload_alias_owned_by("wssp-off-0123456789ab-", TAG));

@@ -903,7 +903,7 @@ fn the_inventory_reports_unfinished_entries_in_bounded_pages_and_continues() {
 /// offload was CONSUMED, FAILED, … or is not this host's) drops the alias
 /// image, the export, the staging reservation and the entry; the VM stays.
 #[test]
-fn a_release_drops_an_uploaded_entrys_alias_export_staging_and_reservation() {
+fn a_release_drops_the_alias_export_staging_and_reservation_of_an_uploaded_entry() {
     let f = fixture();
     uploaded_with_staging(&f, "off-5");
     f.offload

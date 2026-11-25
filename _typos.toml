@@ -7,6 +7,8 @@ extend-exclude = [
   "**/fixtures/**", "**/testdata/**",
   # Vendored third-party source, byte-identical to its published crate.
   "third_party/**",
+  # Upstream license and copyright notices, kept verbatim (names, typos and all).
+  "THIRD-PARTY-LICENSES.md",
   "**/*.gen.*", "**/generated/**", "**/.env.example", "pnpm-lock.yaml", "Cargo.lock",
   "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md",
   "**/*.png", "**/*.ico", "**/*.svg", "**/*.woff*", "**/*.webp",
@@ -18,8 +20,10 @@ extend-ignore-re = [
   '\bTRUN\b', '\bCHEC\b', 'complet\[\^',
   # Intentional shell flags and escaped command-name fragments in hook tests.
   'git clean -nd', 'ba\\sh',
+  # Split or escaped SQL words in hook-bypass tests.
+  "COM''MENT", 'databas\\\\x65',
   # Spanish assertions and relative-time output examples in English source.
-  'hace(?: un momento)?', 'caracteres',
+  'hace(?: un momento)?', 'caracteres', 'eliminacion',
   # Deliberately mixed-case HTTP header to test case-insensitive stripping.
   'AuThOrIzAtIoN',
   # Webhook endpoint ids are `whe_<random>` (fixtures use `whe-1` / SQL 'whe').
@@ -28,8 +32,14 @@ extend-ignore-re = [
   '\bHPE_[A-Z_]+',
   # Postgres truncates generated constraint names at 63 bytes.
   '_storag_fkey',
+  # Generated CHECK constraint names end in a hex hash (applied migrations are immutable).
+  '_ck[0-9a-f]{6,}\b',
+  # Better Auth's signed-query parameter and the image upload session id prefix.
+  '\bba_param\b', '\bises_',
   # Hyphenated English the dictionary splits apart.
-  'look-alikes', 'mis-sized', 'context-ful', '\bOTPs\b',
+  'look-alikes', 'context-ful', '\bOTPs\b',
+  # The English prefix "mis-" (mis-sized, mis-mapped), also in snake_case names.
+  '\b[Mm]is[-_]',
 ]
 
 [default.extend-words]
@@ -45,6 +55,8 @@ recoverys = "recoverys"
 # nftables meta keys for input/output interface, used by the guard ruleset model.
 iif = "iif"
 oif = "oif"
+# POSIX open(2) flag.
+WRONLY = "WRONLY"
 
 [default.extend-identifiers]
 # Inflected SQL keyword and logical conjunction (typos splits their casing).
@@ -52,3 +64,6 @@ CHECKs = "CHECKs"
 ANDed = "ANDed"
 CHECKed = "CHECKed"
 JOINed = "JOINed"
+UPDATEs = "UPDATEs"
+DEFAULTs = "DEFAULTs"
+PATCHed = "PATCHed"
