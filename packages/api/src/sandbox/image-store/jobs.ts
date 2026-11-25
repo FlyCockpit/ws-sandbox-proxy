@@ -208,6 +208,9 @@ export async function originImagesToRelease(now = new Date()): Promise<Releasabl
  * DeleteObject call, then DELETED. A DELETING row is terminal-bound: a
  * failed DeleteObject leaves it DELETING and a later run retries the delete
  * (round-2 P2-7); finalization is conditional on the row still being DELETING.
+ * The page is a snapshot: the mark and the locked re-check act only on the
+ * row as it is now, so a re-upload begun after the page was read (which
+ * clears the old deadline) is never deleted on that deadline.
  */
 export async function gcImageArtifacts(
   store: ImageStore | null = imageStore(),
@@ -250,22 +253,33 @@ export async function gcImageArtifacts(
       continue;
     }
     if (!artifact.deleteAfter) {
-      await prisma.sandboxImageArtifact.update({
-        where: { id: artifact.id },
+      const mark = await prisma.sandboxImageArtifact.updateMany({
+        where: { id: artifact.id, state: artifact.state, deleteAfter: null },
         data: {
           unreferencedSince: now,
           deleteAfter: new Date(now.getTime() + readImageStoreEnv().IMAGE_GC_GRACE_DAYS * DAY_MS),
         },
       });
+      if (mark.count !== 1) continue;
       marked++;
       if (readImageStoreEnv().IMAGE_GC_GRACE_DAYS > 0) continue;
     } else if (artifact.deleteAfter > now) continue;
     const key = await prisma.$transaction(async (tx) => {
       // Owner placement (the same advisory lock `lockOwnerPlacement` takes).
       await tx.$queryRaw`SELECT 1 AS locked FROM pg_advisory_xact_lock(hashtextextended(${artifact.userId}, 31))`;
-      const [row] = await tx.$queryRaw<{ id: string; objectKey: string | null }[]>`
-        SELECT id, "objectKey" FROM sandbox_image_artifact WHERE id = ${artifact.id} FOR UPDATE`;
-      if (!row || (await artifactReferenced(tx, artifact.userId, artifact.fingerprint)))
+      const [row] = await tx.$queryRaw<
+        { objectKey: string | null; state: string; deleteAfter: Date | null }[]
+      >`SELECT "objectKey", state::text, "deleteAfter" FROM sandbox_image_artifact
+        WHERE id = ${artifact.id} FOR UPDATE`;
+      // Still the row the page saw and still due: a begin since then moved
+      // it to UPLOADING and cleared its deadline (a new upload's own grace).
+      if (
+        !row ||
+        row.state !== artifact.state ||
+        !row.deleteAfter ||
+        row.deleteAfter > now ||
+        (await artifactReferenced(tx, artifact.userId, artifact.fingerprint))
+      )
         return undefined;
       await tx.sandboxImageArtifact.update({
         where: { id: artifact.id },

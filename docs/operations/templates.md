@@ -920,10 +920,13 @@ session, so two uploads never write the same key.
   `IMAGE_STORE_ENCRYPTION_KEY` (base64 of 32 bytes) encrypts each image with
   its own data key (AES-256-GCM, 1 MiB records); the data key is wrapped
   under the master key and the grant hands it to the host for one transfer.
-- **Auto-publish.** Live revisions available on a connected owned host are
-  uploaded automatically (one per host, two per account at a time).
+- **Auto-publish.** Live revisions (not retired, template not archived)
+  available on a connected owned host are uploaded automatically (one per
+  host, two per account at a time). It uploads only images GC would keep, so
+  an archived template's image a host still holds is never uploaded again.
 - **GC.** An image no live revision, open transfer or in-flight create uses
-  is deleted after `IMAGE_GC_GRACE_DAYS` (default 7). A sweeper removes
+  is deleted after `IMAGE_GC_GRACE_DAYS` (default 7). The grace starts again
+  with each new upload of the image. A sweeper removes
   objects with no row and multipart uploads older than a day, fails uploads
   with no progress for a day (and the image of every live session it ends),
   and aborts the multipart uploads of ended sessions. Set the bucket

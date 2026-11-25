@@ -1763,6 +1763,10 @@ export async function handleImageUploadBegin(
           wrappedKeyNonce: null,
           keyId: null,
           failureDetail: null,
+          // A new upload starts a new life: GC's grace clock (set while the
+          // old object was unreferenced) never carries over to it.
+          unreferencedSince: null,
+          deleteAfter: null,
         },
         select: { id: true },
       });

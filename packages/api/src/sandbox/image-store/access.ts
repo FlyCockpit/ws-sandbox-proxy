@@ -1,5 +1,6 @@
 import prisma, { type Prisma } from "@wssp/db";
 import { Prisma as PrismaValue } from "@wssp/db/client";
+import { liveRevisionSql } from "./references";
 
 /**
  * Foreign image copies whose access was lost (security review P2-5).
@@ -62,7 +63,7 @@ export function foreignAccessLostSql(
         JOIN sandbox_logical_template t ON t.id = r."templateId" AND t."userId" = r."userId"
         LEFT JOIN account_image_policy ap ON ap."userId" = r."userId"
         WHERE r."userId" = ${owner} AND r."incusFingerprint" = ${fingerprint}
-          AND r."retiredAt" IS NULL AND t."archivedAt" IS NULL
+          AND ${liveRevisionSql()}
           AND (t."imagePlacement"::text = 'ANY_NODE' OR (t."imagePlacement"::text = 'INHERIT'
             AND COALESCE(ap."imagePlacement"::text, 'ANY_NODE') = 'ANY_NODE'))))`;
 }

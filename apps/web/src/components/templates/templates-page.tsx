@@ -1017,7 +1017,9 @@ function TemplateRevisionList({ template, lang }: { template: TemplateItem; lang
               {t("revisionMinDisk", { minDiskGiB: revision.minDiskGiB })}
             </p>
             <RevisionImageBadges revision={revision} lang={lang} />
-            <PublishRevisionButton revision={revision} lang={lang} />
+            {template.archivedAt === null ? (
+              <PublishRevisionButton revision={revision} lang={lang} />
+            ) : null}
             {template.archivedAt === null && !template.communitySource ? (
               <Button
                 type="button"

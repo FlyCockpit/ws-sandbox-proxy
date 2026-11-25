@@ -23,6 +23,7 @@ import {
   getAccountImagePolicy,
   listHostImageCache,
   pruneTemplateNow,
+  publishTemplateRevision,
   setAccountImagePolicy,
   updateTemplateImageSettings,
 } from "./settings";
@@ -133,6 +134,24 @@ describe("session image settings against real PostgreSQL", () => {
     });
     await expect(
       updateTemplateImageSettings(a.owner, { templateId: revision.templateId, captureKeep: 1 }),
+    ).rejects.toMatchObject({ data: { code: "sandbox.template_not_found" } });
+  });
+
+  it("Publish now refuses a revision of an archived template (the backfill never uploads it)", async () => {
+    const a = await user();
+    const revision = await seedTemplateRevision(db.inspect, {
+      data: { userId: a.id, slug: "p", label: "P", incusFingerprint: fp(11) },
+    });
+    // Live: found, then refused only because this test has no image store.
+    await expect(
+      publishTemplateRevision(a.owner, { revisionId: revision.id }),
+    ).rejects.toMatchObject({ data: { code: "sandbox.template_store_unavailable" } });
+    await db.inspect.sandboxTemplate.update({
+      where: { id: revision.templateId },
+      data: { archivedAt: new Date() },
+    });
+    await expect(
+      publishTemplateRevision(a.owner, { revisionId: revision.id }),
     ).rejects.toMatchObject({ data: { code: "sandbox.template_not_found" } });
   });
 

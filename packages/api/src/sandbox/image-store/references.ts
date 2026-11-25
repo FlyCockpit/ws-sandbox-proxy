@@ -4,6 +4,7 @@
  * imports: the relay's frame handlers load it.
  */
 import prisma, { type Prisma } from "@wssp/db";
+import { Prisma as PrismaValue } from "@wssp/db/client";
 
 export const ACTIVE_OPERATION_STATES = [
   "QUEUED",
@@ -13,31 +14,56 @@ export const ACTIVE_OPERATION_STATES = [
   "CANCEL_REQUESTED",
 ];
 
-/** Live references keep an artifact: a live revision, an open transfer, an
- * in-flight create, or an unfinished capture (its result or its upload). */
+/**
+ * The one definition of a live revision: not retired, and its template not
+ * archived. `r` is a `sandbox_template_revision` alias and `t` its own
+ * `sandbox_logical_template`, joined on id and owner. Archiving keeps the
+ * revisions' `retiredAt` unset, so a query that checks only `retiredAt`
+ * disagrees with GC (the churn loop: GC deleted an archived template's image
+ * and the publish backfill uploaded it again from a host copy).
+ */
+export function liveRevisionSql(
+  r: Prisma.Sql = PrismaValue.raw("r"),
+  t: Prisma.Sql = PrismaValue.raw("t"),
+): Prisma.Sql {
+  return PrismaValue.sql`${r}."retiredAt" IS NULL AND ${t}."archivedAt" IS NULL`;
+}
+
+/**
+ * Live references keep an artifact: a live revision, an open transfer, an
+ * in-flight create, or an unfinished capture (its result or its upload).
+ * The SQL boolean GC deletes by. The publish backfill uploads only images
+ * this holds for, so GC never deletes what the backfill would upload again.
+ * `owner` and `fingerprint` are SQL expressions (a bound value or a column).
+ */
+export function artifactReferencedSql(owner: Prisma.Sql, fingerprint: Prisma.Sql): Prisma.Sql {
+  return PrismaValue.sql`(EXISTS (SELECT 1 FROM sandbox_template_revision r
+        JOIN sandbox_logical_template t ON t.id = r."templateId" AND t."userId" = r."userId"
+        WHERE r."userId" = ${owner} AND r."incusFingerprint" = ${fingerprint}
+          AND ${liveRevisionSql()})
+      OR EXISTS (SELECT 1 FROM sandbox_image_transfer x
+        WHERE x."userId" = ${owner} AND x.fingerprint = ${fingerprint} AND x.state = 'OPEN')
+      OR EXISTS (SELECT 1 FROM sandbox_placement p
+        JOIN sandbox_mutation_operation o ON o.id = p."operationId"
+        WHERE p."userId" = ${owner} AND p.artifact = ${fingerprint}
+          AND o.state::text = ANY(${ACTIVE_OPERATION_STATES}::text[]))
+      OR EXISTS (SELECT 1 FROM sandbox_template_capture c
+        WHERE c."userId" = ${owner} AND c.fingerprint = ${fingerprint}
+          AND c.state::text IN ('PENDING', 'CAPTURED', 'STORING'))
+      OR EXISTS (SELECT 1 FROM sandbox_image_transfer x
+        JOIN sandbox_template_capture c ON c."operationId" = x."operationId"
+        WHERE x."userId" = ${owner} AND x.fingerprint = ${fingerprint}
+          AND c.state::text IN ('PENDING', 'CAPTURED', 'STORING')))`;
+}
+
+/** Whether `artifactReferencedSql` holds for `owner`'s image `fingerprint`. */
 export async function artifactReferenced(
   tx: Prisma.TransactionClient,
   ownerId: string,
   fingerprint: string,
 ): Promise<boolean> {
   const rows = await tx.$queryRaw<{ referenced: boolean }[]>`
-    SELECT (EXISTS (SELECT 1 FROM sandbox_template_revision r
-        JOIN sandbox_logical_template t ON t.id = r."templateId" AND t."userId" = r."userId"
-        WHERE r."userId" = ${ownerId} AND r."incusFingerprint" = ${fingerprint}
-          AND r."retiredAt" IS NULL AND t."archivedAt" IS NULL)
-      OR EXISTS (SELECT 1 FROM sandbox_image_transfer x
-        WHERE x."userId" = ${ownerId} AND x.fingerprint = ${fingerprint} AND x.state = 'OPEN')
-      OR EXISTS (SELECT 1 FROM sandbox_placement p
-        JOIN sandbox_mutation_operation o ON o.id = p."operationId"
-        WHERE p."userId" = ${ownerId} AND p.artifact = ${fingerprint}
-          AND o.state::text = ANY(${ACTIVE_OPERATION_STATES}::text[]))
-      OR EXISTS (SELECT 1 FROM sandbox_template_capture c
-        WHERE c."userId" = ${ownerId} AND c.fingerprint = ${fingerprint}
-          AND c.state::text IN ('PENDING', 'CAPTURED', 'STORING'))
-      OR EXISTS (SELECT 1 FROM sandbox_image_transfer x
-        JOIN sandbox_template_capture c ON c."operationId" = x."operationId"
-        WHERE x."userId" = ${ownerId} AND x.fingerprint = ${fingerprint}
-          AND c.state::text IN ('PENDING', 'CAPTURED', 'STORING'))) AS referenced`;
+    SELECT ${artifactReferencedSql(PrismaValue.sql`${ownerId}`, PrismaValue.sql`${fingerprint}`)} AS referenced`;
   return rows[0]?.referenced === true;
 }
 

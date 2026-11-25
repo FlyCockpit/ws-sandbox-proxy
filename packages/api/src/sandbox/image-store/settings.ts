@@ -117,7 +117,8 @@ export type PublishRevisionStatus = "stored" | "in_progress" | "queued" | "no_so
 /**
  * Publish to the image store now (S3 mode): the scheduler's backfill uploads
  * every live revision lacking a STORED artifact; this checks the revision and
- * wakes it rather than issuing a second, competing publish.
+ * wakes it rather than issuing a second, competing publish. A revision of an
+ * archived template is not live (the backfill never uploads it): not found.
  */
 export const publishTemplateRevision = serviceProcedure(
   { sessionOnly: true },
@@ -131,6 +132,7 @@ export const publishTemplateRevision = serviceProcedure(
         id: input.revisionId,
         userId: owner.ownerId,
         retiredAt: null,
+        Template: { archivedAt: null },
         ...launchableRevisionWhere(),
       },
       select: { incusFingerprint: true },

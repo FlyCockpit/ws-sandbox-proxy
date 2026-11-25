@@ -13,7 +13,9 @@ import {
   endTransfersOfEndedOperations,
   originImagesToRelease,
 } from "@wssp/api/sandbox/image-store/jobs";
+import { artifactReferencedSql, liveRevisionSql } from "@wssp/api/sandbox/image-store/references";
 import prisma from "@wssp/db";
+import { Prisma } from "@wssp/db/client";
 import {
   IMAGE_S3_PART_BYTES,
   type ServerDiskMessage,
@@ -42,9 +44,12 @@ async function hostEpoch(hostId: string): Promise<number | null> {
 const PUBLISH_BACKFILL_PER_ACCOUNT = 2;
 
 /**
- * Auto-publish backfill (S3 mode): live revisions with no STORED artifact that
- * are AVAILABLE on an owned, connected, publish-capable host are uploaded,
- * at most one per host and two per account at a time: the query skips an
+ * Auto-publish backfill (S3 mode): live revisions (`liveRevisionSql`: not
+ * retired, template not archived) with no STORED artifact that are AVAILABLE
+ * on an owned, connected, publish-capable host are uploaded, and only while
+ * GC's own `artifactReferencedSql` holds for the image, so GC never deletes
+ * an image this would upload again (the archived-template churn loop). At
+ * most one per host and two per account run at a time: the query skips an
  * account that already has two open publishes, and one tick starts no more
  * than the account's remaining room.
  */
@@ -65,10 +70,13 @@ export async function publishBackfill(send: Send, now = new Date()): Promise<num
       (SELECT count(*)::int FROM sandbox_image_transfer t WHERE t.state = 'OPEN'
         AND t.purpose = 'PUBLISH' AND t."userId" = a."userId") AS "openPublishes"
     FROM sandbox_template_availability a
-    JOIN sandbox_template_revision r ON r.id = a."revisionId" AND r."retiredAt" IS NULL
+    JOIN sandbox_template_revision r ON r.id = a."revisionId"
       AND r."sourceKind"::text <> 'UPSTREAM' AND r."pendingVerifyBuildId" IS NULL
+    JOIN sandbox_logical_template t ON t.id = r."templateId" AND t."userId" = r."userId"
     JOIN sandbox_host h ON h.id = a."hostId" AND h."userId" = a."userId"
-    WHERE a.status = 'AVAILABLE' AND a."verifiedConnectionEpoch" = h."connectionEpoch"
+    WHERE ${liveRevisionSql()}
+      AND ${artifactReferencedSql(Prisma.raw('a."userId"'), Prisma.raw('a."localFingerprint"'))}
+      AND a.status = 'AVAILABLE' AND a."verifiedConnectionEpoch" = h."connectionEpoch"
       AND h.status = 'CONNECTED' AND (h."daemonFeatures"->'image'->'publish') = 'true'::jsonb
       AND (a."imageFormat" IS NULL OR a."imageFormat" = 'unified')
       AND NOT EXISTS (SELECT 1 FROM sandbox_image_artifact x WHERE x."userId" = a."userId"

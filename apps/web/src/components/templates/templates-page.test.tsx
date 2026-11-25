@@ -50,6 +50,7 @@ const server = vi.hoisted(() => ({
   createGate: null as Promise<void> | null,
   /** When set, listHosts waits for this promise before answering. */
   hostsGate: null as Promise<void> | null,
+  imageMode: "off" as "off" | "s3",
   seq: 0,
 }));
 
@@ -169,7 +170,7 @@ vi.mock("@/utils/orpc", () => {
           queryOptions: () => ({
             queryKey: ["settings", "imagePolicy"],
             queryFn: async () => ({
-              mode: "off" as const,
+              mode: server.imageMode,
               imagePlacement: "ANY_NODE" as const,
               quotas: { maxStoredGiB: null, downloadsPerHour: null },
               usage: { storedBytes: "0", downloadsLastHour: 0 },
@@ -395,6 +396,7 @@ const findCard = (id: string) =>
   });
 
 beforeEach(() => {
+  server.imageMode = "off";
   server.revisions = null;
   server.availability = [];
   server.pageSize = 100;
@@ -520,6 +522,7 @@ describe("templates list", () => {
 
   it("the Archived filter asks the server for retired templates and shows them archived", async () => {
     const user = userEvent.setup();
+    server.imageMode = "s3";
     server.templates = [
       templateRow(),
       templateRow({
@@ -533,6 +536,9 @@ describe("templates list", () => {
     await mount();
     await screen.findByText("Ubuntu");
     expect(screen.queryByText("Old")).toBeNull();
+    // A live template's revision offers Publish; an archived one's never does.
+    const publish = { name: enTemplates.images.publish.action };
+    await waitFor(() => expect(within(card("tpl-a")!).getByRole("button", publish)).toBeTruthy());
     await user.click(screen.getByRole("button", { name: enTemplates.filter.retired }));
     expect(await screen.findByText("Old")).toBeTruthy();
     expect(calls("listTemplates").at(-1)?.input).toMatchObject({ status: "retired" });
@@ -542,6 +548,7 @@ describe("templates list", () => {
     // Still shows what it pinned; no archive control on an archived revision.
     await waitFor(() => expect(within(old).getByText("sha256:abababababab…")).toBeTruthy());
     expect(within(old).queryByRole("button", { name: enTemplates.archive.action })).toBeNull();
+    expect(within(old).queryByRole("button", publish)).toBeNull();
   });
 });
 
