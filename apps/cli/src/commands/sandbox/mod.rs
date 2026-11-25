@@ -53,7 +53,7 @@ pub enum SandboxCommand {
     /// Stop a sandbox (its disk is kept).
     Stop(LifecycleArgs),
     /// Start a stopped sandbox again (cold reconnect).
-    Start(LifecycleArgs),
+    Start(StartArgs),
     /// Destroy a sandbox and its disk.
     Destroy(LifecycleArgs),
     /// Guest files: list, stat, read, write, mkdir, move and remove.
@@ -157,6 +157,17 @@ pub struct LifecycleArgs {
     pub json: bool,
 }
 
+#[derive(Debug, clap::Args)]
+pub struct StartArgs {
+    #[command(flatten)]
+    pub lifecycle: LifecycleArgs,
+
+    /// New lease, counted from when the start is accepted: `30m`, `2h`, `1d` (`0`: no lease timer where policy
+    /// allows it; default 5m).
+    #[arg(long, value_name = "DUR", value_parser = parse_duration_ms)]
+    pub timeout: Option<u64>,
+}
+
 pub fn run(args: &Args) -> Result<()> {
     match &args.command {
         SandboxCommand::Create(args) => create(args),
@@ -168,7 +179,7 @@ pub fn run(args: &Args) -> Result<()> {
         SandboxCommand::Ps(args) => exec::ps(args),
         SandboxCommand::Logs(args) => exec::logs(args),
         SandboxCommand::Stop(args) => lifecycle(args, Lifecycle::Stop),
-        SandboxCommand::Start(args) => lifecycle(args, Lifecycle::Start),
+        SandboxCommand::Start(args) => lifecycle(&args.lifecycle, Lifecycle::Start(args.timeout)),
         SandboxCommand::Destroy(args) => lifecycle(args, Lifecycle::Destroy),
         SandboxCommand::Files(args) => files::run(args),
         SandboxCommand::Ports(args) => ports::run(args),
@@ -556,7 +567,8 @@ fn get(args: &IdArgs) -> Result<()> {
 #[derive(Clone, Copy)]
 enum Lifecycle {
     Stop,
-    Start,
+    /// The lease in milliseconds; `None` keeps the server's default.
+    Start(Option<u64>),
     Destroy,
 }
 
@@ -570,10 +582,13 @@ fn lifecycle(args: &LifecycleArgs, action: Lifecycle) -> Result<()> {
             json!({}),
             "stop",
         ),
-        Lifecycle::Start => (
+        Lifecycle::Start(timeout_ms) => (
             Method::Post,
             format!("/v1/sandboxes/{id}/reconnect"),
-            json!({ "mode": "cold" }),
+            match timeout_ms {
+                Some(ms) => json!({ "mode": "cold", "timeoutMs": ms }),
+                None => json!({ "mode": "cold" }),
+            },
             "start",
         ),
         Lifecycle::Destroy => (
@@ -595,7 +610,7 @@ fn lifecycle(args: &LifecycleArgs, action: Lifecycle) -> Result<()> {
         };
     }
     let operation = await_operation(&client, &receipt.operation_id)?;
-    if matches!(action, Lifecycle::Start) {
+    if matches!(action, Lifecycle::Start(_)) {
         let sandbox = wait_ready(&client, id)?;
         return if args.json {
             output::json(&sandbox)

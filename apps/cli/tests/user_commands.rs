@@ -1300,6 +1300,48 @@ fn server_requested_retry_delays_are_never_shortened() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
+#[test]
+fn start_sends_the_lease_only_when_timeout_is_given() {
+    let tmp = tempfile::tempdir().unwrap();
+    let server = Server::new(|_, request| {
+        assert!(
+            request.is("POST", "/v1/sandboxes/sbx-1/reconnect"),
+            "{}",
+            request.target
+        );
+        reply(
+            202,
+            json!({"operationId":"op-1","state":"QUEUED","location":"/v1/operations/op-1"}),
+        )
+    });
+    save_login(tmp.path(), &server.url, &sdk_key('T'));
+    let out = wssp(
+        tmp.path(),
+        &["sandbox", "start", "sbx-1", "--timeout", "2h"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).contains("start accepted (operation op-1, QUEUED)"));
+    let out = wssp(tmp.path(), &["sandbox", "start", "sbx-1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let out = wssp(tmp.path(), &["sandbox", "start", "sbx-1", "--timeout", "0"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let bodies: Vec<Value> = server.requests().iter().map(Request::json).collect();
+    assert_eq!(
+        bodies,
+        vec![
+            json!({"mode": "cold", "timeoutMs": 7_200_000}),
+            json!({"mode": "cold"}),
+            json!({"mode": "cold", "timeoutMs": 0}),
+        ]
+    );
+    let out = wssp(
+        tmp.path(),
+        &["sandbox", "start", "sbx-1", "--timeout", "5x"],
+    );
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(server.requests().len(), 3);
+}
+
 fn template_row(id: &str) -> Value {
     json!({"id": id, "slug": id, "label": id, "archivedAt": null, "createdAt": "2026-11-18T00:00:00.000Z"})
 }

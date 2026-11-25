@@ -125,7 +125,7 @@ wssp sandbox list --state STOPPED --state READY --limit 50
 wssp sandbox list --cursor <next-cursor>
 wssp sandbox get <sandbox-id>
 wssp sandbox stop <sandbox-id> --wait
-wssp sandbox start <sandbox-id> --wait  # cold reconnect; waits until READY
+wssp sandbox start <sandbox-id> --timeout 2h --wait  # cold reconnect; waits until READY
 wssp sandbox destroy <sandbox-id> --wait
 ```
 
@@ -134,7 +134,10 @@ wssp sandbox destroy <sandbox-id> --wait
 Without `--wait` it prints the accepted operation and the new sandbox id;
 with `--wait` it follows the operation and then the sandbox until it is
 READY. `--timeout` is the lease (`30m`, `2h`, `1d`; `0` only where policy
-allows no lease). A login with a live sandbox limit that is reached fails with
+allows no lease). `start --timeout` sets a new lease, counted from when the
+start is accepted (a create counts from READY where the host supports it);
+without `--timeout` a start gets the server's default of 5 minutes, after which
+the sandbox's expiry action applies. A login with a live sandbox limit that is reached fails with
 `sandbox.key_limit_reached` (exit 9). Lists are bounded pages; a further page
 prints its `--cursor`.
 
