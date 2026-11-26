@@ -3,41 +3,37 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Link, useNavigate } from "@tanstack/react-router";
 import { VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
+import { AdvancedSection, FormPage, FormSection } from "@wssp/ui/components/form-page";
 import {
-  AdvancedSection,
-  FormPage,
-  FormSection,
-  focusFirstInvalid,
-} from "@wssp/ui/components/form-page";
-import {
+  hasKeyValueErrors,
   KeyValueEditor,
-  type KeyValueRow,
-  keyValueProblems,
-  rowsToRecord,
+  type KeyValueEntry,
 } from "@wssp/ui/components/key-value-editor";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { toast } from "@wssp/ui/components/sileo";
 import { FieldError, TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { ArrowLeft } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { FormPageStatus } from "@/components/form-page-status";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { PoolImageTarget } from "@/components/pools/pool-image-target";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
-import { useKeyValueLabels } from "@/hooks/use-key-value-labels";
+import { useKeyValueEditorLabels } from "@/hooks/use-form-field-labels";
 import { useSubmissionFence } from "@/hooks/use-submission-fence";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { hostConnectionState } from "@/lib/host-status";
+import { entriesToRecord, PROTOTYPE_NAMES, stateField } from "@/lib/key-value-entries";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import {
   DEFAULT_TEMPLATE_DRAFT,
-  ENV_KEY_PATTERN,
   envRowsToDraft,
   parseTemplateDraft,
   RESERVED_DEFAULT_ENV,
@@ -57,6 +53,9 @@ import {
 import { withFieldError } from "@/lib/with-field-error";
 import { orpc } from "@/utils/orpc";
 import { invalidateTemplates } from "./template-queries";
+
+/** Env names a template's stored defaults may not use (the server refuses them). */
+const ENV_RESERVED = [...RESERVED_DEFAULT_ENV, ...PROTOTYPE_NAMES];
 
 /**
  * Register an existing image (C46), as a page: the host looks the image up in
@@ -188,7 +187,11 @@ function RegisterTemplateForm({
   notice?: ReactNode;
 }) {
   const { t } = useTranslation(["templates", "hosts", "common"]);
-  const kvLabels = useKeyValueLabels(t("templates:registerPage.addVariable"));
+  const editorLabels = useKeyValueEditorLabels();
+  const kvLabels = useMemo(
+    () => ({ ...editorLabels, add: t("templates:registerPage.addVariable") }),
+    [editorLabels, t],
+  );
   // Submitting may await a host refetch; leaving meanwhile must not register.
   const fence = useSubmissionFence();
   const navigate = useNavigate();
@@ -201,11 +204,9 @@ function RegisterTemplateForm({
   const [poolTarget, setPoolTarget] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [slugEdited, setSlugEdited] = useState(false);
-  const [envRows, setEnvRows] = useState<KeyValueRow[]>([]);
+  const [envRows, setEnvRows] = useState<KeyValueEntry[]>([]);
   // Bumped to remount the editor (and drop its .env text) when values are cleared.
   const [envEpoch, setEnvEpoch] = useState(0);
-  // False while the editor's .env text has lines it cannot read (never sent).
-  const [envTextValid, setEnvTextValid] = useState(true);
   const [problem, setProblem] = useState<TemplateProblem | null>(null);
   const [registered, setRegistered] = useState<Registered | null>(null);
   const hostsQuery = useInfiniteQuery({
@@ -238,10 +239,9 @@ function RegisterTemplateForm({
     } as TemplateDraft & { poolId: string; memberId: string },
   });
   const values = useStore(form.store, (state) => state.values);
-  const envProblems = keyValueProblems(envRows, {
-    keyPattern: ENV_KEY_PATTERN,
-    reservedKey: (key) => RESERVED_DEFAULT_ENV.has(key),
-  });
+  // Flagged rows and `.env` lines that did not parse (kept as flagged rows,
+  // never sent) both refuse the draft.
+  const envInvalid = hasKeyValueErrors(envRows, { reservedKeys: ENV_RESERVED });
   const register = useMutation({
     gcTime: 0,
     mutationFn: async (input: ReturnType<typeof parseTemplateDraft>): Promise<Registered> => {
@@ -301,7 +301,7 @@ function RegisterTemplateForm({
     problems.includes(item) ? problemText(item) : null;
   const hostProblem = problems.find((item) => HOST_PROBLEMS.includes(item)) ?? null;
   const selectedHost = hosts.find((host) => host.id === values.hostId);
-  const envCount = Object.keys(rowsToRecord(envRows)).length;
+  const envCount = Object.keys(entriesToRecord(envRows)).length;
 
   const setLabel = (label: string) => {
     form.setFieldValue("label", label);
@@ -311,11 +311,10 @@ function RegisterTemplateForm({
     setEnvRows([]);
     form.setFieldValue("envs", "");
     setEnvEpoch((epoch) => epoch + 1);
-    setEnvTextValid(true);
   }
-  const setEnv = (rows: KeyValueRow[]) => {
-    setEnvRows(rows);
-    form.setFieldValue("envs", envRowsToDraft(rowsToRecord(rows)));
+  const setEnv = (entries: KeyValueEntry[]) => {
+    setEnvRows(entries);
+    form.setFieldValue("envs", envRowsToDraft(entriesToRecord(entries)));
   };
   const submit = async () => {
     flushSync(() => setAttempted(true));
@@ -332,12 +331,8 @@ function RegisterTemplateForm({
       if (!stillCurrent()) return;
       current = registrableHosts(fresh.data?.pages.flatMap((page) => page.items) ?? []);
     }
-    if (
-      templateDraftProblems(value, current, Date.now()).length > 0 ||
-      envProblems.size > 0 ||
-      !envTextValid
-    ) {
-      focusFirstInvalid(formRef.current);
+    if (templateDraftProblems(value, current, Date.now()).length > 0 || envInvalid) {
+      focusFirstInvalidField(formRef.current);
       return;
     }
     register.mutate(parseTemplateDraft(value));
@@ -396,14 +391,17 @@ function RegisterTemplateForm({
   });
   const hostName = poolTarget ? null : (selectedHost?.label ?? null);
 
+  const pageTitle = logical
+    ? t("templates:registerPage.titleVersion", { label: logical.label })
+    : t("templates:registerPage.titleNew");
   return (
     <FormPage
       ref={formRef}
-      title={
-        logical
-          ? t("templates:registerPage.titleVersion", { label: logical.label })
-          : t("templates:registerPage.titleNew")
-      }
+      noValidate
+      // Inside the dashboard frame, which already pads the content column.
+      className="px-0 pt-0"
+      title={pageTitle}
+      aria-label={pageTitle}
       description={t("templates:registerPage.description")}
       back={<BackLink lang={lang} />}
       onSubmit={(event) => {
@@ -411,26 +409,23 @@ function RegisterTemplateForm({
         event.stopPropagation();
         void submit();
       }}
-      status={
-        register.isPending ? (
-          <span role="status" data-image-check="pending">
-            {t("templates:register.checking", { host: selectedHost?.label ?? values.hostId })}
-          </span>
-        ) : problem ? (
-          <span role="alert" data-image-check="failed" className="text-destructive">
-            {t(`templates:problem.${problem}`)}
-          </span>
-        ) : hostName ? (
-          t("templates:registerPage.statusHost", { host: hostName })
-        ) : (
-          t("templates:registerPage.status")
-        )
-      }
       actions={
         <>
-          <Button type="submit" size="touch" disabled={register.isPending}>
-            {register.isPending ? t("templates:register.pending") : t("templates:register.submit")}
-          </Button>
+          <FormPageStatus>
+            {register.isPending ? (
+              <span role="status" data-image-check="pending">
+                {t("templates:register.checking", { host: selectedHost?.label ?? values.hostId })}
+              </span>
+            ) : problem ? (
+              <span role="alert" data-image-check="failed" className="text-destructive">
+                {t(`templates:problem.${problem}`)}
+              </span>
+            ) : hostName ? (
+              t("templates:registerPage.statusHost", { host: hostName })
+            ) : (
+              t("templates:registerPage.status")
+            )}
+          </FormPageStatus>
           <Button
             type="button"
             size="touch"
@@ -442,14 +437,18 @@ function RegisterTemplateForm({
           >
             {t("common:actions.cancel")}
           </Button>
+          <Button type="submit" size="touch" disabled={register.isPending}>
+            {register.isPending ? t("templates:register.pending") : t("templates:register.submit")}
+          </Button>
         </>
       }
     >
       {notice}
-      <fieldset className="contents" disabled={register.isPending}>
+      <fieldset className="min-w-0 space-y-8" disabled={register.isPending}>
         <FormSection
           title={t("templates:registerPage.where")}
           description={t("templates:registerPage.whereHint")}
+          gridClassName="lg:grid-cols-1"
         >
           <SegmentedControl
             value={poolTarget ? "pool" : "host"}
@@ -583,207 +582,216 @@ function RegisterTemplateForm({
         <FormSection
           title={t("templates:registerPage.advanced")}
           description={t("templates:registerPage.advancedHint")}
+          gridClassName="lg:grid-cols-1"
         >
-          <AdvancedSection
-            title={t("templates:registerPage.sections.size")}
-            summary={sizeSummary}
-            data-advanced="size"
-          >
-            <p className="text-xs text-muted-foreground">{t("templates:form.sizeHint")}</p>
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-              <form.Field name="cpuCount">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("cpuCount"))}
-                    label={t("templates:form.cpuCount")}
-                    type="number"
-                    inputMode="numeric"
-                    min={VM_SIZE_LIMITS.cpuCountMin}
-                    max={VM_SIZE_LIMITS.cpuCountMax}
-                    step={1}
-                    autoComplete="off"
-                    inputClassName="min-h-11"
-                  />
+          {/* One cell: the sections join into one ruled list. */}
+          <div className="min-w-0 space-y-8">
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              title={t("templates:registerPage.sections.size")}
+              summary={sizeSummary}
+              data-advanced="size"
+            >
+              <p className="text-xs text-muted-foreground">{t("templates:form.sizeHint")}</p>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <form.Field name="cpuCount">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("cpuCount"))}
+                      label={t("templates:form.cpuCount")}
+                      type="number"
+                      inputMode="numeric"
+                      min={VM_SIZE_LIMITS.cpuCountMin}
+                      max={VM_SIZE_LIMITS.cpuCountMax}
+                      step={1}
+                      autoComplete="off"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="memoryMiB">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("memoryMiB"))}
+                      label={t("templates:form.memoryMiB")}
+                      type="number"
+                      inputMode="numeric"
+                      min={VM_SIZE_LIMITS.memoryMiBMin}
+                      max={VM_SIZE_LIMITS.memoryMiBMax}
+                      step={VM_SIZE_LIMITS.memoryMiBStep}
+                      autoComplete="off"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="defaultDiskGiB">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("defaultDiskGiB"))}
+                      label={t("templates:form.defaultDiskGiB")}
+                      type="number"
+                      inputMode="numeric"
+                      min={VM_SIZE_LIMITS.diskGiBMin}
+                      max={VM_SIZE_LIMITS.diskGiBMax}
+                      step={1}
+                      autoComplete="off"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="minDiskGiB">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("minDiskGiB"))}
+                      label={t("templates:form.minDiskGiB")}
+                      type="number"
+                      inputMode="numeric"
+                      min={VM_SIZE_LIMITS.diskGiBMin}
+                      max={VM_SIZE_LIMITS.diskGiBMax}
+                      step={1}
+                      autoComplete="off"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+              </div>
+            </AdvancedSection>
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              title={t("templates:registerPage.sections.env")}
+              summary={
+                envCount === 0
+                  ? t("templates:registerPage.summary.envNone")
+                  : t("templates:registerPage.summary.env", { count: envCount })
+              }
+              data-advanced="env"
+            >
+              <KeyValueEditor
+                key={envEpoch}
+                field={stateField(
+                  "envs",
+                  envRows,
+                  // The draft's own check, once the rows themselves are clean.
+                  envInvalid ? [] : [errorFor("envs")].filter((item) => item !== null),
+                  setEnv,
                 )}
-              </form.Field>
-              <form.Field name="memoryMiB">
+                label={t("templates:registerPage.envLabel")}
+                description={t("templates:registerPage.envHint")}
+                labels={kvLabels}
+                reservedKeys={ENV_RESERVED}
+                secret
+              />
+            </AdvancedSection>
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              title={t("templates:registerPage.sections.guest")}
+              summary={guestSummary}
+              data-advanced="guest"
+            >
+              <p className="text-xs text-muted-foreground">{t("templates:form.guestHint")}</p>
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+                <form.Field name="guestUid">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("guestUid"))}
+                      label={t("templates:form.guestUid")}
+                      autoComplete="off"
+                      inputMode="numeric"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+                <form.Field name="guestGid">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("guestGid"))}
+                      label={t("templates:form.guestGid")}
+                      autoComplete="off"
+                      inputMode="numeric"
+                      inputClassName="min-h-11"
+                    />
+                  )}
+                </form.Field>
+              </div>
+              <form.Field name="guestHome">
                 {(field) => (
                   <TextField
-                    field={withFieldError(field, errorFor("memoryMiB"))}
-                    label={t("templates:form.memoryMiB")}
-                    type="number"
-                    inputMode="numeric"
-                    min={VM_SIZE_LIMITS.memoryMiBMin}
-                    max={VM_SIZE_LIMITS.memoryMiBMax}
-                    step={VM_SIZE_LIMITS.memoryMiBStep}
-                    autoComplete="off"
-                    inputClassName="min-h-11"
-                  />
-                )}
-              </form.Field>
-              <form.Field name="defaultDiskGiB">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("defaultDiskGiB"))}
-                    label={t("templates:form.defaultDiskGiB")}
-                    type="number"
-                    inputMode="numeric"
-                    min={VM_SIZE_LIMITS.diskGiBMin}
-                    max={VM_SIZE_LIMITS.diskGiBMax}
-                    step={1}
-                    autoComplete="off"
-                    inputClassName="min-h-11"
-                  />
-                )}
-              </form.Field>
-              <form.Field name="minDiskGiB">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("minDiskGiB"))}
-                    label={t("templates:form.minDiskGiB")}
-                    type="number"
-                    inputMode="numeric"
-                    min={VM_SIZE_LIMITS.diskGiBMin}
-                    max={VM_SIZE_LIMITS.diskGiBMax}
-                    step={1}
-                    autoComplete="off"
-                    inputClassName="min-h-11"
-                  />
-                )}
-              </form.Field>
-            </div>
-          </AdvancedSection>
-          <AdvancedSection
-            title={t("templates:registerPage.sections.env")}
-            summary={
-              envCount === 0
-                ? t("templates:registerPage.summary.envNone")
-                : t("templates:registerPage.summary.env", { count: envCount })
-            }
-            data-advanced="env"
-          >
-            <KeyValueEditor
-              key={envEpoch}
-              label={t("templates:registerPage.envLabel")}
-              description={t("templates:registerPage.envHint")}
-              rows={envRows}
-              onChange={setEnv}
-              onValidityChange={setEnvTextValid}
-              labels={kvLabels}
-              problems={envProblems}
-              masked
-              maxRows={64}
-              keyPlaceholder="NAME"
-              error={envProblems.size === 0 ? errorFor("envs") : null}
-            />
-          </AdvancedSection>
-          <AdvancedSection
-            title={t("templates:registerPage.sections.guest")}
-            summary={guestSummary}
-            data-advanced="guest"
-          >
-            <p className="text-xs text-muted-foreground">{t("templates:form.guestHint")}</p>
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-              <form.Field name="guestUid">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("guestUid"))}
-                    label={t("templates:form.guestUid")}
-                    autoComplete="off"
-                    inputMode="numeric"
-                    inputClassName="min-h-11"
-                  />
-                )}
-              </form.Field>
-              <form.Field name="guestGid">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("guestGid"))}
-                    label={t("templates:form.guestGid")}
-                    autoComplete="off"
-                    inputMode="numeric"
-                    inputClassName="min-h-11"
-                  />
-                )}
-              </form.Field>
-            </div>
-            <form.Field name="guestHome">
-              {(field) => (
-                <TextField
-                  field={withFieldError(field, errorFor("guestHome"))}
-                  label={t("templates:form.guestHome")}
-                  autoComplete="off"
-                  inputMode="url"
-                  inputClassName="min-h-11 font-mono"
-                />
-              )}
-            </form.Field>
-            <form.Field name="guestShell">
-              {(field) => (
-                <TextField
-                  field={withFieldError(field, errorFor("guestShell"))}
-                  label={t("templates:form.guestShell")}
-                  autoComplete="off"
-                  inputMode="url"
-                  inputClassName="min-h-11 font-mono"
-                />
-              )}
-            </form.Field>
-          </AdvancedSection>
-          <AdvancedSection
-            title={t("templates:registerPage.sections.details")}
-            summary={detailsSummary}
-            data-advanced="details"
-          >
-            {logical ? null : (
-              <form.Field name="slug">
-                {(field) => (
-                  <TextField
-                    field={withFieldError(field, errorFor("slug"), (value) => {
-                      setSlugEdited(true);
-                      field.handleChange(value);
-                    })}
-                    label={t("templates:form.slug")}
-                    description={t("templates:form.slugHint")}
+                    field={withFieldError(field, errorFor("guestHome"))}
+                    label={t("templates:form.guestHome")}
                     autoComplete="off"
                     inputMode="url"
-                    maxLength={63}
                     inputClassName="min-h-11 font-mono"
                   />
                 )}
               </form.Field>
-            )}
-            <div className="flex min-w-0 flex-col gap-2">
-              <Label htmlFor={architectureId}>{t("templates:form.architecture")}</Label>
-              <FormSelect
-                id={architectureId}
-                autoComplete="off"
-                value={values.architecture}
-                onValueChange={(value) => form.setFieldValue("architecture", value)}
-                className="font-mono"
-              >
-                {TEMPLATE_ARCHITECTURES.map((architecture) => (
-                  <SelectItem key={architecture} value={architecture}>
-                    {architecture}
-                  </SelectItem>
-                ))}
-              </FormSelect>
-              <FieldError errors={errorFor("architecture") ? [errorFor("architecture")] : []} />
-            </div>
-            <form.Field name="guestVersion">
-              {(field) => (
-                <TextField
-                  field={withFieldError(field, errorFor("guestVersion"))}
-                  label={t("templates:form.guestVersion")}
-                  description={t("templates:form.guestVersionHint")}
-                  autoComplete="off"
-                  inputMode="text"
-                  maxLength={TEMPLATE_GUEST_VERSION_MAX}
-                  inputClassName="min-h-11"
-                />
+              <form.Field name="guestShell">
+                {(field) => (
+                  <TextField
+                    field={withFieldError(field, errorFor("guestShell"))}
+                    label={t("templates:form.guestShell")}
+                    autoComplete="off"
+                    inputMode="url"
+                    inputClassName="min-h-11 font-mono"
+                  />
+                )}
+              </form.Field>
+            </AdvancedSection>
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              title={t("templates:registerPage.sections.details")}
+              summary={detailsSummary}
+              data-advanced="details"
+            >
+              {logical ? null : (
+                <form.Field name="slug">
+                  {(field) => (
+                    <TextField
+                      field={withFieldError(field, errorFor("slug"), (value) => {
+                        setSlugEdited(true);
+                        field.handleChange(value);
+                      })}
+                      label={t("templates:form.slug")}
+                      description={t("templates:form.slugHint")}
+                      autoComplete="off"
+                      inputMode="url"
+                      maxLength={63}
+                      inputClassName="min-h-11 font-mono"
+                    />
+                  )}
+                </form.Field>
               )}
-            </form.Field>
-          </AdvancedSection>
+              <div className="flex min-w-0 flex-col gap-2">
+                <Label htmlFor={architectureId}>{t("templates:form.architecture")}</Label>
+                <FormSelect
+                  id={architectureId}
+                  autoComplete="off"
+                  value={values.architecture}
+                  onValueChange={(value) => form.setFieldValue("architecture", value)}
+                  className="font-mono"
+                >
+                  {TEMPLATE_ARCHITECTURES.map((architecture) => (
+                    <SelectItem key={architecture} value={architecture}>
+                      {architecture}
+                    </SelectItem>
+                  ))}
+                </FormSelect>
+                <FieldError errors={errorFor("architecture") ? [errorFor("architecture")] : []} />
+              </div>
+              <form.Field name="guestVersion">
+                {(field) => (
+                  <TextField
+                    field={withFieldError(field, errorFor("guestVersion"))}
+                    label={t("templates:form.guestVersion")}
+                    description={t("templates:form.guestVersionHint")}
+                    autoComplete="off"
+                    inputMode="text"
+                    maxLength={TEMPLATE_GUEST_VERSION_MAX}
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+            </AdvancedSection>
+          </div>
         </FormSection>
       </fieldset>
     </FormPage>

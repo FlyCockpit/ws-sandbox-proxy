@@ -4,6 +4,7 @@ import { OperationsPage } from "@/components/operations/operations-page";
 import { type OperationsSearch, parseOperationsSearch } from "@/lib/operation-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/operations/")({
+  staticData: { pendingShape: "list" },
   validateSearch: parseOperationsSearch,
   component: OperationsRoute,
 });

@@ -221,7 +221,7 @@ const submit = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(page().getByRole("button", { name: enTemplates.register.submit }));
 
 /** Environment rows through the KeyValueEditor's .env text mode. */
-function typeEnv(label: string, text: string, textMode = enCommon.keyValue.textMode) {
+function typeEnv(label: string, text: string, textMode = enCommon.forms.keyValue.textMode) {
   const editor = screen.getByRole("group", { name: label });
   fireEvent.click(within(editor).getByRole("button", { name: textMode }));
   fireEvent.change(screen.getByRole("textbox", { name: label }), { target: { value: text } });
@@ -446,7 +446,9 @@ describe("register an existing image", () => {
     await fillValid(user);
     typeEnv(enTemplates.registerPage.envLabel, "HOME=/root\nAPP_MODE=dev");
     expect(
-      await screen.findByText(enCommon.keyValue.problem.reservedKey.replace("{{key}}", "HOME")),
+      await screen.findByText(
+        enCommon.forms.keyValue.errors.reservedKey.replace("{{key}}", "HOME"),
+      ),
     ).toBeTruthy();
     await submit(user);
     expect(calls("createTemplate")).toHaveLength(0);
@@ -466,7 +468,13 @@ describe("register an existing image", () => {
     await submit(user);
     expect(calls("createTemplate")).toHaveLength(0);
     const text = screen.getByRole("textbox", { name: enTemplates.registerPage.envLabel });
-    expect(screen.getByText(enCommon.keyValue.lineProblem.replace("{{line}}", "2"))).toBeTruthy();
+    expect(
+      screen.getByText(
+        enCommon.forms.keyValue.errors.line
+          .replace("{{line}}", "2")
+          .replace("{{reason}}", enCommon.forms.keyValue.errors.lineReasons["missing-equals"]),
+      ),
+    ).toBeTruthy();
     expect(document.activeElement).toBe(text);
     fireEvent.change(text, { target: { value: "FOO=bar\nREQUIRED_SECRET=s3" } });
     await submit(user);
@@ -480,7 +488,7 @@ describe("register an existing image", () => {
     "%s bounds private environment defaults and clears them after a definite refusal",
     async (lang) => {
       const copy = lang === "en-US" ? enTemplates : esTemplates;
-      const textMode = (lang === "en-US" ? enCommon : esCommon).keyValue.textMode;
+      const textMode = (lang === "en-US" ? enCommon : esCommon).forms.keyValue.textMode;
       const user = userEvent.setup();
       await mount({}, lang);
       await waitFor(() => expect(page().getByLabelText(copy.form.host)).toBeTruthy());

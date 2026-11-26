@@ -9,7 +9,7 @@ import { useId } from "react";
  * Narrow field shape so `@wssp/ui` does not depend on TanStack Form.
  * A `<form.Field>` render-prop object satisfies this structurally.
  */
-type FieldLike<TValue> = {
+export type FieldLike<TValue> = {
   name: string;
   state: {
     value: TValue;

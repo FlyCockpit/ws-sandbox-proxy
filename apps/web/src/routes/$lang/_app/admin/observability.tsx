@@ -7,6 +7,8 @@ import {
 } from "@/lib/admin-observability-search";
 
 export const Route = createFileRoute("/$lang/_app/admin/observability")({
+  // Only the defaults: /admin's first frame equals any unframed URL's.
+  staticData: { pendingShape: "list" },
   validateSearch: parseObservabilitySearch,
   search: {
     middlewares: [stripSearchParams(DEFAULT_OBSERVABILITY_SEARCH)],

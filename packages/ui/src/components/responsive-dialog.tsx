@@ -75,6 +75,9 @@ export function ResponsiveDialog({
             "inset-x-0 top-auto bottom-0 left-0 flex max-h-[80dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden border-t p-0 sm:max-w-none",
           className,
         )}
+        // The drawer's children box below is its one scroller and padding
+        // owner, so the dialog body is only the old popup's flex column.
+        bodyClassName={cn(!isDesktop && "flex flex-col gap-0 overflow-hidden p-0")}
         style={isDesktop ? undefined : { paddingBottom: "var(--safe-area-bottom)" }}
       >
         {!isDesktop ? <div className="mx-auto mt-4 h-1 w-24 shrink-0 bg-muted" /> : null}

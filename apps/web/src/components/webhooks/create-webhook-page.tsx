@@ -2,19 +2,16 @@ import { useForm, useStore } from "@tanstack/react-form";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
-import {
-  AdvancedSection,
-  FormPage,
-  FormSection,
-  focusFirstInvalid,
-} from "@wssp/ui/components/form-page";
+import { AdvancedSection, FormPage, FormSection } from "@wssp/ui/components/form-page";
 import { FieldError, TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { cn } from "@wssp/ui/lib/utils";
 import { ChevronLeft } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { OneTimeSecretPanel, SecretLeaveGuard } from "@/components/credentials/credential-parts";
 import { EmptyState } from "@/components/empty-state";
+import { FormPageStatus } from "@/components/form-page-status";
 import { InlineRetry } from "@/components/inline-retry";
 import { PageHeader } from "@/components/page-shell";
 import { SkeletonList } from "@/components/skeleton-list";
@@ -146,7 +143,7 @@ function CreateWebhookForm({
   const form = useForm({
     defaultValues: DEFAULT_WEBHOOK_DRAFT,
     validators: { onSubmit: webhookDraftSchema(t) },
-    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
+    onSubmitInvalid: () => focusFirstInvalidField(root.current),
     onSubmit: async ({ value }) => {
       setProblem(null);
       setPending(true);
@@ -167,9 +164,14 @@ function CreateWebhookForm({
     },
   });
   const values = useStore(form.store, (state) => state.values);
+  const pageTitle = t("webhooks:create.title");
   return (
     <FormPage
-      title={t("webhooks:create.title")}
+      noValidate
+      // Inside the dashboard frame, which already pads the content column.
+      className="px-0 pt-0"
+      title={pageTitle}
+      aria-label={pageTitle}
       description={t("webhooks:create.description")}
       back={<WebhooksBackLink lang={lang} disabled={pending} />}
       onSubmit={(event) => {
@@ -179,9 +181,9 @@ function CreateWebhookForm({
       }}
       actions={
         <>
-          <Button type="submit" size="touch" disabled={pending}>
-            {pending ? t("webhooks:create.submitting") : t("webhooks:create.submit")}
-          </Button>
+          <FormPageStatus>
+            {t("webhooks:create.status", { count: values.events.length })}
+          </FormPageStatus>
           <Link
             to="/$lang/settings/webhooks"
             params={{ lang }}
@@ -194,11 +196,13 @@ function CreateWebhookForm({
           >
             {t("common:actions.cancel")}
           </Link>
+          <Button type="submit" size="touch" disabled={pending}>
+            {pending ? t("webhooks:create.submitting") : t("webhooks:create.submit")}
+          </Button>
         </>
       }
-      status={t("webhooks:create.status", { count: values.events.length })}
     >
-      <div ref={root} data-webhook-form="create" className="flex min-w-0 flex-col gap-6">
+      <div ref={root} data-webhook-form="create" className="min-w-0 space-y-8">
         <FormSection title={t("webhooks:form.destination")}>
           <form.Field name="url">
             {(field) => (
@@ -214,7 +218,11 @@ function CreateWebhookForm({
             )}
           </form.Field>
         </FormSection>
-        <FormSection title={t("webhooks:form.events")} description={t("webhooks:form.eventsHint")}>
+        <FormSection
+          title={t("webhooks:form.events")}
+          description={t("webhooks:form.eventsHint")}
+          gridClassName="lg:grid-cols-1"
+        >
           <form.Field name="events">
             {(field) => (
               <>
@@ -230,6 +238,7 @@ function CreateWebhookForm({
           </form.Field>
         </FormSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("webhooks:form.details")}
           summary={values.description.trim() || t("webhooks:form.noDescription")}
         >
@@ -248,6 +257,7 @@ function CreateWebhookForm({
         </AdvancedSection>
         {values.events.includes("operation.completed") ? (
           <AdvancedSection
+            gridClassName="lg:grid-cols-1"
             title={t("webhooks:form.kindsSection")}
             summary={t(kindsSummaryKey(values.kinds))}
           >

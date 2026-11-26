@@ -342,8 +342,7 @@ export function envRowsToDraft(record: Record<string, string>): string {
 }
 
 /** Env keys the server refuses on stored defaults. */
-export const RESERVED_DEFAULT_ENV = new Set(["HOME", "SHELL", "TERM"]);
-export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+export const RESERVED_DEFAULT_ENV = ["HOME", "SHELL", "TERM"] as const;
 
 /**
  * A template revision as people read it: `slug vN` (the revision's per-template

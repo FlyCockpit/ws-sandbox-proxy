@@ -280,7 +280,11 @@ Safe alternatives:
 - Forms use TanStack Form with native Zod validators. Use `TextField` from
   `@wssp/ui`. `autoComplete` is always required.
 - Overlay conventions: Create → Dialog · Edit → Sheet · View Details →
-  Dialog/Drawer · Delete → AlertDialog with type-to-confirm.
+  Dialog/Drawer · Delete → AlertDialog with type-to-confirm. A form over about
+  six controls is a `FormPage` route or a wide sheet, never a scrolling dialog;
+  key-value data uses `KeyValueEditor`, tunable numbers `RangeField`, enums
+  human labels; errors inline with focus on the first invalid field
+  (`docs/design/shell-rules.md` § Form surfaces; `pnpm check:dialogs`).
 - Touch targets ≥ 44px. Do not add a second nav bar. Never use
   `transition: all` or `transition-all`. Never set `overflow-y: auto` without
   an explicit `overflow-x`.
@@ -288,7 +292,9 @@ Safe alternatives:
   `apps/web/src/routes/**` unless audited. Prefer derived state, event handlers,
   query state, or custom hooks under `apps/web/src/hooks/`.
 - Route files must not export a component function. Loading uses layout-matching
-  `<Skeleton>` components.
+  `<Skeleton>` components. Every signed-in route declares its pending shape in
+  `staticData` and route loading keeps the shell (`docs/design/shell-rules.md`
+  § Route pending states; `pnpm check:shell-loading`).
 
 ### Web shell — viewport, scrolling and navigation
 

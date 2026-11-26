@@ -4,6 +4,7 @@ import { BuildTemplatePage } from "@/components/template-builds/build-template-p
 import { parseNewTemplateSearch } from "@/lib/template-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/templates/new/build")({
+  staticData: { pendingShape: "form" },
   validateSearch: parseNewTemplateSearch,
   component: BuildTemplateRoute,
 });

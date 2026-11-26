@@ -16,6 +16,8 @@ import { DeploymentSetupCard } from "@/components/admin/deployment-setup-card";
 import { PageHeader, PageShell } from "@/components/page-shell";
 
 export const Route = createFileRoute("/$lang/_app/admin/")({
+  // Only the defaults: /admin's first frame equals any unframed URL's.
+  staticData: { pendingShape: "list" },
   component: AdminOverview,
 });
 

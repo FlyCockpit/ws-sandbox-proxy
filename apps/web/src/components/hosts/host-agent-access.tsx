@@ -383,10 +383,7 @@ export function QueuedHostCommands({
           if (!open) setHandoff(null);
         }}
       >
-        <DialogContent
-          closeLabel={t("queue.close")}
-          className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-3xl"
-        >
+        <DialogContent closeLabel={t("queue.close")} className="sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{t("queue.review")}</DialogTitle>
             <DialogDescription>

@@ -4,6 +4,7 @@ import { SandboxesPage } from "@/components/sandboxes/sandboxes-page";
 import { parseSandboxesSearch } from "@/lib/sandbox-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/sandboxes/")({
+  staticData: { pendingShape: "list" },
   validateSearch: parseSandboxesSearch,
   component: SandboxesRoute,
 });

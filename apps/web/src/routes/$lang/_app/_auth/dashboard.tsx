@@ -5,5 +5,6 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 // an owner-scoped `protectedProcedure`, which enforces the same policy
 // server-side.
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard")({
+  staticData: { pendingShape: "list" },
   component: Outlet,
 });

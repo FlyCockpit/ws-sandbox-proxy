@@ -30,11 +30,16 @@
         // Child Vitest config — passed dynamically to the I/O-guard fixture test.
         "scripts/vitest-test-io-guard-fixture.config.ts!",
         // S3 integration Vitest config — passed by path from scripts/test-s3.mjs.
-        "vitest.s3.config.ts"
+        "vitest.s3.config.ts",
+        // Kept identical to the template's: its mock-mode sign-in
+        // (`mockSession`) has no caller in wssp, which has no mock mode.
+        "scripts/browser-check-lib.ts"
       ],
       "ignoreBinaries": [
         // Machine tool: the opt-in onboarding e2e drives a browser through it
-        // (scripts/e2e/onboarding.mjs checks for it and fails clearly).
+        // (scripts/e2e/onboarding.mjs checks for it and fails clearly), and so
+        // do scripts/browser-check-lib.ts (check:dialogs, check:shell-loading)
+        // and scripts/check-layout.ts.
         "agent-browser",
         // System tool: the webhook TLS tests mint a throwaway CA into a temp dir.
         "openssl",

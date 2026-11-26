@@ -758,7 +758,8 @@
       "contextNeeded": "Se necesita: la receta tiene COPY"
     },
     "plan": "Se compila en {{target}} · reserva hasta {{minutes}} minutos de compilación ({{used}} de {{limit}} usados este mes)",
-    "planNoTarget": "Reserva hasta {{minutes}} minutos de compilación. Elige dónde compilar."
+    "planNoTarget": "Reserva hasta {{minutes}} minutos de compilación. Elige dónde compilar.",
+    "argsRefused": "Argumentos de compilación: como máximo 64, cada valor de hasta 4096 caracteres."
   },
   "preflight": {
     "emptyPool": "{{label}} no tiene hosts, así que nada puede ejecutar esta compilación. Agrega un host al grupo o elige otro grupo.",

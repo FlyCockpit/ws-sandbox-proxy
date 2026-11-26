@@ -22,10 +22,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
-import { AdvancedSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
+import { AdvancedSection } from "@wssp/ui/components/form-page";
 import { SelectItem } from "@wssp/ui/components/select";
 import { toast } from "@wssp/ui/components/sileo";
 import { FieldError, TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { ArrowLeft } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -358,7 +359,7 @@ function EditWebhookSheet({
       kinds: initialKinds,
     } as WebhookDraft,
     validators: { onSubmit: webhookDraftSchema(t) },
-    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
+    onSubmitInvalid: () => focusFirstInvalidField(root.current),
     onSubmit: async ({ value }) => {
       setProblem(null);
       try {
@@ -399,43 +400,46 @@ function EditWebhookSheet({
       onSubmit={() => void form.handleSubmit()}
       actions={
         <>
-          <Button type="submit" size="touch" disabled={submitting}>
-            {submitting ? t("common:actions.saving") : t("common:actions.saveChanges")}
-          </Button>
           <Button type="button" variant="outline" size="touch" onClick={onClose}>
             {t("common:actions.cancel")}
+          </Button>
+          <Button type="submit" size="touch" disabled={submitting}>
+            {submitting ? t("common:actions.saving") : t("common:actions.saveChanges")}
           </Button>
         </>
       }
     >
-      <div ref={root} data-webhook-form="edit" className="flex min-w-0 flex-col gap-6">
-        <form.Field name="url">
-          {(field) => (
-            <TextField
-              field={field}
-              type="url"
-              label={t("webhooks:form.url")}
-              description={t("webhooks:form.urlHint")}
-              autoComplete="off"
-              inputClassName="min-h-11"
-              maxLength={2048}
-            />
-          )}
-        </form.Field>
-        <form.Field name="events">
-          {(field) => (
-            <div className="flex min-w-0 flex-col gap-2">
-              <EventCheckboxes
-                value={field.state.value}
-                onChange={field.handleChange}
-                invalid={field.state.meta.errors.length > 0}
-                errorId={eventsErrorId}
+      <div ref={root} data-webhook-form="edit" className="min-w-0 space-y-8">
+        <div className="flex min-w-0 flex-col gap-6">
+          <form.Field name="url">
+            {(field) => (
+              <TextField
+                field={field}
+                type="url"
+                label={t("webhooks:form.url")}
+                description={t("webhooks:form.urlHint")}
+                autoComplete="off"
+                inputClassName="min-h-11"
+                maxLength={2048}
               />
-              <FieldError id={eventsErrorId} errors={field.state.meta.errors} />
-            </div>
-          )}
-        </form.Field>
+            )}
+          </form.Field>
+          <form.Field name="events">
+            {(field) => (
+              <div className="flex min-w-0 flex-col gap-2">
+                <EventCheckboxes
+                  value={field.state.value}
+                  onChange={field.handleChange}
+                  invalid={field.state.meta.errors.length > 0}
+                  errorId={eventsErrorId}
+                />
+                <FieldError id={eventsErrorId} errors={field.state.meta.errors} />
+              </div>
+            )}
+          </form.Field>
+        </div>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("webhooks:form.details")}
           summary={values.description.trim() || t("webhooks:form.noDescription")}
         >
@@ -453,6 +457,7 @@ function EditWebhookSheet({
           </form.Field>
         </AdvancedSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("webhooks:form.kindsSection")}
           summary={t(kindsSummaryKey(values.kinds))}
         >
@@ -749,10 +754,7 @@ function DeliveryDialog({
   });
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("webhooks:delivery.title", { id: deliveryId })}</DialogTitle>
           <DialogDescription>

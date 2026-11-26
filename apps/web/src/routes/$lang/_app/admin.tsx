@@ -11,6 +11,8 @@ import { decideAdminRouteAccess } from "@/lib/route-session-access";
 import { getRouteAdminAccess } from "@/server/admin-route-access";
 
 export const Route = createFileRoute("/$lang/_app/admin")({
+  // Only the defaults: /admin's first frame equals any unframed URL's.
+  staticData: { pendingShape: "list" },
   beforeLoad: async () => {
     // The verdict comes from the server's `isAdminSessionAuthorized`, the same
     // gate every admin procedure uses, so page and API agree on who is hidden.

@@ -198,20 +198,19 @@ const ARG_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /** Names that look like secrets: build args and ENV are stored in plain text (§6.2). */
 const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|API_?KEY)/i;
 
-export type ParsedArgs = { args: Record<string, string>; invalidId: string | null };
+export type ParsedArgs = { args: Record<string, string>; invalidRow: number | null };
 
 /**
  * Build-arg rows as the API's map, values exactly as typed (a newline stays a
  * newline: the API and recipe accept any string up to 4096 characters). Blank
- * rows are skipped; the first row with a bad name, an over-long value or past
- * the 64-arg limit is reported by id, and then nothing is returned.
+ * rows are skipped; the first row with a bad name (an unparsed `.env` line has
+ * none), an over-long value or past the 64-arg limit is reported by index,
+ * and then nothing is returned.
  */
-export function buildArgsFromRows(
-  rows: readonly { id: string; key: string; value: string }[],
-): ParsedArgs {
+export function buildArgsFromRows(rows: readonly { key: string; value: string }[]): ParsedArgs {
   // Null prototype: a `__proto__` name stays an own key.
   const args = Object.create(null) as Record<string, string>;
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     const name = row.key.trim();
     if (name === "" && row.value === "") continue;
     if (
@@ -219,10 +218,10 @@ export function buildArgsFromRows(
       row.value.length > 4096 ||
       (!Object.hasOwn(args, name) && Object.keys(args).length >= BUILD_ARGS_MAX)
     )
-      return { args: {}, invalidId: row.id };
+      return { args: {}, invalidRow: index };
     args[name] = row.value;
   }
-  return { args, invalidId: null };
+  return { args, invalidRow: null };
 }
 
 /** Build-arg and ENV names that look like secrets (warned, never refused). */

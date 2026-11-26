@@ -1,16 +1,18 @@
 import { createFileRoute, type ErrorComponentProps, redirect } from "@tanstack/react-router";
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
-import { PageSkeleton } from "@/components/app-shell";
 import { DashboardFrame } from "@/components/dashboard-frame";
 import ErrorState from "@/components/error-state";
 import { ForcedPasswordChange } from "@/components/forced-password-change";
 import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
+import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
 import { decideProtectedRouteAccess, loginRedirect } from "@/lib/route-session-access";
 import { getProtectedRouteSession } from "@/server/auth-session";
 import { clientReadableForcedTwoFactorSettings } from "@/utils/two-factor-policy";
 
 export const Route = createFileRoute("/$lang/_app/_auth")({
+  // Its layout draws the dashboard frame (sidebar) around every page below.
+  staticData: { pendingFrame: "dashboard" },
   beforeLoad: async ({ context, location, params }) => {
     if (typeof window !== "undefined") capturePoolInviteFragment();
     // One round trip resolves the session AND the forced-2FA settings the
@@ -44,8 +46,10 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
 function AuthPending() {
   const { lang } = Route.useParams();
   return (
+    // The live frame (sidebar state, admin item) around the page's content
+    // skeleton, shaped by its `staticData`.
     <DashboardFrame lang={lang}>
-      <PageSkeleton />
+      <RouteContentSkeleton skipFrames />
     </DashboardFrame>
   );
 }

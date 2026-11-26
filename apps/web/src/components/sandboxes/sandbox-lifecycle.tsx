@@ -196,8 +196,7 @@ export type SandboxLifecycle = ReturnType<typeof useSandboxLifecycle>;
 
 const ALERT_WIDTH =
   "max-w-[calc(100%-2rem)]! sm:max-w-md! data-[size=default]:max-w-[calc(100%-2rem)]! data-[size=default]:sm:max-w-md! data-[size=sm]:max-w-[calc(100%-2rem)]!";
-const DIALOG_CLASS =
-  "max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-md";
+const DIALOG_CLASS = "sm:max-w-md";
 
 export function SandboxLifecycleDialogs({
   sandbox,

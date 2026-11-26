@@ -4,6 +4,7 @@ import { TerminalsPage } from "@/components/terminals/terminals-page";
 import { parseTerminalsSearch } from "@/lib/terminal-page-search";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/terminals")({
+  staticData: { pendingShape: "list" },
   validateSearch: parseTerminalsSearch,
   component: TerminalsRoute,
 });

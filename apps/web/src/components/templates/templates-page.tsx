@@ -19,6 +19,7 @@ import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -253,7 +254,9 @@ function AboutTemplates() {
     <AdvancedSection
       title={t("templates:requirements.about")}
       data-templates-about=""
-      className="bg-card text-card-foreground"
+      // A boxed disclosure on the list page, not a form section.
+      className="rounded-lg border bg-card px-3 text-card-foreground"
+      gridClassName="lg:grid-cols-1"
     >
       <p className="text-sm text-muted-foreground">{t("templates:description")}</p>
       <h2 className="text-sm font-medium">{t("templates:requirements.title")}</h2>
@@ -747,116 +750,122 @@ function RevisionActions({
         {t("templates:manageRevision")}
       </Button>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent showCloseButton={false} className="overflow-x-hidden overflow-y-auto">
+        <SheetContent showCloseButton={false}>
           <SheetHeader>
             <SheetTitle>{t("templates:manageRevisionTitle", { revision: title })}</SheetTitle>
             <SheetDescription>{t("templates:manageRevisionDescription")}</SheetDescription>
           </SheetHeader>
-          <form
-            className="flex min-w-0 flex-col gap-4 p-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void form.handleSubmit();
-            }}
-          >
-            {launchable && taggable ? (
-              <>
-                <form.Field name="tag">
-                  {(field) => (
-                    <TextField
-                      inputClassName="min-h-11"
-                      field={field}
-                      autoComplete="off"
-                      inputMode="text"
-                      maxLength={64}
-                      label={t("templates:tagLabel")}
-                    />
-                  )}
-                </form.Field>
-                <Button
-                  type="submit"
-                  size="touch"
-                  disabled={busy || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value.tag)}
-                >
-                  {t("templates:setTag")}
-                </Button>
-              </>
-            ) : null}
-            {launchable ? (
-              <>
-                <PoolImageTarget {...poolTarget} onChange={setPoolTarget} />
-                <Button
-                  type="button"
-                  size="touch"
-                  disabled={busy || !poolTarget.poolId || !poolTarget.memberId}
-                  onClick={() => associate.mutate({ templateId, revisionId, ...poolTarget })}
-                >
-                  {t("hosts:sharing.verifyImage")}
-                </Button>
-                <Label htmlFor={hostId}>{t("templates:form.host")}</Label>
-                <FormSelect
-                  id={hostId}
-                  optionsSettled={hosts.isSuccess && !hosts.isFetching && !hosts.hasNextPage}
-                  autoComplete="off"
-                  value={value.hostId}
-                  onValueChange={(value) => form.setFieldValue("hostId", value)}
-                  disabled={busy}
-                >
-                  <SelectItem value="">{t("templates:form.chooseHost")}</SelectItem>
-                  {registrableHosts(hosts.data?.pages.flatMap((page) => page.items) ?? []).map(
-                    (host) => (
-                      <SelectItem key={host.id} value={host.id}>
-                        <ResourceIdentity label={host.label} slug={host.slug} />
-                      </SelectItem>
-                    ),
-                  )}
-                </FormSelect>
-                {hosts.isPending ? <SkeletonList count={1} className="rounded-xl border" /> : null}
-                {hosts.isError ? (
-                  <InlineRetry
-                    message={t("templates:form.hostsFailed")}
-                    onRetry={() => void hosts.refetch()}
-                  />
-                ) : null}
-                <LoadMore
-                  hasNextPage={hosts.hasNextPage}
-                  isFetchingNextPage={hosts.isFetchingNextPage}
-                  onLoadMore={() => void hosts.fetchNextPage()}
-                />
-                <Button
-                  type="button"
-                  size="touch"
-                  disabled={
-                    busy ||
-                    !registrableHosts(hosts.data?.pages.flatMap((page) => page.items) ?? []).some(
-                      (host) => host.id === value.hostId,
-                    )
-                  }
-                  onClick={() => associate.mutate({ templateId, revisionId, hostId: value.hostId })}
-                >
-                  {t("templates:verifyAvailability")}
-                </Button>
-              </>
-            ) : null}
-            <Button
-              type="button"
-              size="touch"
-              variant="outline"
-              disabled={busy}
-              onClick={() => setRetiring(true)}
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form
+              className="flex min-w-0 flex-col gap-4 pb-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void form.handleSubmit();
+              }}
             >
-              {t("templates:retireRevision")}
-            </Button>
-            {problem ? (
-              <p role="alert" className="text-sm text-destructive">
-                {t(`templates:problem.${problem}`)}
-              </p>
-            ) : null}
-            <Button type="button" size="touch" variant="outline" onClick={() => setOpen(false)}>
-              {t("common:actions.close")}
-            </Button>
-          </form>
+              {launchable && taggable ? (
+                <>
+                  <form.Field name="tag">
+                    {(field) => (
+                      <TextField
+                        inputClassName="min-h-11"
+                        field={field}
+                        autoComplete="off"
+                        inputMode="text"
+                        maxLength={64}
+                        label={t("templates:tagLabel")}
+                      />
+                    )}
+                  </form.Field>
+                  <Button
+                    type="submit"
+                    size="touch"
+                    disabled={busy || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value.tag)}
+                  >
+                    {t("templates:setTag")}
+                  </Button>
+                </>
+              ) : null}
+              {launchable ? (
+                <>
+                  <PoolImageTarget {...poolTarget} onChange={setPoolTarget} />
+                  <Button
+                    type="button"
+                    size="touch"
+                    disabled={busy || !poolTarget.poolId || !poolTarget.memberId}
+                    onClick={() => associate.mutate({ templateId, revisionId, ...poolTarget })}
+                  >
+                    {t("hosts:sharing.verifyImage")}
+                  </Button>
+                  <Label htmlFor={hostId}>{t("templates:form.host")}</Label>
+                  <FormSelect
+                    id={hostId}
+                    optionsSettled={hosts.isSuccess && !hosts.isFetching && !hosts.hasNextPage}
+                    autoComplete="off"
+                    value={value.hostId}
+                    onValueChange={(value) => form.setFieldValue("hostId", value)}
+                    disabled={busy}
+                  >
+                    <SelectItem value="">{t("templates:form.chooseHost")}</SelectItem>
+                    {registrableHosts(hosts.data?.pages.flatMap((page) => page.items) ?? []).map(
+                      (host) => (
+                        <SelectItem key={host.id} value={host.id}>
+                          <ResourceIdentity label={host.label} slug={host.slug} />
+                        </SelectItem>
+                      ),
+                    )}
+                  </FormSelect>
+                  {hosts.isPending ? (
+                    <SkeletonList count={1} className="rounded-xl border" />
+                  ) : null}
+                  {hosts.isError ? (
+                    <InlineRetry
+                      message={t("templates:form.hostsFailed")}
+                      onRetry={() => void hosts.refetch()}
+                    />
+                  ) : null}
+                  <LoadMore
+                    hasNextPage={hosts.hasNextPage}
+                    isFetchingNextPage={hosts.isFetchingNextPage}
+                    onLoadMore={() => void hosts.fetchNextPage()}
+                  />
+                  <Button
+                    type="button"
+                    size="touch"
+                    disabled={
+                      busy ||
+                      !registrableHosts(hosts.data?.pages.flatMap((page) => page.items) ?? []).some(
+                        (host) => host.id === value.hostId,
+                      )
+                    }
+                    onClick={() =>
+                      associate.mutate({ templateId, revisionId, hostId: value.hostId })
+                    }
+                  >
+                    {t("templates:verifyAvailability")}
+                  </Button>
+                </>
+              ) : null}
+              <Button
+                type="button"
+                size="touch"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setRetiring(true)}
+              >
+                {t("templates:retireRevision")}
+              </Button>
+              {problem ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {t(`templates:problem.${problem}`)}
+                </p>
+              ) : null}
+              <Button type="button" size="touch" variant="outline" onClick={() => setOpen(false)}>
+                {t("common:actions.close")}
+              </Button>
+            </form>
+          </SheetBody>
         </SheetContent>
       </Sheet>
       <ConfirmDeleteDialog

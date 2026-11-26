@@ -317,10 +317,7 @@ function AttachLoginDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open || attach.isPending ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("sandboxes:credentials.attachTitle")}</DialogTitle>
           <DialogDescription>{t("sandboxes:credentials.attachDescription")}</DialogDescription>

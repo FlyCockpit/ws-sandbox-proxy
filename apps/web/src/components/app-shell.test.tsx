@@ -8,7 +8,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * must be the app (header, sidebar, bottom nav) with only the page body as a
  * skeleton. Rendered to static markup, as the server does.
  */
-const route = vi.hoisted(() => ({ pathname: "/en-US/dashboard/sandboxes" }));
+type Match = { routeId: string; staticData?: Record<string, string> };
+const APP: Match = { routeId: "/$lang/_app" };
+const AUTH: Match = { routeId: "/$lang/_app/_auth", staticData: { pendingFrame: "dashboard" } };
+const leaf = (routeId: string, staticData: Record<string, string>): Match => ({
+  routeId,
+  staticData,
+});
+const route = vi.hoisted(() => ({
+  pathname: "/en-US/dashboard/sandboxes",
+  matches: [] as { routeId: string; staticData?: Record<string, string> }[],
+}));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
     children,
@@ -32,6 +42,9 @@ vi.mock("@tanstack/react-router", () => ({
   ),
   useLocation: () => ({ pathname: route.pathname }),
   useParams: () => ({ lang: "en-US" }),
+  // `_app`'s pending boundary, and the matches of the URL being loaded.
+  useMatch: () => "/$lang/_app",
+  useRouterState: () => route.matches,
 }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_APP_NAME: "wssp" } }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -53,28 +66,29 @@ vi.mock("@/hooks/use-auth-session", () => ({
   },
 }));
 
-import { AppShellPending, shellPendingKind } from "./app-shell";
+import { AppShellPending } from "./app-shell";
+
+/** Point the pending frame at `pathname`, matched as `matches`. */
+function at(pathname: string, ...matches: Match[]) {
+  route.pathname = pathname;
+  route.matches = [{ routeId: "__root__" }, { routeId: "/$lang" }, APP, ...matches];
+}
 
 beforeEach(() => {
-  route.pathname = "/en-US/dashboard/sandboxes";
+  at(
+    "/en-US/dashboard/sandboxes",
+    AUTH,
+    leaf("/$lang/_app/_auth/dashboard/sandboxes/", { pendingShape: "list" }),
+  );
 });
 
 describe("shell pending frame", () => {
-  it.each([
-    ["/en-US/dashboard/sandboxes", "dashboard"],
-    ["/es-MX/settings/hosts/h1", "dashboard"],
-    ["/en-US/settings", "dashboard"],
-    ["/en-US/login", "auth"],
-    ["/en-US/signup/", "auth"],
-    ["/en-US/reset-password", "auth"],
-    ["/en-US/admin/users", "page"],
-    ["/en-US/device", "page"],
-  ] as const)("%s gets the %s body", (pathname, kind) => {
-    expect(shellPendingKind(pathname)).toBe(kind);
-  });
-
   it("paints header, sidebar and bottom nav around a skeleton body on a signed-in URL", () => {
-    route.pathname = "/en-US/settings/hosts";
+    at(
+      "/en-US/settings/hosts",
+      AUTH,
+      leaf("/$lang/_app/_auth/settings/hosts/", { pendingShape: "list" }),
+    );
     const html = renderToStaticMarkup(<AppShellPending />);
     // Header row: the app name, the controls, and the account skeleton.
     expect(html).toContain('data-control="language"');
@@ -97,30 +111,49 @@ describe("shell pending frame", () => {
     expect(bottom.match(/<svg/g)).toHaveLength(5);
     for (const label of ["items.sandboxes", "items.templates", "items.activity", "items.more"])
       expect(bottom).toContain(label);
-    // Only the body is a skeleton.
-    expect(html).toContain("data-page-skeleton");
+    // Only the body is a skeleton, in the page's shape.
+    expect(html).toContain('data-route-skeleton="list"');
     expect(html).toContain('aria-busy="true"');
   });
 
+  it("paints a form page's body as a form", () => {
+    at(
+      "/en-US/dashboard/sandboxes/new",
+      AUTH,
+      leaf("/$lang/_app/_auth/dashboard/sandboxes/new", { pendingShape: "form" }),
+    );
+    const html = renderToStaticMarkup(<AppShellPending />);
+    expect(html).toContain('data-dashboard-nav="sidebar"');
+    expect(html).toContain('data-route-skeleton="form"');
+  });
+
   it("paints no sidebar around an auth page", () => {
-    route.pathname = "/en-US/login";
+    at("/en-US/login", leaf("/$lang/_app/login", { pendingShape: "auth" }));
     const html = renderToStaticMarkup(<AppShellPending />);
     expect(html).not.toContain('data-dashboard-nav="sidebar"');
     expect(html).toContain('id="main-content"');
-    expect(html).not.toContain("data-page-skeleton");
+    expect(html).toContain('data-route-skeleton="auth"');
     // Signed-in or not is unknown here: the bar stays a skeleton.
     const bottom = /<nav [^>]*data-bottom-nav[^>]*>(.*?)<\/nav>/.exec(html)?.[1] ?? "";
     expect(bottom.match(/data-slot="skeleton"/g)).toHaveLength(5);
   });
 
   it("the Settings hub's first frame is card-grid shaped, not a list", () => {
-    route.pathname = "/en-US/settings";
+    at("/en-US/settings", AUTH, leaf("/$lang/_app/_auth/settings/", { pendingShape: "hub" }));
     const html = renderToStaticMarkup(<AppShellPending />);
-    expect(html).toContain("data-settings-hub-skeleton");
-    expect(html).not.toContain("data-page-skeleton");
+    expect(html).toContain('data-route-skeleton="hub"');
     expect(html).toContain("sm:grid-cols-2");
-    // A page under Settings keeps the generic body.
-    route.pathname = "/en-US/settings/hosts";
-    expect(renderToStaticMarkup(<AppShellPending />)).not.toContain("data-settings-hub-skeleton");
+  });
+
+  it("paints /admin exactly like a route that declares nothing, so it never reveals /admin", () => {
+    at(
+      "/en-US/admin/users",
+      { routeId: "/$lang/_app/admin", staticData: { pendingShape: "list" } },
+      leaf("/$lang/_app/admin/users", { pendingShape: "list" }),
+    );
+    const admin = renderToStaticMarkup(<AppShellPending />);
+    at("/en-US/admin/users");
+    expect(admin).toBe(renderToStaticMarkup(<AppShellPending />));
+    expect(admin).not.toContain('data-dashboard-nav="sidebar"');
   });
 });

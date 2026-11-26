@@ -6,6 +6,7 @@ import { getRouteSession } from "@/server/auth-session";
 import { getRouteForcedTwoFactorSettings } from "@/server/route-forced-two-factor-settings";
 
 export const Route = createFileRoute("/$lang/_app/device")({
+  staticData: { pendingShape: "form", pendingWidth: "narrow" },
   validateSearch: (search: Record<string, unknown>) => {
     const userCode = typeof search.user_code === "string" ? search.user_code : undefined;
     return { user_code: userCode };

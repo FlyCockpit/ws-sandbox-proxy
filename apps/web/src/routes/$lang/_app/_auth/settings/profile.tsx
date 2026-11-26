@@ -4,6 +4,7 @@ import { AccountSettingsLayout } from "@/components/settings/account-settings-la
 import { ProfileSettings } from "@/components/settings/profile-settings";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/profile")({
+  staticData: { pendingShape: "detail" },
   component: ProfileRoute,
 });
 

@@ -758,7 +758,8 @@
       "contextNeeded": "Needed: the recipe has COPY"
     },
     "plan": "Builds on {{target}} · reserves up to {{minutes}} build minutes ({{used}} of {{limit}} used this month)",
-    "planNoTarget": "Reserves up to {{minutes}} build minutes. Choose where to build."
+    "planNoTarget": "Reserves up to {{minutes}} build minutes. Choose where to build.",
+    "argsRefused": "Build args: at most 64, each value up to 4096 characters."
   },
   "preflight": {
     "emptyPool": "{{label}} has no hosts, so nothing can run this build. Add a host to the pool, or choose another pool.",

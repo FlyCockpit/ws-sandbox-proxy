@@ -188,10 +188,7 @@ export function CreateCommunityTemplateDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent
-        showCloseButton={false}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent showCloseButton={false} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("templates:community.dialog.title")}</DialogTitle>
           <DialogDescription>{t("templates:community.dialog.description")}</DialogDescription>

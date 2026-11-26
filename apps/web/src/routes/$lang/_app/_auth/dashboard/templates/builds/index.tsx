@@ -4,6 +4,7 @@ import { TemplateBuildsPage } from "@/components/template-builds/template-builds
 import { parseTemplateBuildsSearch, type TemplateBuildsSearch } from "@/lib/template-build-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/templates/builds/")({
+  staticData: { pendingShape: "list" },
   validateSearch: parseTemplateBuildsSearch,
   component: TemplateBuildsRoute,
 });

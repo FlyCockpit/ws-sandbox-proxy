@@ -12,10 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
-import { focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextField } from "@wssp/ui/components/text-field";
+import { FIRST_INVALID_SELECTOR, focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { Plus } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -490,10 +490,7 @@ function MintHostTokenDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("hostCredentials:mint.title")}</DialogTitle>
           <DialogDescription>{t("hostCredentials:mint.description")}</DialogDescription>
@@ -507,7 +504,9 @@ function MintHostTokenDialog({
             event.stopPropagation();
             flushSync(() => setAttempted(true));
             // Errors sit under their fields; the first invalid one gets focus.
-            if (!focusFirstInvalid(formRef.current)) void form.handleSubmit();
+            const root = formRef.current;
+            if (root?.querySelector(FIRST_INVALID_SELECTOR)) focusFirstInvalidField(root);
+            else void form.handleSubmit();
           }}
         >
           <form.Field name="name">

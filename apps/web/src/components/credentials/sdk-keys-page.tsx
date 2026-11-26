@@ -6,16 +6,19 @@ import { Badge } from "@wssp/ui/components/badge";
 import { Button } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@wssp/ui/components/dialog";
-import { AdvancedSection, FormSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
+import { AdvancedSection, FormSection } from "@wssp/ui/components/form-page";
 import { RadioGroup, RadioGroupItem } from "@wssp/ui/components/radio-group";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
+import { FIRST_INVALID_SELECTOR, focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { Plus } from "lucide-react";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -525,6 +528,7 @@ function PlainSection({
 }: {
   title: ReactNode;
   description?: ReactNode;
+  gridClassName?: string;
   children: ReactNode;
 }) {
   return <div className="flex min-w-0 flex-col gap-4">{children}</div>;
@@ -697,7 +701,9 @@ function GrantEditor({
     flushSync(() => setAttempted(true));
     // The first invalid field gets focus (its Advanced section opens); a
     // valid draft goes to the server.
-    if (!focusFirstInvalid(formRef.current)) void form.handleSubmit();
+    const root = formRef.current;
+    if (root?.querySelector(FIRST_INVALID_SELECTOR)) focusFirstInvalidField(root);
+    else void form.handleSubmit();
   };
 
   const Section = mode === "consent" ? PlainSection : FormSection;
@@ -724,6 +730,7 @@ function GrantEditor({
       <Section
         title={t("sdkKeys:form.sections.key")}
         description={t("sdkKeys:form.sections.keyHint")}
+        gridClassName="lg:grid-cols-1"
       >
         {mode !== "consent" ? (
           <form.Field name="name">
@@ -837,189 +844,198 @@ function GrantEditor({
       <Section
         title={t("sdkKeys:form.sections.limits")}
         description={t("sdkKeys:form.sections.limitsHint")}
+        gridClassName="lg:grid-cols-1"
       >
-        <AdvancedSection
-          title={t("sdkKeys:form.sections.resources")}
-          summary={resourceSummary}
-          data-section="resources"
-        >
-          <form.Field name="resourceMode">
-            {(field) => (
-              <div className="flex min-w-0 flex-col gap-1">
-                <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
-                <RadioGroup
-                  aria-label={t("sdkKeys:form.resources")}
-                  name="resourceMode"
-                  value={field.state.value}
-                  onValueChange={(value: ResourceMode) => field.handleChange(value)}
-                >
-                  {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
-                    (resourceMode) => (
-                      <label key={resourceMode} className="flex min-h-11 items-start gap-3 text-sm">
-                        <RadioGroupItem
-                          value={resourceMode}
-                          className="mt-1"
-                          aria-invalid={
-                            (errors.resources.length > 0 && resourceMode === field.state.value) ||
-                            undefined
-                          }
-                          aria-describedby={
-                            errors.resources.length > 0 && resourceMode === field.state.value
-                              ? errorIds.resources
-                              : undefined
-                          }
-                        />
-                        <span className="min-w-0">
-                          <span className="block">{t(`sdkKeys:form.mode.${resourceMode}`)}</span>
-                          <span className="block text-xs text-muted-foreground">
-                            {t(`sdkKeys:form.modeHint.${resourceMode}`)}
+        {/* One cell: consecutive sections join into one ruled list. */}
+        <div className="min-w-0 space-y-8">
+          <AdvancedSection
+            title={t("sdkKeys:form.sections.resources")}
+            summary={resourceSummary}
+            data-section="resources"
+          >
+            <form.Field name="resourceMode">
+              {(field) => (
+                <div className="flex min-w-0 flex-col gap-1">
+                  <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
+                  <RadioGroup
+                    aria-label={t("sdkKeys:form.resources")}
+                    name="resourceMode"
+                    value={field.state.value}
+                    onValueChange={(value: ResourceMode) => field.handleChange(value)}
+                  >
+                    {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
+                      (resourceMode) => (
+                        <label
+                          key={resourceMode}
+                          className="flex min-h-11 items-start gap-3 text-sm"
+                        >
+                          <RadioGroupItem
+                            value={resourceMode}
+                            className="mt-1"
+                            aria-invalid={
+                              (errors.resources.length > 0 && resourceMode === field.state.value) ||
+                              undefined
+                            }
+                            aria-describedby={
+                              errors.resources.length > 0 && resourceMode === field.state.value
+                                ? errorIds.resources
+                                : undefined
+                            }
+                          />
+                          <span className="min-w-0">
+                            <span className="block">{t(`sdkKeys:form.mode.${resourceMode}`)}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {t(`sdkKeys:form.modeHint.${resourceMode}`)}
+                            </span>
                           </span>
-                        </span>
-                      </label>
-                    ),
-                  )}
-                </RadioGroup>
-              </div>
-            )}
-          </form.Field>
-          {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
-            <label className="flex min-h-11 flex-col gap-2 text-sm">
-              {t("sdkKeys:poolMode.revisionContext")}
-              <select
-                className="min-h-11 rounded border bg-background"
-                autoComplete="off"
-                value={revisionPoolId}
-                onChange={(e) => setRevisionPoolId(e.target.value)}
-              >
-                <option value="">{t("sdkKeys:form.pools")}</option>
-                {pools.map((pool) => (
-                  <option key={pool.id} value={pool.id}>
-                    {pool.label} ·{" "}
-                    {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} · {pool.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          {values.resourceMode === "ALLOWLIST" ? (
-            <AllowlistPicker
-              hosts={hosts}
-              templates={templates}
-              hostIds={values.hostIds}
-              templateRevisionIds={values.templateRevisionIds}
-              hostsFailed={hostsQuery.isError}
-              templatesFailed={templatesQuery.isError}
-              loading={hostsQuery.isPending || templatesQuery.isPending}
-              onRetry={() => {
-                void hostsQuery.refetch();
-                void templatesQuery.refetch();
-              }}
-              moreHosts={{
-                hasNextPage: hostsQuery.hasNextPage,
-                isFetchingNextPage: hostsQuery.isFetchingNextPage,
-                onLoadMore: () => void hostsQuery.fetchNextPage(),
-              }}
-              moreTemplates={{
-                hasNextPage: templatesQuery.hasNextPage,
-                isFetchingNextPage: templatesQuery.isFetchingNextPage,
-                onLoadMore: () => void templatesQuery.fetchNextPage(),
-              }}
-              onHosts={(hostIds) => {
-                form.setFieldValue("hostIds", hostIds);
-                // A template runs only on its own host: drop templates
-                // whose host is no longer selected.
-                const allowed = new Set(
-                  selectableTemplates(templates, hostIds).map((template) => template.id),
-                );
-                form.setFieldValue(
-                  "templateRevisionIds",
-                  values.templateRevisionIds.filter((id) => allowed.has(id)),
-                );
-              }}
-              onTemplates={(templateRevisionIds) =>
-                form.setFieldValue("templateRevisionIds", templateRevisionIds)
-              }
-            />
-          ) : null}
-          {values.resourceMode === "ALLOWLIST" ? (
-            <form.Field name="credentialIds">
-              {(field) => (
-                <LoginAllowlistPicker
-                  lang={lang}
-                  selected={field.state.value ?? []}
-                  required={values.scopes.includes("credentials:use")}
-                  onChange={field.handleChange}
-                />
+                        </label>
+                      ),
+                    )}
+                  </RadioGroup>
+                </div>
               )}
             </form.Field>
-          ) : null}
-          <FieldProblems id={errorIds.resources} messages={errors.resources} />
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("sdkKeys:form.sections.pools")}
-          summary={poolSummary}
-          data-section="pools"
-        >
-          <form.Field name="poolMode">
-            {(field) => (
-              <fieldset className="flex min-w-0 flex-col">
-                <legend className="text-sm font-medium">{t("sdkKeys:poolMode.title")}</legend>
-                {(["ALL_USABLE", "SELECTED"] as const).map((poolMode) => (
-                  <label key={poolMode} className="flex min-h-11 items-center gap-3 text-sm">
-                    <input
-                      type="radio"
-                      name="poolMode"
-                      autoComplete="off"
-                      checked={field.state.value === poolMode}
-                      aria-invalid={
-                        (errors.pools.length > 0 && field.state.value === poolMode) || undefined
-                      }
-                      aria-describedby={
-                        errors.pools.length > 0 && field.state.value === poolMode
-                          ? errorIds.pools
-                          : undefined
-                      }
-                      onChange={() => field.handleChange(poolMode)}
-                    />
-                    {t(`sdkKeys:poolMode.${poolMode}`)}
-                  </label>
-                ))}
-              </fieldset>
-            )}
-          </form.Field>
-          <p className="text-xs text-muted-foreground">{t("sdkKeys:poolMode.immutable")}</p>
-          {values.poolMode === "SELECTED" ? (
-            <form.Field name="poolIds">
-              {(field) => (
-                <PoolGrantPicker
-                  pools={pools}
-                  query={poolsQuery}
-                  selected={field.state.value ?? []}
-                  onChange={field.handleChange}
-                />
-              )}
-            </form.Field>
-          ) : null}
-          <FieldProblems id={errorIds.pools} messages={errors.pools} />
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("sdkKeys:form.sections.sandboxes")}
-          summary={sandboxSummary}
-          data-section="sandboxes"
-        >
-          <form.Field name="ownSandboxesOnly">
-            {(field) => (
-              <label className="flex min-h-11 items-center gap-3 text-sm">
-                <Checkbox
-                  checked={field.state.value ?? false}
-                  onCheckedChange={(value) => field.handleChange(value === true)}
-                />
-                <span>{t("sdkKeys:form.ownSandboxesOnly")}</span>
+            {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
+              <label className="flex min-h-11 flex-col gap-2 text-sm">
+                {t("sdkKeys:poolMode.revisionContext")}
+                <select
+                  className="min-h-11 rounded border bg-background"
+                  autoComplete="off"
+                  value={revisionPoolId}
+                  onChange={(e) => setRevisionPoolId(e.target.value)}
+                >
+                  <option value="">{t("sdkKeys:form.pools")}</option>
+                  {pools.map((pool) => (
+                    <option key={pool.id} value={pool.id}>
+                      {pool.label} ·{" "}
+                      {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} · {pool.id}
+                    </option>
+                  ))}
+                </select>
               </label>
-            )}
-          </form.Field>
-          <p className="text-xs text-muted-foreground">{t("sdkKeys:form.ownSandboxesOnlyHint")}</p>
-        </AdvancedSection>
+            ) : null}
+            {values.resourceMode === "ALLOWLIST" ? (
+              <AllowlistPicker
+                hosts={hosts}
+                templates={templates}
+                hostIds={values.hostIds}
+                templateRevisionIds={values.templateRevisionIds}
+                hostsFailed={hostsQuery.isError}
+                templatesFailed={templatesQuery.isError}
+                loading={hostsQuery.isPending || templatesQuery.isPending}
+                onRetry={() => {
+                  void hostsQuery.refetch();
+                  void templatesQuery.refetch();
+                }}
+                moreHosts={{
+                  hasNextPage: hostsQuery.hasNextPage,
+                  isFetchingNextPage: hostsQuery.isFetchingNextPage,
+                  onLoadMore: () => void hostsQuery.fetchNextPage(),
+                }}
+                moreTemplates={{
+                  hasNextPage: templatesQuery.hasNextPage,
+                  isFetchingNextPage: templatesQuery.isFetchingNextPage,
+                  onLoadMore: () => void templatesQuery.fetchNextPage(),
+                }}
+                onHosts={(hostIds) => {
+                  form.setFieldValue("hostIds", hostIds);
+                  // A template runs only on its own host: drop templates
+                  // whose host is no longer selected.
+                  const allowed = new Set(
+                    selectableTemplates(templates, hostIds).map((template) => template.id),
+                  );
+                  form.setFieldValue(
+                    "templateRevisionIds",
+                    values.templateRevisionIds.filter((id) => allowed.has(id)),
+                  );
+                }}
+                onTemplates={(templateRevisionIds) =>
+                  form.setFieldValue("templateRevisionIds", templateRevisionIds)
+                }
+              />
+            ) : null}
+            {values.resourceMode === "ALLOWLIST" ? (
+              <form.Field name="credentialIds">
+                {(field) => (
+                  <LoginAllowlistPicker
+                    lang={lang}
+                    selected={field.state.value ?? []}
+                    required={values.scopes.includes("credentials:use")}
+                    onChange={field.handleChange}
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            <FieldProblems id={errorIds.resources} messages={errors.resources} />
+          </AdvancedSection>
+          <AdvancedSection
+            title={t("sdkKeys:form.sections.pools")}
+            summary={poolSummary}
+            data-section="pools"
+          >
+            <form.Field name="poolMode">
+              {(field) => (
+                <fieldset className="flex min-w-0 flex-col">
+                  <legend className="text-sm font-medium">{t("sdkKeys:poolMode.title")}</legend>
+                  {(["ALL_USABLE", "SELECTED"] as const).map((poolMode) => (
+                    <label key={poolMode} className="flex min-h-11 items-center gap-3 text-sm">
+                      <input
+                        type="radio"
+                        name="poolMode"
+                        autoComplete="off"
+                        checked={field.state.value === poolMode}
+                        aria-invalid={
+                          (errors.pools.length > 0 && field.state.value === poolMode) || undefined
+                        }
+                        aria-describedby={
+                          errors.pools.length > 0 && field.state.value === poolMode
+                            ? errorIds.pools
+                            : undefined
+                        }
+                        onChange={() => field.handleChange(poolMode)}
+                      />
+                      {t(`sdkKeys:poolMode.${poolMode}`)}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+            </form.Field>
+            <p className="text-xs text-muted-foreground">{t("sdkKeys:poolMode.immutable")}</p>
+            {values.poolMode === "SELECTED" ? (
+              <form.Field name="poolIds">
+                {(field) => (
+                  <PoolGrantPicker
+                    pools={pools}
+                    query={poolsQuery}
+                    selected={field.state.value ?? []}
+                    onChange={field.handleChange}
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            <FieldProblems id={errorIds.pools} messages={errors.pools} />
+          </AdvancedSection>
+          <AdvancedSection
+            title={t("sdkKeys:form.sections.sandboxes")}
+            summary={sandboxSummary}
+            data-section="sandboxes"
+          >
+            <form.Field name="ownSandboxesOnly">
+              {(field) => (
+                <label className="flex min-h-11 items-center gap-3 text-sm">
+                  <Checkbox
+                    checked={field.state.value ?? false}
+                    onCheckedChange={(value) => field.handleChange(value === true)}
+                  />
+                  <span>{t("sdkKeys:form.ownSandboxesOnly")}</span>
+                </label>
+              )}
+            </form.Field>
+            <p className="text-xs text-muted-foreground">
+              {t("sdkKeys:form.ownSandboxesOnlyHint")}
+            </p>
+          </AdvancedSection>
+        </div>
       </Section>
       {problem ? (
         <p role="alert" className="text-sm text-destructive">
@@ -1067,21 +1083,17 @@ function GrantEditor({
     >
       <SheetContent
         side="right"
+        size="wide"
         closeLabel={t("common:actions.close")}
-        className="gap-0 overflow-hidden data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
+        className="gap-0 overflow-hidden"
       >
         <form ref={formRef} noValidate className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
           <SheetHeader className="border-b pt-[max(1rem,var(--safe-area-top))]">
             <SheetTitle className="text-base">{t(`${ns}:mint.title`)}</SheetTitle>
             <SheetDescription className="text-sm">{t(`${ns}:mint.description`)}</SheetDescription>
           </SheetHeader>
-          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain p-4">
-            {fields}
-          </div>
-          <div
-            data-slot="sheet-actions"
-            className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t p-4 pb-[max(1rem,var(--safe-area-bottom))]"
-          >
+          <SheetBody className="space-y-8 pt-4">{fields}</SheetBody>
+          <SheetFooter className="min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 sm:justify-start">
             <div className="flex flex-wrap gap-2">{actions}</div>
             <p className="min-w-0 flex-1 text-sm text-muted-foreground" data-sheet-status="">
               {attempted && (invalidCount > 0 || expiryInvalid)
@@ -1091,7 +1103,7 @@ function GrantEditor({
                     { count: values.scopes.length },
                   )}`}
             </p>
-          </div>
+          </SheetFooter>
         </form>
       </SheetContent>
     </Sheet>

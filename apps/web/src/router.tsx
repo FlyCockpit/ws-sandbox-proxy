@@ -7,7 +7,7 @@ import { isSafeAssetScriptPath } from "@wssp/config/locales";
 import { toast } from "@wssp/ui/components/sileo";
 
 import ErrorState from "./components/error-state";
-import { SkeletonList } from "./components/skeleton-list";
+import { RouteContentSkeleton } from "./components/route-content-skeleton";
 import i18n, { createRequestI18n } from "./i18n";
 import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
 import { capturePoolInviteFragment } from "./lib/pool-invite";
@@ -106,11 +106,11 @@ export function getRouter() {
     routeTree,
     defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
-    defaultPendingComponent: () => (
-      <div className="p-4">
-        <SkeletonList />
-      </div>
-    ),
+    // A loading route shows a skeleton of its own content area, shaped by its
+    // `staticData` (lib/pending-layout.ts), inside the shell that is already
+    // on screen: never a bare list, never a frame without the nav.
+    // See docs/design/shell-rules.md § Route pending states
+    defaultPendingComponent: RouteContentSkeleton,
     defaultHashScrollIntoView: false,
     defaultErrorComponent: ErrorState,
     context: {

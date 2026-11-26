@@ -3,6 +3,7 @@ import { McpConsentPage } from "@/components/mcp/mcp-consent-page";
 import { getRouteSession } from "@/server/auth-session";
 import { getRawMcpSearch } from "@/server/mcp-request";
 export const Route = createFileRoute("/$lang/_app/mcp-consent")({
+  staticData: { pendingShape: "form", pendingWidth: "narrow" },
   validateSearch: (search: Record<string, unknown>) => search,
   beforeLoad: async ({ params }) => {
     const resolution = await getRouteSession();

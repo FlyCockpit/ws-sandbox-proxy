@@ -4,6 +4,7 @@ import { RegisterTemplatePage } from "@/components/templates/register-template-p
 import { parseNewTemplateSearch } from "@/lib/template-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/templates/new/register")({
+  staticData: { pendingShape: "form" },
   validateSearch: parseNewTemplateSearch,
   component: RegisterTemplateRoute,
 });

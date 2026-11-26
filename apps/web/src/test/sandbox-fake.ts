@@ -287,6 +287,8 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       queryFn: async ({ pageParam }: { pageParam: string | undefined }) => {
         const input = options.input(pageParam);
         record(procedure, input);
+        const gate = server.gates[procedure];
+        if (gate) await gate;
         failNext(procedure);
         const all = rows(input);
         const start = pageParam === undefined ? 0 : Number(pageParam);

@@ -4,28 +4,23 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { sandboxNameSchema } from "@wssp/api/sandbox/contracts";
 import { revisionRootTaint } from "@wssp/api/sandbox/guest-sudo-policy";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
+import { AdvancedSection, FormPage, FormSection } from "@wssp/ui/components/form-page";
 import {
-  AdvancedSection,
-  FormPage,
-  FormSection,
-  focusFirstInvalid,
-} from "@wssp/ui/components/form-page";
-import {
+  hasKeyValueErrors,
   KeyValueEditor,
-  type KeyValueProblem,
-  type KeyValueRow,
-  keyValueProblems,
-  rowsToRecord,
+  type KeyValueEntry,
 } from "@wssp/ui/components/key-value-editor";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { toast } from "@wssp/ui/components/sileo";
 import { Switch } from "@wssp/ui/components/switch";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
+import { isBlankEntry } from "@wssp/ui/lib/dotenv";
 import { ArrowLeft } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useMemo, useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
+import { FormPageStatus } from "@/components/form-page-status";
 import { FormSelect } from "@/components/form-select";
 import { LoadMore } from "@/components/load-more";
 import { LoginsPicker } from "@/components/logins/login-picker";
@@ -40,14 +35,22 @@ import {
 } from "@/components/sandboxes/create-sandbox-parts";
 import { LifetimeFields } from "@/components/sandboxes/sandbox-parts";
 import { SegmentedControl } from "@/components/segmented-control";
-import { useKeyValueLabels } from "@/hooks/use-key-value-labels";
+import { useKeyValueEditorLabels } from "@/hooks/use-form-field-labels";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useStatusClock } from "@/hooks/use-status-clock";
 import { useSubmissionFence } from "@/hooks/use-submission-fence";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { credentialErrorKey } from "@/lib/credential-errors";
+import { focusFirstInvalidControl, hasInvalidControl } from "@/lib/focus-invalid-control";
 import { hostConnectionState, nextHostStateChangeAt } from "@/lib/host-status";
+import {
+  entriesFitDotenvText,
+  entriesToRecord,
+  isUnreadLine,
+  PROTOTYPE_NAMES,
+  stateField,
+} from "@/lib/key-value-entries";
 import {
   type CapacityWaitChoice,
   capacityWaitChoices,
@@ -224,35 +227,27 @@ const SIZE_FIELD_OF: Partial<Record<SandboxProblem, keyof SizeValues>> = {
   diskBelowImage: "diskGiB",
 };
 
-/** POSIX environment names, as the server's schema accepts them. */
-const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const RESERVED_ENV = new Set(["HOME", "SHELL", "TERM"]);
+/** Env names the platform sets; the editor's default key rule is POSIX names. */
+const ENV_VALIDATION = { reservedKeys: ["HOME", "SHELL", "TERM", ...PROTOTYPE_NAMES] };
+/** Label names: any text without spaces, quotes or `=` (the server checks the rest). */
+const LABEL_VALIDATION = { reservedKeys: [...PROTOTYPE_NAMES], keyPattern: /^[^\s"'=]+$/ };
 
-const envJson = (rows: readonly KeyValueRow[]) => {
-  const record = rowsToRecord(rows);
+/** Editor entries as the draft's JSON object (blank: none). */
+const entriesJson = (entries: readonly KeyValueEntry[]) => {
+  const record = entriesToRecord(entries);
   return Object.keys(record).length > 0 ? JSON.stringify(record) : "";
 };
 /**
- * Label rows as the draft's JSON object: values pass through exactly (a value
- * may hold a newline). Null prototype: a `__proto__` key stays an own key, so
- * the server's schema refuses it instead of it vanishing.
+ * Cleared keys that still wait for a value: a key leaves the set once an
+ * entry with it has a value, or no entry has it any more. Keys, not rows: the
+ * `.env` text mode makes new entries on every edit.
  */
-const labelJson = (rows: readonly KeyValueRow[]) => {
-  const record = Object.create(null) as Record<string, string>;
-  for (const row of rows) if (row.key.trim() || row.value) record[row.key.trim()] = row.value;
-  return Object.keys(record).length > 0 ? JSON.stringify(record) : "";
-};
-/**
- * Cleared keys that still wait for a value: a key leaves the set once a row
- * with it has a value, or no row has it any more. Keys, not row ids: the
- * `.env` text mode makes new rows on every edit.
- */
-const stillCleared = (cleared: ReadonlySet<string>, rows: readonly KeyValueRow[]) => {
+const stillCleared = (cleared: ReadonlySet<string>, entries: readonly KeyValueEntry[]) => {
   if (cleared.size === 0) return cleared;
   const next = new Set<string>();
   for (const key of cleared) {
-    const same = rows.filter((row) => row.key.trim() === key);
-    if (same.length > 0 && same.every((row) => row.value === "")) next.add(key);
+    const same = entries.filter((entry) => entry.key === key);
+    if (same.length > 0 && same.every((entry) => entry.value === "")) next.add(key);
   }
   return next.size === cleared.size ? cleared : next;
 };
@@ -294,23 +289,32 @@ export function CreateSandboxPage({
   const [attempted, setAttempted] = useState(false);
   const [problem, setProblem] = useState<SandboxProblem | null>(null);
   const [loginProblemKey, setLoginProblemKey] = useState<string | null>(null);
-  const [envRows, setEnvRows] = useState<KeyValueRow[]>([]);
+  const [envRows, setEnvRows] = useState<KeyValueEntry[]>([]);
   // Keys whose value a refused create cleared: they stay and must be typed
   // again (or removed) before the next submit.
   const [envCleared, setEnvCleared] = useState<ReadonlySet<string>>(new Set());
   const [envEditor, setEnvEditor] = useState(0);
-  const [labelRows, setLabelRows] = useState<KeyValueRow[]>([]);
-  // `.env` text lines that are not KEY=value never reach the rows: while any
-  // exist, the draft is refused rather than sent without them.
-  const [envTextValid, setEnvTextValid] = useState(true);
-  const [labelTextValid, setLabelTextValid] = useState(true);
+  const [labelRows, setLabelRows] = useState<KeyValueEntry[]>([]);
   // Set by `submit` for its own pass through the form: the pool capacity it
   // just re-read (or "unknown" when that read failed).
   const submitCap = useRef<SizeCap | null | "unknown" | undefined>(undefined);
-  const [open, setOpen] = useState<Partial<Record<Section, boolean>>>({});
   const loginsAvailability = useLoginsAvailability();
-  const envLabels = useKeyValueLabels(t("sandboxes:create.envAdd"));
-  const labelLabels = useKeyValueLabels(t("sandboxes:create.labelsAdd"));
+  const editorLabels = useKeyValueEditorLabels();
+  const envLabels = useMemo(
+    () => ({ ...editorLabels, add: t("sandboxes:create.envAdd") }),
+    [editorLabels, t],
+  );
+  const labelLabels = useMemo(
+    () => ({
+      ...editorLabels,
+      add: t("sandboxes:create.labelsAdd"),
+      errors: {
+        ...editorLabels.errors,
+        invalidKey: (key: string) => t("sandboxes:create.labelKeyInvalid", { key }),
+      },
+    }),
+    [editorLabels, t],
+  );
 
   const limits = useQuery({
     ...orpc.sandboxes.getLimits.queryOptions(),
@@ -426,7 +430,6 @@ export function CreateSandboxPage({
     setEnvRows([]);
     setEnvCleared(new Set());
     setEnvEditor((current) => current + 1);
-    setEnvTextValid(true);
     form.setFieldValue("envs", "");
   };
   /**
@@ -436,15 +439,22 @@ export function CreateSandboxPage({
    * section opens with a notice.
    */
   const clearEnvValues = () => {
+    // Unread `.env` lines may hold a value: they go with the values.
     const kept = envRows
-      .filter((row) => row.key.trim() || row.value)
-      .map((row) => ({ ...row, value: "" }));
+      .filter((entry) => entry.key !== "")
+      .map((entry) => ({ key: entry.key, value: "" }));
     setEnvRows(kept);
-    setEnvCleared(new Set(kept.map((row) => row.key.trim()).filter(Boolean)));
+    setEnvCleared(new Set(kept.map((entry) => entry.key)));
     setEnvEditor((current) => current + 1);
-    setEnvTextValid(true);
-    form.setFieldValue("envs", envJson(kept));
-    if (kept.length > 0) setOpen((current) => ({ ...current, envs: true }));
+    form.setFieldValue("envs", entriesJson(kept));
+    if (kept.length > 0) openSection("envs");
+  };
+  /** Open an Advanced section (a native `<details>`, so its fields stay mounted). */
+  const openSection = (name: Section) => {
+    const details = formRef.current?.querySelector<HTMLDetailsElement>(
+      `details[data-section="${name}"]`,
+    );
+    if (details) details.open = true;
   };
   /**
    * Open the section of `place` and move focus to its first invalid field (or
@@ -452,10 +462,13 @@ export function CreateSandboxPage({
    */
   const reveal = (place: ProblemPlace | null) => {
     const target = place ? SECTION_OF[place] : undefined;
-    if (target) setOpen((current) => ({ ...current, [target]: true }));
+    if (target) openSection(target);
     setTimeout(() => {
       const root = formRef.current;
-      if (focusFirstInvalid(root)) return;
+      if (hasInvalidControl(root)) {
+        focusFirstInvalidControl(root);
+        return;
+      }
       const message = root?.querySelector<HTMLElement>("[data-create-problem-inline]");
       if (!message) return;
       for (let node = message.parentElement; node && node !== root; node = node.parentElement)
@@ -517,8 +530,21 @@ export function CreateSandboxPage({
     values.templateMode === "revision"
       ? revisions.find((item) => item.id === values.templateId)
       : undefined;
+  // With Latest, an untouched size field shows the newest listed version's
+  // value (marked "not set"): the version Latest resolves to decides.
+  const newest = values.templateMode === "logical" ? revisions[0] : undefined;
+  const latestSize = newest
+    ? {
+        revision: newest.revision,
+        cpuCount: newest.cpuCount,
+        memoryMiB: newest.memoryMiB,
+        defaultDiskGiB: newest.defaultDiskGiB,
+        minDiskGiB: newest.minDiskGiB,
+      }
+    : null;
   const defaults = pinned
     ? {
+        revision: pinned.revision,
         cpuCount: pinned.cpuCount,
         memoryMiB: pinned.memoryMiB,
         defaultDiskGiB: pinned.defaultDiskGiB,
@@ -542,7 +568,9 @@ export function CreateSandboxPage({
 
   // Safe placement defaults: Pool when any pool is usable (design-review2
   // #6), else Host; the only usable pool or host is preselected.
-  const placement = placementChoice ?? (pools.length > 0 ? "pool" : "host");
+  // While the pools load, the page shows the pool fields (the usual default),
+  // so it does not jump from Host to Pool when they arrive.
+  const placement = placementChoice ?? (pools.length > 0 || poolsQuery.isPending ? "pool" : "host");
   const autoPoolId = pools.length === 1 ? (pools[0]?.id ?? "") : "";
   const autoHostId = selectableHosts.length === 1 ? (selectableHosts[0]?.id ?? "") : "";
   /** The draft as it will be sent: placement and the lifetime default applied. */
@@ -652,17 +680,18 @@ export function CreateSandboxPage({
     poolCapacity.error,
   ]);
 
-  const envKeyProblems = keyValueProblems(envRows, {
-    keyPattern: ENV_KEY,
-    reservedKey: (key) => RESERVED_ENV.has(key),
-  });
-  /** Rows whose key a refused create cleared and that still have no value. */
-  const envAwaiting = envRows.filter((row) => envCleared.has(row.key.trim()) && row.value === "");
-  const envProblems = new Map<string, KeyValueProblem>([
-    ...envAwaiting.map((row) => [row.id, "valueCleared"] as const),
-    ...envKeyProblems,
-  ]);
-  const labelKeyProblems = keyValueProblems(labelRows);
+  // Flagged rows, and `.env` lines that did not parse (kept as flagged rows,
+  // never sent): either refuses the draft.
+  const envInvalid = hasKeyValueErrors(envRows, ENV_VALIDATION);
+  /** Keys a refused create cleared that still have no value. */
+  const envAwaiting = [
+    ...new Set(
+      envRows
+        .filter((entry) => envCleared.has(entry.key) && entry.value === "")
+        .map((entry) => entry.key),
+    ),
+  ];
+  const labelsInvalid = hasKeyValueErrors(labelRows, LABEL_VALIDATION);
   /** Is this an exact replay of a request whose response was lost? */
   const isReplay = (candidate: SandboxDraft) =>
     problem === "generic" && lastSubmitted.current === JSON.stringify(candidate);
@@ -671,8 +700,8 @@ export function CreateSandboxPage({
     // Only an identical draft may bypass mutable picker checks.
     // Lines the `.env` text could not read are typed input, never sent.
     const unread: SandboxDraftProblem[] = [
-      ...(envTextValid ? [] : ["envs" as const]),
-      ...(labelTextValid ? [] : ["labelsSyntax" as const]),
+      ...(envRows.some(isUnreadLine) ? ["envs" as const] : []),
+      ...(labelRows.some(isUnreadLine) ? ["labelsSyntax" as const] : []),
     ];
     if (isReplay(candidate)) return unread;
     const bound = lifetimeLimit(candidate);
@@ -686,10 +715,9 @@ export function CreateSandboxPage({
       issues.push("unknownHost");
     if (candidate.poolId && !pools.some((pool) => pool.id === candidate.poolId))
       issues.push("unknownPool");
-    if ((envKeyProblems.size > 0 || !envTextValid) && !issues.includes("envs")) issues.push("envs");
+    if (envInvalid && !issues.includes("envs")) issues.push("envs");
     if (envAwaiting.length > 0) issues.push("envsCleared");
-    if ((labelKeyProblems.size > 0 || !labelTextValid) && !issues.includes("labelsSyntax"))
-      issues.push("labelsSyntax");
+    if (labelsInvalid && !issues.includes("labelsSyntax")) issues.push("labelsSyntax");
     return issues;
   };
   /** Size values above `against` (untouched sizes are the server's to resolve). */
@@ -775,7 +803,9 @@ export function CreateSandboxPage({
     form.setFieldValue("poolId", draft.poolId);
     form.setFieldValue("lifetimeMinutes", draft.lifetimeMinutes);
     form.setFieldValue("previewPorts", draft.previewPorts);
-    setPlacementChoice(placement);
+    // While pools are still loading, Pool is only a placeholder default: keep
+    // placement derived so a "no pools" answer still falls back to Host.
+    if (!poolsQuery.isPending) setPlacementChoice(placement);
     setLifetimeTouched(true);
     setAttempted(true);
     // A cached pool cap may be out of date: before refusing on it, read it
@@ -797,12 +827,10 @@ export function CreateSandboxPage({
             : SECTION_OF[DRAFT_PLACE[item]],
         )
         .filter((section): section is Section => section !== undefined);
-      setOpen((current) => ({
-        ...current,
-        ...Object.fromEntries(sections.map((section) => [section, true])),
-      }));
-      // After the invalid fields render, move focus to the first one.
-      setTimeout(() => focusFirstInvalid(formRef.current), 0);
+      for (const name of new Set(sections)) openSection(name);
+      // After the invalid fields render, move focus to the first one (its
+      // section opens).
+      focusFirstInvalidControl(formRef.current);
     }
     submitCap.current = against;
     try {
@@ -822,10 +850,6 @@ export function CreateSandboxPage({
     ),
   );
   const pending = create.isPending;
-  const section = (name: Section) => ({
-    open: open[name] ?? false,
-    onToggle: (next: boolean) => setOpen((current) => ({ ...current, [name]: next })),
-  });
 
   // One set of grant fields: the allowlist when internet access is off, the
   // fallback grants (collapsed) when it is on.
@@ -860,8 +884,10 @@ export function CreateSandboxPage({
     </>
   );
   const grants = lineCount(values.egressDomains) + lineCount(values.egressCidrs);
-  const envCount = Object.keys(rowsToRecord(envRows)).length;
-  const labelCount = labelRows.filter((row) => row.key.trim() || row.value).length;
+  const envCount = envRows.filter((entry) => !isBlankEntry(entry)).length;
+  const labelCount = labelRows.filter((entry) => !isBlankEntry(entry)).length;
+  // A label key `.env` text cannot carry keeps the editor in rows.
+  const labelsFitText = entriesFitDotenvText(labelRows);
   const loginCount = values.credentials?.length ?? 0;
   const previewPortCount = parsePreviewPorts(values.previewPorts)?.length ?? 0;
   const lifetime = lifetimeText(t, draft.lifetimeMinutes);
@@ -901,10 +927,15 @@ export function CreateSandboxPage({
       ? problemText(problem)
       : null;
 
+  const pageTitle = t("sandboxes:create.title");
   return (
     <FormPage
       ref={formRef}
-      title={t("sandboxes:create.title")}
+      noValidate
+      // Inside the dashboard frame, which already pads the content column.
+      className="px-0 pt-0"
+      title={pageTitle}
+      aria-label={pageTitle}
       description={t("sandboxes:create.pageDescription")}
       back={
         <Link
@@ -923,9 +954,55 @@ export function CreateSandboxPage({
       }}
       actions={
         <>
-          <Button type="submit" size="touch" disabled={pending}>
-            {pending ? t("sandboxes:create.pending") : t("sandboxes:create.submit")}
-          </Button>
+          <FormPageStatus>
+            <div className="flex min-w-0 flex-col gap-1">
+              <span data-create-status="">{status}</span>
+              {fallbackProblem ? (
+                <p
+                  role="alert"
+                  id={ids.problem}
+                  {...(loginProblemKey
+                    ? { "data-create-login-problem": "" }
+                    : { "data-create-problem": problem ?? "" })}
+                  className="text-sm text-destructive"
+                >
+                  {fallbackProblem}
+                </p>
+              ) : problem && serverPlace !== null ? (
+                // The refusal sits next to its field, maybe in a closed section or
+                // off-screen: the action bar always repeats it, with a way there.
+                <p
+                  role="alert"
+                  data-create-summary={problem}
+                  className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-destructive"
+                >
+                  {problemText(problem)}
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="touch"
+                    className="h-auto min-h-11 px-0"
+                    onClick={() => reveal(serverPlace)}
+                  >
+                    {t("sandboxes:create.showProblem")}
+                  </Button>
+                </p>
+              ) : problems.length > 0 ? (
+                <p className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-destructive">
+                  <span>{t("common:form.fixErrors")}</span>
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="touch"
+                    className="h-auto min-h-11 px-0"
+                    onClick={() => reveal(null)}
+                  >
+                    {t("sandboxes:create.showProblem")}
+                  </Button>
+                </p>
+              ) : null}
+            </div>
+          </FormPageStatus>
           <Link
             to="/$lang/dashboard/sandboxes"
             params={{ lang }}
@@ -933,68 +1010,28 @@ export function CreateSandboxPage({
           >
             {t("common:actions.cancel")}
           </Link>
+          <Button type="submit" size="touch" disabled={pending}>
+            {pending ? t("sandboxes:create.pending") : t("sandboxes:create.submit")}
+          </Button>
         </>
-      }
-      status={
-        <div className="flex min-w-0 flex-col gap-1">
-          <span data-create-status="">{status}</span>
-          {fallbackProblem ? (
-            <p
-              role="alert"
-              id={ids.problem}
-              {...(loginProblemKey
-                ? { "data-create-login-problem": "" }
-                : { "data-create-problem": problem ?? "" })}
-              className="text-sm text-destructive"
-            >
-              {fallbackProblem}
-            </p>
-          ) : problem && serverPlace !== null ? (
-            // The refusal sits next to its field, maybe in a closed section or
-            // off-screen: the action bar always repeats it, with a way there.
-            <p
-              role="alert"
-              data-create-summary={problem}
-              className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-destructive"
-            >
-              {problemText(problem)}
-              <Button
-                type="button"
-                variant="link"
-                size="touch"
-                className="h-auto min-h-11 px-0"
-                onClick={() => reveal(serverPlace)}
-              >
-                {t("sandboxes:create.showProblem")}
-              </Button>
-            </p>
-          ) : problems.length > 0 ? (
-            <p className="flex min-w-0 flex-wrap items-center gap-x-2 text-sm text-destructive">
-              <span>{t("common:form.fixErrors")}</span>
-              <Button
-                type="button"
-                variant="link"
-                size="touch"
-                className="h-auto min-h-11 px-0"
-                onClick={() => reveal(null)}
-              >
-                {t("sandboxes:create.showProblem")}
-              </Button>
-            </p>
-          ) : null}
-        </div>
       }
     >
       <FormSection
         title={t("sandboxes:create.sectionTemplate")}
         description={t("sandboxes:create.sectionTemplateHint")}
+        gridClassName="lg:grid-cols-1"
       >
         <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
           {/* The section heading names it on screen. */}
           <Label htmlFor={ids.template} className="sr-only">
             {t("sandboxes:create.template")}
           </Label>
-          <PickerStatus query={templatesQuery} failed={t("sandboxes:create.templatesFailed")} />
+          {/* While loading, the select itself (disabled) holds the place. */}
+          <PickerStatus
+            query={templatesQuery}
+            failed={t("sandboxes:create.templatesFailed")}
+            holdsPlace
+          />
           <FormSelect
             id={ids.template}
             optionsSettled={
@@ -1063,6 +1100,7 @@ export function CreateSandboxPage({
       <FormSection
         title={t("sandboxes:create.sectionPlacement")}
         description={t("sandboxes:create.sectionPlacementHint")}
+        gridClassName="lg:grid-cols-1"
       >
         <fieldset className="flex min-w-0 flex-col gap-3" disabled={pending}>
           <SegmentedControl
@@ -1077,7 +1115,11 @@ export function CreateSandboxPage({
           {placement === "pool" ? (
             <div className="flex min-w-0 flex-col gap-2" data-pool-fields="">
               <Label htmlFor={ids.pool}>{t("sandboxes:create.pool")}</Label>
-              <PickerStatus query={poolsQuery} failed={t("sandboxes:create.poolsFailed")} />
+              <PickerStatus
+                query={poolsQuery}
+                failed={t("sandboxes:create.poolsFailed")}
+                holdsPlace
+              />
               {poolsQuery.isSuccess && pools.length === 0 ? (
                 <p className="text-sm text-muted-foreground">{t("sandboxes:create.noPools")}</p>
               ) : (
@@ -1088,6 +1130,7 @@ export function CreateSandboxPage({
                   }
                   autoComplete="off"
                   value={draft.poolId ?? ""}
+                  disabled={poolsQuery.isPending}
                   aria-invalid={has("placement") || serverPlace === "placement" ? true : undefined}
                   onValueChange={(value) => {
                     form.setFieldValue("poolId", value);
@@ -1113,22 +1156,30 @@ export function CreateSandboxPage({
                 isFetchingNextPage={poolsQuery.isFetchingNextPage}
                 onLoadMore={() => void poolsQuery.fetchNextPage()}
               />
-              {pools.length > 0 ? (
+              {/* Drawn while the pools load too: the section keeps its loaded height. */}
+              {pools.length > 0 || poolsQuery.isPending ? (
                 <PoolTrustNotice graceSeconds={selectedPool?.disconnectGraceSeconds} lang={lang} />
               ) : null}
             </div>
           ) : (
             <div className="flex min-w-0 flex-col gap-2" data-host-fields="">
               <Label htmlFor={ids.host}>{t("sandboxes:create.host")}</Label>
-              <PickerStatus query={hostsQuery} failed={t("sandboxes:create.hostsFailed")} />
+              <PickerStatus
+                query={hostsQuery}
+                failed={t("sandboxes:create.hostsFailed")}
+                holdsPlace
+              />
               {hostsQuery.isSuccess && hosts.length === 0 ? (
                 <p className="text-sm text-muted-foreground">{t("sandboxes:create.noHosts")}</p>
-              ) : hostsQuery.isSuccess ? (
+              ) : hostsQuery.isSuccess || hostsQuery.isPending ? (
                 <FormSelect
                   id={ids.host}
-                  optionsSettled={!hostsQuery.isFetching && !hostsQuery.hasNextPage}
+                  optionsSettled={
+                    hostsQuery.isSuccess && !hostsQuery.isFetching && !hostsQuery.hasNextPage
+                  }
                   autoComplete="off"
                   value={draft.hostId}
+                  disabled={hostsQuery.isPending}
                   aria-invalid={has("placement") || serverPlace === "placement" ? true : undefined}
                   onValueChange={(value) => {
                     form.setFieldValue("hostId", value);
@@ -1275,370 +1326,402 @@ export function CreateSandboxPage({
       <FormSection
         title={t("sandboxes:create.sectionAdvanced")}
         description={t("sandboxes:create.sectionAdvancedHint")}
+        gridClassName="lg:grid-cols-1"
       >
-        <AdvancedSection
-          data-section="version"
-          title={t("sandboxes:create.versionTitle")}
-          summary={
-            pinned
-              ? t("sandboxes:create.summary.revision", { revision: pinned.revision })
-              : t("sandboxes:create.summary.latest")
-          }
-          {...section("version")}
-        >
-          {logicalId ? (
-            <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
-              <Label htmlFor={ids.revision}>{t("sandboxes:create.revision")}</Label>
-              <PickerStatus query={revisionsQuery} failed={t("sandboxes:create.revisionsFailed")} />
-              <FormSelect
-                id={ids.revision}
-                optionsSettled={
-                  revisionsQuery.isSuccess &&
-                  !revisionsQuery.isFetching &&
-                  !revisionsQuery.hasNextPage
-                }
-                autoComplete="off"
-                value={values.templateMode === "logical" ? "" : values.templateId}
-                onValueChange={(value) => {
-                  form.setFieldValue("templateMode", value ? "revision" : "logical");
-                  form.setFieldValue("templateId", value || logicalId);
-                }}
-              >
-                <SelectItem value="">{t("sandboxes:create.latest")}</SelectItem>
-                {revisions.map((revision) => (
-                  <SelectItem key={revision.id} value={revision.id}>
-                    {t("sandboxes:create.revisionOption", {
-                      revision: revision.revision,
-                      architecture: revision.architecture,
-                      cpuCount: revision.cpuCount,
-                      memoryMiB: revision.memoryMiB,
-                      defaultDiskGiB: revision.defaultDiskGiB,
-                      minDiskGiB: revision.minDiskGiB,
-                    })}
-                  </SelectItem>
-                ))}
-              </FormSelect>
-              <LoadMore
-                hasNextPage={revisionsQuery.hasNextPage}
-                isFetchingNextPage={revisionsQuery.isFetchingNextPage}
-                onLoadMore={() => void revisionsQuery.fetchNextPage()}
-                label={t("sandboxes:create.moreRevisions")}
-              />
-              <p className="text-xs text-muted-foreground">{t("sandboxes:create.selectorHint")}</p>
-            </fieldset>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {t("sandboxes:create.chooseTemplateFirst")}
-            </p>
-          )}
-        </AdvancedSection>
-
-        <AdvancedSection
-          data-section="size"
-          title={t("sandboxes:create.sizeTitle")}
-          summary={sizeText}
-          {...section("size")}
-        >
-          <p className="text-xs text-muted-foreground">{t("sandboxes:create.sizeIntro")}</p>
-          {values.templateMode === "logical" ? (
-            <p data-size-advisory="" className="text-xs text-muted-foreground">
-              {t("sandboxes:create.latestSizeHint")}
-            </p>
-          ) : null}
-          {placement === "pool" && poolCapacity.isError ? (
-            <p data-pool-capacity-failed="" className="text-xs text-muted-foreground">
-              {t("sandboxes:create.capacity.poolFailed")}
-            </p>
-          ) : placement === "pool" &&
-            poolCapacity.isSuccess &&
-            poolCapacity.data.largest === null ? (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
-              {t("sandboxes:create.capacity.poolNone")}
-            </p>
-          ) : null}
-          <SizeFields
-            values={size}
-            onChange={(field, value) => {
-              const next = value === null ? "" : String(value);
-              // Leaving a field unchanged (blur commits it) keeps the refusal.
-              if (next === values[field]) return;
-              form.setFieldValue(field, next);
-              dismissServerProblem("size");
-            }}
-            defaults={defaults}
-            cap={waiting ? null : cap}
-            capSource={placement}
-            errors={sizeErrors}
-            disabled={pending}
-          />
-          {waitsOverCap ? (
-            <p data-size-waits="" role="status" className="text-xs text-muted-foreground">
-              {t("sandboxes:create.capacity.poolWaits")}
-            </p>
-          ) : null}
-          {inline("size")}
-        </AdvancedSection>
-
-        <AdvancedSection
-          data-section="envs"
-          title={t("sandboxes:create.envTitle")}
-          summary={
-            envCount > 0
-              ? t("sandboxes:create.summary.envs", { count: envCount })
-              : t("sandboxes:create.summary.none")
-          }
-          {...section("envs")}
-        >
-          {envAwaiting.length > 0 ? (
-            <p
-              role="status"
-              data-env-cleared=""
-              className="text-sm text-amber-700 dark:text-amber-400"
-            >
-              {t("sandboxes:create.envCleared")}
-            </p>
-          ) : null}
-          <KeyValueEditor
-            key={envEditor}
-            label={t("sandboxes:create.envTitle")}
-            description={t("sandboxes:create.envHint")}
-            rows={envRows}
-            onChange={(rows) => {
-              setEnvRows(rows);
-              setEnvCleared((current) => stillCleared(current, rows));
-              form.setFieldValue("envs", envJson(rows));
-            }}
-            onValidityChange={setEnvTextValid}
-            labels={envLabels}
-            problems={envProblems}
-            masked
-            maxRows={64}
-            disabled={pending}
-            keyPlaceholder="KEY"
-          />
-          {inline("envs")}
-        </AdvancedSection>
-
-        <AdvancedSection
-          data-section="labels"
-          title={t("sandboxes:create.labels")}
-          summary={
-            labelCount > 0
-              ? t("sandboxes:create.summary.labels", { count: labelCount })
-              : t("sandboxes:create.summary.none")
-          }
-          {...section("labels")}
-        >
-          <KeyValueEditor
-            label={t("sandboxes:create.labels")}
-            description={t("sandboxes:create.labelsRowsHint")}
-            rows={labelRows}
-            onChange={(rows) => {
-              setLabelRows(rows);
-              form.setFieldValue("labels", labelJson(rows));
-            }}
-            onValidityChange={setLabelTextValid}
-            labels={labelLabels}
-            problems={labelKeyProblems}
-            maxRows={32}
-            disabled={pending}
-          />
-          {inline("labels")}
-        </AdvancedSection>
-
-        <AdvancedSection
-          data-section="network"
-          title={t("sandboxes:create.networkTitle")}
-          summary={[
-            values.internetAccess
-              ? grants > 0
-                ? t("sandboxes:create.summary.internetFallback", { count: grants })
-                : t("sandboxes:create.summary.internet")
-              : grants > 0
-                ? t("sandboxes:create.summary.allowlist", { count: grants })
-                : t("sandboxes:create.summary.denyAll"),
-            ...(previewTunnels && previewPortCount > 0
-              ? [t("sandboxes:create.summary.ports", { count: previewPortCount })]
-              : []),
-          ].join(" · ")}
-          {...section("network")}
-        >
-          <fieldset
-            className="flex min-w-0 flex-col gap-3"
-            disabled={pending}
-            data-egress-fields=""
+        {/* One cell: the sections join into one ruled list. */}
+        <div className="min-w-0 space-y-8">
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            data-section="version"
+            title={t("sandboxes:create.versionTitle")}
+            summary={
+              pinned
+                ? t("sandboxes:create.summary.revision", { revision: pinned.revision })
+                : t("sandboxes:create.summary.latest")
+            }
           >
-            <legend className="mb-1 text-sm font-medium">{t("sandboxes:create.egress")}</legend>
-            <form.Field name="internetAccess">
-              {(field) => (
-                <label className="flex min-h-11 items-center gap-3 text-sm">
-                  <Switch
-                    data-internet-access=""
-                    checked={field.state.value}
-                    onCheckedChange={(checked) => field.handleChange(checked)}
-                    disabled={pending}
-                  />
-                  {t("sandboxes:create.internetAccess")}
-                </label>
-              )}
-            </form.Field>
-            <p data-egress-hint="" className="text-xs text-muted-foreground">
-              {t(
-                values.internetAccess
-                  ? "sandboxes:create.internetAccessOnHint"
-                  : "sandboxes:create.egressHint",
-              )}
-            </p>
-            {values.internetAccess ? (
-              <details data-egress-fallback="" className="min-w-0 text-sm">
-                <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-2 font-medium">
-                  {t("sandboxes:create.fallbackSummary")}
-                  <span className="font-normal text-muted-foreground">
-                    {grants > 0
-                      ? t("sandboxes:create.summary.allowlist", { count: grants })
-                      : t("sandboxes:create.summary.none")}
-                  </span>
-                </summary>
-                <div className="flex min-w-0 flex-col gap-3 pt-2">
-                  <p className="text-xs text-muted-foreground">
-                    {t("sandboxes:create.fallbackHint")}
-                  </p>
-                  {grantFields}
-                </div>
-              </details>
-            ) : (
-              grantFields
-            )}
-          </fieldset>
-          {previewTunnels ? (
-            <form.Field
-              name="previewPorts"
-              validators={{
-                // Checked as you type; the draft also refuses it at submit.
-                onChange: z.string().refine((value) => parsePreviewPorts(value) !== null, {
-                  message: t("sandboxes:draft.previewPorts"),
-                }),
-              }}
-            >
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("sandboxes:create.previewPorts")}
-                  description={t("sandboxes:create.previewPortsHint")}
-                  autoComplete="off"
-                  inputMode="numeric"
-                  spellCheck={false}
-                  inputClassName="min-h-11 font-mono"
-                  placeholder="3000, 8080"
-                  disabled={pending}
+            {logicalId ? (
+              <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
+                <Label htmlFor={ids.revision}>{t("sandboxes:create.revision")}</Label>
+                <PickerStatus
+                  query={revisionsQuery}
+                  failed={t("sandboxes:create.revisionsFailed")}
                 />
-              )}
-            </form.Field>
-          ) : null}
-          {inline("network")}
-        </AdvancedSection>
+                <FormSelect
+                  id={ids.revision}
+                  optionsSettled={
+                    revisionsQuery.isSuccess &&
+                    !revisionsQuery.isFetching &&
+                    !revisionsQuery.hasNextPage
+                  }
+                  autoComplete="off"
+                  value={values.templateMode === "logical" ? "" : values.templateId}
+                  onValueChange={(value) => {
+                    form.setFieldValue("templateMode", value ? "revision" : "logical");
+                    form.setFieldValue("templateId", value || logicalId);
+                  }}
+                >
+                  <SelectItem value="">{t("sandboxes:create.latest")}</SelectItem>
+                  {revisions.map((revision) => (
+                    <SelectItem key={revision.id} value={revision.id}>
+                      {t("sandboxes:create.revisionOption", {
+                        revision: revision.revision,
+                        architecture: revision.architecture,
+                        cpuCount: revision.cpuCount,
+                        memoryMiB: revision.memoryMiB,
+                        defaultDiskGiB: revision.defaultDiskGiB,
+                        minDiskGiB: revision.minDiskGiB,
+                      })}
+                    </SelectItem>
+                  ))}
+                </FormSelect>
+                <LoadMore
+                  hasNextPage={revisionsQuery.hasNextPage}
+                  isFetchingNextPage={revisionsQuery.isFetchingNextPage}
+                  onLoadMore={() => void revisionsQuery.fetchNextPage()}
+                  label={t("sandboxes:create.moreRevisions")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("sandboxes:create.selectorHint")}
+                </p>
+              </fieldset>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {t("sandboxes:create.chooseTemplateFirst")}
+              </p>
+            )}
+          </AdvancedSection>
 
-        <AdvancedSection
-          data-section="access"
-          title={t("sandboxes:create.accessTitle")}
-          summary={t(
-            values.guestSudo
-              ? "sandboxes:create.summary.sudoOn"
-              : "sandboxes:create.summary.sudoOff",
-          )}
-          {...section("access")}
-        >
-          <fieldset
-            className="flex min-w-0 flex-col gap-3"
-            disabled={pending}
-            data-guest-sudo-fields=""
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            data-section="size"
+            title={t("sandboxes:create.sizeTitle")}
+            summary={sizeText}
           >
-            <legend className="mb-1 text-sm font-medium">{t("sandboxes:create.guestRoot")}</legend>
-            <form.Field name="guestSudo">
-              {(field) => (
-                <label className="flex min-h-11 items-center gap-3 text-sm">
-                  <Switch
-                    data-guest-sudo=""
-                    checked={field.state.value}
-                    onCheckedChange={(checked) => field.handleChange(checked)}
-                    disabled={pending}
-                  />
-                  {t("sandboxes:create.guestSudo")}
-                </label>
-              )}
-            </form.Field>
-            <p data-guest-sudo-hint="" className="text-xs text-muted-foreground">
-              <Trans
-                t={t}
-                i18nKey={
-                  values.guestSudo
-                    ? "sandboxes:create.guestSudoOnHint"
-                    : "sandboxes:create.guestSudoOffHint"
-                }
-                components={{ code: <code className="whitespace-nowrap" /> }}
-              />
-            </p>
-            {!values.guestSudo && pinned && revisionRootTaint(pinned) ? (
-              <p data-guest-root-tainted="" className="text-xs text-amber-700 dark:text-amber-400">
-                {t("sandboxes:create.guestRootTainted")}
+            <p className="text-xs text-muted-foreground">{t("sandboxes:create.sizeIntro")}</p>
+            {values.templateMode === "logical" ? (
+              <p data-size-advisory="" className="text-xs text-muted-foreground">
+                {t("sandboxes:create.latestSizeHint")}
               </p>
             ) : null}
-          </fieldset>
-        </AdvancedSection>
+            {placement === "pool" && poolCapacity.isError ? (
+              <p data-pool-capacity-failed="" className="text-xs text-muted-foreground">
+                {t("sandboxes:create.capacity.poolFailed")}
+              </p>
+            ) : placement === "pool" &&
+              poolCapacity.isSuccess &&
+              poolCapacity.data.largest === null ? (
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                {t("sandboxes:create.capacity.poolNone")}
+              </p>
+            ) : null}
+            <SizeFields
+              values={size}
+              onChange={(field, value) => {
+                const next = value === null ? "" : String(value);
+                // Leaving a field unchanged (blur commits it) keeps the refusal.
+                if (next === values[field]) return;
+                form.setFieldValue(field, next);
+                dismissServerProblem("size");
+              }}
+              defaults={defaults}
+              fallback={latestSize}
+              cap={cap}
+              capAdvisory={waiting}
+              capSource={placement}
+              errors={sizeErrors}
+              disabled={pending}
+            />
+            {waitsOverCap ? (
+              <p data-size-waits="" role="status" className="text-xs text-muted-foreground">
+                {t("sandboxes:create.capacity.poolWaits")}
+              </p>
+            ) : null}
+            {inline("size")}
+          </AdvancedSection>
 
-        {loginsAvailability === "enabled" ? (
           <AdvancedSection
-            data-section="logins"
-            title={t("sandboxes:create.loginsTitle")}
+            gridClassName="lg:grid-cols-1"
+            data-section="envs"
+            title={t("sandboxes:create.envTitle")}
             summary={
-              loginCount > 0
-                ? t("sandboxes:create.summary.logins", { count: loginCount })
+              envCount > 0
+                ? t("sandboxes:create.summary.envs", { count: envCount })
                 : t("sandboxes:create.summary.none")
             }
-            {...section("logins")}
           >
-            <LoginsPicker
-              value={values.credentials ?? []}
-              disabled={pending}
-              onChange={(next) => form.setFieldValue("credentials", next)}
-            />
-            {inline("logins")}
-          </AdvancedSection>
-        ) : null}
-
-        {placement === "pool" ? (
-          <AdvancedSection
-            data-section="wait"
-            title={t("sandboxes:create.capacityWait")}
-            summary={t(`sandboxes:create.wait.${values.capacityWait ?? "none"}`)}
-            {...section("wait")}
-          >
-            <form.Field name="capacityWait">
-              {(field) => (
-                <div className="flex min-w-0 flex-col gap-2">
-                  <Label htmlFor={ids.wait}>{t("sandboxes:create.capacityWait")}</Label>
-                  <FormSelect
-                    id={ids.wait}
-                    autoComplete="off"
-                    disabled={pending}
-                    value={field.state.value ?? "none"}
-                    onValueChange={(value) => field.handleChange(value as CapacityWaitChoice)}
-                  >
-                    {capacityWaitChoices(effectiveWaitMax(draft.poolId ?? "")).map((choice) => (
-                      <SelectItem key={choice} value={choice}>
-                        {t(`sandboxes:create.wait.${choice}`)}
-                      </SelectItem>
-                    ))}
-                  </FormSelect>
-                  <p className="text-xs text-muted-foreground">
-                    {t("sandboxes:create.capacityWaitHint")}
-                  </p>
-                </div>
+            {envAwaiting.length > 0 ? (
+              <p
+                role="status"
+                data-env-cleared=""
+                className="text-sm text-amber-700 dark:text-amber-400"
+              >
+                {t("sandboxes:create.envCleared")}
+              </p>
+            ) : null}
+            <KeyValueEditor
+              key={envEditor}
+              field={stateField(
+                "envs",
+                envRows,
+                envAwaiting.length > 0
+                  ? [
+                      t("sandboxes:create.envReenter", {
+                        keys: new Intl.ListFormat(lang, { type: "conjunction" }).format(
+                          envAwaiting,
+                        ),
+                      }),
+                    ]
+                  : [],
+                (entries) => {
+                  setEnvRows(entries);
+                  setEnvCleared((current) => stillCleared(current, entries));
+                  form.setFieldValue("envs", entriesJson(entries));
+                },
               )}
-            </form.Field>
-            {inline("wait")}
+              label={t("sandboxes:create.envTitle")}
+              description={t("sandboxes:create.envHint")}
+              labels={envLabels}
+              reservedKeys={ENV_VALIDATION.reservedKeys}
+              secret
+              disabled={pending}
+            />
+            {inline("envs")}
           </AdvancedSection>
-        ) : null}
+
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            data-section="labels"
+            title={t("sandboxes:create.labels")}
+            summary={
+              labelCount > 0
+                ? t("sandboxes:create.summary.labels", { count: labelCount })
+                : t("sandboxes:create.summary.none")
+            }
+          >
+            <KeyValueEditor
+              field={stateField("labels", labelRows, [], (entries) => {
+                setLabelRows(entries);
+                form.setFieldValue("labels", entriesJson(entries));
+              })}
+              label={t("sandboxes:create.labels")}
+              description={t("sandboxes:create.labelsRowsHint")}
+              labels={labelLabels}
+              reservedKeys={LABEL_VALIDATION.reservedKeys}
+              keyPattern={LABEL_VALIDATION.keyPattern}
+              // Label names allow keys `.env` text cannot carry (`#team`):
+              // while one exists, the text view would drop it, so rows only.
+              textMode={labelsFitText}
+              fileImport={false}
+              disabled={pending}
+            />
+            {labelsFitText ? null : (
+              <p role="status" data-labels-rows-only="" className="text-xs text-muted-foreground">
+                {t("sandboxes:create.labelsTextUnavailable")}
+              </p>
+            )}
+            {inline("labels")}
+          </AdvancedSection>
+
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            data-section="network"
+            title={t("sandboxes:create.networkTitle")}
+            summary={[
+              values.internetAccess
+                ? grants > 0
+                  ? t("sandboxes:create.summary.internetFallback", { count: grants })
+                  : t("sandboxes:create.summary.internet")
+                : grants > 0
+                  ? t("sandboxes:create.summary.allowlist", { count: grants })
+                  : t("sandboxes:create.summary.denyAll"),
+              ...(previewTunnels && previewPortCount > 0
+                ? [t("sandboxes:create.summary.ports", { count: previewPortCount })]
+                : []),
+            ].join(" · ")}
+          >
+            <fieldset
+              className="flex min-w-0 flex-col gap-3"
+              disabled={pending}
+              data-egress-fields=""
+            >
+              <legend className="mb-1 text-sm font-medium">{t("sandboxes:create.egress")}</legend>
+              <form.Field name="internetAccess">
+                {(field) => (
+                  <label className="flex min-h-11 items-center gap-3 text-sm">
+                    <Switch
+                      data-internet-access=""
+                      checked={field.state.value}
+                      onCheckedChange={(checked) => field.handleChange(checked)}
+                      disabled={pending}
+                    />
+                    {t("sandboxes:create.internetAccess")}
+                  </label>
+                )}
+              </form.Field>
+              <p data-egress-hint="" className="text-xs text-muted-foreground">
+                {t(
+                  values.internetAccess
+                    ? "sandboxes:create.internetAccessOnHint"
+                    : "sandboxes:create.egressHint",
+                )}
+              </p>
+              {values.internetAccess ? (
+                <details data-egress-fallback="" className="min-w-0 text-sm">
+                  <summary className="flex min-h-11 cursor-pointer flex-wrap items-center gap-x-2 font-medium">
+                    {t("sandboxes:create.fallbackSummary")}
+                    <span className="font-normal text-muted-foreground">
+                      {grants > 0
+                        ? t("sandboxes:create.summary.allowlist", { count: grants })
+                        : t("sandboxes:create.summary.none")}
+                    </span>
+                  </summary>
+                  <div className="flex min-w-0 flex-col gap-3 pt-2">
+                    <p className="text-xs text-muted-foreground">
+                      {t("sandboxes:create.fallbackHint")}
+                    </p>
+                    {grantFields}
+                  </div>
+                </details>
+              ) : (
+                grantFields
+              )}
+            </fieldset>
+            {previewTunnels ? (
+              <form.Field
+                name="previewPorts"
+                validators={{
+                  // Checked as you type; the draft also refuses it at submit.
+                  onChange: z.string().refine((value) => parsePreviewPorts(value) !== null, {
+                    message: t("sandboxes:draft.previewPorts"),
+                  }),
+                }}
+              >
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("sandboxes:create.previewPorts")}
+                    description={t("sandboxes:create.previewPortsHint")}
+                    autoComplete="off"
+                    inputMode="numeric"
+                    spellCheck={false}
+                    inputClassName="min-h-11 font-mono"
+                    placeholder="3000, 8080"
+                    disabled={pending}
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            {inline("network")}
+          </AdvancedSection>
+
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            data-section="access"
+            title={t("sandboxes:create.accessTitle")}
+            summary={t(
+              values.guestSudo
+                ? "sandboxes:create.summary.sudoOn"
+                : "sandboxes:create.summary.sudoOff",
+            )}
+          >
+            <fieldset
+              className="flex min-w-0 flex-col gap-3"
+              disabled={pending}
+              data-guest-sudo-fields=""
+            >
+              <legend className="mb-1 text-sm font-medium">
+                {t("sandboxes:create.guestRoot")}
+              </legend>
+              <form.Field name="guestSudo">
+                {(field) => (
+                  <label className="flex min-h-11 items-center gap-3 text-sm">
+                    <Switch
+                      data-guest-sudo=""
+                      checked={field.state.value}
+                      onCheckedChange={(checked) => field.handleChange(checked)}
+                      disabled={pending}
+                    />
+                    {t("sandboxes:create.guestSudo")}
+                  </label>
+                )}
+              </form.Field>
+              <p data-guest-sudo-hint="" className="text-xs text-muted-foreground">
+                <Trans
+                  t={t}
+                  i18nKey={
+                    values.guestSudo
+                      ? "sandboxes:create.guestSudoOnHint"
+                      : "sandboxes:create.guestSudoOffHint"
+                  }
+                  components={{ code: <code className="whitespace-nowrap" /> }}
+                />
+              </p>
+              {!values.guestSudo && pinned && revisionRootTaint(pinned) ? (
+                <p
+                  data-guest-root-tainted=""
+                  className="text-xs text-amber-700 dark:text-amber-400"
+                >
+                  {t("sandboxes:create.guestRootTainted")}
+                </p>
+              ) : null}
+            </fieldset>
+          </AdvancedSection>
+
+          {loginsAvailability === "enabled" ? (
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              data-section="logins"
+              title={t("sandboxes:create.loginsTitle")}
+              summary={
+                loginCount > 0
+                  ? t("sandboxes:create.summary.logins", { count: loginCount })
+                  : t("sandboxes:create.summary.none")
+              }
+            >
+              <LoginsPicker
+                value={values.credentials ?? []}
+                disabled={pending}
+                onChange={(next) => form.setFieldValue("credentials", next)}
+              />
+              {inline("logins")}
+            </AdvancedSection>
+          ) : null}
+
+          {placement === "pool" ? (
+            <AdvancedSection
+              gridClassName="lg:grid-cols-1"
+              data-section="wait"
+              title={t("sandboxes:create.capacityWait")}
+              summary={t(`sandboxes:create.wait.${values.capacityWait ?? "none"}`)}
+            >
+              <form.Field name="capacityWait">
+                {(field) => (
+                  <div className="flex min-w-0 flex-col gap-2">
+                    <Label htmlFor={ids.wait}>{t("sandboxes:create.capacityWait")}</Label>
+                    <FormSelect
+                      id={ids.wait}
+                      autoComplete="off"
+                      disabled={pending}
+                      value={field.state.value ?? "none"}
+                      onValueChange={(value) => field.handleChange(value as CapacityWaitChoice)}
+                    >
+                      {capacityWaitChoices(effectiveWaitMax(draft.poolId ?? "")).map((choice) => (
+                        <SelectItem key={choice} value={choice}>
+                          {t(`sandboxes:create.wait.${choice}`)}
+                        </SelectItem>
+                      ))}
+                    </FormSelect>
+                    <p className="text-xs text-muted-foreground">
+                      {t("sandboxes:create.capacityWaitHint")}
+                    </p>
+                  </div>
+                )}
+              </form.Field>
+              {inline("wait")}
+            </AdvancedSection>
+          ) : null}
+        </div>
       </FormSection>
     </FormPage>
   );

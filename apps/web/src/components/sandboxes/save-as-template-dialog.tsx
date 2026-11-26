@@ -10,10 +10,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
-import { AdvancedSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
+import { AdvancedSection } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -156,10 +157,7 @@ export function SaveAsTemplateDialog({
   const hasCurrent = templateItems.some((item) => item.id === sandbox.template.id);
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-md"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t("sandboxes:capture.title")}</DialogTitle>
           <DialogDescription>{t("sandboxes:capture.description")}</DialogDescription>
@@ -174,7 +172,7 @@ export function SaveAsTemplateDialog({
               const root = event.currentTarget;
               await form.handleSubmit();
               // A refused option opens its section and takes focus.
-              if (!form.state.isValid) focusFirstInvalid(root);
+              if (!form.state.isValid) focusFirstInvalidField(root);
             }}
           >
             <p
@@ -211,6 +209,7 @@ export function SaveAsTemplateDialog({
                 <AdvancedSection
                   title={t("sandboxes:capture.options")}
                   data-capture-options=""
+                  gridClassName="lg:grid-cols-1"
                   summary={t("sandboxes:capture.optionsSummary", {
                     tag: current.tag || "—",
                     disk: current.defaultDiskGiB.trim() || sandbox.diskGiB,

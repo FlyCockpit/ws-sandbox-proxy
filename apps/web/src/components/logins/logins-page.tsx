@@ -345,10 +345,7 @@ function AddDefinitionDialog({ lang, onClose }: { lang: string; onClose: () => v
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-2xl"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t("logins:definitions.addTitle")}</DialogTitle>
           <DialogDescription>{t("logins:definitions.addDescription")}</DialogDescription>
@@ -433,10 +430,7 @@ function ViewDefinitionDialog({
   });
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-2xl"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
             {t("logins:definitions.title", {
@@ -635,10 +629,7 @@ function CreateLoginDialog({ lang, onClose }: { lang: string; onClose: () => voi
 
   return (
     <Dialog open onOpenChange={(open) => (open || create.isPending ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("logins:create.title")}</DialogTitle>
           <DialogDescription>{t("logins:create.description")}</DialogDescription>

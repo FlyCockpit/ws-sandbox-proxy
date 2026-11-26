@@ -149,17 +149,23 @@ describe("checkBuildBase (FROM must name one of your templates)", () => {
 
 describe("build args and secret names", () => {
   it("takes rows exactly (newlines kept), skips blank rows and reports the first bad row", () => {
-    const row = (id: string, key: string, value: string) => ({ id, key, value });
-    expect(
-      buildArgsFromRows([row("a", "A", "1"), row("b", "", ""), row("c", " B_2 ", "x=y\nz")]),
-    ).toEqual({ args: { A: "1", B_2: "x=y\nz" }, invalidId: null });
-    expect(buildArgsFromRows([row("a", "A", "1"), row("b", "2B", "x")])).toEqual({
-      args: {},
-      invalidId: "b",
+    const row = (key: string, value: string) => ({ key, value });
+    expect(buildArgsFromRows([row("A", "1"), row("", ""), row(" B_2 ", "x=y\nz")])).toEqual({
+      args: { A: "1", B_2: "x=y\nz" },
+      invalidRow: null,
     });
-    expect(buildArgsFromRows([row("a", "A", "v".repeat(4097))])).toEqual({
+    expect(buildArgsFromRows([row("A", "1"), row("2B", "x")])).toEqual({
       args: {},
-      invalidId: "a",
+      invalidRow: 1,
+    });
+    expect(buildArgsFromRows([row("A", "v".repeat(4097))])).toEqual({
+      args: {},
+      invalidRow: 0,
+    });
+    // A `.env` line that did not parse (no key) is never sent.
+    expect(buildArgsFromRows([row("A", "1"), row("", "JUNK")])).toEqual({
+      args: {},
+      invalidRow: 1,
     });
   });
 

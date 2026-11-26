@@ -194,3 +194,33 @@ it("keeps a long translated confirmation inside safe-area bounds with reachable 
   await user.click(submit);
   expect(onConfirm).toHaveBeenCalledWith(token);
 });
+
+it("the mobile drawer has one scroller and one padding owner; the desktop dialog body is unchanged", async () => {
+  let desktop = false;
+  const listeners = new Set<() => void>();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: desktop,
+    addEventListener: (_name: string, callback: () => void) => listeners.add(callback),
+    removeEventListener: (_name: string, callback: () => void) => listeners.delete(callback),
+  }));
+  render(<ResponsiveDetailsExample />);
+  const classesOf = (element: Element | null | undefined) =>
+    (element?.className.toString() ?? "").split(/\s+/);
+  const body = () => document.querySelector("[data-slot=dialog-body]");
+  const children = () => screen.getByText("Development East").parentElement;
+
+  const drawerBody = classesOf(body());
+  expect(drawerBody).toEqual(expect.arrayContaining(["flex", "p-0", "overflow-hidden"]));
+  for (const name of ["px-4", "pt-4", "pb-4", "overflow-y-auto", "grid"])
+    expect(drawerBody).not.toContain(name);
+  expect(classesOf(children())).toEqual(expect.arrayContaining(["px-4", "overflow-y-auto"]));
+
+  await act(async () => {
+    desktop = true;
+    for (const listener of listeners) listener();
+  });
+  expect(body()?.className).toBe(
+    "grid min-h-0 grid-cols-[minmax(0,1fr)] gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-4 pb-4 has-[[data-slot=dialog-footer]]:pb-0 has-[[data-slot=dialog-header]]:pt-0",
+  );
+  expect(children()?.className).toBe("min-w-0");
+});

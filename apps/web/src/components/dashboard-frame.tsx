@@ -16,6 +16,7 @@ import {
   primarySectionFor,
   toLangRoute,
 } from "@/lib/nav-items";
+import { MountedFrameContext } from "@/lib/pending-layout";
 import { useUiPreferences } from "@/stores/ui-preferences";
 
 /**
@@ -50,7 +51,9 @@ export function DashboardFrame({
     <FrameLayout sidebar={<LiveSidebar lang={lang} />}>
       {banner}
       <PullToRefresh onRefresh={handleRefresh}>
-        <FrameContent>{children ?? <Outlet />}</FrameContent>
+        <MountedFrameContext value={true}>
+          <FrameContent>{children ?? <Outlet />}</FrameContent>
+        </MountedFrameContext>
       </PullToRefresh>
     </FrameLayout>
   );

@@ -269,11 +269,11 @@ export function StartLoginDialog({
       onSubmit={() => void form.handleSubmit()}
       actions={
         <>
-          <Button type="submit" size="touch" disabled={pending || (needsConsent && !consent)}>
-            {pending ? t("logins:session.start.submitting") : t("logins:session.start.submit")}
-          </Button>
           <Button type="button" variant="outline" size="touch" disabled={pending} onClick={onClose}>
             {t("common:actions.cancel")}
+          </Button>
+          <Button type="submit" size="touch" disabled={pending || (needsConsent && !consent)}>
+            {pending ? t("logins:session.start.submitting") : t("logins:session.start.submit")}
           </Button>
         </>
       }
@@ -438,48 +438,53 @@ export function StartLoginDialog({
             </fieldset>
           )}
         </form.Field>
-        <AdvancedSection
-          title={t("logins:session.start.networkSection")}
-          summary={
-            egressCount === 0
-              ? t("logins:session.start.networkNone")
-              : t("logins:session.start.networkSummary", { count: egressCount })
-          }
-        >
-          <form.Field name="egressDomains">
-            {(field) => (
-              <TextareaField
-                field={field}
-                label={t("logins:session.start.egress")}
-                description={t("logins:session.start.egressHint")}
-                autoComplete="off"
-                inputClassName="font-mono"
-                rows={2}
-                disabled={pending}
-              />
-            )}
-          </form.Field>
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("logins:session.start.lifetimeSection")}
-          summary={t("logins:session.start.lifetimeSummary", { minutes: timeoutText.trim() })}
-        >
-          <form.Field name="timeoutMinutes">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("logins:session.start.timeout")}
-                description={t("logins:session.start.timeoutHint", {
-                  max: LOGIN_TIMEOUT_MAX_MIN,
-                })}
-                inputMode="numeric"
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={3}
-              />
-            )}
-          </form.Field>
-        </AdvancedSection>
+        {/* The sections join into one ruled list. */}
+        <div className="min-w-0 space-y-8">
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("logins:session.start.networkSection")}
+            summary={
+              egressCount === 0
+                ? t("logins:session.start.networkNone")
+                : t("logins:session.start.networkSummary", { count: egressCount })
+            }
+          >
+            <form.Field name="egressDomains">
+              {(field) => (
+                <TextareaField
+                  field={field}
+                  label={t("logins:session.start.egress")}
+                  description={t("logins:session.start.egressHint")}
+                  autoComplete="off"
+                  inputClassName="font-mono"
+                  rows={2}
+                  disabled={pending}
+                />
+              )}
+            </form.Field>
+          </AdvancedSection>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("logins:session.start.lifetimeSection")}
+            summary={t("logins:session.start.lifetimeSummary", { minutes: timeoutText.trim() })}
+          >
+            <form.Field name="timeoutMinutes">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("logins:session.start.timeout")}
+                  description={t("logins:session.start.timeoutHint", {
+                    max: LOGIN_TIMEOUT_MAX_MIN,
+                  })}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  inputClassName="min-h-11"
+                  maxLength={3}
+                />
+              )}
+            </form.Field>
+          </AdvancedSection>
+        </div>
         {needsConsent ? (
           <div
             role="alert"

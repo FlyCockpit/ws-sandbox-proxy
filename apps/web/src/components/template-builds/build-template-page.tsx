@@ -4,36 +4,33 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { EGRESS_PRESET_NAMES, VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { env } from "@wssp/env/web";
 import { Button } from "@wssp/ui/components/button";
+import { AdvancedSection, FormPage, FormSection } from "@wssp/ui/components/form-page";
 import {
-  AdvancedSection,
-  FormPage,
-  FormSection,
-  focusFirstInvalid,
-} from "@wssp/ui/components/form-page";
-import {
+  hasKeyValueErrors,
   KeyValueEditor,
-  type KeyValueProblem,
-  type KeyValueRow,
-  keyValueProblems,
+  type KeyValueEntry,
 } from "@wssp/ui/components/key-value-editor";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { toast } from "@wssp/ui/components/sileo";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { ArrowLeft } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
+import { FormPageStatus } from "@/components/form-page-status";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useAbortOnUnmount } from "@/hooks/use-abort-on-unmount";
-import { useKeyValueLabels } from "@/hooks/use-key-value-labels";
+import { useKeyValueEditorLabels } from "@/hooks/use-form-field-labels";
 import { useSubmissionFence } from "@/hooks/use-submission-fence";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { HOST_STATUS_REFETCH_MS } from "@/lib/host-status";
+import { PROTOTYPE_NAMES, stateField } from "@/lib/key-value-entries";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { newIntentKey } from "@/lib/sandbox-rules";
 import { hashBuildContext, uploadBuildContext } from "@/lib/sandbox-transfers";
@@ -77,7 +74,11 @@ import {
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const TAG = /^[a-z0-9][a-z0-9._-]{0,62}$/;
-const ARG_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
+/** Build-arg names (the recipe's rule); prototype names are refused too. */
+const ARG_VALIDATION = {
+  keyPattern: /^[A-Za-z_][A-Za-z0-9_]{0,127}$/,
+  reservedKeys: [...PROTOTYPE_NAMES],
+};
 const PICKER_LIMIT = 100;
 const SOURCE_MAX = 65_536;
 /** Default build time limit when left blank (the server's own default). */
@@ -198,7 +199,11 @@ export function BuildTemplateForm({
   const recipeText = useRecipeProblemText();
   const problemText = useBuildProblemText();
   const baseText = useBaseProblemText();
-  const kvLabels = useKeyValueLabels(t("templates:buildPage.addArg"));
+  const editorLabels = useKeyValueEditorLabels();
+  const kvLabels = useMemo(
+    () => ({ ...editorLabels, add: t("templates:buildPage.addArg") }),
+    [editorLabels, t],
+  );
   const targetId = useId();
   const targetErrorId = useId();
   const contextId = useId();
@@ -211,9 +216,7 @@ export function BuildTemplateForm({
   // The source the last refusal was about (a FROM refusal clears on edit).
   const [problemSource, setProblemSource] = useState<string | null>(null);
   const [attempted, setAttempted] = useState(false);
-  const [argRows, setArgRows] = useState<KeyValueRow[]>([]);
-  // False while the editor's .env text has lines it cannot read (never sent).
-  const [argTextValid, setArgTextValid] = useState(true);
+  const [argRows, setArgRows] = useState<KeyValueEntry[]>([]);
   const controller = useRef<AbortController | null>(null);
   // Leaving the page mid-hash aborts it; a hash that still resolves sends nothing.
   const fence = useSubmissionFence();
@@ -324,11 +327,11 @@ export function BuildTemplateForm({
 
   // Derived each render: the composed source, its check, and the warnings.
   const parsedArgs = buildArgsFromRows(argRows);
-  const argProblems = new Map<string, KeyValueProblem>(
-    keyValueProblems(argRows, { keyPattern: ARG_KEY }),
-  );
-  if (parsedArgs.invalidId !== null && !argProblems.has(parsedArgs.invalidId))
-    argProblems.set(parsedArgs.invalidId, "invalidKey");
+  // Flagged rows (and `.env` lines that did not parse) show their own
+  // message; a refusal the rows don't explain (a value too long, too many
+  // args) shows under the editor.
+  const argRowsFlagged = hasKeyValueErrors(argRows, ARG_VALIDATION);
+  const argsInvalid = argRowsFlagged || parsedArgs.invalidRow !== null;
   const composed = composeBuildSource(values.format, values.source, {
     mode: values.egressMode,
     presets: values.presets,
@@ -365,8 +368,7 @@ export function BuildTemplateForm({
     composed.ok &&
     check?.problem === null &&
     baseProblem === null &&
-    argProblems.size === 0 &&
-    argTextValid &&
+    !argsInvalid &&
     target !== "" &&
     !disabled &&
     !targetBlocked &&
@@ -465,7 +467,7 @@ export function BuildTemplateForm({
       });
       // A refusal of the Dockerfile itself is shown and focused there.
       if (next.kind === "recipe" || next.kind === "baseNotFound")
-        focusFirstInvalid(formRef.current);
+        focusFirstInvalidField(formRef.current);
     },
   });
 
@@ -518,14 +520,17 @@ export function BuildTemplateForm({
     { minutes: timeout },
   );
 
+  const pageTitle = template
+    ? t("templates:builds.dialog.title", { label: template.label })
+    : t("templates:builds.dialog.titleNew");
   return (
     <FormPage
       ref={formRef}
-      title={
-        template
-          ? t("templates:builds.dialog.title", { label: template.label })
-          : t("templates:builds.dialog.titleNew")
-      }
+      noValidate
+      // Inside the dashboard frame, which already pads the content column.
+      className="px-0 pt-0"
+      title={pageTitle}
+      aria-label={pageTitle}
       description={t("templates:builds.dialog.description")}
       back={<BackLink lang={lang} />}
       onSubmit={async (event) => {
@@ -533,7 +538,7 @@ export function BuildTemplateForm({
         flushSync(() => setAttempted(true));
         await form.handleSubmit();
         if (!form.state.isValid || !ready || !composed.ok) {
-          focusFirstInvalid(formRef.current);
+          focusFirstInvalidField(formRef.current);
           return;
         }
         submit.mutate({
@@ -543,33 +548,34 @@ export function BuildTemplateForm({
           context: hasCopy ? file : null,
         });
       }}
-      status={
-        progress ? (
-          <span role="status" data-build-progress={progress.phase}>
-            {t(`templates:builds.dialog.${progress.phase}`, { percent: progress.percent })}
-          </span>
-        ) : otherProblem ? (
-          <span role="alert" data-build-problem={otherProblem.kind} className="text-destructive">
-            {problemText(otherProblem)}
-          </span>
-        ) : (
-          <span data-build-plan="">
-            {targetLabel
-              ? t("templates:buildPage.plan", {
-                  target: targetLabel,
-                  minutes: timeout,
-                  used: limits?.usage.minutesUsedThisMonth ?? 0,
-                  limit: limits?.minutesPerMonth ?? "—",
-                })
-              : t("templates:buildPage.planNoTarget", { minutes: timeout })}
-          </span>
-        )
-      }
       actions={
         <>
-          <Button type="submit" size="touch" disabled={pending || disabled || targetBlocked}>
-            {pending ? t("templates:builds.dialog.pending") : t("templates:builds.dialog.submit")}
-          </Button>
+          <FormPageStatus>
+            {progress ? (
+              <span role="status" data-build-progress={progress.phase}>
+                {t(`templates:builds.dialog.${progress.phase}`, { percent: progress.percent })}
+              </span>
+            ) : otherProblem ? (
+              <span
+                role="alert"
+                data-build-problem={otherProblem.kind}
+                className="text-destructive"
+              >
+                {problemText(otherProblem)}
+              </span>
+            ) : (
+              <span data-build-plan="">
+                {targetLabel
+                  ? t("templates:buildPage.plan", {
+                      target: targetLabel,
+                      minutes: timeout,
+                      used: limits?.usage.minutesUsedThisMonth ?? 0,
+                      limit: limits?.minutesPerMonth ?? "—",
+                    })
+                  : t("templates:buildPage.planNoTarget", { minutes: timeout })}
+              </span>
+            )}
+          </FormPageStatus>
           <Button
             type="button"
             size="touch"
@@ -580,6 +586,9 @@ export function BuildTemplateForm({
             }}
           >
             {t("common:actions.cancel")}
+          </Button>
+          <Button type="submit" size="touch" disabled={pending || disabled || targetBlocked}>
+            {pending ? t("templates:builds.dialog.pending") : t("templates:builds.dialog.submit")}
           </Button>
         </>
       }
@@ -593,6 +602,7 @@ export function BuildTemplateForm({
       <FormSection
         title={t("templates:buildPage.recipe")}
         description={t("templates:builds.dialog.sourceHint")}
+        gridClassName="lg:grid-cols-1"
       >
         {template ? null : (
           <form.Field name="slug">
@@ -643,6 +653,7 @@ export function BuildTemplateForm({
       <FormSection
         title={t("templates:builds.dialog.target")}
         description={t("templates:buildPage.targetHint")}
+        gridClassName="lg:grid-cols-1"
       >
         <SegmentedControl
           value={values.targetKind}
@@ -709,266 +720,283 @@ export function BuildTemplateForm({
       <FormSection
         title={t("templates:registerPage.advanced")}
         description={t("templates:buildPage.advancedHint")}
+        gridClassName="lg:grid-cols-1"
       >
-        <AdvancedSection
-          title={t("templates:buildPage.sections.tag")}
-          summary={values.tag}
-          data-advanced="tag"
-        >
-          <form.Field name="tag">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("templates:builds.dialog.tag")}
-                description={t("templates:builds.dialog.tagHint")}
+        {/* One cell: the sections join into one ruled list. */}
+        <div className="min-w-0 space-y-8">
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("templates:buildPage.sections.tag")}
+            summary={values.tag}
+            data-advanced="tag"
+          >
+            <form.Field name="tag">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("templates:builds.dialog.tag")}
+                  description={t("templates:builds.dialog.tagHint")}
+                  autoComplete="off"
+                  inputMode="text"
+                  maxLength={63}
+                  inputClassName="min-h-11 font-mono"
+                />
+              )}
+            </form.Field>
+          </AdvancedSection>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("templates:buildPage.sections.args")}
+            summary={
+              Object.keys(parsedArgs.args).length === 0
+                ? t("templates:buildPage.summary.argsNone")
+                : t("templates:buildPage.summary.args", {
+                    count: Object.keys(parsedArgs.args).length,
+                  })
+            }
+            data-advanced="args"
+          >
+            <KeyValueEditor
+              field={stateField(
+                "buildArgs",
+                argRows,
+                !argRowsFlagged && parsedArgs.invalidRow !== null
+                  ? [t("templates:buildPage.argsRefused")]
+                  : [],
+                setArgRows,
+              )}
+              label={t("templates:builds.dialog.args")}
+              description={t("templates:builds.dialog.argsHint")}
+              labels={kvLabels}
+              keyPattern={ARG_VALIDATION.keyPattern}
+              reservedKeys={ARG_VALIDATION.reservedKeys}
+              fileImport={false}
+            />
+            {secretNames.length > 0 ? (
+              <p
+                role="status"
+                data-secret-warning=""
+                className="text-sm text-amber-700 dark:text-amber-400"
+              >
+                {t("templates:builds.dialog.secretWarning", { names: secretNames.join(", ") })}
+              </p>
+            ) : null}
+          </AdvancedSection>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("templates:buildPage.sections.network")}
+            summary={egressSummary}
+            data-advanced="network"
+          >
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label htmlFor={egressId}>{t("templates:builds.dialog.egress")}</Label>
+              <FormSelect
+                id={egressId}
                 autoComplete="off"
-                inputMode="text"
-                maxLength={63}
-                inputClassName="min-h-11 font-mono"
-              />
+                value={values.egressMode}
+                onValueChange={(next) => form.setFieldValue("egressMode", next as EgressChoice)}
+              >
+                <SelectItem value="asWritten">
+                  {t("templates:builds.dialog.egressAsWritten")}
+                </SelectItem>
+                <SelectItem value="allowlist">
+                  {t("templates:builds.dialog.egressAllowlist")}
+                </SelectItem>
+                <SelectItem value="open" disabled={limits?.openEgress !== true}>
+                  {t("templates:builds.dialog.egressOpen")}
+                </SelectItem>
+              </FormSelect>
+              <p className="text-xs text-muted-foreground">
+                {limits?.openEgress === true
+                  ? t("templates:builds.dialog.egressHint")
+                  : t("templates:builds.dialog.egressOpenUnavailable")}
+              </p>
+            </div>
+            {values.egressMode === "asWritten" ? null : (
+              <>
+                <p className="text-sm">{t("templates:builds.dialog.presets")}</p>
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  {EGRESS_PRESET_NAMES.map((name) => {
+                    const on = values.presets.includes(name);
+                    return (
+                      <Button
+                        key={name}
+                        type="button"
+                        size="touch"
+                        variant={on ? "default" : "outline"}
+                        aria-pressed={on}
+                        data-egress-preset={name}
+                        className="font-mono text-xs"
+                        onClick={() =>
+                          form.setFieldValue(
+                            "presets",
+                            on
+                              ? values.presets.filter((preset) => preset !== name)
+                              : [...values.presets, name],
+                          )
+                        }
+                      >
+                        {name}
+                      </Button>
+                    );
+                  })}
+                </div>
+                <form.Field name="domains">
+                  {(field) => (
+                    <TextField
+                      field={field}
+                      label={t("templates:builds.dialog.domains")}
+                      description={t("templates:builds.dialog.domainsHint")}
+                      autoComplete="off"
+                      inputMode="url"
+                      spellCheck={false}
+                      maxLength={4096}
+                      inputClassName="min-h-11 font-mono"
+                    />
+                  )}
+                </form.Field>
+              </>
             )}
-          </form.Field>
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("templates:buildPage.sections.args")}
-          summary={
-            Object.keys(parsedArgs.args).length === 0
-              ? t("templates:buildPage.summary.argsNone")
-              : t("templates:buildPage.summary.args", {
-                  count: Object.keys(parsedArgs.args).length,
-                })
-          }
-          data-advanced="args"
-        >
-          <KeyValueEditor
-            label={t("templates:builds.dialog.args")}
-            description={t("templates:builds.dialog.argsHint")}
-            rows={argRows}
-            onChange={setArgRows}
-            onValidityChange={setArgTextValid}
-            labels={kvLabels}
-            problems={argProblems}
-            maxRows={64}
-            keyPlaceholder="NAME"
-          />
-          {secretNames.length > 0 ? (
-            <p
-              role="status"
-              data-secret-warning=""
-              className="text-sm text-amber-700 dark:text-amber-400"
-            >
-              {t("templates:builds.dialog.secretWarning", { names: secretNames.join(", ") })}
-            </p>
-          ) : null}
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("templates:buildPage.sections.network")}
-          summary={egressSummary}
-          data-advanced="network"
-        >
-          <div className="flex min-w-0 flex-col gap-2">
-            <Label htmlFor={egressId}>{t("templates:builds.dialog.egress")}</Label>
-            <FormSelect
-              id={egressId}
-              autoComplete="off"
-              value={values.egressMode}
-              onValueChange={(next) => form.setFieldValue("egressMode", next as EgressChoice)}
-            >
-              <SelectItem value="asWritten">
-                {t("templates:builds.dialog.egressAsWritten")}
-              </SelectItem>
-              <SelectItem value="allowlist">
-                {t("templates:builds.dialog.egressAllowlist")}
-              </SelectItem>
-              <SelectItem value="open" disabled={limits?.openEgress !== true}>
-                {t("templates:builds.dialog.egressOpen")}
-              </SelectItem>
-            </FormSelect>
+            {foreignWarning ? (
+              <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
+                {t("templates:builds.dialog.foreignWarning")}
+              </p>
+            ) : null}
+          </AdvancedSection>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("templates:buildPage.sections.resources")}
+            summary={resourcesSummary}
+            data-advanced="resources"
+          >
             <p className="text-xs text-muted-foreground">
-              {limits?.openEgress === true
-                ? t("templates:builds.dialog.egressHint")
-                : t("templates:builds.dialog.egressOpenUnavailable")}
+              {t("templates:builds.dialog.resourcesHint")}
             </p>
-          </div>
-          {values.egressMode === "asWritten" ? null : (
-            <>
-              <p className="text-sm">{t("templates:builds.dialog.presets")}</p>
-              <div className="flex min-w-0 flex-wrap gap-2">
-                {EGRESS_PRESET_NAMES.map((name) => {
-                  const on = values.presets.includes(name);
-                  return (
-                    <Button
-                      key={name}
-                      type="button"
-                      size="touch"
-                      variant={on ? "default" : "outline"}
-                      aria-pressed={on}
-                      data-egress-preset={name}
-                      className="font-mono text-xs"
-                      onClick={() =>
-                        form.setFieldValue(
-                          "presets",
-                          on
-                            ? values.presets.filter((preset) => preset !== name)
-                            : [...values.presets, name],
-                        )
-                      }
-                    >
-                      {name}
-                    </Button>
-                  );
-                })}
-              </div>
-              <form.Field name="domains">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+              <form.Field name="cpuCount">
                 {(field) => (
                   <TextField
                     field={field}
-                    label={t("templates:builds.dialog.domains")}
-                    description={t("templates:builds.dialog.domainsHint")}
+                    label={t("templates:builds.dialog.cpu")}
+                    type="number"
+                    inputMode="numeric"
                     autoComplete="off"
-                    inputMode="url"
-                    spellCheck={false}
-                    maxLength={4096}
-                    inputClassName="min-h-11 font-mono"
+                    min={VM_SIZE_LIMITS.cpuCountMin}
+                    max={VM_SIZE_LIMITS.cpuCountMax}
+                    inputClassName="min-h-11"
                   />
                 )}
               </form.Field>
-            </>
-          )}
-          {foreignWarning ? (
-            <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
-              {t("templates:builds.dialog.foreignWarning")}
-            </p>
-          ) : null}
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("templates:buildPage.sections.resources")}
-          summary={resourcesSummary}
-          data-advanced="resources"
-        >
-          <p className="text-xs text-muted-foreground">
-            {t("templates:builds.dialog.resourcesHint")}
-          </p>
-          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-            <form.Field name="cpuCount">
+              <form.Field name="memoryMiB">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("templates:builds.dialog.memory")}
+                    type="number"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    min={VM_SIZE_LIMITS.memoryMiBMin}
+                    max={VM_SIZE_LIMITS.memoryMiBMax}
+                    step={VM_SIZE_LIMITS.memoryMiBStep}
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+              <form.Field name="diskGiB">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("templates:builds.dialog.disk")}
+                    type="number"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    min={VM_SIZE_LIMITS.diskGiBMin}
+                    max={VM_SIZE_LIMITS.diskGiBMax}
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+              <form.Field name="defaultDiskGiB">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("templates:builds.dialog.defaultDisk")}
+                    type="number"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    min={VM_SIZE_LIMITS.diskGiBMin}
+                    max={VM_SIZE_LIMITS.diskGiBMax}
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+            </div>
+            <form.Field name="timeoutMinutes">
               {(field) => (
                 <TextField
                   field={field}
-                  label={t("templates:builds.dialog.cpu")}
+                  label={t("templates:builds.dialog.timeout")}
+                  description={t("templates:builds.dialog.timeoutHint", { max: maxMinutes })}
                   type="number"
                   inputMode="numeric"
                   autoComplete="off"
-                  min={VM_SIZE_LIMITS.cpuCountMin}
-                  max={VM_SIZE_LIMITS.cpuCountMax}
+                  min={1}
+                  max={maxMinutes}
                   inputClassName="min-h-11"
                 />
               )}
             </form.Field>
-            <form.Field name="memoryMiB">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("templates:builds.dialog.memory")}
-                  type="number"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  min={VM_SIZE_LIMITS.memoryMiBMin}
-                  max={VM_SIZE_LIMITS.memoryMiBMax}
-                  step={VM_SIZE_LIMITS.memoryMiBStep}
-                  inputClassName="min-h-11"
-                />
-              )}
-            </form.Field>
-            <form.Field name="diskGiB">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("templates:builds.dialog.disk")}
-                  type="number"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  min={VM_SIZE_LIMITS.diskGiBMin}
-                  max={VM_SIZE_LIMITS.diskGiBMax}
-                  inputClassName="min-h-11"
-                />
-              )}
-            </form.Field>
-            <form.Field name="defaultDiskGiB">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("templates:builds.dialog.defaultDisk")}
-                  type="number"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  min={VM_SIZE_LIMITS.diskGiBMin}
-                  max={VM_SIZE_LIMITS.diskGiBMax}
-                  inputClassName="min-h-11"
-                />
-              )}
-            </form.Field>
-          </div>
-          <form.Field name="timeoutMinutes">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("templates:builds.dialog.timeout")}
-                description={t("templates:builds.dialog.timeoutHint", { max: maxMinutes })}
-                type="number"
-                inputMode="numeric"
-                autoComplete="off"
-                min={1}
-                max={maxMinutes}
-                inputClassName="min-h-11"
+          </AdvancedSection>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("templates:buildPage.sections.context")}
+            summary={
+              file
+                ? file.name
+                : hasCopy
+                  ? t("templates:buildPage.summary.contextNeeded")
+                  : t("templates:buildPage.summary.contextNone")
+            }
+            // A Dockerfile with COPY needs the context: its section opens.
+            ref={(details: HTMLDetailsElement | null) => {
+              if (details && hasCopy) details.open = true;
+            }}
+            data-advanced="context"
+          >
+            <div className="flex min-w-0 flex-col gap-2">
+              <Label htmlFor={contextId}>{t("templates:builds.dialog.context")}</Label>
+              <input
+                id={contextId}
+                type="file"
+                accept=".tar,application/x-tar"
+                disabled={pending}
+                aria-invalid={fileInvalid || (attempted && contextMissing) || undefined}
+                onChange={(event) => {
+                  const next = event.target.files?.[0] ?? null;
+                  setFile(next);
+                  setFileInvalid(next !== null && !next.name.toLowerCase().endsWith(".tar"));
+                }}
+                className="min-h-11 w-full min-w-0 text-sm file:mr-3 file:min-h-11 file:rounded-md file:border file:bg-background file:px-3"
               />
-            )}
-          </form.Field>
-        </AdvancedSection>
-        <AdvancedSection
-          title={t("templates:buildPage.sections.context")}
-          summary={
-            file
-              ? file.name
-              : hasCopy
-                ? t("templates:buildPage.summary.contextNeeded")
-                : t("templates:buildPage.summary.contextNone")
-          }
-          open={hasCopy ? true : undefined}
-          data-advanced="context"
-        >
-          <div className="flex min-w-0 flex-col gap-2">
-            <Label htmlFor={contextId}>{t("templates:builds.dialog.context")}</Label>
-            <input
-              id={contextId}
-              type="file"
-              accept=".tar,application/x-tar"
-              disabled={pending}
-              aria-invalid={fileInvalid || (attempted && contextMissing) || undefined}
-              onChange={(event) => {
-                const next = event.target.files?.[0] ?? null;
-                setFile(next);
-                setFileInvalid(next !== null && !next.name.toLowerCase().endsWith(".tar"));
-              }}
-              className="min-h-11 w-full min-w-0 text-sm file:mr-3 file:min-h-11 file:rounded-md file:border file:bg-background file:px-3"
-            />
-            <p className="text-xs text-muted-foreground">
-              {t("templates:builds.dialog.contextHint")}
-            </p>
-            {fileInvalid ? (
-              <p role="alert" className="text-sm text-destructive">
-                {t("templates:builds.dialog.contextTypeInvalid")}
+              <p className="text-xs text-muted-foreground">
+                {t("templates:builds.dialog.contextHint")}
               </p>
-            ) : contextMissing ? (
-              <p role={attempted ? "alert" : "status"} data-context-needed="" className="text-sm">
-                {t("templates:builds.dialog.contextNeeded")}
-              </p>
-            ) : !hasCopy && file !== null && check !== null ? (
-              <p role="status" className="text-sm text-muted-foreground">
-                {t("templates:builds.dialog.contextUnused")}
-              </p>
-            ) : null}
-          </div>
-        </AdvancedSection>
+              {fileInvalid ? (
+                <p role="alert" className="text-sm text-destructive">
+                  {t("templates:builds.dialog.contextTypeInvalid")}
+                </p>
+              ) : contextMissing ? (
+                <p role={attempted ? "alert" : "status"} data-context-needed="" className="text-sm">
+                  {t("templates:builds.dialog.contextNeeded")}
+                </p>
+              ) : !hasCopy && file !== null && check !== null ? (
+                <p role="status" className="text-sm text-muted-foreground">
+                  {t("templates:builds.dialog.contextUnused")}
+                </p>
+              ) : null}
+            </div>
+          </AdvancedSection>
+        </div>
       </FormSection>
     </FormPage>
   );

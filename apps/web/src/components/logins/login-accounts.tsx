@@ -13,6 +13,7 @@ import { Input } from "@wssp/ui/components/input";
 import { Label } from "@wssp/ui/components/label";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -449,37 +450,39 @@ function RenameAccountSheet({
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle>{t("logins:accounts.renameTitle")}</SheetTitle>
           <SheetDescription>{t("logins:form.optionalNameHint")}</SheetDescription>
         </SheetHeader>
         <form
           noValidate
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="name">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("logins:form.optionalName")}
-                inputMode="text"
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={80}
-              />
-            )}
-          </form.Field>
-          <ProblemText problem={problem} />
-          <SheetFooter className="px-0">
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="name">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("logins:form.optionalName")}
+                  inputMode="text"
+                  autoComplete="off"
+                  inputClassName="min-h-11"
+                  maxLength={80}
+                />
+              )}
+            </form.Field>
+            <ProblemText problem={problem} />
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(formState) => formState.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -487,9 +490,6 @@ function RenameAccountSheet({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>
@@ -930,52 +930,54 @@ function EditInstanceSheet({
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle>{t("logins:instances.editTitle")}</SheetTitle>
           <SheetDescription>{t("logins:form.optionalNameHint")}</SheetDescription>
         </SheetHeader>
         <form
           noValidate
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="name">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("logins:form.optionalName")}
-                inputMode="text"
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={80}
-              />
-            )}
-          </form.Field>
-          {shareable ? (
-            <form.Field name="maxConcurrent">
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="name">
               {(field) => (
                 <TextField
                   field={field}
-                  label={t("logins:form.maxConcurrent")}
-                  description={t("logins:form.maxConcurrentEditHint")}
-                  inputMode="numeric"
+                  label={t("logins:form.optionalName")}
+                  inputMode="text"
                   autoComplete="off"
                   inputClassName="min-h-11"
-                  maxLength={6}
+                  maxLength={80}
                 />
               )}
             </form.Field>
-          ) : null}
-          <ProblemText problem={problem} />
-          <SheetFooter className="px-0">
+            {shareable ? (
+              <form.Field name="maxConcurrent">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("logins:form.maxConcurrent")}
+                    description={t("logins:form.maxConcurrentEditHint")}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    inputClassName="min-h-11"
+                    maxLength={6}
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            <ProblemText problem={problem} />
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(formState) => formState.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -983,9 +985,6 @@ function EditInstanceSheet({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>
@@ -1085,10 +1084,7 @@ function UploadValueDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open || write.isPending ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {t("logins:upload.title", { name: instanceLabel(t, instance) })}

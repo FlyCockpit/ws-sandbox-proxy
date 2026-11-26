@@ -36,12 +36,15 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
 
 function DialogContent({
   className,
+  bodyClassName,
   children,
   showCloseButton = true,
   closeLabel,
   ...props
-}: DialogPrimitive.Popup.Props &
-  (
+}: DialogPrimitive.Popup.Props & {
+  /** Classes for the inner scroll box that holds the children (padding, gap). */
+  bodyClassName?: string;
+} & (
     | { showCloseButton: false; closeLabel?: string }
     | { showCloseButton?: true; closeLabel: string }
   )) {
@@ -50,18 +53,37 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        // The popup is capped at the visible viewport and does not scroll; its
+        // body does. So a dialog taller than the screen never pushes its title,
+        // close button or action bar off screen: the close button is pinned to
+        // the popup, DialogHeader sticks to the top of the body and
+        // DialogFooter to its bottom. A dialog should still fit without
+        // scrolling at all (`pnpm check:dialogs` measures it); this is the
+        // safety net. Rule: patterns/design-system.md § Form surfaces
         className={cn(
-          "fixed top-[calc(50%+(var(--safe-area-top)-var(--safe-area-bottom))/2)] left-[calc(50%+(var(--safe-area-left)-var(--safe-area-right))/2)] z-50 grid max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] w-[calc(100%-var(--safe-area-left)-var(--safe-area-right)-2rem)] overflow-x-hidden overflow-y-auto max-w-[calc(100%-2rem)] grid-cols-[minmax(0,1fr)] -translate-x-1/2 -translate-y-1/2 gap-4 overscroll-contain rounded-none bg-background p-4 text-xs/relaxed ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          showCloseButton && "[&>[data-slot=dialog-header]]:pr-10",
+          "fixed top-[calc(50%+(var(--safe-area-top)-var(--safe-area-bottom))/2)] left-[calc(50%+(var(--safe-area-left)-var(--safe-area-right))/2)] z-50 flex max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] w-[calc(100%-var(--safe-area-left)-var(--safe-area-right)-2rem)] max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-none bg-background text-xs/relaxed ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
       >
-        {children}
+        <div
+          data-slot="dialog-body"
+          // The edge padding moves onto a sticky header or footer when there is
+          // one (a sticky box cannot reach into its container's padding, so it
+          // must own that space), and the body keeps it otherwise.
+          className={cn(
+            "grid min-h-0 grid-cols-[minmax(0,1fr)] gap-4 overflow-x-hidden overflow-y-auto overscroll-contain px-4 pt-4 pb-4 has-[[data-slot=dialog-footer]]:pb-0 has-[[data-slot=dialog-header]]:pt-0",
+            bodyClassName,
+          )}
+        >
+          {children}
+        </div>
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            render={<Button variant="ghost" className="absolute top-1 right-0" size="icon-touch" />}
+            render={
+              <Button variant="ghost" className="absolute top-1 right-0 z-20" size="icon-touch" />
+            }
           >
             <XIcon />
             <span className="sr-only">{closeLabel}</span>
@@ -72,21 +94,43 @@ function DialogContent({
   );
 }
 
+/**
+ * Title + description. Sticky at the top of the dialog body, so the title
+ * stays visible if the body ever scrolls; it carries the body's top padding
+ * (`pt-4`) itself, and `pr-12` keeps a long title clear of the close button.
+ * In a dialog that fits (the rule) it renders exactly where a plain header
+ * would.
+ */
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-1 text-left", className)}
+      className={cn(
+        "sticky top-0 z-10 flex flex-col gap-1 bg-background pt-4 pr-12 text-left md:pr-10",
+        className,
+      )}
       {...props}
     />
   );
 }
 
+/**
+ * The action bar. Sticky at the bottom of the dialog body, so the primary
+ * action stays on screen however tall the content gets (from inside a
+ * `<form>` too: the form's box ends where the footer does). It carries the
+ * body's bottom padding (`pb-4`); `-mt-2 pt-2` gives the buttons a little air
+ * when content scrolls under them without moving them. Primary action last in
+ * source order: on phones the column is reversed, so it sits on top, nearest
+ * the thumb.
+ */
 function DialogFooter({ className, children, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-footer"
-      className={cn("flex flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)}
+      className={cn(
+        "sticky bottom-0 z-10 -mt-2 flex flex-col-reverse gap-2 bg-background pt-2 pb-4 sm:flex-row sm:justify-end",
+        className,
+      )}
       {...props}
     >
       {children}

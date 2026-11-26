@@ -22,8 +22,9 @@ const reviewed: Record<string, string> = {
     "31841cc3a1c9f70a14e7ac982f894cb646639734568156b6a864b8a79e2a6bf7",
   "apps/web/src/server/auth-session.ts":
     "d814bdeff8c464203bcdf31eae102ca8e99b56c77f378de287d30daede452b33",
+  // Reviewed 11-26 (wssp-fix phase B): pending-state staticData added; the emailVerified reads are unchanged, read only.
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
-    "2bc11a672816e859f9e11a58321d59a7b705beac2e6ff21aa3eb53a44a39f284",
+    "3990c4ebfced8b9c9cdd0a3bb715993f7f5d30c47a2373bbe6d42029a89ddb05",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   "apps/web/src/components/admin/admin-users-page.tsx":
     "5895f67f92935a9de6af500c0b24d90c860f7061bb1ed5aa00bf03b352cf0318",
@@ -47,8 +48,9 @@ const reviewed: Record<string, string> = {
     "6a6c6a8e4fbd9cf302b0e49309778986acf2f12c31be7dbceb99d723d28cc7fa",
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
+  // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.
   "apps/web/src/routes/$lang/_app/_auth.tsx":
-    "eec4c113f20a534feb637d843aedcf9a6a92186ae6325a1854db5613f4a7aa9c",
+    "ffe588302f59acfde55ce2e7a3a9bdfb5205f3051ea9daaf357b1f9b375decc9",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
   "packages/api/src/lib/sensitive-session-two-factor-gate.ts":
     "6a51bb5c7a528ca30fda6700413196bda144bbfc9f6f58d77e878250c192cbcf",

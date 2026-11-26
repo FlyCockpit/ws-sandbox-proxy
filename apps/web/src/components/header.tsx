@@ -22,7 +22,9 @@ export default function Header({ placeholder = false }: { placeholder?: boolean 
   const lang = isSupportedLocale(params.lang) ? params.lang : DEFAULT_LOCALE;
 
   return (
-    <div>
+    // `data-app-header`: what `pnpm check:shell-loading` measures, frame by
+    // frame, from the first paint of a hard refresh to the loaded page.
+    <div data-app-header="">
       <div className="flex min-w-0 flex-row flex-wrap items-center gap-4 px-4 py-2">
         {/* The app name gives way first at every width (see AppNameLink): it
             truncates down to 44px before the row wraps, so the header stays

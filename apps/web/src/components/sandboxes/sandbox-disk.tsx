@@ -4,6 +4,7 @@ import { Button } from "@wssp/ui/components/button";
 import { RadioGroup, RadioGroupItem } from "@wssp/ui/components/radio-group";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -223,10 +224,7 @@ function OffloadPinSheet({
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle id={labelId}>{t("sandboxes:disk.pin.title")}</SheetTitle>
           <SheetDescription>{t("sandboxes:disk.pin.description")}</SheetDescription>
@@ -234,46 +232,51 @@ function OffloadPinSheet({
         <form
           noValidate
           data-disk-pin-form=""
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="offloadPin">
-            {(field) => (
-              <RadioGroup
-                aria-labelledby={labelId}
-                name={radioName}
-                value={field.state.value}
-                onValueChange={(value: DiskView["offloadPin"]) => field.handleChange(value)}
-              >
-                {PINS.map((value) => (
-                  <label key={value} className="flex min-h-11 min-w-0 items-start gap-3 text-sm">
-                    <RadioGroupItem value={value} className="mt-1" />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="font-medium">{t(`sandboxes:disk.pin.${value}`)}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {t(`sandboxes:disk.pin.${value}Hint`)}
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="offloadPin">
+              {(field) => (
+                <RadioGroup
+                  aria-labelledby={labelId}
+                  name={radioName}
+                  value={field.state.value}
+                  onValueChange={(value: DiskView["offloadPin"]) => field.handleChange(value)}
+                >
+                  {PINS.map((value) => (
+                    <label key={value} className="flex min-h-11 min-w-0 items-start gap-3 text-sm">
+                      <RadioGroupItem value={value} className="mt-1" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="font-medium">{t(`sandboxes:disk.pin.${value}`)}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {t(`sandboxes:disk.pin.${value}Hint`)}
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                ))}
-              </RadioGroup>
-            )}
-          </form.Field>
-          {narrowed ? (
-            <p data-disk-pin-narrowed="" className="text-sm text-muted-foreground">
-              {t("sandboxes:disk.pin.narrowed")}
-            </p>
-          ) : null}
-          {failed ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("sandboxes:disk.pin.failed")}
-            </p>
-          ) : null}
-          <SheetFooter className="px-0">
+                    </label>
+                  ))}
+                </RadioGroup>
+              )}
+            </form.Field>
+            {narrowed ? (
+              <p data-disk-pin-narrowed="" className="text-sm text-muted-foreground">
+                {t("sandboxes:disk.pin.narrowed")}
+              </p>
+            ) : null}
+            {failed ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("sandboxes:disk.pin.failed")}
+              </p>
+            ) : null}
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(state) => state.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -281,9 +284,6 @@ function OffloadPinSheet({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>
@@ -373,10 +373,7 @@ function OffloadPolicySheet({
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle id={labelId}>{t("sandboxes:disk.policy.title")}</SheetTitle>
           <SheetDescription>{t("sandboxes:disk.policy.description")}</SheetDescription>
@@ -384,62 +381,67 @@ function OffloadPolicySheet({
         <form
           noValidate
           data-disk-policy-form=""
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="mode">
-            {(field) => (
-              <RadioGroup
-                aria-labelledby={labelId}
-                name={radioName}
-                value={field.state.value}
-                onValueChange={(value: OffloadPolicyView["mode"]) => field.handleChange(value)}
-              >
-                {MODES.map((value) => (
-                  <label key={value} className="flex min-h-11 min-w-0 items-start gap-3 text-sm">
-                    <RadioGroupItem value={value} className="mt-1" />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="font-medium">
-                        {t(`sandboxes:disk.policy.option.${value}`)}
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="mode">
+              {(field) => (
+                <RadioGroup
+                  aria-labelledby={labelId}
+                  name={radioName}
+                  value={field.state.value}
+                  onValueChange={(value: OffloadPolicyView["mode"]) => field.handleChange(value)}
+                >
+                  {MODES.map((value) => (
+                    <label key={value} className="flex min-h-11 min-w-0 items-start gap-3 text-sm">
+                      <RadioGroupItem value={value} className="mt-1" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="font-medium">
+                          {t(`sandboxes:disk.policy.option.${value}`)}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {t(`sandboxes:disk.policy.option.${value}Hint`)}
+                        </span>
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        {t(`sandboxes:disk.policy.option.${value}Hint`)}
-                      </span>
-                    </span>
-                  </label>
-                ))}
-              </RadioGroup>
-            )}
-          </form.Field>
-          <form.Subscribe selector={(state) => state.values.mode}>
-            {(mode) =>
-              mode === "after" ? (
-                <form.Field name="minutes" validators={{ onSubmit: minutesValidator }}>
-                  {(field) => (
-                    <TextField
-                      field={field}
-                      label={t("sandboxes:disk.policy.minutes")}
-                      description={t("sandboxes:disk.policy.minutesHint")}
-                      inputMode="numeric"
-                      autoComplete="off"
-                      inputClassName="min-h-11 tabular-nums"
-                    />
-                  )}
-                </form.Field>
-              ) : null
-            }
-          </form.Subscribe>
-          <p className="text-sm text-muted-foreground">{t("sandboxes:disk.policy.pressure")}</p>
-          {failed ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("sandboxes:disk.policy.failed")}
-            </p>
-          ) : null}
-          <SheetFooter className="px-0">
+                    </label>
+                  ))}
+                </RadioGroup>
+              )}
+            </form.Field>
+            <form.Subscribe selector={(state) => state.values.mode}>
+              {(mode) =>
+                mode === "after" ? (
+                  <form.Field name="minutes" validators={{ onSubmit: minutesValidator }}>
+                    {(field) => (
+                      <TextField
+                        field={field}
+                        label={t("sandboxes:disk.policy.minutes")}
+                        description={t("sandboxes:disk.policy.minutesHint")}
+                        inputMode="numeric"
+                        autoComplete="off"
+                        inputClassName="min-h-11 tabular-nums"
+                      />
+                    )}
+                  </form.Field>
+                ) : null
+              }
+            </form.Subscribe>
+            <p className="text-sm text-muted-foreground">{t("sandboxes:disk.policy.pressure")}</p>
+            {failed ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t("sandboxes:disk.policy.failed")}
+              </p>
+            ) : null}
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(state) => state.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -447,9 +449,6 @@ function OffloadPolicySheet({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>

@@ -193,6 +193,36 @@ async function chooseRevision(user: User, revisionId: string) {
   );
 }
 
+/** A size field's typed input ("vCPUs", "Memory" …); the slider shares its label. */
+const sizeInput = (
+  scope: ReturnType<typeof within>,
+  label: string,
+  inputLabel: string = enCommon.forms.range.inputLabel,
+) => scope.getByRole("textbox", { name: `${label} ${inputLabel}` }) as HTMLInputElement;
+/** Type a size and leave the field, which commits it. */
+async function typeSize(user: User, input: HTMLInputElement, text: string) {
+  await user.clear(input);
+  await user.type(input, text);
+  await user.tab();
+}
+/** Put vCPU above the pool's cap: chosen while waiting for room, then the wait is dropped. */
+async function cpuAbovePoolCap(user: User, cpu: string) {
+  const wait = await openSection(user, "wait");
+  await selectOption(
+    user,
+    wait.getByLabelText(enSandboxes.create.capacityWait),
+    enSandboxes.create.wait["1h"],
+  );
+  const size = await openSection(user, "size");
+  await typeSize(user, sizeInput(size, "vCPUs"), cpu);
+  await selectOption(
+    user,
+    wait.getByLabelText(enSandboxes.create.capacityWait),
+    enSandboxes.create.wait.none,
+  );
+  return size;
+}
+
 const submit = (user: User) =>
   user.click(form().getByRole("button", { name: enSandboxes.create.submit }));
 
@@ -200,16 +230,17 @@ const submit = (user: User) =>
 async function typeEnv(user: User, key: string, value: string) {
   const envs = await openSection(user, "envs");
   await user.click(envs.getByRole("button", { name: enSandboxes.create.envAdd }));
-  const keys = envs.getAllByRole("textbox", { name: /^Key \d+$/ });
+  const keys = envs.getAllByRole("textbox", { name: /^Key, row \d+$/ });
   await user.type(keys[keys.length - 1]!, key);
-  const values = envs.getAllByLabelText(/^Value \d+$/);
+  const values = envs.getAllByLabelText(/^Value(, row \d+| for .+)$/);
   await user.click(values[values.length - 1]!);
   await user.paste(value);
 }
+/** The env editor's text inputs (an empty editor shows one blank row). */
 const envValues = () =>
-  [...page().querySelectorAll<HTMLInputElement>('[data-section="envs"] input')].map(
-    (input) => input.value,
-  );
+  [
+    ...page().querySelectorAll<HTMLInputElement>('[data-section="envs"] input:not([type="file"])'),
+  ].map((input) => input.value);
 
 beforeEach(() => {
   server.current = newFakeSandboxServer();
@@ -266,6 +297,79 @@ describe("defaults and layout", () => {
       lifecycle: { onTimeout: "stop" },
     });
     expect(created()).not.toHaveProperty("sandboxHostId");
+  });
+
+  it("a submit while pools load doesn't freeze Pool: no pools still falls back to the only host", async () => {
+    server.current.pools = [];
+    server.current.hosts = [fakeHost()];
+    let release = () => {};
+    server.current.gates.listPools = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const user = userEvent.setup();
+    await mount();
+    await submit(user);
+    expect(calls("createSandbox")).toHaveLength(0);
+    release();
+    await waitFor(() =>
+      expect(
+        form()
+          .getByRole("button", { name: enSandboxes.create.placementHost })
+          .getAttribute("aria-pressed"),
+      ).toBe("true"),
+    );
+    await pickTemplate(user);
+    await submit(user);
+    await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+    expect(created()).toMatchObject({ sandboxHostId: "host-1" });
+  });
+
+  it("while the pickers load, Template and Where it runs draw their loaded controls, disabled", async () => {
+    server.current.pools = [{ id: "pool-1", slug: "lab", label: "Lab" }];
+    let release = () => {};
+    const loaded = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    for (const procedure of ["listTemplates", "listPools", "listHosts"])
+      server.current.gates[procedure] = loaded;
+    await mount();
+    /** The shape of both sections: their controls, and no skeleton standing in for one. */
+    const shape = () => {
+      const template = form().getByRole("combobox", { name: enSandboxes.create.template });
+      const pool = form().getByRole("combobox", { name: enSandboxes.create.pool });
+      const sections = [template.closest("fieldset")!, pool.closest("fieldset")!];
+      return {
+        skeletons: sections.flatMap((section) => [
+          ...section.querySelectorAll('[data-slot="skeleton"]'),
+        ]).length,
+        placementPool: form()
+          .getByRole("button", { name: enSandboxes.create.placementPool })
+          .getAttribute("aria-pressed"),
+        trustLine: page().querySelector("[data-pool-trust-line]") !== null,
+        disabled: [(template as HTMLButtonElement).disabled, (pool as HTMLButtonElement).disabled],
+      };
+    };
+    const loading = shape();
+    expect(loading).toEqual({
+      skeletons: 0,
+      placementPool: "true",
+      trustLine: true,
+      disabled: [true, true],
+    });
+    release();
+    await waitFor(() =>
+      expect(
+        (form().getByRole("combobox", { name: enSandboxes.create.pool }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    await waitFor(() =>
+      expect(
+        (form().getByRole("combobox", { name: enSandboxes.create.template }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    expect(shape()).toEqual({ ...loading, disabled: [false, false] });
   });
 
   it("without pools the placement is Host, and the only usable host is preselected", async () => {
@@ -425,7 +529,7 @@ describe("creating a sandbox", () => {
     // A label value without a key is a labels problem, shown in its (opened) section.
     const labels = await openSection(user, "labels");
     await user.click(labels.getByRole("button", { name: enSandboxes.create.labelsAdd }));
-    await user.type(labels.getByLabelText("Value 1"), "oops");
+    await user.type(labels.getByLabelText("Value, row 1"), "oops");
     await submit(user);
     expect(page().querySelector('[data-draft-problem="labelsSyntax"]')).not.toBeNull();
     expect(calls("createSandbox")).toEqual([]);
@@ -448,8 +552,8 @@ describe("creating a sandbox", () => {
     await user.click(form().getByRole("radio", { name: enSandboxes.lifetime.destroyOption }));
     const labels = await openSection(user, "labels");
     await user.click(labels.getByRole("button", { name: enSandboxes.create.labelsAdd }));
-    await user.type(labels.getByLabelText("Key 1"), "team");
-    await user.type(labels.getByLabelText("Value 1"), "infra");
+    await user.type(labels.getByLabelText("Key, row 1"), "team");
+    await user.type(labels.getByLabelText("Value for team"), "infra");
     await typeEnv(user, "APP", "synthetic-create-env");
     await submit(user);
     await waitFor(() => expect(navigate).toHaveBeenCalled());
@@ -476,7 +580,7 @@ describe("creating a sandbox", () => {
     await pickHost(user);
     await pickTemplate(user);
     const envs = await openSection(user, "envs");
-    await user.click(envs.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(envs.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     await user.click(envs.getByRole("textbox", { name: enSandboxes.create.envTitle }));
     await user.paste('# comment\nAPP=hello\nexport GREETING="hi there"\n');
     await submit(user);
@@ -490,7 +594,7 @@ describe("creating a sandbox", () => {
     await pickHost(user);
     await pickTemplate(user);
     const envs = await openSection(user, "envs");
-    await user.click(envs.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(envs.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     const text = envs.getByRole("textbox", { name: enSandboxes.create.envTitle });
     await user.click(text);
     await user.paste("FOO=bar\nREQUIRED_SECRET");
@@ -510,7 +614,7 @@ describe("creating a sandbox", () => {
     await pickHost(user);
     await pickTemplate(user);
     const labels = await openSection(user, "labels");
-    await user.click(labels.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(labels.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     const text = labels.getByRole("textbox", { name: enSandboxes.create.labels });
     await user.click(text);
     await user.paste("team=a\nowner");
@@ -525,12 +629,43 @@ describe("creating a sandbox", () => {
     await pickHost(user);
     await pickTemplate(user);
     const labels = await openSection(user, "labels");
-    await user.click(labels.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(labels.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     await user.click(labels.getByRole("textbox", { name: enSandboxes.create.labels }));
     await user.paste('NOTE="first\\nTEAM=prod"');
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
     expect(created().metadata).toEqual({ NOTE: "first\nTEAM=prod" });
+  });
+
+  it("a label key .env text can't carry (#team) keeps the editor in rows and is sent as typed", async () => {
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickHost(user);
+    await pickTemplate(user);
+    const labels = await openSection(user, "labels");
+    const textMode = () => labels.queryByRole("button", { name: enCommon.forms.keyValue.textMode });
+    expect(textMode()).not.toBeNull();
+    const key = labels.getByRole("textbox", { name: /^Key, row 1$/ }) as HTMLInputElement;
+    await user.type(key, "#team");
+    await user.click(labels.getByLabelText(/^Value for #team$/));
+    await user.paste("ops");
+    // The text view would read `#team=ops` as a comment and drop it: refused,
+    // with the reason, and the row stays as typed.
+    expect(textMode()).toBeNull();
+    expect(labels.getByText(enSandboxes.create.labelsTextUnavailable)).toBeTruthy();
+    expect(key.value).toBe("#team");
+    await user.type(labels.getByLabelText(/^Value for #team$/), "!");
+    expect((labels.getByRole("textbox", { name: /^Key, row 1$/ }) as HTMLInputElement).value).toBe(
+      "#team",
+    );
+    await submit(user);
+    await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+    expect(created().metadata).toEqual({ "#team": "ops!" });
+    // A key text can carry offers the text view again.
+    await user.clear(labels.getByRole("textbox", { name: /^Key, row 1$/ }));
+    await user.type(labels.getByRole("textbox", { name: /^Key, row 1$/ }), "team");
+    expect(textMode()).not.toBeNull();
+    expect(labels.queryByText(enSandboxes.create.labelsTextUnavailable)).toBeNull();
   });
 
   it("reserved or invalid environment names are refused inline, never sent", async () => {
@@ -540,7 +675,7 @@ describe("creating a sandbox", () => {
     await pickTemplate(user);
     await typeEnv(user, "HOME", "/tmp");
     expect(page().querySelector('[data-section="envs"]')?.textContent).toContain(
-      enCommon.keyValue.problem.reservedKey.replace("{{key}}", "HOME"),
+      enCommon.forms.keyValue.errors.reservedKey.replace("{{key}}", "HOME"),
     );
     await submit(user);
     expect(page().querySelector('[data-draft-problem="envs"]')).not.toBeNull();
@@ -553,10 +688,10 @@ describe("creating a sandbox", () => {
     await pickHost(user);
     await pickTemplate(user);
     await typeEnv(user, "__proto__", "x");
-    const reserved = enCommon.keyValue.problem.reservedKey.replace("{{key}}", "__proto__");
+    const reserved = enCommon.forms.keyValue.errors.reservedKey.replace("{{key}}", "__proto__");
     expect(page().querySelector('[data-section="envs"]')?.textContent).toContain(reserved);
     const labels = await openSection(user, "labels");
-    await user.click(labels.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(labels.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     await user.click(labels.getByRole("textbox", { name: enSandboxes.create.labels }));
     await user.paste("__proto__=y");
     expect(page().querySelector('[data-section="labels"]')?.textContent).toContain(reserved);
@@ -912,12 +1047,19 @@ describe("size sliders", () => {
     await pickHost(user);
     await chooseRevision(user, "tpl-1");
     const size = await openSection(user, "size");
-    expect((size.getByRole("spinbutton", { name: "vCPUs" }) as HTMLInputElement).value).toBe("2");
-    expect((size.getByRole("spinbutton", { name: "Memory" }) as HTMLInputElement).value).toBe("2");
-    const disk = size.getByRole("spinbutton", { name: "Root disk" }) as HTMLInputElement;
-    expect(disk.value).toBe("48");
-    expect(disk.getAttribute("min")).toBe("8");
-    expect(size.getByText(/Root disk: 48 GiB if left blank; at least 8 GiB/)).toBeTruthy();
+    expect(sizeInput(size, "vCPUs").value).toBe("2 vCPU");
+    expect(sizeInput(size, "Memory").value).toBe("2 GiB");
+    expect(sizeInput(size, "Root disk").value).toBe("48 GiB");
+    expect(size.getByText(/Default 48 GiB; at least 8 GiB/)).toBeTruthy();
+    // The default is marked as coming from the pinned version.
+    expect(
+      size.getAllByText(
+        enCommon.forms.range.defaultFrom.replace(
+          "{{source}}",
+          enSandboxes.create.sizeDefaultSource.replace("{{revision}}", "1"),
+        ),
+      ).length,
+    ).toBe(3);
     expect(
       page().querySelector('details[data-section="size"] [data-slot="advanced-section-summary"]')
         ?.textContent,
@@ -947,12 +1089,12 @@ describe("size sliders", () => {
         /^Alpha · /,
       );
       const size = await openSection(user, "size");
-      const memory = size.getByRole("spinbutton", { name: copy.create.memory });
-      await user.clear(memory);
-      await user.type(memory, "3.1");
-      const disk = size.getByRole("spinbutton", { name: copy.create.disk });
-      await user.clear(disk);
-      await user.type(disk, "40");
+      const inputLabel = (lang === "en-US" ? enCommon : esCommon).forms.range.inputLabel;
+      const memory = sizeInput(size, copy.create.memory, inputLabel);
+      await typeSize(user, memory, "3.1");
+      // Shown in GiB, rounded to the 256 MiB step.
+      expect(memory.value).toBe("3 GiB");
+      await typeSize(user, sizeInput(size, copy.create.disk, inputLabel), "40");
       await user.click(form().getByRole("button", { name: copy.create.submit }));
       await waitFor(() => expect(navigate).toHaveBeenCalled());
       expect(created()).toMatchObject({ memoryMiB: 3072, diskGiB: 40 });
@@ -970,15 +1112,12 @@ describe("size sliders", () => {
     expect(size.getByText("This host has 4 vCPUs free.")).toBeTruthy();
     expect(size.getByText("This host has 3.5 GiB of memory free.")).toBeTruthy();
     expect(size.getByText("This host has 95 GiB of disk free.")).toBeTruthy();
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    expect(cpu.getAttribute("max")).toBe("4");
-    await user.clear(cpu);
-    await user.type(cpu, "8");
-    expect(cpu.getAttribute("aria-invalid")).toBe("true");
-    await submit(user);
-    expect(calls("createSandbox")).toEqual([]);
-    await user.clear(cpu);
-    await user.type(cpu, "3");
+    const cpu = sizeInput(size, "vCPUs");
+    // More than the host has is lowered to what it has, with the reason.
+    await typeSize(user, cpu, "8");
+    expect(cpu.value).toBe("4 vCPU");
+    expect(size.getByRole("status").textContent).toContain("This host has 4 vCPUs free");
+    await typeSize(user, cpu, "3");
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
     expect(created()).toMatchObject({ cpuCount: 3 });
@@ -998,19 +1137,12 @@ describe("size sliders", () => {
     );
     const capacityReads = calls("poolCapacity");
     expect(capacityReads.at(-1)?.input).toEqual({ id: "pool-1", template: "revision/tpl-1" });
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    await user.clear(cpu);
-    await user.type(cpu, "8");
-    expect(cpu.getAttribute("aria-invalid")).toBe("true");
-    const memory = size.getByRole("spinbutton", { name: "Memory" });
-    await user.clear(memory);
-    await user.type(memory, "4");
+    const cpu = sizeInput(size, "vCPUs");
+    await typeSize(user, cpu, "8");
+    expect(cpu.value).toBe("6 vCPU");
+    await typeSize(user, sizeInput(size, "Memory"), "4");
     // Moving sizes never re-reads the budgeted capacity view.
     expect(calls("poolCapacity")).toHaveLength(capacityReads.length);
-    await submit(user);
-    expect(calls("createSandbox")).toEqual([]);
-    await user.clear(cpu);
-    await user.type(cpu, "6");
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
     expect(created()).toMatchObject({ poolId: "pool-1", cpuCount: 6, memoryMiB: 4096 });
@@ -1038,9 +1170,12 @@ describe("size sliders", () => {
     await pickHost(user);
     const size = await openSection(user, "size");
     await waitFor(() => expect(size.getByText(enSandboxes.create.latestSizeHint)).toBeTruthy());
-    expect((size.getByRole("spinbutton", { name: "vCPUs" }) as HTMLInputElement).value).toBe("");
-    expect((size.getByRole("spinbutton", { name: "Memory" }) as HTMLInputElement).value).toBe("");
-    expect(size.queryByText(/if left blank/)).toBeNull();
+    // Untouched fields say they are not set; no default mark or Reset.
+    expect(size.getAllByText(enSandboxes.create.sizeNotSet).length).toBe(3);
+    expect(size.queryByText(/^Default/)).toBeNull();
+    expect(size.queryByRole("button", { name: enCommon.forms.range.reset })).toBeNull();
+    // A shown-only value never reads as over the host's cap.
+    expect(sizeInput(size, "vCPUs").getAttribute("aria-invalid")).toBeNull();
     expect(
       page().querySelector('details[data-section="size"] [data-slot="advanced-section-summary"]')
         ?.textContent,
@@ -1055,6 +1190,59 @@ describe("size sliders", () => {
       expect(created()).not.toHaveProperty(field);
   });
 
+  it("with Latest, typing exactly the shown value is an override and is sent", async () => {
+    server.current.templates = [fakeTemplate({ cpuCount: 8, memoryMiB: 2048 })];
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickTemplate(user);
+    await pickHost(user);
+    const size = await openSection(user, "size");
+    // Alpha has 4 vCPUs free: the untouched field shows 4 and sends nothing.
+    const cpu = sizeInput(size, "vCPUs");
+    await waitFor(() => expect(cpu.value).toBe("4 vCPU"));
+    expect(size.getAllByText(enSandboxes.create.sizeNotSet).length).toBe(3);
+    await typeSize(user, cpu, "4");
+    expect(size.getAllByText(enSandboxes.create.sizeNotSet).length).toBe(2);
+    await submit(user);
+    await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+    expect(created()).toMatchObject({ cpuCount: 4 });
+    expect(created()).not.toHaveProperty("memoryMiB");
+  });
+
+  it.each(["latest", "pinned"])(
+    "Use template default puts %s overrides back to inherit (nothing sent)",
+    async (mode) => {
+      server.current.templates = [
+        fakeTemplate({ cpuCount: 2, memoryMiB: 2048, defaultDiskGiB: 48, minDiskGiB: 8 }),
+      ];
+      const user = userEvent.setup();
+      await openCreate(user);
+      if (mode === "pinned") await chooseRevision(user, "tpl-1");
+      else await pickTemplate(user);
+      await pickHost(user);
+      const size = await openSection(user, "size");
+      const templateDefaultButton = () =>
+        size.queryByRole("button", { name: enSandboxes.create.sizeUseTemplateDefault });
+      // Nothing overridden: nothing to put back.
+      expect(templateDefaultButton()).toBeNull();
+      await typeSize(user, sizeInput(size, "vCPUs"), "3");
+      await typeSize(user, sizeInput(size, "Memory"), "3");
+      await user.click(templateDefaultButton()!);
+      expect(templateDefaultButton()).toBeNull();
+      expect(
+        page().querySelector('details[data-section="size"] [data-slot="advanced-section-summary"]')
+          ?.textContent,
+      ).toBe(enSandboxes.create.summary.templateDefault);
+      if (mode === "latest")
+        expect(size.getAllByText(enSandboxes.create.sizeNotSet).length).toBe(3);
+      else expect(sizeInput(size, "vCPUs").value).toBe("2 vCPU");
+      await submit(user);
+      await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+      for (const field of ["cpuCount", "memoryMiB", "diskGiB"])
+        expect(created()).not.toHaveProperty(field);
+    },
+  );
+
   it("a pool cap that would refuse a submit is read again first, and a raised cap lets it through", async () => {
     server.current.pools = [{ id: "pool-1", slug: "lab", label: "Lab" }];
     server.current.poolLargest = { cpuCount: 6, memoryMiB: 8192, diskGiB: 100 };
@@ -1068,9 +1256,8 @@ describe("size sliders", () => {
       ).toBeTruthy(),
     );
     const reads = calls("poolCapacity").length;
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    await user.clear(cpu);
-    await user.type(cpu, "8");
+    await cpuAbovePoolCap(user, "8");
+    expect(sizeInput(size, "vCPUs").getAttribute("aria-invalid")).toBe("true");
     // Still 6: one fresh read, then the refusal.
     await submit(user);
     await waitFor(() => expect(calls("poolCapacity")).toHaveLength(reads + 1));
@@ -1095,9 +1282,8 @@ describe("size sliders", () => {
         size.getByText("The most any host in this pool can take now is 6 vCPUs."),
       ).toBeTruthy(),
     );
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    await user.clear(cpu);
-    await user.type(cpu, "8");
+    await cpuAbovePoolCap(user, "8");
+    expect(sizeInput(size, "vCPUs").getAttribute("aria-invalid")).toBe("true");
     const reads = calls("poolCapacity").length;
     let release = () => {};
     server.current.gates.poolCapacity = new Promise<void>((resolve) => {
@@ -1125,9 +1311,8 @@ describe("size sliders", () => {
         size.getByText("The most any host in this pool can take now is 6 vCPUs."),
       ).toBeTruthy(),
     );
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    await user.clear(cpu);
-    await user.type(cpu, "8");
+    await cpuAbovePoolCap(user, "8");
+    expect(sizeInput(size, "vCPUs").getAttribute("aria-invalid")).toBe("true");
     server.current.errors.poolCapacity = [new Error("network")];
     await submit(user);
     // The server checks capacity under its locks; the browser does not refuse.
@@ -1285,10 +1470,12 @@ describe("pools, paging and refusals", () => {
     const size = await openSection(user, "size");
     await waitFor(() => expect(calls("poolCapacity").length).toBeGreaterThan(0));
     const reads = calls("poolCapacity").length;
-    const cpu = size.getByRole("spinbutton", { name: "vCPUs" });
-    await user.clear(cpu);
-    await user.type(cpu, "8");
+    const cpu = sizeInput(size, "vCPUs");
+    await typeSize(user, cpu, "8");
+    expect(cpu.value).toBe("8 vCPU");
     expect(cpu.getAttribute("aria-invalid")).not.toBe("true");
+    // The cap is said, not applied.
+    expect(size.getByText("The most any host in this pool can take now is 6 vCPUs.")).toBeTruthy();
     expect(page().querySelector("[data-size-waits]")?.textContent).toBe(
       enSandboxes.create.capacity.poolWaits,
     );
@@ -1377,10 +1564,19 @@ describe("pools, paging and refusals", () => {
       expect(page().querySelector('[data-draft-problem="envsCleared"]')?.textContent).toBe(
         enSandboxes.draft.envsCleared,
       );
+      // The editor names the keys to fill in again and is marked invalid
+      // (focus lands on it); the value input itself is the shared editor's.
+      expect(page().querySelector('[data-section="envs"]')?.textContent).toContain(
+        enSandboxes.create.envReenter.replace("{{keys}}", "APP"),
+      );
+      expect(
+        page()
+          .querySelector('[data-section="envs"] input[aria-label="Key, row 1"]')
+          ?.getAttribute("aria-invalid"),
+      ).toBe("true");
       const value = page().querySelector<HTMLInputElement>(
-        '[data-section="envs"] input[aria-label="Value 1"]',
+        '[data-section="envs"] input[aria-label="Value for APP"]',
       )!;
-      expect(value.getAttribute("aria-invalid")).toBe("true");
       expect(calls("createSandbox")).toHaveLength(1);
       await user.click(value);
       await user.paste("typed-again");
@@ -1406,7 +1602,7 @@ describe("pools, paging and refusals", () => {
     await body().findByText(enSandboxes.problem.hostCapacity);
     const envs = await openSection(user, "envs");
     await user.click(
-      envs.getByRole("button", { name: enCommon.keyValue.remove.replace("{{key}}", "APP") }),
+      envs.getByRole("button", { name: enCommon.forms.keyValue.remove.replace("{{key}}", "APP") }),
     );
     expect(page().querySelector("[data-env-cleared]")).toBeNull();
     await submit(user);
@@ -1424,7 +1620,7 @@ describe("pools, paging and refusals", () => {
     await submit(user);
     await body().findByText(enSandboxes.problem.hostCapacity);
     const envs = await openSection(user, "envs");
-    await user.click(envs.getByRole("button", { name: enCommon.keyValue.textMode }));
+    await user.click(envs.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     const text = envs.getByRole("textbox", { name: enSandboxes.create.envTitle });
     expect((text as HTMLTextAreaElement).value).toBe("TOKEN=");
     // Every text edit makes new rows: the cleared key, not a row id, is what waits.
@@ -1516,7 +1712,7 @@ describe("pools, paging and refusals", () => {
       // Leaving the page and coming back starts a fresh, empty draft.
       cleanup();
       await openCreate(user);
-      expect(envValues()).toEqual([]);
+      expect(envValues()).toEqual(["", ""]);
       expect(JSON.stringify(storage.mock.calls)).not.toContain(sentinel);
       expect(JSON.stringify(localStorage)).not.toContain(sentinel);
       expect(JSON.stringify(sessionStorage)).not.toContain(sentinel);
@@ -1815,20 +2011,20 @@ describe("first-time walk fixes", () => {
     );
   });
 
-  it("typing above the host's free memory is refused inline at once, said once", async () => {
+  it("typing above the host's free memory is lowered to it at once, with the reason", async () => {
     const user = userEvent.setup();
     await openCreate(user);
     await pickHost(user);
     await chooseRevision(user, "tpl-1");
     const size = await openSection(user, "size");
-    const memory = size.getByRole("spinbutton", { name: "Memory" });
-    await user.clear(memory);
-    await user.type(memory, "3.75");
-    expect(memory.getAttribute("aria-invalid")).toBe("true");
-    // The capacity line is not repeated next to the same error.
+    const memory = sizeInput(size, "Memory");
+    await typeSize(user, memory, "3.75");
+    expect(memory.value).toBe("3.5 GiB");
     expect(size.getAllByText("This host has 3.5 GiB of memory free.")).toHaveLength(1);
+    expect(size.getByRole("status").textContent).toContain("Set to 3.5 GiB");
     await submit(user);
-    expect(calls("createSandbox")).toEqual([]);
+    await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+    expect(created()).toMatchObject({ memoryMiB: 3584 });
   });
 
   it("a pooled RAM refusal is shown at Memory, echoed in the action bar, and focus moves there", async () => {
@@ -1846,7 +2042,7 @@ describe("first-time walk fixes", () => {
     await waitFor(() => expect(summary()?.textContent).toContain(enSandboxes.problem.capacityRam));
     const size = page().querySelector<HTMLDetailsElement>('details[data-section="size"]')!;
     expect(size.open).toBe(true);
-    const memory = within(size).getByRole("spinbutton", { name: "Memory" });
+    const memory = sizeInput(within(size), "Memory");
     expect(memory.getAttribute("aria-invalid")).toBe("true");
     expect(within(size).getByText(enSandboxes.problem.capacityRam)).toBeTruthy();
     await waitFor(() => expect(document.activeElement).toBe(memory));

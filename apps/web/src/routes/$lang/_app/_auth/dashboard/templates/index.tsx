@@ -4,6 +4,7 @@ import { TemplatesPage } from "@/components/templates/templates-page";
 import { parseTemplatesSearch } from "@/lib/template-rules";
 
 export const Route = createFileRoute("/$lang/_app/_auth/dashboard/templates/")({
+  staticData: { pendingShape: "list" },
   validateSearch: parseTemplatesSearch,
   component: TemplatesRoute,
 });

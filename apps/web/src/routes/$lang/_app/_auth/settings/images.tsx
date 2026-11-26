@@ -5,6 +5,7 @@ import { AccountImagePolicyCard } from "@/components/settings/account-image-poli
 import { AccountSettingsLayout } from "@/components/settings/account-settings-layout";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/images")({
+  staticData: { pendingShape: "list" },
   component: ImagesRoute,
 });
 

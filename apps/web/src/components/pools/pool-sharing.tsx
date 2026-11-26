@@ -416,6 +416,9 @@ export function ShareForm({
       actions={
         secret ? undefined : (
           <>
+            <Button size="touch" variant="outline" type="button" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(state) => state.isValid}>
               {(valid) => (
                 <Button size="touch" type="submit" disabled={action.pending || !valid}>
@@ -423,9 +426,6 @@ export function ShareForm({
                 </Button>
               )}
             </form.Subscribe>
-            <Button size="touch" variant="outline" type="button" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </>
         )
       }
@@ -467,7 +467,11 @@ export function ShareForm({
               </form.Field>
             ))}
           </FormSection>
-          <AdvancedSection title={t("hosts:sharing.limits")} summary={capsSummary}>
+          <AdvancedSection
+            gridClassName="lg:grid-cols-1"
+            title={t("hosts:sharing.limits")}
+            summary={capsSummary}
+          >
             <p className="text-sm text-muted-foreground">{t("hosts:sharing.nullCaps")}</p>
             {(["maxMemoryMiB", "maxVcpu", "maxDiskGiB"] as const).map((name) => (
               <form.Field key={name} name={name}>
@@ -486,6 +490,7 @@ export function ShareForm({
           </AdvancedSection>
           {!share ? (
             <AdvancedSection
+              gridClassName="lg:grid-cols-1"
               title={t("hosts:sharing.invitation")}
               summary={t(
                 values.signupAllowed
@@ -561,11 +566,11 @@ export function PoolSharing({
       onClose={onClose}
       actions={
         <>
-          <Button size="touch" onClick={() => setEditing("new")}>
-            {t("hosts:sharing.add")}
-          </Button>
           <Button size="touch" variant="outline" onClick={onClose}>
             {t("common:actions.close")}
+          </Button>
+          <Button size="touch" onClick={() => setEditing("new")}>
+            {t("hosts:sharing.add")}
           </Button>
         </>
       }

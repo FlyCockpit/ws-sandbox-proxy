@@ -23,6 +23,7 @@ import { twoFactorCodeError, twoFactorPasswordError } from "@/lib/two-factor-err
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/security")({
+  staticData: { pendingShape: "detail" },
   component: SecuritySettings,
 });
 

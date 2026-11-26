@@ -356,7 +356,7 @@
     "revision": "Revision",
     "latest": "Latest version (chosen when you create)",
     "revisionOption": "Revision {{revision}} · {{architecture}} · {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB (min {{minDiskGiB}})",
-    "revisionDiskHint": "Root disk: {{defaultDiskGiB}} GiB if left blank; at least {{minDiskGiB}} GiB (the image's own root). A larger disk grows the root filesystem on first boot.",
+    "revisionDiskHint": "Default {{defaultDiskGiB}} GiB; at least {{minDiskGiB}} GiB (the image's own root). A larger disk grows the root filesystem on first boot.",
     "revisionsFailed": "Couldn't load revisions.",
     "moreRevisions": "Load more revisions",
     "latestSizeHint": "The latest version's size is known only when you create. Pin a version under Template version to see its size here.",
@@ -409,8 +409,6 @@
     "vcpu": "vCPUs",
     "memory": "Memory",
     "disk": "Root disk",
-    "templateDefault": "Template default",
-    "resetDefault": "Use template default",
     "capacity": {
       "hostCpu_one": "This host has {{count}} vCPU free.",
       "hostCpu_other": "This host has {{count}} vCPUs free.",
@@ -430,6 +428,7 @@
     "envHint": "Private defaults for commands and terminals: up to 64 variables. HOME, SHELL and TERM are reserved. Values stay private on the server and host.",
     "envAdd": "Add variable",
     "labelsRowsHint": "Optional labels to find and group sandboxes: up to 32. Never put secrets here.",
+    "labelsTextUnavailable": "Some keys can't be written as KEY=value lines; edit them as rows.",
     "labelsAdd": "Add label",
     "networkTitle": "Network",
     "accessTitle": "Access",
@@ -485,7 +484,12 @@
     "envCleared": "For safety, values are cleared after a refused create. Enter them again.",
     "previewPorts": "Preview ports",
     "previewPortsHint": "Guest ports you may share later as a preview link, for example 3000, 8080. Leave blank if you don't need links; a port forward always works.",
-    "showProblem": "Show"
+    "showProblem": "Show",
+    "sizeNotSet": "Not set: the latest version's own size is used.",
+    "sizeUseTemplateDefault": "Use template default",
+    "sizeDefaultSource": "version {{revision}}",
+    "envReenter": "Enter the values for {{keys}} again, or remove those variables.",
+    "labelKeyInvalid": "{{key}} can't be a label name: no spaces, quotes or =."
   },
   "draft": {
     "noHost": "Choose a pool or an explicit host.",

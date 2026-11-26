@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@wssp/ui/components/button";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -48,34 +49,33 @@ export function AdminImageQuotaSheet({
   });
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle>{t("admin:imageQuota.title", { name: user.name || user.email })}</SheetTitle>
           <SheetDescription>{t("admin:imageQuota.description")}</SheetDescription>
         </SheetHeader>
-        {quota.isPending ? <Skeleton className="m-4 h-40" /> : null}
-        {quota.isError ? (
-          <InlineRetry
-            message={t("admin:imageQuota.loadFailed")}
-            onRetry={() => void quota.refetch()}
-          />
-        ) : null}
-        {quota.data ? (
-          <QuotaForm
-            userId={user.id}
-            initial={{
-              storedGiBMax: quota.data.storedGiBMax,
-              downloadsPerHourMax: quota.data.downloadsPerHourMax,
-              concurrentBuildsMax: quota.data.concurrentBuildsMax,
-              buildMinutesPerMonthMax: quota.data.buildMinutesPerMonthMax,
-              offloadGiBMax: quota.data.offloadGiBMax,
-            }}
-            onClose={onClose}
-          />
-        ) : null}
+        <SheetBody className="flex min-w-0 flex-col gap-4">
+          {quota.isPending ? <Skeleton className="h-40" /> : null}
+          {quota.isError ? (
+            <InlineRetry
+              message={t("admin:imageQuota.loadFailed")}
+              onRetry={() => void quota.refetch()}
+            />
+          ) : null}
+          {quota.data ? (
+            <QuotaForm
+              userId={user.id}
+              initial={{
+                storedGiBMax: quota.data.storedGiBMax,
+                downloadsPerHourMax: quota.data.downloadsPerHourMax,
+                concurrentBuildsMax: quota.data.concurrentBuildsMax,
+                buildMinutesPerMonthMax: quota.data.buildMinutesPerMonthMax,
+                offloadGiBMax: quota.data.offloadGiBMax,
+              }}
+              onClose={onClose}
+            />
+          ) : null}
+        </SheetBody>
       </SheetContent>
     </Sheet>
   );
@@ -155,7 +155,7 @@ function QuotaForm({
   });
   return (
     <form
-      className="flex min-w-0 flex-col gap-4 p-4"
+      className="flex min-w-0 flex-col gap-4 pb-4"
       onSubmit={(event) => {
         event.preventDefault();
         void form.handleSubmit();

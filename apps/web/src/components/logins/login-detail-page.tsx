@@ -22,6 +22,7 @@ import {
 import { SelectItem } from "@wssp/ui/components/select";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -409,52 +410,54 @@ function EditLoginSheet({
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle>{t("logins:edit.title")}</SheetTitle>
           <SheetDescription>{t("logins:edit.description")}</SheetDescription>
         </SheetHeader>
         <form
           noValidate
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="name">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("logins:form.name")}
-                inputMode="text"
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={80}
-              />
-            )}
-          </form.Field>
-          {login.copyBack ? (
-            <form.Field name="checkpoint">
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="name">
               {(field) => (
                 <TextField
                   field={field}
-                  label={t("logins:form.checkpoint")}
-                  description={t("logins:form.checkpointHint")}
-                  inputMode="numeric"
+                  label={t("logins:form.name")}
+                  inputMode="text"
                   autoComplete="off"
                   inputClassName="min-h-11"
-                  maxLength={3}
+                  maxLength={80}
                 />
               )}
             </form.Field>
-          ) : null}
-          <ProblemText problem={problem} />
-          <SheetFooter className="px-0">
+            {login.copyBack ? (
+              <form.Field name="checkpoint">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("logins:form.checkpoint")}
+                    description={t("logins:form.checkpointHint")}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    inputClassName="min-h-11"
+                    maxLength={3}
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            <ProblemText problem={problem} />
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(formState) => formState.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -462,9 +465,6 @@ function EditLoginSheet({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>
@@ -535,10 +535,7 @@ function RepinDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open || repin.isPending ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
+      <DialogContent closeLabel={t("common:actions.close")} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t("logins:repin.title", { name: login.name })}</DialogTitle>
           <DialogDescription>{t("logins:repin.description")}</DialogDescription>

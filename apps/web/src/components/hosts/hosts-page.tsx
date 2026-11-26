@@ -18,6 +18,7 @@ import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { CopyField } from "@wssp/ui/components/copy-field";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetFooter,
@@ -924,39 +925,41 @@ function EditHostSheet({ host, onClose }: { host: HostItem; onClose: () => void 
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
+      <SheetContent closeLabel={t("common:actions.close")}>
         <SheetHeader>
           <SheetTitle>{t("hosts:edit.title")}</SheetTitle>
           <SheetDescription>{t("hosts:edit.description")}</SheetDescription>
         </SheetHeader>
         <form
-          className="flex min-w-0 flex-col gap-4 px-4"
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
             void form.handleSubmit();
           }}
         >
-          <form.Field name="label">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("hosts:edit.label")}
-                inputMode="text"
-                autoComplete="off"
-                maxLength={160}
-              />
-            )}
-          </form.Field>
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`hosts:problem.${problem}`)}
-            </p>
-          ) : null}
-          <SheetFooter className="px-0">
+          <SheetBody className="flex min-w-0 flex-col gap-4">
+            <form.Field name="label">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("hosts:edit.label")}
+                  inputMode="text"
+                  autoComplete="off"
+                  maxLength={160}
+                />
+              )}
+            </form.Field>
+            {problem ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t(`hosts:problem.${problem}`)}
+              </p>
+            ) : null}
+          </SheetBody>
+          <SheetFooter>
+            <Button type="button" variant="outline" size="touch" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(formState) => formState.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -964,9 +967,6 @@ function EditHostSheet({ host, onClose }: { host: HostItem; onClose: () => void 
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
           </SheetFooter>
         </form>
       </SheetContent>

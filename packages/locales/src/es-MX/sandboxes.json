@@ -99,7 +99,7 @@
     "revision": "Revisión",
     "latest": "Versión más reciente (se elige al crear)",
     "revisionOption": "Revisión {{revision}} · {{architecture}} · {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB (mín. {{minDiskGiB}})",
-    "revisionDiskHint": "Disco raíz: {{defaultDiskGiB}} GiB si se deja vacío; al menos {{minDiskGiB}} GiB (la raíz de la imagen). Un disco más grande amplía el sistema de archivos raíz en el primer arranque.",
+    "revisionDiskHint": "Predeterminado {{defaultDiskGiB}} GiB; al menos {{minDiskGiB}} GiB (la raíz de la imagen). Un disco más grande amplía el sistema de archivos raíz en el primer arranque.",
     "revisionsFailed": "No se pudieron cargar las revisiones.",
     "moreRevisions": "Cargar más revisiones",
     "latestSizeHint": "El tamaño de la versión más reciente solo se conoce al crear. Fija una versión en Versión de la plantilla para ver su tamaño aquí.",
@@ -152,8 +152,6 @@
     "vcpu": "vCPU",
     "memory": "Memoria",
     "disk": "Disco raíz",
-    "templateDefault": "Predeterminado de la plantilla",
-    "resetDefault": "Usar el predeterminado de la plantilla",
     "capacity": {
       "hostCpu_one": "Este host tiene {{count}} vCPU libre.",
       "hostCpu_other": "Este host tiene {{count}} vCPU libres.",
@@ -173,6 +171,7 @@
     "envHint": "Valores predeterminados privados para comandos y terminales: hasta 64 variables. HOME, SHELL y TERM están reservadas. Los valores permanecen privados en el servidor y el host.",
     "envAdd": "Agregar variable",
     "labelsRowsHint": "Etiquetas opcionales para encontrar y agrupar sandboxes: hasta 32. Nunca pongas secretos aquí.",
+    "labelsTextUnavailable": "Algunas claves no se pueden escribir como líneas CLAVE=valor; edítalas como filas.",
     "labelsAdd": "Agregar etiqueta",
     "networkTitle": "Red",
     "accessTitle": "Acceso",
@@ -228,7 +227,12 @@
     "envCleared": "Por seguridad, los valores se borran después de una creación rechazada. Ingrésalos de nuevo.",
     "previewPorts": "Puertos de vista previa",
     "previewPortsHint": "Puertos del invitado que podrás compartir después como enlace de vista previa, por ejemplo 3000, 8080. Déjalo vacío si no necesitas enlaces; un reenvío de puerto siempre funciona.",
-    "showProblem": "Mostrar"
+    "showProblem": "Mostrar",
+    "sizeNotSet": "Sin definir: se usa el tamaño de la versión más reciente.",
+    "sizeUseTemplateDefault": "Usar el predeterminado de la plantilla",
+    "sizeDefaultSource": "versión {{revision}}",
+    "envReenter": "Vuelve a escribir los valores de {{keys}} o quita esas variables.",
+    "labelKeyInvalid": "{{key}} no puede ser un nombre de etiqueta: sin espacios, comillas ni =."
   },
   "credentials": {
     "heading": "Inicios de sesión de CLI",

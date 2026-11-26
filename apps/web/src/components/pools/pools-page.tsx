@@ -13,17 +13,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
-import { AdvancedSection, FormSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
+import { AdvancedSection, FormSection } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import {
   Sheet,
+  SheetBody,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { Plus } from "lucide-react";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -204,7 +206,7 @@ function CreatePoolDialog({ lang, onClose }: { lang: string; onClose: () => void
   const form = useForm({
     defaultValues: { label: "", slug: "" },
     validators: { onSubmit: z.object({ label: labelSchema(t), slug: slugSchema(t) }) },
-    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
+    onSubmitInvalid: () => focusFirstInvalidField(root.current),
     onSubmit: async ({ value }) => {
       setProblem(null);
       try {
@@ -366,7 +368,7 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
         label: labelSchema(t),
       }),
     },
-    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
+    onSubmitInvalid: () => focusFirstInvalidField(root.current),
     onSubmit: async ({ value }) => {
       setProblem(null);
       try {
@@ -422,16 +424,16 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
       onSubmit={() => void form.handleSubmit()}
       actions={
         <>
-          <Button type="submit" size="touch" disabled={pending}>
-            {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
-          </Button>
           <Button type="button" size="touch" variant="outline" onClick={onClose}>
             {t("common:actions.cancel")}
+          </Button>
+          <Button type="submit" size="touch" disabled={pending}>
+            {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
           </Button>
         </>
       }
     >
-      <div ref={root} data-pool-form="edit" className="flex min-w-0 flex-col gap-6">
+      <div ref={root} data-pool-form="edit" className="min-w-0 space-y-8">
         <FormSection title={t("hosts:pools.edit.essential")}>
           <form.Field name="label">
             {(field) => (
@@ -483,6 +485,7 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
           </form.Field>
         </FormSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("hosts:pools.edit.lifetime")}
           summary={t(
             values.unlimitedLeaseForShares === "shares"
@@ -513,6 +516,7 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
           </form.Field>
         </AdvancedSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("hosts:pools.edit.placement")}
           summary={[
             t(values.preferOwnHosts ? "hosts:pools.edit.preferOwn" : "hosts:pools.edit.anyHost"),
@@ -552,6 +556,7 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
           </form.Field>
         </AdvancedSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("hosts:pools.edit.images")}
           summary={
             values.memberImageCacheMaxGiB.trim() === ""
@@ -576,6 +581,7 @@ function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
           </form.Field>
         </AdvancedSection>
         <AdvancedSection
+          gridClassName="lg:grid-cols-1"
           title={t("hosts:pools.edit.queue")}
           summary={[
             values.capacityWaitMinutes.trim() || operatorLimit,
@@ -787,12 +793,12 @@ function MembersSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onClo
       onClose={onClose}
       actions={
         <>
+          <Button type="button" size="touch" variant="outline" onClick={onClose}>
+            {t("common:actions.close")}
+          </Button>
           <Button size="touch" onClick={() => setAdding(true)}>
             <Plus aria-hidden="true" />
             {t("hosts:pools.add")}
-          </Button>
-          <Button type="button" size="touch" variant="outline" onClick={onClose}>
-            {t("common:actions.close")}
           </Button>
         </>
       }
@@ -1152,53 +1158,55 @@ function MemberLeaseSheet({
         if (!open) onClose();
       }}
     >
-      <SheetContent showCloseButton={false} className="overflow-x-hidden overflow-y-auto">
+      <SheetContent showCloseButton={false}>
         <SheetHeader>
           <SheetTitle>{t("hosts:lease.editMember")}</SheetTitle>
           <SheetDescription>{t("hosts:lease.memberDescription")}</SheetDescription>
         </SheetHeader>
-        <form
-          className="flex min-w-0 flex-col gap-4 p-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void form.handleSubmit();
-          }}
-        >
-          <form.Field name="maxLease">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("hosts:lease.memberField")}
-                description={t("hosts:lease.fieldHint")}
-                autoComplete="off"
-                inputMode="text"
-                maxLength={12}
-                inputClassName="min-h-11"
-                onChange={() => setWarning(null)}
-              />
-            )}
-          </form.Field>
-          {warning ? (
-            <p role="alert" data-lease-warning="">
-              {t(warning.more ? "hosts:lease.previewMore" : "hosts:lease.preview", {
-                count: warning.affected,
-              })}
-            </p>
-          ) : null}
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`hosts:pools.problem.${problem}`)}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
-              {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
-            </Button>
-            <Button type="button" size="touch" variant="outline" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
-          </div>
-        </form>
+        <SheetBody className="flex min-w-0 flex-col gap-4">
+          <form
+            className="flex min-w-0 flex-col gap-4 pb-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void form.handleSubmit();
+            }}
+          >
+            <form.Field name="maxLease">
+              {(field) => (
+                <TextField
+                  field={field}
+                  label={t("hosts:lease.memberField")}
+                  description={t("hosts:lease.fieldHint")}
+                  autoComplete="off"
+                  inputMode="text"
+                  maxLength={12}
+                  inputClassName="min-h-11"
+                  onChange={() => setWarning(null)}
+                />
+              )}
+            </form.Field>
+            {warning ? (
+              <p role="alert" data-lease-warning="">
+                {t(warning.more ? "hosts:lease.previewMore" : "hosts:lease.preview", {
+                  count: warning.affected,
+                })}
+              </p>
+            ) : null}
+            {problem ? (
+              <p role="alert" className="text-sm text-destructive">
+                {t(`hosts:pools.problem.${problem}`)}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
+                {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
+              </Button>
+              <Button type="button" size="touch" variant="outline" onClick={onClose}>
+                {t("common:actions.cancel")}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
       </SheetContent>
     </Sheet>
   );
