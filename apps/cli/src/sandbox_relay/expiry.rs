@@ -728,7 +728,7 @@ impl ExpiryService {
                             row.enforcement_loss || row.lease.action == LeaseAction::Destroy;
                         let _offload_hold = match &offload {
                             Some(offload) if destroying => {
-                                Some(offload.preempt(&row.sandbox_id, &|| true).map_err(
+                                Some(offload.preempt(&row.sandbox_id, None, &|| true).map_err(
                                     |error| {
                                         anyhow::anyhow!(
                                             "disk offload publish still running ({:?})",

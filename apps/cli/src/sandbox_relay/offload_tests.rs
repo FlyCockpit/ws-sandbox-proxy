@@ -1011,7 +1011,7 @@ fn reconnect_waits_for_an_in_flight_publish_and_kill_preempts_the_upload() {
     f.offload.handle_server(request("off-1"));
     wait_until("publishing", || f.runtime.publishes_in_flight() == 1);
     let started = Instant::now();
-    let hold = f.offload.preempt(SBX, &|| true).expect("hold");
+    let hold = f.offload.preempt(SBX, None, &|| true).expect("hold");
     assert_eq!(f.runtime.publishes_in_flight(), 0, "returned mid-publish");
     assert!(started.elapsed() >= Duration::from_millis(100));
     wait_until("cleaned", || {
@@ -1029,7 +1029,7 @@ fn reconnect_waits_for_an_in_flight_publish_and_kill_preempts_the_upload() {
     // A kill preempts an upload waiting for its grant: nothing reported.
     f.offload.handle_server(request("off-3"));
     wait_for_frame(&f.images, |m| begin_of(m).is_some());
-    let _kill = f.offload.preempt(SBX, &|| true).expect("hold");
+    let _kill = f.offload.preempt(SBX, None, &|| true).expect("hold");
     wait_until("upload preempted", || f.offload.entry(SBX).is_none());
     std::thread::sleep(Duration::from_millis(50));
     assert!(f.images.drain().iter().all(|m| failed_of(m).is_none()));
@@ -1041,7 +1041,11 @@ fn reconnect_waits_for_an_in_flight_publish_and_kill_preempts_the_upload() {
     f.runtime.set_publish_hold(Some(Duration::from_secs(2)));
     f.offload.handle_server(request("off-1"));
     wait_until("publishing", || f.runtime.publishes_in_flight() == 1);
-    let error = f.offload.preempt(SBX, &|| false).err().expect("refused");
+    let error = f
+        .offload
+        .preempt(SBX, None, &|| false)
+        .err()
+        .expect("refused");
     assert_eq!(error.code, SandboxErrorCode::Cancelled);
 }
 
@@ -1096,7 +1100,7 @@ fn a_stored_copy_survives_preemption_and_a_cancel_removes_an_unfinished_one() {
     let mut stored = entry(OffloadPhase::Stored, "off-1");
     stored.staged_sha256 = Some("ab".repeat(32));
     seed_entry(&f, stored.clone());
-    drop(f.offload.preempt(SBX, &|| true).unwrap());
+    drop(f.offload.preempt(SBX, None, &|| true).unwrap());
     assert_eq!(f.offload.entry(SBX), Some(stored));
     // An uploaded (awaiting `stored`) entry is cancelled by the server.
     let mut uploaded = entry(OffloadPhase::Uploaded, "off-2");
@@ -1642,7 +1646,7 @@ fn local_pressure_asks_for_the_least_recently_used_copies_a_bounded_number_at_on
                 code: "no_restore_host".into(),
             },
         ));
-    let hold = f.offload.preempt(SBX, &|| true).unwrap();
+    let hold = f.offload.preempt(SBX, None, &|| true).unwrap();
     assert_eq!(f.offload.pressure_evict(), 0);
     drop(hold);
     assert_eq!(f.offload.pressure_evict(), 1);
@@ -2029,6 +2033,105 @@ fn expect_disk_holds_only_for_the_unchanged_stored_copy_and_a_restore_drops_it()
         f.offload.entry(SBX).is_none(),
         "T16: dropped on restore accept"
     );
+}
+
+/// e2e5 followup 02: the server marks an offload STORED (worker verify)
+/// and sends its `disk.offload.stored` ack only on a later sweep, so a start
+/// right after STORED reaches this host while the entry is still
+/// `uploaded`. That start's `expectDisk` is the server's stored verdict: its
+/// preemption journals the entry `stored` (alias and staging dropped,
+/// `released` answered) instead of cleaning it up, and the cached copy is
+/// proven, not refused `disk_stale`. Without `expectDisk` (or for another
+/// seq or fingerprint) the uploaded entry is still preempted and the cold
+/// reconnect refused. The late ack then changes nothing.
+#[test]
+fn a_cached_start_right_after_stored_settles_the_uploaded_entry_before_the_ack() {
+    use crate::sandbox_relay::supervisor::{DISK_STALE, restore_intent};
+    let cold = |fingerprint: &str, seq: u64| -> sandbox_protocol::OperationDispatch {
+        serde_json::from_value(serde_json::json!({
+            "sandboxOwnerId":"owner", "operationId":"cold", "sandboxId":SBX,
+            "kind":"sandbox.reconnect", "generation":4, "attempt":1,
+            "idempotencyKey":"cold", "bodyHash":"a".repeat(64),
+            "launchMode":"cold", "expectDisk": {"seq": seq, "fingerprint": fingerprint}}))
+        .unwrap()
+    };
+    let intent = |f: &Fixture, d: &sandbox_protocol::OperationDispatch| {
+        restore_intent(
+            &f.runtime,
+            Some(&f.images),
+            Some(&f.offload),
+            d,
+            INSTANCE,
+            &|| true,
+        )
+    };
+    // The job runs to `uploaded` (completion sent; the verdict is pending).
+    let upload = |f: &Fixture| -> String {
+        f.offload.handle_server(request("off-1"));
+        let (begin, _) = wait_for_frame(&f.images, |m| begin_of(m).is_some());
+        let begin = begin_of(&begin).unwrap().clone();
+        let (url, seen) = s3(1);
+        f.offload
+            .handle_server(grant("off-1", "ses-1", &url, begin.size_bytes, KEY));
+        wait_for_frame(&f.images, |m| {
+            matches!(m, DaemonControlMessage::DiskUploadComplete(_))
+        });
+        seen.join().unwrap();
+        wait_until("uploaded", || {
+            f.offload
+                .entry(SBX)
+                .is_some_and(|e| e.phase == OffloadPhase::Uploaded)
+        });
+        begin.fingerprint
+    };
+
+    // The pre-fix order: the uploaded entry is preempted away, so the
+    // cached start is refused although the server holds it STORED.
+    let f = fixture();
+    let fingerprint = upload(&f);
+    let d = cold(&fingerprint, 1);
+    drop(f.offload.preempt(SBX, None, &|| true).unwrap());
+    assert!(f.offload.entry(SBX).is_none());
+    assert_eq!(intent(&f, &d).unwrap_err().message, DISK_STALE);
+
+    // Another offload's expectation never settles this entry.
+    let f = fixture();
+    let fingerprint = upload(&f);
+    let other = sandbox_protocol::DispatchExpectDiskV11 {
+        seq: 2,
+        fingerprint: fingerprint.clone(),
+    };
+    drop(f.offload.preempt(SBX, Some(&other), &|| true).unwrap());
+    wait_until("preempted", || f.offload.entry(SBX).is_none());
+
+    // The fix: the start's `expectDisk` settles the entry first.
+    let f = fixture();
+    let fingerprint = upload(&f);
+    let d = cold(&fingerprint, 1);
+    let hold = f
+        .offload
+        .preempt(SBX, d.expect_disk.as_ref(), &|| true)
+        .unwrap();
+    let entry = f.offload.entry(SBX).expect("kept");
+    assert_eq!(entry.phase, OffloadPhase::Stored);
+    assert_eq!(entry.fingerprint().as_deref(), Some(fingerprint.as_str()));
+    intent(&f, &d).expect("the stored copy starts at once");
+    let (released, _) = wait_for_frame(&f.images, |m| released_of(m).is_some());
+    assert_eq!(released_of(&released), Some("off-1"));
+    assert!(f.runtime.alias_target(&al("off-1")).is_none());
+    wait_until("staging gone", || staging_dirs(&f).is_empty());
+    // The job (cancelled by the settle) never drops the stored entry.
+    wait_until("job ended", || {
+        !f.offload.lock_jobs().active.contains_key(SBX)
+    });
+    drop(hold);
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+    // The server's late stored ack is answered and keeps `stored`.
+    f.offload.handle_server(stored_ack("off-1", &fingerprint));
+    let (again, _) = wait_for_frame(&f.images, |m| released_of(m).is_some());
+    assert_eq!(released_of(&again), Some("off-1"));
+    assert_eq!(f.offload.entry(SBX).unwrap().phase, OffloadPhase::Stored);
+    intent(&f, &d).expect("still the stored copy");
 }
 
 /// A socket stream whose writes are buffered by tungstenite and whose flush

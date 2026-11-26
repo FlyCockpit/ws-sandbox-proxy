@@ -874,9 +874,13 @@ impl RelaySupervisor {
                     // sandbox's unfinished disk offload and, before any lease
                     // or Effect record, waits for an in-flight publish. The
                     // hold keeps a new publish out until this iteration ends.
+                    // A cached cold reconnect's `expectDisk` is the server's
+                    // stored verdict: it settles an `uploaded` entry of that
+                    // offload first, so a start right after STORED (before
+                    // the stored ack's sweep) is not refused `disk_stale`.
                     let (_offload_hold, preempted) = match (d.kind.as_str(), offload.get()) {
                         ("sandbox.reconnect" | "sandbox.kill", Some(offload)) => match offload
-                            .preempt(&d.sandbox_id, &|| {
+                            .preempt(&d.sandbox_id, d.expect_disk.as_ref(), &|| {
                                 !journal.cancel_blocks(&d.operation_id, d.generation)
                                     && authority.owned(&d.operation_id, d.generation, d.attempt)
                             }) {

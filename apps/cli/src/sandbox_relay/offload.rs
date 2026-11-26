@@ -785,11 +785,21 @@ impl OffloadService {
     /// offload and, while Incus still publishes it, wait (bounded by
     /// `IMAGE_IO_TIMEOUT` and `still_wanted`). The hold keeps any new
     /// publish of the sandbox out until dropped. A `stored` copy is kept.
+    ///
+    /// `expect` is a cached cold reconnect's `expectDisk`. The server binds
+    /// it only to a STORED offload, so it is that offload's stored verdict
+    /// too: its `uploaded` entry is journaled `stored` first (as the
+    /// `disk.offload.stored` ack would, which the server sends on a later
+    /// sweep), so the preemption keeps it and the reconnect can prove it.
     pub fn preempt(
         &self,
         sandbox_id: &str,
+        expect: Option<&sandbox_protocol::DispatchExpectDiskV11>,
         still_wanted: &dyn Fn() -> bool,
     ) -> Result<LifecycleHold, ImageError> {
+        if let Some(expect) = expect {
+            self.store_expected(sandbox_id, expect);
+        }
         let hold = {
             let mut jobs = self.lock_jobs();
             *jobs.holds.entry(sandbox_id.to_owned()).or_insert(0) += 1;
@@ -1648,8 +1658,41 @@ impl OffloadService {
         // A repeated ack never undoes a journaled eviction (its staging
         // went at the first ack).
         if !matches!(entry.phase, OffloadPhase::Evicting | OffloadPhase::Evicted) {
-            entry.phase = OffloadPhase::Stored;
             entry.generation = stored.generation;
+        }
+        self.settle_stored(sandbox_id, entry);
+    }
+
+    /// A cached cold reconnect's `expectDisk` (see [`Self::preempt`]): an
+    /// `uploaded` entry of exactly that seq and fingerprint settles as if
+    /// its stored ack had arrived. Any other entry is left alone (the
+    /// reconnect then proves or refuses it in `expect_disk_holds`).
+    fn store_expected(&self, sandbox_id: &str, expect: &sandbox_protocol::DispatchExpectDiskV11) {
+        let Some(entry) = self.entry(sandbox_id) else {
+            return;
+        };
+        if entry.phase != OffloadPhase::Uploaded
+            || entry.seq != expect.seq
+            || entry.fingerprint().as_deref() != Some(expect.fingerprint.as_str())
+        {
+            return;
+        }
+        tracing::debug!(
+            sandbox_id,
+            "cached cold reconnect names an uploaded disk offload; journaling it stored"
+        );
+        self.settle_stored(sandbox_id, entry);
+    }
+
+    /// The stored verdict of journaled `entry`: journal `stored` (through
+    /// the transition table; never over an eviction), stop a job of it still
+    /// running, drop the alias image and the staging, then answer
+    /// `disk.offload.released`.
+    fn settle_stored(&self, sandbox_id: &str, mut entry: OffloadEntry) {
+        let (offload_id, seq) = (entry.offload_id.clone(), entry.seq);
+        let released = || self.report_released(sandbox_id, &offload_id, seq);
+        if !matches!(entry.phase, OffloadPhase::Evicting | OffloadPhase::Evicted) {
+            entry.phase = OffloadPhase::Stored;
             match self.transition(sandbox_id, &entry) {
                 Ok(Moved::Applied) => {}
                 Ok(Moved::Past) => {}
