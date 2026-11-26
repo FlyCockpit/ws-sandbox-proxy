@@ -1410,7 +1410,7 @@ describe("create form (design-review2 #1, #21)", () => {
     await submit(user);
     const name = within(dialog()).getByLabelText(enCredentials.form.name);
     expect(name.getAttribute("aria-invalid")).toBe("true");
-    // Focus moves after the invalid render commits (timing-only under load).
+    // focusFirstInvalidField moves focus one animation frame after the submit.
     await waitFor(() => expect(document.activeElement).toBe(name));
     // Each error sits under its own field, not in a list at the bottom.
     expect(
@@ -1466,7 +1466,8 @@ describe("create form (design-review2 #1, #21)", () => {
     const resources = dialog().querySelector<HTMLDetailsElement>('[data-section="resources"]')!;
     resources.open = false;
     await submit(user);
-    expect(resources.open).toBe(true);
+    // focusFirstInvalidField opens the section and focuses one frame later.
+    await waitFor(() => expect(resources.open).toBe(true));
     const focused = document.activeElement as HTMLElement;
     expect(focused.getAttribute("aria-invalid")).toBe("true");
     expect(resources.contains(focused)).toBe(true);

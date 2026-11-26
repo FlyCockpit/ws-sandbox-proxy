@@ -15,9 +15,9 @@
  * hidden there too. Making it follow the account means storing the flag
  * server-side instead (a user preference).
  *
- * Storage access is guarded like lib/consent.ts: Safari private mode and
- * "block all site data" throw on `localStorage`, and a checklist that crashes
- * the home is worse than one that comes back.
+ * Storage access is guarded: Safari private mode and "block all site data"
+ * throw on `localStorage`, and a checklist that crashes the home is worse than
+ * one that comes back.
  */
 
 export type GettingStartedProgress = {

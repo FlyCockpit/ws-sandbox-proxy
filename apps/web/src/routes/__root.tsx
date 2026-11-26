@@ -25,7 +25,6 @@ import { FileDropGuard } from "@/components/file-drop-guard";
 import IdentityBoundary from "@/components/identity-boundary";
 import { ThemeColorSync } from "@/components/theme-color-sync";
 import { ThemeProvider } from "@/components/theme-provider";
-import { useAnalyticsConsent } from "@/hooks/use-analytics-consent";
 import { useAppUpdate } from "@/hooks/use-app-update";
 import { useHashTargetScroll } from "@/hooks/use-hash-target-scroll";
 import { useIdentityBoundaryEnabled } from "@/hooks/use-identity-boundary-enabled";
@@ -169,10 +168,6 @@ function RootComponent() {
   useHashTargetScroll();
   useStaleBuildRecovery();
   const identityBoundaryEnabled = useIdentityBoundaryEnabled();
-  // The analytics gate. Renders nothing; loads the (currently empty) analytics
-  // seam once, and only once the visitor has allowed it. Root-level so public
-  // pages are gated too.
-  useAnalyticsConsent();
   return (
     <I18nextProvider i18n={i18nInstance}>
       <I18nReady>
