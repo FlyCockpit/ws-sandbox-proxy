@@ -55,7 +55,13 @@
     "summary": "Advanced"
   },
   "form": {
-    "fixErrors": "Fix the highlighted fields."
+    "fixErrors": "Fix the highlighted fields.",
+    "leave": {
+      "title": "Discard what you entered?",
+      "description": "You haven't created anything yet. If you leave now, the choices on this page are lost.",
+      "stay": "Keep editing",
+      "leave": "Discard and leave"
+    }
   },
   "offline": {
     "showingDataFrom": "You're offline — showing data from {{time}}.",

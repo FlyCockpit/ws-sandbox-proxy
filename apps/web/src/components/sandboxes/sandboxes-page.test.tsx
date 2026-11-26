@@ -516,6 +516,30 @@ describe("sandboxes list", () => {
     );
   });
 
+  it("card titles are h2 under the page h1, and a finished operation adds no 'Done' line", async () => {
+    const receipt = (state: string) => ({
+      id: `op-${state}`,
+      kind: "STOP_SANDBOX",
+      state,
+      errorCode: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+    });
+    server.current.sandboxes = [
+      sandboxRow({ id: "sbx-done", lastLifecycleOperation: receipt("SUCCEEDED") }),
+      sandboxRow({ id: "sbx-failed", lastLifecycleOperation: receipt("FAILED") }),
+    ];
+    await mount();
+    await screen.findByText("sbx-done");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(enSandboxes.title);
+    expect(screen.getByRole("heading", { level: 2, name: "sbx-done" })).toBeTruthy();
+    expect(screen.queryAllByRole("heading", { level: 3 })).toHaveLength(0);
+    const done = row("sbx-done");
+    expect(done.querySelector("[data-receipt-state]")).toBeNull();
+    expect(done.textContent).not.toContain(enSandboxes.receipt.state.SUCCEEDED);
+    expect(row("sbx-failed").querySelector('[data-receipt-state="FAILED"]')).not.toBeNull();
+  });
+
   it("the Deleted filter asks the server for deleted sandboxes and offers no lifecycle action", async () => {
     server.current.sandboxes = [sandboxRow(), sandboxRow({ id: "sbx-gone", state: "DELETED" })];
     const user = userEvent.setup();

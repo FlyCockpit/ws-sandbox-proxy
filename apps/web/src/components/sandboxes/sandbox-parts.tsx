@@ -124,8 +124,8 @@ export function ReceiptLine({
       <p className="text-sm text-muted-foreground">{t("sandboxes:receipt.none")}</p>
     );
   }
-  // In the list a finished request ("Stop: Done") repeats what the state
-  // already says; only one in flight or one that went wrong is worth a line.
+  // In a list a finished operation is noise ("Stop: Done" on every card);
+  // only one in flight or one that went wrong is worth a line there.
   if (compact && receipt.state === "SUCCEEDED") return null;
   const created = new Date(receipt.createdAt).getTime();
   const hint =

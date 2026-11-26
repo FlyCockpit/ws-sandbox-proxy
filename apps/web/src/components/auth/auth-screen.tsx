@@ -38,7 +38,11 @@ export function AuthCard({
           there so the inputs' focus rings are not clipped at the edge. */}
       <Card className="w-full min-w-0 max-w-md max-sm:overflow-visible max-sm:bg-transparent max-sm:py-0 max-sm:ring-0">
         <CardHeader className="text-center max-sm:px-0">
-          <CardTitle className="font-heading text-2xl tracking-tight">{title}</CardTitle>
+          {/* The card title is the page's heading (sign in, sign up, 2FA…);
+              the h1 inherits the title's look. */}
+          <CardTitle className="font-heading text-2xl tracking-tight">
+            <h1>{title}</h1>
+          </CardTitle>
           <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 max-sm:px-0">{children}</CardContent>

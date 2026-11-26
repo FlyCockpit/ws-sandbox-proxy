@@ -314,9 +314,10 @@ function SandboxRow({
       <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-            <h3 data-sandbox-name="" className="min-w-0 truncate font-mono text-sm font-medium">
+            {/* Under the page's h1, each sandbox is a second-level heading. */}
+            <h2 data-sandbox-name="" className="min-w-0 truncate font-mono text-sm font-medium">
               {sandboxTitle(sandbox)}
-            </h3>
+            </h2>
             <StatePill state={sandbox.state} display={sandboxDisplayOverride(sandbox)} />
             {/* Only a stored disk is worth a badge in the list (disk offload). */}
             {sandbox.disk && sandbox.disk.location !== "host" ? (
@@ -408,7 +409,7 @@ function SandboxRow({
               ))}
             </ul>
           ) : null}
-          {/* Nothing for a finished request: the state already says it. */}
+          {/* Empty (hidden) when the last operation simply succeeded. */}
           <div className="mt-2 empty:hidden">
             <ReceiptLine
               receipt={sandbox.lastLifecycleOperation}

@@ -113,49 +113,70 @@ export function WebhooksPage({ lang }: { lang: string }) {
           {(items) => (
             <>
               <ul aria-label={t("webhooks:list.label")} className="flex min-w-0 flex-col gap-3">
-                {items.map((endpoint) => (
-                  <li
-                    key={endpoint.id}
-                    data-webhook-id={endpoint.id}
-                    className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-4 text-card-foreground"
-                  >
-                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                      <Link
-                        to="/$lang/settings/webhooks/$endpointId"
-                        params={{ lang, endpointId: endpoint.id }}
-                        aria-label={t("webhooks:list.open", { host: webhookHost(endpoint.url) })}
-                        className="inline-flex min-h-11 min-w-0 items-center break-all font-medium underline underline-offset-4"
-                      >
-                        {endpoint.url}
-                      </Link>
-                      <Badge variant={endpoint.enabled ? "secondary" : "destructive"}>
-                        {endpoint.enabled
-                          ? t("webhooks:status.enabled")
-                          : t("webhooks:status.disabled")}
-                      </Badge>
-                    </div>
-                    {endpoint.description ? (
-                      <p className="break-words text-sm text-muted-foreground">
-                        {endpoint.description}
-                      </p>
-                    ) : null}
-                    <ul
-                      aria-label={t("webhooks:list.events")}
-                      className="flex min-w-0 flex-wrap gap-1.5"
+                {items.map((endpoint) => {
+                  const failing = endpoint.health.consecutiveFailures > 0;
+                  return (
+                    <li
+                      key={endpoint.id}
+                      data-webhook-id={endpoint.id}
+                      className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-4 text-card-foreground"
                     >
-                      {endpoint.events.map((event) => (
-                        <li key={event} className="rounded-sm border px-2 py-0.5 text-xs">
-                          {t(`webhooks:event.${event}`)}
-                        </li>
-                      ))}
-                    </ul>
-                    <p className="text-sm text-muted-foreground">
-                      {endpoint.health.consecutiveFailures > 0
-                        ? t("webhooks:list.failing", { count: endpoint.health.consecutiveFailures })
-                        : t("webhooks:list.healthy")}
-                    </p>
-                  </li>
-                ))}
+                      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                        <Link
+                          to="/$lang/settings/webhooks/$endpointId"
+                          params={{ lang, endpointId: endpoint.id }}
+                          aria-label={t("webhooks:list.open", { host: webhookHost(endpoint.url) })}
+                          className="inline-flex min-h-11 min-w-0 items-center break-all font-medium underline underline-offset-4"
+                        >
+                          {endpoint.url}
+                        </Link>
+                        {/* An enabled endpoint whose latest deliveries fail is not healthy:
+                          say so in the badge, not only in grey text below. */}
+                        <Badge
+                          data-webhook-status={
+                            !endpoint.enabled ? "disabled" : failing ? "failing" : "enabled"
+                          }
+                          variant={
+                            !endpoint.enabled ? "destructive" : failing ? "warning" : "secondary"
+                          }
+                        >
+                          {!endpoint.enabled
+                            ? t("webhooks:status.disabled")
+                            : failing
+                              ? t("webhooks:status.failing")
+                              : t("webhooks:status.enabled")}
+                        </Badge>
+                      </div>
+                      {endpoint.description ? (
+                        <p className="break-words text-sm text-muted-foreground">
+                          {endpoint.description}
+                        </p>
+                      ) : null}
+                      <ul
+                        aria-label={t("webhooks:list.events")}
+                        className="flex min-w-0 flex-wrap gap-1.5"
+                      >
+                        {endpoint.events.map((event) => (
+                          <li key={event} className="rounded-sm border px-2 py-0.5 text-xs">
+                            {t(`webhooks:event.${event}`)}
+                          </li>
+                        ))}
+                      </ul>
+                      <p
+                        className={cn(
+                          "text-sm",
+                          failing ? "font-medium text-state-warning" : "text-muted-foreground",
+                        )}
+                      >
+                        {endpoint.health.consecutiveFailures > 0
+                          ? t("webhooks:list.failing", {
+                              count: endpoint.health.consecutiveFailures,
+                            })
+                          : t("webhooks:list.healthy")}
+                      </p>
+                    </li>
+                  );
+                })}
               </ul>
               <LoadMore
                 hasNextPage={endpoints.hasNextPage}

@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   members: [] as Record<string, unknown>[],
   calls: [] as { kind: string; input: Record<string, unknown> }[],
   previewAffected: 0,
+  shared: [] as Record<string, unknown>[],
+  sharedGate: null as Promise<void> | null,
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
@@ -53,6 +55,7 @@ vi.mock("@/utils/orpc", () => {
       queryFn: async ({ pageParam }: { pageParam: string | undefined }) => {
         const input = options.input(pageParam);
         state.reads.push({ kind: name, input });
+        if (name === "shared" && state.sharedGate) await state.sharedGate;
         const error = state.errors[name]?.shift();
         if (error) throw error;
         const start = Number(pageParam ?? 0);
@@ -96,6 +99,10 @@ vi.mock("@/utils/orpc", () => {
       sandboxPools: {
         key: () => ["pools"],
         list: page("pools", () => state.pools),
+        listShared: page("shared", () => state.shared),
+        listContributions: page("contributions", () => []),
+        leave: mutate("leave", () => ({})),
+        withdrawHost: mutate("withdrawHost", () => ({})),
         listMembers: page("pools-members", () => state.members),
         create: mutate("create", (input) => {
           const row = { ...input, id: "pool-1", createdAt: now, updatedAt: now, deletedAt: null };
@@ -171,12 +178,21 @@ beforeEach(() => {
   state.members = [];
   state.calls = [];
   state.previewAffected = 0;
+  state.shared = [];
+  state.sharedGate = null;
 });
-function Harness({ lang, initialTab }: { lang: string; initialTab: "owned" | "shared" }) {
-  const [tab, setTab] = useState<"owned" | "shared">(initialTab);
+function Harness({
+  lang,
+  initialTab,
+}: {
+  lang: string;
+  initialTab: "owned" | "shared" | undefined;
+}) {
+  const [tab, setTab] = useState<"owned" | "shared" | undefined>(initialTab);
   return <PoolsPage lang={lang} tab={tab} onTabChange={setTab} />;
 }
-async function mount(lang = "en-US", initialTab: "owned" | "shared" = "owned") {
+/** `"auto"`: no tab chosen in the URL, so the page picks one. */
+async function mount(lang = "en-US", initialTab: "owned" | "shared" | "auto" = "owned") {
   const i18n = createInstance();
   await i18n.init({
     lng: lang,
@@ -192,7 +208,7 @@ async function mount(lang = "en-US", initialTab: "owned" | "shared" = "owned") {
   const view = render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
-        <Harness lang={lang} initialTab={initialTab} />
+        <Harness lang={lang} initialTab={initialTab === "auto" ? undefined : initialTab} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -268,14 +284,125 @@ it.each(["en-US", "es-MX"])(
     await user.type(form.getByLabelText(text.pools.slug), "UPPER");
     await user.click(form.getByRole("button", { name: text.pools.create }));
     expect(await form.findByText(text.pools.invalidSlug)).toBeTruthy();
-    expect(await form.findByText(text.pools.invalidLabel)).toBeTruthy();
-    expect(text.pools.invalidLabel).toMatch(lang === "en-US" ? /label/ : /etiqueta/);
+    // An empty label just asks for one; the 1–120 rule is for a label that breaks it.
+    expect(await form.findByText(text.pools.labelRequired)).toBeTruthy();
+    expect(form.queryByText(text.pools.invalidLabel)).toBeNull();
+    expect(text.pools.labelRequired).toMatch(lang === "en-US" ? /label/ : /etiqueta/);
     // Focus moves to the first invalid field (the label).
     await waitFor(() => expect(document.activeElement).toBe(form.getByLabelText(text.pools.label)));
     expect(state.calls).toHaveLength(0);
     void actions;
   },
 );
+
+it("an empty create asks for a label and shows no slug error the person didn't cause", async () => {
+  const user = userEvent.setup();
+  await mount();
+  await user.click(screen.getByRole("button", { name: en.pools.create }));
+  const form = within(await screen.findByRole("dialog"));
+  await user.click(form.getByRole("button", { name: en.pools.create }));
+  expect(await form.findByText(en.pools.labelRequired)).toBeTruthy();
+  expect(form.queryByText(en.pools.invalidSlug)).toBeNull();
+  expect(form.queryByText(en.pools.invalidLabel)).toBeNull();
+  await waitFor(() => expect(document.activeElement).toBe(form.getByLabelText(en.pools.label)));
+  // Typing a label fills the slug, and the pool is created.
+  await user.type(form.getByLabelText(en.pools.label), "Team pool");
+  await user.click(form.getByRole("button", { name: en.pools.create }));
+  await waitFor(() =>
+    expect(state.calls).toEqual([
+      { kind: "create", input: { slug: "team-pool", label: "Team pool" } },
+    ]),
+  );
+});
+
+it("with no tab chosen, a teammate who owns no pool starts on Shared with me", async () => {
+  state.shared = [
+    {
+      id: "pool-s",
+      slug: "team",
+      label: "Team pool",
+      disconnectGraceSeconds: 0,
+      owner: { name: "Ada" },
+      share: {
+        canUse: true,
+        canContribute: false,
+        maxMemoryMiB: null,
+        maxVcpu: null,
+        maxDiskGiB: null,
+        usage: { memoryMiB: "0", vcpu: "0", diskGiB: "0" },
+      },
+    },
+  ];
+  await mount("en-US", "auto");
+  expect(await screen.findByRole("heading", { name: "Team pool" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: en.sharing.shared }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  expect(screen.queryByText(en.pools.empty)).toBeNull();
+  // Templates are not shared with the pool: said once, with a way to make one.
+  expect(screen.getByText(en.sharing.templatesNotShared)).toBeTruthy();
+  expect(screen.getByText(en.sharing.openTemplates).tagName).toBe("A");
+});
+
+it("with no tab chosen, nothing says 'No pools yet' or picks a tab before both lists answer", async () => {
+  let answerShared: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    answerShared = resolve;
+  });
+  state.shared = [{ id: "pool-s", slug: "team", label: "Team pool", disconnectGraceSeconds: 0 }];
+  state.sharedGate = gate;
+  await mount("en-US", "auto");
+  await waitFor(() => expect(state.reads.map((read) => read.kind)).toContain("pools"));
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(screen.queryByText(en.pools.empty)).toBeNull();
+  for (const tab of screen.getAllByRole("tab"))
+    expect(tab.getAttribute("aria-selected")).toBe("false");
+  answerShared();
+  expect(await screen.findByRole("heading", { name: "Team pool" })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: en.sharing.shared }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  expect(screen.queryByText(en.pools.empty)).toBeNull();
+});
+
+it("with no tab chosen and no pools owned, a failed Shared list opens with its retry", async () => {
+  // Every read fails until the person retries.
+  state.errors.shared = Array.from({ length: 20 }, () => new Error("offline"));
+  state.shared = [{ id: "pool-s", slug: "team", label: "Team pool", disconnectGraceSeconds: 0 }];
+  const user = userEvent.setup();
+  await mount("en-US", "auto");
+  const retry = await screen.findByRole("button", { name: common.actions.tryAgain });
+  expect(screen.getByRole("tab", { name: en.sharing.shared }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  expect(screen.getByText(en.pools.failed)).toBeTruthy();
+  expect(screen.queryByText(en.pools.empty)).toBeNull();
+  // A failing list is read a bounded number of times, not in a loop.
+  const reads = state.reads.filter((read) => read.kind === "shared").length;
+  expect(reads).toBeLessThanOrEqual(3);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(state.reads.filter((read) => read.kind === "shared")).toHaveLength(reads);
+  state.errors.shared = [];
+  await user.click(retry);
+  expect(await screen.findByRole("heading", { name: "Team pool" })).toBeTruthy();
+});
+
+it("with no tab chosen, an owner starts on Owned; a chosen Owned tab stays even when empty", async () => {
+  state.pools = [{ id: "pool-1", slug: "a", label: "Pool A" }];
+  state.shared = [{ id: "pool-s", slug: "team", label: "Team pool", disconnectGraceSeconds: 0 }];
+  const owner = await mount("en-US", "auto");
+  await screen.findByRole("heading", { name: "Pool A" });
+  expect(screen.getByRole("tab", { name: en.sharing.owned }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+  owner.unmount();
+  state.pools = [];
+  await mount("en-US", "owned");
+  expect(await screen.findByText(en.pools.empty)).toBeTruthy();
+  expect(screen.getByRole("tab", { name: en.sharing.owned }).getAttribute("aria-selected")).toBe(
+    "true",
+  );
+});
 
 it("pages pools, members and host choices with bounded cursor requests", async () => {
   state.pageSize = 1;
@@ -565,7 +692,7 @@ it("pool lifetime: an invalid value is refused locally", async () => {
   expect(state.calls).toEqual([]);
 });
 
-it("the pool card summarizes hosts, people, capacity and the longest lifetime, with Hosts as its one primary action", async () => {
+it("the pool card summarizes hosts, people, capacity and the longest lifetime, with Hosts and People as outline actions", async () => {
   state.pools = [
     {
       id: "pool-1",
@@ -609,7 +736,11 @@ it("the pool card summarizes hosts, people, capacity and the longest lifetime, w
   expect(empty.querySelector("[data-pool-summary-lease]")?.textContent).toBe(
     en.pools.summary.leaseUnlimited,
   );
-  // One primary (Hosts), one secondary (People); the rest in a menu, delete last.
+  // Hosts and People are outline buttons (a filled Hosts read as a selected
+  // tab beside Create pool); the rest in a menu, delete last.
+  expect(within(lab).getByRole("button", { name: en.pools.actions.hosts }).className).not.toMatch(
+    /\bbg-primary\b/,
+  );
   const buttons = within(lab)
     .getAllByRole("button")
     .map((button) => button.textContent || button.getAttribute("aria-label"));

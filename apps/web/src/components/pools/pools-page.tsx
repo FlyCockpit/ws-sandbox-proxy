@@ -47,7 +47,7 @@ import { type CredentialProblem, credentialProblem } from "@/lib/credential-rule
 import { formatLeaseDuration, leaseLimitText, parseLeaseLimit } from "@/lib/lease-duration";
 import { orpc } from "@/utils/orpc";
 import { PoolCapacityDialog } from "./pool-capacity";
-import { PoolSharing, SharedPools, SharingNotice } from "./pool-sharing";
+import { PoolSharing, SharedPools, SharingNotice, useSharedPools } from "./pool-sharing";
 
 type Pool = Awaited<ReturnType<AppRouterClient["sandboxPools"]["list"]>>["items"][number];
 type PoolSummary = NonNullable<Pool["summary"]>;
@@ -96,11 +96,12 @@ function useLongestLifetime(lang: string) {
 
 export function PoolsPage({
   lang,
-  tab,
+  tab: chosenTab,
   onTabChange,
 }: {
   lang: string;
-  tab: "owned" | "shared";
+  /** The chosen tab; unset picks one (see `tab` below). */
+  tab: "owned" | "shared" | undefined;
   onTabChange: (tab: "owned" | "shared") => void;
 }) {
   const { t } = useTranslation(["hosts", "common"]);
@@ -112,7 +113,25 @@ export function PoolsPage({
     }),
     meta: { skipGlobalErrorToast: true },
   });
+  const shared = useSharedPools();
   useTwoFactorRedirectOnError(lang, [pools.error]);
+  // Unchosen, someone who owns no pool but has one shared with them (a
+  // teammate) starts on Shared with me rather than an empty Owned list.
+  // Unchosen, the tab is picked once both lists that decide it have answered
+  // (until then neither tab is selected and only a skeleton shows, never "No
+  // pools yet"): someone who owns no pool but has one shared with them starts
+  // on Shared with me, as does one whose Shared list failed (its retry says
+  // so). The pick is kept, so a later refetch never flips or unmounts the tab.
+  const ownsNone = pools.data?.pages[0]?.items.length === 0;
+  const loading = pools.isPending || (ownsNone && shared.isPending);
+  const candidate =
+    ownsNone && (shared.isError || (shared.data?.pages[0]?.items.length ?? 0) > 0)
+      ? "shared"
+      : "owned";
+  const [pickedTab, setPickedTab] = useState<"owned" | "shared">();
+  if (chosenTab === undefined && pickedTab === undefined && !loading) setPickedTab(candidate);
+  const tab = chosenTab ?? pickedTab ?? (loading ? undefined : candidate);
+  const deciding = tab === undefined;
   return (
     <div className="flex min-w-0 flex-col gap-6">
       <PageHeader
@@ -140,7 +159,9 @@ export function PoolsPage({
           </Button>
         ))}
       </div>
-      {tab === "shared" ? (
+      {deciding ? (
+        <SkeletonList count={3} />
+      ) : tab === "shared" ? (
         <SharedPools lang={lang} />
       ) : (
         <>
@@ -176,13 +197,13 @@ export function PoolsPage({
   );
 }
 
+/** An empty label just asks for one; the full rule is for a label that breaks it. */
 const labelSchema = (t: (key: string) => string) =>
-  z
-    .string()
-    .refine(
-      (value) => createPoolInput.shape.label.safeParse(value).success,
-      t("hosts:pools.invalidLabel"),
-    );
+  z.string().superRefine((value, ctx) => {
+    if (!value.trim()) ctx.addIssue({ code: "custom", message: t("hosts:pools.labelRequired") });
+    else if (!createPoolInput.shape.label.safeParse(value).success)
+      ctx.addIssue({ code: "custom", message: t("hosts:pools.invalidLabel") });
+  });
 const slugSchema = (t: (key: string) => string) =>
   z
     .string()
@@ -205,7 +226,17 @@ function CreatePoolDialog({ lang, onClose }: { lang: string; onClose: () => void
   });
   const form = useForm({
     defaultValues: { label: "", slug: "" },
-    validators: { onSubmit: z.object({ label: labelSchema(t), slug: slugSchema(t) }) },
+    validators: {
+      // The slug follows the label: while both are empty, only the label's
+      // error shows (the slug fills itself once there is a label).
+      onSubmit: z.object({ label: z.string(), slug: z.string() }).superRefine((value, ctx) => {
+        for (const issue of labelSchema(t).safeParse(value.label).error?.issues ?? [])
+          ctx.addIssue({ code: "custom", path: ["label"], message: issue.message });
+        if (!value.label.trim() && !value.slug) return;
+        if (!slugSchema(t).safeParse(value.slug).success)
+          ctx.addIssue({ code: "custom", path: ["slug"], message: t("hosts:pools.invalidSlug") });
+      }),
+    },
     onSubmitInvalid: () => focusFirstInvalidField(root.current),
     onSubmit: async ({ value }) => {
       setProblem(null);
@@ -675,7 +706,9 @@ function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
         </div>
         <PageActions
           primary={
-            <Button size="touch" onClick={() => setMembers(true)}>
+            // Outline like People: a filled button here read as a selected
+            // tab and competed with the page's Create pool.
+            <Button size="touch" variant="outline" onClick={() => setMembers(true)}>
               {t("hosts:pools.actions.hosts")}
             </Button>
           }

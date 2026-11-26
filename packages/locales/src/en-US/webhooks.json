@@ -19,6 +19,7 @@
   "status": {
     "enabled": "Enabled",
     "disabled": "Disabled",
+    "failing": "Failing",
     "disabledByOwner": "Disabled by you. Deliveries are not sent while it is disabled.",
     "disabledForFailures": "Disabled after sustained delivery failures (72 hours and 20 consecutive failures). Fix the receiver, then enable it again."
   },
