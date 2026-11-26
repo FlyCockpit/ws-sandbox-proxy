@@ -47,7 +47,11 @@ vi.mock("@/lib/auth-client", () => ({
   authClient: { signIn: { email: fx.signIn }, signUp: { email: fx.signUp } },
 }));
 vi.mock("@/server/auth-session", () => ({ getRouteSession: vi.fn() }));
-vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
+vi.mock("@/utils/orpc", () => ({
+  orpc: {
+    appConfig: { queryOptions: () => ({}), queryKey: () => ["appConfig"], call: async () => ({}) },
+  },
+}));
 vi.mock("@/lib/pool-invite", () => ({
   poolInviteToken: () => undefined,
   postAuthHref: (href: string) => href,

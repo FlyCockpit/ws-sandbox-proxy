@@ -16,6 +16,7 @@ import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
+import { ensureRouteQuery } from "@/lib/route-query";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { signupNotice } from "@/lib/signup-notice";
 import { getRouteSession } from "@/server/auth-session";
@@ -34,7 +35,9 @@ export const Route = createFileRoute("/$lang/_app/signup")({
     if (decision.kind === "redirect-authenticated") {
       throw redirect({ href: safeRedirectTo(search.redirectTo, params.lang) });
     }
-    const cfg = await context.queryClient.ensureQueryData(orpc.appConfig.queryOptions());
+    const cfg = await ensureRouteQuery(context.queryClient, orpc.appConfig.queryKey(), () =>
+      orpc.appConfig.call(),
+    );
     if (!cfg.signupEnabled && !cfg.adminBootstrapSignupEnabled && !poolInviteToken()) {
       throw redirect({ to: "/$lang/login", params: { lang: params.lang }, search });
     }
