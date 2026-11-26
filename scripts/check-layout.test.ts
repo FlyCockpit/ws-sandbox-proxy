@@ -27,6 +27,14 @@ describe("judgeLayout", () => {
     assert.deepEqual(judgeLayout("landing", good, {}), []);
   });
 
+  it("reports <main> scrolling past its layout (a min-h-full box under the admin nav)", () => {
+    assert.deepEqual(judgeLayout("admin users", { ...good, overflow: 1 }, {}), []);
+    assert.match(
+      judgeLayout("admin users", { ...good, overflow: 60 }, {}).join("\n"),
+      /<main> scrolls 60px past its layout/,
+    );
+  });
+
   it("reports a page outside any shell (the old bare 404)", () => {
     assert.match(
       judgeLayout("404", { ...good, header: false, main: null, rules: [] }, {}).join("\n"),

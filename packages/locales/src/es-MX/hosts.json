@@ -519,6 +519,11 @@
     "revokeTitle": "¿Quitar a {{name}} de {{pool}}?",
     "confirmEmail": "Escribe el correo para confirmar.",
     "copyEmail": "Copiar correo",
+    "revokeContributedHosts_one": "{{name}} tiene {{count}} host en este grupo, y sale del grupo con esa persona.",
+    "revokeContributedHosts_other": "{{name}} tiene {{count}} hosts en este grupo, y salen del grupo con esa persona.",
+    "revokePlain": "{{name}} pierde el acceso a {{pool}}. Puedes volver a compartirlo más tarde.",
+    "revokeInvitePlain": "La invitación a {{name}} deja de funcionar. Puedes volver a invitar más tarde.",
+    "revoking": "Revocando…",
     "sharedBy": "Compartido contigo por {{name}}",
     "poolId": "ID del pool",
     "poolIdLabel": "ID",
@@ -627,5 +632,73 @@
     "access": "Acceso",
     "images": "Imágenes"
   },
-  "terminalOff": "Las terminales de host están desactivadas en este host. Actívalas en el host con wssp host config set-host-terminal on."
+  "terminalOff": "Las terminales de host están desactivadas en este host. Actívalas en el host con wssp host config set-host-terminal on.",
+  "hostPolicy": {
+    "titleOwner": "Lo que pueden ejecutar las personas con quienes compartes este grupo",
+    "titleMember": "Lo que te permiten los hosts de este grupo",
+    "loading": "Comprobando lo que permiten los hosts de este grupo…",
+    "failed": "No se pudo cargar lo que permiten los hosts de este grupo.",
+    "noHostsOwner": "Este grupo aún no tiene hosts activados, así que las personas con quienes lo compartes no pueden ejecutar nada. Siguiente paso: agrega un host al grupo desde su tarjeta.",
+    "noHostsMember": "Este grupo aún no tiene ningún host activado para ti, así que aquí no se puede ejecutar nada. Siguiente paso: pide a {{owner}} que agregue un host, o aporta uno propio.",
+    "ownHosts_one": "Tu propio host en este grupo ejecuta todo lo que inicies ahí.",
+    "ownHosts_other": "Tus {{count}} hosts propios en este grupo ejecutan todo lo que inicies ahí.",
+    "owner": {
+      "images": {
+        "all": "Todos los hosts ejecutan plantillas de otras cuentas.",
+        "some": "Algunos hosts ejecutan plantillas de otras cuentas; los demás solo las de su dueño.",
+        "none": "Ningún host ejecuta plantillas de otras cuentas, así que las personas con quienes compartes este grupo no pueden iniciar un sandbox aquí."
+      },
+      "builds": {
+        "all": "Todos los hosts compilan plantillas para otras cuentas.",
+        "some": "Algunos hosts compilan plantillas para otras cuentas.",
+        "none": "Ningún host compila plantillas para otras cuentas, así que sus compilaciones de plantillas en este grupo fallan."
+      },
+      "openEgress": {
+        "all": "Los sandboxes de otras cuentas pueden acceder a internet abierto.",
+        "some": "Los sandboxes de otras cuentas pueden acceder a internet abierto en algunos hosts; en los demás solo llegan a los destinos que indiquen.",
+        "none": "Los sandboxes de otras cuentas solo llegan a los destinos que indiquen (sin internet abierto)."
+      },
+      "guestSudo": {
+        "all": "Los sandboxes de otras cuentas pueden usar root (sudo) en su VM.",
+        "some": "Los sandboxes de otras cuentas pueden usar root (sudo) en su VM en algunos hosts.",
+        "none": "Los sandboxes de otras cuentas se ejecutan sin root (sudo) en su VM."
+      }
+    },
+    "member": {
+      "images": {
+        "all": "Todos los hosts pueden ejecutar tus plantillas.",
+        "some": "Algunos hosts pueden ejecutar tus plantillas; tus sandboxes van solo a esos.",
+        "none": "Ningún host de aquí ejecuta plantillas de otras cuentas, así que todavía no puedes iniciar un sandbox aquí con tus plantillas."
+      },
+      "builds": {
+        "all": "Todos los hosts pueden compilar tus plantillas.",
+        "some": "Algunos hosts pueden compilar tus plantillas.",
+        "none": "Ningún host de aquí compila plantillas de otras cuentas, así que compilar una plantilla en este grupo falla."
+      },
+      "openEgress": {
+        "all": "Tus sandboxes pueden acceder a internet abierto.",
+        "some": "Tus sandboxes pueden acceder a internet abierto en algunos hosts; en los demás solo llegan a los destinos que indiques.",
+        "none": "Tus sandboxes solo llegan a los destinos que indiques (sin internet abierto)."
+      },
+      "guestSudo": {
+        "all": "Tus sandboxes pueden usar root (sudo) en su VM.",
+        "some": "Tus sandboxes pueden usar root (sudo) en su VM en algunos hosts.",
+        "none": "Tus sandboxes se ejecutan sin root (sudo) en su VM."
+      }
+    },
+    "nextOwner": "Para permitir más, el dueño de cada host lo cambia en el propio host, nunca desde el panel. En el host:",
+    "nextMember": "Para ejecutar más aquí, pide a {{owner}} o a quien agregó el host que lo permita en el propio host (no se puede cambiar desde el panel), o aporta un host propio. En el host:",
+    "imagesStep": "Configura accept_foreign_images = true en la configuración del host (wssp host config path muestra dónde está), solo después de la comprobación de imágenes externas de la guía de hosts.",
+    "buildsStep": "Ejecutar compilaciones de plantillas para otras cuentas:",
+    "openEgressStep": "Permitir que los sandboxes de otras cuentas accedan a internet abierto:",
+    "guestSudoStep": "Permitir que los sandboxes de otras cuentas usen sudo:",
+    "restartStep": "Luego reinicia wssp host run para que se apliquen los ajustes de imágenes y compilaciones.",
+    "copyCommand": "Copiar comando",
+    "readyOwner": "Siguiente paso: las personas con quienes lo compartes agregan una plantilla propia en Plantillas y eligen este grupo.",
+    "readyMember": "Siguiente paso: agrega una plantilla propia y luego elige este grupo.",
+    "foreignBuildsOff": "Tus compilaciones solo se ejecutan en tus propios hosts. Para compilar en este grupo, activa \"Ejecutar mis compilaciones en hosts de compilación de otras personas\".",
+    "openImageSettings": "Abrir Configuración › Imágenes y compilaciones",
+    "guide": "Ajustes de host para grupos compartidos (guía)",
+    "theOwner": "el dueño del grupo"
+  }
 }

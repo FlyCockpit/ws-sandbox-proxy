@@ -31,7 +31,10 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { CopyableId } from "@/components/copyable-id";
-import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
+import {
+  OneTimeSecretPanel,
+  RevokeCredentialDialog,
+} from "@/components/credentials/credential-parts";
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
@@ -43,6 +46,7 @@ import { formatGraceDuration, formatWait } from "@/lib/format-duration";
 import { leaseLimitText, parseLeaseLimit } from "@/lib/lease-duration";
 import { orpc } from "@/utils/orpc";
 import { PoolCapacityDialog } from "./pool-capacity";
+import { PoolHostPolicyNotice } from "./pool-host-policy";
 
 type SharedPool = Awaited<
   ReturnType<AppRouterClient["sandboxPools"]["listShared"]>
@@ -320,6 +324,13 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
         </div>
       ) : null}
       {pool.ownHostsOnly ? <p className="text-sm">{t("hosts:sharing.ownHostsOnly")}</p> : null}
+      {"share" in pool && pool.share?.canUse ? (
+        <PoolHostPolicyNotice
+          poolId={pool.id}
+          lang={lang}
+          ownerName={"owner" in pool ? pool.owner?.name : undefined}
+        />
+      ) : null}
       <p className="text-sm text-muted-foreground">
         {pool.disconnectGraceSeconds === 0
           ? t("hosts:sharing.graceNone")
@@ -618,6 +629,8 @@ export function ShareForm({
               </form.Field>
             </AdvancedSection>
           ) : null}
+          {/* Before inviting: what the invited person can run on these hosts. */}
+          {!share ? <PoolHostPolicyNotice poolId={poolId} lang={lang} /> : null}
           <SharingNotice />
         </>
       )}
@@ -637,9 +650,13 @@ export function PoolSharing({
 }) {
   const { t } = useTranslation(["hosts", "common"]);
   const [editing, setEditing] = useState<Share | "new" | null>(null);
-  const [revoking, setRevoking] = useState<{ id: string; grantee?: string; name: string } | null>(
-    null,
-  );
+  /** `hosts`: how many hosts the person has in this pool (0 for an invitation). */
+  const [revoking, setRevoking] = useState<{
+    id: string;
+    grantee?: string;
+    name: string;
+    hosts: number;
+  } | null>(null);
   const [secret, setSecret] = useState<{ link: string; sent: boolean } | null>(null);
   const action = useSharingAction(lang);
   const revokeShare = useMutation({
@@ -666,6 +683,17 @@ export function PoolSharing({
   });
   const noPeople =
     shares.data?.pages[0]?.items.length === 0 && invites.data?.pages[0]?.items.length === 0;
+  const confirmRevoke = () =>
+    void action.run(async () => {
+      if (!revoking) return;
+      if (revoking.grantee)
+        await revokeShare.mutateAsync({
+          poolId,
+          granteeUserId: revoking.grantee,
+        });
+      else await revokeInvite.mutateAsync({ poolId, inviteId: revoking.id });
+      setRevoking(null);
+    });
   return (
     <WideSheet
       data-pool-people=""
@@ -698,6 +726,7 @@ export function PoolSharing({
           </p>
         </div>
       ) : null}
+      <PoolHostPolicyNotice poolId={poolId} lang={lang} />
       {noPeople ? (
         <p className="text-sm text-muted-foreground">{t("hosts:sharing.noPeople")}</p>
       ) : null}
@@ -751,6 +780,7 @@ export function PoolSharing({
                       id: share.id,
                       grantee: share.granteeUserId,
                       name: share.Grantee?.email ?? share.granteeUserId,
+                      hosts: share.contributedHosts,
                     })
                   }
                 >
@@ -806,7 +836,7 @@ export function PoolSharing({
                   <Button
                     size="touch"
                     variant="destructive"
-                    onClick={() => setRevoking({ id: invite.id, name: invite.email })}
+                    onClick={() => setRevoking({ id: invite.id, name: invite.email, hosts: 0 })}
                   >
                     {t("hosts:sharing.revoke")}
                   </Button>
@@ -825,29 +855,44 @@ export function PoolSharing({
           onClose={() => setEditing(null)}
         />
       ) : null}
+      {/* Hosts the person added leave the pool with them: only then the
+          contribution warning and a typed confirmation. Anyone else (and an
+          invitation) gets a plain revoke confirmation. */}
       <ConfirmDeleteDialog
-        open={!!revoking}
+        open={!!revoking && revoking.hosts > 0}
         onOpenChange={(open) => {
           if (!open) setRevoking(null);
         }}
         title={t("hosts:sharing.revokeTitle", { name: revoking?.name ?? "", pool: poolLabel })}
-        description={t("hosts:sharing.contributionNotice")}
+        description={
+          <>
+            {t("hosts:sharing.revokeContributedHosts", {
+              name: revoking?.name ?? "",
+              count: revoking?.hosts ?? 0,
+            })}{" "}
+            {t("hosts:sharing.contributionNotice")}
+          </>
+        }
         confirmToken={revoking?.name ?? ""}
         typePrompt={t("hosts:sharing.confirmEmail")}
         copyAriaLabel={t("hosts:sharing.copyEmail")}
+        confirmLabel={t("hosts:sharing.revoke")}
+        pendingLabel={t("hosts:sharing.revoking")}
         isPending={action.pending}
-        onConfirm={() =>
-          void action.run(async () => {
-            if (!revoking) return;
-            if (revoking.grantee)
-              await revokeShare.mutateAsync({
-                poolId,
-                granteeUserId: revoking.grantee,
-              });
-            else await revokeInvite.mutateAsync({ poolId, inviteId: revoking.id });
-            setRevoking(null);
-          })
-        }
+        onConfirm={confirmRevoke}
+      />
+      <RevokeCredentialDialog
+        open={!!revoking && revoking.hosts === 0}
+        onOpenChange={(open) => {
+          if (!open) setRevoking(null);
+        }}
+        title={t("hosts:sharing.revokeTitle", { name: revoking?.name ?? "", pool: poolLabel })}
+        description={t(
+          revoking?.grantee ? "hosts:sharing.revokePlain" : "hosts:sharing.revokeInvitePlain",
+          { name: revoking?.name ?? "", pool: poolLabel },
+        )}
+        isPending={action.pending}
+        onConfirm={confirmRevoke}
       />
     </WideSheet>
   );

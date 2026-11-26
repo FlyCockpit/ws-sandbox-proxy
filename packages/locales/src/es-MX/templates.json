@@ -766,7 +766,10 @@
     "poolOffline": "Ningún host de {{label}} está conectado ahora. La compilación espera hasta que uno se reconecte.",
     "hostOffline": "{{label}} no está conectado ahora. La compilación espera hasta que se reconecte.",
     "hostDraining": "{{label}} se está vaciando y no acepta trabajo nuevo. Quítale el vaciado o elige otro host.",
+    "poolNoForeignBuilder": "Ningún host de {{label}} compila plantillas para otras cuentas, así que esta compilación fallaría. Pide al dueño del grupo que permita compilaciones para otras cuentas en el host (wssp host config set-accept-foreign-builds on y accept_foreign_images = true), compila en un host propio o elige otro grupo.",
+    "poolForeignBuildsOff": "Tus compilaciones solo se ejecutan en tus propios hosts, y no tienes ninguno en {{label}}. Activa \"Ejecutar mis compilaciones en hosts de compilación de otras personas\" en Configuración › Imágenes y compilaciones, o elige otro grupo.",
     "openPools": "Abrir Grupos",
+    "openImageSettings": "Abrir Configuración › Imágenes y compilaciones",
     "openHosts": "Abrir Hosts"
   },
   "placing": {
@@ -775,6 +778,8 @@
     "poolOffline": "Sigue esperando: ningún host de {{label}} está conectado. La compilación empieza cuando uno se reconecte.",
     "hostOffline": "Sigue esperando: {{label}} no está conectado. La compilación empieza cuando se reconecte, o cancélala y compila en otro lugar.",
     "hostDraining": "Sigue esperando: {{label}} se está vaciando y no acepta trabajo nuevo. Quítale el vaciado, o cancela esta compilación y compila en otro lugar.",
+    "poolNoForeignBuilder": "Nada puede ejecutar esta compilación: ningún host de {{label}} compila plantillas para otras cuentas. Pide al dueño del grupo que lo permita en el host, o cancela esta compilación y compila en un host propio.",
+    "poolForeignBuildsOff": "Nada puede ejecutar esta compilación: tus compilaciones solo se ejecutan en tus propios hosts, y no tienes ninguno en {{label}}. Activa \"Ejecutar mis compilaciones en hosts de compilación de otras personas\" en Configuración › Imágenes y compilaciones, o cancela esta compilación y compila en otro lugar.",
     "waitPool": "Sigue esperando un host de {{label}} con espacio para la VM de compilación. Empieza cuando uno tenga espacio, o falla si ninguno se libera a tiempo.",
     "waitHost": "Sigue esperando a que {{label}} tenga espacio para la VM de compilación. Empieza cuando haya espacio, o falla si no se libera a tiempo.",
     "unknown": "Sigue esperando un host de compilación. Comprueba que el host o el grupo que elegiste esté conectado y tenga capacidad libre."

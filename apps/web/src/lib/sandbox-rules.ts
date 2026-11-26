@@ -491,6 +491,26 @@ export function startLeaseInput(
   return timeoutMs === null ? null : { timeoutMs };
 }
 
+/**
+ * Whether "keep its lifetime" fits the sandbox's current lease limit: a
+ * remembered lease (`0` is no time limit) above a since-lowered pool or host
+ * ceiling would be refused, so it is shown but not offered.
+ */
+export function keepLifetimeAllowed(keepTimeoutMs: number, limit: LifetimeLimit): boolean {
+  return keepTimeoutMs === 0 ? limit.allowUnlimited : keepTimeoutMs <= limit.maxTimeoutMs;
+}
+
+/**
+ * The longest finite preset `limit` allows (never "no time limit" on its own),
+ * or null when none fits. Start/Restore preselects it when keeping the
+ * remembered lease is over the limit.
+ */
+export function longestLifetime(limit: LifetimeLimit): string | null {
+  const finite = lifetimeOptions(limit.maxTimeoutMs).filter((minutes) => minutes > 0);
+  const longest = finite[finite.length - 1];
+  return longest === undefined ? null : String(longest);
+}
+
 /** One entry per line, trimmed; blank lines are ignored. */
 function parseLines(text: string): string[] {
   return text

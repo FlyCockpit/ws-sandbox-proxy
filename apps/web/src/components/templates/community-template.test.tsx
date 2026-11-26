@@ -90,6 +90,16 @@ vi.mock("@/utils/orpc", () => {
       sandboxPools: {
         listUsable: query("pools", () => ({ items: [server.pool], nextCursor: null })),
         getUsable: query("pool", () => server.pool),
+        hostPolicy: query("hostPolicy", () => ({
+          viewer: "member",
+          hosts: 1,
+          ownHosts: 0,
+          images: "all",
+          builds: "all",
+          openEgress: "all",
+          guestSudo: "all",
+          allowForeignBuilds: true,
+        })),
         listUsableMembers: query("members", () => ({ items: [], nextCursor: null })),
       },
     },

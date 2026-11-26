@@ -32,6 +32,7 @@ import {
 import {
   acceptPoolInvite,
   contributePoolHost,
+  getPoolHostPolicy,
   getUsablePool,
   grantPoolShare,
   leavePool,
@@ -92,6 +93,12 @@ export const sandboxPoolsRouter = {
     .input(poolIdInput)
     .handler(({ input, context }) =>
       getUsablePool(sessionPrincipal(context.session.user.id), input),
+    ),
+  /** Browser-only: what the pool's hosts allow other accounts (aggregate, display only). */
+  hostPolicy: protectedProcedure
+    .input(poolIdInput)
+    .handler(({ input, context }) =>
+      getPoolHostPolicy(sessionPrincipal(context.session.user.id), input),
     ),
   listUsableMembers: protectedProcedure
     .input(listPoolMembersInput)

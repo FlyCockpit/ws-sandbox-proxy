@@ -580,7 +580,6 @@
     "copyTempPasswordAriaLabel": "Copiar contraseña temporal",
     "tempPasswordHint": "Esta contraseña solo se muestra una vez. En su primer inicio de sesión, la persona confirma su dirección de correo con el enlace que recibe y vuelve a iniciar sesión. Después debe cambiar la contraseña.",
     "savedPassword": "He guardado la contraseña",
-    "passwordCopied": "Contraseña copiada",
     "deleteTitle": "¿Eliminar este usuario?",
     "deleteDescription": "Esto elimina permanentemente la cuenta junto con sus sesiones, credenciales, claves de SDK, plantillas y los registros de sandboxes y operaciones terminados. Se rechaza mientras la cuenta aún tenga hosts, sandboxes, operaciones sin terminar, eventos pendientes o transferencias activas. Para conservar la cuenta pero bloquear el acceso, archívala.",
     "typeEmailToConfirm": "Escribe el correo del usuario para confirmar",

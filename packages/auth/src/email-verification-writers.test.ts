@@ -14,8 +14,9 @@ const reviewed: Record<string, string> = {
   "packages/auth/src/terminal-hooks.ts":
     "fd5892eec0910cf1162b1ebfb89d224e6d564fd0f321326922d3113cfa9ce42d",
   // Pool invitations: acceptance and its preview require (read) a verified email.
+  // Reviewed 11-26 (e2e5-fups): listPoolShares counts contributed hosts and the pool host-policy read; the emailVerified reads are unchanged, read only.
   "packages/api/src/sandbox/services/sharing.ts":
-    "2277349e144318dcdea25c423a065ae99bae1cfc9076ef77bcb6020607418d62",
+    "ec4631603e5809d0f276f75bb30f0c937fa7553cf0b2ac4c1ee095794ec4d5df",
   "apps/web/src/hooks/use-admin-navigation.ts":
     "edda6b0dc1e47f7ce522201510c3d5a4e16c14de20fc3d5652b2ee94eb39235e",
   // Reviewed 11-26 (home-nav): decideRootLanding removed; the emailVerified reads are unchanged, read only.
@@ -33,8 +34,9 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   // Reviewed 11-26 (viewport-pass): row/badge class names only; the emailVerified read is unchanged, read only.
   // Reviewed 11-26 (tpl-e2e5-fups lane C): invite "Email language" select and the archive Undo toast; the emailVerified read is unchanged, read only.
+  // Reviewed 11-26 (e2e5-fups): the invite's temporary password uses the masked secret panel; the emailVerified read is unchanged, read only.
   "apps/web/src/components/admin/admin-users-page.tsx":
-    "d9a36d1893c8c451334d394443e031015be210e1a080dec18a06e2342692b3a7",
+    "76636c266ddb9e7c8617b45dd00a40759ca8a2b0d0439c9894b6b78d80394eb5",
   "apps/worker/src/operational-alerts.ts":
     "c60c93d8c519bfb0a69f84a088a27b57799a4f7e368070a872d7673cc9497d59",
   // Reviewed 11-24: comment only (sign-up answers are address-independent).

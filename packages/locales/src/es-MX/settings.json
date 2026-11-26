@@ -128,6 +128,10 @@
     "changingPassword": "Cambiando contraseña…",
     "passwordChangedSuccess": "Contraseña cambiada. Los otros dispositivos han cerrado sesión.",
     "currentPasswordMismatch": "Tu contraseña actual no coincide.",
+    "currentPasswordRequired": "Ingresa tu contraseña actual.",
+    "newPasswordTooShort": "Usa al menos {{min}} caracteres.",
+    "newPasswordTooLong": "Usa como máximo {{max}} caracteres.",
+    "confirmPasswordRequired": "Ingresa la nueva contraseña otra vez.",
     "passwordReused": "Elige una contraseña distinta de la temporal.",
     "passwordChangeError": "No se pudo cambiar tu contraseña. Intenta de nuevo."
   },

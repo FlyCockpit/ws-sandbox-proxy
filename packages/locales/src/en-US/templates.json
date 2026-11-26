@@ -766,7 +766,10 @@
     "poolOffline": "No host in {{label}} is connected right now. The build waits until one reconnects.",
     "hostOffline": "{{label}} isn't connected right now. The build waits until it reconnects.",
     "hostDraining": "{{label}} is draining and takes no new work. Undrain it, or choose another host.",
+    "poolNoForeignBuilder": "No host in {{label}} builds templates for other accounts, so this build would fail. Ask the pool's owner to allow builds for other accounts at the host (wssp host config set-accept-foreign-builds on and accept_foreign_images = true), build on a host of your own, or choose another pool.",
+    "poolForeignBuildsOff": "Your builds run only on your own hosts, and you have none in {{label}}. Turn on \"Run my builds on other people's builder hosts\" in Settings › Images & builds, or choose another pool.",
     "openPools": "Open Pools",
+    "openImageSettings": "Open Settings › Images & builds",
     "openHosts": "Open Hosts"
   },
   "placing": {
@@ -775,6 +778,8 @@
     "poolOffline": "Still waiting: no host in {{label}} is connected. The build starts when one reconnects.",
     "hostOffline": "Still waiting: {{label}} isn't connected. The build starts when it reconnects, or cancel it and build elsewhere.",
     "hostDraining": "Still waiting: {{label}} is draining and takes no new work. Undrain it, or cancel this build and build elsewhere.",
+    "poolNoForeignBuilder": "Nothing can run this build: no host in {{label}} builds templates for other accounts. Ask the pool's owner to allow it at the host, or cancel this build and build on a host of your own.",
+    "poolForeignBuildsOff": "Nothing can run this build: your builds run only on your own hosts, and you have none in {{label}}. Turn on \"Run my builds on other people's builder hosts\" in Settings › Images & builds, or cancel this build and build elsewhere.",
     "waitPool": "Still waiting for a host in {{label}} with room for the build VM. It starts when one has room, or fails if none frees up in time.",
     "waitHost": "Still waiting for {{label}} to have room for the build VM. It starts when there is room, or fails if none frees up in time.",
     "unknown": "Still waiting for a builder host. Check that the host or pool you chose is connected and has free capacity."

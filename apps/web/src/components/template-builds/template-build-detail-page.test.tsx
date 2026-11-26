@@ -25,6 +25,7 @@ const server = vi.hoisted(() => ({
   pool: { id: "pool_1", label: "Pool A", slug: "pool-a", memberCount: 1 },
   members: [] as Record<string, unknown>[],
   host: null as Record<string, unknown> | null,
+  hostPolicy: null as Record<string, unknown> | null,
 }));
 
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -71,6 +72,7 @@ vi.mock("@/utils/orpc", () => {
     orpc: {
       sandboxPools: {
         getUsable: query("getUsable", () => server.pool),
+        hostPolicy: query("hostPolicy", () => server.hostPolicy),
         listUsableMembers: query("listUsableMembers", () => ({
           items: server.members,
           nextCursor: null,

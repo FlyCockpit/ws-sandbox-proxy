@@ -5,8 +5,10 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import enAdmin from "@wssp/locales/src/en-US/admin.json";
 import enCommon from "@wssp/locales/src/en-US/common.json";
+import enCredentials from "@wssp/locales/src/en-US/credentials.json";
 import esAdmin from "@wssp/locales/src/es-MX/admin.json";
 import esCommon from "@wssp/locales/src/es-MX/common.json";
+import esCredentials from "@wssp/locales/src/es-MX/credentials.json";
 import { createInstance, type i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,7 +93,7 @@ vi.mock("@/utils/orpc", () => {
         }),
         invite: mutation("invite", () => ({
           userId: "new",
-          tempPassword: "temp",
+          tempPassword: "Qx7-temp-pass",
           emailSent: true,
         })),
       },
@@ -109,11 +111,11 @@ beforeAll(async () => {
   await i18n.init({
     lng: "en-US",
     fallbackLng: false,
-    ns: ["admin", "common", "errors"],
+    ns: ["admin", "common", "errors", "credentials"],
     defaultNS: "admin",
     resources: {
-      "en-US": { admin: enAdmin, common: enCommon },
-      "es-MX": { admin: esAdmin, common: esCommon },
+      "en-US": { admin: enAdmin, common: enCommon, credentials: enCredentials },
+      "es-MX": { admin: esAdmin, common: esCommon, credentials: esCredentials },
     },
     interpolation: { escapeValue: false },
     react: { useSuspense: false },
@@ -389,6 +391,36 @@ describe("admin users mutations", () => {
     } finally {
       await i18n.changeLanguage("en-US");
     }
+  });
+
+  it("shows the invited user's temporary password masked, with Show and Copy", async () => {
+    const u = userEvent.setup();
+    mount();
+    await screen.findByText("One");
+    await u.click(screen.getByRole("button", { name: enAdmin.users.invite }));
+    const form = await screen.findByRole("dialog");
+    await u.type(within(form).getByLabelText(enAdmin.users.nameLabel), "New");
+    await u.type(within(form).getByLabelText(enAdmin.users.emailLabel), "new@example.com");
+    await u.click(within(form).getByRole("button", { name: enAdmin.users.sendInvite }));
+    const reveal = await screen.findByRole("dialog", { name: enAdmin.users.revealTitle });
+    const value = () => reveal.querySelector("[data-secret-value]")!;
+    // Masked by default: the password is not in the dialog's text.
+    expect(value().textContent).not.toContain("Qx7-temp-pass");
+    expect(reveal.textContent).not.toContain("Qx7-temp-pass");
+    expect(within(reveal).getByText(enAdmin.users.tempPasswordHint)).toBeTruthy();
+    expect(
+      within(reveal).getByRole("button", { name: enAdmin.users.copyTempPasswordAriaLabel }),
+    ).toBeTruthy();
+    const show = within(reveal).getByRole("button", { name: enCredentials.reveal.show });
+    expect(show.getAttribute("aria-pressed")).toBe("false");
+    await u.click(show);
+    expect(value().textContent).toBe("Qx7-temp-pass");
+    await u.click(within(reveal).getByRole("button", { name: enCredentials.reveal.hide }));
+    expect(value().textContent).not.toContain("Qx7-temp-pass");
+    await u.click(within(reveal).getByRole("button", { name: enAdmin.users.savedPassword }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: enAdmin.users.revealTitle })).toBeNull(),
+    );
   });
 
   it("labels the invite role select and formats join dates in the UI locale (M7-S15, M7-S16)", async () => {

@@ -242,6 +242,7 @@ const surface = [
       listShared: sharing.listSharedPools,
       listUsable: sharing.listUsablePools,
       getUsable: sharing.getUsablePool,
+      hostPolicy: sharing.getPoolHostPolicy,
       listUsableMembers: sharing.listUsablePoolMembers,
       listContributions: sharing.listPoolContributions,
       listShares: sharing.listPoolShares,
@@ -274,6 +275,7 @@ const surface = [
       listShared: null,
       listUsable: "pools.list",
       getUsable: "pools.get",
+      hostPolicy: null,
       listUsableMembers: "pools.members",
       listContributions: null,
       listShares: null,
@@ -585,7 +587,7 @@ describe("independent SDK scope and service inventory", () => {
         );
       expect(Object.keys(group.services).sort()).toEqual(serviceNames.sort());
     }
-    expect(count).toBe(147);
+    expect(count).toBe(148);
     // Owner dashboard reads and qualified usable reads share the same budgets
     // and SDK actions. Only these three explicit aliases may repeat.
     expect(actions.filter((action, index) => actions.indexOf(action) !== index).sort()).toEqual([

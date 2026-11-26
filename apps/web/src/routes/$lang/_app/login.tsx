@@ -13,7 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { FormAlert } from "@/components/auth/form-alert";
 import { TwoFactorChallenge } from "@/components/auth/two-factor-challenge";
-import { useAuthSession } from "@/hooks/use-auth-session";
+import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
 import { poolInviteToken, postAuthHref } from "@/lib/pool-invite";
 import { resolveRouteSession } from "@/lib/route-session";
@@ -41,7 +41,7 @@ function LoginPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   const [challenge, setChallenge] = useState(false);
-  const authSession = useAuthSession();
+  const sessionSettled = useAuthSessionSettled();
   const {
     data: configData,
     isPending: configPending,
@@ -55,77 +55,79 @@ function LoginPage() {
   const adminBootstrapOnly = !signupOpen && configData?.adminBootstrapSignupEnabled === true;
   const emailEnabled = configData?.emailEnabled ?? false;
   const postAuthRedirect = safeRedirectTo(redirectTo, lang);
-  const sessionPending =
-    authSession.state.status === "pending" || authSession.state.status === "error";
+
+  // The password was accepted, so the session and config this page waited for
+  // have both loaded. The challenge stays outside the gate: every
+  // `/two-factor/*` call makes Better Auth refetch the (still empty) session,
+  // and a refetch or a config revalidation must never unmount the challenge
+  // and drop its mode (an emailed code would go to the TOTP check).
+  if (challenge) {
+    return (
+      <TwoFactorChallenge
+        emailEnabled={emailEnabled}
+        onVerified={() => {
+          toast.success(t("auth:signedInSuccess"));
+          window.location.assign(postAuthHref(postAuthRedirect, lang));
+        }}
+        onBack={() => setChallenge(false)}
+      />
+    );
+  }
 
   return (
     <AuthConfigGate
-      isPending={sessionPending || configPending}
+      // Settled once, not live: the refetch after a sign-in attempt must not
+      // swap the form for a skeleton and lose its inline error.
+      isPending={!sessionSettled || configPending}
       isError={configError}
       onRetry={() => refetchConfig()}
     >
-      {challenge ? (
-        <TwoFactorChallenge
-          emailEnabled={emailEnabled}
-          onVerified={() => {
-            toast.success(t("auth:signedInSuccess"));
-            window.location.assign(postAuthHref(postAuthRedirect, lang));
-          }}
-          onBack={() => setChallenge(false)}
+      <AuthCard title={t("auth:login.signinTitle")} description={t("auth:login.signinDescription")}>
+        {/* Only for a visitor who arrived from an invitation link: the secret is
+            held in memory (lib/pool-invite.ts), and reopening the link after
+            sign-in is the one thing they must know. */}
+        {poolInviteToken() ? <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p> : null}
+        <SignInForm
+          lang={lang}
+          redirectTo={postAuthRedirect}
+          showForgotPassword={emailEnabled}
+          onNeeds2FA={() => setChallenge(true)}
         />
-      ) : (
-        <AuthCard
-          title={t("auth:login.signinTitle")}
-          description={t("auth:login.signinDescription")}
-        >
-          {/* Only for a visitor who arrived from an invitation link: the secret is
-              held in memory (lib/pool-invite.ts), and reopening the link after
-              sign-in is the one thing they must know. */}
-          {poolInviteToken() ? (
-            <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p>
-          ) : null}
-          <SignInForm
-            lang={lang}
-            redirectTo={postAuthRedirect}
-            showForgotPassword={emailEnabled}
-            onNeeds2FA={() => setChallenge(true)}
-          />
-          {signupOpen ? (
-            // `max-sm:-mt-2`: on phones the link's 44px box may use half of the
-            // gap above it (its text sits 12px inside the box), which keeps it
-            // above the BottomNav at 320×568.
-            <div className="text-center max-sm:-mt-2">
+        {signupOpen ? (
+          // `max-sm:-mt-2`: on phones the link's 44px box may use half of the
+          // gap above it (its text sits 12px inside the box), which keeps it
+          // above the BottomNav at 320×568.
+          <div className="text-center max-sm:-mt-2">
+            <Link
+              to="/$lang/signup"
+              params={{ lang }}
+              search={{ redirectTo }}
+              className={cn(buttonVariants({ variant: "link" }), "min-h-[44px]")}
+            >
+              {t("auth:login.signupHint")}
+            </Link>
+          </div>
+        ) : (
+          // Sign-up is closed: say how people get in instead of a link that
+          // can only fail. Administrator addresses may still bootstrap.
+          <div data-signup-closed="" className="space-y-1 text-center max-sm:-mt-2">
+            <p className="text-sm text-muted-foreground">{t("auth:login.byInvitation")}</p>
+            {adminBootstrapOnly ? (
               <Link
                 to="/$lang/signup"
                 params={{ lang }}
                 search={{ redirectTo }}
-                className={cn(buttonVariants({ variant: "link" }), "min-h-[44px]")}
+                className={cn(
+                  buttonVariants({ variant: "link" }),
+                  "min-h-[44px] text-muted-foreground",
+                )}
               >
-                {t("auth:login.signupHint")}
+                {t("auth:login.adminSignupHint")}
               </Link>
-            </div>
-          ) : (
-            // Sign-up is closed: say how people get in instead of a link that
-            // can only fail. Administrator addresses may still bootstrap.
-            <div data-signup-closed="" className="space-y-1 text-center max-sm:-mt-2">
-              <p className="text-sm text-muted-foreground">{t("auth:login.byInvitation")}</p>
-              {adminBootstrapOnly ? (
-                <Link
-                  to="/$lang/signup"
-                  params={{ lang }}
-                  search={{ redirectTo }}
-                  className={cn(
-                    buttonVariants({ variant: "link" }),
-                    "min-h-[44px] text-muted-foreground",
-                  )}
-                >
-                  {t("auth:login.adminSignupHint")}
-                </Link>
-              ) : null}
-            </div>
-          )}
-        </AuthCard>
-      )}
+            ) : null}
+          </div>
+        )}
+      </AuthCard>
     </AuthConfigGate>
   );
 }

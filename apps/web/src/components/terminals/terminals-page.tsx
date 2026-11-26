@@ -23,9 +23,10 @@ import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
+import { useStatusClock } from "@/hooks/use-status-clock";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { dateTimeTitle } from "@/lib/format-date-time";
-import { formatAge, hostConnectionState } from "@/lib/host-status";
+import { formatAge, HOST_STATUS_REFETCH_MS, hostConnectionState } from "@/lib/host-status";
 import {
   NEW_TERMINAL_TARGETS_LIMIT,
   TERMINAL_KIND_FILTERS,
@@ -35,7 +36,7 @@ import { orpc } from "@/utils/orpc";
 
 /** Live terminals come from relay memory; poll so other tabs' terminals show up. */
 const TERMINALS_REFETCH_MS = 10_000;
-/** The picker follows sandboxes starting and hosts connecting elsewhere. */
+/** The picker follows sandboxes starting elsewhere. */
 const TARGETS_REFETCH_MS = 30_000;
 const NEW_TERMINAL_ID = "new-terminal";
 
@@ -148,7 +149,7 @@ export function TerminalsPage({
           )}
         </QueryBoundary>
       </section>
-      <NewTerminal lang={lang} kind={kind} live={all ?? []} now={now} />
+      <NewTerminal lang={lang} kind={kind} live={all ?? []} />
     </div>
   );
 }
@@ -333,12 +334,10 @@ function NewTerminal({
   lang,
   kind,
   live,
-  now,
 }: {
   lang: string;
   kind: TerminalKindFilter;
   live: readonly LiveTerminal[];
-  now: number;
 }) {
   const { t } = useTranslation(["terminal", "hosts", "dashboard"]);
   const sandboxes = useQuery({
@@ -352,9 +351,17 @@ function NewTerminal({
   const hosts = useQuery({
     ...orpc.terminals.hostTargets.queryOptions(),
     enabled: kind !== "sandbox",
-    refetchInterval: TARGETS_REFETCH_MS,
+    // Heartbeats are judged against a 30 s window: a list cached while the
+    // filter hid it (or from an earlier visit) is refetched as soon as it
+    // shows, and polled at the host-status cadence, never the five-minute
+    // default staleTime.
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchInterval: HOST_STATUS_REFETCH_MS,
     meta: { skipGlobalErrorToast: true },
   });
+  // Until that refetch lands, the cached rows are judged as of their fetch.
+  const now = useStatusClock(hosts.dataUpdatedAt, hosts.isFetching);
   const openOn = new Set(live.map((terminal) => `${terminal.target.kind}:${terminal.target.id}`));
 
   return (

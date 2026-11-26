@@ -30,8 +30,10 @@ import {
   hasStoredCopy,
   IntentKeys,
   KEEP_LIFETIME,
+  keepLifetimeAllowed,
   type LifetimeLimit,
   lifetimeMs,
+  longestLifetime,
   renewalInput,
   type SandboxProblem,
   sandboxProblem,
@@ -454,7 +456,7 @@ function StartDialog({
   const { start } = mutations;
   const onExpire = sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop";
   const offloaded = sandbox.state === "OFFLOADED";
-  const [startMinutes, setStartMinutes] = useState(() => {
+  const [pickedMinutes, setStartMinutes] = useState(() => {
     const sent = startSent.current;
     if (
       sent?.sandboxId === sandbox.id &&
@@ -463,7 +465,18 @@ function StartDialog({
       return sent.minutes;
     return KEEP_LIFETIME;
   });
-  const startLease = startLeaseInput(startMinutes, lifetimeLimit);
+  // A remembered lease above a since-lowered pool or host ceiling would be
+  // refused: "keep" is then shown as over the limit and the longest allowed
+  // choice is preselected instead (derived, so a limit read later applies too).
+  const keepOverLimit = !keepLifetimeAllowed(sandbox.rememberedLeaseTimeoutMs, lifetimeLimit);
+  const startMinutes =
+    pickedMinutes === KEEP_LIFETIME && keepOverLimit
+      ? (longestLifetime(lifetimeLimit) ?? pickedMinutes)
+      : pickedMinutes;
+  const startLease =
+    startMinutes === KEEP_LIFETIME && keepOverLimit
+      ? null
+      : startLeaseInput(startMinutes, lifetimeLimit);
   return (
     <Dialog open onOpenChange={(next) => (next ? undefined : setOpen(null))}>
       <DialogContent closeLabel={t("common:actions.close")} className={DIALOG_CLASS}>
@@ -487,6 +500,7 @@ function StartDialog({
           onMinutes={setStartMinutes}
           onExpire={onExpire}
           keepTimeoutMs={sandbox.rememberedLeaseTimeoutMs}
+          keepOverLimit={keepOverLimit}
           disabled={start.isPending}
         />
         <div className="flex flex-wrap justify-end gap-2">

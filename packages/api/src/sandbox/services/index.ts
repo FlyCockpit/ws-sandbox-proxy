@@ -106,6 +106,7 @@ export const POOL_PROCEDURE_INVENTORY = {
   listShared: sharingServices.listSharedPools,
   listUsable: sharingServices.listUsablePools,
   getUsable: sharingServices.getUsablePool,
+  hostPolicy: sharingServices.getPoolHostPolicy,
   listUsableMembers: sharingServices.listUsablePoolMembers,
   listContributions: sharingServices.listPoolContributions,
   grantShare: sharingServices.grantPoolShare,

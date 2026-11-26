@@ -9,7 +9,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@wssp/ui/components/card";
-import { CopyField } from "@wssp/ui/components/copy-field";
 import {
   Dialog,
   DialogContent,
@@ -51,6 +50,7 @@ import { useTranslation } from "react-i18next";
 import { z } from "zod";
 
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
 import { EmptyState } from "@/components/empty-state";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
@@ -792,22 +792,15 @@ function RevealInviteDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-w-0 space-y-1.5">
-          <Label>{t("admin:users.tempPasswordLabel")}</Label>
-          <CopyField
-            value={reveal?.tempPassword ?? ""}
-            copyLabel={t("admin:users.copyTempPasswordAriaLabel")}
-            onCopied={() => toast.success(t("admin:users.passwordCopied"))}
-            onCopyError={() => toast.error(t("errors:couldNotCopy"))}
-          />
-          <p className="text-xs text-muted-foreground">{t("admin:users.tempPasswordHint")}</p>
-        </div>
-
-        <DialogFooter>
-          <Button onClick={onClose} className="min-h-[44px]">
-            {t("admin:users.savedPassword")}
-          </Button>
-        </DialogFooter>
+        {/* Masked by default with Show and Copy, like every other secret. */}
+        <OneTimeSecretPanel
+          secret={reveal?.tempPassword ?? ""}
+          label={t("admin:users.tempPasswordLabel")}
+          warning={t("admin:users.tempPasswordHint")}
+          doneLabel={t("admin:users.savedPassword")}
+          copyLabel={t("admin:users.copyTempPasswordAriaLabel")}
+          onDone={onClose}
+        />
       </DialogContent>
     </Dialog>
   );

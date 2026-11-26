@@ -51,6 +51,8 @@ export type FakeSandboxServer = {
   maxTimeoutMs?: number;
   /** `sandboxPools.capacity`'s `largest` (the most one pool host can take now; default roomy). */
   poolLargest?: { cpuCount: number; memoryMiB: number; diskGiB: number } | null;
+  /** `sandboxPools.hostPolicy` (default: every host allows other accounts everything). */
+  poolHostPolicy?: Row;
   /** `listTemplates` `versions` by logical template id (unset: no `versions` field). */
   templateVersions?: Record<string, { count: number; latest: number | null }>;
   /** `getLimits` `previewTunnels` (a tunnel server is configured). */
@@ -413,6 +415,19 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       },
     },
     sandboxPools: {
+      hostPolicy: {
+        queryOptions: query(["sandboxPools", "hostPolicy"], "poolHostPolicy", () => ({
+          viewer: "member",
+          hosts: 1,
+          ownHosts: 0,
+          images: "all",
+          builds: "all",
+          openEgress: "all",
+          guestSudo: "all",
+          allowForeignBuilds: true,
+          ...server.poolHostPolicy,
+        })),
+      },
       capacity: {
         queryOptions: query(
           ["sandboxPools", "capacity"],

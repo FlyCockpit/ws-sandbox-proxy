@@ -39,6 +39,8 @@ const server = vi.hoisted(() => ({
   calls: [] as { procedure: string; input: unknown }[],
   endError: null as unknown,
   sandboxesError: null as unknown,
+  /** While set, hostTargets answers only once it resolves. */
+  hostsGate: null as Promise<void> | null,
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
@@ -93,6 +95,7 @@ vi.mock("@/utils/orpc", () => {
             queryKey: ["terminals", "hostTargets"],
             queryFn: async () => {
               record("terminals.hostTargets", undefined);
+              if (server.hostsGate) await server.hostsGate;
               return { hosts: structuredClone(server.hosts), more: false };
             },
           }),
@@ -201,6 +204,21 @@ function mount(kind: "all" | "sandbox" | "host" = "all", onKindChange = vi.fn())
   return onKindChange;
 }
 
+/** The page with a filter the test switches, on one QueryClient (its cache survives). */
+function mountSwitchable() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const ui = (kind: "all" | "sandbox") => (
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <TerminalsPage lang="en-US" kind={kind} onKindChange={vi.fn()} />
+      </I18nextProvider>
+    </QueryClientProvider>
+  );
+  const view = render(ui("all"));
+  return { client, rerender: (kind: "all" | "sandbox") => view.rerender(ui(kind)) };
+}
+const halo = () => document.querySelector<HTMLElement>('[data-new-terminal-target="host-1"]');
+
 const page = enTerminal.page;
 const row = (id: string) => document.querySelector<HTMLElement>(`li[data-terminal-id="${id}"]`);
 
@@ -212,10 +230,14 @@ beforeEach(async () => {
   server.calls = [];
   server.endError = null;
   server.sandboxesError = null;
+  server.hostsGate = null;
   toast.success.mockReset();
   toast.error.mockReset();
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("Terminals page", () => {
   it("empty: says how to open the first terminal and links to the picker", async () => {
@@ -401,6 +423,50 @@ describe("Terminals page", () => {
     // The filtered empty state names only hosts.
     expect(screen.queryByText(/Can't tell yet/)).toBeNull();
     expect(screen.getByText(page.empty.description.host)).toBeTruthy();
+  });
+
+  it("hosts cached while the filter hid them are never judged stale before the refetch lands", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server.hosts = [host({ lastHeartbeatAt: new Date() })];
+    const { client, rerender } = mountSwitchable();
+    await waitFor(() => expect(within(halo()!).getByText(/^Connected/)).toBeTruthy());
+    const hostCalls = () => server.calls.filter((c) => c.procedure === "terminals.hostTargets");
+    expect(hostCalls()).toHaveLength(1);
+
+    // Filter to Sandboxes for 70 s (the hosts query is off), meanwhile the
+    // host keeps beating; the next answer is held back.
+    rerender("sandbox");
+    expect(halo()).toBeNull();
+    vi.setSystemTime(Date.now() + 70_000);
+    server.hosts = [host({ lastHeartbeatAt: new Date() })];
+    let answer = () => {};
+    server.hostsGate = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+
+    // Back to All: the 70 s old cached row is refetched at once and, until
+    // the answer lands, reads as it did when fetched, not "Connection stale".
+    rerender("all");
+    await waitFor(() => expect(hostCalls()).toHaveLength(2));
+    expect(within(halo()!).getByText(/^Connected/)).toBeTruthy();
+    expect(within(halo()!).queryByText(/Connection stale/)).toBeNull();
+    answer();
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(within(halo()!).getByText(/^Connected/)).toBeTruthy();
+  });
+
+  it("a host whose refetch fails is judged against the wall clock again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    server.hosts = [host({ lastHeartbeatAt: new Date() })];
+    const { rerender } = mountSwitchable();
+    await waitFor(() => expect(within(halo()!).getByText(/^Connected/)).toBeTruthy());
+    rerender("sandbox");
+    vi.setSystemTime(Date.now() + 70_000);
+    server.hostsGate = Promise.reject(new Error("network"));
+    server.hostsGate.catch(() => {});
+    rerender("all");
+    // The server could not confirm the 70 s old heartbeat: never "Connected".
+    await waitFor(() => expect(within(halo()!).getByText(/Connection stale/)).toBeTruthy());
   });
 
   it("a failed first load of the picker offers retry, never 'no sandbox is running'", async () => {

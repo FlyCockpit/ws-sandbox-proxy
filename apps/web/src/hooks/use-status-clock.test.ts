@@ -15,3 +15,12 @@ it("uses the wall clock online and the last fetch time offline", () => {
   // Nothing fetched yet: fall back to the wall clock.
   expect(renderHook(() => useStatusClock(0)).result.current).toBe(10_000);
 });
+
+it("judges cached data as of its fetch while a refetch replaces it", () => {
+  vi.spyOn(Date, "now").mockReturnValue(100_000);
+  vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+  expect(renderHook(() => useStatusClock(4_000, true)).result.current).toBe(4_000);
+  // The refetch settled (or failed): the wall clock again.
+  expect(renderHook(() => useStatusClock(4_000, false)).result.current).toBe(100_000);
+  expect(renderHook(() => useStatusClock(0, true)).result.current).toBe(100_000);
+});

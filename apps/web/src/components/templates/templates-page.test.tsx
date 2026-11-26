@@ -238,6 +238,21 @@ vi.mock("@/utils/orpc", () => {
             queryFn: async () => ({ id: "pool-a", label: "Shared pool", memberCount: 1 }),
           }),
         },
+        hostPolicy: {
+          queryOptions: () => ({
+            queryKey: ["poolHostPolicy"],
+            queryFn: async () => ({
+              viewer: "owner",
+              hosts: 1,
+              ownHosts: 1,
+              images: "all",
+              builds: "all",
+              openEgress: "all",
+              guestSudo: "all",
+              allowForeignBuilds: null,
+            }),
+          }),
+        },
         listUsableMembers: {
           queryOptions: () => ({
             queryKey: ["listUsableMembersFlat"],

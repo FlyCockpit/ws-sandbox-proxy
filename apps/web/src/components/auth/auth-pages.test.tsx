@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { act, type ReactNode, useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -16,6 +16,15 @@ const fx = vi.hoisted(() => ({
   },
   signIn: vi.fn(),
   signUp: vi.fn(),
+  twoFactor: {
+    sendOtp: vi.fn(),
+    verifyOtp: vi.fn(),
+    verifyTotp: vi.fn(),
+    verifyBackupCode: vi.fn(),
+  },
+  // Better Auth's session atom as the page sees it; `setSession` re-renders.
+  session: { status: "anonymous" as "pending" | "anonymous" | "error" },
+  listeners: new Set<() => void>(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
@@ -41,14 +50,27 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: fx.config, isPending: false, isError: false, refetch: vi.fn() }),
 }));
 vi.mock("@/hooks/use-auth-session", () => ({
-  useAuthSession: () => ({ state: { status: "anonymous" } }),
+  useAuthSession: () => ({
+    state: useSyncExternalStore(
+      (onChange) => {
+        fx.listeners.add(onChange);
+        return () => fx.listeners.delete(onChange);
+      },
+      () => fx.session,
+    ),
+  }),
 }));
 vi.mock("@/lib/auth-client", () => ({
-  authClient: { signIn: { email: fx.signIn }, signUp: { email: fx.signUp } },
+  authClient: {
+    signIn: { email: fx.signIn },
+    signUp: { email: fx.signUp },
+    twoFactor: fx.twoFactor,
+  },
 }));
 vi.mock("@/server/auth-session", () => ({ getRouteSession: vi.fn() }));
 vi.mock("@/utils/orpc", () => ({
   orpc: {
+    auth: { verifyEmailTransport: { call: async () => ({ ok: true }) } },
     appConfig: { queryOptions: () => ({}), queryKey: () => ["appConfig"], call: async () => ({}) },
   },
 }));
@@ -79,8 +101,15 @@ beforeEach(() => {
   fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
   fx.signIn.mockReset();
   fx.signUp.mockReset();
+  for (const fn of Object.values(fx.twoFactor)) fn.mockReset();
+  fx.session = { status: "anonymous" };
 });
 afterEach(() => cleanup());
+
+function setSession(status: typeof fx.session.status) {
+  fx.session = { status };
+  for (const listener of fx.listeners) listener();
+}
 
 function fill(label: string, value: string) {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -141,6 +170,73 @@ describe("sign in", () => {
     render(<LoginPage />);
     expect(screen.getByText("auth:login.byInvitation")).toBeTruthy();
     expect(screen.queryByText("auth:login.adminSignupHint")).toBeNull();
+  });
+});
+
+describe("sign-in 2FA challenge", () => {
+  const mode = () =>
+    document.querySelector("[data-challenge-mode]")?.getAttribute("data-challenge-mode");
+
+  async function reachChallenge() {
+    fx.config = { ...fx.config, emailEnabled: true };
+    fx.signIn.mockResolvedValue({ data: { twoFactorRedirect: true }, error: null });
+    render(<LoginPage />);
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "right-password");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+    await waitFor(() => expect(mode()).toBe("totp"));
+  }
+
+  it("keeps the emailed-code mode through the session refetch the send causes", async () => {
+    // Better Auth refetches the still-empty session after `/two-factor/send-otp`:
+    // the atom reports pending while it runs, then anonymous again.
+    fx.twoFactor.sendOtp.mockImplementation(async () => {
+      setSession("pending");
+      return { data: { status: true }, error: null };
+    });
+    fx.twoFactor.verifyOtp.mockResolvedValue({ error: { code: "INVALID_CODE", status: 401 } });
+    await reachChallenge();
+    const challenge = document.querySelector("[data-challenge-mode]");
+
+    fireEvent.click(screen.getByRole("button", { name: "auth:twoFactor.emailMeCode" }));
+    await waitFor(() => expect(mode()).toBe("email"));
+    act(() => setSession("anonymous"));
+    act(() => setSession("error"));
+    expect(mode()).toBe("email");
+    // The same element: the challenge was never unmounted.
+    expect(document.querySelector("[data-challenge-mode]")).toBe(challenge);
+    expect(screen.getByRole("button", { name: "auth:twoFactor.useAuthenticator" })).toBeTruthy();
+    expect(screen.getByText("auth:twoFactor.emailCodeDescription")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("auth:fields.verificationCode"), {
+      target: { value: "654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "auth:twoFactor.verify" }));
+    // Refused by the email check, so the email-code error, not the authenticator's.
+    expect((await screen.findByRole("alert")).textContent).toBe("auth:errors.invalidEmailCode");
+    expect(fx.twoFactor.verifyOtp).toHaveBeenCalledWith({ code: "654321" });
+    expect(fx.twoFactor.verifyTotp).not.toHaveBeenCalled();
+  });
+
+  it("keeps the sign-in form and its error through a session refetch", async () => {
+    fx.signIn.mockImplementation(async () => {
+      setSession("pending");
+      return { error: { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 } };
+    });
+    render(<LoginPage />);
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "wrong-password");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("auth:errors.invalidCredentials");
+    expect(screen.getByLabelText("auth:fields.password")).toBeTruthy();
+  });
+
+  it("waits for the first session answer before showing the form", () => {
+    fx.session = { status: "pending" };
+    render(<LoginPage />);
+    expect(screen.queryByLabelText("auth:fields.password")).toBeNull();
+    act(() => setSession("anonymous"));
+    expect(screen.getByLabelText("auth:fields.password")).toBeTruthy();
   });
 });
 

@@ -206,6 +206,7 @@ export function LifetimeFields({
   onExpire,
   onOnExpire,
   keepTimeoutMs,
+  keepOverLimit = false,
   disabled,
   hint,
   error,
@@ -222,6 +223,8 @@ export function LifetimeFields({
    * "keep its lifetime" (value `KEEP_LIFETIME`), which sends no timeout.
    */
   keepTimeoutMs?: number;
+  /** The remembered lease is above the current limit: listed, disabled, with the reason. */
+  keepOverLimit?: boolean;
   disabled?: boolean;
   /** Replaces the default hint (Create states its own default). */
   hint?: string;
@@ -248,13 +251,24 @@ export function LifetimeFields({
           onValueChange={(value) => onMinutes(value)}
         >
           {keepTimeoutMs === undefined ? null : (
-            <SelectItem value={KEEP_LIFETIME}>
+            <SelectItem
+              value={KEEP_LIFETIME}
+              disabled={keepOverLimit}
+              data-keep-over-limit={keepOverLimit ? "" : undefined}
+            >
               {keepTimeoutMs === 0
-                ? t("sandboxes:lifetime.keepUnlimited")
-                : t("sandboxes:lifetime.keep", {
-                    lifetime: formatLeaseDuration(keepTimeoutMs, i18n.language),
-                    action: t(`sandboxes:expiry.action.${onExpire}`),
-                  })}
+                ? t(
+                    keepOverLimit
+                      ? "sandboxes:lifetime.keepUnlimitedOverLimit"
+                      : "sandboxes:lifetime.keepUnlimited",
+                  )
+                : t(
+                    keepOverLimit ? "sandboxes:lifetime.keepOverLimit" : "sandboxes:lifetime.keep",
+                    {
+                      lifetime: formatLeaseDuration(keepTimeoutMs, i18n.language),
+                      action: t(`sandboxes:expiry.action.${onExpire}`),
+                    },
+                  )}
             </SelectItem>
           )}
           {lifetimeOptions(maxTimeoutMs, allowUnlimited).map((value) => (
@@ -274,7 +288,9 @@ export function LifetimeFields({
             t(
               keepTimeoutMs === undefined
                 ? "sandboxes:lifetime.hint"
-                : "sandboxes:lifetime.keepHint",
+                : keepOverLimit
+                  ? "sandboxes:lifetime.keepOverLimitHint"
+                  : "sandboxes:lifetime.keepHint",
             )}
         </p>
         {error ? (

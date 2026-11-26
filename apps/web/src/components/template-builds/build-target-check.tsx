@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
+import { type PoolHostPolicy, usePoolHostPolicy } from "@/components/pools/pool-host-policy";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useStatusClock } from "@/hooks/use-status-clock";
 import {
@@ -27,22 +28,67 @@ export type BuildTargetCheck =
   | { kind: "emptyPool"; label: string }
   | { kind: "poolDisabled"; label: string }
   | { kind: "poolOffline"; label: string }
+  /** A shared pool: none of your hosts, and no host builds for other accounts. */
+  | { kind: "poolNoForeignBuilder"; label: string }
+  /** A shared pool: none of your hosts, and your builds stay on your own hosts. */
+  | { kind: "poolForeignBuildsOff"; label: string }
   | { kind: "hostOffline"; label: string }
   | { kind: "hostDraining"; label: string };
 
 /** Blocking problems disable Build; the rest are warnings. */
 export function blocksBuild(check: BuildTargetCheck): boolean {
-  return check.kind === "emptyPool" || check.kind === "poolDisabled";
+  return (
+    check.kind === "emptyPool" ||
+    check.kind === "poolDisabled" ||
+    check.kind === "poolNoForeignBuilder" ||
+    check.kind === "poolForeignBuildsOff"
+  );
+}
+
+/** Where a verdict's next step is taken. */
+export function checkLink(kind: string): "hosts" | "pools" | "images" {
+  if (kind === "poolForeignBuildsOff") return "images";
+  return kind.startsWith("host") || kind === "waitHost" ? "hosts" : "pools";
+}
+const CHECK_LINKS = {
+  hosts: { to: "/$lang/settings/hosts", label: "templates:preflight.openHosts" },
+  pools: { to: "/$lang/settings/pools", label: "templates:preflight.openPools" },
+  images: { to: "/$lang/settings/images", label: "templates:preflight.openImageSettings" },
+} as const;
+
+/** The link under a pre-flight or placing line. */
+export function CheckLink({ kind, lang }: { kind: string; lang: string }) {
+  const { t } = useTranslation(["templates"]);
+  const link = CHECK_LINKS[checkLink(kind)];
+  return (
+    <Link
+      to={link.to}
+      params={{ lang }}
+      className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+    >
+      {t(link.label)}
+    </Link>
+  );
 }
 
 type MemberRead = { enabled?: boolean; Host?: { status: string } | null };
 
-/** Pure: the verdict from what the pool read and its (owner-only) member rows say. */
-function poolCheck(
+/**
+ * Pure: the verdict from what the pool read, its (owner-only) member rows and
+ * the pool's host policy say. A shared pool where you have no host builds only
+ * on hosts whose owners build for other accounts, and only with your opt-in.
+ */
+export function poolCheck(
   pool: { label: string; memberCount: number },
   members: readonly MemberRead[] | undefined,
+  policy?: Pick<PoolHostPolicy, "viewer" | "hosts" | "ownHosts" | "builds" | "allowForeignBuilds">,
 ): BuildTargetCheck {
   if (pool.memberCount === 0) return { kind: "emptyPool", label: pool.label };
+  if (policy?.viewer === "member" && policy.ownHosts === 0 && policy.hosts > 0) {
+    if (policy.builds === "none") return { kind: "poolNoForeignBuilder", label: pool.label };
+    if (policy.allowForeignBuilds === false)
+      return { kind: "poolForeignBuildsOff", label: pool.label };
+  }
   // Only the pool owner sees member rows with a host and an enabled flag.
   const owned = (members ?? []).filter((member) => member.Host != null);
   if (owned.length === 0 || owned.length < pool.memberCount) return { kind: "ok" };
@@ -98,10 +144,11 @@ export function usePoolBuildCheck(poolId: string): {
     staleTime: 0,
     meta: { skipGlobalErrorToast: true },
   });
+  const policy = usePoolHostPolicy(pool.data && "owner" in pool.data ? poolId : "");
   if (poolId === "" || !pool.data)
     return { check: { kind: "ok" }, pending: pool.isPending, label: null };
   return {
-    check: poolCheck(pool.data, members.data?.items as MemberRead[] | undefined),
+    check: poolCheck(pool.data, members.data?.items as MemberRead[] | undefined, policy.data),
     pending: false,
     label: pool.data.label,
   };
@@ -123,17 +170,7 @@ export function BuildTargetNote({ check, lang }: { check: BuildTargetCheck; lang
       }
     >
       <p>{t(`templates:preflight.${check.kind}`, { label: check.label })}</p>
-      <Link
-        to={check.kind.startsWith("host") ? "/$lang/settings/hosts" : "/$lang/settings/pools"}
-        params={{ lang }}
-        className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-      >
-        {t(
-          check.kind.startsWith("host")
-            ? "templates:preflight.openHosts"
-            : "templates:preflight.openPools",
-        )}
-      </Link>
+      <CheckLink kind={check.kind} lang={lang} />
     </div>
   );
 }

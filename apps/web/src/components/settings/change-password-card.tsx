@@ -46,9 +46,14 @@ export function ChangePasswordCard({
     validators: {
       onSubmit: z
         .object({
-          currentPassword: z.string().min(1),
-          newPassword: z.string().min(12).max(128),
-          confirmPassword: z.string().min(1),
+          // Field-specific copy: the generic map would say "Must be at least
+          // 1 characters." for an empty field.
+          currentPassword: z.string().min(1, t("settings:security.currentPasswordRequired")),
+          newPassword: z
+            .string()
+            .min(12, t("settings:security.newPasswordTooShort", { min: 12 }))
+            .max(128, t("settings:security.newPasswordTooLong", { max: 128 })),
+          confirmPassword: z.string().min(1, t("settings:security.confirmPasswordRequired")),
         })
         .refine((values) => values.newPassword === values.confirmPassword, {
           message: t("validation:passwordsMustMatch"),

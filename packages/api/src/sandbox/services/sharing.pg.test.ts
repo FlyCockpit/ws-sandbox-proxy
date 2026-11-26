@@ -47,6 +47,7 @@ import { createSdkKey } from "./sdk-keys";
 import {
   acceptPoolInvite,
   contributePoolHost,
+  getPoolHostPolicy,
   getUsablePool,
   grantPoolShare,
   leavePool,
@@ -687,6 +688,56 @@ async function readFixture() {
   });
   return { ...f, member };
 }
+it("host policy aggregates the usable switched-on hosts' consent for other accounts and names no host", async () => {
+  const f = await readFixture();
+  await db.inspect.sandboxHost.update({
+    where: { id: f.host.id },
+    data: {
+      daemonFeatures: { image: { build: true, acceptForeign: false, acceptForeignBuilds: false } },
+      daemonOpenEgressForOthers: false,
+      daemonGuestSudoForOthers: true,
+    },
+  });
+  const member = await getPoolHostPolicy(session(f.c.id), { id: f.pool.id });
+  expect(member).toEqual({
+    viewer: "member",
+    hosts: 1,
+    ownHosts: 0,
+    images: "none",
+    builds: "none",
+    openEgress: "none",
+    guestSudo: "all",
+    allowForeignBuilds: false,
+  });
+  for (const hidden of [f.host.id, f.host.label, f.host.slug, f.b.id, f.b.email])
+    expect(JSON.stringify(member)).not.toContain(hidden);
+  await db.inspect.sandboxHost.update({
+    where: { id: f.host.id },
+    data: {
+      daemonFeatures: { image: { build: true, acceptForeign: true, acceptForeignBuilds: true } },
+    },
+  });
+  expect(await getPoolHostPolicy(session(f.a.id), { id: f.pool.id })).toMatchObject({
+    viewer: "owner",
+    hosts: 1,
+    ownHosts: 0,
+    images: "all",
+    builds: "all",
+    allowForeignBuilds: null,
+  });
+  // A switched-off member is not described; contribute-only grantees read nothing.
+  await db.inspect.sandboxPoolMember.update({
+    where: { id: f.member.id },
+    data: { enabled: false },
+  });
+  expect(await getPoolHostPolicy(session(f.c.id), { id: f.pool.id })).toMatchObject({
+    hosts: 0,
+    images: "none",
+  });
+  await expect(getPoolHostPolicy(session(f.b.id), { id: f.pool.id })).rejects.toMatchObject({
+    code: "NOT_FOUND",
+  });
+});
 it("qualified shared reads disclose only own permissions/usage and opaque use-members; contributions and owner mutations remain separate", async () => {
   const f = await readFixture();
   const page = await listSharedPools(session(f.c.id), { limit: 10 });
@@ -1020,6 +1071,21 @@ it("U1 host detail guests are bounded opaque allocation metadata; creator/pool o
   const roster = await listPoolShares(session(f.a.id), { poolId: f.pool.id, limit: 1 });
   expect(roster.items[0]).toHaveProperty("usage.memoryMiB", "0");
   expect(roster.items[0]).toHaveProperty("Grantee.email");
+  // The People roster says who has hosts in the pool (Revoke warns only for them).
+  const contributedOf = async () =>
+    new Map(
+      (await listPoolShares(session(f.a.id), { poolId: f.pool.id, limit: 10 })).items.map(
+        (share) => [share.granteeUserId, share.contributedHosts],
+      ),
+    );
+  expect(await contributedOf()).toEqual(
+    new Map([
+      [f.b.id, 1],
+      [f.c.id, 0],
+    ]),
+  );
+  await withdrawPoolHost(session(f.b.id), { poolId: f.pool.id, sandboxHostId: f.host.id });
+  expect((await contributedOf()).get(f.b.id)).toBe(0);
 });
 
 it.each(["banned", "deleting"] as const)(

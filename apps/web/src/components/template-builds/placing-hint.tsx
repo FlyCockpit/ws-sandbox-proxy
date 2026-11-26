@@ -1,10 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { HOST_STATUS_REFETCH_MS } from "@/lib/host-status";
 import { orpc } from "@/utils/orpc";
-import { type BuildTargetCheck, useHostBuildCheck, usePoolBuildCheck } from "./build-target-check";
+import {
+  type BuildTargetCheck,
+  CheckLink,
+  useHostBuildCheck,
+  usePoolBuildCheck,
+} from "./build-target-check";
 
 /**
  * A build still waiting for a builder host (QUEUED or PLACING) after
@@ -56,7 +60,6 @@ function PlacingReason({ target, lang }: { target: Build["target"]; lang: string
   } else if (target.hostId !== null && host.data) {
     reason = hostVerdict.kind !== "ok" ? hostVerdict : { kind: "waitHost", label: host.data.label };
   } else reason = { kind: "unknown" };
-  const hostLink = reason.kind.startsWith("host") || reason.kind === "waitHost";
   return (
     <div
       role="status"
@@ -66,13 +69,7 @@ function PlacingReason({ target, lang }: { target: Build["target"]; lang: string
       <p>
         {t(`templates:placing.${reason.kind}`, { label: "label" in reason ? reason.label : "" })}
       </p>
-      <Link
-        to={hostLink ? "/$lang/settings/hosts" : "/$lang/settings/pools"}
-        params={{ lang }}
-        className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-      >
-        {t(hostLink ? "templates:preflight.openHosts" : "templates:preflight.openPools")}
-      </Link>
+      <CheckLink kind={reason.kind} lang={lang} />
     </div>
   );
 }

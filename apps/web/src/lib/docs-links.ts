@@ -20,6 +20,7 @@ export const DOC_PAGES = {
   tunnels: "guide/tunnels.md",
   connect: "guide/connect.md",
   cliInstall: "guide/cli.md#install",
+  poolHostPolicy: "guide/pools.md#what-a-pools-hosts-allow-other-accounts",
 } as const;
 
 export type DocPage = keyof typeof DOC_PAGES;

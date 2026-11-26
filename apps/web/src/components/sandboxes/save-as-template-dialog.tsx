@@ -7,6 +7,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
@@ -268,12 +269,16 @@ export function SaveAsTemplateDialog({
                 {t(`sandboxes:capture.problem.${problem}`)}
               </p>
             ) : null}
-            <Button type="submit" size="touch" disabled={capture.isPending}>
-              {capture.isPending ? t("sandboxes:capture.pending") : t("sandboxes:capture.submit")}
-            </Button>
-            <Button type="button" size="touch" variant="outline" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
+            {/* Pinned action bar, Cancel then the primary action, so both stay
+                on screen with Options open on a phone. */}
+            <DialogFooter>
+              <Button type="button" size="touch" variant="outline" onClick={onClose}>
+                {t("common:actions.cancel")}
+              </Button>
+              <Button type="submit" size="touch" disabled={capture.isPending}>
+                {capture.isPending ? t("sandboxes:capture.pending") : t("sandboxes:capture.submit")}
+              </Button>
+            </DialogFooter>
           </form>
         )}
       </DialogContent>
@@ -332,14 +337,16 @@ function CaptureProgress({
             : ""}
         </p>
       )}
-      <Button
-        type="button"
-        size="touch"
-        variant={settled ? "default" : "outline"}
-        onClick={onClose}
-      >
-        {settled ? t("sandboxes:capture.close") : t("sandboxes:capture.background")}
-      </Button>
+      <DialogFooter>
+        <Button
+          type="button"
+          size="touch"
+          variant={settled ? "default" : "outline"}
+          onClick={onClose}
+        >
+          {settled ? t("sandboxes:capture.close") : t("sandboxes:capture.background")}
+        </Button>
+      </DialogFooter>
     </div>
   );
 }

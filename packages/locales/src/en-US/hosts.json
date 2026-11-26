@@ -456,6 +456,11 @@
     "revokeTitle": "Remove {{name}} from {{pool}}?",
     "confirmEmail": "Type the email to confirm.",
     "copyEmail": "Copy email",
+    "revokeContributedHosts_one": "{{name}} has {{count}} host in this pool, and it leaves the pool with them.",
+    "revokeContributedHosts_other": "{{name}} has {{count}} hosts in this pool, and they leave the pool with them.",
+    "revokePlain": "{{name}} loses access to {{pool}}. You can share it with them again later.",
+    "revokeInvitePlain": "The invitation to {{name}} stops working. You can invite them again later.",
+    "revoking": "Revoking…",
     "sharedBy": "Shared with you by {{name}}",
     "poolId": "pool ID",
     "poolIdLabel": "ID",
@@ -627,5 +632,73 @@
     "access": "Access",
     "images": "Images"
   },
-  "terminalOff": "Host terminals are off on this host. Turn them on at the host with wssp host config set-host-terminal on."
+  "terminalOff": "Host terminals are off on this host. Turn them on at the host with wssp host config set-host-terminal on.",
+  "hostPolicy": {
+    "titleOwner": "What people you share this pool with can run",
+    "titleMember": "What this pool's hosts allow you",
+    "loading": "Checking what this pool's hosts allow…",
+    "failed": "Couldn't load what this pool's hosts allow.",
+    "noHostsOwner": "This pool has no switched-on hosts yet, so people you share it with can't run anything. Next step: add a host to the pool on its card.",
+    "noHostsMember": "This pool has no host switched on for you yet, so nothing can run here. Next step: ask {{owner}} to add a host, or contribute one of your own.",
+    "ownHosts_one": "Your own host in this pool runs everything you start there.",
+    "ownHosts_other": "Your {{count}} own hosts in this pool run everything you start there.",
+    "owner": {
+      "images": {
+        "all": "Every host runs templates from other accounts.",
+        "some": "Some hosts run templates from other accounts; the rest run only their owner's.",
+        "none": "No host runs templates from other accounts, so people you share this pool with can't start a sandbox here."
+      },
+      "builds": {
+        "all": "Every host builds templates for other accounts.",
+        "some": "Some hosts build templates for other accounts.",
+        "none": "No host builds templates for other accounts, so their template builds on this pool fail."
+      },
+      "openEgress": {
+        "all": "Other accounts' sandboxes may reach the open internet.",
+        "some": "Other accounts' sandboxes may reach the open internet on some hosts; on the rest they reach only the destinations they list.",
+        "none": "Other accounts' sandboxes reach only the destinations they list (no open internet)."
+      },
+      "guestSudo": {
+        "all": "Other accounts' sandboxes may use root (sudo) in their VM.",
+        "some": "Other accounts' sandboxes may use root (sudo) in their VM on some hosts.",
+        "none": "Other accounts' sandboxes run without root (sudo) in their VM."
+      }
+    },
+    "member": {
+      "images": {
+        "all": "Every host can run your templates.",
+        "some": "Some hosts can run your templates; your sandboxes go only to those.",
+        "none": "No host here runs other accounts' templates, so you can't start a sandbox here from your templates yet."
+      },
+      "builds": {
+        "all": "Every host can build your templates.",
+        "some": "Some hosts can build your templates.",
+        "none": "No host here builds other accounts' templates, so building a template on this pool fails."
+      },
+      "openEgress": {
+        "all": "Your sandboxes may reach the open internet.",
+        "some": "Your sandboxes may reach the open internet on some hosts; on the rest they reach only the destinations you list.",
+        "none": "Your sandboxes reach only the destinations you list (no open internet)."
+      },
+      "guestSudo": {
+        "all": "Your sandboxes may use root (sudo) in their VM.",
+        "some": "Your sandboxes may use root (sudo) in their VM on some hosts.",
+        "none": "Your sandboxes run without root (sudo) in their VM."
+      }
+    },
+    "nextOwner": "To allow more, each host's owner changes it at the host itself, never from the dashboard. On the host:",
+    "nextMember": "To run more here, ask {{owner}} or whoever added the host to allow it at the host itself (it can't be changed from the dashboard), or contribute a host of your own. On the host:",
+    "imagesStep": "Set accept_foreign_images = true in the host config (wssp host config path prints where it is), only after the foreign-image check in the hosts guide.",
+    "buildsStep": "Run template builds for other accounts:",
+    "openEgressStep": "Let other accounts' sandboxes reach the open internet:",
+    "guestSudoStep": "Let other accounts' sandboxes use sudo:",
+    "restartStep": "Then restart wssp host run so the image and build settings apply.",
+    "copyCommand": "Copy command",
+    "readyOwner": "Next step: the people you share it with add a template of their own on Templates and choose this pool.",
+    "readyMember": "Next step: add a template of your own, then choose this pool.",
+    "foreignBuildsOff": "Your builds run only on your own hosts. To build on this pool, turn on \"Run my builds on other people's builder hosts\".",
+    "openImageSettings": "Open Settings › Images & builds",
+    "guide": "Host settings for shared pools (guide)",
+    "theOwner": "the pool's owner"
+  }
 }

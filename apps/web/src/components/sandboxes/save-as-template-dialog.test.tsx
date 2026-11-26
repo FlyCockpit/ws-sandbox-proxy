@@ -187,3 +187,14 @@ it("explains that an offloaded disk must be restored before a capture", async ()
   await userEvent.click(screen.getByRole("button", { name: en.capture.submit }));
   expect(await screen.findByText(en.capture.problem.offloaded)).toBeTruthy();
 });
+
+it("pins Cancel then Save as template in the dialog's action bar, outside the Options section", async () => {
+  await mount("en-US");
+  const footer = document.querySelector<HTMLElement>('[data-slot="dialog-footer"]');
+  expect(footer).toBeTruthy();
+  const buttons = [...footer!.querySelectorAll("button")].map((b) => b.textContent);
+  expect(buttons).toEqual([commonEn.actions.cancel, en.capture.submit]);
+  // The bar is the form's last child, so the sticky footer submits the form.
+  expect(footer!.closest("form")?.lastElementChild).toBe(footer);
+  expect(document.querySelector("[data-capture-options]")?.contains(footer!)).toBe(false);
+});

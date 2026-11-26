@@ -497,6 +497,24 @@ describe("defaults and layout", () => {
     expect(document.body.textContent).not.toContain("pool-raw-id");
   });
 
+  it("a shared pool says what its hosts allow and whom to ask; an own pool says nothing", async () => {
+    server.current.pools = [
+      { id: "pool-own", slug: "lab", label: "Lab" },
+      { id: "pool-b", slug: "b", label: "Pool B", owner: { name: "Ada" } },
+    ];
+    server.current.poolHostPolicy = { hosts: 2, images: "none", builds: "none" };
+    const user = userEvent.setup();
+    await openCreate(user);
+    const pool = await form().findByRole("combobox", { name: enSandboxes.create.pool });
+    await selectOption(user, pool, `Lab · ${enHosts.sharing.owned}`);
+    expect(page().querySelector("[data-pool-host-policy]")).toBeNull();
+    await selectOption(user, pool, "Pool B · Ada");
+    const notice = await form().findByRole("region", { name: enHosts.hostPolicy.titleMember });
+    expect(notice.textContent).toContain(enHosts.hostPolicy.member.images.none);
+    expect(notice.textContent).toContain(enHosts.hostPolicy.nextMember.replace("{{owner}}", "Ada"));
+    expect(notice.textContent).toContain("wssp host config set-accept-foreign-builds on");
+  });
+
   it("advanced sections start collapsed and summarise their current values", async () => {
     const user = userEvent.setup();
     await openCreate(user);
@@ -938,11 +956,19 @@ describe("creating a sandbox", () => {
     await user.clear(form().getByLabelText(enSandboxes.create.name));
     await user.type(form().getByLabelText(enSandboxes.create.name), "quiet-otter");
     await submit(user);
-    await waitFor(() =>
-      expect(page().querySelector("[data-create-problem]")?.textContent).toBe(
-        enSandboxes.problem.nameTaken,
-      ),
+    // The refusal is Name's own error: marked invalid, described by it, focused.
+    const name = form().getByLabelText<HTMLInputElement>(enSandboxes.create.name);
+    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
+    const errorId = name.getAttribute("aria-describedby")?.split(" ").at(-1);
+    expect(document.getElementById(errorId!)?.textContent).toBe(enSandboxes.problem.nameTaken);
+    expect(summary()?.textContent).toContain(enSandboxes.problem.nameTaken);
+    await waitFor(() => expect(document.activeElement).toBe(name));
+    // "Show" in the action bar goes back to the field, not to a message.
+    name.blur();
+    await user.click(
+      within(summary()!).getByRole("button", { name: enSandboxes.create.showProblem }),
     );
+    await waitFor(() => expect(document.activeElement).toBe(name));
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(2));
     const keys = calls("createSandbox").map(
@@ -2024,7 +2050,7 @@ describe("first-time walk fixes", () => {
     await pickHost(user);
     // Before any submit: what fits on Alpha (3584 MiB after the VM overhead).
     expect(page().querySelector("[data-host-free]")?.textContent).toBe(
-      enSandboxes.create.capacity.hostFree
+      enSandboxes.create.capacity.hostLargest
         .replace("{{cpu}}", "4")
         .replace("{{memory}}", "3.5")
         .replace("{{disk}}", "95"),
@@ -2103,6 +2129,33 @@ describe("first-time walk fixes", () => {
         .replace("{{label}}", "Beta")
         .replace("{{reason}}", enSandboxes.create.unavailable.ram),
     );
+  });
+
+  it("memory above the create limit is explained in GiB, the field's own unit", async () => {
+    const user = userEvent.setup();
+    await openCreate(user);
+    await chooseRevision(user, "tpl-1");
+    const size = await openSection(user, "size");
+    const memory = sizeInput(size, "Memory");
+    await typeSize(user, memory, "100");
+    expect(memory.value).toBe("100 GiB");
+    await submit(user);
+    await waitFor(() => expect(memory.getAttribute("aria-invalid")).toBe("true"));
+    expect(enSandboxes.draft.memoryMiB).toContain("GiB");
+    expect(size.getAllByText(enSandboxes.draft.memoryMiB).length).toBeGreaterThan(0);
+    for (const alert of size.getAllByRole("alert")) expect(alert.textContent).not.toContain("MiB");
+    expect(calls("createSandbox")).toHaveLength(0);
+  });
+
+  it("a host whose per-sandbox maximum is below its free capacity names the largest sandbox, not free capacity", async () => {
+    // The fake host has 64 vCPU free but takes at most 4 per sandbox.
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickHost(user);
+    const line = page().querySelector("[data-host-free]")?.textContent ?? "";
+    expect(line).toContain("4 vCPU");
+    expect(line).not.toContain("64 vCPU");
+    expect(line.startsWith(enSandboxes.create.capacity.hostLargest.split(":")[0]!)).toBe(true);
   });
 
   it("typing above the host's free memory keeps the value, blocks the create and offers the cap", async () => {

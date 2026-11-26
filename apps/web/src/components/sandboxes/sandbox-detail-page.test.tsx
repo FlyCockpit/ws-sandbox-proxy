@@ -2157,14 +2157,69 @@ describe("Start and Restore keep the remembered lease by default", () => {
     expect(lost).toMatchObject({ timeoutMs: 30 * 60_000 });
   });
 
-  it("a remembered unlimited lease reads as no time limit", async () => {
-    server.current.sandboxes = [sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: 0 })];
-    const user = userEvent.setup();
-    mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
-    const field = within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
-    expect(field.textContent).toContain(enSandboxes.lifetime.keepUnlimited);
-  });
+  it.each([
+    ["STOPPED", enSandboxes.start.action, enSandboxes.start.confirm],
+    ["OFFLOADED", enSandboxes.start.restoreAction, enSandboxes.start.restoreConfirm],
+  ])(
+    "%s under a lowered ceiling: keep is marked over the limit and the longest allowed is preselected",
+    async (state, open, confirm) => {
+      server.current.maxTimeoutMs = 17 * 60_000;
+      server.current.sandboxes = [
+        sandboxRow({
+          state,
+          rememberedLeaseTimeoutMs: twoHours,
+          ...(state === "OFFLOADED" ? { sandboxHostId: null, host: null, disk: STORED_DISK } : {}),
+        }),
+      ];
+      const user = userEvent.setup();
+      mount();
+      await user.click(await screen.findByRole("button", { name: open }));
+      const popup = within(screen.getByRole("dialog"));
+      const field = popup.getByLabelText(enSandboxes.lifetime.field);
+      expect(field.textContent).toContain("15 minutes");
+      expect(field.textContent).not.toContain("Keep its lifetime");
+      expect(popup.getByText(enSandboxes.lifetime.keepOverLimitHint)).toBeTruthy();
+      const choices = await selectChoices(user, field);
+      expect(choices.map((option) => option.textContent)).toEqual([
+        "Keep its lifetime (2 hours): longer than this pool or host now allows",
+        "5 minutes",
+        "15 minutes",
+      ]);
+      expect(choices[0]!.getAttribute("aria-disabled")).toBe("true");
+      await user.click(popup.getByRole("button", { name: confirm }));
+      await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+      expect(calls("reconnectSandbox")[0]!.input).toMatchObject({
+        id: "sbx-1",
+        mode: "cold",
+        timeoutMs: 15 * 60_000,
+      });
+    },
+  );
+
+  it.each([true, false])(
+    "a remembered unlimited lease reads as no time limit (path still allows it: %s)",
+    async (unlimited) => {
+      server.current.sandboxes = [
+        sandboxRow({
+          state: "STOPPED",
+          rememberedLeaseTimeoutMs: 0,
+          leaseLimit: { finiteMaxMs: 86_400_000, unlimited },
+        }),
+      ];
+      const user = userEvent.setup();
+      mount();
+      await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+      const field = within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+      if (unlimited) expect(field.textContent).toContain(enSandboxes.lifetime.keepUnlimited);
+      else {
+        // No longer allowed: the longest finite choice instead, keep listed as over the limit.
+        expect(field.textContent).toContain("24 hours");
+        const choices = await selectChoices(user, field);
+        expect(choices[0]!.textContent).toBe(enSandboxes.lifetime.keepUnlimitedOverLimit);
+        expect(choices[0]!.getAttribute("aria-disabled")).toBe("true");
+      }
+    },
+  );
 });
 
 describe("S0 sensitive session unavailable", () => {

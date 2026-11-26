@@ -14,9 +14,11 @@ import {
   isCreateInputMistake,
   isGuestPath,
   isTransitional,
+  keepLifetimeAllowed,
   LEASE_MAX_MS,
   leaseView,
   lifetimeOptions,
+  longestLifetime,
   newIntentKey,
   offersRestoreOverride,
   parseLabels,
@@ -756,5 +758,23 @@ describe("disk offload (C8)", () => {
       sandboxProblem({ code: "CONFLICT", status: 409, data: { code: "sandbox.disk_unavailable" } }),
     ).toBe("diskUnavailable");
     expect(enSandboxes.problem.diskUnavailable).toBeTruthy();
+  });
+});
+
+describe("keeping a remembered lease under the current limit", () => {
+  const limit = { maxTimeoutMs: 17 * 60_000, allowUnlimited: false };
+  it("allows a remembered lease within the limit and refuses one above it", () => {
+    expect(keepLifetimeAllowed(15 * 60_000, limit)).toBe(true);
+    expect(keepLifetimeAllowed(17 * 60_000, limit)).toBe(true);
+    expect(keepLifetimeAllowed(2 * 3_600_000, limit)).toBe(false);
+  });
+  it("allows a remembered unlimited lease only where no time limit is allowed", () => {
+    expect(keepLifetimeAllowed(0, limit)).toBe(false);
+    expect(keepLifetimeAllowed(0, { ...limit, allowUnlimited: true })).toBe(true);
+  });
+  it("the longest allowed choice is the longest finite preset, never no time limit", () => {
+    expect(longestLifetime(limit)).toBe("15");
+    expect(longestLifetime({ maxTimeoutMs: 86_400_000, allowUnlimited: true })).toBe("1440");
+    expect(longestLifetime({ maxTimeoutMs: 60_000, allowUnlimited: false })).toBeNull();
   });
 });

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import common from "@wssp/locales/src/en-US/common.json";
+import credentials from "@wssp/locales/src/en-US/credentials.json";
 import en from "@wssp/locales/src/en-US/hosts.json";
 import esCommon from "@wssp/locales/src/es-MX/common.json";
 import es from "@wssp/locales/src/es-MX/hosts.json";
@@ -21,7 +22,16 @@ const rows = vi.hoisted(() => ({
   invites: [] as unknown[],
   shared: null as unknown[] | null,
   shares: [] as unknown[],
+  hostPolicy: {} as Record<string, unknown>,
 }));
+const CLOSED_POLICY = {
+  hosts: 2,
+  ownHosts: 0,
+  images: "none",
+  builds: "none",
+  openEgress: "none",
+  guestSudo: "all",
+};
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, className, to }: { children: ReactNode; className?: string; to: string }) => (
     <a className={className} href={to}>
@@ -63,6 +73,12 @@ vi.mock("@/utils/orpc", () => {
       },
       sandboxPools: {
         key: () => ["pools"],
+        hostPolicy: {
+          queryOptions: ({ input }: { input: { id: string } }) => ({
+            queryKey: ["hostPolicy", input.id],
+            queryFn: async () => rows.hostPolicy,
+          }),
+        },
         listShares: page("shares", []),
         listInvites: page("invites", []),
         revokeShare: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
@@ -106,12 +122,16 @@ afterEach(() => {
   rows.invites = [];
   rows.shared = null;
   rows.shares = [];
+  rows.hostPolicy = { ...CLOSED_POLICY, viewer: "owner", allowForeignBuilds: null };
 });
 async function mount(kind: "form" | "shared" | "manage", lang = "en-US") {
   const i18n = createInstance();
   await i18n.init({
     lng: lang,
-    resources: { "en-US": { hosts: en, common }, "es-MX": { hosts: es, common: esCommon } },
+    resources: {
+      "en-US": { hosts: en, common, credentials },
+      "es-MX": { hosts: es, common: esCommon },
+    },
   });
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -246,6 +266,53 @@ it("the owner reads each person's usage under their name, not as 'Your usage'", 
   expect(screen.queryByText(/^Your usage/)).toBeNull();
   expect(screen.queryByText(/^You're using/)).toBeNull();
 });
+
+it.each([
+  [0, false],
+  [2, true],
+])(
+  "revoking a person with %i contributed hosts warns about hosts only when they have some",
+  async (hosts, warns) => {
+    rows.shares = [
+      {
+        id: "share-1",
+        granteeUserId: "user-2",
+        canUse: true,
+        canContribute: true,
+        maxMemoryMiB: null,
+        maxVcpu: null,
+        maxDiskGiB: null,
+        contributedHosts: hosts,
+        usage: { memoryMiB: "0", vcpu: "0", diskGiB: "0" },
+        Grantee: { name: "Devon", email: "dev@example.test" },
+      },
+    ];
+    const user = userEvent.setup();
+    await mount("manage");
+    await user.click(await screen.findByRole("button", { name: en.sharing.revoke }));
+    const dialog = await screen.findByRole("alertdialog");
+    const text = dialog.textContent ?? "";
+    expect(text.includes(en.sharing.contributionNotice)).toBe(warns);
+    expect(within(dialog).queryByRole("button", { name: common.actions.delete })).toBeNull();
+    if (warns) {
+      expect(text).toContain(
+        en.sharing.revokeContributedHosts_other
+          .replace("{{name}}", "dev@example.test")
+          .replace("{{count}}", "2"),
+      );
+      // Typed confirmation, and the action says what it does.
+      expect(
+        within(dialog).getByRole("button", { name: en.sharing.revoke }).hasAttribute("disabled"),
+      ).toBe(true);
+    } else {
+      expect(text).toContain(
+        en.sharing.revokePlain.replace("{{name}}", "dev@example.test").replace("{{pool}}", "Pool"),
+      );
+      expect(within(dialog).queryByRole("textbox")).toBeNull();
+      expect(within(dialog).getByRole("button", { name: credentials.revoke.confirm })).toBeTruthy();
+    }
+  },
+);
 
 it("shared tab shows an empty state when no pools are shared", async () => {
   rows.shared = [];
@@ -493,4 +560,45 @@ it("a rate-limited edit of an existing share says to wait, without invitation wo
   await user.click(screen.getByRole("button", { name: common.actions.save }));
   expect(await screen.findByText(en.sharing.tooManyChangesLater)).toBeTruthy();
   expect(screen.queryByText(/invitations/)).toBeNull();
+});
+
+it("the share sheet says other accounts can't run anything on these hosts and how the host owner allows it", async () => {
+  rows.hostPolicy = { ...CLOSED_POLICY, viewer: "owner", allowForeignBuilds: null };
+  const { container } = await mount("form");
+  const notice = await screen.findByRole("region", { name: en.hostPolicy.titleOwner });
+  expect(within(notice).getByText(en.hostPolicy.owner.images.none)).toBeTruthy();
+  expect(within(notice).getByText(en.hostPolicy.owner.builds.none)).toBeTruthy();
+  expect(within(notice).getByText(en.hostPolicy.imagesStep)).toBeTruthy();
+  expect(notice.textContent).toContain("wssp host config set-accept-foreign-builds on");
+  expect(notice.textContent).toContain("wssp host config set-open-egress-for-others on");
+  expect(within(notice).getByText(en.hostPolicy.restartStep)).toBeTruthy();
+  // Nothing can run yet, so no "they can start" step.
+  expect(container.querySelector("[data-host-policy-state='ready']")).toBeNull();
+});
+it("the People sheet repeats it, and an open pool tells the owner the next step", async () => {
+  rows.hostPolicy = {
+    viewer: "owner",
+    hosts: 1,
+    ownHosts: 1,
+    images: "all",
+    builds: "all",
+    openEgress: "all",
+    guestSudo: "all",
+    allowForeignBuilds: null,
+  };
+  const { container } = await mount("manage");
+  await screen.findByText(en.hostPolicy.readyOwner);
+  expect(container.querySelector("[data-host-policy-steps]")).toBeNull();
+});
+it("a shared pool's card tells its member what the hosts refuse and whom to ask", async () => {
+  rows.hostPolicy = { ...CLOSED_POLICY, viewer: "member", allowForeignBuilds: false };
+  await mount("shared");
+  const notice = await screen.findByRole("region", { name: en.hostPolicy.titleMember });
+  expect(within(notice).getByText(en.hostPolicy.member.images.none)).toBeTruthy();
+  expect(
+    within(notice).getByText(en.hostPolicy.nextMember.replace("{{owner}}", "Pool owner")),
+  ).toBeTruthy();
+  // A member is shown only the steps that block its own work.
+  expect(notice.textContent).toContain("wssp host config set-accept-foreign-builds on");
+  expect(notice.textContent).not.toContain("set-open-egress-for-others");
 });

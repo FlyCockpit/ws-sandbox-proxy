@@ -164,6 +164,9 @@
     "hint": "Counted from when the server accepts your request; deployment limits apply.",
     "keep": "Keep its lifetime ({{lifetime}}, then {{action}})",
     "keepUnlimited": "Keep its lifetime (no time limit)",
+    "keepOverLimit": "Keep its lifetime ({{lifetime}}): longer than this pool or host now allows",
+    "keepUnlimitedOverLimit": "Keep its lifetime (no time limit): this pool or host now requires a limit",
+    "keepOverLimitHint": "Its last lifetime is longer than this pool or host now allows, so choose one within the limit. A new choice becomes its lifetime for later starts. Counted when the server accepts your request.",
     "keepHint": "It keeps the lifetime and expiry action it last had: from its create, its last start or its last renewal, whichever came last. Choose another to replace it; a new choice becomes its lifetime for later starts. Counted when the server accepts your request; deployment limits apply.",
     "onExpire": "When the lifetime ends",
     "stopOption": "Stop the VM (keep its disk)",
@@ -432,7 +435,7 @@
       "poolFailed": "Couldn't check this pool's free capacity. The server still checks when you create.",
       "poolNone": "No host in this pool can take a new sandbox right now.",
       "poolWaits": "More than any host in this pool can take now: the create will wait for room.",
-      "hostFree": "Free on this host now: {{cpu}} vCPU · {{memory}} GiB memory · {{disk}} GiB disk.",
+      "hostLargest": "Largest sandbox this host can take now: {{cpu}} vCPU · {{memory}} GiB memory · {{disk}} GiB disk.",
       "hostUnknown": "Connected, but this host hasn't reported its free capacity recently. The server checks when you create."
     },
     "envTitle": "Environment",
@@ -513,7 +516,7 @@
     "unknownHost": "That host is unavailable or draining. Choose a listed host.",
     "unknownPool": "That pool is no longer listed. Reload or choose another pool.",
     "cpuCount": "Enter a whole vCPU count from 1 to 32, or leave it blank.",
-    "memoryMiB": "Enter 512–65536 MiB in steps of 256, or leave it blank.",
+    "memoryMiB": "Enter 0.5–64 GiB in steps of 0.25 GiB, or leave it blank.",
     "diskGiB": "Enter a whole root size from 1 to 2048 GiB, or leave blank.",
     "credentials": "Choose a login in every login row (each login once, at most 8), or remove the empty rows.",
     "previewPorts": "Enter up to 8 different port numbers from 1 to 65535, separated by commas or spaces."

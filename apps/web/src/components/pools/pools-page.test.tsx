@@ -98,6 +98,21 @@ vi.mock("@/utils/orpc", () => {
       },
       sandboxPools: {
         key: () => ["pools"],
+        hostPolicy: {
+          queryOptions: ({ input }: { input: { id: string } }) => ({
+            queryKey: ["hostPolicy", input.id],
+            queryFn: async () => ({
+              viewer: "member",
+              hosts: 1,
+              ownHosts: 0,
+              images: "all",
+              builds: "all",
+              openEgress: "all",
+              guestSudo: "all",
+              allowForeignBuilds: true,
+            }),
+          }),
+        },
         list: page("pools", () => state.pools),
         listShared: page("shared", () => state.shared),
         listContributions: page("contributions", () => []),

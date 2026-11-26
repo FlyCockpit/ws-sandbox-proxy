@@ -10,6 +10,7 @@ import type { Principal } from "../contracts";
 import { poolNotFound } from "../errors";
 import { lockHostForSandboxOperation } from "../host-admission";
 import { poolLeaseViews } from "../lease-policy";
+import { poolHostPolicyMemberSelect, summarizePoolHostPolicy } from "../pool-host-policy";
 import type { listPoolMembersInput, listPoolsInput, poolIdInput } from "../pool-input";
 import { lockPoolGraph, MAX_ACTIVE_POOL_MEMBERSHIPS } from "../pool-locks";
 import { poolSelect } from "../pool-visibility";
@@ -90,11 +91,21 @@ export const listPoolShares = serviceProcedure(
       } satisfies Prisma.ShareSelect,
     });
     const page = cursorPage(rows, input.limit, "createdAt");
-    const usageByGrantee = await shareUsageByCreator(
-      prisma,
-      input.poolId,
-      page.items.map((share) => share.granteeUserId),
-    );
+    const grantees = page.items.map((share) => share.granteeUserId);
+    const usageByGrantee = await shareUsageByCreator(prisma, input.poolId, grantees);
+    // Hosts each person has in this pool now: revoking access withdraws them,
+    // so the owner's confirmation warns only when there are any.
+    const contributed = await prisma.sandboxPoolMember.groupBy({
+      by: ["hostOwnerId"],
+      where: {
+        poolId: input.poolId,
+        userId: owner.ownerId,
+        hostOwnerId: { in: grantees },
+        removedAt: null,
+      },
+      _count: { _all: true },
+    });
+    const hostsByGrantee = new Map(contributed.map((row) => [row.hostOwnerId, row._count._all]));
     return {
       ...page,
       items: page.items.map((share) => {
@@ -105,6 +116,7 @@ export const listPoolShares = serviceProcedure(
         };
         return {
           ...share,
+          contributedHosts: hostsByGrantee.get(share.granteeUserId) ?? 0,
           usage: {
             memoryMiB: String(usage.memoryMiB),
             vcpu: String(usage.vcpu),
@@ -394,6 +406,36 @@ export const getUsablePool = serviceProcedure(
     const view = await poolReadView(owner, input.id);
     await check();
     return { ...view, memberCount };
+  },
+);
+/**
+ * Browser-only: what the pool's switched-on hosts allow other accounts (node
+ * consent the daemons last reported), aggregated "all/some/none" over the
+ * same member set `getUsable` counts. Names no host, owner or status.
+ */
+export const getPoolHostPolicy = serviceProcedure(
+  { sessionOnly: true },
+  async (owner: Principal, input: z.infer<typeof poolIdInput>) => {
+    const { pool, check } = await readPool(owner, input.id);
+    const members = await prisma.sandboxPoolMember.findMany({
+      where: { AND: [readableMembers(owner, pool.id, pool.userId), { enabled: true }] },
+      select: poolHostPolicyMemberSelect,
+      take: MAX_ACTIVE_POOL_MEMBERSHIPS,
+    });
+    const policy =
+      pool.userId === owner.ownerId
+        ? null
+        : await prisma.accountImagePolicy.findUnique({
+            where: { userId: owner.ownerId },
+            select: { allowForeignBuilds: true },
+          });
+    await check();
+    return summarizePoolHostPolicy(
+      owner.ownerId,
+      pool.userId,
+      members,
+      policy?.allowForeignBuilds === true,
+    );
   },
 );
 const ownerMemberReadSelect = {

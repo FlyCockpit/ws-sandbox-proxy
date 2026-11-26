@@ -23,8 +23,12 @@ const server = vi.hoisted(() => ({
   calls: [] as { procedure: string; input: unknown }[],
   usage: null as Record<string, unknown> | null,
   needsContext: false,
-  pool: { id: "pool_a", label: "Pool A", slug: "pool-a", memberCount: 1 },
+  pool: { id: "pool_a", label: "Pool A", slug: "pool-a", memberCount: 1 } as Record<
+    string,
+    unknown
+  >,
   members: [] as Record<string, unknown>[],
+  hostPolicy: null as Record<string, unknown> | null,
   host: {} as Record<string, unknown>,
   templates: [] as { id: string; slug: string; versions: { count: number } }[],
   createError: null as unknown,
@@ -99,6 +103,7 @@ vi.mock("@/utils/orpc", () => {
       sandboxPools: {
         listUsable: query("pools", () => ({ items: [server.pool], nextCursor: null })),
         getUsable: query("pool", () => server.pool),
+        hostPolicy: query("hostPolicy", () => server.hostPolicy),
         listUsableMembers: query("members", () => ({ items: server.members, nextCursor: null })),
       },
     },
@@ -129,6 +134,7 @@ beforeEach(() => {
   server.needsContext = false;
   server.pool = { id: "pool_a", label: "Pool A", slug: "pool-a", memberCount: 1 };
   server.members = [];
+  server.hostPolicy = null;
   server.host = {};
   server.templates = [
     { id: "tpl_base", slug: "base", versions: { count: 1 } },
@@ -324,6 +330,41 @@ describe("BuildTemplateForm", () => {
     expect(
       (screen.getByRole("button", { name: "Start build" }) as HTMLButtonElement).disabled,
     ).toBe(true);
+  });
+
+  it.each([
+    [
+      "no host builds for other accounts",
+      { builds: "none", allowForeignBuilds: true },
+      /No host in Pool A builds templates for other accounts, so this build would fail/,
+    ],
+    [
+      "the person's builds stay on their own hosts",
+      { builds: "all", allowForeignBuilds: false },
+      /Your builds run only on your own hosts, and you have none in Pool A/,
+    ],
+  ])("refuses a shared pool where %s and names the next step", async (_, policy, text) => {
+    const user = userEvent.setup();
+    server.pool = { ...server.pool, owner: { id: "u_owner", name: "Owner" } };
+    server.hostPolicy = {
+      viewer: "member",
+      hosts: 2,
+      ownHosts: 0,
+      images: "all",
+      openEgress: "none",
+      guestSudo: "all",
+      ...policy,
+    };
+    renderPage();
+    fireEvent.change(source(), { target: { value: "FROM base\nRUN true\n" } });
+    await user.click(screen.getByRole("button", { name: "A pool" }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Build on" })).toBeTruthy());
+    await selectOption(user, screen.getByRole("combobox", { name: "Build on" }), /Pool A/);
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Start build" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(creates()).toEqual([]);
   });
 
   it("builds on a usable pool and says where it runs and what it reserves", async () => {

@@ -26,6 +26,7 @@ import { UnsavedChangesGuard } from "@/components/leave-guard-dialog";
 import { LoadMore } from "@/components/load-more";
 import { LoginsPicker } from "@/components/logins/login-picker";
 import { useLoginsAvailability } from "@/components/logins/logins-shared";
+import { PoolHostPolicyNotice } from "@/components/pools/pool-host-policy";
 import {
   lifetimeText,
   PickerStatus,
@@ -70,6 +71,7 @@ import {
   sandboxProblem,
 } from "@/lib/sandbox-rules";
 import { gibFromMib, hostChoice, hostSizeCap, type SizeCap } from "@/lib/sandbox-size";
+import { withFieldError } from "@/lib/with-field-error";
 import { orpc } from "@/utils/orpc";
 
 /**
@@ -1145,6 +1147,14 @@ export function CreateSandboxPage({
               {pools.length > 0 || poolsQuery.isPending ? (
                 <PoolTrustNotice graceSeconds={selectedPool?.disconnectGraceSeconds} lang={lang} />
               ) : null}
+              {/* A shared pool runs only your own templates, and only where its hosts allow. */}
+              {selectedPool && "owner" in selectedPool && selectedPool.owner ? (
+                <PoolHostPolicyNotice
+                  poolId={selectedPool.id}
+                  lang={lang}
+                  ownerName={selectedPool.owner.name}
+                />
+              ) : null}
             </div>
           ) : (
             <div className="flex min-w-0 flex-col gap-2" data-host-fields="">
@@ -1223,9 +1233,11 @@ export function CreateSandboxPage({
                   })}
                 </p>
               ) : selectedHost && cap ? (
-                // What fits, as soon as a host is chosen (not only after a refusal).
+                // What fits, as soon as a host is chosen (not only after a refusal):
+                // the largest single sandbox (free capacity within the host's
+                // per-VM maximum), not the host's whole free capacity.
                 <p data-host-free="" className="text-xs text-muted-foreground">
-                  {t("sandboxes:create.capacity.hostFree", {
+                  {t("sandboxes:create.capacity.hostLargest", {
                     cpu: cap.cpuCount,
                     memory: gibFromMib(cap.memoryMiB),
                     disk: cap.diskGiB,
@@ -1259,7 +1271,12 @@ export function CreateSandboxPage({
         >
           {(field) => (
             <TextField
-              field={field}
+              // A server refusal of the name (taken, not allowed) is the field's
+              // own error: it marks Name invalid, so "Show" focuses the field.
+              field={withFieldError(
+                field,
+                serverPlace === "name" && problem ? problemText(problem) : null,
+              )}
               label={t("sandboxes:create.name")}
               description={t("sandboxes:create.nameHint")}
               autoComplete="off"
@@ -1271,18 +1288,6 @@ export function CreateSandboxPage({
             />
           )}
         </form.Field>
-        {/* The field shows its own rule as you type; the server's refusals show here. */}
-        {serverPlace === "name" && problem ? (
-          <p
-            role="alert"
-            tabIndex={-1}
-            data-create-problem={problem}
-            data-create-problem-inline=""
-            className="text-sm text-destructive outline-none"
-          >
-            {problemText(problem)}
-          </p>
-        ) : null}
         {limits.isError ? (
           <PickerStatus query={limits} failed={t("sandboxes:lifetime.limitsFailed")} />
         ) : null}

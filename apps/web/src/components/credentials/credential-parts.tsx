@@ -47,11 +47,20 @@ export function OneTimeSecretPanel({
   secret,
   label,
   onDone,
+  warning,
+  doneLabel,
+  copyLabel,
   children,
 }: {
   secret: string;
   label: string;
   onDone: () => void;
+  /** Replaces the default "shown once, revoke if lost" line (a secret that is not revoked). */
+  warning?: string;
+  /** Replaces the default "I've saved it". */
+  doneLabel?: string;
+  /** Replaces the copy button's default accessible name ("Copy secret"). */
+  copyLabel?: string;
   children?: ReactNode;
 }) {
   const { t } = useTranslation(["credentials", "common"]);
@@ -67,7 +76,7 @@ export function OneTimeSecretPanel({
     >
       <p className="text-sm font-medium">{label}</p>
       <p role="status" className="text-sm text-muted-foreground">
-        {t("credentials:reveal.onceWarning")}
+        {warning ?? t("credentials:reveal.onceWarning")}
       </p>
       <div className="flex min-w-0 items-center gap-2">
         <code
@@ -90,7 +99,7 @@ export function OneTimeSecretPanel({
           type="button"
           variant="outline"
           size="icon-touch"
-          aria-label={t("credentials:reveal.copy")}
+          aria-label={copyLabel ?? t("credentials:reveal.copy")}
           onClick={async () => setCopyFailed(!(await copy(secret)))}
         >
           {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
@@ -108,7 +117,7 @@ export function OneTimeSecretPanel({
       ) : null}
       {children}
       <Button type="button" size="touch" onClick={onDone}>
-        {t("credentials:reveal.done")}
+        {doneLabel ?? t("credentials:reveal.done")}
       </Button>
     </section>
   );

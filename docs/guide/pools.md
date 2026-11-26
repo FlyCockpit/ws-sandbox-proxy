@@ -338,6 +338,36 @@ snapshot of accepted work.
    permissions, caps and usage. With the contribute permission, **Contribute a
    host** adds one of your enrolled hosts to it.
 
+## What a pool's hosts allow other accounts
+
+Sharing a pool lends its hosts, never their owners' node-local settings, and
+templates stay per account. A person the pool is shared with runs only their
+own templates there, so each host's settings decide what they can do:
+
+| Host config key                | Changed at the host with                                 | Default |
+| ------------------------------ | -------------------------------------------------------- | ------- |
+| `accept_foreign_images`        | edit the host config (`wssp host config path`), restart  | off     |
+| `accept_foreign_builds`        | `wssp host config set-accept-foreign-builds on`, restart | off     |
+| `allow_open_egress_for_others` | `wssp host config set-open-egress-for-others on`         | off     |
+| `allow_guest_sudo_for_others`  | `wssp host config set-allow-guest-sudo-for-others on`    | on      |
+
+With `accept_foreign_images` off on every host, another account can neither
+start a sandbox nor build a template in the pool (a foreign build also needs
+`accept_foreign_builds` and the builder, and the builder's own owner opting
+in under **Settings → Images & builds**). Keep `accept_foreign_images` off
+until you have run the [foreign-image qualification](../operations/templates.md#foreign-image-qualification).
+Open egress and guest sudo only degrade: a sandbox runs in allowlist mode or
+without sudo.
+
+The share sheet (**People → Share or invite**), the **Shared with me** card,
+**Create sandbox** with a shared pool chosen and the template build pre-flight
+show these settings as "every host", "some hosts" or "no host" over the
+switched-on hosts you may use (`sandboxPools.hostPolicy`, browser session
+only; it names no host and reflects what each daemon last reported), each
+with the next step. A build on a pool with none of your hosts and no host that
+builds for other accounts is refused before it is sent. Only the host's owner
+can change these, at the host; the server and dashboard never raise them.
+
 ## Lease limits
 
 Each sandbox's longest lifetime is the smallest of the deployment maximum, its

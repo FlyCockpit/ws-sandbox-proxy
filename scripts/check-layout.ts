@@ -22,6 +22,8 @@
  * the landing page, the 404, the sign-in page and (signed in) the dashboard
  * and admin users pages, it checks that:
  * - the document never scrolls and the shell's `<main>` is the scroller;
+ * - `<main>` scrolls no further than its layout root (no `min-h-full` box
+ *   below a sibling bar, such as the admin section nav);
  * - the 404 renders inside the public shell (header rule and scroller present);
  * - `<main>` reserves no scrollbar gutter, and every full-width rule (the
  *   headers' `<hr>`, the admin sub-nav's and the 2FA banner's `border-b`)
@@ -49,6 +51,12 @@ export interface Probe {
   header: boolean;
   /** `scrollbar`: the width `<main>` gives up to a scrollbar right now (offsetWidth − clientWidth). */
   main: { scrollable: boolean; scrollbar: number } | null;
+  /**
+   * How far `<main>`'s scroll height runs past its layout root (its first in-flow child, or its
+   * own height if taller): a box sized to `<main>` (`min-h-full`) below a sibling bar overflows the
+   * root by that bar, and the sticky sidebar slides under the header at the bottom.
+   */
+  overflow?: number;
   /**
    * `inMain`: the rule is inside the scroller, so a visible scrollbar is its right edge. `start`:
    * where its left edge belongs, 0 or the left of the dashboard content column (after the sidebar).
@@ -83,6 +91,10 @@ export function judgeLayout(page: string, probe: Probe, expect: Expect): string[
   if (probe.main && !probe.main.scrollable && probe.main.scrollbar > 0)
     bad.push(
       `${page}: <main> reserves a ${probe.main.scrollbar}px scrollbar gutter on a page that does not scroll`,
+    );
+  if ((probe.overflow ?? 0) > 1)
+    bad.push(
+      `${page}: <main> scrolls ${probe.overflow}px past its layout; a box sized to <main> (min-h-full) sits below a sibling bar`,
     );
   for (const rule of probe.rules) {
     const edge = probe.vw - (rule.inMain ? scrollbar : 0);
@@ -128,6 +140,8 @@ const PROBE = `(async () => {
   const headerRules = [...document.querySelectorAll("hr")].filter((hr) => !main || !main.contains(hr));
   const out = { vw, docScroll: document.scrollingElement.scrollHeight - window.innerHeight, header: headerRules.length > 0, main: null, rules: [], toast: null };
   if (main) out.main = { scrollable: main.scrollHeight > main.clientHeight, scrollbar: main.offsetWidth - main.clientWidth };
+  const root = main && [...main.children].find((el) => !["absolute", "fixed"].includes(getComputedStyle(el).position) && getComputedStyle(el).display !== "none");
+  if (main && root) out.overflow = Math.round(main.scrollHeight - Math.max(main.clientHeight, root.offsetHeight));
   for (const hr of headerRules) out.rules.push({ name: "header <hr>", left: Math.round(hr.getBoundingClientRect().left), right: Math.round(hr.getBoundingClientRect().right), inMain: false });
   // Bands inside the dashboard content column start where the column starts, after the sidebar.
   const column = document.querySelector("[data-dashboard-content]");

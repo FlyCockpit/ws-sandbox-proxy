@@ -111,7 +111,6 @@
     "copyTempPasswordAriaLabel": "Copy temporary password",
     "tempPasswordHint": "This password is only shown once. On their first sign-in the person confirms their email address through the link they're sent, then signs in again. They should change the password afterwards.",
     "savedPassword": "I've saved the password",
-    "passwordCopied": "Password copied",
     "deleteTitle": "Delete this user?",
     "deleteDescription": "This permanently removes the account with its sessions, credentials, SDK keys, templates and finished sandbox and operation records. It is refused while the account still has hosts, sandboxes, unfinished operations, pending events or active transfers. To keep the account but block access, archive it instead.",
     "typeEmailToConfirm": "Type the user's email to confirm",
