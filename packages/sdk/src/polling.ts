@@ -7,7 +7,6 @@ import {
   type ProcessRef,
 } from "@wssp/sandbox-contracts";
 import { isTransientRefusal, WsspError, type WsspErrorKind, type WsspErrorPhase } from "./errors";
-import type { WsspTransport } from "./transport";
 
 /** First delay between polls; doubles each round up to `maxIntervalMs`. */
 export const DEFAULT_POLL_INTERVAL_MS = 250;
@@ -157,8 +156,8 @@ export function longPollWaitMs(polling: ResolvedPolling, remainingMs: number): n
 
 /**
  * Whether a held answer that carried progress was paced by the server: it
- * took (nearly) the server's progress hold. A shorter answer (an older server,
- * a capped one, or a misbehaving one) is not trusted to pace the next read.
+ * took (nearly) the server's progress hold. A shorter answer (a capped server
+ * or a misbehaving one) is not trusted to pace the next read.
  */
 export function pacedProgress(elapsedMs: number): boolean {
   return elapsedMs >= OPERATION_WAIT_PROGRESS_HOLD_MS - LONG_POLL_EARLY_TOLERANCE_MS;
@@ -211,39 +210,25 @@ export class RequestPacer {
   }
 }
 
-/** Servers that answered `waitMs` with 400 (they predate long-poll), per client transport. */
-const longPollUnsupported = new WeakSet<WsspTransport>();
-
 /**
- * One operation read, held server-side for `waitMs` when the server supports
- * it. `read(query, timeoutMs)` receives the `waitMs` query (or nothing) and the
- * transport timeout to use (hold + margin, or the transport default). A server
- * that predates long-poll rejects the unknown `waitMs` with 400 BAD_REQUEST:
- * the first such answer is remembered for this client and the read is repeated
- * plainly. `held` is true when the server accepted a hold for this read.
- * `waited` is true only when it also took (nearly) the whole hold, so a server
- * that answers early without news, e.g. at its waiter cap, is polled with
- * normal backoff instead of in a tight loop. Callers that can tell the answer
- * carried progress may re-issue a `held` read at once (the server holds the
- * next one until there is more).
+ * One operation read, held server-side for `waitMs`. `read(query, timeoutMs)`
+ * receives the `waitMs` query (or nothing) and the transport timeout to use
+ * (hold + margin, or the transport default). A `waitMs` of 0 is a plain read.
+ * Any error, a 400 included, is the caller's. `held` is true when the read
+ * asked for a hold. `waited` is true only when it also took (nearly) the whole
+ * hold, so a server that answers early without news, e.g. at its waiter cap,
+ * is polled with normal backoff instead of in a tight loop. Callers that can
+ * tell the answer carried progress may re-issue a `held` read at once (the
+ * server holds the next one until there is more).
  */
 export async function longPollRead<T>(
-  transport: WsspTransport,
   waitMs: number,
   read: (query: { waitMs?: string }, timeoutMs: number | undefined) => Promise<T>,
 ): Promise<{ value: T; waited: boolean; held: boolean; elapsedMs: number }> {
-  if (waitMs <= 0 || longPollUnsupported.has(transport))
+  if (waitMs <= 0)
     return { value: await read({}, undefined), waited: false, held: false, elapsedMs: 0 };
   const started = Date.now();
-  let value: T;
-  try {
-    value = await read({ waitMs: String(waitMs) }, waitMs + LONG_POLL_REQUEST_MARGIN_MS);
-  } catch (error) {
-    if (!(error instanceof WsspError && error.status === 400 && error.code === "BAD_REQUEST"))
-      throw error;
-    longPollUnsupported.add(transport);
-    return { value: await read({}, undefined), waited: false, held: false, elapsedMs: 0 };
-  }
+  const value = await read({ waitMs: String(waitMs) }, waitMs + LONG_POLL_REQUEST_MARGIN_MS);
   const elapsedMs = Date.now() - started;
   return {
     value,

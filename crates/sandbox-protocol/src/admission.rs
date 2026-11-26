@@ -1,4 +1,4 @@
-//! Bounded 10.3 observations. Scheduling enforcement is activated separately.
+//! Bounded host image-availability observations. Scheduling enforcement is activated separately.
 use serde::{Deserialize, Serialize};
 
 pub const AVAILABILITY_PAGE_MAX: usize = 100;

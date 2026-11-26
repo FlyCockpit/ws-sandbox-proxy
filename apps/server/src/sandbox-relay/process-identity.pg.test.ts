@@ -441,7 +441,7 @@ it.each([
     ).toMatchObject({ type: "receipt.confirmed", operationId: f.op.id });
   },
 );
-// WP0 round 2: the exact-receipt classifier. Every refusal outside the
+// WP0: the exact-receipt classifier. Every refusal outside the
 // retryable allowlist settles; authority changes, database errors and pending
 // observations stay refused.
 const exact = (f: Fixture, kind: string) => ({

@@ -431,7 +431,7 @@ cargo xtask sync-docs --check
   service or schedule, no migration backup gate or freshness penalty while off,
   and one startup notice explaining how to enable them. Backups remain opt-in.
   `BACKUP_ENABLED=true` with no usable destination fails every migrating start,
-  a brand-new database too (owner decision, no exemption).
+  a brand-new database too, with no exemption.
 - The entrypoint stays PID 1 through migration and the startup backup check
   (supervised children, stop signals forwarded, exit 143/130/129), refuses a
   monitor key equal to the writer key, then drops the backup writer keys and every `BACKUP_S3_*` the process does not read

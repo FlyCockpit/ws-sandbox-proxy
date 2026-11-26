@@ -303,11 +303,6 @@ non-granted names get no answer and time out in the build VM instead of
 failing at once; granted names keep resolving. If the stub cannot start, the
 build runs without hints and its resolver refuses those names itself.
 
-Daemons from before the stub logged a build resolver's queries to a
-daemon-owned pipe instead. Current daemons no longer migrate such a build:
-its recorded network is refused (fails closed), so a build left running by
-one of those daemons fails and must be started again.
-
 Presets expand into ordinary domain grants before validation:
 
 | Preset       | Domains                                                                                                             |

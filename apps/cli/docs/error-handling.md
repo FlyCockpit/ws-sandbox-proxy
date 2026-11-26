@@ -80,7 +80,7 @@ fresh capacity acquisition. See the [hosts guide](../../../docs/guide/hosts.md#g
 
 ## Sized launch refusals
 
-Protocol 10.6 launches require both accepted size fields. Immutable intent,
+Launches require both accepted size fields. Immutable intent,
 lease, placement or effective-config disagreement uses `vm_size_mismatch`;
 it never proves a prior VM absent. Reconnect refusals are UNKNOWN, including
 definite host failures, and preserve the shared slot/RAM hold until positive

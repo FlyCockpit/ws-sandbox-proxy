@@ -249,8 +249,8 @@ fn recovery_and_probes_read_the_persisted_mode() {
     );
 }
 
-/// Prod 26.04 (2026-11-07): a community prep build VM failed `agent_timeout`
-/// at 205 s under the standard 120 s budget. Bootstrap readiness gets at
+/// Ubuntu 26.04: a community prep build VM can need 205 s for its agent,
+/// past the standard 120 s budget. Bootstrap readiness gets at
 /// least `BOOTSTRAP_AGENT_TIMEOUT`; standard readiness keeps the configured
 /// budget, and a larger configured budget is never lowered.
 #[test]

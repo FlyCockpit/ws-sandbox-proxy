@@ -90,7 +90,7 @@ async function seed(
   });
   const op = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId,
@@ -468,7 +468,7 @@ describe("typed results and quota (real PostgreSQL)", () => {
     await db.inspect.sandboxOperation.createMany({
       data: ids.map((id) => ({
         ...requestDigestMetadata(),
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }, { generation: 1 }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }, { generation: 1 }),
         id,
         userId: base.ownerId,
         sandboxId: base.sandboxId,
@@ -1045,7 +1045,7 @@ it("cleanup caps rows and owners and preserves progress between bounded ticks", 
   await db.inspect.sandboxOperation.createMany({
     data: ids.map((id) => ({
       ...requestDigestMetadata(),
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }, { generation: 1 }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }, { generation: 1 }),
       id,
       userId: f.ownerId,
       sandboxId: f.sandboxId,
@@ -1196,7 +1196,7 @@ it("owned action receipts are unsupported typed results; foreign receipts remain
   const f = await seed();
   const receipt = await db.inspect.sandboxActionReceipt.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: f.ownerId,
@@ -1358,7 +1358,7 @@ it("stores re-check the dispatched host, epoch, attempt and process identity", a
   });
   const local = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: f.ownerId,
@@ -1399,7 +1399,7 @@ it("stores re-check the dispatched host, epoch, attempt and process identity", a
   });
   const otherOwned = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: f.ownerId,
@@ -1488,7 +1488,7 @@ it("the suffix outbox lock is an index condition on the named sandboxes (B1-C-3)
 });
 
 it.each(["RUN_COMMAND", "MKDIR", "REMOVE_PATH", "SIGNAL_PROCESS"] as const)(
-  "a 10.5 %s reads as versioned from creation, in flight or failed before start",
+  "an fs/process %s reads as versioned from creation, in flight or failed before start",
   async (kind) => {
     expect(initialResultFields(kind, false)).toEqual({});
     const f = await seed(kind);
@@ -1625,7 +1625,7 @@ it.each([false, true])(
     const startedAt = "2026-10-27T00:00:00.000Z";
     const command = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         userId: f.ownerId,

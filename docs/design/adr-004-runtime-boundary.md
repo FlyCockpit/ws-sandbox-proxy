@@ -7,7 +7,7 @@ Accepted; separate host access is defined by [ADR-006](./adr-006-agent-host-acce
 ## Context
 
 API procedures must remain portable and testable while Incus integration stays
-on Linux node daemons. A TypeScript in-process runtime shim was removed; the
+on Linux node daemons. There is no TypeScript in-process runtime shim; the
 node daemon is the only process that talks to Incus.
 
 ## Decision
@@ -111,7 +111,7 @@ of this contract; the relay channel is the
 
 ## Tracked process and timerless command contract
 
-Approved Branch A non-kill signals open/verify a guest wrapper group pidfd, then
+Non-kill signals open/verify a guest wrapper group pidfd, then
 signal the process group, or refuse signal_unsupported_on_guest before effect.
 There is no host pidfd across the VM boundary or numeric/leader-only fallback.
 SIGKILL remains canonical cancellation. After exhausted cleanup, transport death
@@ -127,8 +127,8 @@ finite setup, lease and execution authority remain. See the
 `VmSize` (CPU count and guest memory in MiB). The shared policy permits integer
 CPU counts 1–32 and memory 512–65536 MiB in 256 MiB steps. Invalid allocation
 fails before daemon or network IO. The daemon passes the decoded dispatch
-allocation pinned on the accepted sandbox and boot placement. Protocol 10.6
-launches require both dimensions; unsized fresh launches are refused. Historical
+allocation pinned on the accepted sandbox and boot placement. Launches
+require both dimensions; unsized fresh launches are refused. Historical
 on-disk records alone retain 1 vCPU / 1024 MiB deserialize defaults.
 
 Stopped init explicitly writes `limits.cpu=<decimal>` and

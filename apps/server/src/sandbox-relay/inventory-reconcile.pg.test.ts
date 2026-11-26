@@ -134,7 +134,7 @@ async function reportSucceeded(operationId: string, state: "ready" | "stopped", 
 /** Root evidence for `sandboxId`'s retained root still present while its VM
  * is gone: an orphan root, stamped with the pool's current observation
  * sequence. These C37 cells use it as the minimal root evidence VM absence
- * now needs (Codex review WP2 r1 P1); it is not the normal completed
+ * now needs; it is not the normal completed
  * enforcement-loss cleanup, which reports an absent root with network proof
  * (covered by the cancel-wire C37/C38 cells). */
 async function presentRootOf(sandboxId: string) {
@@ -363,7 +363,7 @@ describe("C33 (real PostgreSQL): offline lifecycle convergence", () => {
     expect((await host()).connectionEpoch).toBe(1);
   });
 
-  it("Codex WP2 r1 P1: a rootless absence claiming expiry of a lease not yet due releases nothing", async () => {
+  it("a rootless absence claiming expiry of a lease not yet due releases nothing", async () => {
     const seed = await seedHost();
     const sandboxId = await readySandbox(seed);
     const sender = { userId: seed.owner.ownerId, hostId: seed.hostId, connectionEpoch: 1 };
@@ -460,7 +460,7 @@ describe("C33 (real PostgreSQL): offline lifecycle convergence", () => {
     ).toBe(0);
   });
 
-  // Review integ2 P1: a deferred stopped-root proof of the first arm, then a
+  // A deferred stopped-root proof of the first arm, then a
   // reconnect that booted the VM but failed startup (FAILED, cleanup stop
   // queued). The old arm's proof says nothing about the instance the failed
   // reconnect booted, so it must not settle that cleanup or release its hold.
@@ -1650,7 +1650,7 @@ describe("UNKNOWN targeted attestation on real PostgreSQL", () => {
     if (evidence === "old-host")
       await db.inspect.sandboxHost.update({
         where: { id: f.seed.hostId },
-        data: { relayProtocolVersion: "10.7" },
+        data: { relayProtocolVersion: "0.7" },
       });
     if (evidence === "new-generation")
       await db.inspect.sandbox.update({
@@ -2676,7 +2676,7 @@ describe("a deleted sandbox's VM still present: durable, contained remediation",
   });
 });
 
-/** Codex WP2 r3 P1 on real PostgreSQL: a cold reconnect installs its new
+/** On real PostgreSQL: a cold reconnect installs its new
  * lease before a targeted observation snapshots the still-STOPPED VM; the
  * reconnect's READY result is applied before that queued observation. The
  * session's observation fence answers it superseded: no downgrade, no
@@ -2726,8 +2726,8 @@ describe("WP2 follow-up (real PostgreSQL): the observation fence", () => {
     ).toEqual({ results: [{ sandboxId, outcome: "superseded" }] });
     expect(await row()).toEqual({ ...before, updatedAt: expect.any(Date) });
     expect(await liveCount()).toBe(1);
-    // Inverse: the same entry unfenced is exactly the downgrade Codex
-    // reproduced; observation 2 (begun after the server answered 1) is
+    // Inverse: the same entry unfenced is exactly the downgrade the fence
+    // prevents; observation 2 (begun after the server answered 1) is
     // judged by the census rules: the VM really stopped later.
     expect(fence.accept(2)).toBe(true);
     expect(fence.predates(sandboxId, 2)).toBe(false);
@@ -2749,7 +2749,7 @@ describe("WP2 follow-up (real PostgreSQL): the observation fence", () => {
     expect(await liveCount()).toBe(0);
   });
 
-  /** Codex rc-fu-b r1 #1: a daemon that jumps past the fenced observation
+  /** A daemon that jumps past the fenced observation
    * (2, or MAX_SAFE_INTEGER, as its first batch) is refused before any
    * judgement: the READY row and its capacity stay. */
   it("refuses an observation that jumps past the fenced one", async () => {

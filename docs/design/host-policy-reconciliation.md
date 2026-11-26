@@ -77,14 +77,10 @@ Heartbeat `policyReconciler` reports enabled, last-pass time and counts of last
 observed verified/drift/inconclusive/foreign/absent/pending active ids. These are
 historical polling observations, NOT a continuously verified host-wide claim or
 packet evidence. The socket reader uses a local snapshot, never daemon IO.
-Telemetry requires explicit **10.1** minor-version selection in `hello.ok`,
-matching `capabilities.protocolVersion` and advertised server support.
-Daemons send the unchanged strict **10.0** hello envelope and advertise
-`supportedProtocolVersions: ["10.1", "10.0"]`. Baseline servers select 10.0;
-heartbeats then omit `policyReconciler` entirely (not null). New servers select
-10.0 for old daemons and 10.1 only when offered. No extra optional handshake
-fields or relaxed unknown-field validation are used. Unsupported/inconsistent
-selections are refused before heartbeats, and unnegotiated telemetry is refused.
+Telemetry rides relay protocol **1.0**: the daemon's strict hello advertises
+`supportedProtocolVersions: ["1.0"]` and the server's `hello.ok` selects it.
+No extra optional handshake fields or relaxed unknown-field validation are
+used; any other version is refused before heartbeats.
 The server stores the bounded report plus a server `reportedAt` timestamp in
 the nullable, display-only `SandboxHost.policyReconcilerHealth` metadata column
 under the current authenticated owner/host/epoch fence. A new hello resets that
@@ -92,7 +88,8 @@ column to an empty, unreported object so prior-epoch health is not reused.
 Owner-scoped host lists and native host DTOs expose only the schema-validated
 report, never raw health metadata or unknown host-supplied fields.
 It does NOT promote `egressPolicy`, alter dispatch authorization, clear
-quarantine or settle any sandbox. Legacy heartbeats retain the latest report.
+quarantine or settle any sandbox. A heartbeat that omits `policyReconciler`
+(the field is optional, never null) retains the latest report.
 
 Hardware evidence remains OUTSTANDING. See the non-executable
 [qualification specification](../operations/host-isolation-qualification.md).
@@ -100,7 +97,7 @@ ACL compilation, shim execution and fake lifecycles prove control-plane
 ordering/refusal only. The existing create/detail DOM tests cover **recorded**
 policy and metadata. Refresh/readback coherence is described below.
 
-DNS grant refresh: the production refresh caller is now the
+DNS grant refresh: the production refresh caller is the
 same service-owned expiry loop, as a separate cadence-gated pass (about once a
 second, one pass at a time, its own revocable permit joined on shutdown). It
 refreshes only lifecycle-active ids whose recorded domain grants are past
@@ -114,7 +111,7 @@ leaves the armed expiry lease to fence the grant.
 
 Owed refresh: a refresh mutates the live ACL
 (and possibly the bridge's `raw.dnsmasq`) before its durable commit. The DNS
-revocation marker now records `refresh_owed` before the first mutation and the
+revocation marker records `refresh_owed` before the first mutation and the
 digest of every `raw.dnsmasq` body before it is published; only the commit
 clears them (network teardown clears them too). While a refresh is owed, or the
 marker holds uncommitted revocations or pending mutations, the readback compares
@@ -126,7 +123,7 @@ when the live ACL equals the old plan. Explained means:
 - DNS-tagged rules that are `disabled` or `reject`/`drop` may appear or
   vanish. Any other DNS-tagged rule must be an exact `enabled` canonical
   `allow`; `allow-stateless`, a `logged` allow (Incus's third, active state,
-  now modelled rather than refused) or an unknown action is drift;
+  modelled rather than refused) or an unknown action is drift;
 - planned DNS allows may be absent;
 - every DNS allow present is fenced, or is a planned or ledger-armed identity
   with its DNS/DoT companions;
@@ -139,11 +136,11 @@ Anything else is still drift. "Owed" is a value, not an early return: the
 bridge config, the static rules and the instance devices (eth0 bridge and
 filtering, extra NICs or devices, NIC ACLs) are verified in every
 observation, owed or not, and convict on a mismatch. Only after all of them
-pass is the owed refusal surfaced. The old
-rule (an uncommitted revocation is drift) let a refresh that withdrew a denied
-grant and then failed to publish get its healthy VM halted by the reconciler
-and destroyed by the loss drain. A failed DNS expiry recovery no longer
-short-circuits the verdict either. It runs the same coherent snapshot in owed
+pass is the owed refusal surfaced. An uncommitted revocation is therefore not
+drift by itself, so a refresh that withdrew a denied grant and then failed to
+publish never gets its healthy VM halted by the reconciler and destroyed by the
+loss drain. A failed DNS expiry recovery does not short-circuit the verdict
+either. It runs the same coherent snapshot in owed
 mode, so unexplained drift still convicts and everything else is inconclusive.
 An owed refresh is scheduled at the 15-second retry spacing. It runs despite a
 reconciler refusal only when that refusal's last cause was the owed refresh

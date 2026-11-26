@@ -375,7 +375,7 @@ export class SwipeTracker {
 // -- text size --------------------------------------------------------------
 
 /**
- * 1 px (owner 11-24): a phone can shrink the text far enough to fit a wide
+ * 1 px: a phone can shrink the text far enough to fit a wide
  * program. The cols × rows that follow are clamped to the relay contract's
  * PTY bounds (`clampTerminalSize`: 1024 × 512) before anything is sent.
  */

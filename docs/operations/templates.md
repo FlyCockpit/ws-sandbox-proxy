@@ -452,7 +452,7 @@ A latest/tag selector resolves only once at acceptance. Moving a tag never
 changes replay or an existing sandbox. An ALLOWLIST key must grant the resolved
 exact revision; granting its old latest revision grants no future append.
 The key picker displays exact IDs and each selected host's verified/pending
-association. Follow the [re-mint walkthrough](../guide/auth-planes.md#minting-sdk-resource-grants).
+association. See [minting SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants).
 
 Pools use only exact revisions already associated with member hosts; placement
 does not copy or build images. Grant the pool, selected hosts and exact
@@ -543,12 +543,13 @@ foreign pool members need no foreign host allowlist grant. See
 
 ## Image distribution
 
-A create no longer needs the image on the chosen host in advance. When a host
+A create does not need the image on the chosen host in advance. When a host
 has no current verified copy, placement may still choose it if the image can
-be fetched there right now; hosts that already have it rank first.
+be fetched there right away; hosts that already have it rank first.
 
-- **Modes.** `IMAGE_DISTRIBUTION=off` keeps the old behaviour exactly (no
-  fetch, no capture, no image store, lease from acceptance). `auto` uses the
+- **Modes.** `IMAGE_DISTRIBUTION=off` places a create only on a host that
+  already has a current verified copy (no fetch, no capture, no image store,
+  lease from acceptance). `auto` uses the
   S3 image store when `IMAGE_S3_BUCKET` and both keys are set, otherwise
   _peer mode_: the image is copied from one of the image owner's own connected
   hosts through the server, in one-time 32 MiB parts. Peer copies are never

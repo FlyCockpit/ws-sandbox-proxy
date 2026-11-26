@@ -6,7 +6,7 @@ import {
   takeDiskLivenessSlot,
 } from "./disk-liveness.js";
 
-describe("disk liveness allowance (rounds 2-4)", () => {
+describe("disk liveness allowance", () => {
   it("is per connection and bounded; probes lapse with the interval", () => {
     const theirs = new Map<string, number>();
     const mine = new Map<string, number>();
@@ -35,7 +35,7 @@ describe("disk liveness allowance (rounds 2-4)", () => {
     expect(takeDiskLivenessSlot(mine, "tr-new", 30_000)).toBe(true);
   });
 
-  it("a disk upload granted on this connection holds a slot before its first heartbeat (round 4)", () => {
+  it("a disk upload granted on this connection holds a slot before its first heartbeat", () => {
     const fresh = new Map<string, number>();
     grantDiskLiveness(fresh, "tr-disk");
     // Unproven ids fill every probe first ...
@@ -49,7 +49,7 @@ describe("disk liveness allowance (rounds 2-4)", () => {
     expect(takeDiskLivenessSlot(fresh, "tr-disk", 11_000)).toBe(true);
   });
 
-  it("probes stay charged after they prove an id non-disk: at most the limit of lookups per interval (round 5)", () => {
+  it("probes stay charged after they prove an id non-disk: at most the limit of lookups per interval", () => {
     const mine = new Map<string, number>();
     for (let i = 0; i < DISK_LIVENESS_PROBES_MAX; i++) {
       expect(takeDiskLivenessSlot(mine, `tr-fake-${i}`, 0)).toBe(true);

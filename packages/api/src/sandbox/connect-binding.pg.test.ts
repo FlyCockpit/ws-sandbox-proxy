@@ -1,7 +1,7 @@
 /**
- * The retained `sandboxes.connect` authorization against a real database
- * (wssp-ssh 1b): scope, kind, owner scoping, the synchronous `current()` after
- * a committed revoke, and the live re-read's verdicts.
+ * The retained `sandboxes.connect` authorization against a real database:
+ * scope, kind, owner scoping, the synchronous `current()` after a committed
+ * revoke, and the live re-read's verdicts.
  */
 import {
   seedLaunchHost,

@@ -221,7 +221,7 @@ type HeldTerminalFrame =
 
 /**
  * Host channel frames held while the socket's cached authority ticket is
- * revalidated (wssp-ssh 1b, like the terminal hold). A node that honours its
+ * revalidated (like the terminal hold). A node that honours its
  * windows has, per counted channel, at most a window of output, a window of
  * stdin acks, its eofs, ready, error notices and exit in flight; the bound is
  * twice that over the per-host cap, so overflow means the node ignored its
@@ -362,7 +362,7 @@ type SessionState = {
   pendingReceiptSweep?: ReturnType<typeof setInterval>;
   /** Ordered host terminal frames awaiting a fresh authority ticket (bounded). */
   terminalHold: { frames: HeldTerminalFrame[]; bytes: number; refreshing: boolean };
-  /** Hello `channels` (wssp-ssh): the negotiated kinds; absent: no channel frames. */
+  /** Hello `channels`: the negotiated kinds; absent: no channel frames. */
   channelKinds?: readonly string[];
   /** Ordered host channel frames awaiting a fresh authority ticket (bounded). */
   channelHold: { frames: HeldChannelFrame[]; bytes: number };
@@ -857,7 +857,7 @@ export class SandboxRelaySessionManager {
   readonly connectAudit = new ConnectAuditRecorder();
 
   /**
-   * CLI channels (wssp-ssh 1b): `/v1/sandboxes/{id}/connect` connections ride
+   * CLI channels: `/v1/sandboxes/{id}/connect` connections ride
    * a registered, reconciled, non-quiescing host that negotiated `channels`.
    */
   readonly connects = new ConnectManager(
@@ -1427,7 +1427,7 @@ export class SandboxRelaySessionManager {
     };
   }
 
-  /** Config payload is sent only over the current authenticated 10.3+ socket.
+  /** Config payload is sent only over the current authenticated socket.
    * No operation send/claim is implied; only a persisted exact ACK unlocks it. */
   async installExecutionConfig(
     hostId: string,
@@ -2333,7 +2333,7 @@ export class SandboxRelaySessionManager {
   }
 
   /**
-   * Channel frames take the terminal lane's path (wssp-ssh 1b): validated and
+   * Channel frames take the terminal lane's path: validated and
    * routed synchronously, bypassing the serialized queue. A host that did not
    * negotiate `channels` never receives one, so any frame from it is a
    * protocol error.
@@ -2944,7 +2944,7 @@ export class SandboxRelaySessionManager {
                 );
             };
             // The ordering lookup reads the database: the begin spends its
-            // grant budget first (land round 1), exactly once; its handler,
+            // grant budget first, exactly once; its handler,
             // now or once released, does not spend it again.
             const { spendImageGrantBudget } = await import("./image-handlers.js");
             if (!(await spendImageGrantBudget(sender.hostId))) return refuse("rate_limited");
@@ -3738,7 +3738,7 @@ export class SandboxRelaySessionManager {
 
   /** A disk upload grant or resume answer this connection sends: its
    * transfer holds a disk liveness slot from now on (`grantDiskLiveness`), so
-   * unproven heartbeat ids never crowd out its first heartbeat (round 4). */
+   * unproven heartbeat ids never crowd out its first heartbeat. */
   private noteDiskGrant(session: SessionState, frame: { type: string; transferId?: string }) {
     if (frame.type !== "disk.upload.grant" && frame.type !== "disk.upload.resumed") return;
     if (frame.transferId === undefined) return;

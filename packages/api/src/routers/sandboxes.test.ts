@@ -1570,7 +1570,7 @@ describe("S0 closed browser gate inventory", () => {
       "captureSandbox",
       // Offload §8.7 (U10): re-queue a pending restore cleanup (no guest access).
       "retryCleanup",
-      // wssp-ssh §10: the owner's connection audit (metadata only, no guest access).
+      // The owner's connection audit (metadata only, no guest access).
       "listConnectSessions",
     ];
     expect(entries.sort()).toEqual(

@@ -97,7 +97,7 @@ export function createPrismaClient(options: {
 }
 
 /**
- * The connect audit's own small pool (wssp-ssh §10), isolated from the
+ * The connect audit's own small pool, isolated from the
  * shared one so a stalled database can never make audit writes hold, or wait
  * for, connections that relay authorization reads need: at most
  * `CONNECT_AUDIT_POOL.max` connections per server process, a 2 s bound on

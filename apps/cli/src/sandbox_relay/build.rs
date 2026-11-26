@@ -1,5 +1,4 @@
-//! Template-build gate (owner decision D1: guest root runs only inside build
-//! VMs).
+//! Template-build gate (guest root runs only inside build VMs).
 //!
 //! Every dispatch passes [`gate`] before any lease, Effect record or runtime
 //! call. The decision uses only this host's journaled sandbox record (its

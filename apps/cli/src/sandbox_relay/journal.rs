@@ -629,12 +629,12 @@ impl HostJournal {
             }
             host_request_hash = Some(mac(
                 installed,
-                "wssp-host-request-v2",
+                "wssp-host-request-v1",
                 &serde_json::json!({"sandboxOwnerId":dispatch.sandbox_owner_id, "sandboxId":dispatch.sandbox_id,
                     "generation": dispatch.generation, "requestHash":dispatch.body_hash.as_deref().ok_or(SandboxErrorCode::ProtocolError)?}).to_string(),
             ));
             (
-                mac(installed, "wssp-host-dispatch-v2", &{
+                mac(installed, "wssp-host-dispatch-v1", &{
                     let mut canonical = dispatch.clone();
                     if let Some(env) = &mut canonical.env {
                         env.sort();
@@ -3448,17 +3448,17 @@ mod tests {
     }
 
     #[test]
-    fn v5_version_marker_is_refused_without_converting_evidence() {
+    fn unsupported_version_marker_is_refused_without_converting_evidence() {
         let dir = tempfile::tempdir().unwrap();
         let binding = binding();
         {
             let journal =
                 crate::sandbox_relay::test_support::open_journal(dir.path(), &binding).unwrap();
-            let row = receipt("preserve-v5", 1);
+            let row = receipt("preserve-unsupported", 1);
             journal.record_intent(&row).unwrap();
         }
         let version_path = dir.path().join("VERSION");
-        fs::write(&version_path, "5").unwrap();
+        fs::write(&version_path, "2").unwrap();
         // Preserve every journal file, including uncertain intent evidence.
         let before: Vec<_> = fs::read_dir(dir.path().join("receipts"))
             .unwrap()
@@ -3471,7 +3471,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("original daemon"), "{error}");
-        assert_eq!(fs::read_to_string(version_path).unwrap(), "5");
+        assert_eq!(fs::read_to_string(version_path).unwrap(), "2");
         assert!(!before.is_empty());
         for (path, bytes) in before {
             assert_eq!(fs::read(path).unwrap(), bytes);

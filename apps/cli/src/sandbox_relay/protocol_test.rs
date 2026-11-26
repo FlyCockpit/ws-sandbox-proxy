@@ -6,6 +6,6 @@ mod tests {
     fn reexported_protocol_version_matches_crate() {
         assert_eq!(SANDBOX_RELAY_PROTOCOL_VERSION, "1.0");
         assert!(known_protocol_version(SANDBOX_RELAY_PROTOCOL_VERSION));
-        assert!(!known_protocol_version("11.0"));
+        assert!(!known_protocol_version("2.0"));
     }
 }

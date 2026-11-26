@@ -277,7 +277,7 @@ describe("claim, record and recovery (real PostgreSQL)", () => {
       where: { id: { in: [neverEnqueued.id, lost.id] } },
     });
     expect(rows.every((row) => row.enqueuedAt !== null && row.enqueueSeq === 1)).toBe(true);
-    // enqueuedAt is database time, whatever the worker clock says (round 5).
+    // enqueuedAt is database time, whatever the worker clock says.
     const other = await endpointFor(owner);
     const skewed = await pending(owner, other.id, {
       nextAttemptAt: new Date(Date.now() - 60_000),

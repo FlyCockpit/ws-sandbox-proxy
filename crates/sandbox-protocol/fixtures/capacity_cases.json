@@ -1308,7 +1308,7 @@
     "input": {
       "type": "hello",
       "id": "hello-fixture-1",
-      "protocolVersion": "10.7",
+      "protocolVersion": "2.0",
       "supportedProtocolVersions": ["1.0"],
       "daemon": {
         "hostId": "host-fixture",
@@ -1382,7 +1382,7 @@
       "type": "hello",
       "id": "hello-fixture-1",
       "protocolVersion": "1.0",
-      "supportedProtocolVersions": ["1.0", "10.7"],
+      "supportedProtocolVersions": ["1.0", "0.9"],
       "daemon": {
         "hostId": "host-fixture",
         "label": "Fixture host",

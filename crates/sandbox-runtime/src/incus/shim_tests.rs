@@ -4630,8 +4630,8 @@ fn reboot_tolerance_never_waits_on_a_stopped_crashed_or_looping_vm() {
 
 /// Incus reports Error for the instant the old QEMU process of a restarting
 /// VM is alive with its monitor gone. A state read landing there during the
-/// Ubuntu 26.04 first-boot reboot (about 13 s after start, live chaos stack
-/// 2026-11-07: `vm_not_running` after 23.6 s) is a reboot phase, in the
+/// Ubuntu 26.04 first-boot reboot (about 13 s after start; `vm_not_running`
+/// seen after 23.6 s under load) is a reboot phase, in the
 /// agent wait and in the post-pass validation alike.
 #[test]
 fn a_teardown_error_read_during_a_guest_reboot_is_a_restart() {
@@ -4875,7 +4875,7 @@ fn a_stalled_query_after_a_stop_is_bounded_by_the_settle_window() {
     );
 }
 
-/// Codex R2-1: the binding refresh inside the final observations is bounded
+/// The binding refresh inside the final observations is bounded
 /// by the shared deadline too; a refresh that eats the budget is
 /// `agent_timeout`, never a late READY.
 #[test]
@@ -4896,7 +4896,7 @@ fn a_binding_refresh_past_the_deadline_is_agent_timeout_never_ready() {
     );
 }
 
-/// Codex R2-2: after a Stopped read, a stalled instance-metadata query (the
+/// After a Stopped read, a stalled instance-metadata query (the
 /// binding refresh, not `/state`) is also cut at the settle bound.
 #[test]
 fn a_stalled_binding_refresh_after_a_stop_is_bounded_by_the_settle_window() {

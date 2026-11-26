@@ -190,7 +190,7 @@ async function main() {
     // targets) when it finishes (packages/db/src/testing/pg.ts), so the
     // data directory holds the template plus at most two running files'
     // databases (two Vitest workers) and the WAL, not one clone per file.
-    // Measured on the full run (2026-11-04, 116 files): tmpfs peak 118 MiB
+    // Measured on the full run (116 files): tmpfs peak 118 MiB
     // and cgroup memory.peak 300 MiB, against about 1.7 GiB of tmpfs when
     // every clone was kept. 512m/1024m leaves 4x and 3x headroom; a new test
     // file adds nothing, only a bigger schema or a heavier single file does.

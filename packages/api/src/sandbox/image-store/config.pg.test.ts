@@ -19,7 +19,7 @@ const db = await pgTestDatabase();
 afterAll(() => db.close());
 
 describe("stored-image byte aggregate against real PostgreSQL", () => {
-  it("P2-8 (round 2): sum(bigint) comes back as an exact bigint usable in quota arithmetic", async () => {
+  it("P2-8: sum(bigint) comes back as an exact bigint usable in quota arithmetic", async () => {
     const ownerId = randomUUID();
     await db.inspect.user.create({
       data: { id: ownerId, name: "O", email: `${ownerId}@example.test` },

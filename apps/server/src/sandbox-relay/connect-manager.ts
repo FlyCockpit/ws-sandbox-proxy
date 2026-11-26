@@ -1,5 +1,5 @@
 /**
- * Server half of CLI channels (wssp-ssh 1b): one `wssp.connect.v1` client
+ * Server half of CLI channels: one `wssp.connect.v1` client
  * WebSocket (`GET /v1/sandboxes/{id}/connect`, a kind `API` key with
  * `sandboxes:connect`) multiplexes channels that the node runs as guest
  * processes over the host relay's `channel.*` family
@@ -156,8 +156,8 @@ const OPEN_WINDOW_MS = 60_000;
  */
 const CONNECT_MAX_LIFETIME_MS = 12 * 60 * 60 * 1000;
 /**
- * Default per-connection byte rate in each direction (owner decision 4: a
- * speed cap per connection protects the node owner's link on shared nodes).
+ * Default per-connection byte rate in each direction (a speed cap per
+ * connection protects the node owner's link on shared nodes).
  */
 const CONNECT_DEFAULT_MAX_BYTES_PER_SECOND = 8 * 1024 * 1024;
 

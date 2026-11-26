@@ -198,7 +198,7 @@ The control plane never decrypts vault values to mask host output.
   mode (a root-owned broker running agent commands as a separate unprivileged
   user): its root setup and failure modes cost more than it protected, since
   file tools, the daemon's Incus-admin socket and persistence from earlier runs
-  kept daemon-level reach. Owner decision 2026-11-13.
+  kept daemon-level reach.
 - We reject running host commands as root. Incus-admin power remains
   substantial even without Unix uid 0.
 - We reject treating pool membership or own-sandbox filtering as a host

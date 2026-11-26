@@ -323,7 +323,7 @@ describe("Forget unreachable host (§8.2 N1, CN1)", () => {
     await unreachable(w);
     await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata("STOP_SANDBOX"),
 
         userId: w.owner,

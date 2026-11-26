@@ -6,8 +6,8 @@
  * reconnect admitted before that read installs its new lease first, so the
  * entry can say "stopped" under the current arm; if the reconnect's READY
  * result reaches the server before the queued observation, judging that
- * entry would downgrade a running VM and release its capacity (Codex WP2 r3
- * P1). Host trust does not help: a correct daemon produces that frame.
+ * entry would downgrade a running VM and release its capacity. Host trust
+ * does not help: a correct daemon produces that frame.
  *
  * The daemon numbers each offered observation (shared by its batches) and
  * starts one only after every batch of the previous one was acknowledged.

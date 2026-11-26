@@ -371,7 +371,7 @@ describe("detach and re-attach", () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
   });
 
-  it("explains a sandbox without a recorded guest identity (C52-CO-5)", async () => {
+  it("explains a sandbox without a recorded guest identity", async () => {
     renderTerminal();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: enTerminal.actions.attach }));
@@ -947,7 +947,7 @@ it("a paste the terminal cannot take keeps the dialog and the draft", async () =
   ).toBe("keep me");
 });
 
-describe("phone header (owner 11-24: one row, one menu)", () => {
+describe("phone header (one row, one menu)", () => {
   const PHONE = "(max-width: 640px)";
   beforeEach(() => {
     vi.stubGlobal(

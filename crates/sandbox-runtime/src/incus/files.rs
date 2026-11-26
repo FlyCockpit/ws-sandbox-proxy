@@ -285,8 +285,8 @@ impl IncusClient {
         };
         Ok(proof.map(|_| crate::MkdirResponse { created }))
     }
-    /// Readiness only: `$HOME/repo` is template layout, so this keeps the
-    /// pre-10.5 `mkdir -p` follow semantics (B2-K-3) inside the same
+    /// Readiness only: `$HOME/repo` is template layout, so this keeps
+    /// `mkdir -p` follow semantics (B2-K-3) inside the same
     /// permit-fenced mutation executor. User-API mkdir never follows links.
     pub fn guest_ensure_directory(
         &self,

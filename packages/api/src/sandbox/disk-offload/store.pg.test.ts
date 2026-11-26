@@ -419,7 +419,7 @@ describe("enqueue (§7: one export per host, two per account; §4, N4)", () => {
     expect((await offloadCandidates()).some((c) => c.sandboxId === twin.id)).toBe(true);
   });
 
-  it("review r3: a STORED export holds its host's slot until the daemon confirms the release", async () => {
+  it("a STORED export holds its host's slot until the daemon confirms the release", async () => {
     const w = await world();
     const { seedSandboxInstance } = await import("../testing/resource-fixtures");
     const { seedStoredOffload } = await import("../testing/offload-fixtures");
@@ -495,7 +495,7 @@ describe("enqueue (§7: one export per host, two per account; §4, N4)", () => {
     const busy = await world();
     await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         userId: busy.owner,
@@ -532,7 +532,7 @@ describe("enqueue (§7: one export per host, two per account; §4, N4)", () => {
     ).toBe(true);
   });
 
-  it("a staging_full attempt retries after minutes, not the half-hour backoff (review r2)", async () => {
+  it("a staging_full attempt retries after minutes, not the half-hour backoff", async () => {
     const w = await world();
     await db.inspect.sandboxDiskOffload.create({
       data: {

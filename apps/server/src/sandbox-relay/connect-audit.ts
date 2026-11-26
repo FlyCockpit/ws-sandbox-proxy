@@ -1,5 +1,5 @@
 /**
- * wssp-ssh §10: the connect relay's audit. One `SandboxConnectSession` row
+ * The connect relay's audit. One `SandboxConnectSession` row
  * per live connection (written after `hello`, completed at its end) and one
  * structured log line per open and per close.
  *

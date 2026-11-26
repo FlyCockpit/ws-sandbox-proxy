@@ -226,7 +226,7 @@ describe("SwipeTracker", () => {
 });
 
 describe("text size", () => {
-  it("clamps to 1–20 px in whole px (owner 11-24: minimum 1 px)", () => {
+  it("clamps to 1–20 px in whole px (minimum 1 px)", () => {
     expect(FONT_SIZE_MIN).toBe(1);
     expect(clampFontSize(0)).toBe(1);
     expect(clampFontSize(-4)).toBe(1);

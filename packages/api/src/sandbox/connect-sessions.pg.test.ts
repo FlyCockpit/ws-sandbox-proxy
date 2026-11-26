@@ -8,7 +8,7 @@ import {
 } from "./testing/resource-fixtures";
 
 /**
- * wssp-ssh §10 against real PostgreSQL: the connect audit row is written with
+ * The connect audit against real PostgreSQL: the row is written with
  * the key's origin, completed once, read back owner-scoped through the
  * dashboard projection, deleted with its owner (FK cascade), and purged after
  * 90 days in bounded batches that never touch younger rows.

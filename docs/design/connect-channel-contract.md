@@ -6,22 +6,24 @@ user: a workload (`pty` or `exec`), or the channel helper relaying one connectio
 (`tcp`) or a guest Unix socket (`unix`) ([Relay channels](#relay-channels)). This note covers the host leg (server ↔ daemon), the guest side and the client leg
 (`/v1/sandboxes/{id}/connect`, [Client wire](#client-wire-wsspconnectv1)).
 
-The browser terminal family (`terminal.*`, `docs/design/terminal-relay-contract.md`) is unchanged and separate.
+The browser terminal family (`terminal.*`, `docs/design/terminal-relay-contract.md`) is separate.
 
-Owner-approved (2026-11-20) changes that bind the client increments: clients acknowledge output promptly and the
-stall rule is per frame age; each sandbox owner gets at most half of the host's bulk-frame cap; the scope unit is
-`wssp-chan-<connectionId>.<channelId>.scope`.
+Rules that bind clients: clients acknowledge output promptly and the stall rule is per frame age; each sandbox
+owner gets at most half of the host's bulk-frame cap; the scope unit is `wssp-chan-<connectionId>.<channelId>.scope`.
 
 ## Capability and rollout
 
 - The daemon offers `channels: {kinds: ["pty", "exec", "tcp", "unix"]}` in `hello.daemon.capabilities` when its
   runtime implements channels. The server echoes the offer in `hello.ok.capabilities.channels` and never opens a
   kind the node did not offer: a client open of such a kind exits `unsupported_capability` without reaching the
-  node (an older node during a rollout).
+  node.
 - The server never sends a `channel.*` frame to a host that did not negotiate channels. A daemon that receives one
   without the echo closes the connection (protocol error), and the server treats an unsolicited daemon `channel.*`
   frame the same way.
-- The relay version stays `1.0`. Rollout order is server first, then daemons; roll back daemons first.
+- Both peers accept exactly relay protocol `1.0` (subprotocol `ws-sandbox-proxy.relay.v1`); there is no version
+  negotiation. Channels are capability-gated within that version: a node whose runtime does not offer a kind gets
+  `unsupported_capability` for it. Mixed-version deployments are not supported: run the server, daemons and SDK
+  from the same release, updating the server first, then the daemons.
 
 ## Fence
 

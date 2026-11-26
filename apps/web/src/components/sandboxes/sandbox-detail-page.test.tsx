@@ -201,7 +201,7 @@ describe("reading a sandbox", () => {
     ).toBeTruthy();
   });
 
-  it("shows this sandbox's recent CLI connections (wssp-ssh §10), one bounded page", async () => {
+  it("shows this sandbox's recent CLI connections, one bounded page", async () => {
     server.current.connectSessions = [
       {
         id: "c-1",
@@ -233,7 +233,7 @@ describe("reading a sandbox", () => {
     expect(input.limit).toBeLessThanOrEqual(100);
   });
 
-  it("shows the commands that connect to this sandbox (wssp-ssh increment 3)", async () => {
+  it("shows the commands that connect to this sandbox", async () => {
     mount();
     const panel = await screen.findByRole("region", { name: enSandboxes.connect.heading });
     const commands = within(panel).getByRole("list", { name: enSandboxes.connect.label });

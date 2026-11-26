@@ -627,7 +627,7 @@ pub struct RelaySupervisor {
     finished_tx: mpsc::SyncSender<FinishedOp>,
     tracked: TrackedCommands,
     outputs: Mutex<HashMap<OutputKey, OutputWindow>>,
-    /// 10.5 command attempts awaiting one best-effort `process.started`:
+    /// Command attempts awaiting one best-effort `process.started`:
     /// (sandbox, process identity, output sink). Bounded by output slots.
     starts: Mutex<HashMap<OutputKey, PendingStart>>,
     output_turn: std::sync::atomic::AtomicUsize,
@@ -811,7 +811,7 @@ impl RelaySupervisor {
                     // on every path (result, deferral, early exit).
                     // The job's ownership token moves into this worker; it
                     // is released when the iteration ends unless it moves on
-                    // with the final completion (review rounds 1-3).
+                    // with the final completion.
                     let owner = job.owner.take();
                     job.first_allocation_attempt = journal.first_allocation_attempt(&job.dispatch);
                     let d = &job.dispatch;
@@ -1823,7 +1823,7 @@ impl RelaySupervisor {
             .map_err(|_| anyhow::anyhow!("host observation queue full or closed"))
     }
     /// Best-effort, bounded, idempotent start observations (4a): at most one
-    /// per accepted 10.5 command attempt, host clock only, no nonce, no ACK.
+    /// per accepted command attempt, host clock only, no nonce, no ACK.
     /// Losing one is an availability uncertainty; final results repeat it.
     pub fn poll_started(&self) -> Vec<sandbox_protocol::results::ProcessStarted> {
         // Never hold the output lock while taking `starts` (submit nests them
@@ -3989,7 +3989,7 @@ pub fn command_result_for(
     })
 }
 
-// Durable 10.5 receipts retain the start frame as private metadata. The
+// Durable command receipts retain the start frame as private metadata. The
 // standalone frame still passes through the sole negotiated wire encoder.
 fn command_observation_for(
     dispatch: &OperationDispatch,
@@ -4489,7 +4489,7 @@ fn run_supervised(
 #[cfg(all(test, unix))]
 mod tests {
     /// A failed capture keeps the fixed wire message but logs the runtime's
-    /// cause on the host (prod 26.04 capture: the log said only
+    /// cause on the host (otherwise its log would say only
     /// `capture_failed`).
     #[test]
     fn a_failed_capture_logs_the_runtime_cause() {
@@ -5202,8 +5202,8 @@ mod tests {
                 _ => SandboxErrorCode::Cancelled,
             };
             let mut receipt = intent_from_dispatch(&journal, &binding, &d);
-            // Legacy stored cancellations still pass through the
-            // journal guard, even though new wire cancels forbid create.
+            // A stored cancellation still passes through the journal
+            // guard, even though wire cancels never mark a create.
             receipt.cancel_requested = refusal == "journal-cancel";
             journal.record_fixture_intent(&receipt).unwrap();
             assert!(journal.first_allocation_attempt(&d));
@@ -6544,7 +6544,7 @@ exit 1
         assert_eq!(done(&relay, "cmd").state, OperationState::Succeeded);
     }
 
-    /// Round 2 #1: a command that finished just before the drop, with output
+    /// A command that finished just before the drop, with output
     /// not yet published, stays owned by the publication path: it is carried,
     /// keeps its output window, and publishes every byte after adoption.
     #[test]

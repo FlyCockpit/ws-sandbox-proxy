@@ -1369,8 +1369,8 @@ impl OffloadService {
                             UPLOAD_IN_PROGRESS => {}
                             // A `stale` answer to the begin itself (no session
                             // yet): this offload may be past uploading on the
-                            // server (review r3: an upload whose complete went
-                            // out before a crash).
+                            // server (an upload whose complete went out
+                            // before a crash).
                             STALE if session.is_none() => return Err(JobEnd::Unsettled),
                             STALE => step = Step::Resume,
                             RATE_LIMITED | STORE_UNAVAILABLE => {

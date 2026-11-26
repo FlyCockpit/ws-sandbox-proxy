@@ -30,7 +30,7 @@ import {
   noteHostBlockerReleased,
   releaseLiveResourcesIfHeld,
 } from "./host-admission";
-import { hashLegacyEnvFreeBody, requestDigestMetadata } from "./idempotency";
+import { hashEnvFreeBody, requestDigestMetadata } from "./idempotency";
 import {
   accessExpiryIdempotencyKey,
   leaseExpiryIdempotencyKey,
@@ -157,7 +157,7 @@ export function leaseExpiryRequestHash(input: {
   generation: number;
   leaseRevision: number;
 }): string {
-  return hashLegacyEnvFreeBody(input);
+  return hashEnvFreeBody(input);
 }
 
 export function leaseExpiryDispatchAction(
@@ -590,7 +590,7 @@ export async function commitLockedSandboxLeaseExpiry(
     isDestroy ? "KILL_SANDBOX" : "STOP_SANDBOX",
   );
 
-  const requestBodyHash = hashLegacyEnvFreeBody({
+  const requestBodyHash = hashEnvFreeBody({
     sandboxId: sandbox.id,
     action: dispatchAction,
     generation: nextGeneration,
@@ -746,7 +746,7 @@ export async function queueFailedTeardownRetry(
   const { kind, intent } = await systemTeardownKind(tx, sandbox, input.failed.kind);
   const nextGeneration = sandbox.generation + 1;
   const idempotencyKey = teardownRetryIdempotencyKey(sandbox.id, nextGeneration, retry);
-  const requestBodyHash = hashLegacyEnvFreeBody({
+  const requestBodyHash = hashEnvFreeBody({
     sandboxId: sandbox.id,
     action: "teardown-retry",
     kind,
@@ -830,7 +830,7 @@ export async function requeueRestoreCleanup(
   const nextGeneration = sandbox.generation + 1;
   // Retry index 0: a new chain with its own TEARDOWN_RETRY_MAX retries.
   const idempotencyKey = teardownRetryIdempotencyKey(sandbox.id, nextGeneration, 0);
-  const requestBodyHash = hashLegacyEnvFreeBody({
+  const requestBodyHash = hashEnvFreeBody({
     sandboxId: sandbox.id,
     action: "cleanup-retry",
     kind,

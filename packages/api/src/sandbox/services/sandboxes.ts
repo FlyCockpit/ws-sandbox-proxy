@@ -425,7 +425,7 @@ async function enqueueOwnedOperation(
     rearmLease?: { timeoutMs?: number; clock: LeaseClock };
     /** CLI logins: resume pins passed on this cold start (§7.2 rule 4). */
     credentialPins?: readonly CredentialClaimRequest[];
-    /** Staged 10.5 admission (6A callers only); see operationTransaction. */
+    /** Fs/process admission; see operationTransaction. */
     fsProcess?: { commandEnvironment?: boolean };
     /** Reconnect only: the restore an OFFLOADED sandbox resumes through. */
     restore?: { request: RestoreRequestInput; clock: LeaseClock };

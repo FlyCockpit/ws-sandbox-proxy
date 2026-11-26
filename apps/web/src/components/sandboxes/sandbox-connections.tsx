@@ -12,7 +12,7 @@ import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
 /**
- * The sandbox detail "Recent connections" panel (wssp-ssh §10): the owner's
+ * The sandbox detail "Recent connections" panel: the owner's
  * CLI connections to this sandbox, newest first, one bounded page at a time.
  * Metadata only (key, origin, times, end reason, channel counts, forwarded
  * guest ports, bytes): the server never records what ran.
@@ -53,7 +53,7 @@ function bytes(value: string, locale: string): string {
 }
 
 /**
- * The sandbox detail "Connect" hint (wssp-ssh §11, increment 3): the CLI
+ * The sandbox detail "Connect" hint: the CLI
  * commands that reach this sandbox, a shell and plain ssh. Commands only;
  * nothing here talks to the sandbox.
  */

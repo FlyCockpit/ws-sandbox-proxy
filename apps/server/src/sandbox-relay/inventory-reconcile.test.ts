@@ -774,7 +774,7 @@ describe("uncertain and failed teardowns converge on proof", () => {
           { sandboxOwnerId: "user-1", root: null, sandboxId: "sbx-1", state: "absent" },
           clock,
         ),
-        // Codex WP2 r3 #2: a kill still waiting for root proof (live slot
+        // A kill still waiting for root proof (live slot
         // freed, disk held) is not converged, so the host retries it.
       ).toEqual({ converged: kind === "STOP_SANDBOX" });
       expect(sandbox()).toMatchObject({
@@ -996,7 +996,7 @@ describe("the preceding lease arm proves a destroy of a stopped disk", () => {
     expect(store.operations.get("op-stop")?.state).toBe("SUCCEEDED");
   });
 
-  // Review integ2 P1: a reconnect that reached the host and failed may have
+  // A reconnect that reached the host and failed may have
   // booted (and replaced) the instance before failing, so the older arm's
   // evidence concludes nothing about it, not even instance absence.
   it("not when a later reconnect reached the host: absence then proves nothing", async () => {
@@ -1905,7 +1905,7 @@ describe("UNKNOWN targeted allocation attestation", () => {
     "stale-epoch",
   ])("%s keeps the hold", async (evidence) => {
     provision();
-    if (evidence === "old-host") host().relayProtocolVersion = "10.7";
+    if (evidence === "old-host") host().relayProtocolVersion = "0.7";
     if (evidence === "new-generation") sandbox().generation = 2;
     if (evidence === "no-attestation") {
       await new InventoryCensus(sender(), clock).acceptPage(page(0, []));
@@ -2038,7 +2038,7 @@ describe("UNKNOWN targeted allocation attestation", () => {
   });
 });
 
-/** WP2 §9 (Codex review-integ3 diagnostics): evidence is judged per entry so
+/** WP2 §9: evidence is judged per entry so
  * the host can re-offer it until it converges. Each case first reproduces the
  * refusal, then shows the re-offer under a current observation converging. */
 /** The observation fence of a session that received no lifecycle result
@@ -2241,7 +2241,7 @@ describe("a host expiry flag never stands in for root evidence", () => {
   });
 });
 
-/** Codex WP2 r3 #2: completed, due destroy evidence whose root census
+/** Completed, due destroy evidence whose root census
  * failed (`root: null`) moves the row and frees its live slot, but the disk
  * reservation stays held: that is not convergence, so the host keeps its
  * rootless retry, and the retry with root evidence releases the disk. */
@@ -2287,7 +2287,7 @@ describe("rootless partial convergence keeps the host retrying", () => {
   });
 });
 
-/** Codex WP2 r3 #3: census VM absence without root evidence still settles a
+/** Census VM absence without root evidence still settles a
  * pending stop (the server's own record) for a teardown or held-ERROR row,
  * and still converges nothing else. */
 describe("rootless census absence and pending teardowns", () => {
@@ -2346,7 +2346,7 @@ describe("rootless census absence and pending teardowns", () => {
   });
 });
 
-/** Codex WP2 r3 P1, the interleaving end to end at the judge: a cold
+/** The interleaving end to end at the judge: a cold
  * reconnect installs its new lease (generation 2) before a targeted
  * observation snapshots it while the VM is still STOPPED; the reconnect's
  * READY result reaches the server first, then the queued observation. The

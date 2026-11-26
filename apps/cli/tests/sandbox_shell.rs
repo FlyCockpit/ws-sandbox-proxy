@@ -2249,8 +2249,8 @@ fn a_stalled_socket_ends_without_a_closing_handshake() {
     // on the stalled socket is skipped, so the CLI does not wait for the
     // write timeout again. The stall itself takes 30 to 60 s (a blocked
     // write that copied some bytes before it blocked returns them after
-    // 30 s, and only the next one fails); before the fix three more
-    // timed-out writes followed, at least 150 s in all.
+    // 30 s, and only the next one fails); attempting the closing handshake
+    // would add three more timed-out writes, at least 150 s in all.
     let root = tempfile::tempdir().unwrap();
     let (done_tx, done) = std::sync::mpsc::channel::<()>();
     let done = Mutex::new(Some(done));

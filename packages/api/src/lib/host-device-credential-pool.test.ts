@@ -16,7 +16,7 @@ const { mintHostDeviceCredentialFromApprovedDeviceCode: exchange } = await impor
 );
 const { invalidateForceTwoFactorSettingsCache } = await import("./two-factor-policy");
 
-// Codex c2's real pg.Pool / PrismaPg probe, with only the SQL socket replaced.
+// A real pg.Pool / PrismaPg probe, with only the SQL socket replaced.
 // No TCP connection: the normal test I/O guard remains active.
 class SqlSocket extends EventEmitter {
   _queryable = true;
@@ -85,7 +85,7 @@ it.each([1, 2])(
     }
     const query = (connection: Transport) =>
       connection.queryRaw({ sql: "SELECT key, value FROM app_setting", args: [], argTypes: [] });
-    // A global settings read really queues on the installed pool, as in the review probe.
+    // A global settings read really queues on the installed pool.
     const globalSettings = vi.fn(async () => {
       await query(adapter);
       return [];

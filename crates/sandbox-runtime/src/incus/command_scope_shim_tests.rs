@@ -167,7 +167,7 @@ fn a_receipt_without_a_journaled_uid_keeps_todays_boot_exec() {
     }
 }
 
-/// Codex cg-retire P2 #2: every preflight Incus read (stopped probe, binding,
+/// Every preflight Incus read (stopped probe, binding,
 /// running check, QEMU identity, the exec's refresh) shares
 /// `RETIRE_PREFLIGHT_BUDGET`, never the 120 s client default, and a read the
 /// budget cuts short fails unproven: no proof, no helper exec, no retirement.
@@ -200,7 +200,7 @@ fn a_stalled_preflight_query_fails_unproven_within_the_preflight_budget() {
     }
 }
 
-/// Codex P2 on the preflight budget: the QEMU identity's two state reads
+/// On the preflight budget, the QEMU identity's two state reads
 /// share the absolute deadline (each bounded by what is left), so two slow
 /// answers together never stretch the preflight past the budget.
 #[test]

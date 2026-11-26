@@ -232,7 +232,7 @@ describe("runRestoreWaitPass login refusals", () => {
       ]);
     });
 
-  it("a host_forbidden at target selection is a login verdict, not capacity (review r1 P2)", async () => {
+  it("a host_forbidden at target selection is a login verdict, not capacity", async () => {
     refuse("select", "credential.host_forbidden");
     await passAt(0);
     expect(row).toMatchObject({ state: "WAITING", lastLoginRefusal: "credential.host_forbidden" });

@@ -1147,7 +1147,7 @@ describe("C7b drain before rebind (pg)", () => {
     );
     const op = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         userId: o.owner,
@@ -1288,7 +1288,7 @@ describe("C8a recovery path and launch settlement (pg)", () => {
     await census(o);
     const op = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         userId: o.owner,
@@ -1486,7 +1486,7 @@ describe("C8a recovery path and launch settlement (pg)", () => {
     await census(o);
     const op = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         userId: o.owner,

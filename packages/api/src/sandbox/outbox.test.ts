@@ -425,10 +425,7 @@ describe("T11 (M4): the lease-policy system renewal gains exactly one validated 
     ["a malformed lease", { lease: { ...lease, revision: 0 } }],
     ["a lease past the far-future bound", { lease: { ...lease, deadlineUnixMs: 253402300800000 } }],
     ["an extra lease field", { lease: { ...lease, extra: true } }],
-    [
-      "a lease that is not shorten-only (round 2 #1)",
-      { lease: { ...lease, shortenOnly: undefined } },
-    ],
+    ["a lease that is not shorten-only", { lease: { ...lease, shortenOnly: undefined } }],
     ["an extra payload field", { envs: { A: "b" } }],
     ["a user idempotency key", { idempotencyKey: "user-renewal" }],
     ["another reserved namespace", { idempotencyKey: "lease-expire:s:1:2:STOP" }],

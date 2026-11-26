@@ -309,7 +309,7 @@ if (
 handle.disconnect();
 const legacyCommand: CommandInput = {
   argv: ["true"],
-  // @ts-expect-error The pre-launch env tuple field was deliberately removed.
+  // @ts-expect-error The env tuple form is not part of CommandInput.
   env: [["APP_MODE", "fixture"]],
 };
 void legacyCommand;

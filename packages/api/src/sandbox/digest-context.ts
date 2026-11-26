@@ -16,7 +16,7 @@ import { idempotencyConflict } from "./errors";
 const DIGEST_CONTEXT_VERSION = 1;
 
 /** Default request MAC domain (`hashRequestBody` without a domain). */
-export const REQUEST_DIGEST_DOMAIN = "wssp-request-v2";
+export const REQUEST_DIGEST_DOMAIN = "wssp-request-v1";
 /** Recorded only: KILL/STOP hash env-free bodies with no transport input. */
 export const ENV_FREE_DIGEST_DOMAIN = "env-free";
 /**
@@ -28,7 +28,7 @@ export const ENV_FREE_DIGEST_DOMAIN = "env-free";
  */
 export const RESTORE_INTENT_DIGEST_DOMAIN = "restore-intent:v1";
 /** Non-dispatch action receipts (`action-receipts.ts`). */
-export const ACTION_DIGEST_DOMAIN = "wssp-action-v2";
+export const ACTION_DIGEST_DOMAIN = "wssp-action-v1";
 
 const snapshotSchema = z
   .object({

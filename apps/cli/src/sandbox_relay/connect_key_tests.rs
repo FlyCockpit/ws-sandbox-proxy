@@ -385,10 +385,10 @@ fn key_free_cleanup_scheme_has_an_exact_kind_allowlist() {
 }
 
 /// Security regression: retry transport fields (attempt, stdinSequence) must
-/// be excluded from the keyed dispatch MAC, as they are from the legacy body.
+/// be excluded from the keyed dispatch MAC, as they are from the env-free body.
 /// An unacknowledged DISPATCHED op from an older epoch is redispatched with attempt+1
 /// (outbox-processor.ts:578); with a Result-phase receipt the host must replay
-/// that known result, exactly as the legacy scheme does, not demote it.
+/// that known result, exactly as the env-free scheme does, not demote it.
 #[test]
 fn probe_keyed_redispatch_new_attempt_replays_result() {
     for (kind, keyed) in [
@@ -579,7 +579,7 @@ fn retry_digest_exclusions_preserve_receipt_identity_fences() {
             assert_eq!(journal.lookup("work").unwrap(), stored);
         }
         // Another operation with its own idempotency key is fresh, never a
-        // replay of the first operation, even if its legacy body hash matches.
+        // replay of the first operation, even if its body hash matches.
         let mut separate = incoming.clone();
         separate.operation_id = "separate".into();
         separate.idempotency_key = "separate".into();

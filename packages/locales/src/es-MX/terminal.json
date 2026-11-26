@@ -59,7 +59,7 @@
     "hostShutdown": "El daemon del host del sandbox se detuvo, así que la terminal terminó. Vuelve a conectarla cuando el host regrese.",
     "hostRevoked": "El host del sandbox ya no está autorizado (su credencial se revocó o expiró, o el host se eliminó), así que la terminal terminó.",
     "exited": "La shell terminó con el código {{exitCode}}.",
-    "noTerminalIdentity": "Este sandbox no puede abrir una terminal. Los sandboxes creados antes de que existieran las terminales no tienen un usuario invitado registrado: reconecta el sandbox, o detenlo e inícialo, y vuelve a conectar la terminal. Si eso no funciona, quizá haya que actualizar el daemon del host.",
+    "noTerminalIdentity": "Este sandbox no puede abrir una terminal. Su host no tiene un usuario invitado registrado para él: reconecta el sandbox, o detenlo e inícialo, y vuelve a conectar la terminal. Si eso no funciona, quizá haya que actualizar el daemon del host.",
     "hostCapacity": "El host tiene demasiadas terminales abiertas en este momento. Inténtalo de nuevo en un momento.",
     "hostRefused": "El host rechazó la terminal ({{code}}).",
     "ended": "La sesión de terminal terminó.",

@@ -182,7 +182,7 @@ describe("pre-parsed daemon control frames (terminal lane)", () => {
 });
 
 describe("sandboxRelayProtocol", () => {
-  it("shares frozen 10.3 admission/availability fixtures and rejects unbounded replies", () => {
+  it("shares frozen admission/availability fixtures and rejects unbounded replies", () => {
     const cases: { direction: string; frame: Record<string, unknown> }[] = JSON.parse(
       readFileSync(join(protocolFixtures, "control_admission_availability.json"), "utf8"),
     );
@@ -276,10 +276,10 @@ describe("sandboxRelayProtocol", () => {
       supported: true,
       requestedMajorVersions: [1],
     });
-    expect(parseSandboxRelaySubprotocolHeader("ws-sandbox-proxy.relay.v9")).toEqual({
+    expect(parseSandboxRelaySubprotocolHeader("ws-sandbox-proxy.relay.v2")).toEqual({
       ok: true,
       supported: false,
-      requestedMajorVersions: [9],
+      requestedMajorVersions: [2],
     });
   });
 
@@ -346,7 +346,7 @@ describe("sandboxRelayProtocol", () => {
   it("rejects an old 1.0 hello control frame", () => {
     expect(() =>
       parseDaemonControlFrame(
-        JSON.stringify({ ...helloFixture("host-1", false), protocolVersion: "10.7" }),
+        JSON.stringify({ ...helloFixture("host-1", false), protocolVersion: "0.7" }),
       ),
     ).toThrow();
   });
@@ -785,7 +785,7 @@ it("shares the dispatch audit frames with Rust", () => {
     ).toThrow();
 });
 
-it("shares the v10 inventory census fixtures with Rust and rejects malformed pages", () => {
+it("shares the inventory census fixtures with Rust and rejects malformed pages", () => {
   const raw = readFileSync(join(protocolFixtures, "control_sandbox_inventory.json"), "utf8");
   const page = parseDaemonControlFrame(raw);
   expect(page).toEqual(JSON.parse(raw));
@@ -1137,7 +1137,7 @@ it("pruned receipts contain only safe identity and cannot carry a digest", () =>
     expect(() => parseDaemonControlFrame(JSON.stringify({ ...frame, ...patch }))).toThrow();
 });
 
-it("shares frozen private config and digest-pruned 10.3 frames with Rust", () => {
+it("shares frozen private config and digest-pruned frames with Rust", () => {
   const cases: { direction: string; frame: Record<string, unknown> }[] = JSON.parse(
     readFileSync(join(protocolFixtures, "control_private_config.json"), "utf8"),
   );
@@ -1220,7 +1220,7 @@ it("shares the versioned host result codec with Rust and gates both wire carrier
             };
         for (const version of ["1.0"])
           expect(() => parseDaemonControlFrame(JSON.stringify(frame), version)).not.toThrow();
-        for (const version of ["10.0", "10.4", "10.5", "10.6", "10.7", "11.1"])
+        for (const version of ["0.0", "0.4", "0.5", "0.6", "0.7", "1.2"])
           expect(() => parseDaemonControlFrame(JSON.stringify(frame), version)).toThrow();
       }
   }

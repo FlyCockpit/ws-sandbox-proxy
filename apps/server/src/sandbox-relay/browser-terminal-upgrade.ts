@@ -43,7 +43,7 @@ const BROWSER_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/sandboxes\/[^/]+\/term
 export const HOST_TERMINAL_ROUTE = "/api/dashboard/hosts/:hostId/terminal/ws";
 const HOST_TERMINAL_PATH_PATTERN = /^\/api\/dashboard\/hosts\/[^/]+\/terminal\/ws$/;
 const MACHINE_CREDENTIAL = /wssp_(?:sdk|host|device|agent)_/;
-/** CLI shells (wssp-ssh 1b): `GET /v1/sandboxes/{id}/connect`. */
+/** CLI shells: `GET /v1/sandboxes/{id}/connect`. */
 const CONNECT_PATH_PATTERN = /^\/v1\/sandboxes\/[^/]+\/connect$/;
 
 type BrowserTerminalVariables = {

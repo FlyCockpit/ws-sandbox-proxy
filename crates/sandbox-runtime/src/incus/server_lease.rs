@@ -1,4 +1,4 @@
-//! One wssp daemon per Incus server (owner decision 2026-11-07).
+//! One wssp daemon per Incus server.
 //!
 //! Two daemons on one Incus server share its image store and network
 //! namespace, so image fingerprints and the `wsn-<id>` bridge names collide.

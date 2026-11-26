@@ -1,5 +1,5 @@
 /**
- * wssp-ssh §10: the `SandboxConnectSession` audit (one row per CLI
+ * The `SandboxConnectSession` audit (one row per CLI
  * connection). Metadata only: who connected (owner, key, the key's origin),
  * to which sandbox and host, when, how it ended, how many channels of each
  * kind and how many data bytes moved. Never content, commands, argv, env or

@@ -180,8 +180,7 @@ Own sandboxes only does not limit them.** Local command/file and terminal
 settings start off. The dashboard or node can turn them off; only an interactive
 person on the node can turn them on. Lowering interrupts affected work. See
 [node settings](./hosts.md#node-settings-for-agents-and-terminals) and
-[ADR-006](../design/adr-006-agent-host-access.md), which supersedes the earlier
-blanket restriction on SDK host execution. Browser terminals remain session-only.
+[ADR-006](../design/adr-006-agent-host-access.md). Browser terminals remain session-only.
 
 ## Host plane
 

@@ -497,7 +497,7 @@ mod tests {
         }
     }
 
-    /// Codex review-integ3 #2: a census entry without an expiry arm (a plain
+    /// A census entry without an expiry arm (a plain
     /// stopped VM with an unexpired lease) judged `stale_storage` is offered
     /// again under the next observation, once, and settles when judged.
     #[test]
@@ -545,7 +545,7 @@ mod tests {
         assert!(reported.is_empty(), "a pure re-offer reports no arm");
     }
 
-    /// Codex review-integ3 #3: `not_converged` while the pool was unavailable
+    /// `not_converged` while the pool was unavailable
     /// at the stamped sequence waits for a newer healthy observation; a
     /// `not_converged` under a healthy pool is final (no busy loop).
     #[test]
@@ -776,7 +776,7 @@ mod tests {
         assert!(evidence.reoffer("sbx").is_none());
     }
 
-    /// Codex review-integ3 #1: a connected expiry arm judged `stale_storage`
+    /// A connected expiry arm judged `stale_storage`
     /// has its digest change recorded (the digest alone never re-sends it),
     /// and the refusal is offered again under the next observation until it
     /// converges.
@@ -1015,7 +1015,7 @@ mod tests {
         assert!(backoff.ready(start));
     }
 
-    /// Codex rc-fu-b r1 #2: evidence the observation fence superseded (a
+    /// Evidence the observation fence superseded (a
     /// genuinely stopped VM re-offered while a result for it arrived, healthy
     /// pool) is never dropped like a final `not_converged`: it is observed
     /// again under each newer observation, at most `FENCED_RETRIES` times.

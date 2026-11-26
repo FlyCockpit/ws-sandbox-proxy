@@ -25,7 +25,7 @@ export { API_KEY_ONLY_SCOPES, SERVICE_SCOPES, type ServiceScope, unusableScopes 
 
 /**
  * Scope groups in the order the mint form shows them. `connect` stands alone
- * with its own description (wssp-ssh owner decision 2): only the SDK key form
+ * with its own description: only the SDK key form
  * offers it, never preselected; agent tokens and OAuth consent never do.
  */
 export const SCOPE_GROUPS: readonly { id: string; scopes: readonly ServiceScope[] }[] = [

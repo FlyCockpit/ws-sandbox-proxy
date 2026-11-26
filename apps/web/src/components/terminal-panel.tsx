@@ -96,7 +96,7 @@ export function TerminalPanel({
       report(outcome, t("terminal:clipboard.pasted"), t("terminal:clipboard.pasteEmpty")),
   });
   const { status, notice, warning, size } = terminal.snapshot;
-  // Phones (owner 11-24): one header row, no status line; messages go into
+  // Phones: one header row, no status line; messages go into
   // the terminal area or a toast.
   const phone = useMediaQuery(PHONE_TERMINAL_QUERY);
   const mobileKeyboardOpen = useMobileKeyboard();

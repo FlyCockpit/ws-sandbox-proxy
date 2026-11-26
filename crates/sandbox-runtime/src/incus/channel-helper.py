@@ -1,4 +1,4 @@
-# Guest channel helper (wssp-ssh increments 1 and 2). Run as `python3 -I -S -c <this> <phase> ...`.
+# Guest channel helper. Run as `python3 -I -S -c <this> <phase> ...`.
 #
 # Phases (argv after the source):
 #   launch <scope> <nonce> <uid> <gid> -- <tail...>   guest root: create the channel's own systemd scope

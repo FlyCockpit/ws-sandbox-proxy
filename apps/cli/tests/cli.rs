@@ -648,7 +648,7 @@ sys.exit(1)
                             }
                             if reconnected {
                                 // A reconnect dials before re-observing the
-                                // host (review r3 P2): its detection runs
+                                // host: its detection runs
                                 // after hello.ok, before host.admission.
                                 ws.send(tungstenite::Message::Text(
                                     include_str!(

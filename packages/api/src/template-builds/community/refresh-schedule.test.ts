@@ -75,7 +75,7 @@ describe("startCommunityRefreshSchedule", () => {
     await start({ claims, scan, clock: at("2026-11-15T07:00:00Z") }).check();
     expect(scan).toHaveBeenCalledTimes(1);
     // Done marker for the day, lease released.
-    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v2:done:2026-11-15"]);
+    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v1:done:2026-11-15"]);
     await start({ claims, scan, clock: at("2026-11-16T05:30:00Z") }).check();
     expect(scan).toHaveBeenCalledTimes(2);
   });
@@ -108,7 +108,7 @@ describe("startCommunityRefreshSchedule", () => {
     const complete = vi.fn(async () => ({ stopped: false }));
     await start({ claims, scan: complete, clock: at("2026-11-15T06:00:00Z") }).check();
     expect(complete).toHaveBeenCalledTimes(1);
-    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v2:done:2026-11-15"]);
+    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v1:done:2026-11-15"]);
   });
 
   it("a crashed scanner or a lost lease reply blocks the day only until the lease expires", async () => {
@@ -128,7 +128,7 @@ describe("startCommunityRefreshSchedule", () => {
     redis.advance(10 * 60);
     await start({ claims, scan, clock: at("2026-11-15T06:15:00Z") }).check();
     expect(scan).toHaveBeenCalledTimes(1);
-    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v2:done:2026-11-15"]);
+    expect([...redis.keys.keys()]).toEqual(["wssp:community-refresh:v1:done:2026-11-15"]);
   });
 
   it("renews the lease while scanning and stops when it was lost", async () => {
@@ -150,10 +150,10 @@ describe("startCommunityRefreshSchedule", () => {
     redis.advance(9 * 60);
     await vi.waitFor(() => expect(redis.eval.mock.calls.length).toBeGreaterThan(3));
     redis.advance(9 * 60);
-    expect(redis.keys.has("wssp:community-refresh:v2:lease:2026-11-15")).toBe(true);
+    expect(redis.keys.has("wssp:community-refresh:v1:lease:2026-11-15")).toBe(true);
     expect(shouldStop()).toBe(false);
     // Someone else holds it now (e.g. it lapsed during a Redis outage).
-    redis.keys.set("wssp:community-refresh:v2:lease:2026-11-15", {
+    redis.keys.set("wssp:community-refresh:v1:lease:2026-11-15", {
       value: "other",
       expiresAt: Number.POSITIVE_INFINITY,
     });
@@ -164,13 +164,13 @@ describe("startCommunityRefreshSchedule", () => {
       expect(redis.eval).toHaveBeenCalledWith(
         expect.stringContaining('"del"'),
         1,
-        "wssp:community-refresh:v2:lease:2026-11-15",
+        "wssp:community-refresh:v1:lease:2026-11-15",
         expect.any(String),
       ),
     );
-    expect(redis.keys.has("wssp:community-refresh:v2:done:2026-11-15")).toBe(false);
+    expect(redis.keys.has("wssp:community-refresh:v1:done:2026-11-15")).toBe(false);
     // Its release never deletes the other holder's lease.
-    expect(redis.keys.get("wssp:community-refresh:v2:lease:2026-11-15")?.value).toBe("other");
+    expect(redis.keys.get("wssp:community-refresh:v1:lease:2026-11-15")?.value).toBe("other");
   });
 
   it("stops a scan whose renewals fail before the lease could expire", async () => {
@@ -197,7 +197,7 @@ describe("startCommunityRefreshSchedule", () => {
     expect(shouldStop()).toBe(true);
     finish();
     await vi.waitFor(() =>
-      expect(redis.keys.has("wssp:community-refresh:v2:done:2026-11-15")).toBe(false),
+      expect(redis.keys.has("wssp:community-refresh:v1:done:2026-11-15")).toBe(false),
     );
   });
 

@@ -92,7 +92,7 @@ async function artifact(f: F, fingerprint: string, id?: string) {
 async function operation(f: F, state: "RUNNING" | "FAILED" | "SUCCEEDED") {
   return db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: f.ownerId,
@@ -476,7 +476,8 @@ describe("image store maintenance against real PostgreSQL", () => {
     const cutoff = new Date(now.getTime() - 24 * 3_600_000);
     // storedAt is completion time; a later metadata update cannot reset the age.
     const expired = await create(cutoff, new Date(now.getTime() - 2 * 3_600_000));
-    const legacy = await create(null, cutoff);
+    // A row without storedAt ages from updatedAt.
+    const unstamped = await create(null, cutoff);
     const retry = await create(new Date(cutoff.getTime() + 1), cutoff);
     const enqueued: string[] = [];
     const store = {
@@ -486,7 +487,7 @@ describe("image store maintenance against real PostgreSQL", () => {
     await sweepImageStore(store, now, async (id) => {
       enqueued.push(id);
     });
-    for (const row of [expired, legacy]) {
+    for (const row of [expired, unstamped]) {
       expect(
         await db.inspect.sandboxImageArtifact.findUniqueOrThrow({ where: { id: row.id } }),
       ).toMatchObject({ state: "FAILED", corruptReports: 0, objectKey: row.objectKey });

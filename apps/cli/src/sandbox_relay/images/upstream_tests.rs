@@ -351,7 +351,7 @@ fn the_foreign_gate_refuses_an_upstream_fetch_before_any_request() {
     );
 }
 
-/// The total budget bounds a GET in flight (Codex P2): a host that trickles
+/// The total budget bounds a GET in flight: a host that trickles
 /// one byte at a time never trips the idle read timeout, yet the fetch ends
 /// at its deadline as image_fetch_timeout instead of holding the cache
 /// reservation and the per-fingerprint lock for the whole trickle.

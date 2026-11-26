@@ -34,7 +34,7 @@ use super::super::journal::{AttemptState, TeardownCaptureState};
 use super::super::slot::{EXPIRY_SLOT_WAIT, SlotError, TEARDOWN_SLOT_WAIT};
 
 /// Local expiry's credential phase (pre-checks, quiesce, pack, seal,
-/// upload attempt, scrub) before its 16 s graceful stop (owner decision).
+/// upload attempt, scrub) before its 16 s graceful stop.
 pub const EXPIRY_CREDENTIAL_PHASE: Duration = Duration::from_secs(20);
 /// A stop/kill's credential phase: slot wait (10 s) plus the outcome wait
 /// (30 s) with margin for quiesce, pack and scrub.

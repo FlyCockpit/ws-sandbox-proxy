@@ -1033,9 +1033,9 @@ fn assert_next_refresh_commits(fx: &Fixture, expiry: u64) {
     assert!(!fx.statedir().join("stopped-instance").exists());
 }
 
-/// NEW-1 regression (the probe): the refresh DENIES the name (rebinding)
-/// and withdraws it, then the publication fails. Before this fix the reconciler
-/// convicted drift, force-stopped the VM, and the drain deleted it.
+/// NEW-1 regression: the refresh DENIES the name (rebinding) and withdraws
+/// it, then the publication fails. Convicting drift here would force-stop
+/// the VM and let the drain delete it.
 #[test]
 fn new1_uncommitted_refresh_denial_is_owed_not_drift() {
     let fx = Fixture::new(&[A]);
@@ -1324,7 +1324,7 @@ fn a_logged_allow_convicts_with_or_without_an_owed_refresh() {
 
 /// G1-R1-2 (regression): BOTH the allow withdrawal AND the fence fail, so
 /// the denied destination stays open. A denied grant is not "our own
-/// work": this convicts and halts exactly as before this fix.
+/// work": this still convicts and halts.
 #[test]
 fn owed_refresh_convicts_a_denied_grant_that_cannot_be_fenced() {
     let fx = Fixture::new(&[A]);
@@ -1526,8 +1526,7 @@ fn a_denied_identity_on_a_destination_still_granted_elsewhere_is_owed() {
 }
 
 // C58 G1 r3 (G1-R2-1): an owed refresh explains only DNS-managed ACL rules
-// and the dnsmasq publication — never an instance device. Adopted from the
-// r2 security-review probes.
+// and the dnsmasq publication — never an instance device.
 
 /// Point eth0 at the shared, unrestricted `incusbr0`: the VM's egress
 /// bypasses the sandbox bridge and its ACL entirely.
@@ -1569,7 +1568,7 @@ fn an_owed_refresh_never_masks_a_device_broadening() {
 }
 
 /// Regression: a bare stale owed mark (exact ACL) never masks a
-/// device-level broadening either — this exact state was convicted before this fix.
+/// device-level broadening either — this exact state stays convicted.
 #[test]
 fn a_stale_owed_mark_never_masks_a_device_broadening() {
     let fx = Fixture::new(&[A]);
@@ -2454,7 +2453,7 @@ fn a_create_retry_over_an_existing_vm_never_tears_down_its_network() {
     }
 }
 
-/// Final-review probe B (adopted): an uncertain allow to B, then the grant
+/// An uncertain allow to B, then the grant
 /// rotates AWAY from B and commits; B's late apply then lands. B is never
 /// effectively open, readiness never verifies while it is live, and the
 /// next refresh withdraws it.

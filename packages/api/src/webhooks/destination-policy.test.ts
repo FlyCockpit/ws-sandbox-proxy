@@ -291,7 +291,7 @@ describe("IPv6 translation and embedding ranges (review finding 1)", () => {
   });
 });
 
-describe("network-specific NAT64 prefixes (review round 2, finding 1)", () => {
+describe("network-specific NAT64 prefixes", () => {
   const prefixes = parseTranslationPrefixes("fd12:3456:789a:bcde::/64, 2001:db8:122::/48");
   const allowlist: WebhookAllowlist = {
     // An operator allowlist that would otherwise cover the translated range.

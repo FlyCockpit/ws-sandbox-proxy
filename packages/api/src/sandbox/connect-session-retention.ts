@@ -1,5 +1,5 @@
 /**
- * wssp-ssh §10: retention of the `SandboxConnectSession` audit. Imported by
+ * Retention of the `SandboxConnectSession` audit. Imported by
  * the worker's daily sweep, so it reaches nothing but Postgres (no server
  * environment).
  */

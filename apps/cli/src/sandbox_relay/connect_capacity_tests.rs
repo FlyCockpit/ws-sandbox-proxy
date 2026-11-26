@@ -928,9 +928,9 @@ fn restart_after_confirmed_kill_ignores_surviving_unknown_allocation_at_cap_one(
     }
 }
 
-/// 4b.3 + B2-C-1/B2-K-1: an ordinary-pool overflow on a pre-10.5 (10.0)
-/// session is a definite FAILED `host_capacity` result, the existing legacy
-/// code and never a teardown-grade one; the session and other work continue.
+/// 4b.3 + B2-C-1/B2-K-1: an ordinary-pool overflow is a definite FAILED
+/// `host_capacity` result and never a teardown-grade one; the session and
+/// other work continue.
 #[test]
 fn ordinary_pool_overflow_is_host_capacity_and_keeps_the_session_open() {
     let held = Arc::new(std::sync::atomic::AtomicBool::new(true));

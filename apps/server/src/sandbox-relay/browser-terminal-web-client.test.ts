@@ -588,7 +588,7 @@ describe("real TerminalClient against the real C53 endpoint", {
 
   it.each([
     [
-      "P6 host refuses with unsupported_capability (pre-C52 sandbox)",
+      "P6 host refuses with unsupported_capability (no guest identity)",
       { error: { code: "unsupported_capability", message: "no guest identity" } },
       { kind: "noTerminalIdentity", code: "unsupported_capability" },
       false,

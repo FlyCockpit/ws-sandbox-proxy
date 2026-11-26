@@ -558,7 +558,7 @@ describe("service idempotency replay authorization", () => {
     prisma.sandboxOperation.findFirst.mockResolvedValue({
       authorizingKeyId: "key-allow",
       digestContext: digestContextSnapshot({
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "host-1",
         hostOwnerId: "user-a",
       }),

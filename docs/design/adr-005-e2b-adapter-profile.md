@@ -28,8 +28,8 @@ today.
   semantics.
 - Native TypeScript SDK ships first.
 
-The native SDK now supplies E2B-shaped files and tracked commands with deliberate
+The native SDK supplies E2B-shaped files and tracked commands with deliberate
 divergences: bounded pages, qualified identity, typed signal refusal, proof-based
 kill outcomes, checked nonzero exits and observer detach by default. It remains
 neither an E2B wire facade nor an all-guest process API. See the
-[coordinated SDK/server migration](../guide/sandboxes.md#filesystem-and-command-result-limits).
+[filesystem and command limits](../guide/sandboxes.md#filesystem-and-command-result-limits).

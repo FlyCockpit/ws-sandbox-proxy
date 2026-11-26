@@ -1,11 +1,10 @@
 # Dashboard edge lines
 
-Set 2026-11-22 by the orchestrator's gridlines alignment pass (owner-requested),
-measured on ink (glyph and icon bounds, or a boxed control's box) at 390px and
-1440px, light and dark. The lines follow the FlyCockpit template's design
-system ("Edge lines"); this page records where wssp's shell matches them and
-the lines only wssp has. Change a value only with the owner's approval, and
-record the new value here.
+The alignment lines the dashboard shell follows, measured on ink (glyph and
+icon bounds, or a boxed control's box) at 390px and 1440px, light and dark.
+This page records the lines shared by every container and the lines specific
+to wssp areas. Change a value only with maintainer approval, and record the
+new value here.
 
 Terms: the **text line** is where labels, headings and bare icons start; the
 **box line** is where filled, bordered or shadowed controls start; the
@@ -13,7 +12,7 @@ Terms: the **text line** is where labels, headings and bare icons start; the
 the horizontal line every item in a bar centres on. An item is within
 tolerance when its ink is within 1px of its line.
 
-## Shared with the template
+## Shared lines
 
 | Container                                                           | Text line                                                                                                                                                | Box line                                                                         | Trailing line                                     | Centre / icon column                                                                                                                                     |
 | ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -29,19 +28,18 @@ inside pages, cards and forms (a 16px card padding leaves no room to outdent a
 box), and a miss is fixed in the container (padding, `inset`, or the close
 button's placement), never with a one-off margin on one item.
 
-## wssp only
+## Area-specific lines
 
 | Container                                                         | Lines                                                                                                                                                                                                                                                                                                         |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Dashboard sidebar (`DashboardFrame` `aside`, `md:` and up)        | Item boxes start 8px inside the sidebar (`px-2` on the nav); icons sit on one column 15px inside the box (23px from the sidebar edge); labels follow after the icon and `gap-2`. The collapse button's box ends 8px from the sidebar's trailing edge (`p-2`). Collapsed, every icon centres on the 64px rail. |
-| Admin area                                                        | The admin tab strip and the overview, users and observability pages share the wide container's (`max-w-7xl`) 16px line. Admin settings uses a narrower container, so its heading does not sit under the tab strip's first tab; page width is a layout decision outside an alignment pass and is left as is.   |
+| Admin area                                                        | The admin tab strip and the overview, users and observability pages share the wide container's (`max-w-7xl`) 16px line. Admin settings uses a narrower container, so its heading does not sit under the tab strip's first tab; page width is a layout decision outside these lines.                           |
 | Onboarding checklist, hosts enrolment card, deployment setup card | Cards: 16px text line; steps are rows of the card (`rounded-lg border p-3` rows inside the card keep a 12px inner line, like `Card size="sm"`).                                                                                                                                                               |
 
 ## How it was measured
 
-The pinned gridlines probe (`flycockpit-plan/ops/tools/gridlines`) on every
-dashboard page and overlay at 1440 and 390 (mobile emulation), light and dark;
-the probe skips `aria-hidden` icons, so the close buttons and menu icons were
-measured from the DOM. Fixed on 2026-11-22: the dialog and sheet close button
-(was `top-2 right-2`: glyph ink about 25px in and 4px below the title's centre; now 16.7px in and centred), and
-the user menu (icon `mr-2` doubled the item gap; Sign Out had no `inset`).
+Measured on 2026-11-22 with a gridlines probe on every dashboard page and
+overlay at 1440 and 390 (mobile emulation), light and dark. The probe skips
+`aria-hidden` icons, so the close buttons and menu icons were measured from
+the DOM: the dialog and sheet close button's glyph ink sits 16.7px in and
+centred on the title line.

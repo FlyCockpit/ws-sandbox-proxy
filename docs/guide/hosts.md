@@ -249,8 +249,8 @@ sandbox:
   Release additionally requires every prior allocation dispatch to have the
   same durable journal identity, and every dispatch in the current session to
   precede the request's monotonic barrier. Prepared but unsent dispatches,
-  newer attempts, missing/pruned bindings, a replaced journal and older peers
-  keep the hold. Old unacknowledged allocations become UNKNOWN after
+  newer attempts, missing/pruned bindings and a replaced journal keep the
+  hold. Old unacknowledged allocations become UNKNOWN after
   reconciliation and then use the targeted exchange. REQUESTED/SCHEDULED
   allocations refused before progress use the same rule.
 
@@ -268,7 +268,7 @@ sandbox:
   only on hosts locked by that transaction; other hosts wait for their next
   census. On the retired placement's locked host, no reconnect is needed after
   the last contradictory placement reaches DELETED.
-  Legacy ERROR/`instance_missing` rows retain normal
+  ERROR/`instance_missing` rows keep normal
   recovery to STOPPED when their stopped VM reappears. The one automatic
   destroy is for a sandbox already DELETED whose VM the host still reports
   (`deleted_instance_present`): the sandbox stays DELETED and the host is
@@ -850,21 +850,12 @@ systemctl --user enable --now wssp-host
 Ask the host administrator to enable lingering for that user if lease
 enforcement must continue after you log out.
 
-**Existing installs: update the unit.** The current example uses
-`KillMode=mixed` and `TimeoutStopSec=75s`. With the old unit, `systemctl stop`
-signals the whole control group at once and can cut the daemon's terminal and
-relay cleanup short. It also sets `LimitCORE=0`, so a crash never writes a
-core file holding [CLI-login](./cli-logins.md#security-model) values. Copy
-the new unit and run `systemctl --user daemon-reload`.
-
-A host on a release before `wssp host` must update its unit **before**
-installing the new binary: set
-`ExecStart=%h/.local/bin/wssp host run --runtime incus` (keep any existing
-arguments) and `ExecReload=%h/.local/bin/wssp host daemon quiesce`, or copy
-the current example, then run `systemctl --user daemon-reload`. Only then
-install the new binary and reload or restart (see [Upgrades](#upgrades)). With
-the old unit, the reload fails (`unrecognized subcommand 'daemon'`) and any
-restart crash-loops on `unrecognized subcommand 'connect'`.
+**Keep the unit's stop settings.** The example uses `KillMode=mixed` and
+`TimeoutStopSec=75s`. Without them, `systemctl stop` signals the whole control
+group at once and can cut the daemon's terminal and relay cleanup short. It
+also sets `LimitCORE=0`, so a crash never writes a core file holding
+[CLI-login](./cli-logins.md#security-model) values. After changing the unit,
+run `systemctl --user daemon-reload`.
 
 **Graceful reload.** The example unit sets
 `ExecReload=%h/.local/bin/wssp host daemon quiesce`. `systemctl --user reload
@@ -888,7 +879,7 @@ minute.
 
 A template build step waiting in the queue meanwhile does not spend its
 build timeout (at most 60 minutes of credit per quiesce). A reconnect during those steps keeps the hold in place. If the server does
-not acknowledge the quiesce within 30 seconds (an older server), the daemon
+not acknowledge the quiesce within 30 seconds, the daemon
 restarts at once, as `systemctl stop` would.
 
 `wssp host daemon quiesce` signals the daemon only after it checks the daemon's
@@ -1327,23 +1318,16 @@ Service units need no mandatory capacity flags. Complete
 [capacity and storage qualification](#capacity-and-storage-qualification)
 before production.
 
-**Upgrading from a release before `wssp host`.** Update the user unit first:
-`ExecStart=%h/.local/bin/wssp host run --runtime incus` (keep any existing
-arguments) and `ExecReload=%h/.local/bin/wssp host daemon quiesce`, or copy
-the current [example](../../apps/cli/examples/wssp-host.service); run
-`systemctl --user daemon-reload`; then install the new binary and reload or
-restart as below. With the old unit, the reload fails (`unrecognized
-subcommand 'daemon'`) and any restart crash-loops on `unrecognized subcommand
-'connect'`. The root guard keeps working on its old copy: it is a separate
-binary under `/usr/local/lib/wssp/` and its socket protocol is unchanged.
-Re-running `sudo wssp host guard install --daemon-user <user>` later upgrades
-it and rewrites the guard unit to the new `__wssp-guard` entry.
+The root guard is a separate binary under `/usr/local/lib/wssp/` and keeps
+running across daemon upgrades. Re-run
+`sudo wssp host guard install --daemon-user <user>` to upgrade it; that also
+rewrites the guard unit.
 
 Check for systemd drop-ins too: a file under
 `~/.config/systemd/user/wssp-host.service.d/` that sets `ExecStart=` (or
-`ExecReload=`) overrides the unit and still runs the old command line. Edit
-each one the same way (`systemctl --user cat wssp-host` lists the unit and
-every drop-in), then run `systemctl --user daemon-reload`.
+`ExecReload=`) overrides the unit. Keep each one consistent with the example
+(`systemctl --user cat wssp-host` lists the unit and every drop-in), then run
+`systemctl --user daemon-reload`.
 
 **Upgrading a running host.** Install the new binary (run the server's
 `/install.sh` again after the server upgrade: it replaces `~/.local/bin/wssp`
@@ -1376,9 +1360,9 @@ enroll the replacement (new device login or new token), restart the daemon on
 it, then revoke the old credential on **Host credentials**; a live connection
 on a revoked credential closes with 4003.
 
-## Release notes for operators
+## Operating notes
 
-Version 1.0.0 uses one strict relay contract. Preserve private state (directories
+The relay uses one strict contract. Preserve private state (directories
 0700, files 0600), the documented systemd service settings, host journals and
 pinned disk identities. The node requires current storage/guard observations;
 reconnect census and expiry results are fenced per entry. Command output chunks
@@ -1386,9 +1370,9 @@ are negotiated up to 64 KiB. UNKNOWN receipts retire only with exact proof and
 never cause automatic command replay.
 
 - **Unknown commands on a running VM: per-command guest scopes.** Every
-  command now runs in its own root-owned systemd scope,
+  command runs in its own root-owned systemd scope,
   `wssp.slice/wssp-cmd-<operation>-<generation>-<attempt>.scope`, so guest
-  `system.slice` resource settings no longer apply to commands. When the
+  `system.slice` resource settings do not apply to commands. When the
   host loses track of a command, a root helper (pushed by the host for each
   check, never stored in the image) reads that scope:
   - **Gone or empty:** the receipt retires while the VM keeps running. Gone
@@ -1416,7 +1400,8 @@ never cause automatic command replay.
   command that could not run in its scope (older systemd, the 2 s
   `systemd-run --version` probe timed out, or a `Slice=` drop-in moved it)
   first writes the per-boot marker `/run/wssp/unscoped`; for the rest of that
-  boot only the old proofs apply. If that marker cannot be written (for
+  boot an UNKNOWN command on the running VM is kept until the VM stops, is
+  gone or reboots. If that marker cannot be written (for
   example `/run/wssp` is not a root-owned directory without group or world
   write, `/run` is read-only, or it is full), the command fails before it
   starts instead of running unscoped. A guest whose user lingers with
@@ -1438,7 +1423,7 @@ never cause automatic command replay.
   stop, kill, reconnect, create or probe. A guest reboot may keep the same
   QEMU process, so stop the sandbox to free them reliably. Host-proof entries
   hold at most 4 per sandbox, 8 per owner and 16 per node of the 64 retirement
-  slots. Every sandbox now holds at most `max(64, max_concurrent_commands)`
+  slots. Every sandbox holds at most `max(64, max_concurrent_commands)`
   unfinished command receipts (`host_capacity`, reason `sandbox_receipts`).
   Unsupported or corrupt journal records fail closed.
 - **Layered lease policy.** Every accepted host advertises its lease ceiling
@@ -1812,8 +1797,8 @@ offload_fetch_mbps = 0    # cap restore downloads (0 = unlimited)
   export. A host that was away gets the verdict from its next inventory
   pass. A host away for 30 minutes during an upload
   loses that attempt.
-- **Upgrades.** Update the server before the daemons: an older server
-  refuses the `reportId` field.
+- **Upgrades.** Update the server before the daemons: the strict relay
+  refuses a field the server does not know, such as an upload's `reportId`.
 - **Rate caps.** `offload_upload_mbps` and `offload_fetch_mbps` are in
   megabits per second (1 Mbps = 125 000 bytes/s); 0 or unset is unlimited.
   A daemon restart applies a change.

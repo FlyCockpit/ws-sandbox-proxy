@@ -13,7 +13,7 @@ export async function handleReapExpiredAuthTokensJob(
   const start = Date.now();
   const { deleted } = await reapExpiredAuthTokens();
   await sweepHostAccessRetention();
-  // CLI connection audit rows past 90 days (wssp-ssh §10), bounded batches.
+  // CLI connection audit rows past 90 days, bounded batches.
   const connectSessions = await purgeConnectSessions();
   console.log(
     `[reap-expired-auth-tokens] Job ${job.id} (${reason}) deleted ` +

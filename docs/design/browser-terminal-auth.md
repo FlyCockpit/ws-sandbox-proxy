@@ -25,8 +25,7 @@ The upgrade selects its consumer by path before consumption: host path
 `wssp.terminal.ticket.`. Both select `wssp.terminal.v1`, keep cookie-only
 live-owner auth/Origin/CSRF/upgrade budgets and require one-use digest-only
 30-second tickets. Relabeling a token cannot cross the separate stores.
-Guest tickets pin transport owner and epoch; legacy tickets without that tuple
-are burned. These tickets confer no API-key, MCP-credential or admin terminal
+Guest tickets pin transport owner and epoch. These tickets confer no API-key, MCP-credential or admin terminal
 authority. Separate scoped host commands/files follow [ADR-006](./adr-006-agent-host-access.md).
 
 Required host proof uses a fresh unused TOTP step for each attempt,

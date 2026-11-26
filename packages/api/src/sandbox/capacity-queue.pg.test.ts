@@ -1033,7 +1033,7 @@ async function cloneWait(sandboxId: string, overrides: { poolId?: string } = {})
   });
   const op = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: sandbox.userId,
@@ -1193,7 +1193,7 @@ describe("security review regressions", () => {
   }, 60_000);
 });
 
-describe("security review round 2 regressions", () => {
+describe("security regressions: wrap and head eligibility", () => {
   it("finding 1: tail churn cannot postpone the wrap; a revisited victim places once its cap lifts", async () => {
     const f = await poolFixture(db);
     const front = await grantee(f);
@@ -1362,7 +1362,7 @@ describe("security review round 2 regressions", () => {
   });
 });
 
-describe("security review round 3 regression", () => {
+describe("security regression: pinned member usage", () => {
   it.each(["memory", "vcpu"] as const)(
     "pinned %s member usage outliving the head's deadline makes the contributed host ineligible: no bypasses, never reserved",
     async (resource) => {

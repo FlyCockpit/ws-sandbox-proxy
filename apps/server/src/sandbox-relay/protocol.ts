@@ -744,7 +744,7 @@ const privateConfigInstallSchema = z
   .strict();
 
 const U64_MAX = 18_446_744_073_709_551_615n;
-/** 10.5 birth codec; session ingress still requires explicit negotiation.
+/** Birth codec; session ingress still requires explicit negotiation.
  * Field rules match Rust `ProcessStarted::validate` exactly (shared cases in
  * `process_started_cases.json`): opaque operation id, canonical lowercase
  * 8-4-4-4-12 boot id (Linux boot_id; no RFC version rule), 1..=u64::MAX ticks. */

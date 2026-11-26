@@ -87,8 +87,8 @@ fn restore_dispatch_carries_its_fields_and_guest_privilege() {
     assert!(sandbox_protocol::dispatch_has_disk_fields(&d));
 }
 
-/// Old-daemon compatibility (I10): a reconnect without disk fields encodes
-/// exactly as before, and an explicit null is not a second spelling.
+/// I10: a reconnect without disk fields omits them from its encoding, and an
+/// explicit null is not a second spelling.
 #[test]
 fn reconnect_without_disk_fields_is_byte_identical() {
     let fixture = fixture("control_startup.json");

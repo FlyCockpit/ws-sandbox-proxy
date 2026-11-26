@@ -7,7 +7,7 @@ const { digestContextSnapshot, parseDigestContext } = await import("./digest-con
 describe("digest context snapshot (§8.3a)", () => {
   it("round-trips and fails closed on a malformed stored snapshot", () => {
     const snapshot = digestContextSnapshot(
-      { domain: "wssp-request-v2", hostId: "h", hostOwnerId: "o" },
+      { domain: "wssp-request-v1", hostId: "h", hostOwnerId: "o" },
       { generation: 3, configId: "cfg", usagePoolId: null, usageMemberId: null },
     );
     expect(parseDigestContext(snapshot)).toEqual(snapshot);

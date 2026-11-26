@@ -23,7 +23,7 @@ pub fn env_limits() -> &'static EnvLimits {
     &ENV_LIMITS
 }
 
-/// Reject duplicates even on the legacy private tuple wire. Errors are constant.
+/// Reject duplicates, which the private tuple wire can carry. Errors are constant.
 pub fn canonical_env_json(env: &[(String, String)]) -> Result<Vec<u8>, (SandboxErrorCode, String)> {
     let invalid = || {
         (

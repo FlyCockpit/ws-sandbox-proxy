@@ -248,7 +248,7 @@ impl HostJournal {
         } else if d.kind == "sandbox.lease.renew" {
             bail!("renew has no existing lease");
         }
-        // Review round 2 #1: a shorten-only lease is the server's keyless
+        // A shorten-only lease is the server's keyless
         // system pull-in. It is a renewal, and the host stores it only as a
         // shortening of the deadline it holds for this generation.
         if lease.shorten_only && d.kind != "sandbox.lease.renew" {
@@ -2082,7 +2082,7 @@ mod tests {
         ));
     }
 
-    /// Review round 2 #1: a shorten-only system renewal never moves the
+    /// A shorten-only system renewal never moves the
     /// host's deadline later, even when the server's acknowledged view lags a
     /// shorter lease the host already installed and a newer extension is
     /// queued; it keeps its revision, so it still supersedes that extension.

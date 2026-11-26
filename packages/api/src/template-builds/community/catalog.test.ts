@@ -64,7 +64,7 @@ describe("community catalog (community-base S5)", () => {
     );
     expect(schema).toMatch(
       new RegExp(
-        `@check template_build_origin: .*"recipeDigest" IN \\('${UBUNTU_CLOUD_PREP_V1_DIGEST}'(, '[0-9a-f]{64}')*\\)`,
+        `@check template_build_origin: .*"recipeDigest" (= '${UBUNTU_CLOUD_PREP_V1_DIGEST}'|IN \\('${UBUNTU_CLOUD_PREP_V1_DIGEST}'(, '[0-9a-f]{64}')*\\))`,
       ),
     );
   });

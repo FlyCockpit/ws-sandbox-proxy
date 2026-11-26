@@ -99,7 +99,7 @@ policy is decided when the build VM is materialized, like for any sandbox
 
 A build starts from the owner's registered base template. The documented guest
 default is `images:ubuntu/26.04/cloud`; Ubuntu 24.04 remains supported. On
-24.04 GA / kernel 6.8, approved group-pidfd non-kill signals refuse
+24.04 GA / kernel 6.8, group-pidfd non-kill signals refuse
 `signal_unsupported_on_guest`. HWE (`linux-generic-hwe-24.04`) or another
 verified ≥6.9 kernel is the remedy only after checking the booted kernel is
 ≥6.9 and the helper probe succeeds. See

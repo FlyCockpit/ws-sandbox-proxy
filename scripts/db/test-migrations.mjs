@@ -578,7 +578,7 @@ async function main() {
                 "SELECT count(*)::int AS n FROM pg_constraint WHERE contype='c' AND connamespace='public'::regnamespace",
               )
             ).rows[0].n,
-            154,
+            157,
           );
           assert.equal(
             (
@@ -633,7 +633,7 @@ async function main() {
           let refused;
           let result;
           try {
-            // Owner decision: a brand-new database is not exempt.
+            // A brand-new database is not exempt.
             refused = await migrate({ BACKUP_ENABLED: "true" });
             assert.equal(refused.code, 1, refused.out);
             assert.match(

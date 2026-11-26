@@ -166,7 +166,7 @@ describe("template build deadline vs quiesce hold (WP7)", () => {
     expect((await hostRow(f.host.id)).quiescingSince).toBeNull();
   });
 
-  it("review r1 P2-3: settlement waits for an orchestrator tick holding the build; the tick still sees the hold", async () => {
+  it("settlement waits for an orchestrator tick holding the build; the tick still sees the hold", async () => {
     const { f, buildId, step } = await heldStep();
     const now = new Date();
     await db.inspect.sandboxOperation.update({
@@ -209,7 +209,7 @@ describe("template build deadline vs quiesce hold (WP7)", () => {
     expect((await hostRow(f.host.id)).quiescingSince).toBeNull();
   });
 
-  it("review r1 P2-4: writes from an older connection never land after a newer hello", async () => {
+  it("writes from an older connection never land after a newer hello", async () => {
     const { f, buildId, step } = await heldStep();
     const now = new Date();
     await db.inspect.sandboxOperation.update({

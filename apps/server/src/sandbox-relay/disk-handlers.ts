@@ -849,7 +849,7 @@ export async function handleDiskUploadComplete(
       if (!(await completeDiskSession(tx, { offloadId: m.offloadId, sessionId: session.id })))
         return "refused";
       // The transfer may have ended while ListParts ran (expired, cancelled):
-      // the claim then rolls back whole (round 1 L3 #3).
+      // the claim then rolls back whole.
       const moved = await tx.sandboxImageTransfer.updateMany({
         where: { id: session.transferId, state: "OPEN" },
         data: { state: "COMPLETE", endReason: "uploaded", bytesDone: session.storedBytes },

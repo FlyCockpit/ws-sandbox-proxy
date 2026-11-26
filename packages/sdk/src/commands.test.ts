@@ -2599,21 +2599,15 @@ describe("long-poll operation reads", () => {
     expect(leftovers()).toBe(0);
   });
 
-  it("falls back to plain polling after an old server's 400 and remembers it", async () => {
-    const { client, calls, leftovers } = harness(
-      json(202, receipt()),
-      envelope("BAD_REQUEST"), // an old server rejects the unknown waitMs
-      json(200, page({ chunks: [chunk("stdout", 0, "x")], nextCursor: "0_1", receivedBytes: 1 })),
-      json(200, completePage({ offset: 1, nextCursor: "0_1", receivedBytes: 1, totalBytes: 1 })),
-    );
-    await ok(client.commands.script("sbx_1", "true"));
-    expect(calls.map((c) => waitMsOf(c))).toEqual([null, "20000", null, null]);
-    // Without server holds, progress does not skip the interval (no tight loop).
-    expect((calls[3] as Call).at - (calls[2] as Call).at).toBe(100);
+  it("a 400 answer to a held read is a real error, not retried without waitMs", async () => {
+    const { client, calls, leftovers } = harness(json(202, receipt()), envelope("BAD_REQUEST"));
+    const error = await fails(client.commands.script("sbx_1", "true"));
+    expect(error.kind).toBe("invalid_request");
+    expect(calls.map((c) => waitMsOf(c))).toEqual([null, "20000"]);
     expect(leftovers()).toBe(0);
   });
 
-  it("a 400 without waitMs is a real error, not a fallback", async () => {
+  it("a 400 on a plain read is a real error", async () => {
     const { client, calls } = harness(json(202, receipt()), envelope("BAD_REQUEST"));
     const error = await fails(client.commands.script("sbx_1", "true", { longPollMs: 0 }));
     expect(error.kind).toBe("invalid_request");

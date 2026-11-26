@@ -1,5 +1,5 @@
 /**
- * CLI shell authority (`GET /v1/sandboxes/{id}/connect`, wssp-ssh 1b): the
+ * CLI shell authority (`GET /v1/sandboxes/{id}/connect`): the
  * retained `sandboxes.connect` authorization of one kind `API` key plus the
  * sandbox's live placement, read the same way the browser terminal re-reads
  * its binding. Used before the upgrade (HTTP refusals) and on every re-read

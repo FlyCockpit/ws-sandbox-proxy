@@ -2374,8 +2374,8 @@ mod vm_size_tests {
         let value = serde_json::json!({"sandboxOwnerId":"owner", "type":"operation.dispatch", "sandboxOwnerId":"owner","operationId":"op","sandboxId":"sbx","idempotencyKey":"key","kind":"sandbox.create","generation":1,"attempt":1,"cpuCount":1,"memoryMiB":1024,"allocation":allocation});
         let dispatch = parse_server_control_for_version(&value.to_string(), "1.0").unwrap();
         assert!(encode_server_control_for_version(&dispatch, "1.0").is_ok());
-        for old in ["10.0", "10.6", "10.7", "11.1"] {
-            assert!(parse_server_control_for_version(&value.to_string(), old).is_err());
+        for other in ["0.9", "0.8", "1.1", "2.0"] {
+            assert!(parse_server_control_for_version(&value.to_string(), other).is_err());
         }
         let mut missing = value.clone();
         missing.as_object_mut().unwrap().remove("allocation");

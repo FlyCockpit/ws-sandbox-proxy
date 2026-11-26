@@ -3523,10 +3523,10 @@ fn cancellation_during_an_allow_mutation_preserves_the_pending_journal() {
     std::thread::scope(|scope| {
         let running = scope.spawn(|| refresh(&client, "sbx-1", &policy, &hash, &transport));
         // Cancel while the allow mutation is in flight — but only once the
-        // shim has ARMED (queued) the accepted request. The old fixed 2 s
-        // sleep after the CLI's log line raced the shim under host load:
-        // the group kill could land before the request was accepted, so
-        // the deferred apply never happened (also flaky before this fix).
+        // shim has ARMED (queued) the accepted request. A fixed 2 s sleep
+        // after the CLI's log line would race the shim under host load: the
+        // group kill could land before the request was accepted, so the
+        // deferred apply would never happen.
         let deadline = std::time::Instant::now() + Duration::from_secs(60);
         while !statedir.join("defer-acl-allow-add.armed").exists() {
             assert!(

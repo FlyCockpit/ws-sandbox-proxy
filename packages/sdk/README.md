@@ -572,9 +572,8 @@ if (first.nextCursor) {
   open until something changes (`polling.longPollMs`, default 20 s, at most
   25 s; `0` turns it off). A command that finishes 300 ms after it started is
   seen ~300 ms later instead of on the next poll interval, and a waiting
-  command costs about three requests a minute. A server that predates
-  long-poll answers the first `waitMs` read with 400; the client remembers
-  that and polls plainly from then on. A server-paced answer that moves the
+  command costs about three requests a minute. A 400 answer to a held read
+  is a real error; the client never retries it without `waitMs`. A server-paced answer that moves the
   output cursor is followed at once, and a run whose final output page reads
   `SUCCEEDED` needs no separate status read. One command's output reads are
   capped at a burst of 24 (a finished command's whole retained output) and
@@ -621,17 +620,17 @@ if (first.nextCursor) {
   request fails with `lease_exceeds_policy` (`kind: "invalid_request"`) and
   `error.maxTimeoutMs`, the largest allowed value; nothing is clamped. Accepted
   retries keep their original deadline. Ship this SDK with the matching server:
-  older SDKs parse error and operation codes strictly.
+  the SDK parses error and operation codes strictly.
 - `sandbox.endAt` is host-effective and null before ACK. Unknown timing stays
   null. `sandboxDomain` and `portExposure` are null; advertised ports flags are
   false. Pause, autoResume=true and ingress refuse before allocation.
 - `wssp.operations.wait(id)` polls an operation to any terminal outcome;
   `wssp.sandboxes.waitReady` / `waitDeleted` poll sandbox state directly.
   Per-call `{ intervalMs, maxIntervalMs, waitTimeoutMs, signal }` override the
-  client `polling` defaults. `waitTimeoutMs` bounds only the SDK wait. The old
-  wait-only `timeoutMs` alias was removed, including from client polling
-  defaults. Use `waitTimeoutMs` for lifecycle, file, transfer, operation and
-  handle waits. On command submission, `timeoutMs` now means guest execution.
+  client `polling` defaults. `waitTimeoutMs` bounds only the SDK wait. Use
+  `waitTimeoutMs` for lifecycle, file, transfer, operation and handle waits,
+  including client polling defaults; there is no wait-only `timeoutMs`. On
+  command submission, `timeoutMs` means guest execution.
   On `connect`, the guest-side reconnect lease goes in `leaseTimeoutMs`.
 - The wait deadline bounds every single request, not just the sleeps: an
   in-flight request is cancelled when the deadline expires, and a terminal
@@ -918,7 +917,7 @@ if (capabilities.limits.commandTimeoutZero) {
   destroy if you need sandbox-wide teardown. Those lifecycle recovery rules do
   not authorize re-running the command.
 - Read `guestApi.supportedSignals` to discover signal controls. TERM/INT/HUP
-  use approved Branch A group-pidfd delivery on guest kernels ≥6.9 with helper
+  use group-pidfd delivery on guest kernels ≥6.9 with helper
   support; otherwise invocation refuses `signal_unsupported_on_guest` before
   effect. There is no leader-only or numeric fallback. SIGKILL is canonical
   cancel. The typed helper preserves server `UNSUPPORTED_CAPABILITY` or the
@@ -965,7 +964,7 @@ Mutation outcomes inherently reveal existence (for example created=false or an
 existing-file collision) to `files:write`; that does not grant stat/list access.
 `ProcessError.processKind` distinguishes stale, exited, unavailable and unknown
 incarnations. `stat`/`exists` convert only confirmed `fs_not_found`, after authorized result version/expiry checks.
-Unversioned legacy results throw `OPERATION_RESULT_UNSUPPORTED`, expired
+Unversioned results throw `OPERATION_RESULT_UNSUPPORTED`, expired
 versioned observations throw `OPERATION_RESULT_EXPIRED`, and sandbox/operation
 404s always throw. Neither retained status nor a coarse missing code bypasses
 result retention. Validation failures retain no received body, Zod details or
@@ -1086,8 +1085,8 @@ daemon's log; the requirements are in the
 
 ## Private environment and metadata contracts
 
-Command environment overrides use `envs: Record<string, string>`. The legacy
-`env` tuple field is rejected. Maps allow 64 unique POSIX names (128 UTF-8 bytes),
+Command environment overrides use `envs: Record<string, string>`. An `env`
+tuple field is rejected. Maps allow 64 unique POSIX names (128 UTF-8 bytes),
 4096 UTF-8 bytes per value and 16384 bytes of sorted, escaped JSON in total.
 NUL, malformed Unicode and prototype names are rejected before submission.
 HOME and SHELL overrides are accepted but ignored; TERM still applies to piped
@@ -1095,8 +1094,7 @@ commands. Workload values travel over a bounded stdin frame, never host argv.
 
 Metadata is string → string only, with at most 32 entries, 64 UTF-16 units per key,
 1024 per value and 8192 UTF-8 bytes of JSON. Non-string values, NUL, malformed
-Unicode and prototype-related keys are refused. Old scalar metadata is no longer
-accepted or converted on read; disposable pre-launch rows must be recreated.
+Unicode and prototype-related keys are refused.
 
 Sandbox discovery defaults to READY. Use `states` to request history; the dashboard
 explicitly requests its active/deleted/all history view. `metadata` matches every

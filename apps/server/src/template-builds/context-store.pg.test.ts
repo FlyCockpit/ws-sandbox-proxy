@@ -37,7 +37,7 @@ const db = await pgTestDatabase();
 const { TransferStore } = await import("../sandbox-transfers/store.js");
 const { BuildContextStore, buildContextRoot } = await import("./context-store.js");
 const { registerBuildContextRoutes } = await import("./context-routes.js");
-const { hashLegacyEnvFreeBody } = await import("@wssp/api/sandbox/idempotency");
+const { hashEnvFreeBody } = await import("@wssp/api/sandbox/idempotency");
 
 const transferLimits: TransferLimits = {
   maxBytes: CHUNK * 4,
@@ -620,7 +620,7 @@ describe("import (TransferStore.importSealed, §3.7, r3 N17, pg 16)", () => {
         direction: "UPLOAD",
         guestPath,
         idempotencyKey: `tb:${s.build.id}:import:0:0`,
-        requestBodyHash: hashLegacyEnvFreeBody({
+        requestBodyHash: hashEnvFreeBody({
           kind: "import",
           sandboxId: s.sandbox.id,
           generation: s.sandbox.generation,

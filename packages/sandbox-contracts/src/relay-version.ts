@@ -1,6 +1,7 @@
-/** Sole integrated relay contract (capacity + sharing + typed terminals).
+/** The relay contract version (capacity, sharing and typed terminals).
  * Deploy same-commit peers; the version string alone cannot prove shape parity.
- * Old stored versions remain ineligible and must never be rewritten as current.
+ * A stored version other than this one is ineligible and is never rewritten as
+ * current.
  */
 export const SANDBOX_RELAY_PROTOCOL_VERSION = "1.0";
 export type RelayProtocolVersion = typeof SANDBOX_RELAY_PROTOCOL_VERSION;

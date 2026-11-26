@@ -849,7 +849,7 @@ describe("C57 concurrency: six workers, retained VMs and a detached broker", () 
       const client = f.client();
       const sandbox = await client.sandboxes.create(body, { idempotencyKey: `worker-${worker}` });
       const run = await client.commands.script(sandbox.id, `echo worker-${worker}`);
-      // The low-level receipt and operation-ID follower also work on 10.6.
+      // The low-level receipt and operation-ID follower also work.
       const process = await client.transport.request("startCommand", {
         params: { id: sandbox.id },
         body: { script: `job-${worker} || exit 1` },

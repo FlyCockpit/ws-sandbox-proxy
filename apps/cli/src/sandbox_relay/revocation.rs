@@ -288,7 +288,7 @@ fn stop_one(
 }
 
 /// A registered session proves restored authority. The marker is removed
-/// through the journal IO latch (Codex WP2 r1 #7): a surviving marker would
+/// through the journal IO latch: a surviving marker would
 /// stop valid guests at the next start, so a failed delete closes admission
 /// and reports the host unschedulable like any failed journal write.
 pub(super) fn clear(journal: &HostJournal) {
@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(running(&fake), vec!["sbx-a".to_owned()]);
     }
 
-    /// Codex WP2 r1 #7: lifting the marker is a journal write. A failed
+    /// Lifting the marker is a journal write. A failed
     /// unlink latches the journal (admission closes, the host reports itself
     /// unschedulable) instead of only warning; a successful one leaves the
     /// journal healthy.

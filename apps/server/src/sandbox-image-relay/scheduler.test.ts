@@ -261,7 +261,7 @@ describe("image scheduler — unit (mocked sweep and DB; real-DB finalizer: capt
       ]);
     });
     it("the 15 s tick runs the stall rule before scheduling, so the freed host gets its cancel then its next export", async () => {
-      // Round 1 (L2 #5): the tick's own wiring, not only the helper.
+      // The tick's own wiring, not only the helper.
       mocks.mode = "off";
       mocks.hosts.set("h1", { connectionEpoch: 9, userId: "owner" });
       mocks.storedOffloads.mockResolvedValue([]);
@@ -306,7 +306,7 @@ describe("image scheduler — unit (mocked sweep and DB; real-DB finalizer: capt
       const sendDisk = vi.fn((_h: string, _e: number, _f: unknown) => true);
       expect(await sendStoredAcks(sendDisk)).toBe(1);
       expect(sendDisk).toHaveBeenCalledWith("src", 9, frame);
-      // Review r3: every STORED row the host has not released yet, bounded.
+      // Every STORED row the host has not released yet, bounded.
       expect(mocks.storedOffloads).toHaveBeenLastCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ state: "STORED", sourceReleasedAt: null }),

@@ -1,6 +1,6 @@
 //! Template-build dispatch fields (additive within 1.0).
 //!
-//! Owner decision D1: guest root runs only inside build VMs. The wire carries
+//! Guest root runs only inside build VMs. The wire carries
 //! three optional fields, each refused outside its one dispatch kind:
 //!
 //! - `build` rides only on `sandbox.create`; the daemon journals its `buildId`

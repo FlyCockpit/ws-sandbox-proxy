@@ -3579,7 +3579,7 @@ exec(source)
             }
         }
     }
-    /// Codex P2: a banner first accepted after `HOST_SETUP_BUDGET` (a
+    /// A banner first accepted after `HOST_SETUP_BUDGET` (a
     /// supervision thread stalled 40 s on a 15 s budget) neither starts the
     /// execution timer nor binds a start. Otherwise the runtime deadline
     /// (late start + budget) could fall after the retire helper's due time

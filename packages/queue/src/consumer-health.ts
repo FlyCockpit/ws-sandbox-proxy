@@ -3,8 +3,7 @@ import type IORedis from "ioredis";
 
 // A Redis database is an application/environment boundary, just like QUEUE_NAMES.
 // UUID members prevent a retiring replica from withdrawing its replacement.
-// v1 advertised only process availability and cannot prove queue coverage.
-const KEY = "wssp:consumers:v2:";
+const KEY = "wssp:consumers:v1:";
 export const CONSUMER_HEARTBEAT_TTL_MS = 15_000;
 const INTERVAL_MS = 5_000;
 type HealthRedis = Pick<IORedis, "eval" | "zrem">;

@@ -471,8 +471,9 @@ content (32 KiB each), for up to 24 hours. Expired content is explicitly marked
 `outputExpired`; oversized content is marked `truncated`. File download bytes
 are not journaled: they live in the server's transfer store once captured, so a
 host recovery without the download window reports an unknown outcome. Corrupt receipts or failed durable writes
-fail closed. Relay protocol v10 requires both peers to be upgraded together:
-upgrade the server first, because an older server refuses a newer daemon's hello.
+fail closed. Both peers speak exactly relay protocol `1.0`
+(`ws-sandbox-proxy.relay.v1`) and refuse any other version. When upgrading,
+update the server first, then the daemons.
 
 Incus operations use bounded background queues. Heartbeats and cancellation
 admission continue on the socket reader; a separate bounded worker handles
@@ -502,7 +503,7 @@ Drain exit codes: 0 success; 1 transport/parse/conflict or other runtime failure
 or server unavailable (HTTP 429/5xx). No redirect or automatic retry is followed;
 HTTP is accepted only on explicit loopback development origins.
 
-Command stdout/stderr uses binary relay v10 frames while the command runs. Both
+Command stdout/stderr uses binary relay frames while the command runs. Both
 streams share one sequence and byte offset. The host keeps the first 256 KiB
 and rolling final 768 KiB; an evicted interval is reported as `[gapStart, offset)`.
 At most four 8 KiB chunks await a cumulative `command.output.ack` (matching
@@ -544,7 +545,7 @@ are private, ID-derived and unlinked before receiving content; last-handle close
 (including process death) releases their bytes.
 
 Guest file IO uses a small Python 3 helper through `incus exec -T`, with the
-registered guest UID/GID/HOME. Python 3 is now required by readiness. Reads and
+registered guest UID/GID/HOME. Readiness requires Python 3. Reads and
 uploads reject non-regular files, symlinks in any path component, and `..`.
 An upload is one helper invocation: it stages and fsyncs
 `.wssp-upload-<token>` next to the destination, verifies length and SHA-256,
@@ -571,8 +572,8 @@ because a capture only continues on the connection that started it.
 
 ### Durable host leases
 
-Relay v10 requires a lease deadline, revision, action and `retry-force-60s` policy
-on create/reconnect/renew. Journal v4 persists accepted lease decisions before
+The relay requires a lease deadline, revision, action and `retry-force-60s` policy
+on create/reconnect/renew. The daemon journal persists accepted lease decisions before
 boot or renewal ACK; per-sandbox checkpoints survive receipt confirmation.
 An interrupted decision repairs its checkpoint on startup. Replayed renewal
 receipts retain the original decision. Missing, stale or expired leases and
@@ -744,8 +745,8 @@ host argv and host child environments. PTY workload environments are not active.
 
 The relay protocol includes bounded rich filesystem results and tracked pipe-command
 identity, not a guest-wide process census. Controls bind the full process
-reference; legacy naked-PID signal/kill is unsupported. Read
-`guestApi.supportedSignals`: TERM/INT/HUP use approved group-pidfd delivery on
+reference; a bare PID cannot be signalled or killed. Read
+`guestApi.supportedSignals`: TERM/INT/HUP use group-pidfd delivery on
 guest kernels ≥6.9 with helper support, otherwise return the typed pre-effect
 `signal_unsupported_on_guest`. SIGKILL uses canonical cancel. No numeric or
 leader-only fallback exists for non-kill signals. Acceptance is not death.

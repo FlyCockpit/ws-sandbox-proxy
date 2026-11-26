@@ -2547,7 +2547,7 @@ fn relay_session_loop(
     }
     let (expiry_tx, expiry_rx) = mpsc::sync_channel::<ExpiryObservation>(1);
     let mut expiry_observing = false;
-    // Codex WP2 r1 #6: a failed observation delays the next one.
+    // A failed observation delays the next one.
     let mut expiry_backoff = super::evidence::ObservationBackoff::default();
     let heartbeat = session_heartbeat(if options.heartbeat.is_zero() {
         Duration::from_secs(5)
@@ -4068,7 +4068,7 @@ fn drain_finished(
         ) {
             // A socket failure mid-batch: the failed item's ownership token
             // went with it; every untouched completion goes back to the
-            // supervisor with its token, never discarded (review round 3).
+            // supervisor with its token, never discarded.
             held.extend(batch);
             relay.requeue_finished(held);
             return Err(error);
@@ -6597,7 +6597,7 @@ mod tests {
             "only command.run carries identity"
         );
         assert!(sandbox_protocol::known_protocol_version("1.0"));
-        for version in ["10.0", "10.5", "10.6", "10.7", "11.1"] {
+        for version in ["0.9", "0.8", "1.1", "2.0", "1"] {
             assert!(!sandbox_protocol::known_protocol_version(version));
         }
     }
@@ -8478,7 +8478,7 @@ mod tests {
         assert!(!error.to_string().contains("test-only-token"));
     }
 
-    /// Review round 2 #2: a definitive revocation (ban → close 4003) leaves
+    /// A definitive revocation (ban → close 4003) leaves
     /// the server no way to stop this host's VMs, so the daemon stops every
     /// one itself, durably: disks kept, nothing destroyed; a restart re-applies
     /// the stop before anything else; a registered session (unban /

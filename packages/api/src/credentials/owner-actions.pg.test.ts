@@ -112,7 +112,7 @@ type World = Awaited<ReturnType<typeof world>>;
 async function activeLease(w: World, state: "ACTIVE" | "RELEASING" = "ACTIVE") {
   const op = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: w.owner,

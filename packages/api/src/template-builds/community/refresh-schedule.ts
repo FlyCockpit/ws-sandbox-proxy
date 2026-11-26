@@ -29,7 +29,7 @@ const LEASE_TTL_SECONDS = 10 * 60;
 const LEASE_RENEW_MS = 60_000;
 /** Outlives its day, so a finished day is never scanned again. */
 const DONE_TTL_SECONDS = 2 * 86_400;
-const KEY_PREFIX = "wssp:community-refresh:v2:";
+const KEY_PREFIX = "wssp:community-refresh:v1:";
 
 /** The UTC day whose scan is due at `now`, or null before 05:23 UTC. */
 export function communityRefreshDueDay(now: Date): string | null {

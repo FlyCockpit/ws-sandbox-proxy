@@ -824,7 +824,7 @@ describe("controls and stdin", () => {
     expect((await s.event(received.id)).processedAt).not.toBeNull();
   });
 
-  it("locks only the reopenable stdin range, never the stdin history (round 2 #2)", async () => {
+  it("locks only the reopenable stdin range, never the stdin history", async () => {
     const s = await seed({ state: "RUNNING", nextStdinSequence: 300 });
     const now = new Date();
     // 298 delivered chunks of this attempt and 50 of an older attempt.
@@ -978,11 +978,11 @@ describe("Intent-phase gates", () => {
     expect(await ok.adopt({ phase: "intent" })).toBe(true);
   });
 
-  // Production 2026-11-05: a create still fetching its template image (Intent)
-  // across a server redeploy was refused adoption and settled UNKNOWN. A hello
-  // clears the guard lease (it belongs to the connection), so the Intent
-  // create's guard gate needs this epoch's first healthy `host.egress-state`,
-  // which the daemon now sends before the adoption frame.
+  // A create still fetching its template image (Intent) across a server
+  // redeploy must be adopted, not settled UNKNOWN. A hello clears the guard
+  // lease (it belongs to the connection), so the Intent create's guard gate
+  // needs this epoch's first healthy `host.egress-state`, which the daemon
+  // sends before the adoption frame.
   it("an Intent create needs this epoch's guard lease renewal, an Effect create does not", async () => {
     const s = await seed({ kind: "CREATE_SANDBOX" });
     // Exactly what host-hello writes for a new connection.

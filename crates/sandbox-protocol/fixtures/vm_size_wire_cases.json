@@ -1,8 +1,8 @@
 [
   {
-    "name": "old or unknown launch 10.0",
+    "name": "non-current launch 0.9",
     "kind": "launch",
-    "version": "10.0",
+    "version": "0.9",
     "input": {
       "cpuCount": 1,
       "memoryMiB": 1024,
@@ -11,9 +11,9 @@
     "valid": false
   },
   {
-    "name": "old or unknown launch 10.5",
+    "name": "non-current launch 0.8",
     "kind": "launch",
-    "version": "10.5",
+    "version": "0.8",
     "input": {
       "cpuCount": 1,
       "memoryMiB": 1024,
@@ -22,9 +22,9 @@
     "valid": false
   },
   {
-    "name": "old or unknown launch 10.6",
+    "name": "non-current launch 1.1",
     "kind": "launch",
-    "version": "10.6",
+    "version": "1.1",
     "input": {
       "cpuCount": 1,
       "memoryMiB": 1024,
@@ -33,9 +33,9 @@
     "valid": false
   },
   {
-    "name": "old or unknown launch 10.7",
+    "name": "non-current launch 2.0",
     "kind": "launch",
-    "version": "10.7",
+    "version": "2.0",
     "input": {
       "cpuCount": 1,
       "memoryMiB": 1024,
@@ -44,9 +44,9 @@
     "valid": false
   },
   {
-    "name": "old or unknown launch 11.1",
+    "name": "non-current launch 1",
     "kind": "launch",
-    "version": "11.1",
+    "version": "1",
     "input": {
       "cpuCount": 1,
       "memoryMiB": 1024,

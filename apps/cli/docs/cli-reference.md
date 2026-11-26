@@ -39,9 +39,11 @@ a cap. Pool drain blocks new roots; retained roots keep their pool and size.
 `wssp host config show --json` is read-only and reports partial inspection when Incus or
 original journal evidence is unavailable. Restart/reconnect to apply changes.
 
-Journal v5 requires the coordinated breaking deployment: retire old allocations
-using the old daemon, preserve its journal, then use a fresh private directory.
-Never delete or convert a journal to make active or unknown roots launchable.
+The daemon journal is version 1. The daemon refuses a journal with any other
+version, or journal state without a version marker: retire its allocations with
+the daemon that wrote it, preserve that journal, then use a fresh private
+directory. Never delete or convert a journal to make active or unknown roots
+launchable.
 
 <!-- BEGIN GENERATED: WSSP_BLESS_CLI_REFERENCE=1 cargo test -p wssp --test cli_reference -->
 

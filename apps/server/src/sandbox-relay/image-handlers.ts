@@ -1224,7 +1224,7 @@ export async function handleImageUploadProgress(
 ): Promise<void> {
   if (!(await grantBudget(ctx.sender.hostId))) {
     // A disk offload's liveness is not spent from the shared grant budget
-    // (round 1 L2 #1: other image traffic or an unavailable budget store
+    // (other image traffic or an unavailable budget store
     // would let the stall rule fail a moving upload): per connection, at
     // most one attempt per transfer per interval; a proven disk upload keeps
     // its own slot, other ids share `DISK_LIVENESS_PROBES_MAX` probes (another

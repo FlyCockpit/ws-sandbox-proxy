@@ -91,14 +91,14 @@ export type BuildDigestInput = {
 /**
  * The whole-recipe cache key component: recipe, resolved
  * base, effective args, context, the normalized egress request and the
- * resolved VM size. Both the cache lookup and active-build dedupe key on it.
- * `v: 2` added the VM size; `v: 3` the published default disk. Older digests
- * never match (one rebuild, no reuse of a differently sized result).
+ * resolved VM size, including the published default disk. Both the cache
+ * lookup and active-build dedupe key on it, so a differently sized result is
+ * never reused.
  */
 export function buildDigest(input: BuildDigestInput): Promise<string> {
   return sha256Hex(
     canonicalJson({
-      v: 3,
+      v: 1,
       recipe: input.recipeDigest,
       base: { revisionId: input.baseRevisionId, fingerprint: input.baseFingerprint },
       args: input.args,

@@ -4532,7 +4532,7 @@ impl IncusClient {
 }
 
 /// The sole plan record version this daemon writes and accepts.
-pub(crate) const PLAN_RECORD_VERSION: u64 = 2;
+pub(crate) const PLAN_RECORD_VERSION: u64 = 1;
 
 /// Refuse missing and unsupported versions before interpreting a plan.
 pub(crate) fn record_version(record: &serde_json::Value) -> Result<u64, String> {
@@ -4552,11 +4552,12 @@ mod plan_record_tests {
     #[test]
     fn only_known_plan_record_versions_are_readable() {
         assert!(record_version(&serde_json::json!({})).is_err());
-        assert!(record_version(&serde_json::json!({ "version": 1 })).is_err());
-        assert_eq!(record_version(&serde_json::json!({ "version": 2 })), Ok(2));
+        assert_eq!(record_version(&serde_json::json!({ "version": 1 })), Ok(1));
         assert!(record_version(&serde_json::json!({ "version": 0 })).is_err());
+        assert!(record_version(&serde_json::json!({ "version": 2 })).is_err());
         assert!(record_version(&serde_json::json!({ "version": 3 })).is_err());
-        assert!(record_version(&serde_json::json!({ "version": "2" })).is_err());
+        assert!(record_version(&serde_json::json!({ "version": "1" })).is_err());
+        assert!(record_version(&serde_json::json!({ "version": 1.0 })).is_err());
     }
 }
 

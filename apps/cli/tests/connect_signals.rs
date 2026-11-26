@@ -411,7 +411,7 @@ fn journal_key_sentinel_never_reaches_actual_cli_stderr() {
 
 /// Security regression: the server derives the install binding from
 /// BETTER_AUTH_URL, the daemon from its own --server URL. An alias of the same
-/// server (localhost vs 127.0.0.1) must not stop the 10.3 session from
+/// server (localhost vs 127.0.0.1) must not stop the session from
 /// reconciling: cleanup (sandbox.kill/stop) is supposed to work without a key.
 #[test]
 fn probe_server_alias_key_install_still_reconciles() {
@@ -532,7 +532,7 @@ fn key_install_still_reconciles(variant: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         reconciled,
-        "10.3 session never reconciled after a server-alias key install; stderr: {stderr}"
+        "session never reconciled after a server-alias key install; stderr: {stderr}"
     );
 }
 

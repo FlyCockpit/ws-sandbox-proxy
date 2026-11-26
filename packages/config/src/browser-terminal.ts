@@ -1,14 +1,17 @@
-// Browser terminal plane (C53): the cookie-session WebSocket that attaches a
+// Browser terminal plane: the cookie-session WebSocket that attaches a
 // browser to one sandbox PTY. Shared by the server endpoint and the web client
-// (C54) so the two cannot drift. Contract: docs/design/browser-terminal-auth.md.
+// so the two cannot drift. Contract: docs/design/browser-terminal-auth.md.
 
 import terminalLimits from "./sandbox-terminal-limits.json";
 
-/** The original browser terminal subprotocol: every end is final (4401). */
+/**
+ * Browser terminal subprotocol without reattach (host terminals and v1
+ * sandbox attachments): every end is final (4401).
+ */
 export const BROWSER_TERMINAL_SUBPROTOCOL = "wssp.terminal.v1";
 
 /**
- * WP8 reattach (sandbox terminals only): a v2 attachment learns its
+ * Reattachable subprotocol (sandbox terminals only): a v2 attachment learns its
  * `terminalId` and output sequence in `ready`, and a relay drop or server
  * restart sends it `reconnecting` + {@link BROWSER_TERMINAL_RECONNECT_CLOSE_CODE}
  * instead of the final 4401, so it can resume the same PTY with a new
@@ -40,12 +43,12 @@ export const BROWSER_TERMINAL_CLOSE_CODE = 4401;
  */
 export const BROWSER_TERMINAL_RECONNECT_CLOSE_CODE = 4402;
 
-/** D5: the node's reattach grace when nothing else is known (default 120 s, max 10 min). */
+/** The node's reattach grace when nothing else is known (default 120 s, max 10 min). */
 export const TERMINAL_RESUME_GRACE_DEFAULT_MS: number = terminalLimits.resumeGraceDefaultMs;
 export const TERMINAL_RESUME_GRACE_MAX_MS: number = terminalLimits.resumeGraceMaxMs;
 
 /**
- * Reattach budget per detached terminal (WP8): at most this many attempts,
+ * Reattach budget per detached terminal: at most this many attempts,
  * spread across the grace. Each attempt costs one mint point (20 per 60 s per
  * user) and one upgrade point (30 per 60 s); neither budget is raised.
  */
@@ -63,7 +66,7 @@ export function browserTerminalPath(sandboxId: string): string {
   return `/api/dashboard/sandboxes/${encodeURIComponent(sandboxId)}/terminal/ws`;
 }
 
-/** PTY size bounds of the relay contract (C52): out-of-range sizes are refused. */
+/** PTY size bounds of the relay contract: out-of-range sizes are refused. */
 export const BROWSER_TERMINAL_MAX_ROWS: number = terminalLimits.maxRows;
 export const BROWSER_TERMINAL_MAX_COLS: number = terminalLimits.maxCols;
 
@@ -73,7 +76,7 @@ export const BROWSER_TERMINAL_INPUT_FRAME_MAX_BYTES: number = terminalLimits.dat
 /** Most input bytes the server queues toward the host before refusing frames (`rate_limited`). */
 export const BROWSER_TERMINAL_INPUT_QUEUE_MAX_BYTES: number = terminalLimits.inputQueueMaxBytes;
 
-/** A socket buffering more than this is detached rather than queued (C52 slow consumer). */
+/** A socket buffering more than this is detached rather than queued (slow consumer). */
 export const BROWSER_TERMINAL_BUFFERED_MAX_BYTES: number =
   terminalLimits.attachmentBufferedMaxBytes;
 

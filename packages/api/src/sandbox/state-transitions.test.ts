@@ -172,7 +172,7 @@ describe("lifecycle result ownership", () => {
         "READY",
         "state_conflict",
       ),
-      // An older daemon's dispatch-time lease refusal (round 6).
+      // An older daemon's dispatch-time lease refusal.
     ).toBeUndefined();
     expect(
       sandboxStateForLifecycleResult(

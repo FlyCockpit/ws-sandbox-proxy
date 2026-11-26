@@ -122,10 +122,7 @@ pub fn decide(
             "this kernel cannot pin the process (no pidfd), so it is not sent SIGUSR1".to_string()
         }
         Ok(Some(_)) => return Decision::Quiesce(target.pid),
-        Ok(None) => format!(
-            "no daemon control file names pid {} (a daemon from before graceful quiesce)",
-            target.pid
-        ),
+        Ok(None) => format!("no daemon control file names pid {}", target.pid),
         Err(reason) => reason,
     };
     if target.managed {

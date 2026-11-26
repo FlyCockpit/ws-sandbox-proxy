@@ -1,4 +1,4 @@
-//! wssp-ssh executable-shim tests for CLI channels: a fake `incus` binary in a
+//! Executable-shim tests for CLI channels: a fake `incus` binary in a
 //! private temp dir, never a live VM. The shim stands in for the guest-root
 //! phases only (scope creation and the cancel fence need guest root and guest
 //! systemd); everything after them is the REAL helper chain run locally: the

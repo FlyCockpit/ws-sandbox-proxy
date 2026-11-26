@@ -167,7 +167,7 @@ function setupOperation() {
   operation = {
     ...requestDigestMetadata(),
     digestContext: digestContextSnapshot({
-      domain: "wssp-request-v2",
+      domain: "wssp-request-v1",
       hostId: "host-1",
       hostOwnerId: "user-a",
     }),

@@ -253,7 +253,7 @@ function acceptingOf(principal: Principal): Accepting {
 }
 
 /**
- * The canonical identity of a community request (Codex P3): what a replay
+ * The canonical identity of a community request: what a replay
  * under the same idempotency key must repeat exactly, else it is an
  * idempotency conflict, never the earlier acceptance.
  */

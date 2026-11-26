@@ -1400,7 +1400,7 @@ fn a_failed_acceptance_send_still_carries_the_received_work() {
     assert_ne!(receipt.error_code, Some(SandboxErrorCode::Cancelled.into()));
 }
 
-/// Round 2 #1: a command completes immediately before the drop while its
+/// A command completes immediately before the drop while its
 /// output is still unacknowledged. It is adopted (not settled by a bare
 /// receipt), and after reconnect its output is delivered in full with the
 /// result.
@@ -1552,7 +1552,7 @@ fn relay_parts() -> (
     (dir, journal, authority, relay)
 }
 
-/// Review round 3 #1: the socket fails in the middle of a published batch.
+/// The socket fails in the middle of a published batch.
 /// The failed completion's ownership goes with it (receipt recovery settles
 /// it); every untouched completion keeps its token and goes back to the
 /// supervisor, so no ownerless entry is ever carried or adopted.
@@ -1627,7 +1627,7 @@ fn a_socket_error_mid_batch_requeues_owned_completions_and_never_strands_ownersh
     assert!(!authority.owned(&requeued, 1, 1), "released once consumed");
 }
 
-/// Review round 3 #2: a stdin-failure observation (UNKNOWN, non-interim,
+/// A stdin-failure observation (UNKNOWN, non-interim,
 /// no token) is published while the command worker still owns the attempt
 /// (e.g. cancellation cleanup). Publishing it never releases the worker's
 /// ownership, so a drop carries the attempt and keeps its cleanup permit.
@@ -2413,7 +2413,7 @@ fn reconcile_outlasting_ttls(
     }
 }
 
-/// WP2 item 6 (Codex WP2 r1 #5): carried work is offered for adoption
+/// WP2 item 6: carried work is offered for adoption
 /// before any unrelated receipt is replayed, so stalled receipt resolutions
 /// can never eat the carry grace of healthy carried work. Here the seeded
 /// sandbox's journaled create receipt (`create`) is replayed on the
@@ -2486,14 +2486,14 @@ fn wp2_carried_work_is_adopted_before_receipt_replay() {
     drop(c.wire);
 }
 
-/// Production 2026-11-05: a create still in its Intent phase (there: the
-/// template image download) when the relay dropped was refused adoption on
-/// reconnect and settled UNKNOWN. The server re-runs the create's TTL gates
-/// (egress-guard lease, storage health) for an Intent adoption; a hello resets
-/// both, and the daemon renewed them only from the dispatch loop, after
-/// reconciliation. Now the session renews them on its own cadence from
-/// `hello.ok`, through reconciliation: even a reconnect that outlasts both
-/// TTLs adopts the Intent create, which then completes.
+/// A create still in its Intent phase (e.g. the template image download)
+/// when the relay drops is adopted on reconnect, not settled UNKNOWN. The
+/// server re-runs the create's TTL gates (egress-guard lease, storage
+/// health) for an Intent adoption, and a hello resets both. Renewing them
+/// only from the dispatch loop, after reconciliation, would let them lapse,
+/// so the session renews them on its own cadence from `hello.ok`, through
+/// reconciliation: even a reconnect that outlasts both TTLs adopts the
+/// Intent create, which then completes.
 #[test]
 fn an_intent_create_is_adopted_after_a_reconnect_that_outlasts_the_report_ttls() {
     let mut c = carried_creates();
@@ -3248,7 +3248,7 @@ fn wp2_a_stalled_receipt_query_is_deferred_and_delivered_in_the_same_session() {
     drop(wire);
 }
 
-/// WP2 section 9 end to end (Codex review-integ3 #1 and #2): with
+/// WP2 section 9 end to end: with
 /// `expiryStatusResults` negotiated, a census entry the server refused for
 /// stale storage (here a plain running sandbox with an unexpired lease, no
 /// expiry arm) is offered again on the connected channel under the next
@@ -3434,7 +3434,7 @@ fn wp2_refused_evidence_is_reoffered_under_newer_observations_until_converged() 
 /// WP2 follow-up: this release offers `expiryStatusResults` together with
 /// `observationFence`, and uses the judged path only when the server answers
 /// both. A server that answers `expiryStatusResults` alone (it judges
-/// unfenced: Codex WP2 r3 P1), or an answer to an offer never made, keeps
+/// unfenced), or an answer to an offer never made, keeps
 /// the older path (no batch), which judges only expired arms.
 
 #[test]

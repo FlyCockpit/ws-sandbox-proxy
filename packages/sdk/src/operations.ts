@@ -236,7 +236,6 @@ export async function waitOperation(
   return poll<OperationRead>(
     async (attempt, { remainingMs }) => {
       const { value: operation, waited } = await longPollRead(
-        transport,
         longPollWaitMs(polling, remainingMs),
         (query, timeoutMs) =>
           transport.request("getOperation", {

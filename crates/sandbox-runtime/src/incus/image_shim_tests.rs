@@ -610,9 +610,9 @@ fn scrub_position(shim: &Shim) -> Option<usize> {
     })
 }
 
-/// Prod 26.04 capture (2026-11-07): on a busy host the capture VM's agent
-/// answered before its boot settled; `/etc/machine-id` was still the
-/// read-only transient mount and the scrub failed. The scrub waits for a
+/// Ubuntu 26.04 capture: on a busy host the capture VM's agent can answer
+/// before its boot settled, while `/etc/machine-id` is still the read-only
+/// transient mount, and the scrub would fail. The scrub waits for a
 /// settled boot (`systemctl is-system-running --wait`), after an agent that
 /// first does not answer.
 #[test]
@@ -694,7 +694,7 @@ fn a_failed_scrub_names_its_first_error() {
     assert!(shim.calls().iter().all(|c| !c.starts_with("publish")));
 }
 
-/// Codex P2 (CLI-logins: login values never logged): a guest can point a
+/// CLI logins (login values never logged): a guest can point a
 /// manifest path at `/run/<login value>`, or fail on a path it chose. The
 /// scrub error keeps only an allowlisted class and a fixed manifest path:
 /// never a link target, a guest-chosen path or the helper's free text.

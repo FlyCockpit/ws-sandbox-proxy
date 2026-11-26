@@ -177,7 +177,7 @@ fn operation_dispatch_fixture_carries_attempt_stdin_start() {
 }
 
 #[test]
-fn v3_receipt_reconciliation_fixtures() {
+fn receipt_reconciliation_fixtures() {
     for file in [
         "control_operation_receipt.json",
         "control_reconcile_complete.json",
@@ -430,7 +430,7 @@ fn channel_frames_round_trip_with_typescript() {
 }
 
 /// The optional `channels` hello offer parses on both hello decoders, is
-/// strict, and the `hello.ok` echo is optional (old daemons and old servers).
+/// strict, and the `hello.ok` echo is optional.
 #[test]
 fn channels_capability_is_optional_strict_and_echoed() {
     let hello: serde_json::Value =
@@ -459,7 +459,7 @@ fn channels_capability_is_optional_strict_and_echoed() {
         panic!("not hello");
     };
     assert_eq!(daemon.capabilities.channels, None);
-    // Increment 2's relay kinds ride the same offer.
+    // The relay kinds ride the same offer.
     let relays = with(serde_json::json!({ "kinds": ["pty", "exec", "tcp", "unix"] }));
     let DaemonControlMessage::Hello { daemon, .. } = parse_daemon_control(&relays).unwrap() else {
         panic!("not hello");

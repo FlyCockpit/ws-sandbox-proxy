@@ -120,7 +120,7 @@ async function plannedFetch(
   });
   const op = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: owner.owner,

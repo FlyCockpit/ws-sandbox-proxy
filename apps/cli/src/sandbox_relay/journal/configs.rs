@@ -5,7 +5,7 @@ use sandbox_protocol::{
 };
 use std::io::Read;
 
-const LOCAL_CONFIG_DOMAIN: &str = "wssp-host-private-config-v2";
+const LOCAL_CONFIG_DOMAIN: &str = "wssp-host-private-config-v1";
 const LOCAL_CONFIG_SCHEME: &str = "hmac-sha256-v1";
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn v6_private_configs_share_only_the_transport_and_keep_creator_mac_identity_after_restart() {
+    fn private_configs_share_only_the_transport_and_keep_creator_mac_identity_after_restart() {
         let dir = tempfile::tempdir().unwrap();
         let (transport, key, mut a) = fixture();
         a.sandbox_owner_id = "creator-a".into();
@@ -813,7 +813,7 @@ mod tests {
             let retained: ConfigEnvelope = serde_json::from_str(&disk).unwrap();
             assert_eq!(
                 retained.checksum,
-                "88fa8c1e0227838f7e84796a4e584460bb05028cc729b1c21f2b3b48bfb157c5"
+                "95cf87a80416cbe9e8a934aeb43eac0a40f7ad10876094c7ae7228ca78e7c8da"
             );
             assert_ne!(retained.checksum, ack.config.binding_mac);
             assert!(!format!("{j:?}").contains(&retained.checksum));
@@ -1752,9 +1752,9 @@ mod tests {
         assert!(j.matching(&binding).is_ok());
     }
 
-    /// Review probe (s2b2 sec r1, F1): before this slice an unconfirmed terminal
-    /// receipt is retired at the next hello by the server's exact-binding
-    /// confirmation against its terminal row. Config GC must not tombstone it
+    /// An unconfirmed terminal receipt is retired at the next hello by the
+    /// server's exact-binding confirmation against its terminal row. Config
+    /// GC must not tombstone it
     /// first: a tombstone refuses every confirmation and nothing else deletes
     /// it, so it occupies one of MAX_RECEIPTS admission slots forever.
     #[test]

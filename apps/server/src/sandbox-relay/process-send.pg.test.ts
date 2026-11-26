@@ -254,7 +254,7 @@ it("old-epoch process.started before reconciliation is refused without a write",
   );
   expect(f.frames).toEqual([]);
 });
-it("epoch downgrade between prepare and send refuses despite an unchanged cached 10.5 session", async () => {
+it("epoch downgrade between prepare and send refuses despite an unchanged cached current-protocol session", async () => {
   const f = await registered();
   const first = db.pauseAt("send", { after: "sandboxHost.findFirst" });
   const possible = vi.fn();
@@ -276,7 +276,7 @@ it("epoch downgrade between prepare and send refuses despite an unchanged cached
   await commitHostHello({
     identity: f.identity,
     now: new Date(),
-    message: hello(f.host.id, "10.4"),
+    message: hello(f.host.id, "0.4"),
   });
   gate.release();
   expect(await sending).toBe("refused_before_frame");
@@ -351,7 +351,7 @@ it.each(
     } else {
       await db.inspect.sandboxHost.update({
         where: { id: f.host.id },
-        data: { relayProtocolVersion: "10.7" },
+        data: { relayProtocolVersion: "0.7" },
       });
     }
     expect(
@@ -385,7 +385,7 @@ it("H stays locked from the final capability read through synchronous frame enqu
   preliminary.release();
   await final.waitReached();
   const downgrade = db.run("downgrade", () =>
-    commitHostHello({ identity: f.identity, now: new Date(), message: hello(f.host.id, "10.4") }),
+    commitHostHello({ identity: f.identity, now: new Date(), message: hello(f.host.id, "0.4") }),
   );
   await db.waitUntilBlocked("downgrade", { by: "send" });
   expect(f.frames).toEqual([]);
@@ -551,7 +551,7 @@ it.each(
     })),
   ),
 )(
-  "real 10.4 hello settles $proof with reconciliation first=$reconcileFirst",
+  "a real non-current hello settles $proof with reconciliation first=$reconcileFirst",
   async ({ reconcileFirst, proof }) => {
     const f = await queuedStat(proof === "prior-possible");
     const { processSandboxOutboxBatch } = await import("./outbox-processor");
@@ -560,7 +560,7 @@ it.each(
     vi.spyOn(f.manager, "dispatchOperation").mockImplementationOnce(async (hostId, input) => {
       if (proof === "frame-possible") input.onPossibleDispatchFrame?.();
       f.manager.acceptAuthenticatedSocket({ socket: successor, identity: f.identity });
-      await replaceHello(f, successor, "10.4");
+      await replaceHello(f, successor, "0.4");
       expect(f.manager.isHostConnected(f.host.id, 2)).toBe(false);
       if (reconcileFirst) await reconcileSocket(f, successor);
       // The actual old-epoch dispatch refuses before a frame on this replacement.
@@ -623,19 +623,19 @@ it.each(["protocol", "runtime"] as const)(
   },
 );
 
-it("carried 10.4 proof while disconnected keeps queued work and its hold until reconnect", async () => {
+it("a carried non-current-protocol proof while disconnected keeps queued work and its hold until reconnect", async () => {
   const f = await queuedStat();
   const { processSandboxOutboxBatch } = await import("./outbox-processor");
   const successor = { ...f.socket };
   f.manager.acceptAuthenticatedSocket({ socket: successor, identity: f.identity });
-  await replaceHello(f, successor, "10.4");
+  await replaceHello(f, successor, "0.4");
   await f.manager.removeSession(successor);
   expect(
     await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } }),
   ).toMatchObject({
     connectionEpoch: 3,
     status: "DISCONNECTED",
-    relayProtocolVersion: "10.4",
+    relayProtocolVersion: "0.4",
     relayProtocolEpoch: 3,
   });
   await processSandboxOutboxBatch();
@@ -653,7 +653,7 @@ it("carried 10.4 proof while disconnected keeps queued work and its hold until r
   });
   const reconnected = { ...f.socket };
   f.manager.acceptAuthenticatedSocket({ socket: reconnected, identity: f.identity });
-  await replaceHello(f, reconnected, "10.4");
+  await replaceHello(f, reconnected, "0.4");
   await processSandboxOutboxBatch();
   expect(
     await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: f.op.id } }),
@@ -678,7 +678,7 @@ it("another scanner retiring the old claim as unsupported still permits first-un
   const successor = { ...f.socket };
   vi.spyOn(f.manager, "dispatchOperation").mockImplementationOnce(async (hostId, input) => {
     f.manager.acceptAuthenticatedSocket({ socket: successor, identity: f.identity });
-    await replaceHello(f, successor, "10.4");
+    await replaceHello(f, successor, "0.4");
     // A nested independent scan stands in for a different server process.
     await processSandboxOutboxBatch();
     expect(
@@ -720,7 +720,7 @@ it.each(["pid", "acceptance", "dispatch-epoch", "error-code", "same-epoch"] as c
         where: { aggregateId: f.sandbox.id },
       });
       f.manager.acceptAuthenticatedSocket({ socket: successor, identity: f.identity });
-      await replaceHello(f, successor, "10.4");
+      await replaceHello(f, successor, "0.4");
       await reconcileSocket(f, successor);
       // These synthetic inconsistent states cannot arise from this no-frame
       // first claim. O serializes real receipt/acceptance writers with settle;
@@ -953,7 +953,7 @@ it.each(["off", "old", "unknown", "runtime"])(
   "D-20 %s refuses zero before receipt or outbox",
   async (mode) => {
     zeroPolicy.enabled = mode !== "off";
-    const f = await timerCommand(mode === "old" ? "10.7" : "1.0");
+    const f = await timerCommand(mode === "old" ? "0.7" : "1.0");
     if (mode === "unknown" || mode === "runtime")
       await db.inspect.sandboxHost.update({
         where: { id: f.host.id },
@@ -1001,7 +1001,7 @@ it.each(["first-unsent", "prior-possible", "frame-possible"] as const)(
     vi.spyOn(f.manager, "dispatchOperation").mockImplementationOnce(async (hostId, input) => {
       if (proof === "frame-possible") input.onPossibleDispatchFrame?.();
       f.manager.acceptAuthenticatedSocket({ socket: successor, identity: f.identity });
-      await replaceHello(f, successor, "10.4");
+      await replaceHello(f, successor, "0.4");
       return dispatch(hostId, input);
     });
     const { processSandboxOutboxBatch } = await import("./outbox-processor");
@@ -1033,7 +1033,7 @@ it.each([false, true])(
   "D-20 immediate send refuses unnegotiated zero (switch=%s)",
   async (enabled) => {
     zeroPolicy.enabled = enabled;
-    const f = await registered("10.4");
+    const f = await registered("0.4");
     expect(
       await f.manager.dispatchOperation(f.host.id, {
         authorizingPrincipal: { kind: "session" },
@@ -1099,7 +1099,7 @@ it("D-20 admission waits for H before reading a competing downgrade", async () =
   const f = await timerCommand();
   const gate = db.pauseAt("downgrade", { before: "$transaction.commit" });
   const downgrade = db.run("downgrade", () =>
-    commitHostHello({ identity: f.identity, now: new Date(), message: hello(f.host.id, "10.4") }),
+    commitHostHello({ identity: f.identity, now: new Date(), message: hello(f.host.id, "0.4") }),
   );
   await gate.waitReached();
   const accepting = db.run("accept-zero", () => f.accept(0));
@@ -1644,7 +1644,7 @@ it("B5 outbox size mismatch fails the first unsent launch while retaining its li
   expect(f.frames.filter((frame) => frame.type === "operation.dispatch")).toEqual([]);
 });
 
-it.each(["10.0", "10.4", "10.5", "10.6", "10.7", "11.1"])(
+it.each(["0.0", "0.4", "0.5", "0.6", "0.7", "1.2"])(
   "stored version %s cannot gain 1.0 authority",
   async (version) => {
     const f = await registered();
@@ -1855,7 +1855,7 @@ it.each(["supported", "unsupported"] as const)(
       admissionEpoch: null,
       admissionRuntime: null,
     });
-    // Before the fix this refused with a final 400 UNSUPPORTED_CAPABILITY.
+    // Not a final 400 UNSUPPORTED_CAPABILITY: the stat queues for the host.
     const owner = sessionPrincipal(f.userId);
     const receipt = await statPath(owner, {
       id: f.sandbox.id,

@@ -303,7 +303,7 @@ describe("decision table (§3.2, §3.3)", () => {
     expect(quiesceHeldMs(null, run("QUEUED", minutes(-4)), NOW)).toBe(0);
     expect(quiesceHeldMs(since, null, NOW)).toBe(0);
     expect(quiesceHeldMs(since, { ...run("QUEUED", minutes(-4)), kind: "PUT_FILE" }, NOW)).toBe(0);
-    // Review r1 P2-5: an orphaned marker credits at most QUIESCE_HOLD_MAX_MS.
+    // An orphaned marker credits at most QUIESCE_HOLD_MAX_MS.
     const old = minutes(-500);
     expect(quiesceHeldMs(old, run("QUEUED", minutes(-490)), NOW)).toBe(
       QUIESCE_HOLD_MAX_MS - 10 * 60_000,

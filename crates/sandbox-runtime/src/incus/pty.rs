@@ -309,7 +309,7 @@ fn exit_code(status: &portable_pty::ExitStatus) -> Option<i32> {
 }
 
 impl IncusPtyChild {
-    /// A channel PTY's client (wssp-ssh): the channel's IO owner holds the
+    /// A channel PTY's client: the channel's IO owner holds the
     /// master, so this handle never resizes.
     pub(super) fn for_channel(
         child: Box<dyn portable_pty::Child + Send + Sync>,

@@ -369,7 +369,7 @@ const surface = [
       // Session-only operation projections (operation-views.ts); /v1 has no list.
       listOperations: null,
       getOperationView: null,
-      // Session-only CLI connection audit (connect-sessions.ts, wssp-ssh §10); no /v1 or MCP read.
+      // Session-only CLI connection audit (connect-sessions.ts); no /v1 or MCP read.
       listConnectSessions: null,
       probeSandbox: "sandboxes.probe",
       createSandbox: "sandboxes.create",

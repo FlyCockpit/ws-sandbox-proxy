@@ -1,5 +1,5 @@
 /** Apply committed migrations through the relocated production runner, preserving domain invariants. */
-import { cpSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -91,8 +91,9 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
         "SELECT id, migration_name, checksum, started_at, finished_at, applied_steps_count FROM _prisma_migrations ORDER BY migration_name",
       )
     ).rows;
-    // Every committed folder, in order: 0_init first, then the additive ones.
-    expect(history.map((row) => row.migration_name)).toEqual(committedMigrations());
+    // The release baseline is the only committed migration.
+    expect(committedMigrations()).toEqual(["0_init"]);
+    expect(history.map((row) => row.migration_name)).toEqual(["0_init"]);
     expect(history[0]).toMatchObject({ migration_name: "0_init", applied_steps_count: 1 });
     for (const row of history) expect(row.finished_at).toBeInstanceOf(Date);
     await inspector.query(
@@ -194,7 +195,7 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
         /sdk_pool_grant_identity/,
       );
 
-      await inspector.query(`INSERT INTO sandbox_mutation_operation (id,"userId","sandboxId",generation,kind,state,"idempotencyKey","requestBodyHash","requestDigestScheme","requestDigestKeyId","digestContext","updatedAt") VALUES ('attach-op','owner','sbx',1,'CREDENTIAL_ATTACH','QUEUED','attach','hash','hmac-sha256-v1','${"c".repeat(32)}','{"version":1,"domain":"wssp-request-v2","hostId":"host","hostOwnerId":"owner","generation":1,"configId":null,"usagePoolId":null,"usageMemberId":null}',now());
+      await inspector.query(`INSERT INTO sandbox_mutation_operation (id,"userId","sandboxId",generation,kind,state,"idempotencyKey","requestBodyHash","requestDigestScheme","requestDigestKeyId","digestContext","updatedAt") VALUES ('attach-op','owner','sbx',1,'CREDENTIAL_ATTACH','QUEUED','attach','hash','hmac-sha256-v1','${"c".repeat(32)}','{"version":1,"domain":"wssp-request-v1","hostId":"host","hostOwnerId":"owner","generation":1,"configId":null,"usagePoolId":null,"usageMemberId":null}',now());
         INSERT INTO credential_definition (id,"userId",slug,version,document,digest,"displayName") VALUES ('def','owner','cli',1,'{}','${HEX}','CLI');
         INSERT INTO credential (id,"userId",name,"definitionId","definitionDigest",mode,delivery,"copyBack","updatedAt") VALUES ('login','owner','cli','def','${HEX}','EXCLUSIVE','GUEST',true,now());
         INSERT INTO credential_account (id,"userId","credentialId",ordinal,"updatedAt") VALUES ('acct','owner','login',1,now());
@@ -359,7 +360,7 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
       );
       // Managed build VMs and their operations never emit workload webhooks.
       await inspector.query(`INSERT INTO webhook_endpoint (id,"userId",url,events,"operationKinds","secretCiphertext","secretNonce","secretKeyId","secretVersion","updatedAt") VALUES ('endpoint','owner','https://hooks.example.test/events',ARRAY['sandbox.ready','operation.completed'],ARRAY[]::text[],decode('00','hex'),decode(repeat('00',12),'hex'),'${"0".repeat(16)}',1,now());
-        INSERT INTO sandbox_mutation_operation (id,"userId","sandboxId",generation,kind,state,"idempotencyKey","requestBodyHash","requestDigestScheme","requestDigestKeyId","digestContext","updatedAt") VALUES ('build-op','owner','vm',1,'CREATE_SANDBOX','RUNNING','build-op','hash','hmac-sha256-v1','${"c".repeat(32)}','{"version":1,"domain":"wssp-request-v2","hostId":"host","hostOwnerId":"owner","generation":1,"configId":null,"usagePoolId":null,"usageMemberId":null}',now());
+        INSERT INTO sandbox_mutation_operation (id,"userId","sandboxId",generation,kind,state,"idempotencyKey","requestBodyHash","requestDigestScheme","requestDigestKeyId","digestContext","updatedAt") VALUES ('build-op','owner','vm',1,'CREATE_SANDBOX','RUNNING','build-op','hash','hmac-sha256-v1','${"c".repeat(32)}','{"version":1,"domain":"wssp-request-v1","hostId":"host","hostOwnerId":"owner","generation":1,"configId":null,"usagePoolId":null,"usageMemberId":null}',now());
         UPDATE sandbox_instance SET state = 'READY' WHERE id IN ('vm','sbx');
         UPDATE sandbox_mutation_operation SET state = 'SUCCEEDED' WHERE id IN ('build-op','attach-op');`);
       expect(
@@ -380,30 +381,18 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
   }
 }, 180000);
 
-it("the sftp recipe migration keeps community prep builds recorded with the previous digest", async () => {
-  const OLD = "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
-  const NEW = "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b";
-  const LATER = "20261121000100_community_recipe_sftp";
-  const database = `${db.name}_sftp`;
+it("community prep builds accept only the current prep recipe digest", async () => {
+  const CURRENT = "28ddd19b6c16efce199908628d342179eb933ccead39625b640d567fd22a98be";
+  const database = `${db.name}_community_digest`;
   // The harness owns this disposable database and cleans it up after this file.
   await db.inspect.$executeRawUnsafe(`CREATE DATABASE ${database}`);
   const url = new URL(db.url);
   url.pathname = `/${database}`;
-  const scratch = mkdtempSync(join(tmpdir(), "wssp-schema-migrations-sftp-"));
+  const scratch = mkdtempSync(join(tmpdir(), "wssp-schema-migrations-digest-"));
   const inspector = new Client({ connectionString: url.toString() });
   await inspector.connect();
   try {
-    const migration = canonicalApplyFixture(root, scratch, url.toString());
-    // Apply the history before this migration only, as a deployed database has it.
-    const copied = join(migration.prismaCwd, "prisma/migrations");
-    const held = join(scratch, "held");
-    const later = readdirSync(copied, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name >= LATER)
-      .map((entry) => entry.name);
-    expect(later[0]).toBe(LATER);
-    for (const name of later) cpSync(join(copied, name), join(held, name), { recursive: true });
-    for (const name of later) rmSync(join(copied, name), { recursive: true });
-    migration.apply();
+    canonicalApplyFixture(root, scratch, url.toString()).apply();
     const prep = (id: string, digest: string) =>
       buildRow(id, {
         origin: "'COMMUNITY_PREP'",
@@ -415,108 +404,30 @@ it("the sftp recipe migration keeps community prep builds recorded with the prev
       INSERT INTO sandbox_logical_template (id,"userId",slug,label,"updatedAt") VALUES ('tpl','owner','tpl','Tpl',now());
       INSERT INTO sandbox_template_revision (id,"userId","templateId",revision,"incusFingerprint",architecture,"manifestDigest") VALUES ('rev','owner','tpl',1,'${FP}','x86_64','${HEX}');
       INSERT INTO sandbox_pool (id,"userId",slug,label) VALUES ('pool','owner','pool','Pool');`);
-    await inspector.query(prep("before", OLD));
-    const beforeNew = await inspector.query(prep("new-too-early", NEW)).then(
-      () => undefined,
-      (cause: unknown) => cause as PgError,
-    );
-    expect(beforeNew?.constraint).toMatch(/^template_build_origin_/);
-
-    // This migration only: later ones replace its CHECK again (tested below).
-    cpSync(join(held, LATER), join(copied, LATER), { recursive: true });
-    migration.apply();
+    await inspector.query(prep("current", CURRENT));
     const live = await inspector.query(
       `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'template_build_origin_%'`,
     );
-    expect(live.rows).toEqual([
-      { conname: "template_build_origin_ckb5e863b8", convalidated: true },
-    ]);
+    expect(live.rows).toHaveLength(1);
+    expect(live.rows[0]).toMatchObject({ convalidated: true });
+    // Any other digest is refused, including the prep recipe's earlier ones.
+    for (const [id, digest] of [
+      ["other", HEX],
+      ["before-rsync", "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b"],
+      ["before-sftp", "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59"],
+    ] as const) {
+      const refused = await inspector.query(prep(id, digest)).then(
+        () => undefined,
+        (cause: unknown) => cause as PgError,
+      );
+      expect(refused?.code).toBe("23514");
+      expect(refused?.constraint).toBe(live.rows[0]?.conname);
+    }
+    // A user build may carry any digest.
+    await inspector.query(buildRow("user-build", { recipeDigest: `'${HEX}'` }));
     expect(
-      (await inspector.query(`SELECT id, "recipeDigest" FROM sandbox_template_build`)).rows,
-    ).toEqual([{ id: "before", recipeDigest: OLD }]);
-    // The new release writes the new digest; the release still running writes the old one.
-    await inspector.query(prep("after", NEW));
-    await inspector.query(prep("old-release", OLD));
-    const other = await inspector.query(prep("other", HEX)).then(
-      () => undefined,
-      (cause: unknown) => cause as PgError,
-    );
-    expect(other?.code).toBe("23514");
-    expect(other?.constraint).toBe("template_build_origin_ckb5e863b8");
-  } finally {
-    await inspector.end();
-    rmSync(scratch, { recursive: true, force: true });
-  }
-}, 180000);
-
-it("the rsync recipe migration keeps community prep builds recorded with both earlier digests", async () => {
-  const OLDEST = "eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59";
-  const OLD = "76e4e99b8c48671d3f2ea5ba282479e413f91fb15d0f736e6481cec5b9e7af9b";
-  const NEW = "28ddd19b6c16efce199908628d342179eb933ccead39625b640d567fd22a98be";
-  const LATER = "20261121000200_community_recipe_rsync";
-  const database = `${db.name}_rsync`;
-  // The harness owns this disposable database and cleans it up after this file.
-  await db.inspect.$executeRawUnsafe(`CREATE DATABASE ${database}`);
-  const url = new URL(db.url);
-  url.pathname = `/${database}`;
-  const scratch = mkdtempSync(join(tmpdir(), "wssp-schema-migrations-rsync-"));
-  const inspector = new Client({ connectionString: url.toString() });
-  await inspector.connect();
-  try {
-    const migration = canonicalApplyFixture(root, scratch, url.toString());
-    const copied = join(migration.prismaCwd, "prisma/migrations");
-    const held = join(scratch, "held");
-    const later = readdirSync(copied, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name >= LATER)
-      .map((entry) => entry.name);
-    expect(later[0]).toBe(LATER);
-    for (const name of later) cpSync(join(copied, name), join(held, name), { recursive: true });
-    for (const name of later) rmSync(join(copied, name), { recursive: true });
-    migration.apply();
-    const prep = (id: string, digest: string) =>
-      buildRow(id, {
-        origin: "'COMMUNITY_PREP'",
-        verifyRequired: "true",
-        noCache: "true",
-        recipeDigest: `'${digest}'`,
-      });
-    await inspector.query(`INSERT INTO "user" (id,name,email) VALUES ('owner','Owner','owner@example.test');
-      INSERT INTO sandbox_logical_template (id,"userId",slug,label,"updatedAt") VALUES ('tpl','owner','tpl','Tpl',now());
-      INSERT INTO sandbox_template_revision (id,"userId","templateId",revision,"incusFingerprint",architecture,"manifestDigest") VALUES ('rev','owner','tpl',1,'${FP}','x86_64','${HEX}');
-      INSERT INTO sandbox_pool (id,"userId",slug,label) VALUES ('pool','owner','pool','Pool');`);
-    await inspector.query(prep("oldest", OLDEST));
-    await inspector.query(prep("before", OLD));
-    const beforeNew = await inspector.query(prep("new-too-early", NEW)).then(
-      () => undefined,
-      (cause: unknown) => cause as PgError,
-    );
-    expect(beforeNew?.constraint).toBe("template_build_origin_ckb5e863b8");
-
-    for (const name of later) cpSync(join(held, name), join(copied, name), { recursive: true });
-    migration.apply();
-    const live = await inspector.query(
-      `SELECT conname, convalidated FROM pg_constraint WHERE conname LIKE 'template_build_origin_%'`,
-    );
-    expect(live.rows).toEqual([
-      { conname: "template_build_origin_ck4c786b2f", convalidated: true },
-    ]);
-    expect(
-      (await inspector.query(`SELECT id, "recipeDigest" FROM sandbox_template_build ORDER BY id`))
-        .rows,
-    ).toEqual([
-      { id: "before", recipeDigest: OLD },
-      { id: "oldest", recipeDigest: OLDEST },
-    ]);
-    // The new release writes the new digest; the release still running writes the previous one.
-    await inspector.query(prep("after", NEW));
-    await inspector.query(prep("old-release", OLD));
-    await inspector.query(prep("oldest-again", OLDEST));
-    const other = await inspector.query(prep("other", HEX)).then(
-      () => undefined,
-      (cause: unknown) => cause as PgError,
-    );
-    expect(other?.code).toBe("23514");
-    expect(other?.constraint).toBe("template_build_origin_ck4c786b2f");
+      (await inspector.query(`SELECT id FROM sandbox_template_build ORDER BY id`)).rows,
+    ).toEqual([{ id: "current" }, { id: "user-build" }]);
   } finally {
     await inspector.end();
     rmSync(scratch, { recursive: true, force: true });

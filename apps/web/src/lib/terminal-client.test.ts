@@ -494,7 +494,7 @@ describe("detach and close", () => {
     expect(second.client.state.notice).toEqual({ kind: "ended" });
   });
 
-  it("explains a pre-C52 sandbox without a guest identity (C52-CO-5)", async () => {
+  it("explains a sandbox whose lease records no guest identity", async () => {
     const { client } = setup();
     await client.start();
     const socket = FakeWebSocket.last();

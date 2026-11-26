@@ -1,5 +1,5 @@
 /**
- * `GET /v1/sandboxes/{id}/connect` (wssp-ssh 1b): the CLI shell plane. A
+ * `GET /v1/sandboxes/{id}/connect`: the CLI shell plane. A
  * WebSocket upgrade with subprotocol `wssp.connect.v1`, authenticated only by
  * `Authorization: Bearer wssp_sdk_…` of kind `API` holding
  * `sandboxes:connect`. Every refusal is an HTTP answer in the /v1 error

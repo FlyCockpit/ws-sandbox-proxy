@@ -57,7 +57,7 @@ enum SandboxTeardownIntent {
   SYSTEM_DETACH
 }
 
-/// Immutable launch semantics of a create or reconnect operation (round 5).
+/// Immutable launch semantics of a create or reconnect operation.
 enum SandboxLaunchMode {
   NEW_ROOT
   COLD
@@ -230,7 +230,7 @@ model SandboxHost {
   /// Bounded host-reported reconciler observations with server reportedAt.
   /// Display-only: never admission, lifecycle or packet-isolation authority.
   policyReconcilerHealth      Json?
-  /// Advertised in the last registered hello (relay v10): the host enforces
+  /// Advertised in the last registered hello: the host enforces
   /// recorded sandbox egress policies. Admission gate for policy-bearing
   /// creates only; it can never widen an already-recorded policy.
   egressEnforcement           Boolean                       @default(false)
@@ -859,7 +859,7 @@ model Sandbox {
   cachedOffloadSeq           Int?
   /// N1: base image of the current instance lineage when restored (null = template).
   diskBaseFingerprint        String?
-  /// Pinned at restore (owner decision 1).
+  /// Pinned at restore.
   cloudInitInstanceId        String?
   offloadPin                 SandboxOffloadPin         @default(ANY)
   /// When a STOPPED disk is exported to the image store: at once (ON_STOP),
@@ -925,7 +925,7 @@ model Sandbox {
   @@unique([diskOffloadId, id, userId])
   /// Owner list (sandbox-list.ts): state filter, then createdAt/id keyset order.
   /// Its [userId, state] prefix serves every owner/state filter, so the old
-  /// [userId, state] index was dropped (2026-11-04 outbox release).
+  /// [userId, state] index is redundant and not kept.
   @@index([userId, state, createdAt, id])
   @@index([sandboxHostId, state])
   @@index([usagePoolId])
@@ -1031,9 +1031,9 @@ model SandboxOperation {
   teardownIntent              SandboxTeardownIntent?
   /// Immutable, set at acceptance; null for non-launch kinds.
   launchMode                  SandboxLaunchMode?
-  /// Round 5: set only by restore admission; immutable.
+  /// Set only by restore admission; immutable.
   restoreOffloadId            String?
-  /// Round 5/6 (CN3, V5): every replay input of the request digest.
+  /// CN3, V5: every replay input of the request digest.
   digestContext               Json
   /// U5: on a SYSTEM_DETACH kill, the failed restore attempt it ends.
   attemptOperationId          String?
@@ -1170,7 +1170,7 @@ model SandboxActionReceipt {
   errorCode                   String?
   probeState                  String?
   resourceId                  String?
-  /// §8.3a: the replay inputs of the request digest (round 5/6).
+  /// §8.3a: the replay inputs of the request digest.
   digestContext               Json
   User                        User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
@@ -1312,7 +1312,7 @@ model SandboxTerminalSession {
   @@map("sandbox_terminal_session")
 }
 
-/// wssp-ssh §10: one row per CLI connection (`GET /v1/sandboxes/{id}/connect`),
+/// One row per CLI connection (`GET /v1/sandboxes/{id}/connect`),
 /// written once the connection is live (after `hello`) and completed when it
 /// ends. Metadata only: never content, commands, argv, env or paths. Rows are
 /// deleted with the owner (FK cascade) and purged 90 days after `openedAt` by
@@ -2067,7 +2067,7 @@ model SandboxDiskOffload {
   completedSessionId  String?                     @unique
   verifiedAt          DateTime?
   storedAt            DateTime?
-  /// Review r3: the source host confirmed (`disk.offload.released`) that it
+  /// The source host confirmed (`disk.offload.released`) that it
   /// dropped this offload's alias, export and staging; a STORED row holds
   /// the host's export slot until then.
   sourceReleasedAt    DateTime?
@@ -2143,7 +2143,7 @@ model SandboxDiskCopy {
   @@map("sandbox_disk_copy")
 }
 
-/// Round 6, V3: the durable continuation of one queued restore. One row per
+/// V3: the durable continuation of one queued restore. One row per
 /// accepted restore operation, never per sandbox. `intent` is private: it is
 /// never projected and is scrubbed at any end, like SandboxCapacityWait.intent.
 model SandboxRestoreWait {

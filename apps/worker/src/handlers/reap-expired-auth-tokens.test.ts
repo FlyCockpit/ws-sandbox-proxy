@@ -124,7 +124,7 @@ describe("handleReapExpiredAuthTokensJob", () => {
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("0 device code(s)"));
   });
 
-  it("also purges CLI connection audit rows past retention (wssp-ssh §10)", async () => {
+  it("also purges CLI connection audit rows past retention", async () => {
     const { purgeConnectSessions } = await import("@wssp/api/sandbox/connect-session-retention");
     await handleReapExpiredAuthTokensJob(job());
     expect(purgeConnectSessions).toHaveBeenCalledTimes(1);

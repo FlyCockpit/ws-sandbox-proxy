@@ -642,16 +642,13 @@ export function createCommandsApi(
         waited,
         held,
         elapsedMs,
-      } = await longPollRead(
-        transport,
-        longPollWaitMs(polling, deadlineAt - Date.now()),
-        (hold, timeoutMs) =>
-          transport.request("getCommandOutput", {
-            params: { id: operationId },
-            query: cursor === undefined ? hold : { cursor, ...hold },
-            signal: attempt,
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-          }),
+      } = await longPollRead(longPollWaitMs(polling, deadlineAt - Date.now()), (hold, timeoutMs) =>
+        transport.request("getCommandOutput", {
+          params: { id: operationId },
+          query: cursor === undefined ? hold : { cursor, ...hold },
+          signal: attempt,
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        }),
       );
       // The request may have ignored the abort: recheck the attempt signal,
       // then refuse to apply a page whose follow session is stale.
@@ -1470,7 +1467,6 @@ export function createCommandsApi(
         async (signal, { remainingMs }) => {
           // The server holds a not-ready read until the start evidence lands.
           const { value: read, waited } = await longPollRead(
-            transport,
             longPollWaitMs(startPolling, remainingMs),
             async (query, timeoutMs) => {
               try {

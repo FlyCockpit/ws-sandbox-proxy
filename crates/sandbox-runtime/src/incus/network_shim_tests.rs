@@ -1248,8 +1248,6 @@ fn shim_client_applies_and_verifies_directly() {
         .expect("teardown again");
 }
 
-// ---- C35 round 3 ----
-
 /// F1: two projects on one daemon. A dedicated project without network
 /// isolation inherits the default project's networks; the project tag must
 /// scope census, adoption, and teardown to the owning project.
@@ -5113,8 +5111,8 @@ fn an_unreadable_plan_is_inconclusive_and_never_convicts() {
     // Leg 3 (C37 R7): valid JSON but structurally MALFORMED plan records —
     // a missing or wrongly typed identity and any missing/mistyped
     // structural field are unavailable EVIDENCE, never positive proof of a
-    // foreign plan. Before this fix each of these read as `Ok(None)`,
-    // manufactured confirmed drift, and the drain deleted a healthy VM.
+    // foreign plan. Reading any of these as `Ok(None)` would manufacture
+    // confirmed drift and let the drain delete a healthy VM.
     for (label, body) in [
         ("empty object", "{}"),
         ("json null", "null"),

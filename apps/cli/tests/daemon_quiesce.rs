@@ -295,7 +295,7 @@ fn sleeper() -> ManagedChild {
     .expect("spawn sleep")
 }
 
-/// An older daemon (no control file) under systemd restarts with SIGTERM;
+/// A daemon without a control file under systemd restarts with SIGTERM;
 /// a manual run never signals a process it cannot verify, and without
 /// `$MAINPID` or `--pid` it refuses.
 #[test]

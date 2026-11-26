@@ -42,9 +42,9 @@
     "valid": true
   },
   {
-    "name": "server old peer",
+    "name": "server non-current peer",
     "kind": "server",
-    "version": "10.6",
+    "version": "0.9",
     "frame": {
       "type": "allocation.attest.request",
       "connectionEpoch": 2,
@@ -4441,9 +4441,9 @@
     "valid": true
   },
   {
-    "name": "daemon old peer",
+    "name": "daemon non-current peer",
     "kind": "daemon",
-    "version": "10.6",
+    "version": "0.9",
     "frame": {
       "type": "allocation.attest.result",
       "connectionEpoch": 2,
@@ -7866,9 +7866,9 @@
     "valid": false
   },
   {
-    "name": "old admission journal forbidden",
+    "name": "non-current admission journal forbidden",
     "kind": "daemon",
-    "version": "10.6",
+    "version": "0.9",
     "frame": {
       "type": "host.admission",
       "connectionEpoch": 2,

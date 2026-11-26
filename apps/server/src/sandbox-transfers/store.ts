@@ -11,7 +11,7 @@ import {
   lockHostForSandboxOperation,
   noteHostBlockerReleased,
 } from "@wssp/api/sandbox/host-admission";
-import { hashLegacyEnvFreeBody, requestDigestMetadata } from "@wssp/api/sandbox/idempotency";
+import { hashEnvFreeBody, requestDigestMetadata } from "@wssp/api/sandbox/idempotency";
 import {
   operationDigestContext,
   operationTransaction,
@@ -590,7 +590,7 @@ export class TransferStore implements RelayCaptures {
       throw transferError("BAD_REQUEST");
     const parsed = validation.data;
     const action = parsed.direction === "UPLOAD" ? "files.write" : "files.read";
-    const hash = hashLegacyEnvFreeBody(parsed);
+    const hash = hashEnvFreeBody(parsed);
     const permit = `create:${owner.ownerId}:${parsed.idempotencyKey}`;
     const creating = this.creates.get(permit);
     if (creating) {
@@ -761,7 +761,7 @@ export class TransferStore implements RelayCaptures {
       )
     )
       throw transferError("BAD_REQUEST");
-    const hash = hashLegacyEnvFreeBody({
+    const hash = hashEnvFreeBody({
       kind: "import",
       sandboxId,
       generation,

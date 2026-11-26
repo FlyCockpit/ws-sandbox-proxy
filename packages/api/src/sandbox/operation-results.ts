@@ -35,7 +35,7 @@ export function isContentResultKind(kind: string): kind is (typeof CONTENT_KINDS
   return (CONTENT_KINDS as readonly string[]).includes(kind);
 }
 /** B1-C-7: a scalar-result operation (command, mkdir, remove, signal)
- * accepted under 10.5 carries the result version from creation, so an
+ * accepted with fs/process support carries the result version from creation, so an
  * in-flight or failed-before-start row reads as versioned (pending/failed),
  * never as legacy UNSUPPORTED. Content kinds are versioned by their hold. */
 export function initialResultFields(kind: string, fsProcess: boolean) {

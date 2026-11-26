@@ -1313,7 +1313,7 @@ it.each(["stop", "destroy"] as const)(
   },
 );
 
-it.each(["10.6", "10.7"])(
+it.each(["0.6", "0.7"])(
   "B5 create refused by %s stores unsupported_capability on the sandbox",
   async (version) => {
     const f = await seed();

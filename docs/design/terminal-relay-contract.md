@@ -410,16 +410,15 @@ session's own pump thread, never on the socket loop.
 
 Template revision defaults merge with sandbox create overrides into one private
 snapshot. The terminal uses that same snapshot after stop/reconnect or daemon
-restart, even if tags or pool membership later change. The 10.3 private-config
+restart, even if tags or pool membership later change. The private-config
 ACK precedes VM launch; terminal startup uses the gated raw PTY env handshake
 before browser input/resize can reach the shell. No env values are added to
 terminal metadata, receipts or diagnostics. Deliberate guest output remains
-terminal data visible to its authorized viewer. The [SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants)
-replaced old resources/tickets; there is no adoption of old sessions.
+terminal data visible to its authorized viewer.
 
 ## Tracked command observer boundary
 
-The 10.5 tracked pipe-command API adds no terminal frame or SDK PTY. Closing
+The tracked pipe-command API adds no terminal frame or SDK PTY. Closing
 this browser PTY closes its shell; command observer disconnect/abort only
 detaches and sends neither EOF nor cancel. Host authority revocation remains a
 separate teardown boundary. See the [filesystem and command behavior](../guide/sandboxes.md#filesystem-and-command-result-limits).
@@ -494,7 +493,7 @@ ACK, preserving false/unavailable as unconfirmed. Host idle/lifetime timeout
 notices are distinct from opening timeout. No browser timer duplicates daemon
 limits. See the [explicit staged checklist](../operations/sharing-terminal-qualification.md).
 It authorizes no deployment, Incus VM, production browsing or local-policy change
-in implementation. Same integrated commit and original v5 settlement remain
+in implementation. Same integrated commit and preserved journal settlement remain
 operator gates; fake-wire/DOM tests do not prove live network isolation.
 
 ### Consumer inventory

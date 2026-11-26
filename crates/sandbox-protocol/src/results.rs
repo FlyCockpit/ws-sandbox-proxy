@@ -1,4 +1,4 @@
-//! Inactive 10.5 fs/process codecs. No runtime or protocol advertisement change.
+//! Relay file and process result codecs.
 use serde::{Deserialize, Serialize};
 pub mod host;
 

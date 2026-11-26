@@ -1,4 +1,4 @@
-//! CLI channels (wssp-ssh): one guest process per channel, started inside its
+//! CLI channels: one guest process per channel, started inside its
 //! own guest systemd scope, as the guest user, with an exact argv.
 //!
 //! - `pty` channels run the workload on a guest tty.

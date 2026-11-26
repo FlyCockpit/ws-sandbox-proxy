@@ -456,7 +456,7 @@ impl RunCommandRequest {
     }
 }
 
-/// Shared 10.5 metadata DTO; stat and directory entries have identical bounds.
+/// Shared file metadata DTO; stat and directory entries have identical bounds.
 pub use sandbox_protocol::results::EntryInfo;
 pub type GuestPathKind = sandbox_protocol::results::EntryType;
 
@@ -866,7 +866,7 @@ pub struct SignalProcessRequest {
     pub idempotency_key: String,
     pub pid: u32,
     pub signal: ProcessSignal,
-    /// Required for every effect. A naked legacy PID refuses pre-issue.
+    /// Required for every effect. A naked PID refuses pre-issue.
     pub target: Option<SignalTarget>,
 }
 
@@ -1042,7 +1042,7 @@ pub struct CommandRecord {
     #[serde(default)]
     pub guest_pid: Option<u32>,
     /// Public start identity, present only after the fixed-position start
-    /// record. The legacy `guest_pid` banner remains cleanup-only.
+    /// record. The unverified `guest_pid` banner remains cleanup-only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub birth: Option<CommandBirth>,
     pub chunks: Vec<CommandStreamChunk>,
@@ -1873,7 +1873,7 @@ pub trait SandboxRuntime: Send + Sync {
         false
     }
 
-    /// Spawn one channel process in its own guest scope (wssp-ssh). The
+    /// Spawn one channel process in its own guest scope. The
     /// spawn blocks (instance binding, host spawn) but carries no secret and
     /// starts no workload: the guest waits for the preamble the IO owner
     /// writes through the returned [`crate::ChannelIo`].

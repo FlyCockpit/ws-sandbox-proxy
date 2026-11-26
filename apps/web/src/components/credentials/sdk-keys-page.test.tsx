@@ -1142,7 +1142,7 @@ it("marks an existing no-expiry agent token as blocked by policy, without hiding
   expect(within(dated).queryByText(enAgents.expiry.blockedByPolicy)).toBeNull();
 });
 
-describe("sandboxes:connect (wssp-ssh owner decision 2)", () => {
+describe("sandboxes:connect scope", () => {
   it("the SDK key form offers it alone in its own described group, never preselected, and mints it only when ticked", async () => {
     const user = userEvent.setup();
     mount();

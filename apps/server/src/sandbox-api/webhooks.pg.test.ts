@@ -232,7 +232,7 @@ describe("/v1 webhooks (real PostgreSQL)", () => {
     expect(await moved.json()).toMatchObject({ error: { code: "webhook.destination_blocked" } });
   });
 
-  it("disables an endpoint whose name no longer resolves; enabling or moving it re-validates (round 2, finding 3)", async () => {
+  it("disables an endpoint whose name no longer resolves; enabling or moving it re-validates", async () => {
     const k = await key(await owner());
     const created = webhookEndpointWithSecretSchema.parse(
       await (

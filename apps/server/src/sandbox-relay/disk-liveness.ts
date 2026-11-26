@@ -1,6 +1,6 @@
 /**
  * A connection's disk upload liveness allowance outside the shared image
- * grant budget (round 1 L2 #1): when the budget refuses an
+ * grant budget: when the budget refuses an
  * `image.upload.progress`, a disk offload upload's heartbeat may still move
  * its transfer's `lastProgressAt`, so other image traffic or an unavailable
  * budget store never lets the stall rule fail a moving upload. Per
@@ -68,7 +68,7 @@ export function confirmDiskLiveness(
 ): void {
   const at = allowance.get(transferId) ?? allowance.get(CONFIRMED + transferId) ?? nowMs;
   // The probe's own entry stays until it lapses: it keeps counting against
-  // `DISK_LIVENESS_PROBES_MAX` whatever it proved (round 5), so fresh ids
+  // `DISK_LIVENESS_PROBES_MAX` whatever it proved, so fresh ids
   // never buy more than that many lookups per interval.
   if (!disk) {
     allowance.delete(CONFIRMED + transferId);
@@ -84,7 +84,7 @@ export function confirmDiskLiveness(
 }
 
 /** The server granted `transferId` (a disk upload) to this connection: it
- * holds a slot from now on, before its first heartbeat (round 4). */
+ * holds a slot from now on, before its first heartbeat. */
 export function grantDiskLiveness(allowance: DiskLiveness, transferId: string): void {
   if (allowance.has(CONFIRMED + transferId)) return;
   // Never tried yet: its first heartbeat may go at once.

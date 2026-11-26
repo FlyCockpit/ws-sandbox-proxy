@@ -374,13 +374,10 @@ commit a fitting alternate before terminal reconciliation acquires its locks.
 The resulting `RelayFenceRejected` is a stale discovery, not proof of access
 loss. Terminal revalidation repeats all authority checks, at most twice; the
 paired session-deletion case still refuses. Unexpected errors and sustained
-churn still fail closed. This proves a concrete race behind the possible
-one-path-removal closure; it does not establish which event caused the single
-live failure.
+churn still fail closed.
 
-The reported 120-second command/reset remains unconfirmed in this source tree.
 The client and supervisor's 120-second command settings are defaults for an
-omitted timeout. Explicit positive deadlines and zero already travel unchanged
+omitted timeout. Explicit positive deadlines and zero travel unchanged
 through acceptance, persistence, dispatch and the runtime. The expanded
 `process-send.pg.test.ts` matrix includes 300,000 ms, and its typed UNKNOWN
 result test checks subsequent heartbeat handling and preservation of terminal
@@ -392,9 +389,9 @@ These tests use disposable PostgreSQL, FakeRuntime and executable shims only.
 
 The daemon's connection-loss warning is logged after relay-session teardown,
 which revokes active operation authority and can log UNKNOWN first. Those two
-log timestamps alone do not establish that UNKNOWN caused the socket reset.
-Identifying the live reset still needs the matching server/proxy close evidence
-and the running daemon's build identity; no live binary or service was inspected.
+log timestamps alone do not establish that UNKNOWN caused a socket reset;
+attributing a live reset needs the matching server/proxy close evidence and the
+running daemon's build identity.
 
 ## Rust DNS lifetime tests
 
@@ -878,7 +875,7 @@ shims cover runtime lifecycle; no live VM is needed or launched.
 ## Host capacity/storage qualification
 
 Hermetic capacity coverage uses TS/Rust shared-policy parity, strict relay protocol
-fixtures, FakeRuntime/Incus shims, local journal-v5 recovery and disposable PG
+fixtures, FakeRuntime/Incus shims, local journal recovery and disposable PG
 races. Test RAM/vCPU/root lifetime separately: stop frees live holds only; missing
 storage preserves root/guard charges, and only positive original-root/network
 absence frees them. Include zero healthy cap/cold start, implicit sparse-root
@@ -988,7 +985,7 @@ Only the public fingerprint/architecture reaches the verifier; private defaults
 stay in the creator's revision. Permission loss during verifier IO cannot store
 availability or a logical template. Current epoch, member and owner checks run
 again under User/K/G/H before persistence. Verification is budgeted and pending
-work is bounded per creator and host. Availability census now walks registered
+work is bounded per creator and host. Availability census walks registered
 revisions across creators on its authenticated transport host.
 
 Creation accepts `expectedDisconnectGraceSeconds`; a decrease refuses before
@@ -1145,7 +1142,7 @@ before final picker response, bounded host-owner allocation metadata without
 creator identity, and roster identity/usage. They use disposable PostgreSQL only.
 No live server, test node daemon or Incus VM is needed. The separately invoked
 [operator checklist](operations/sharing-terminal-qualification.md) leaves deployment,
-original-daemon retirement, hardware and A/B IPv4/IPv6 isolation unverified until
+hardware and A/B IPv4/IPv6 isolation unverified until
 a separately authorized operator window.
 
 ## Startup census and atomic ACL qualification
@@ -1172,12 +1169,12 @@ complete allow/reject groups, drift refusal, bounded failed publication,
 durable recovery and stale-write rejection. The ETag fixture checks Incus's
 Go JSON field order, omitted strings, null slices, HTML escaping and newline.
 
-Unresolved identity-specific mutations and fence obligations written by earlier
-daemons retain their existing recovery boundary. The historical DNS mutation
-fault suites explicitly select that recovery path through the test-only
+Unresolved identity-specific mutations and fence obligations in the journal
+keep the identity-specific recovery boundary. The DNS mutation fault suites
+explicitly select that recovery path through the test-only
 `force_legacy_dns_recovery` seam; the atomic-policy tests use the production
 default. A proven pre-request `query --header` parser refusal selects the
-existing identity-specific writer on older supported CLIs; this decision is
+identity-specific writer on older supported Incus CLIs; this decision is
 cached rather than repeatedly probing. Atomic PUTs are exercised on the current
 CLI. Neither test family uses a daemon or launches a VM. The allocation-lock
 regression holds the real fixture lock for 61 seconds to prove admission exceeds
@@ -1279,8 +1276,10 @@ transitions lock the lease and then decrement its instance (lease → instance),
 which inverts the claim order but cannot cycle: every path that locks an
 existing lease holds that lease's sandbox S first, and claims only insert leases.
 
-`credentials/selection.pg.test.ts` covers §7.7 tests 1-4, 16, 19, 20 (create
-half) and 21 with statement barriers; `packages/db/src/schema-apply.pg.test.ts`
+`credentials/selection.pg.test.ts` covers exclusive and shareable claim races,
+pause versus auto-pick, login delete versus claim, the instance-count limit,
+multi-login create ordering and login versus workload claims with statement
+barriers; `packages/db/src/schema-apply.pg.test.ts`
 covers the credential schema's CHECKs on a fresh apply. Run them with
 `pnpm test:pg --filter=@wssp/api --filter=@wssp/db -- src/credentials/selection.pg.test.ts src/schema-apply.pg.test.ts`.
 
@@ -1296,7 +1295,7 @@ holds the epoch `FOR SHARE` and takes ciphertext rows `FOR UPDATE SKIP LOCKED`,
 so it never waits on a row lock. A switch waits for in-flight writers. A writer
 that arrives during a switch waits for it and then seals under the new kid.
 
-`crypto/data-key-epoch.pg.test.ts` covers §7.7 test 23 with statement barriers.
+`crypto/data-key-epoch.pg.test.ts` covers the data-key epoch fence with statement barriers.
 A writer parked after its `FOR SHARE` blocks the promote. A writer that arrives
 during a promote blocks behind it. After the switch, a stale writer (vault
 value, return key, webhook rotate, rewrap) aborts and writes nothing. Rewrap

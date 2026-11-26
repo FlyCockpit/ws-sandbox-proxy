@@ -308,7 +308,7 @@ it("pool grants are independent, loaded owner choices; pending revision associat
   });
 });
 
-describe("sandboxes:connect (wssp-ssh owner decision 2)", () => {
+describe("sandboxes:connect scope", () => {
   it("stands alone in its own described group, offered only on the SDK key form", () => {
     const connect = SCOPE_GROUPS.filter((group) => group.scopes.includes("sandboxes:connect"));
     expect(connect).toEqual([{ id: "connect", scopes: ["sandboxes:connect"] }]);

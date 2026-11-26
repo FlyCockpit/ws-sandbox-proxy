@@ -39,7 +39,7 @@
     "hostShutdown": "The sandbox's node daemon was stopped, so the terminal ended. Attach again once the host is back.",
     "hostRevoked": "The sandbox's host is no longer authorized (its credential was revoked or expired, or the host was removed), so the terminal ended.",
     "exited": "The shell exited with code {{exitCode}}.",
-    "noTerminalIdentity": "This sandbox cannot open a terminal. Sandboxes created before terminals were available have no recorded guest user: reconnect the sandbox, or stop and start it, then attach again. If that does not help, the host's daemon may need an update.",
+    "noTerminalIdentity": "This sandbox cannot open a terminal. Its host has no guest user recorded for it: reconnect the sandbox, or stop and start it, then attach again. If that does not help, the host's daemon may need an update.",
     "hostCapacity": "The host has too many terminals open right now. Try again in a moment.",
     "hostRefused": "The host refused the terminal ({{code}}).",
     "ended": "The terminal session ended.",

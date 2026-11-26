@@ -1273,7 +1273,7 @@ fn usage_errors_need_no_network() {
 
 #[test]
 fn local_resets_racing_a_natural_end_never_consume_channel_slots() {
-    // Review round 1: DATA and a natural exit arrive while (or after) the
+    // DATA and a natural exit arrive while (or after) the
     // local client resets. The exit was held for output that can no longer
     // be delivered and the server ignores the close, so without a discard
     // every such connection kept its slot; 32 of them stopped the forward.
@@ -1581,7 +1581,7 @@ fn stdin_of(log: &[In], channel: u32) -> (usize, Option<u64>) {
 
 #[test]
 fn stalled_uploads_never_starve_a_later_connection() {
-    // Review round 3 and audit M1: four uploads whose guest services read
+    // Four uploads whose guest services read
     // nothing fill the connection's 4 MiB stdin budget. A fifth connection
     // still sends its first frame at once (every channel slot keeps one
     // frame of the budget), and credit returned a little at a time to the

@@ -117,9 +117,9 @@ The [cargo-dist 0.34 configuration reference](https://github.com/axodotdev/cargo
 defines the target triple keys and global runner override. Workflow action upgrades use Node 24 internally and require
 GitHub-hosted runners or a sufficiently recent self-hosted runner (at least
 2.329.0 for authenticated Git inside container actions). The build toolchain
-uses Node 26.13.1 and pnpm 12.18.0. Checkout credentials now live under `RUNNER_TEMP`; CLI artifact
+uses Node 26.13.1 and pnpm 12.18.0. Checkout credentials live under `RUNNER_TEMP`; CLI artifact
 checkouts disable persistence. Checkout refuses unsafe fork code under
 privileged workflow triggers. Labeler keeps the `changed-files` matcher format;
-setup-node explicitly caches pnpm where needed and no longer supplies a dummy
+setup-node explicitly caches pnpm where needed and supplies no dummy
 registry token. Cache restore/save inputs and artifact archive defaults remain
 compatible; artifact downloads enforce digest verification.

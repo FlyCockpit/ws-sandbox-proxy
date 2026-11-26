@@ -7,7 +7,7 @@ import { TerminalStatusIcon, terminalIndicator } from "./terminal-header";
 
 afterEach(cleanup);
 
-/** The picker's icon and colour states (owner 11-24 demo, mapped onto wssp's terminal states). */
+/** The picker's icon and colour states, mapped onto wssp's terminal states. */
 describe("terminalIndicator", () => {
   it("keyboard green while attached: what you type reaches the shell", () => {
     expect(terminalIndicator("attached", null)).toEqual({ mode: "typing", tone: "connected" });

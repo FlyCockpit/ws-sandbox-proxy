@@ -9,7 +9,7 @@ import prisma, { type Prisma } from "@wssp/db";
 import { lockOwnerForAdmission } from "@wssp/db/account-deletion";
 import { Prisma as PrismaValue } from "@wssp/db/client";
 import { digestContextSnapshot, ENV_FREE_DIGEST_DOMAIN } from "./digest-context";
-import { hashLegacyEnvFreeBody } from "./idempotency";
+import { hashEnvFreeBody } from "./idempotency";
 import { leasePolicyIdempotencyKey } from "./idempotency-key-reserved";
 import {
   commitSandboxLeaseRenewal,
@@ -126,7 +126,7 @@ export async function pullInLeaseLocked(
     leaseExpiresAt: new Date(target),
     onExpire: s.leaseExpireAction,
     idempotencyKey: leasePolicyIdempotencyKey(s.id, s.generation, s.leaseRevision),
-    bodyHash: hashLegacyEnvFreeBody({
+    bodyHash: hashEnvFreeBody({
       sandboxId: s.id,
       action: "lease-policy",
       generation: s.generation,

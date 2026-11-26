@@ -107,7 +107,7 @@ export const sandboxesRouter = {
     return listSandboxViews(sessionPrincipal(context.session.user.id), input);
   }),
 
-  /** The owner's recent CLI connections to the sandbox (metadata only, wssp-ssh §10). */
+  /** The owner's recent CLI connections to the sandbox (metadata only). */
   listConnectSessions: protectedProcedure
     .input(listSandboxConnectSessionsInput)
     .handler(({ input, context }) =>

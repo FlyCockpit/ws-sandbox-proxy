@@ -215,7 +215,7 @@ describe("prune of processed rows of long-deleted sandboxes", () => {
       (s) =>
         db.inspect.sandboxOperation.create({
           data: {
-            digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+            digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
             ...requestDigestMetadata("KILL_SANDBOX"),
 
             userId: s.userId,

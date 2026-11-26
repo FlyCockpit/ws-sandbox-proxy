@@ -52,7 +52,7 @@ describe("reserved internal idempotency key namespaces", () => {
     ).toBe(false);
   });
 
-  it("rejects readiness-failed keys that could block another sandbox cleanup (codex P7)", () => {
+  it("rejects readiness-failed keys that could block another sandbox cleanup", () => {
     expect(
       runCommandInput.safeParse({
         id: "sandbox-1",

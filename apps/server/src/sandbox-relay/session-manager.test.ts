@@ -407,7 +407,7 @@ describe("ordered socket authority", () => {
     }
   });
 
-  describe("channel lane (wssp-ssh 1b)", () => {
+  describe("channel lane", () => {
     const fence = {
       channelId: "chan-1",
       connectionId: "conn-1",
@@ -757,7 +757,7 @@ describe("ordered socket authority", () => {
     ]);
     expect(store.hosts.get("host-1")!.connectionEpoch).toBe(1);
   });
-  it.each(["11.0", "2.0", "3.0"])("rejects hello %s before registration", async (version) => {
+  it.each(["1.1", "2.0", "3.0"])("rejects hello %s before registration", async (version) => {
     const host = socket();
     manager.handleTextFrame(host, helloFrame("host-1", version));
     await manager.drain(host);
@@ -3489,7 +3489,7 @@ it("attests historical UNKNOWN; new create uncertainty queues cleanup without an
   }
 });
 
-it("10.7 allocation without journal binding fails validation before any frame", async () => {
+it("an allocation without journal binding fails validation before any frame", async () => {
   const host = await registered();
   const sessions = Reflect.get(manager, "sessionsBySocket") as Map<
     FakeSocket,
@@ -3986,7 +3986,7 @@ describe("D3b command-output throughput", () => {
     await manager.drain(host);
     expect(host.closes.length).toBe(1);
   });
-  /** Codex rc-fu-b r1 #1: after a result fences observation 1, a first
+  /** After a result fences observation 1, a first
    * batch that jumps to 2 (or MAX_SAFE_INTEGER) is refused before anything
    * is judged: the session fails, the row is untouched. */
   it.each([2, Number.MAX_SAFE_INTEGER])(
@@ -4016,7 +4016,7 @@ describe("D3b command-output throughput", () => {
       expect(store.sandboxes.get("sbx-1")).toEqual(before);
     },
   );
-  /** Codex WP2 r3 P1 at the session: a lifecycle result for sbx-1 arrives
+  /** At the session: a lifecycle result for sbx-1 arrives
    * while observation 1 may be in flight; observation 1's stopped entry
    * (non-expired, the current arm) is answered superseded without being
    * judged, and the row is untouched. Observation 2 began after the server
@@ -4499,7 +4499,7 @@ describe("capture begin ordering (post-landing #4)", () => {
       );
       await manager.drain(host);
       expect(handled).toEqual(["req-held", "req-now", "req-receipt"]);
-      // A failed lookup (rounds 2 A #1, 3 A #1): neither handled now (it
+      // A failed lookup: neither handled now (it
       // would be refused for good) nor held (nothing might release it), but
       // refused `store_unavailable`, which the daemon retries.
       db.sandboxTemplateCapture.count.mockRejectedValueOnce(new Error("unavailable"));
@@ -4511,13 +4511,13 @@ describe("capture begin ordering (post-landing #4)", () => {
         reason: "store_unavailable",
         requestId: "req-retry",
       });
-      // Land round 1: over the grant budget the begin is refused
+      // Over the grant budget the begin is refused
       // `rate_limited` before the ordering lookup (no database read for
       // it), as its handler would refuse it; each begin spent one point.
       const lookups = db.sandboxTemplateCapture.count.mock.calls.length;
       const spent = budgets.imageGrant.mock.calls.length;
       expect(spent - spentBefore).toBe(4);
-      // Land round 1: every handled begin (released or at once) had spent
+      // Every handled begin (released or at once) had spent
       // its grant budget before the lookup; its handler is told so.
       expect(options).toEqual([
         { budgetSpent: true },

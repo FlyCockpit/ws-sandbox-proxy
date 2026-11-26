@@ -502,12 +502,12 @@ always look at the answer, not the elapsed time. The SDK does this for you.
   no command retry; recover through sandbox stop or kill, never an automatic
   new-key command submission. The SDK reports these as error kind `unknown`
   carrying the `operationId` and `idempotencyKey`.
-- On relay 10.7, a held UNKNOWN create/reconnect may later become FAILED
+- A held UNKNOWN create/reconnect may later become FAILED
   with `host_effect_not_issued` when a targeted, ordered host attestation
   proves the VM was never created and no allocation can still run. The sandbox
   becomes ERROR and its capacity is released. This uses the current connection
-  and does not close terminals or transfers. Older hosts and uncertain effects
-  retain their holds. See [host recovery](hosts.md).
+  and does not close terminals or transfers. Uncertain effects retain their
+  holds. See [host recovery](hosts.md).
 - **Teardown recovery is the exception.** The daemon automatically retries an
   unresolved stop or kill after reconnect and on heartbeat. On a STOPPING
   sandbox whose current-generation teardown is UNKNOWN, you may send kill
@@ -540,9 +540,7 @@ always look at the answer, not the elapsed time. The SDK does this for you.
   the command started, including detached ones (best-effort only in a
   `guestRoot` sandbox, where only the VM stopping or a new QEMU process
   retires the receipt; see [Root in the guest](#root-in-the-guest)). The operation stays
-  `UNKNOWN_OUTCOME`. See [host recovery](hosts.md). Node daemons built before this change report
-  a timeout as `UNKNOWN_OUTCOME`. They report a cancel that the command
-  honoured as `SUCCEEDED` with exit code 143.
+  `UNKNOWN_OUTCOME`. See [host recovery](hosts.md).
 - `host_disconnect_expired` (SDK kind `unavailable`) means the host stayed
   disconnected from the server past its carry cap (`max_carry`) and proved it
   stopped the work. Endings during an outage otherwise keep their natural code
@@ -581,8 +579,7 @@ always look at the answer, not the elapsed time. The SDK does this for you.
   Commands run as the template's guest user. With
   [`guestSudo`](#root-in-the-guest) (the default) that user can run `sudo`.
 - Every SDK submission form uses command `timeoutMs`, in the input or options,
-  never both. `guestTimeoutMs` and the deprecated wait-only `timeoutMs` alias
-  were removed. Use finite `waitTimeoutMs` for observation (at most 60 minutes);
+  never both. Use finite `waitTimeoutMs` for observation (at most 60 minutes);
   expiry detaches the observer without cancellation. Command zero never makes
   that wait zero or infinite. With an explicit positive command budget and no
   explicit wait budget, the default wait covers it plus one minute. Lifecycle
@@ -713,7 +710,7 @@ guest.
 
 `GET /v1/sandboxes` discovers READY sandboxes by default. `metadata` is one bounded
 JSON query value whose string pairs match exactly with AND; `states` is one
-comma-separated state list. The current schema also supports `templateRevisionId`, strict
+comma-separated state list. Listing also supports `templateRevisionId`, strict
 `startedAfter` (VM start time), and `order=asc|desc` on `(createdAt, id)`.
 Filtering and owner/key visibility happen in SQL before pagination. Reuse the opaque
 sandbox cursor only with the same owner, filters and order. The dashboard requests
@@ -735,7 +732,7 @@ defaults; the guest identity remains fixed.
 
 Each source and the final command union permit at most 64 entries, 128 UTF-8 bytes
 per name, 4096 per value and 16384 bytes of sorted escaped JSON. Oversized unions
-are refused before enqueue. Every fresh launch requires current authenticated 10.3 admission, inventory and
+are refused before enqueue. Every fresh launch requires current authenticated host admission, inventory and
 exact image evidence, with its journal key acknowledged. Dispatch installs the private
 snapshot durably and waits for the exact config ACK before starting the VM.
 
@@ -777,7 +774,7 @@ signal helper's own support probe in the guest; a guest without group signals
 (including 24.04 GA/6.8) then lists only SIGKILL. Until a current host report arrives, TERM/INT/HUP stay listed; every call still
 checks the guest capability before effect. The deployment-wide
 `/v1/capabilities` never describes a particular guest. Either way support is
-still `signalSupport: "checked-at-call"`: approved Branch A TERM/INT/HUP
+still `signalSupport: "checked-at-call"`: TERM/INT/HUP
 delivery uses the verified wrapper's group pidfd on booted guest kernels ≥6.9
 with helper support, the helper probes the running guest on every call, and an
 unsupported guest refuses `signal_unsupported_on_guest` before effect. SIGKILL remains canonical

@@ -268,6 +268,7 @@ CREATE TABLE "user" (
     "createdViaPoolInviteBy" TEXT,
     "createdViaPoolInviteId" TEXT,
     "operationalAlerts" BOOLEAN NOT NULL DEFAULT true,
+    "mustChangePassword" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "user_pkey" PRIMARY KEY ("id")
 );
@@ -1654,6 +1655,8 @@ CREATE TABLE "sandbox_connect_session" (
     "closeIntent" TEXT,
     "ptyChannels" INTEGER NOT NULL DEFAULT 0,
     "execChannels" INTEGER NOT NULL DEFAULT 0,
+    "relayChannels" INTEGER NOT NULL DEFAULT 0,
+    "forwardedPorts" INTEGER[] DEFAULT ARRAY[]::INTEGER[],
     "bytesIn" BIGINT NOT NULL DEFAULT 0,
     "bytesOut" BIGINT NOT NULL DEFAULT 0,
 
@@ -1858,6 +1861,7 @@ CREATE TABLE "sandbox_image_artifact" (
     "lastFetchedAt" TIMESTAMP(3),
     "lastProgressAt" TIMESTAMP(3),
     "corruptReports" INTEGER NOT NULL DEFAULT 0,
+    "failureDetail" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -1942,6 +1946,7 @@ CREATE TABLE "sandbox_image_transfer" (
     "partSize" INTEGER NOT NULL,
     "partCount" INTEGER NOT NULL,
     "bytesDone" BIGINT NOT NULL DEFAULT 0,
+    "wireBytes" BIGINT NOT NULL DEFAULT 0,
     "sourceEpoch" INTEGER,
     "destEpoch" INTEGER,
     "dispatchAttempt" INTEGER,
@@ -1996,6 +2001,8 @@ CREATE TABLE "sandbox_template_capture" (
     "defaultDiskGiB" INTEGER,
     "storagePoolId" TEXT,
     "errorCode" TEXT,
+    "errorDetail" TEXT,
+    "capturedAt" TIMESTAMP(3),
     "symlinkedPaths" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "buildId" TEXT,
     "buildAttempt" INTEGER NOT NULL DEFAULT 0,
@@ -2843,6 +2850,9 @@ CREATE INDEX "sandbox_mutation_operation_userId_createdAt_idx" ON "sandbox_mutat
 
 -- CreateIndex
 CREATE INDEX "sandbox_mutation_operation_sandboxId_createdAt_idx" ON "sandbox_mutation_operation"("sandboxId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "sandbox_operation_remembered_lease_idx" ON "sandbox_mutation_operation"("sandboxId", "leaseRevisionAccepted" DESC) WHERE ((kind = ANY (ARRAY['CREATE_SANDBOX'::"SandboxOperationKind", 'RECONNECT_SANDBOX'::"SandboxOperationKind"])) AND ("leaseRevisionAccepted" IS NOT NULL) AND ("leaseTimeoutMs" IS NOT NULL));
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sandbox_mutation_operation_userId_idempotencyKey_key" ON "sandbox_mutation_operation"("userId", "idempotencyKey");
@@ -3765,7 +3775,7 @@ ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_outcome_ck73
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_wait_ckbf6848aa" CHECK (("waitForCapacityMs" IS NULL OR "waitForCapacityMs" BETWEEN 1000 AND 2073600000) AND ("waitForCapacityMs" IS NULL OR "poolId" IS NOT NULL) AND ("errorDetail" IS NULL OR ("errorCode" IS NOT NULL AND "errorDetail" ~ '^[a-z0-9_.]{1,64}$')));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_error_code_cka31ed2c8" CHECK ("errorCode" IS NULL OR "errorCode" IN ('build_step_failed', 'build_step_unknown', 'build_step_timeout', 'build_step_host_disconnected', 'build_timeout', 'build_context_timeout', 'build_context_mismatch', 'build_context_expired', 'build_context_failed', 'build_placement_failed', 'build_capture_failed', 'build_capture_lease_expired', 'build_store_failed', 'build_authority_lost', 'build_host_lost', 'build_internal', 'build_cancelled', 'build_verify_failed', 'build_upstream_unavailable'));
 ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_verify_ck423d125a" CHECK ((NOT "verifyRequired" AND "verifySandboxId" IS NULL AND "verifyDeadlineAt" IS NULL) OR ("verifyRequired" AND "noCache"));
-ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_origin_ck651c67d2" CHECK ("origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = 'eb8a190977a1665adb2f14dcbe7f60eede39ea3ef72f8646652f4919d6802c59' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL));
+ALTER TABLE "sandbox_template_build" ADD CONSTRAINT "template_build_origin_ck6c73b42a" CHECK ("origin"::text = 'USER' OR ("verifyRequired" AND "recipeDigest" = '28ddd19b6c16efce199908628d342179eb933ccead39625b640d567fd22a98be' AND "sourceFormat"::text = 'RECIPE' AND "contextSha256" IS NULL));
 ALTER TABLE "sandbox_build_context" ADD CONSTRAINT "sandbox_build_context_shape_ck4f029215" CHECK ("totalBytes" > 0 AND "receivedBytes" BETWEEN 0 AND "totalBytes" AND "expectedSha256" ~ '^[0-9a-f]{64}$' AND "importAttempt" >= 0 AND (state::text = 'ADOPTED') = ("transferId" IS NOT NULL) AND (state::text NOT IN ('SEALED', 'ADOPTED') OR "receivedBytes" = "totalBytes") AND ("errorCode" IS NULL OR (state::text IN ('ABORTED', 'EXPIRED') AND "errorCode" IN ('build_context_timeout', 'build_context_expired', 'build_context_mismatch', 'build_context_failed'))) AND (state::text NOT IN ('OPEN', 'SEALED') OR "reservationHeld"));
 ALTER TABLE "sandbox_build_context_chunk" ADD CONSTRAINT "sandbox_build_context_chunk_shape_ck629ad63f" CHECK ("offset" >= 0 AND "length" > 0);
 ALTER TABLE "credential_definition" ADD CONSTRAINT "credential_definition_version_cke7b16127" CHECK ("version" >= 1);
@@ -3876,6 +3886,7 @@ ALTER TABLE "sandbox_image_artifact" ADD CONSTRAINT "sandbox_image_artifact_fing
 ALTER TABLE "sandbox_image_artifact" ADD CONSTRAINT "sandbox_image_artifact_stored_ck65a022ef" CHECK ("state"::text <> 'STORED' OR ("objectKey" IS NOT NULL AND "verifiedAt" IS NOT NULL AND "storeKind"::text = 'S3'));
 ALTER TABLE "sandbox_image_artifact" ADD CONSTRAINT "sandbox_image_artifact_encryption_ckbce1a6c5" CHECK (("encryption" IS NULL AND "wrappedKey" IS NULL AND "wrappedKeyNonce" IS NULL AND "keyId" IS NULL) OR ("encryption" = 'aes256gcm-r1' AND "wrappedKey" IS NOT NULL AND "wrappedKeyNonce" IS NOT NULL AND "keyId" IS NOT NULL));
 ALTER TABLE "sandbox_image_artifact" ADD CONSTRAINT "sandbox_image_artifact_sizes_ckbfeccfee" CHECK ("sizeBytes" > 0 AND ("unpackedBytes" IS NULL OR "unpackedBytes" > 0) AND ("partSize" IS NULL OR "partSize" > 0) AND "corruptReports" >= 0);
+ALTER TABLE "sandbox_image_artifact" ADD CONSTRAINT "sandbox_image_artifact_failure_detail_ck10f9628d" CHECK ("failureDetail" IS NULL OR "failureDetail" ~ '^[a-z0-9_.]{1,64}$');
 ALTER TABLE "sandbox_image_upload_session" ADD CONSTRAINT "sandbox_image_upload_session_target_ck06e72383" CHECK (("artifactId" IS NULL) <> ("diskOffloadId" IS NULL));
 ALTER TABLE "sandbox_image_upload_session" ADD CONSTRAINT "sandbox_image_upload_session_live_ck89aac608" CHECK (("state"::text = 'OPEN') = (COALESCE("liveArtifactId", "liveDiskOffloadId") IS NOT NULL) AND ("liveArtifactId" IS NULL OR "liveArtifactId" = "artifactId") AND ("liveDiskOffloadId" IS NULL OR "liveDiskOffloadId" = "diskOffloadId"));
 ALTER TABLE "sandbox_image_upload_session" ADD CONSTRAINT "sandbox_image_upload_session_disk_key_ck443cfa00" CHECK (CASE WHEN "diskOffloadId" IS NULL THEN "wrapSalt" IS NULL ELSE ("state"::text = 'OPEN') = ("wrappedKey" IS NOT NULL) AND ("wrappedKey" IS NULL) = ("wrapSalt" IS NULL) AND ("wrappedKey" IS NULL OR "encryption" = 'aes256gcm-r1') END);
@@ -3883,11 +3894,13 @@ ALTER TABLE "sandbox_image_upload_session" ADD CONSTRAINT "sandbox_image_upload_
 ALTER TABLE "sandbox_image_upload_session" ADD CONSTRAINT "sandbox_image_upload_session_sizes_cka6bb2748" CHECK ("sizeBytes" > 0 AND "storedBytes" >= "sizeBytes" AND "partSize" > 0 AND "hostEpoch" > 0);
 ALTER TABLE "sandbox_image_upload_part" ADD CONSTRAINT "sandbox_image_upload_part_ckb0317c8b" CHECK ("partNumber" BETWEEN 1 AND 10000 AND "sizeBytes" > 0 AND length("etag") BETWEEN 1 AND 256);
 ALTER TABLE "sandbox_host_image_cache" ADD CONSTRAINT "sandbox_host_image_cache_entry_cka237c952" CHECK ("fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "compressedBytes" >= 0 AND ("unpackedBytes" IS NULL OR "unpackedBytes" >= 0) AND "origin" IN ('fetched', 'captured', 'replica') AND "connectionEpoch" > 0);
+ALTER TABLE "sandbox_image_transfer" ADD CONSTRAINT "sandbox_image_transfer_wire_bytes_ck2cb9f9a8" CHECK ("wireBytes" >= 0 AND "wireBytes" <= 17592186044416);
 ALTER TABLE "sandbox_image_transfer" ADD CONSTRAINT "sandbox_image_transfer_shape_ck01776d3f" CHECK ("fingerprint" ~ '^sha256:[0-9a-f]{64}$' AND "mode" IN ('S3', 'RELAY') AND "sizeBytes" > 0 AND "partSize" > 0 AND "partCount" BETWEEN 1 AND 10000 AND "bytesDone" >= 0 AND "bytesDone" <= "sizeBytes");
 ALTER TABLE "sandbox_image_link" ADD CONSTRAINT "sandbox_image_link_shape_ck9e5a0d60" CHECK ("role" IN ('SOURCE', 'DEST') AND "partNumber" BETWEEN 1 AND 10000 AND "tokenDigest" ~ '^[0-9a-f]{64}$' AND "expiresAt" > "createdAt" AND "hostEpoch" > 0);
 ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_shape_ckbb831d5d" CHECK (cardinality("scrubPaths") <= 80 AND "chargedMemoryMiB" >= 0 AND "chargedVcpu" >= 0 AND "diskChargeGiB" >= 0 AND ("fingerprint" IS NULL OR "fingerprint" ~ '^sha256:[0-9a-f]{64}$') AND (NOT "resourcesHeld" OR "storagePoolId" IS NOT NULL OR "diskChargeGiB" = 0));
 ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_build_attempt_ck67c06fdb" CHECK ("buildAttempt" >= 0 AND ("buildId" IS NOT NULL OR "buildAttempt" = 0));
 ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_default_disk_ckca9d5ce0" CHECK ("defaultDiskGiB" IS NULL OR ("defaultDiskGiB" >= 1 AND "defaultDiskGiB" <= 2048));
+ALTER TABLE "sandbox_template_capture" ADD CONSTRAINT "sandbox_template_capture_error_detail_ck7943ec85" CHECK ("errorDetail" IS NULL OR "errorDetail" ~ '^[a-z0-9_.]{1,64}$');
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_intent_ck3be86db2" CHECK ((state::text = 'WAITING' AND "intent" IS NOT NULL AND "endedAt" IS NULL) OR (state::text <> 'WAITING' AND "intent" IS NULL AND "endedAt" IS NOT NULL));
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_bypass_ck70dd6c14" CHECK ("bypassCount" >= 0);
 ALTER TABLE "sandbox_capacity_wait" ADD CONSTRAINT "sandbox_capacity_wait_deadline_cka867a222" CHECK ("deadlineAt" IS NULL OR "deadlineAt" > "enqueuedAt");
@@ -4032,7 +4045,7 @@ BEGIN
     types := types || 'sandbox.create_failed'::text;
   END IF;
   IF to_state = 'DELETED' THEN types := types || 'sandbox.destroyed'::text; END IF;
-  -- Disk offload (R6, T15): only the detach of a stopped sandbox to its store copy.
+  -- Disk offload: only the detach of a stopped sandbox to its store copy.
   IF from_state = 'STOPPED' AND to_state = 'OFFLOADED' THEN types := types || 'sandbox.offloaded'::text; END IF;
   FOREACH t IN ARRAY types LOOP
     IF EXISTS (SELECT 1 FROM webhook_endpoint e WHERE e."userId" = NEW."userId" AND e."disabledAt" IS NULL AND t = ANY(e.events)) THEN
@@ -4067,7 +4080,7 @@ BEGIN
   RETURN NULL;
 END $wssp$;
 
--- CLI-login credential events (the CLI-logins plan §12 N10): one webhook_event
+-- CLI-login credential events: one webhook_event
 -- per subscribed `credential.<type>` for the four lease outcomes an owner acts
 -- on. The facts carry only the event row id; the renderer re-reads that row
 -- through a fixed projection (ids and a reason code), so no value, path or

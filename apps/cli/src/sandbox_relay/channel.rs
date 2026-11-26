@@ -1,4 +1,4 @@
-//! CLI channels on the node (wssp-ssh): `channel.*` frames from the server
+//! CLI channels on the node: `channel.*` frames from the server
 //! drive one guest process each (`pty` or `exec`, or a `tcp`/`unix` relay to
 //! a guest loopback port or guest Unix socket), started by the runtime in its
 //! own guest scope as the sandbox's guest user.

@@ -416,7 +416,7 @@ pub(crate) mod incus {
             }
             // §2.6: the reused plan also takes the recorded mode, settings,
             // resolver base and denied grants — never recompiled from
-            // current node settings. A legacy record yields none.
+            // current node settings. A missing or foreign record yields none.
             if let Ok(Some(recorded)) = client.persisted_enforcement_plan_checked(sandbox_id) {
                 plan.mode = recorded.mode;
                 plan.settings = recorded.settings;

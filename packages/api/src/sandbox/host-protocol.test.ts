@@ -19,7 +19,7 @@ it("requires exact 1.0 with the existing epoch and runtime fences", () => {
     admissionRuntime: "FAKE",
   };
   expect(fsProcessHostSupported(host)).toBe(true);
-  for (const relayProtocolVersion of [null, "10.0", "10.5", "10.6", "10.7", "11.1"])
+  for (const relayProtocolVersion of [null, "0.0", "0.5", "0.6", "0.7", "1.2"])
     expect(fsProcessHostSupported({ ...host, relayProtocolVersion })).toBe(false);
   expect(fsProcessHostSupported({ ...host, relayProtocolEpoch: 1 })).toBe(false);
   expect(fsProcessHostSupported({ ...host, admissionEpoch: 1 })).toBe(false);
@@ -45,10 +45,10 @@ it("refuses admission only on positive current-epoch evidence of no support", ()
   expect(fsProcessHostSupported({ ...reconnecting, admissionEpoch: null })).toBe(false);
   // Stale protocol facts from another epoch prove nothing either.
   expect(
-    fsProcessHostRefused({ ...host, relayProtocolVersion: "10.7", relayProtocolEpoch: 1 }),
+    fsProcessHostRefused({ ...host, relayProtocolVersion: "0.7", relayProtocolEpoch: 1 }),
   ).toBe(false);
   // Current-epoch evidence of an older protocol or unsupported runtime refuses.
-  for (const relayProtocolVersion of ["10.0", "10.5", "10.7", "11.1"])
+  for (const relayProtocolVersion of ["0.0", "0.5", "0.7", "1.2"])
     expect(fsProcessHostRefused({ ...host, relayProtocolVersion })).toBe(true);
   expect(fsProcessHostRefused({ ...host, admissionRuntime: "UNSUPPORTED" })).toBe(true);
   expect(

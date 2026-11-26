@@ -23,8 +23,8 @@ Each sandbox has one of two modes:
 
 - Omitting `egress` (or sending `null` or `{}`) requests `open`.
 - Without `mode`, any `domains` or `cidrs` key, even an empty array, means
-  `allowlist`. Older clients that asked for a restricted sandbox therefore stay
-  restricted. Explicit deny-all is `{ "mode": "allowlist" }`.
+  `allowlist`, so a client that lists any grants gets a restricted sandbox.
+  Explicit deny-all is `{ "mode": "allowlist" }`.
 - The TypeScript SDK adds `allowInternetAccess` (the E2B name). `true` requests
   `open`; any `egress.domains`/`cidrs` become **fallback grants**, used only if
   the sandbox lands on another user's host that allows only listed
@@ -44,7 +44,7 @@ Each sandbox has one of two modes:
   on. `GET` on a sandbox reports `egress.mode`, and `egressModeReason` says why
   an open request became an allowlist: `node_policy` (the host's owner did not
   allow open internet for other users) or `host_unsupported` (the host's daemon
-  predates open mode).
+  does not advertise open egress).
 
 ## What is always blocked
 
@@ -140,10 +140,10 @@ narrow) and records a warning.
 The rest of this page describes allowlist mode (and the machinery both modes
 share).
 
-## Compatibility with older policies
+## When the protected ranges expand
 
-Existing policies are not grandfathered when the protected ranges expand.
-For example, a previously accepted `203.0.0.0/8` intersects the now-protected
+A stored policy is not grandfathered when a future release adds a protected
+range. For example, a stored `203.0.0.0/8` intersects the protected
 `203.0.113.0/24` and is refused even though most of the prefix is public.
 The policy is immutable; recreate the sandbox with narrower, allowed CIDRs.
 
@@ -270,8 +270,6 @@ addresses, and keeps re-resolving them while the sandbox runs. Consequences:
   A stopped or destroyed sandbox stops being refreshed, and so does every
   sandbox while the node daemon is stopped. Grants that lapsed meanwhile are
   re-resolved when the sandbox is running under a connected daemon again.
-  Sandboxes created before this behavior shipped are refreshed after their
-  next cold boot or reconnect.
 - **Shared IPs.** While a grant is live, everything served from a granted
   address is reachable: other sites on the same CDN or virtual-hosting IP,
   regardless of the HTTP `Host` header or TLS SNI. WS Sandbox Proxy does not inspect HTTP

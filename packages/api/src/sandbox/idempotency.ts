@@ -60,7 +60,7 @@ export function hostJournalKey(hostOwnerId: string, hostId: string, serverBindin
   url.password = "";
   const server = serverBinding ?? url.toString();
   const keyHex = createHmac("sha256", Buffer.from(env.SANDBOX_REQUEST_HMAC_SECRET, "hex"))
-    .update(encodeHmacContext(["wssp-host-journal-key-v2", keyId, server, hostOwnerId, hostId]))
+    .update(encodeHmacContext(["wssp-host-journal-key-v1", keyId, server, hostOwnerId, hostId]))
     .digest("hex");
   return { keyVersion: 1 as const, keyId, server, hostOwnerId, hostId, keyHex };
 }
@@ -118,7 +118,7 @@ export function hashRequestBody(body: unknown, context: RequestDigestContext = {
   return createHmac("sha256", Buffer.from(env.SANDBOX_REQUEST_HMAC_SECRET, "hex"))
     .update(
       encodeHmacContext([
-        context.domain ?? "wssp-request-v2",
+        context.domain ?? "wssp-request-v1",
         requestDigestKeyId,
         env.BETTER_AUTH_URL,
         context.ownerId ?? "",
@@ -193,13 +193,13 @@ export function privateConfigBinding(
     bindingKeyId: metadata.requestDigestKeyId,
     bindingMac: hashRequestBody(
       { ...input, env: [...input.env].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)) },
-      { ...context, domain: "wssp-server-config-binding-v2" },
+      { ...context, domain: "wssp-server-config-binding-v1" },
     ),
   };
 }
 
-/** Only for env-free transfer identities which retain their existing SHA scheme. */
-export function hashLegacyEnvFreeBody(body: unknown): string {
+/** Plain SHA-256 of the canonical body, for env-free identities that carry no request MAC. */
+export function hashEnvFreeBody(body: unknown): string {
   return createHash("sha256").update(canonicalizeJson(body), "utf8").digest("hex");
 }
 
@@ -209,7 +209,7 @@ export function hashOperationRequestBody(
   context: RequestDigestContext = {},
 ): string {
   return kind === "KILL_SANDBOX" || kind === "STOP_SANDBOX"
-    ? hashLegacyEnvFreeBody(body)
+    ? hashEnvFreeBody(body)
     : hashRequestBody(body, context);
 }
 

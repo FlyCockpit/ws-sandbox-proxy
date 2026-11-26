@@ -1472,7 +1472,7 @@ describe("terminal lane on the relay session manager", () => {
         FakeSocket,
         { protocolVersion: string }
       >;
-      sessions.get(socket)!.protocolVersion = "10.7";
+      sessions.get(socket)!.protocolVersion = "0.7";
       const frame =
         type === "host.admission"
           ? {

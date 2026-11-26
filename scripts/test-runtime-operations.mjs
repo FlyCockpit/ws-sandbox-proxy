@@ -58,7 +58,7 @@ async function runtimeCheck(mode) {
   );
   await expiring.start();
   assert.equal(await health.hasExternalConsumer(queues.redisConnection, [expiringQueue]), true);
-  const expiryKey = `wssp:consumers:v2:external:${expiringQueue}`;
+  const expiryKey = `wssp:consumers:v1:external:${expiringQueue}`;
   const [replicaId] = await queues.redisConnection.zrange(expiryKey, 0, -1);
   assert.ok(replicaId);
   // Model a crashed publisher's expired score without waiting fifteen seconds.

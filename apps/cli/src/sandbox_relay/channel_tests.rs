@@ -1,4 +1,4 @@
-//! wssp-ssh 1a host channel tests: real `ChannelHost` + custodian threads +
+//! Host channel tests: real `ChannelHost` + custodian threads +
 //! journal + authority + registry over the FakeRuntime channel driver (no
 //! Incus, no socket). The fake guest speaks the real in-band protocol
 //! (PROMPT, preamble, secret-bound READY/EXIT); its IO never blocks. Time
@@ -2589,7 +2589,7 @@ fn seeded_interleavings_keep_the_trace_invariants() {
     }
 }
 
-/// H1 (pre-audit): stdin frames and the stdin eof that arrive after a
+/// H1: stdin frames and the stdin eof that arrive after a
 /// natural end was decided are dropped quietly, never a violation.
 #[test]
 fn stdin_after_a_natural_end_is_not_a_violation() {
@@ -2613,7 +2613,7 @@ fn stdin_after_a_natural_end_is_not_a_violation() {
     assert!(control.stdin().is_empty());
 }
 
-/// M1 (pre-audit): a promptly acknowledging channel is never timed out, and
+/// M1: a promptly acknowledging channel is never timed out, and
 /// a trickle of single acks does not keep a holder alive.
 #[test]
 fn trickle_ackers_time_out_and_innocent_channels_never_do() {
@@ -2686,8 +2686,6 @@ fn the_custodian_kills_at_the_deadline_on_its_own() {
     assert_eq!(exit.intent, Some(ChannelCloseIntent::Expired));
     assert_eq!(exit.signal, Some(9));
 }
-
-// ------------------------------------------------- codex v2 round 1 ----
 
 /// r1.1: many holders below any threshold cannot pin the cap: every
 /// unacknowledged frame is due within 60 s.
@@ -2834,8 +2832,6 @@ fn mismatched_opens_of_a_live_channel_count_as_violations() {
     assert_eq!(closes(&control), vec!["kill"]);
 }
 
-// ------------------------------------------------- codex v2 round 2 ----
-
 /// r2.2: an idle proof counts only for a stream found empty in this tick; a
 /// stream the tick's budget could not reach keeps its queued output. Both
 /// variants run (data on one stream, EOF on the other): whichever stream the
@@ -2934,8 +2930,6 @@ fn the_custodian_deadline_upgrades_an_unsettled_normal_close() {
     assert!(rig.slots.wait_idle(Duration::from_secs(5)));
 }
 
-// ------------------------------------------------- codex v2 round 3 ----
-
 /// r3.1: a normal close still settling at the deadline is killed even when
 /// its settled update is already queued for the owner.
 #[test]
@@ -3030,9 +3024,9 @@ fn slots_reserve_a_unit_until_the_slot_drops() {
 //
 // A tick only queues its frames; the socket writes follow once it has
 // decided everything. Every former site where a blocking write separated a
-// check from the action it guards (v2 r1.3, r4.1, Fable F1/F2, r5.1,
-// r6.1–r6.3) is crossed here during the flush instead: a deadline or a
-// revocation lands while a hooked write "blocks". What the tick decided
+// check from the action it guards is crossed here during the flush
+// instead: a deadline or a revocation lands while a hooked write
+// "blocks". What the tick decided
 // before it stands; the next tick acts on the crossing before anything else.
 
 /// Polls (bounded, r6.4) until a flush writes a frame matching `on`, then
@@ -3226,7 +3220,7 @@ fn ready_and_data_written_across_the_deadline() {
     wait_until("deadline kill", || killed(&rig, "ch-1"));
 }
 
-/// Fable F2: stdin admitted but not yet handed over (the guest's stdin is
+/// Stdin admitted but not yet handed over (the guest's stdin is
 /// full) when a revocation lands during a flush is never handed over: the
 /// next tick checks before it writes stdin.
 #[test]
@@ -3300,7 +3294,7 @@ fn a_failed_flush_write_ends_the_poll_after_the_tick_decided() {
     assert!(!killed(&rig, "ch-1"));
 }
 
-/// v2 r4.1 / Fable F1: an unsettled normal close's exit write crosses the
+/// An unsettled normal close's exit write crosses the
 /// deadline or a revocation while the settlement is queued: the next tick
 /// sees the crossing before it consumes the settlement, so the scope is
 /// killed and released only after the kill's answer.
@@ -3433,7 +3427,7 @@ fn a_natural_end_decided_before_a_flush_crossing_is_killed_next_tick() {
     }
 }
 
-/// Codex v3 r1.1 (1a.1: by construction): the setup deadline passes while
+/// By construction, the setup deadline passes while
 /// another channel's authority lookup waits (on a journal or credential
 /// lock) in the tick's gather phase. The tick's one clock read follows every
 /// lookup, so a starting channel with READY waiting in its pipe is ended by

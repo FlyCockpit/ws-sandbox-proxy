@@ -234,8 +234,9 @@ const INTENT_KINDS: Record<string, TerminalNoticeKind> = {
 };
 
 const ERROR_KINDS: Record<string, TerminalNoticeKind> = {
-  // The host refuses an open when the sandbox's journal lease records no
-  // guest identity: a sandbox created before terminals existed (C52-CO-5).
+  // The host refuses an open when this sandbox cannot host a terminal: its
+  // journal lease records no guest identity, it is a build sandbox, or the
+  // runtime has no PTY support.
   unsupported_capability: "noTerminalIdentity",
   host_capacity: "hostCapacity",
   rate_limited: "hostCapacity",

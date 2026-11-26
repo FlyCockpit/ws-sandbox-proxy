@@ -112,7 +112,7 @@ describe("template capture scrub spec (pg)", () => {
   it("E1-B-01: residue a stop reported scrubbed (cleared) is still scrubbed by the capture", async () => {
     const w = await world();
     // The repro: the stop's scrub reported verifiedAbsent, so the only
-    // residue row is cleared. Before the fix the capture spec was null.
+    // residue row is cleared, and the capture spec is still built.
     await residue(w, [".fakecli/token"], true);
     const built = await spec(w.sandbox.id);
     expect(built).not.toBeNull();

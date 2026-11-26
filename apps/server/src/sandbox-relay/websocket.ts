@@ -180,7 +180,7 @@ function releaseSocket(ws: SandboxRelayWsContext) {
   relaySockets.delete(ws);
 }
 
-/** The relay's CLI connect manager (`/v1/sandboxes/{id}/connect`, wssp-ssh 1b). */
+/** The relay's CLI connect manager (`/v1/sandboxes/{id}/connect`). */
 export function sandboxConnectManager() {
   return sandboxRelaySessionManager.connects;
 }

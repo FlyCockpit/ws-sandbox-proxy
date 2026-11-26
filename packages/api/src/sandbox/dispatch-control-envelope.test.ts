@@ -129,7 +129,7 @@ describe("command.run dispatch control envelope (C15-S1)", () => {
     expect(JSON.stringify(payload)).toBe(original);
   });
 
-  it("codex counterexample: guard rejects or production encodes", () => {
+  it("counterexample: guard rejects or production encodes", () => {
     const payload = fullCommandPayload("true", {
       architecture: "x".repeat(500),
       guestHome: `/${"x".repeat(64296)}`,

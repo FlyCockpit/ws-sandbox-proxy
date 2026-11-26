@@ -154,6 +154,12 @@ default to `false`, lengthen the grace, extend it to any check other than
 forced 2FA, or drop `createdAt` from a call site or session projection so
 the grace silently never ends.
 
+The 24-hour grace counts from the account's creation, not from the moment a
+policy is turned on. Turning on forced 2FA for public (non-admin) users later
+therefore applies at once to every account older than 24 hours: the
+forced-2FA check refuses those users until they enroll a second factor.
+Announce the change before you turn it on.
+
 ## CSP
 
 `apps/server/src/security-headers.ts` owns the policy. Do not add

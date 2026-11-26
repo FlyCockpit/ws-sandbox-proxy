@@ -398,7 +398,7 @@ struct Inner {
     /// recorded, so entries do not accumulate; cancels no job consumes
     /// (e.g. after a successful serve) are bounded by `CANCELLED_MAX`,
     /// oldest first. A cancel of a transfer a job runs (`running`) is never
-    /// the one dropped (land round 1): those are bounded by admission. Lock
+    /// the one dropped: those are bounded by admission. Lock
     /// order: this, then `running`.
     cancelled: Mutex<VecDeque<String>>,
     /// Transfers a job of this service runs now (serve, template upload once
@@ -2070,7 +2070,7 @@ impl ImageService {
                 };
                 // An ended job's kept report is not retired by a
                 // `continue: false` answer: the server also refuses a resume
-                // it could not fence right now (round 1 L1 #1), while the
+                // it could not fence right now, while the
                 // upload is still open. Only the report's own `report.ack`
                 // (handled, or nothing left to end) or its bounds retire it.
                 self.deliver(&job.resume_key(), frame);

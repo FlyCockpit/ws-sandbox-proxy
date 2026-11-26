@@ -189,7 +189,7 @@ const ENDPOINT_KEY_SHARE =
   /^sql:SELECT id, "operationKinds", events, "createdAt" FROM webhook_endpoint/;
 const EVENT_LOCK = /^sql:SELECT id, seq, "userId", type, .* FOR UPDATE SKIP LOCKED$/;
 
-describe("fan-out locks endpoints before events, like deletion (review rounds 1-4)", () => {
+describe("fan-out locks endpoints before events, like deletion", () => {
   it("fan-out first (holding endpoint and event): account finalization waits, then deletes everything", async () => {
     await drain();
     const { owner, eventId } = await seedFanOutCase();
@@ -305,7 +305,7 @@ describe("fan-out locks endpoints before events, like deletion (review rounds 1-
   });
 });
 
-describe("review round 5: ordered multi-endpoint deletion, bounded contention, rotating cursor", () => {
+describe("ordered multi-endpoint deletion, bounded contention, rotating cursor", () => {
   /** Owner with `endpoints` endpoints (all subscribed) and one unfanned event. */
   async function ownerWithEndpoints(endpoints: number) {
     const owner = await seedOwner(db.inspect);
@@ -407,7 +407,7 @@ describe("review round 5: ordered multi-endpoint deletion, bounded contention, r
   }, 60_000);
 });
 
-describe("review round 6: retention reaper takes endpoints before events", () => {
+describe("retention reaper takes endpoints before events", () => {
   /** An owner whose only state is an endpoint, an 8-day-old event and its delivery. */
   async function oldDeliveryCase() {
     const owner = await seedOwner(db.inspect);

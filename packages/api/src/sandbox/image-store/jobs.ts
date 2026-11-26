@@ -500,7 +500,8 @@ export async function sweepImageStore(
   // between the VERIFYING commit and the enqueue, or a dropped job) is
   // re-published after an hour. Give up after a day without claiming corruption,
   // even if this worker's store configuration is unavailable. storedAt records
-  // upload completion (entry to VERIFYING); older rows fall back to updatedAt.
+  // upload completion (entry to VERIFYING). No CHECK requires it, so a row
+  // without one ages from updatedAt rather than staying VERIFYING forever.
   let reverified = 0;
   {
     const hourAgo = new Date(now.getTime() - HOUR_MS);

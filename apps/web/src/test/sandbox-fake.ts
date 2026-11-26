@@ -43,7 +43,7 @@ export type FakeSandboxServer = {
   templates: Row[];
   observationResults?: Row[];
   connections?: Row[];
-  /** `sandboxes.listConnectSessions` rows (wssp-ssh §10), each with its `sandboxId`. */
+  /** `sandboxes.listConnectSessions` rows, each with its `sandboxId`. */
   connectSessions?: Row[];
   supportedSignals?: ("SIGKILL" | "SIGTERM" | "SIGINT" | "SIGHUP")[];
   capabilitiesUnavailable?: boolean;

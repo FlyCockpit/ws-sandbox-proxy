@@ -1976,7 +1976,7 @@ fn a_server_cancel_between_parts_stops_before_the_next_part() {
     assert_eq!(failed.cause, sandbox_protocol::ImageFailureCause::Refused);
     assert_eq!(failed.code, ImageFailureCode::Cancelled);
     assert_eq!(failed.refusal.as_deref(), Some("upload_stalled"));
-    // Round 4: the ended job took its cancel with it (no accumulation).
+    // The ended job took its cancel with it (no accumulation).
     wait_uploads_finished(&images, 1);
     assert!(!images.cancelled("tr-cut"));
 }
@@ -2905,7 +2905,7 @@ fn a_relay_reconnect_mid_upload_resumes_the_transfer() {
 /// is down queues its failure; the next connection gets the transfer's
 /// resume first, then that failure with its cause, and the job leaves the
 /// resume registry only once the failure was acknowledged (a `continue:
-/// false` answer to its resume does not retire it, round 1 L1 #1: the
+/// false` answer to its resume does not retire it: the
 /// failure still goes, and its `report.ack` retires the job).
 #[test]
 fn a_failure_while_the_relay_is_down_reaches_the_server_after_resume_with_its_cause() {
@@ -4372,7 +4372,7 @@ fn an_old_census_page_queued_behind_a_failed_batch_is_gone_after_reconnect() {
 
 /// An ended job answered `continue: false` keeps its terminal report (and
 /// its registry entry) until the report's `report.ack`, which then takes
-/// its queued resume and terminal frame with it (round 1 L1 #1).
+/// its queued resume and terminal frame with it.
 #[test]
 fn a_refused_resume_keeps_the_ended_jobs_report_until_acked() {
     let runtime = FakeRuntime::default();
@@ -4400,7 +4400,7 @@ fn a_refused_resume_keeps_the_ended_jobs_report_until_acked() {
     );
     assert_eq!(images.resumable_jobs(), 1);
     answer_transfer_resume(&images, "tr-refused", false);
-    // Round 1 (L1 #1): a refused resume may be a fence of the moment; the
+    // A refused resume may be a fence of the moment; the
     // ended job's failure stays queued and the job registered until acked.
     assert_eq!(images.resumable_jobs(), 1);
     let id = images
@@ -4798,7 +4798,7 @@ fn a_kept_job_report_follows_its_resume_and_the_ack_retires_the_job() {
     assert!(images.queued().is_empty(), "{:?}", images.queued());
 }
 
-/// Round 1 (L1 #1): a `continue: false` answer to an ended job's resume does
+/// A `continue: false` answer to an ended job's resume does
 /// not retire its kept report: the server also refuses a resume it could not
 /// fence right now while the upload is still open. The report (and its job,
 /// so the next connection resumes it first) stays until its `report.ack`; a
@@ -4836,7 +4836,7 @@ fn a_resume_answered_continue_false_keeps_the_job_report_until_acked() {
     assert!(images.queued().is_empty(), "{:?}", images.queued());
 }
 
-/// Round 1 (L1 #4): a report forgotten at a reconnect (past its age) goes
+/// A report forgotten at a reconnect (past its age) goes
 /// with its queued copy (a failed batch had put it back) and its job's
 /// resume: nothing of it reaches the new connection.
 #[test]
@@ -4858,7 +4858,7 @@ fn a_report_forgotten_at_a_reconnect_leaves_nothing_queued() {
     assert!(images.queued().is_empty(), "{:?}", images.queued());
 }
 
-/// Round 1 (L1 #3): re-queued reports and resumes respect `OUTBOX_MAX` like
+/// Re-queued reports and resumes respect `OUTBOX_MAX` like
 /// any push: advisory frames make room for them.
 #[test]
 fn re_queued_reports_keep_the_outbox_bounded() {
@@ -5078,13 +5078,13 @@ fn a_cancel_of_an_ended_job_is_not_recorded() {
     assert!(!images.cancelled("tr-9"));
     images.handle_server(cancel("tr-live"));
     assert!(images.cancelled("tr-live"));
-    // Rounds 3-4: a stale answer to a repeat that arrives after the report
+    // A stale answer to a repeat that arrives after the report
     // was acked is not recorded either (no job runs it any more).
     let id = images.kept_reports()[0].clone();
     images.handle_server(ack(&id));
     images.handle_server(cancel("tr-9"));
     assert!(!images.cancelled("tr-9"));
-    // Round 5: cancels no job consumes (late, after a successful serve)
+    // Cancels no job consumes (late, after a successful serve)
     // stay bounded; the newest are kept.
     for i in 0..=CANCELLED_MAX {
         images.handle_server(cancel(&format!("tr-late-{i}")));
@@ -5094,7 +5094,7 @@ fn a_cancel_of_an_ended_job_is_not_recorded() {
     assert_eq!(images.inner.cancelled.lock().unwrap().len(), CANCELLED_MAX);
 }
 
-/// Land round 1: the `CANCELLED_MAX` cap never drops the cancel of a
+/// The `CANCELLED_MAX` cap never drops the cancel of a
 /// transfer a job still runs (a serve inside a long export, an upload
 /// between parts), however many other cancels arrive meanwhile; once the
 /// job ends its cancel is an ordinary one again.
@@ -5126,7 +5126,7 @@ fn the_cancel_cap_keeps_a_running_jobs_cancel() {
     assert_eq!(images.inner.cancelled.lock().unwrap().len(), CANCELLED_MAX);
 }
 
-/// Round 1 (L2 #4): a cancel stops a part body at its next buffer, so a
+/// A cancel stops a part body at its next buffer, so a
 /// slow PUT does not keep its job (and the export slot and staging) until
 /// the whole part went out.
 #[test]

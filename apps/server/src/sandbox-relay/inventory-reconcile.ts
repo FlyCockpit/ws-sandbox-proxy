@@ -717,7 +717,7 @@ export async function convergeInventoryEntry(
                 return { converged: true };
               return { converged: lease.adopted };
             }
-            // Codex WP2 r3 #2: without root evidence the disk reservation
+            // Without root evidence the disk reservation
             // stays held, so the host keeps its rootless retry until root
             // evidence settles the rest (partial convergence is not converged).
             const moved = await convergeStoppedOrMissing(tx, sender, sandbox, "absent", null, now);
@@ -1720,8 +1720,8 @@ async function recordSettledHostExpiry(
  * only when `predates` (the session's observation fence) proves the
  * observation began after every lifecycle result received for its sandbox.
  * Otherwise it is `superseded` untouched (the host re-observes it later): a reconnect's READY result can
- * overtake a stopped observation taken under its new lease (Codex WP2 r3
- * P1), and the result is the newer truth. The fence defaults closed. */
+ * overtake a stopped observation taken under its new lease, and the result
+ * is the newer truth. The fence defaults closed. */
 export async function judgeExpiryStatus(
   sender: RelaySender,
   entries: readonly InventoryEntry[],

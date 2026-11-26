@@ -553,7 +553,7 @@ it.each(["same", "missing-pool", "different-key"] as const)(
     await parked.waitReached();
     const winner = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         ...prior,

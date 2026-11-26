@@ -115,7 +115,7 @@ can read device credentials, replace daemon code, and control Incus. A MAC deriv
 from the same uid's credential would not enforce a stronger boundary, so journal
 MACs are not introduced here.
 
-Relay v9 carries lease deadlines, actions and revisions on create, reconnect and
+The relay carries lease deadlines, actions and revisions on create, reconnect and
 renew. The host persists the accepted decision before boot or renewal ACK;
 lease checkpoints survive receipt confirmation and are repaired from durable
 receipt decisions on restart. The server records effective lifetime only from
@@ -190,7 +190,7 @@ these metadata-only audit logs use the deployment's normal log retention.
 
 ## Host dashboard edits and daemon metadata
 
-The owner's `label` is authoritative. A registered hello no longer overwrites
+The owner's `label` is authoritative. A registered hello never overwrites
 it with the daemon's `--label`; it records only the daemon-reported runtime
 (`daemonRuntime`: `FAKE`, `INCUS_KVM`, `UNSUPPORTED`) and `daemonVersion`, which
 are display metadata and never admission inputs.
@@ -392,8 +392,7 @@ use a Sheet; availability distinguishes verified from pending evidence.
 
 The SDK key page displays exact revision/pool IDs and selected-host association
 status. A pooled ALLOWLIST key needs the pool, current host and exact revision
-grants together. The [re-mint walkthrough](../guide/auth-planes.md#minting-sdk-resource-grants)
-covers retained identities with emptied template grants after the reset.
+grants together. See [minting SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants).
 Create envs remain transient browser form/mutation state: safe settlement clears
 them; uncertain requests retain exact input for replay, with no browser storage,
 values in toasts or detail readback. The sandbox detail shows safe retained

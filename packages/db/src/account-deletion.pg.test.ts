@@ -81,7 +81,7 @@ async function seedReceipts(userId: string) {
     data: {
       digestContext: {
         version: 1,
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "",
         hostOwnerId: "",
         generation: null,
@@ -330,7 +330,7 @@ async function seedEveryReceipt(userId: string) {
     data: {
       digestContext: {
         version: 1,
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "",
         hostOwnerId: "",
         generation: null,
@@ -353,7 +353,7 @@ async function seedEveryReceipt(userId: string) {
     data: {
       digestContext: {
         version: 1,
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "",
         hostOwnerId: "",
         generation: null,
@@ -394,7 +394,7 @@ async function seedEveryReceipt(userId: string) {
     data: {
       digestContext: {
         version: 1,
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "",
         hostOwnerId: "",
         generation: null,
@@ -654,7 +654,7 @@ async function seedEveryReceipt(userId: string) {
       generation: 1,
     },
   });
-  // wssp-ssh §10: a CLI connect audit row (cascades with the account).
+  // A CLI connect audit row (cascades with the account).
   await db.inspect.sandboxConnectSession.create({
     data: {
       id: `c-${userId}`,
@@ -839,7 +839,7 @@ async function seedCapacityWait(
     data: {
       digestContext: {
         version: 1,
-        domain: "wssp-request-v2",
+        domain: "wssp-request-v1",
         hostId: "",
         hostOwnerId: "",
         generation: null,

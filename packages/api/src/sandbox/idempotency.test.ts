@@ -98,13 +98,13 @@ it("derives stable per-server owner and enrolled-host keys with the specified LP
 it("request HMAC and host key derivation match independent LP vectors", () => {
   expect(requestDigestMetadata().requestDigestKeyId).toBe("8b5de811559de0500133031b29046644");
   expect(hashRequestBody({ env: { K: "private" } })).toBe(
-    "8e3145ce71fc949b09d4ab20e8c3d98ebb8d9c47337afbee7a97836522b89f26",
+    "f3638298a086c84fdd63b08f3e2baa437f8b856b2d12305ae5047dc3f6f75761",
   );
   const host = hostJournalKey("owner", "host");
   const proof = createHmac("sha256", Buffer.from(host.keyHex, "hex"))
     .update(Buffer.concat([Buffer.from([0, 0, 0, 14]), Buffer.from("host-key-proof")]))
     .digest("hex");
-  expect(proof).toBe("43a24a275fac09cf2aac6a38d4c38610876390c82369467031abcbde72b89173");
+  expect(proof).toBe("4470111b24cd21acc86cf552f7349d0ae00a027fa995d8c84d610d041da70e79");
 });
 
 it("private config server binding has a separate LP domain, identity and principal", () => {
@@ -127,7 +127,7 @@ it("private config server binding has a separate LP domain, identity and princip
   expect(binding.bindingScheme).toBe("hmac-sha256-v1");
   expect(binding.bindingKeyId).toBe(requestDigestMetadata().requestDigestKeyId);
   expect(binding.bindingMac).toBe(
-    "603cbad7b1e80d2cb329c84da22f25b505435b2e6064ce83b9dd10565adac17d",
+    "e24b5bd6075bf5754d9b88e29da1be5f822f739a813f9172e0421373d63c096a",
   );
   expect(privateConfigBinding({ ...input, env: [...input.env].reverse() }, context)).toEqual(
     binding,
@@ -171,7 +171,7 @@ it("3B bound request HMAC has independent LP owner/host/authorizer vectors and c
     .update(
       Buffer.concat(
         [
-          "wssp-request-v2",
+          "wssp-request-v1",
           "8b5de811559de0500133031b29046644",
           "http://localhost:3000",
           "owner",

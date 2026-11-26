@@ -197,7 +197,7 @@ closes host PTYs and preserves guest work. Optional mode is local-only via
 `wssp host config set-host-terminal-totp optional`. The dashboard can raise the
 requirement on a connected host; only a persisted ACK confirms it. Offline
 TOTP-raise requests are not stored; timeout/disconnect needs an explicit retry.
-There is no dashboard enable control. You can now choose **Turn off** for
+There is no dashboard enable control. You can choose **Turn off** for
 **People may open a host terminal** on the host detail's **Agent access** card. This
 immediately refuses new tickets and attachments, sets a durable server-side
 veto and asks the daemon to persist off and close host PTYs. The node cannot
@@ -206,8 +206,8 @@ vetoed receives another turn-off request. Only a live owner browser session
 can choose **Allow again** to lift the dashboard block only when the node is
 online and its live report at the current epoch says host terminals are off.
 If it reports on, run `wssp host config set-host-terminal off` at the node first and
-wait for the off report. Lifting the block does not turn on the node setting. This supersedes
-the earlier absence of dashboard lowering; see [ADR-006](../design/adr-006-agent-host-access.md).
+wait for the off report. Lifting the block does not turn on the node setting. See
+[ADR-006](../design/adr-006-agent-host-access.md).
 Turning off **Agents may run host commands** separately interrupts agent host
 commands and pending file work. Guest terminals are a separate target.
 

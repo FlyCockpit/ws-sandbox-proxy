@@ -578,7 +578,7 @@ describe("disk.upload.parts / complete (S1)", () => {
   });
 
   it("a transfer that ended while ListParts ran is not claimed", async () => {
-    // Round 1 (L3 #3): the claim re-checks the transfer, not only the session.
+    // The claim re-checks the transfer, not only the session.
     const w = await opened();
     listAll(w.session, [3 * (MIB + 16)]);
     const transferId = (await sessions(w.offload.id))[0]!.transferId!;
@@ -671,7 +671,7 @@ describe("disk.upload.parts / complete (S1)", () => {
   });
 
   it("a disk heartbeat keeps its upload alive while the shared grant budget is exhausted, once per interval", async () => {
-    // Rounds 1 (L2 #1), 2 (B #2) and 3: template ids on the same connection
+    // Template ids on the same connection
     // never crowd out the disk upload's liveness.
     const { OFFLOAD_UPLOAD_STALL_MS } = await import("@wssp/api/sandbox/disk-offload/upload-stall");
     const { handleImageUploadProgress } = await import("./image-handlers");
@@ -717,7 +717,7 @@ describe("disk.upload.parts / complete (S1)", () => {
   });
 
   it("a cleanup failure after the stall rule committed loses no ended row's cancel", async () => {
-    // Round 4: cleanup is best effort; every committed end is returned.
+    // Cleanup is best effort; every committed end is returned.
     const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
       "@wssp/api/sandbox/disk-offload/upload-stall"
     );
@@ -749,7 +749,7 @@ describe("disk.upload.parts / complete (S1)", () => {
   });
 
   it("a heartbeat racing the stall rule waits for its locked re-check and moves nothing after it", async () => {
-    // Round 1 (L2 #2): the decision and the end are one locked step; a
+    // The decision and the end are one locked step; a
     // heartbeat that arrives meanwhile cannot commit fresh progress under
     // an upload the rule is about to fail.
     const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
@@ -796,7 +796,7 @@ describe("disk.upload.parts / complete (S1)", () => {
   });
 
   it("a disk resume racing the stall rule takes sandbox → session → transfer as it does: no deadlock", async () => {
-    // Round 2 (A #2 / B #1): sandbox → offload → session → transfer.
+    // Lock order: sandbox → offload → session → transfer.
     const { endStalledOffloadUploads, OFFLOAD_UPLOAD_STALL_MS } = await import(
       "@wssp/api/sandbox/disk-offload/upload-stall"
     );
@@ -1462,7 +1462,7 @@ describe("transfer authority (T8)", () => {
 });
 
 /**
- * Review r2 (2+3): the daemon reports its unfinished offloads after
+ * The daemon reports its unfinished offloads after
  * reconciliation; each is answered from this host's own row, however old
  * or however many (pages of at most 256).
  */
@@ -1621,7 +1621,7 @@ describe("disk.offload.inventory (reconnect re-ack)", () => {
 });
 
 /**
- * Review r3 (1): the daemon's `disk.offload.released` records that the
+ * The daemon's `disk.offload.released` records that the
  * source host dropped a verified offload's alias, export and staging (the
  * host's export slot is free only then), once, on that host's own row.
  */

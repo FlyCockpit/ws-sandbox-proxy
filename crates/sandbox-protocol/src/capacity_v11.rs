@@ -56,7 +56,7 @@ macro_rules! checked {
         checked!($public, $raw, { $($field: $ty),* }, optional {}, $v, $valid);
     };
     // `optional` fields may be absent (their default) and are never encoded
-    // at their default, so older peers' frames stay byte-identical.
+    // at their default, so a frame has one canonical spelling.
     ($public:ident, $raw:ident, { $( $field:ident : $ty:ty ),* $(,)? }, optional { $( $ofield:ident : $oty:ty ),* $(,)? }, $v:ident, $valid:expr) => {
         #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
         #[serde(rename_all = "camelCase", try_from = "serde_json::Value")]

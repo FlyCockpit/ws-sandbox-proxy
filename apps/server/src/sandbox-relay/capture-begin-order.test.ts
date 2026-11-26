@@ -31,7 +31,7 @@ describe("capture begin ordering", () => {
     expect(await new CaptureBeginOrder().hold(sender, begin("op-1"))).toBe("handle");
   });
 
-  it("a failed lookup neither handles the begin early nor holds it: retry (rounds 2 A #1, 3 A #1)", async () => {
+  it("a failed lookup neither handles the begin early nor holds it: retry", async () => {
     count.mockRejectedValueOnce(new Error("database unavailable"));
     const order = new CaptureBeginOrder();
     expect(await order.hold(sender, begin("op-1"))).toBe("retry");

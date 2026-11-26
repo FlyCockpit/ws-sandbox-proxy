@@ -72,7 +72,7 @@ export async function endStalledOffloadUploads(
       })
       .catch(() => null);
     // Best-effort cleanup (the sweeper retries it): a failure never loses
-    // this or another committed row's cancel (round 3).
+    // this or another committed row's cancel.
     await finishEndedOffload(store, done).catch(() => {});
     if (done)
       ended.push({

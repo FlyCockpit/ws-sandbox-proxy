@@ -441,7 +441,7 @@ it.each(["same", "other"] as const)(
     const accepted = await db.inspect.sandboxActionReceipt.create({
       data: {
         digestContext: digestContextSnapshot(
-          { domain: "wssp-action-v2", hostId: f.host.id, hostOwnerId: f.owner.ownerId },
+          { domain: "wssp-action-v1", hostId: f.host.id, hostOwnerId: f.owner.ownerId },
           { generation: 1 },
         ),
 
@@ -462,7 +462,7 @@ it.each(["same", "other"] as const)(
             eof: false,
           },
           {
-            domain: "wssp-action-v2",
+            domain: "wssp-action-v1",
             ownerId: f.owner.ownerId,
             hostOwnerId: f.owner.ownerId,
             hostId: f.host.id,

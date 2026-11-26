@@ -425,7 +425,7 @@ it.each(["same", "other"] as const)(
     const winner = await db.inspect.sandboxActionReceipt.create({
       data: {
         digestContext: digestContextSnapshot(
-          { domain: "wssp-action-v2", hostId: f.host.id, hostOwnerId: f.ownerId },
+          { domain: "wssp-action-v1", hostId: f.host.id, hostOwnerId: f.ownerId },
           { generation: 1 },
         ),
 
@@ -442,7 +442,7 @@ it.each(["same", "other"] as const)(
         requestBodyHash: digests.hashRequestBody(
           { action: "sandboxes.probe", input },
           {
-            domain: "wssp-action-v2",
+            domain: "wssp-action-v1",
             ownerId: f.ownerId,
             hostId: f.host.id,
             hostOwnerId: f.ownerId,
@@ -490,7 +490,7 @@ it("3B operation and action writers bind request HMAC to owner, original host an
     digests.hashRequestBody(
       { action: "sandboxes.probe", input: probe },
       {
-        domain: "wssp-action-v2",
+        domain: "wssp-action-v1",
         ownerId: f.ownerId,
         hostId: f.host.id,
         hostOwnerId: f.ownerId,

@@ -177,8 +177,8 @@ long-poll" below; SDK `polling.longPollMs`, default 20 s): a read the server
 held for its whole hold, or an output answer the server paced (held its 2 s
 progress hold) that moved the cursor, is re-sent at once with the backoff reset;
 early answers, replays and answers without news back off as before; an output
-page for a different operation ID is a protocol error, and a first 400 to `waitMs` (a server
-that predates it) switches that client to plain polling. An
+page for a different operation ID is a protocol error, and a 400 to a `waitMs` read is a
+real error that is never retried without `waitMs`. An
 operation that ends `UNKNOWN_OUTCOME` is not automatically retried by the SDK;
 the teardown recovery exception is described below. `create` resolves only
 a READY sandbox, `destroy` only confirmed deletion (DELETED or a confirmed
@@ -444,7 +444,7 @@ Create selectors accept slug, slug:tag, template/logical-ID or revision/ID.
 Ungrantable, absent, retired and unresolved revisions are absence-equivalent.
 The retained sandbox context uses origin host, exact revision and nullable
 origin pool, including replay, receipt, cancellation, files and terminal reads.
-Pools are not active in this release. See [SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants).
+See [SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants) for host and pool grants.
 
 ## Mutation actions and receipts
 
@@ -497,7 +497,7 @@ the host that holds it; an OFFLOADED one is restored onto an eligible host
 and lease arm and preserve the timeout policy. Deleted
 sandboxes cannot reconnect. Lease renewal reports requested versus effective
 lease in the sandbox read DTO; a receipt never promises an offline extension.
-Renewals stay QUEUED until dispatched and acknowledged by the host. Relay v8
+Renewals stay QUEUED until dispatched and acknowledged by the host. The relay
 carries `lease: {revision, deadlineUnixMs, action, expiryPolicy}` on create,
 reconnect and `sandbox.lease.renew`; successful results echo that exact tuple.
 Effective revision advances monotonically from matching ACKs; the deadline may
@@ -539,9 +539,8 @@ keys, malformed JSON and non-string values. `states` is one comma-separated list
 cursor/take (`limit + 1`). Dashboard `status=active|deleted|all` explicitly requests
 history. Normalized equivalent map/state order and changed limits may reuse a cursor;
 changed owners/filters/order cannot. Cursors contain a query hash, never envs.
-Invalid stored metadata on disposable pre-launch rows reads as `{}` on lists and
-detail views. Each adaptation logs one constant warning with only the sandbox id
-and `legacy_metadata_dropped` code; input validation remains strict.
+Stored metadata is validated on every read: a sandbox DTO is never built from
+an invalid stored map, and input validation is equally strict.
 Any explicit metadata filter, including `{}`, excludes invalid stored maps
 before pagination. Filtered pages select at most `limit + 1` valid positions in
 SQL, then apply the original owner/key predicates again in a bounded projection
@@ -611,8 +610,8 @@ locks in `apps/server/src/sandbox-relay/egress-capability-race.pg.test.ts`.
 Host
 daemons advertise `egressPolicy` in the relay hello; the
 control plane records it as `SandboxHost.egressEnforcement` (disclosed on the
-host DTO as `egressEnforcement`). Relay protocol v10 requires both peers to be
-upgraded together. The normalized policy and its SHA-256 hash — over the
+host DTO as `egressEnforcement`). Both peers speak exactly relay protocol 1.0;
+a peer offering any other version is refused. The normalized policy and its SHA-256 hash — over the
 canonical JSON text itself (`{"cidrs":[],"domains":[]}` for deny-all), never
 a re-serialized wrapper — are persisted on the sandbox row at create, ride
 the create
@@ -706,8 +705,8 @@ binding so the restart drain keeps the sandbox deliberately fenced without
 rebuilding or tearing down anything under the bound VM, and recovery runs
 through the existing journaled kill/teardown path; the request's recorded
 policy identity is also compared explicitly against the persisted record
-(`verify_recorded_policy_identity`), since a verify-only reconnect can no
-longer rely on the apply's rule-equality check to reject a changed policy.
+(`verify_recorded_policy_identity`), since a verify-only reconnect cannot
+rely on the apply's rule-equality check to reject a changed policy.
 Every resume still passes the start's pre-issue fences (cold) or the
 readiness fence (warm), so no window between verification and Ready can
 resume unenforced. Readiness includes the fence state:
@@ -741,7 +740,7 @@ unenforced one `unreachable` (never a false Ready), while the cleanup
 itself is driven by the op-result paths above; a live probe likewise
 reports the guest reachable (`guest_ready`) only past the boundary,
 otherwise the error surfaces as `unreachable` to its callers. Detection alone is not a cleanup
-outcome: the boundary now also writes a DURABLE record
+outcome: the boundary also writes a DURABLE record
 (`enforcement-losses/<id>.json`, write-if-absent, own-project validated)
 on every confirmed running-VM drift, so every consumer — operation result,
 receipt settle, census, probe — feeds the same signal and none can drop
@@ -786,10 +785,10 @@ errors carry the drift code) — authorizes enforcement-loss cleanup: the
 observation — timeout, cancellation, unknown-outcome, a transport or
 daemon read failure nested in the readback, an unsettleable DNS
 obligation, or an exhausted coherence budget — propagates its own
-retryable code at every layer, running or stopped: `check_readiness` no
-longer converts it to `guest_unavailable`, the warm reconnect journals no
+retryable code at every layer, running or stopped: `check_readiness` never
+converts it to `guest_unavailable`, the warm reconnect journals no
 refusal fence for it, and the drain keeps the record and acts never. The
-loss record itself moved onto the same atomic, crash-durable journal write
+loss record itself uses the same atomic, crash-durable journal write
 path as the provisioning journal (`write_durable_record`: unique no-follow
 temp, file fsync, atomic rename, directory fsync). A persistence failure
 is actionable — named in the detection error, never silently treated as
@@ -797,7 +796,7 @@ recorded — and because only a WELL-FORMED own-project record counts as
 standing, an interrupted (truncated/empty) write is rewritten by the next
 detection; enumeration treats an unreadable or unparseable record as
 actionable evidence to re-verify from live daemon state, never as a
-reason to skip the sandbox, so one partial write can no longer
+reason to skip the sandbox, so one partial write cannot
 permanently disable observational cleanup. Local observations and persistence failures obey the same
 classification rules. First, local persisted-state reads are fallible throughout
 the observation: an unreadable or unparseable DNS revocation marker
@@ -810,7 +809,7 @@ deleted over a local EACCES/EIO/partial write; only positively OBSERVED
 divergence — a readable pending revocation marker, a cleanly absent or
 foreign plan record, a live-versus-plan comparison mismatch — is
 `ConfirmedDrift`. Second, when the loss record cannot be persisted, the
-boundary no longer relies on re-detection: it takes a permit-INDEPENDENT
+boundary does not rely on re-detection: it takes a permit-INDEPENDENT
 restrictive action itself — an ownership-fenced force-stop of the
 breached VM on a separately scoped cleanup permit (the caller's revoked
 permit must not strand a confirmed breach, and a probe/census caller's
@@ -820,7 +819,7 @@ non-destructive: teardown authority stays with the relay's
 GuestUnavailable-driven lifecycle cleanup and, once the journal is
 writable again, the re-detecting drain. A stop failure is diagnostic-only;
 the drift signal stands regardless.
-Transition marking and the confirmed-breach halt share enforcing boundaries. Transition marking no longer predicts
+Transition marking and the confirmed-breach halt share enforcing boundaries. Transition marking does not predict
 at pass entry: the guard lives at the shared mutation boundary, acquired
 LAZILY immediately before the first actual mutation and retained through
 the settle's plan commit. The blind pre-fence fills the caller's guard
@@ -828,13 +827,13 @@ cell only on its way into a genuine fence add, and the recovery settle
 marks from the exact post-probe settle condition on a fresh clock — so a
 grant whose expiry lands DURING the recovery probe (the probe deadline
 deliberately runs right up to the earliest future expiry, as much as 20
-seconds beyond the old +2s prediction window) is fenced, withdrawn, and
+seconds out) is fenced, withdrawn, and
 committed as a marked transition, and a concurrent verifier whose own
 recovery already finished retries to a coherent snapshot instead of
 comparing the old plan against the narrowed ACL and convicting a healthy
 expiry of drift. A genuinely no-op pass still never marks, so a healthy
 leased sandbox's epoch stays stable. And the permit-independent
-restrictive action is now ONE boundary — `halt_confirmed_breach`, an
+restrictive action is ONE boundary — `halt_confirmed_breach`, an
 ownership-fenced force-stop on a fresh bounded cleanup permit — shared by
 the detection path's loss-record-persistence failure and the drain's
 teardown-bookkeeping failure: when the loss record stands but the
@@ -848,7 +847,7 @@ keeps destruction authority with the relay's lifecycle cleanup and the
 drain's fenced teardown, which the retained loss record retries on the
 next pass. Healthy, inconclusive, and foreign observations never reach
 the halt.
-Loss-drain scheduling and persisted-plan validation fail closed independently. The enforcement-loss drain now enforces the SAME scheduling
+Loss-drain scheduling and persisted-plan validation fail closed independently. The enforcement-loss drain enforces the SAME scheduling
 boundary as the network-cleanup drain: per-record failure isolation (one
 persistently failing record — a halted breach whose teardown bookkeeping
 keeps failing on an unwritable `network-cleanups` journal — never strands
@@ -858,7 +857,7 @@ best-effort progress hint, never evidence) that resumes each pass AFTER
 the last attempted record, wrapping around, with the 256-per-pass bound
 applied AFTER rotation — so retained records can neither monopolize the
 head of every sweep nor hide records behind an alphabetical cap. And the
-persisted-plan reader now shape-validates the WHOLE record — required
+persisted-plan reader shape-validates the WHOLE record — required
 string identity, parseable gateway, the rules array, and grants /
 policy_cidrs as fully well-typed arrays with every grant a parseable CIDR
 — BEFORE the identity comparison: a valid-JSON but structurally malformed
@@ -866,7 +865,7 @@ record (`{}`, `null`, a wrongly typed `sandbox_id`, a truncated write) is
 unavailable EVIDENCE and classifies inconclusive, never as positive proof
 of a foreign plan; only a well-formed record positively recorded for a
 DIFFERENT sandbox reads as "no plan of ours here". A malformed record
-therefore can no longer manufacture confirmed drift that convicts — and
+therefore cannot manufacture confirmed drift that convicts — and
 deletes — a healthy VM.
 
 Autonomous cleanup preserves lifecycle and capacity ownership. Every destructive
@@ -884,7 +883,7 @@ confirmed breach on the independent cleanup permit, retains its loss record,
 and grants no deletion authority. Complete runs only after confirmed VM and
 network absence, durably records `expiryComplete` and `instanceAbsent`, then
 allows loss-record retirement. A failed Complete retains retry evidence.
-The existing connected `sandbox.expiry_status` publication now carries these
+The connected `sandbox.expiry_status` publication carries these
 non-timer completions too: generation-fenced inventory convergence releases
 server `liveResourcesHeld`/host `liveCount` and fences late results, while the
 reader's exact-arm completion check releases `LiveSandboxAdmission`. No socket
@@ -896,8 +895,9 @@ cannot settle or free a newer successful allocation at either boundary.
 Every timer attempt binds to its immutable worker-start intent. Timer
 workers and loss drains complete through ONE journal CAS, including the exact
 lease, generation, binding, template and stop-versus-destruction intent. A
-stop-only worker predating loss escalation cannot complete, publish absence,
-release capacity or authorize rearming. An upgraded worker must actually destroy.
+stop-only worker started before loss escalation cannot complete, publish absence,
+release capacity or authorize rearming; completing the escalated arm requires
+actual destruction.
 An enforcement-loss arm, like a destroy lease, cannot be rearmed as a stopped VM.
 
 The lifecycle boundary is installed before startup inventory and shared by all
@@ -975,7 +975,7 @@ denies the whole name and is never installed. The AAAA view is validated
 with the same strictness: NODATA/NXDOMAIN are fine, malformed responses
 deny like malformed A responses, and actual AAAA data denies the name as
 UNSUPPORTED_CAPABILITY rather than silently narrowing the grant to v4. The
-same rebinding check now also guards create-time compilation. Refresh
+same rebinding check also guards create-time compilation. Refresh
 lifetimes clamp to 30–300s. A domain grant is a content grant, never a
 resolver grant: each domain-resolved address also gains `reject` companions
 for DNS/DoT (udp/53, tcp/53, tcp/853) — Incus orders drop > reject > allow
@@ -1075,8 +1075,8 @@ TCP/443 included — the port-scoped DNS/DoT companions alone leave the
 rest open) installed through an INDEPENDENTLY bounded, permit-free
 client, so revoking the issuing permit mid-mutation cannot leave the
 destination unprotected. Allow rules carry a per-name monotonic
-GENERATION (`wssp-dns-g<N>-<hex>`; generation 0 keeps the legacy
-`wssp-dns-<hex>` shape), so a re-grant's rule can never be mistaken for
+GENERATION (`wssp-dns-g<N>-<hex>`, the compile-time generation 0
+included), so a re-grant's rule can never be mistaken for
 a stale request's rule: a re-grant does NOT retire the older pending
 entry. The pending entry
 outlives the commit (readiness stays refused) and is NEVER retired by
@@ -1281,7 +1281,7 @@ floors plus a global request floor folded from the armed obligations'
 identities and the durable request counter), stops and unmaps the lease
 owner, and durably retires the obligations, the withdrawal evidence, and
 the fence-epoch counter; recovery treats obligations whose ACL is gone
-as moot, so records left by older builds never block a recreate.
+as moot, so stale records never block a recreate.
 
 The expiry fence for an INITIAL grant is computed statically at
 construction: one `dns_lease_entry` constructor arms every
@@ -1314,7 +1314,7 @@ commit revalidates its refreshed rules against the live ACL, dropping
 anything another lifecycle writer already settled between the snapshot
 and the commit.
 
-Lease deadlines now
+Lease deadlines
 propagate through EVERY owner-lock-held operation: the
 watcher's preliminary read is bounded by the next live armed expiry,
 the settlement's commit-lock wait and under-lock ACL read share one
@@ -1331,7 +1331,7 @@ STANDING fence obligation carried by the marker — installed before
 anything broadens, released only through the journaled path once the
 policy authorizes the destination again — so a deferred daemon-side
 apply can only ever land behind the fence, while clean teardown and
-recreation stay usable (a standing-only marker no longer blocks
+recreation stay usable (a standing-only marker does not block
 readiness; unresolved pending entries still do). Coverage for an allow
 withdrawal means a SURVIVING VERIFIED authorization: an
 installed allow whose entire reject-companion group is observed and not
@@ -1351,7 +1351,7 @@ obligation retire without waiting for another grant lifecycle event —
 retirement still conditional on durable proof.
 
 Authorization coverage, fence release, and
-evidence durability now sit behind a single complete boundary each.
+evidence durability sit behind a single complete boundary each.
 Readiness refuses while ANY identity's revocation is owed to the live
 ACL, not only while pending mutations exist: a crash between
 the last removal and the commit leaves `pending` empty and `revoked`
@@ -1379,7 +1379,7 @@ continues the sequence. Expiry coverage is an OBSERVED, COMPLETE,
 SURVIVING rule group — never an unexpired armed obligation,
 which proves nothing about a surviving authorization; a failed coverage
 read fails closed (fenced). The commit gate refuses ANY unexplained
-loss: a tolerated absence now requires affirmative settlement
+loss: a tolerated absence requires affirmative settlement
 evidence (withdrawal evidence for the rule's own group or its
 destination), so a newly installed rule deleted underneath the pass
 refuses exactly like a previously durable one. Positive withdrawal
@@ -1399,9 +1399,9 @@ an expiring destination unfenced past its own deadline.
 
 Fence release checks adoption journals, release-phase deadlines,
 coverage lifetimes, and blind-fence reconciliation. Every fence-adoption
-site excludes identities with an unresolved release in EITHER journal: the refresh's preventive and at-issuance adoption checks now
+site excludes identities with an unresolved release in EITHER journal: the refresh's preventive and at-issuance adoption checks
 read the lease's `.lease-releases` journal exactly like the shared
-withdrawal helper always did, and lease fences withdrawn as companions
+withdrawal helper, and lease fences withdrawn as companions
 of a losing destination are journaled there before issuance and retired
 on proof, so a release-uncertain fence can never be adopted and removed
 around an uncertain allow. The owner-locked release phase carries ONE
@@ -1469,13 +1469,13 @@ released only on a destination-wide proof — either a verified
 live authorization covers the destination or EVERY observed enabled
 allow covering it is proven withdrawn; a surviving group installed by a
 REVOKED sibling (itself awaiting a failed withdrawal's retry) is an
-unauthorized survivor, so the expiring identity's clean withdrawal no
-longer releases the fence over it. With these, the closure table below
+unauthorized survivor, so the expiring identity's clean withdrawal never
+releases the fence over it. With these, the closure table below
 also covers crashed first issuances, pre-fence stalls composed with
 parked observation, and partial sibling withdrawals.
 
-Each regression composes a deferred daemon-side effect with a
-cleanup/confirmation that retired its durable record too early.
+Each of these failure modes composes a deferred daemon-side effect with a
+cleanup/confirmation that would retire its durable record too early.
 IDENTITY: the request-identity high-water mark is MONOTONE and
 independent of marker retirement — `next_request` counts every
 allocation, fence epochs included, but the committed generation history
@@ -1489,7 +1489,7 @@ authorization — the release gate is the shared one (an
 observed, complete group of an UNEXPIRED, non-revoked grant), so a
 confirmation cached at add time is revalidated at release time; when a
 second address's uncertain issuance revokes the grant mid-pass and the
-sweep removes its installed group, the stale confirmation can no longer
+sweep removes its installed group, the stale confirmation cannot
 release the fence around another grant's still-unresolved allow for the
 same destination (a genuinely live overlapping grant still releases —
 the live-coverage inverse is retained). DEADLINE: recovery enters the deadline
@@ -1514,22 +1514,20 @@ the round deadline); (5) stale-fence sweep releases
 (gated on the pass's authorized/static destinations); (6) the commit-
 time drain's retries of journaled refresh-fence releases (subject to the same gate); (7) adoption
 decisions, which are releases-by-reliance (strict on BOTH release
-journals). IDENTITY: the tombstone floor moved
-INSIDE the shared request allocator — only the allow-generation
-allocator read it before, so a fence-only allocation (a revocation-only
-pass whose allow withdrawal is refused) could reissue a retired fence's
-epoch whose deferred removal was still in flight; now every allocation
-is floored by the tombstone's high-water mark, and an unreadable
-tombstone fails the allocation closed. DEADLINE: recovery carries ONE
+journals). IDENTITY: the tombstone floor lives
+INSIDE the shared request allocator, so every allocation — a fence-only
+allocation (a revocation-only pass whose allow withdrawal is refused)
+included — is floored by the tombstone's high-water mark and never
+reissues a retired fence's epoch whose deferred removal may still be in
+flight; an unreadable tombstone fails the allocation closed. DEADLINE: recovery carries ONE
 absolute deadline across pre-fencing AND the absence probe —
 the watcher's shared deadline discipline, applied to recovery: the
 deadline is captured before pre-fencing, the probe gets only what
 remains, and an exhausted deadline re-discovers and fences the
-newly-due destinations before any observation (pre-fix a pre-fence that
-consumed a second grant's remaining lifetime excluded that grant from
-the recomputed gap and re-armed the probe with a fresh 20s budget while
-the expired allow stayed effective — the owner lock held and no watcher
-running). AUTHORIZATION: a journaled fence-release RETRY in
+newly-due destinations before any observation, so a pre-fence that
+consumes a second grant's remaining lifetime never hands the probe a
+fresh budget while that grant's expired allow stays effective under the
+held owner lock. AUTHORIZATION: a journaled fence-release RETRY in
 reconciliation goes through the same destination-wide gate as every
 other release: an unresolved old allow and a pending release
 can coexist after a temporary reauthorization, and releasing on sight
@@ -1558,26 +1556,25 @@ obligations first, enumerated from the on-disk ledgers
 learn what is armed, so recovery completes before the census's own
 daemon observations (instance listing) that could stall; the other
 entry points delegate to the same per-sandbox boundary (verify and
-apply recover before accepting enforcement; refresh arms). Pre-fix,
-startup with a running VM and an expired lease reported the sandbox
-Ready without a watcher: the expired allow stayed effective until some
-unrelated operation happened to recover. Verification additionally
+apply recover before accepting enforcement; refresh arms), so startup
+with a running VM and an expired lease never reports the sandbox Ready
+without a watcher. Verification additionally
 recovers BEFORE its ordinary network/ACL reads — those reads carry no
 deadline discipline and can stall, and recovery's blind pre-fence needs
 no observation, so an overdue destination is fenced even while every
-outer read is parked. COUNTER MONOTONICITY: reconciliation held
-a marker snapshot read before its loop; its replacement-fence branch
-allocates durably (advancing `next_request` on disk), and the
-retirement write-back of the stale snapshot rolled the counter backward
-— the tombstone floor cannot see the regression because the freshly
-consumed epochs were never tombstoned, so a crash/retry could reissue
-an allocated fence epoch whose deferred removal is still in flight. The
+outer read is parked. COUNTER MONOTONICITY: reconciliation holds
+a marker snapshot read before its loop while its replacement-fence branch
+allocates durably (advancing `next_request` on disk), so a write-back of
+the stale snapshot must not roll the counter backward — the tombstone
+floor cannot see such a regression because freshly consumed epochs are
+not yet tombstoned, and a crash/retry could then reissue an allocated
+fence epoch whose deferred removal is still in flight. The
 complete marker-write enumeration: `persist_dns_revocation_record` is
 the SINGLE write boundary, reached from exactly seven sites — the
 request allocator, the journal-pending write, the revocation extension,
-the reconciliation write-back (the offender), the pending-retirement
+the reconciliation write-back, the pending-retirement
 write, the drain settlement, and the commit clear — plus ONE deletion
-boundary (`clear_dns_revocations`, which folds the counter into the tombstone). The invariant is now enforced inside the single boundary: every
+boundary (`clear_dns_revocations`, which folds the counter into the tombstone). The invariant is enforced inside the single boundary: every
 write clamps `next_request` to the maximum of the caller's value, the
 on-disk record's, and the tombstone's high-water mark, and an
 undecodable existing marker or tombstone fails the write closed — no
@@ -1587,24 +1584,20 @@ mark backward.
 Recovery fans out before any settlement
 is awaited, issuance revalidates coverage instead of trusting the
 pass-start cache, and startup recovery enforces RECORDED revocations,
-not only elapsed TTLs. RECOVERY FAN-OUT:
-`recover_all_dns_expiry_obligations` ran serially and returned on the
-first error, so sandbox A's malformed ledger (or a stalled settlement)
-prevented sandbox B's owner and watcher from ever starting — one
-sandbox's failure starved every later sandbox's autonomous lease
-enforcement. Recovery is now split: the PREPARE phase (ledger read,
+not only elapsed TTLs. RECOVERY FAN-OUT: one sandbox's malformed
+ledger or stalled settlement never prevents another sandbox's owner and
+watcher from starting, so `recover_all_dns_expiry_obligations` is split
+in two: the PREPARE phase (ledger read,
 obligation adoption, owner liveness, watcher spawn — nothing fallible
 against the daemon) runs for EVERY enumerated sandbox before ANY
 settlement, and the fallible SETTLE phase then runs per sandbox with
 each error isolated and aggregated (naming the failed sandboxes) after
 all settlements complete. ISSUANCE COVERAGE: the issuance
-skip-fence check trusted `confirmed_dests` — captured when the pass
-read the ACL — without checking the authorizing grant's expiry,
-revocation, or continued installation. A pass stalled past an
-authorizer's expiry (the lease cleanly withdrew it) still found the
-destination in the stale cache and issued a re-grant's allow with NO
-preventive fence; a crash or deferred daemon-side apply then left the
-allow effective with no confirmed authorization behind it. Issuance now
+skip-fence check never trusts `confirmed_dests` (captured when the pass
+read the ACL) alone: a pass stalled past an authorizer's expiry would
+otherwise issue a re-grant's allow with NO preventive fence, and a crash
+or deferred daemon-side apply would leave the allow effective with no
+confirmed authorization behind it. Issuance
 authorizes only through (a) a covering static CIDR, (b) an allow THIS
 pass installed and confirmed (current by construction), or (c) the SAME
 current-authorization gate the release paths use — obligations
@@ -1621,11 +1614,11 @@ de-authorizes destinations the pass itself removed, and the post-add
 fence-RELEASE gate re-verifies grant liveness from the pass's
 expiries before releasing — a stale hit there SKIPS a release, which is
 the fail-closed direction. RECORDED-DENIAL RECOVERY: recovery
-settled only obligations whose TTL had elapsed. A denial journaled into
-the durable marker (NXDOMAIN) with a crash before the mutation left the
-denied address reachable until the old TTL, and the census then
-reported readiness because nothing enforced the marker. Recovery's
-settle phase now enforces every recorded revoked name's destinations
+settles recorded denials, not only obligations whose TTL has elapsed, so
+a denial journaled into the durable marker (NXDOMAIN) followed by a
+crash before the mutation never leaves the denied address reachable
+until the old TTL behind a census that reports readiness. Recovery's
+settle phase enforces every recorded revoked name's destinations
 through the shared withdrawal boundary (fence-first, lease-fence
 identity family, the pass deadline) before readiness can report, and
 preserves the marker and obligations until a committing refresh — the
@@ -1635,25 +1628,22 @@ Issuance authorization is judged against
 the rule set that SURVIVES the pass, recorded revocations are
 immediately-due obligations in the autonomous enforcement boundary, and
 denial recovery derives coverage from the recorded static policy and
-verified surviving groups. SURVIVING-SET ISSUANCE: the earlier coverage gate
-revalidated obligations against a fresh ledger read, but the RULE SET it
-judged was still the pass-start observation — during a partial rotation
-{X,Y}→{X,Z}, the old generation's complete group for X is still
-installed when Z's issuance is gated, so the group THIS pass was
-withdrawing authorized its own replacement; and the destination-only
-`issued_this_pass` cache never invalidated on a later expiry or
-revocation, so a grant revoked mid-pass still legitimized later
-issuances on its destinations. One boundary now: authorization requires
+verified surviving groups. SURVIVING-SET ISSUANCE: the coverage gate
+judges the rule set that survives the pass, never the pass-start
+observation alone — during a partial rotation {X,Y}→{X,Z}, the old
+generation's complete group for X is still installed when Z's issuance
+is gated, and the group THIS pass is withdrawing must not authorize its
+own replacement; a grant revoked mid-pass likewise never legitimizes
+later issuances on its destinations. One boundary: authorization requires
 a complete enabled group in the pass-SURVIVING rule set (the observed
 set minus every rule this pass retires, plus every rule this pass has
 installed and confirmed), unexpired by the clock and non-revoked by the
 durable marker plus this pass's own revocations, matched to the request
-identity's own armed grant; the destination-only cache is gone.
-AUTONOMOUS DENIAL RETRIES: recovery's denial enforcement was
-bounded by the API call's own pass deadline — a stalled probe could
-consume all of it, and the watcher ignored recorded revocations
-entirely, so a denied grant could stay installed until its old TTL
-elapsed. Recorded revocations are now due IMMEDIATELY in the same
+identity's own armed grant; there is no destination-only issuance cache.
+AUTONOMOUS DENIAL RETRIES: denial enforcement is not bounded by
+an API call's own pass deadline (a stalled probe could consume all of
+it), and the watcher enforces recorded revocations, so a denied grant
+never stays installed until its old TTL elapses. Recorded revocations are due IMMEDIATELY in the same
 autonomous boundary as expiries: the marker's revoked names intersected
 with the armed obligations (identity-precise to the generation the
 denial was journaled AGAINST, recorded in the marker at journal time —
@@ -1667,9 +1657,9 @@ at this boundary (the withdrawal boundary itself fails closed on the
 same read, and readiness already refuses on it, so denying live grants
 on a storage error would only block legitimate traffic); an unreadable
 state enforces. COVERAGE-AWARE DENIAL RECOVERY: the refusal
-boundary derived `covered = false` unconditionally, quarantining
-destinations a legitimate authorization still covered. Coverage is now
-the observed, complete, non-revoked surviving group OR the recorded
+boundary derives coverage rather than assuming `covered = false`, so it
+never quarantines destinations a legitimate authorization still covers.
+Coverage is the observed, complete, non-revoked surviving group OR the recorded
 policy's static CIDR grants (persisted as `policy_cidrs` on the plan
 record — never the resolved grant expansion, whose DNS answers are
 themselves expiring authorizations), in both the fence-reconcile phase
@@ -1682,12 +1672,12 @@ Denials record every outstanding
 identity, lease recovery is scoped to the owning project, the
 commit-time drain joins the shared release boundary, and pending-allow
 reconciliation derives real coverage. DENIAL IDENTITY SET: a
-denial recorded only the COMMITTED generation per name, so a re-grant
-that installed and published its fresh generation and then failed
-BEFORE committing (durable state one generation behind) left the live
-uncommitted identity invisible to autonomous recovery — the watcher
-skipped it and the denied destination stayed effective until its TTL.
-The marker now journals, per denied name, the SET of every generation
+denial records more than the COMMITTED generation per name, because a
+re-grant that installed and published its fresh generation and then
+failed BEFORE committing (durable state one generation behind) would
+otherwise leave the live uncommitted identity invisible to autonomous
+recovery and the denied destination effective until its TTL.
+The marker journals, per denied name, the SET of every generation
 outstanding at journal time: the committed generation UNION every armed
 identity in the durable lease ledger (an unreadable ledger fails the
 journal write closed — a denial is never recorded with an incomplete
@@ -1695,19 +1685,18 @@ identity set), and the autonomous boundary enforces a pair when its
 entry's generation is IN the recorded set. A generation issued AFTER
 the denial is absent from the set and stays exempt — it belongs to the
 committing refresh. RECOVERY PROJECT SCOPE: the durable
-revocation marker and lease ledger carry their owning project (legacy
-records without the field are claimed by the `default` project alone),
+revocation marker and lease ledger carry their owning project (records
+without the field are claimed by the `default` project alone),
 and `recover_all_dns_expiry_obligations` filters ledgers by project
 BEFORE any owner activation or watcher spawn — two daemons sharing one
-host state root can no longer adopt, settle, or purge each other's
+host state root cannot adopt, settle, or purge each other's
 obligations (a foreign ledger is left byte-for-byte untouched; an
 undecodable ledger is still reported, never silently stranded). The
 per-sandbox recovery read refuses a foreign ledger fail-closed, the
 in-memory owner map keys on the project, and the blind mutation
 boundary re-checks the ACL's project tag alongside the sandbox tag.
 COMMIT-DRAIN RELEASE GATE: the commit-time pending-mutation
-drain removed journaled refresh fences on sight — no authorization
-check, no replacement, no owner synchronization, no deadline. It now
+drain never removes journaled refresh fences on sight; it
 routes through the same shared release boundary as reconciliation
 (current authorization, else a verified fresh-epoch replacement
 installed BEFORE the old identity's removal, under the lease-owner
@@ -1715,47 +1704,44 @@ lock, bounded by the remaining lifetime of the pass's grants), making
 the release enumeration complete at seven sites; an
 expiry-during-drain or a failed replacement keeps the old fence and
 the journaled entry, and an exhausted deadline simply skips the retry.
-RECONCILE COVERAGE: pending-allow reconciliation passed
-`covered = false` unconditionally, so a REFUSED withdrawal of a stale
-pending allow installed a destination-wide refresh fence even when a
-complete live sibling group still authorized the destination —
-blocking the legitimate sibling, and unreachable through coverage-aware recovery
-(recovery's coverage-aware path never removes refresh-family fences).
-Coverage is now derived through the shared current-authorization
+RECONCILE COVERAGE: pending-allow reconciliation derives coverage
+rather than assuming `covered = false`, so a REFUSED withdrawal of a
+stale pending allow never installs a destination-wide refresh fence
+while a complete live sibling group still authorizes the destination
+(such a fence would block the legitimate sibling, and recovery's
+coverage-aware path never removes refresh-family fences).
+Coverage is derived through the shared current-authorization
 predicate, extended with an exclusion for the exact identity being
 withdrawn: the stale rule's own group never legitimizes its
 destination, a genuinely covering sibling keeps the destination
 unfenced and reachable while the entry stays journaled for retry, and
-an uncovered destination is fenced exactly as before.
+an uncovered destination is fenced.
 
 Journaled releases are bounded by
 every armed expiry, the drain hands its proven removals to the commit,
 and a CNAME hop validates the current owner's complete record set
 before advancing. RELEASE BOUND BY ARMED EXPIRIES: the shared
-release boundary held the lease-owner state lock across its ACL reads,
-replacement install, and removal under the caller's deadline alone —
-reconciliation passes NONE, so a stalled daemon operation parked the
-lock under the plain host timeout while an UNRELATED grant expired,
-and that grant's watcher could not take the lock to fence the
-destination: it stayed reachable past its lifetime. The boundary now
+release boundary holds the lease-owner state lock across its ACL reads,
+replacement install, and removal, and reconciliation passes no caller
+deadline, so a stalled daemon operation bounded only by the plain host
+timeout could keep an UNRELATED grant's watcher from taking the lock and
+fencing that destination past its lifetime. The boundary therefore
 derives ONE absolute deadline from the caller's deadline AND the
 earliest armed lease expiry (an unreadable ledger fails the release
 closed — it simply does not happen), and yields the lock at expiry so
-the watcher fences on time. DRAIN-TO-COMMIT SNAPSHOT: the
-drain ignored its results, so a fence released by a drain retry stayed
-journaled forever AND vanished between the pass's post-replacement
-observation and the commit's live re-read — a journaled fence
-withdrawal produces none of the lease-withdrawal evidence the commit
-accepts, so the commit rejected its own drain's work as unexplained
-rule loss. The drain now returns explicit outcomes: proven releases
+the watcher fences on time. DRAIN-TO-COMMIT SNAPSHOT: a fence released by a drain retry vanishes
+between the pass's post-replacement observation and the commit's live
+re-read, and a journaled fence withdrawal produces none of the
+lease-withdrawal evidence the commit accepts, so the drain returns
+explicit outcomes rather than having the commit reject its own drain's
+work as unexplained rule loss: proven releases
 retire from the journal at the drain, and the commit folds exactly
 those identity+destination pairs into its expected snapshot — every
-OTHER unexplained absence still refuses. CNAME HOP CONFLICT REJECTION: the chain walks (both A and AAAA) followed a CNAME and
-validated only the TARGET's addresses, so an answer carrying
-`a A 10.0.0.5` beside `a CNAME b` never had the A record examined — a
-public answer for `b` laundered the protected address into an accepted
-grant. The walks now reject an owner carrying BOTH a CNAME and address
-records before advancing. The validation is PER-HOP (each reachable
+OTHER unexplained absence still refuses. CNAME HOP CONFLICT REJECTION: the chain walks (both A and AAAA) never
+validate only a CNAME TARGET's addresses — for an answer carrying
+`a A 10.0.0.5` beside `a CNAME b`, a public answer for `b` would launder
+the protected address into an accepted grant — so they reject an owner
+carrying BOTH a CNAME and address records before advancing. The validation is PER-HOP (each reachable
 owner's complete set as the walk visits it) rather than whole-answer
 up front: the inline-chain contract is per-hop — only records owned by
 a reachable name participate, so a stray unrelated record elsewhere in
@@ -1766,22 +1752,21 @@ would otherwise skip the records.
 The commit carries the drain's
 replacement fences, every fence mutation proves ACL ownership first,
 conflicting CNAME answers deny, and the pre-fence cache prunes to
-armed triples. DRAIN ADDITIONS REACH THE COMMIT: the
-commit-time drain reported only its proven RELEASES, so a replacement
-fence the release boundary installed for an unauthorized (revoked)
-destination — after the pass's observation — was live but named by no
-durable record: the commit filtered it out of the persisted snapshot
-and every later reconnect verification refused the sandbox. The drain
-now returns additions alongside removals, the release boundary
+armed triples. DRAIN ADDITIONS REACH THE COMMIT: a
+replacement fence the release boundary installs for an unauthorized
+(revoked) destination after the pass's observation must be named by a
+durable record, or the commit would filter it out of the persisted
+snapshot and every later reconnect verification would refuse the
+sandbox. The drain therefore returns additions alongside removals, the release boundary
 authorizes generation-exactly (a fresh re-grant over a revoked name
 releases its own fence while the denied generations stay fenced), and
 the commit validates the complete derived multiset — installed PLUS
 drain-added — against its live re-read. OWNERSHIP BEFORE EVERY FENCE
 MUTATION: the blind pre-fence and the journaled release
-boundary mutated the ACL without ever checking the sandbox/project
-tags, so a same-named ACL retagged to a foreign sandbox could receive
-fence adds and removals driven by this sandbox's lease obligations.
-The pre-fence now attempts a tightly bounded (deadline-capped, never
+boundary check the sandbox/project tags before mutating the ACL, so a
+same-named ACL retagged to a foreign sandbox never receives fence adds
+and removals driven by this sandbox's lease obligations.
+The pre-fence attempts a tightly bounded (deadline-capped, never
 more than 5s) ownership read first: a successful read proving foreign
 tags vetoes the pass with ZERO mutations, while a stalled or failed
 read falls back to the blind add — the pre-fence's whole purpose is
@@ -1794,16 +1779,16 @@ quiet mid-settle (a concurrent withdrawal's durable proof landed
 between the tick's due check and the settle's own): without it the
 interleaving leaves an orphaned deny-all fence no future settle is
 due to clean — destinations the settle already processed are skipped,
-so the common path pays nothing. CONFLICTING CNAME TARGETS DENY: a reachable owner answering with two DISTINCT CNAME targets had
-the walk silently select the first branch, leaving the other branch's
-record set unvalidated — `a CNAME pub` beside `a CNAME priv` beside
-`priv A 10.0.0.5` sailed through on the public branch in one answer
-order. Both walks (A and AAAA) now reject distinct targets for one
-owner outright; identical duplicates are one RRset and collapse to a
+so the common path pays nothing. CONFLICTING CNAME TARGETS DENY: selecting either branch of a
+reachable owner answering with two DISTINCT CNAME targets would leave
+the other branch's record set unvalidated (`a CNAME pub` beside
+`a CNAME priv` beside `priv A 10.0.0.5` would pass on the public branch),
+so both walks (A and AAAA) reject distinct targets for one
+owner outright, in every answer order; identical duplicates are one RRset and collapse to a
 single hop with the tighter TTL. PRE-FENCE CACHE PRUNING: the
-blind-fence dedup cache grew by one (identity, destination, expiry)
-triple per lifetime fencing event — unbounded for a long-lived
-sandbox. It now prunes to currently-armed triples under the owner lock
+blind-fence dedup cache, one (identity, destination, expiry) triple per
+fencing event, stays bounded for a long-lived sandbox: it prunes to
+currently-armed triples under the owner lock
 at every pre-fence pass; an identity mid-settlement stays armed until
 retirement (guarded by owed evidence), so the release-then-retire
 path still never re-fences mid-settle, and a renewed identity is
@@ -1811,14 +1796,13 @@ blind-fenced again at its second expiry (its fresh triple differs).
 
 The orphan-fence sweep is bound by
 the next armed expiry, and retirement requires an attempted
-withdrawal. SWEEP BOUND BY ARMED EXPIRIES: the earlier sweep ran
-under the lease-owner lock with a FRESH 5s budget for its ACL read and
-for every orphan fence removal, so a grant expiring mid-sweep waited —
-repeatedly, one 5s stall per orphan — while the sole watcher could not
-resume fencing; worse, the settle's retirement pass re-read the clock
-AFTER the sweep and retired the newly-expired obligation UNPROCESSED —
-no fence, no withdrawal, and the armed ledger going quiet disarmed the
-watcher for good: the allow stayed effective forever. The sweep now
+withdrawal. SWEEP BOUND BY ARMED EXPIRIES: the sweep runs
+under the lease-owner lock, so it never grants its ACL read or each
+orphan fence removal a fresh budget (a grant expiring mid-sweep would
+wait one stall per orphan while the sole watcher could not resume
+fencing), and the settle never retires a newly-expired obligation
+UNPROCESSED (the armed ledger going quiet would disarm the watcher with
+the allow still effective). The sweep
 derives ONE absolute deadline from the earliest future armed expiry
 (exactly like the round deadline), skips outright when every blind
 fence was already handled, and stops at the deadline; when the sweep
@@ -1834,13 +1818,11 @@ Preserved fence obligations are
 enforced on EVERY recreation, domain-free ones included. STANDING
 FENCES ON DOMAIN-FREE RECREATION: teardown preserves a
 standing fence obligation (and the pending-mutation journal) while
-removing the ACL and the expiry ledger — but the create-time
-publication boundary returned early whenever no DNS answers needed
-publication, so a domain-free recreation never reinstalled the fence,
-readiness passed (a standing-only marker does not gate it), and the
-delayed old allow could land EFFECTIVE against a policy that denies
-the destination, with no expiry watcher armed to withdraw it. The
-publication boundary now enforces preserved obligations through the
+removing the ACL and the expiry ledger, and readiness does not gate on
+a standing-only marker, so a domain-free recreation that skipped the
+fence would let the delayed old allow land EFFECTIVE against a policy
+that denies the destination, with no expiry watcher armed to withdraw
+it. The create-time publication boundary therefore enforces preserved obligations through the
 shared enforce-and-commit boundary regardless of publication need: a
 clean domain-free creation (no marker) keeps the cheap return, a
 reborn incarnation under a NEW policy hash inherits the obligations —
@@ -1901,7 +1883,7 @@ discriminating executable proof:
 | NEWLY INSTALLED RULE LOSS AT COMMIT                                     | A companion installed by THIS pass and deleted underneath the parked commit refuses the commit (nothing persisted); the retry repairs (inverse)                                                                                                                                                                                                                                                                                                                                                                                  | `a_newly_installed_rule_loss_refuses_the_commit`                                                                                                                                                                                            |
 | EVIDENCE DURABLE AT PROOF TIME                                          | The post-withdrawal re-observation read parked and killed still finds the (tag, destination) pair in the append-only evidence log; releasing the barrier retires the obligation with no new proof (inverse)                                                                                                                                                                                                                                                                                                                      | `a_failed_post_withdrawal_read_preserves_the_evidence`                                                                                                                                                                                      |
 | AUTONOMOUS RETRY AFTER FAILED SETTLEMENT                                | Recovery with failing ACL reads surfaces the error AND still settles the overdue obligation once storage recovers, with no further recovery call                                                                                                                                                                                                                                                                                                                                                                                 | `a_failed_initial_settlement_still_retries_autonomously`                                                                                                                                                                                    |
-| PRE-FENCE BEFORE OBSERVATION                                            | A stalled preliminary read no longer delays the second grant's fence: the blind pre-fence installs it at its own deadline (tightened tolerance), before any observation                                                                                                                                                                                                                                                                                                                                                          | `a_stalled_preliminary_read_cannot_delay_the_next_expiry`                                                                                                                                                                                   |
+| PRE-FENCE BEFORE OBSERVATION                                            | A stalled preliminary read never delays the second grant's fence: the blind pre-fence installs it at its own deadline (tightened tolerance), before any observation                                                                                                                                                                                                                                                                                                                                                              | `a_stalled_preliminary_read_cannot_delay_the_next_expiry`                                                                                                                                                                                   |
 | ADOPTION EXCLUDES BOTH RELEASE JOURNALS                                 | A canonical lease fence with an unresolved lease-side release is never adopted by a revoke-only pass: the newer refresh fence stays and the release-uncertain fence is withdrawn through the journaled companion path, retiring its entry on proof                                                                                                                                                                                                                                                                               | `a_refresh_never_adopts_a_lease_fence_with_an_unresolved_release`                                                                                                                                                                           |
 | ONE DEADLINE FOR THE RELEASE PHASE                                      | A stalled stale-fence release consumes the earliest armed deadline; the next release is then skipped and the expiring grant settles on time — no per-call budget refresh lets the phase outlive the deadline                                                                                                                                                                                                                                                                                                                     | `a_stalled_fence_release_never_outlives_the_earliest_deadline`                                                                                                                                                                              |
 | COVERAGE REQUIRES AN UNEXPIRED GRANT                                    | Two complete-but-expired groups sharing a destination never count as coverage for each other; the destination is fenced, and both obligations settle once the daemon behaves (inverse)                                                                                                                                                                                                                                                                                                                                           | `a_complete_but_expired_group_never_counts_as_coverage`                                                                                                                                                                                     |
@@ -1924,9 +1906,9 @@ discriminating executable proof:
 | STARTUP OWNS OBLIGATION RECOVERY                                        | A grant that expired while the daemon was down, on a healthy running VM with no outstanding network cleanup, recovered by the startup census ITSELF (no reconnect, refresh, or direct recovery call): the expired allow is withdrawn and the ledger retired before the census reports; plus the verification leg — every ACL read parked from the outset: recovery's blind pre-fence still fences the overdue destination BEFORE the stalled outer read returns, and verification passes against the settled truth once released | `startup_inventory_recovers_expired_dns_obligations`, `verification_recovers_dns_obligations_before_its_first_outer_read`                                                                                                                   |
 | MONOTONE HIGH-WATER AT THE MARKER-WRITE BOUNDARY                        | Successful replacement reconciliation (uncertain issuance, uncertain ensured release, denial) composed with interruption, reauthorization, and a later uncertain release: the reconciliation write-back never decreases the consumed-identity high-water mark, and no fence epoch ever repeats a retired one                                                                                                                                                                                                                     | `reconciliation_never_rolls_back_the_request_counter`                                                                                                                                                                                       |
 | RECOVERY FANS OUT BEFORE ANY SETTLEMENT                                 | Restart with two sandboxes: A's durable ledger is malformed while B's lease independently expired — BOTH owners and watchers activate before any settlement is awaited, A's failure is isolated and surfaced in an aggregated error naming the sandbox, and B settles and retires normally; the healthy single-sandbox recovery inverse is retained                                                                                                                                                                              | `startup_recovery_activates_every_owner_before_settling_any`                                                                                                                                                                                |
-| ISSUANCE BEHIND CURRENT AUTHORIZATION                                   | A authorizes X (constant policy, so transient retention preserves A's identity); the pass stalls past A's expiry and the lease cleanly withdraws A and releases its deadline fence; B's re-grant for X (fresh identity) is then issued BEHIND a preventive fence because issuance revalidates current authorization — pre-fix the stale pass-start cache issued it unfenced; genuinely live overlapping grants sharing a destination still issue the second allow with no second fence (inverse)                                 | `issuance_skips_the_fence_only_behind_current_authorization`                                                                                                                                                                                |
+| ISSUANCE BEHIND CURRENT AUTHORIZATION                                   | A authorizes X (constant policy, so transient retention preserves A's identity); the pass stalls past A's expiry and the lease cleanly withdraws A and releases its deadline fence; B's re-grant for X (fresh identity) is then issued BEHIND a preventive fence because issuance revalidates current authorization rather than trusting the stale pass-start cache; genuinely live overlapping grants sharing a destination still issue the second allow with no second fence (inverse)                                         | `issuance_skips_the_fence_only_behind_current_authorization`                                                                                                                                                                                |
 | RECOVERY ENFORCES RECORDED DENIALS                                      | An NXDOMAIN journaled into the durable marker with the refresh crashed before the mutation: startup recovery enforces the recorded withdrawal (fence-first, through the shared boundary) before the census reports, rather than leaving the denied address reachable until the old TTL; the marker's denial evidence is preserved until a committing refresh retires it, and a committed live grant is untouched (inverse)                                                                                                       | `startup_inventory_enforces_recorded_denials`                                                                                                                                                                                               |
-| PARTIAL-ROTATION ISSUANCE BEHIND A FENCE                                | A {X,Y}→{X,Z} rotation: the retiring generation's complete group for X never authorizes the replacement — the re-issued allow lands BEHIND a preventive fence (pre-fix the pass-start rule observation authorized it through the group the same pass was withdrawing); a same-pass authorizer whose grant expired mid-pass no longer legitimizes later issuance on its destinations either; genuinely live overlapping grants still skip the fence (live-overlap inverse retained)                                               | `rotation_reissues_behind_a_fence_not_the_retired_group`, `issuance_revalidates_a_same_pass_authorizer_at_expiry`                                                                                                                           |
+| PARTIAL-ROTATION ISSUANCE BEHIND A FENCE                                | A {X,Y}→{X,Z} rotation: the retiring generation's complete group for X never authorizes the replacement — the re-issued allow lands BEHIND a preventive fence (the group the same pass is withdrawing never authorizes it); a same-pass authorizer whose grant expired mid-pass never legitimizes later issuance on its destinations either; genuinely live overlapping grants still skip the fence (live-overlap inverse retained)                                                                                              | `rotation_reissues_behind_a_fence_not_the_retired_group`, `issuance_revalidates_a_same_pass_authorizer_at_expiry`                                                                                                                           |
 | AUTONOMOUS DENIAL ENFORCEMENT AFTER RECOVERY                            | A marker-only crash with the recovery probe exhausted by a parked read (zero budget): recovery surfaces its error and the WATCHER enforces the recorded denial autonomously — blind pre-observation fence, then retried withdrawal until it proves out; the marker is preserved until a committing refresh retires it, and a committed live grant is untouched (inverse)                                                                                                                                                         | `the_watcher_enforces_a_recorded_denial_after_recoverys_probe_is_exhausted`                                                                                                                                                                 |
 | COVERAGE-AWARE DENIAL RECOVERY                                          | A refused withdrawal on a recorded denial: a verified non-revoked surviving sibling group over the shared domain keeps the destination unfenced (the blind pre-fence is reconciled away through the journaled release path), a destination authorized only by the recorded policy's static CIDRs is never lease-fenced, and an uncovered destination is quarantined and stays fenced until the withdrawal proves out                                                                                                             | `denial_recovery_fences_only_an_uncovered_destination`                                                                                                                                                                                      |
 | DENIALS RECORD EVERY OUTSTANDING IDENTITY                               | A re-grant installs and publishes its fresh generation but fails before the state commit; the NXDOMAIN denial then journals BOTH the committed and the armed uncommitted generations, and watcher-only recovery withdraws the live uncommitted identity and fences the destination within its deadline; an identity issued AFTER the denial is absent from the recorded set and stays exempt — the post-denial re-grant commits and stays reachable (inverse)                                                                    | `a_crashed_first_issuance_never_reuses_its_identity_across_recreate` (second-denial leg)                                                                                                                                                    |
@@ -1935,8 +1917,8 @@ discriminating executable proof:
 | RECONCILE DERIVES REAL COVERAGE                                         | A stale deferred allow lands while a complete live sibling group (same destination, other grant) still authorizes it: a REFUSED withdrawal of the stale rule installs no destination-wide fence and the sibling stays reachable throughout; once removals work the stale rule withdraws cleanly with the destination still unfenced, and the uncovered inverse still fences                                                                                                                                                      | `reconcile_preserves_sibling_coverage_for_a_stale_pending_allow`                                                                                                                                                                            |
 | JOURNALED RELEASES YIELD AT THE EARLIEST ARMED EXPIRY                   | A pending fence release reconciles with no caller deadline while a separate short-lived grant is armed: the stalled removal hits the armed-expiry deadline, yields the owner lock, and the expiring grant's watcher fences its destination at its expiry — long before the barrier's own cap; once the daemon behaves the journaled release completes and the fence retires (inverse)                                                                                                                                            | `a_stalled_reconcile_release_yields_the_owner_lock_for_an_expiry`                                                                                                                                                                           |
 | THE COMMIT FOLDS THE DRAIN'S PROVEN RELEASES INTO ITS SNAPSHOT          | The ensured release of a preventive fence fails uncertainly once; the commit-time drain's retry succeeds: the refresh commits (no unexplained-rule-loss rejection), the released fence is gone, the journaled entry retires at the drain, the marker clears, and a follow-up refresh is clean (readiness)                                                                                                                                                                                                                        | `a_drain_succeeded_fence_release_commits_and_clears_the_marker`                                                                                                                                                                             |
-| A CNAME BESIDE ADDRESS DATA DENIES                                      | `a A 10.0.0.5` beside `a CNAME b` denies before the hop is even followed (a public `b` answer can no longer launder the carried address); the denial holds for public addresses too; the AAAA walk denies a CNAME beside same-owner IPv6 data identically; valid inline chains stay accepted (existing inverses)                                                                                                                                                                                                                 | `mixed_cname_and_address_data_for_the_current_hop_denies`, `mixed_cname_and_address_data_denies_even_with_public_addresses`, `mixed_cname_and_aaaa_data_for_the_current_hop_denies`                                                         |
-| THE COMMIT CARRIES THE DRAIN'S REPLACEMENT FENCES                       | A journaled fence release retried against a since-revoked destination installs a verified replacement fence between the pass's observation and the commit: the persisted plan names EVERY live fence, the revocation commits, and reconnect verification would no longer refuse the sandbox over an unrecorded rule                                                                                                                                                                                                              | `a_drain_installed_replacement_fence_enters_the_committed_plan`, readiness leg in `a_drain_succeeded_fence_release_commits_and_clears_the_marker`                                                                                           |
+| A CNAME BESIDE ADDRESS DATA DENIES                                      | `a A 10.0.0.5` beside `a CNAME b` denies before the hop is even followed (a public `b` answer cannot launder the carried address); the denial holds for public addresses too; the AAAA walk denies a CNAME beside same-owner IPv6 data identically; valid inline chains stay accepted (existing inverses)                                                                                                                                                                                                                        | `mixed_cname_and_address_data_for_the_current_hop_denies`, `mixed_cname_and_address_data_denies_even_with_public_addresses`, `mixed_cname_and_aaaa_data_for_the_current_hop_denies`                                                         |
+| THE COMMIT CARRIES THE DRAIN'S REPLACEMENT FENCES                       | A journaled fence release retried against a since-revoked destination installs a verified replacement fence between the pass's observation and the commit: the persisted plan names EVERY live fence, the revocation commits, and reconnect verification never refuses the sandbox over an unrecorded rule                                                                                                                                                                                                                       | `a_drain_installed_replacement_fence_enters_the_committed_plan`, readiness leg in `a_drain_succeeded_fence_release_commits_and_clears_the_marker`                                                                                           |
 | FENCE MUTATIONS PROVE ACL OWNERSHIP FIRST                               | The ACL is retagged to a foreign sandbox while a fence release is journaled / a lease is overdue: the release boundary refuses before any mutation, and the blind pre-fence's bounded ownership probe vetoes the pass — not one rule added or removed, and the refresh fails closed; restoring ownership enforces the overdue lease normally (healthy inverses)                                                                                                                                                                  | `a_journaled_fence_release_never_mutates_a_foreign_acl`, `a_blind_prefence_never_mutates_a_foreign_acl`                                                                                                                                     |
 | DISTINCT CNAME TARGETS FOR ONE OWNER DENY                               | `a CNAME public` + `a CNAME private` + `private A 10.0.0.5` denies in EITHER answer order (no branch is ever selected), identically in the AAAA walk; identical duplicate CNAMEs collapse to one hop with the tighter TTL (inverse)                                                                                                                                                                                                                                                                                              | `conflicting_cname_targets_deny_regardless_of_branch_order`, `conflicting_cname_targets_deny_in_the_aaaa_walk`, `duplicate_identical_cnames_collapse_to_one_hop`                                                                            |
 | PRE-FENCE CACHE PRUNED TO ARMED TRIPLES                                 | Three rotation-and-settlement rounds with short TTLs: the cache never exceeds the currently-armed triple (unpruned it would accumulate one per round); a renewed identity whose tag and expiry differ is blind-fenced again at its second expiry (existing inverse)                                                                                                                                                                                                                                                              | `the_prefence_cache_stays_bounded_across_rotation_and_settlement`, `a_renewed_identity_is_blind_fenced_again_at_its_second_expiry`                                                                                                          |
@@ -2021,9 +2003,9 @@ policy) re-resolves instead.
 
 Every managed bridge/ACL also carries a project tag
 (`user.wssp.project`, stamped at create and verified before any adoption or
-deletion; untagged legacy objects belong to `default`). Dedicated projects
+deletion; an object without the tag is never managed). Dedicated projects
 without network isolation inherit the default project's networks, so census,
-legacy reconstruction, gateway reuse, and teardown are all scoped by that
+orphan reconstruction, gateway reuse, and teardown are all scoped by that
 tag — one project on a shared daemon never counts, adopts, or deletes
 another's sandbox networking. Apply, teardown, and journal updates for one
 sandbox are serialized on a per-sandbox lock held across the fence check and
@@ -2042,7 +2024,7 @@ component's parent is fsynced), matching the host journal. Subnet allocation
 runs under a daemon-wide allocation lock held from the taken-subnet snapshot
 through bridge creation, so two concurrent creates with colliding seeds
 recheck under the lock and never claim the same range. The `incus-surface`
-probe harness now tears down and verifies the run's owned bridge/ACL pairs
+probe harness tears down and verifies the run's owned bridge/ACL pairs
 (including partially completed launches) through the same fenced teardown,
 never another run's or project's objects, and keeps all runtime state inside
 a per-run scratch dir it removes. The runtime's durable state root is passed
@@ -2052,7 +2034,7 @@ no separate host-state environment variable.
 
 The drain reads each obligation UNDER the sandbox lock,
 never before it, so a failed retry that durably replaces the record while
-the drain waits is fenced against what the journal says now, and the fresh
+the drain waits is fenced against what the journal currently says, and the fresh
 record is never unlinked from under a stale snapshot. Journal records carry
 the full SET of incarnations they cover: a retry's write-ahead merges the
 prior record and the live resources' markers before restamping, so a crash
@@ -2116,12 +2098,10 @@ owned ACL + the instance's effective devices equal to the audited launch
 devices. VM existence alone is never proof (a crash between the network
 apply and the NIC check leaves a running VM with unrestricted egress).
 Journal records are schema-validated, not merely syntax-checked: the record
-must be an object whose `sandbox_id` matches the filename, `phase` and
-`project` must be well-typed when present, `attempts` must be a non-empty
-string array when present, and only the explicitly recognized legacy shapes
-(a single `attempt` string, or no attempt field at all) are accepted — a
-malformed present field can never collapse into an adopt-any-marker legacy
-obligation. DNS resolution runs on a bounded executor: a fixed worker set
+must be an object whose `sandbox_id` matches the filename, with a
+recognized `phase`, a non-empty `project` string, and `attempts` as a
+non-empty string array — a missing or malformed field is rejected and
+never collapses into an adopt-any-marker obligation. DNS resolution runs on a bounded executor: a fixed worker set
 with a bounded queue retains capacity until a stalled lookup ACTUALLY
 finishes, so caller-side timeouts never leak detached threads and a stalled
 NSS resolver fails fast instead of exhausting thread creation (which itself
@@ -2147,7 +2127,7 @@ participation to this host identity; the lock wait is bounded (60 s) and
 cancellation-aware via the caller's permit, and the guard is released as
 soon as bridge creation completes rather than spanning VM boot.
 
-Provisioned lock location and legacy-shape fencing. The
+Provisioned lock location and incarnation fencing. The
 allocation-lock directory is an administrator-PROVISIONED system path,
 `/var/lib/wssp/incus-daemon-locks`, never created at use time: setup
 (`wssp host run` enrollment) provisions it when it can and otherwise fails
@@ -2160,14 +2140,11 @@ same daemon, and first-creator squatting by an unrelated local user is
 impossible. Every acquisition validates the provisioning (real directory,
 never a symlink; root- or self-owned; exactly mode 2770 — setgid so lock
 files inherit the group, no world access) and fails closed rather than
-repairing anything. Cleanup records carrying ANY modern field (phase or
-project) must also carry a non-empty incarnation fence: a modern record
-without attempts is rejected as malformed (preserved and reported, causing
-no deletion) instead of degrading to the unfenced legacy shape, whose empty
-attempt set the drain reads as permission to adopt the resources' current
-marker — which would authorize deletion of a newer incarnation. Only
-genuinely legacy records (no phase and no project fields at all) may be
-unfenced. `WSSP_INCUS_DAEMON_LOCK_DIR` exists solely as a dev/test seam
+repairing anything. Every cleanup record must carry a non-empty
+incarnation fence: a record without attempts is rejected as malformed
+(preserved and reported, causing no deletion), because an empty attempt
+set would read as permission to adopt the resources' current marker —
+which would authorize deletion of a newer incarnation. `WSSP_INCUS_DAEMON_LOCK_DIR` exists solely as a dev/test seam
 (shim-driven harnesses cannot provision /var/lib, mirroring
 `WSSP_INCUS_BINARY`); a directory resolved through it faces the identical
 ownership/mode validation, so the seam relocates the lock but never weakens
@@ -2190,7 +2167,7 @@ Enrollment proves lock usability, not just metadata.
 operation (create, fsync, remove a probe file as the current user,
 O_NOFOLLOW) before the relay connects: a root-owned 2770 directory whose
 group excludes the daemon user passes metadata checks but fails every lock
-open with EACCES, so the preflight now fails fast with group-membership and
+open with EACCES, so the preflight fails fast with group-membership and
 reprovisioning guidance instead of advertising an egress-capable host whose
 creates all fail. `WSSP_INCUS_DAEMON_LOCK_DIR` is also registered through
 the required env process (hidden, inSchema:false entry in
@@ -2198,7 +2175,7 @@ scripts/lib/env-manifest.ts, the same channel shell-script vars use;
 `pnpm env:sync` passes).
 
 Full binding for recovery, race-free enrollment probes.
-The provisioning intent now persists the complete instance binding (the
+The provisioning intent persists the complete instance binding (the
 `bind_instance` tuple: template fingerprint, create key) alongside the
 incarnation fence, and restart recovery requires the FULL bind_instance
 authorization against the existing VM before any NIC repair or intent
@@ -2235,28 +2212,27 @@ cleanups fold into the harness exit code, and `incus-surface cleanup
 ACL survives.
 
 Absence-verified cleanup, registered seam. Surface
-cleanup no longer trusts command exit codes: after every owned VM `delete
+cleanup never trusts command exit codes alone: after every owned VM `delete
 --force` and the probe `project delete`, a fail-closed absence probe
 (`config get` / `project show`; an unverifiable probe is itself a failure)
 IS the propagation — a failed or silently incomplete deletion leaves the
 object, which the probe catches, so a surviving VM (even one not referencing
 the managed bridge) or a surviving project fails cleanup and retains the
-state journal. WSSP_INCUS_DAEMON_LOCK_DIR is now a declared optional var
-(packages/env/src/vars/shared.ts, like the entrypoint-read MIGRATE_ON_START
-precedent) with its manifest entry in the schema set — `pnpm env:sync`
-passes with 68 keys.
+state journal. WSSP_INCUS_DAEMON_LOCK_DIR is a declared optional var
+(packages/env/src/vars/shared.ts, like the entrypoint-read MIGRATE_ON_START)
+with its manifest entry in the schema set.
 
 Absence requires explicit not-found evidence. Every
 cleanup probe — the ownership probe, the post-delete VM verify, and the
-`project show` verify — now accepts absence ONLY from the Incus CLI's
+`project show` verify — accepts absence ONLY from the Incus CLI's
 explicit not-found signature (`Error: <Kind> not found` on stderr with a
 nonzero exit). Any other nonzero exit (daemon unreachable, permission
-denied, malformed response) is propagated as failure: the ownership probe no
-longer suppresses errors into "unowned" (which would silently skip this
+denied, malformed response) is propagated as failure: the ownership probe never
+suppresses errors into "unowned" (which would silently skip this
 run's own VM), and inconclusive verify probes fail cleanup with retained
 state instead of printing "cleaned" over an unverified survivor.
 
-The bridged NIC override no longer carries the OVN-only
+The bridged NIC override does not carry the OVN-only
 `security.acls.default.*` keys (the installed Incus 6.0.0 `devices_nic`
 reference lists ACL options only for OVN NICs; the deny-defaults remain on
 the bridge network config itself, and the test shim rejects any bridged-NIC
@@ -2266,19 +2242,19 @@ point — not just the first config's — so the restart drain keeps fenced
 cleanup authority over a bridge and ACL restamped onto different
 incarnations instead of rejecting one as a conflict and dropping the
 obligation over a live owned object; a marker-less resource still yields a
-schema-valid (empty-string attempt) record. Absence evidence is now matched
+schema-valid (empty-string attempt) record. Absence evidence is matched
 EXACTLY per object: `Error: Failed to fetch instance "<name>" in project
 "<p>": Instance not found` for a `config get` probe and
 `Error: Project not found` for `project show` (both verified against the
 installed 6.0 CLI), so an unrelated diagnostic that merely mentions
-"not found" is a failure, never absence. Finally the surface-cleanup state
+"not found" is a failure, never absence. The surface-cleanup state
 dir is keyed by run id alone (`wssp-surface-state-<run-id>`) with an
 `owner.pid` claim guard — a live owner refuses a second claimant, a dead
 owner's journal is adopted — so a later `incus-surface cleanup <run-id>`
 process reopens a retained journal across processes, and a state-dir
 removal failure is reported instead of swallowed.
 
-The incarnation fence now preserves the empty-string
+The incarnation fence preserves the empty-string
 marker for EACH unmarked owned resource even when marked resources coexist
 (all three collectors — provisioning intent, teardown write-ahead, and the
 owner-teardown fence): a crash mid-adoption that restamps only the ACL
@@ -2289,7 +2265,7 @@ run ownership as a process-held flock on `wssp-surface-lock-<run-id>` —
 OUTSIDE the state dir, so the initial cleanup's directory removal never
 drops it — refusing any concurrent `cleanup <run-id>` for the whole run
 (the kernel releases a dead owner's claim, so crash retention still works).
-create_sandbox now rejects a sandbox/instance-name mismatch with
+create_sandbox rejects a sandbox/instance-name mismatch with
 IdempotencyConflict BEFORE the allocation lock or any network apply, so a
 conflicting-name probe can never provision bridge/ACL/intent state under an
 id cleanup never reclaims. The live-expiry fixture tears down bridge+ACL
@@ -2297,7 +2273,7 @@ per sandbox (runtime state in its temp dir) and verifies absence, and the
 surface census assertion checks that outstanding networking RETAINS
 capacity — an untagged VM whose bridge/ACL remain is re-journaled and
 reported as Provisioning, keeping the count unchanged until teardown
-evidence completes. Legacy reconstruction takes the sandbox lock BEFORE rechecking the journal, VM
+evidence completes. Orphan reconstruction takes the sandbox lock BEFORE rechecking the journal, VM
 absence, ownership, and current markers and holds it THROUGH persistence, so
 an inventory observation can never overwrite a concurrent create's fresh
 provisioning intent with a stale teardown record (which would have orphaned
@@ -2307,12 +2283,12 @@ and installs its cleanup guard immediately after project creation. Launch/repair
 identifies the audited root disk by its PROPERTIES (a disk mounted at /),
 not its name, so a valid profile whose root disk is named "rootfs" passes
 create and recovery instead of stranding a provisioned sandbox; a stopped
-VM's drifted or legacy NIC is repaired by REPLACING eth0 with the complete
+VM's drifted or profile-inherited NIC is repaired by REPLACING eth0 with the complete
 audited definition (remove + add, which shadows an inherited device
 wholesale) instead of `device set`/`override`, whose key merge would retain
 incompatible properties like parent=br0 next to the sandbox bridge; and the
 surface harness never creates a pid-suffixed scratch state dir — a refused
-concurrent claim leaves nothing behind. All surface state (run lock and state dir) now lives beneath an
+concurrent claim leaves nothing behind. All surface state (run lock and state dir) lives beneath an
 owner-validated, mode-0700 parent that survives cleanup, a symlinked or
 foreign-owned state path is rejected rather than adopted, and the host
 journal's predictable temp file is created O_EXCL|O_NOFOLLOW (the daemon
@@ -2351,11 +2327,8 @@ best-effort guest group kill. Guest work may remain alive. There is no command
 retry; sandbox stop/kill is recovery. One residual remains: a command that
 exits 143 or 137 by itself in the short window between the helper's liveness
 check (a scan of the guest process table) and its signal is reported as
-stopped. The wire states and codes (`failed` + `timeout`, `cancelled`) have
-existed since protocol 10.0, so no version bump or server change is needed.
-Daemons built before this change report a timeout as UNKNOWN_OUTCOME and a
-TERM-honoured cancel as SUCCEEDED/143. The server stores whatever the daemon
-reports.
+stopped. The wire states and codes are `failed` + `timeout` and `cancelled`;
+the server stores whatever the daemon reports.
 
 Command input preserves script bytes and enforces the shared serialized 32 KiB
 command budget, with 120-second default and 1800-second maximum timeout. Stdin
@@ -2396,7 +2369,7 @@ remain available while draining.
 
 ## Command output
 
-Command output transport is relay v9 binary data with aggregate byte cursors
+Command output transport is binary relay data with aggregate byte cursors
 and gap ranges. Command terminal `result` contains only `exitCode`, `pid` and
 `outputBytes`; status reads still disclose no output.
 
@@ -2558,7 +2531,7 @@ reader) and stores relay download captures in this same transfer store: a
 `operationAttempt`), reserving the configured per-transfer maximum until the final
 chunk seals it at its real length with a whole-file `sha256`. Captures share the
 limits, quota, expiry, sweep, shutdown drain and restart recovery above; there is
-no second store. Relay v7 file ACKs bind operation, generation, attempt, sequence
+no second store. Relay file ACKs bind operation, generation, attempt, sequence
 and cumulative byte offset, and each non-final download chunk is exactly one
 fixed 1 MiB transfer chunk. A final download result must match the sealed length
 and SHA-256 and records `transferId`. Upload commit binds the spool to one durable
@@ -2687,7 +2660,7 @@ overrides remain accepted and ignored; piped-command TERM remains overridable.
 Sandbox create `envs` is an optional bounded string map of immutable private
 workload defaults. Command overrides merge before validation/enqueue. Sandbox
 and operation public responses never include defaults or config binding digests.
-A nonempty create waits on durable 10.3 private-config installation before boot.
+A nonempty create waits on durable private-config installation before boot.
 
 ## Additive pool placement
 
@@ -2698,15 +2671,15 @@ plane. It pages logical templates independently of placement, then chooses a
 latest selector or exact revision; key minting displays exact revision grants
 and verified/pending host associations. It never treats PENDING as launch
 proof. See the [pool dashboard workflow](../guide/pools.md#dashboard-walkthrough)
-and [post-reset credential procedure](../guide/auth-planes.md#minting-sdk-resource-grants).
-Neither workflow introduces a schema reset or expands retained SDK grants.
+and [SDK resource-grant procedure](../guide/auth-planes.md#minting-sdk-resource-grants).
+Neither workflow expands existing SDK grants.
 
-## Files/process compatibility release
+## Files and process behavior
 
-The [filesystem and command behavior](../guide/sandboxes.md#filesystem-and-command-result-limits) consolidates 10.5
-strict DTO changes, result scopes/retention, bounded live pages and owner-wide
+The [filesystem and command behavior](../guide/sandboxes.md#filesystem-and-command-result-limits) covers the
+strict DTOs, result scopes/retention, bounded live pages and owner-wide
 procedure budgets. Protected result/connect reads disclose guest content;
-generic operation/admin views remain metadata-only. Approved Branch A signal
+generic operation/admin views remain metadata-only. Non-kill signal
 support is checked at call; a sandbox's guestApi.supportedSignals also drops
 TERM/INT/HUP once the node's ready-time probe found no group signals, and
 clients read it. Command
@@ -2795,7 +2768,8 @@ admission semantics are unconditional on a valid relay session while runtime and
 authority checks remain. Hello/admission binds static RAM/vCPU/per-VM and storage
 identity/cap tuples to an epoch. Monotonic inventory observations update health/
 usage only (5-second polls, 15-second validity); heartbeat does not refresh them.
-Journal v5 durably pins allocations and non-increasing per-marker implicit P.
+The daemon journal (version 1) durably pins allocations and non-increasing
+per-marker implicit P; any other journal version is refused.
 
 Automatic storage cap is floor(min(P, 80%-total, max(0,F+A−H))/GiB), with
 A trusted charged-root physical bytes bounded by C (otherwise zero), H 5% of
@@ -2807,9 +2781,9 @@ Read-only inspection returns partial failures without provisioning anything.
 
 The [shared policy](../../packages/sandbox-contracts/src/vm-size-limits.json)
 currently uses 256-MiB VM overhead and max(2048 MiB,25%) host reserve pending
-required live RAM calibration. Existing holds preserve historical charges across
-that update. [capacity and storage qualification](../guide/hosts.md#capacity-and-storage-qualification)
-remain owner-authorized release gates; no old journal/root conversion is supported.
+required live RAM calibration. Existing holds keep the charges they were admitted
+with when that policy changes. [capacity and storage qualification](../guide/hosts.md#capacity-and-storage-qualification)
+remain owner-authorized release gates; no journal or storage-root conversion exists.
 
 ## Integrated sharing consumers
 

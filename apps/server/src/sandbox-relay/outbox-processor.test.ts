@@ -494,8 +494,7 @@ describe("durable outbound fences", () => {
     expect(store.writes.indexOf("operations")).toBeLessThan(store.writes.indexOf("outbox"));
     expect(store.outbox.get("evt-1")!.processedAt).toBeNull();
   });
-  // WP0 precondition for retiring the daemon's pre-10.5 result paths: a
-  // daemon refuses an unversioned result kind per operation, so every row
+  // A daemon refuses an unversioned result kind per operation, so every row
   // current acceptance writes must dispatch versioned. The encoder still
   // only forwards what the row carries.
   it.each(Object.keys(RESULT_TYPE_BY_KIND))(
@@ -1939,7 +1938,7 @@ it("allocation journal lineage survives same-journal retries and is permanently 
 });
 
 it.each([false, true])(
-  "an unbound 10.7 allocation cannot retry-loop and releases only a proven first claim (retry: %s)",
+  "an allocation without a journal binding cannot retry-loop and releases only a proven first claim (retry: %s)",
   async (retry) => {
     Object.assign(store.operations.get("op-1")!, {
       kind: "CREATE_SANDBOX",

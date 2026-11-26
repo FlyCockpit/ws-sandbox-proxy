@@ -1784,7 +1784,7 @@ it("offload wire: the real host advertises diskOffload and serves offload frames
 });
 
 it("offload wire: after reconciliation the real host reports its unfinished offload and a release drops it", async () => {
-  // Review r2: an `uploaded` entry whose stored ack was missed, journaled
+  // An `uploaded` entry whose stored ack was missed, journaled
   // before this daemon started (its state dir: data/relay/sha256(host id)).
   const journal = () =>
     join(
@@ -1845,7 +1845,7 @@ it("offload wire: after reconciliation the real host reports its unfinished offl
 });
 
 it("offload wire: a stored ack is answered disk.offload.released once the host dropped the export", async () => {
-  // Review r3: the server frees the host's export slot only on this frame.
+  // The server frees the host's export slot only on this frame.
   const journal = () =>
     join(
       dir,

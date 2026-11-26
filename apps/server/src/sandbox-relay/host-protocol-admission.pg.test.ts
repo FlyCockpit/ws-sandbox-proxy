@@ -99,9 +99,9 @@ describe("durable negotiated host admission", () => {
       });
     }
     // A current-epoch older protocol is positive refusal evidence.
-    await hello(f, ["10.7"]);
+    await hello(f, ["0.7"]);
     await expect(admit(f)).rejects.toMatchObject({ data: { code: "UNSUPPORTED_CAPABILITY" } });
-    const epoch = await hello(f, ["1.0", "10.4"]);
+    const epoch = await hello(f, ["1.0", "0.4"]);
     await (await import("./inventory-reconcile")).recordHostAdmission(
       { ...f, connectionEpoch: epoch },
       {
@@ -128,7 +128,7 @@ describe("durable negotiated host admission", () => {
     const f = await seed();
     const original = await row(f);
     const gate = db.pauseAt("hello", { before: "sandboxHost.updateMany" });
-    const work = db.run("hello", () => hello(f, ["10.0"]));
+    const work = db.run("hello", () => hello(f, ["0.0"]));
     await gate.waitReached();
     gate.fail(new Error("injected between hello writes"));
     await expect(work).rejects.toThrow();
@@ -191,13 +191,13 @@ describe("durable negotiated host admission", () => {
     const { f, accept, counts } = await stagedAcceptance();
     await db.inspect.sandboxHost.update({
       where: { id: f.hostId },
-      data: { relayProtocolVersion: "10.7" },
+      data: { relayProtocolVersion: "0.7" },
     });
     expect(await disconnectJournalKey(f, new Date(), true)).toBe(true);
     expect(await row(f)).toMatchObject({
       status: "DISCONNECTED",
       connectionEpoch: 9,
-      relayProtocolVersion: "10.7",
+      relayProtocolVersion: "0.7",
       relayProtocolEpoch: 9,
     });
     await expect(admit(f)).rejects.toMatchObject({ data: { code: "UNSUPPORTED_CAPABILITY" } });
@@ -210,7 +210,7 @@ describe("durable negotiated host admission", () => {
   it("admission reads after H, never before the competing downgrade commits", async () => {
     const f = await seed();
     const gate = db.pauseAt("downgrade", { before: "$transaction.commit" });
-    const downgrade = db.run("downgrade", () => hello(f, ["10.4"]));
+    const downgrade = db.run("downgrade", () => hello(f, ["0.4"]));
     await gate.waitReached();
     const acceptance = db.run("accept", () => admit(f));
     const denied = expect(acceptance).rejects.toThrow();
@@ -442,7 +442,7 @@ it.each(["carried", "old-server", "invalid-snapshot"] as const)(
       ).toMatchObject({ state: "QUEUED", dispatchAttempt: 0 });
     }
     vi.mocked(offlineManager.isHostConnected).mockReturnValue(true);
-    await hello(f, ["10.4"]);
+    await hello(f, ["0.4"]);
     const downgraded = await counts();
     await expect(accept("STAT_PATH", "old-rich")).rejects.toMatchObject({
       data: { code: "UNSUPPORTED_CAPABILITY" },
@@ -527,7 +527,7 @@ it.each(["refusal", "publish"] as const)(
     await prefix((tx) =>
       reserveOperationResult(tx, { ownerId: f.userId, operationId: op.operationId }),
     );
-    await hello(f, ["10.4"]);
+    await hello(f, ["0.4"]);
     const publish = () =>
       prefix(async (tx) => {
         const { connectionEpoch } = await tx.sandboxHost.findUniqueOrThrow({
@@ -777,7 +777,7 @@ it.each(b4Shapes)(
       }
       ids.push(op.id);
     }
-    await hello(f, ["10.4"]);
+    await hello(f, ["0.4"]);
     vi.mocked(manager.dispatchOperation).mockClear();
     await processSandboxOutboxBatch();
     expect(manager.dispatchOperation).not.toHaveBeenCalled();
@@ -899,7 +899,7 @@ it.each(
       },
     });
     vi.mocked(manager.dispatchOperation).mockImplementationOnce(async () => {
-      await hello(f, ["10.4"]);
+      await hello(f, ["0.4"]);
       // A registered successor cannot be connected for dispatch until its real
       // reconciliation finishes. Never fabricate the old always-true state.
       vi.mocked(manager.isHostConnected).mockReturnValue(false);
@@ -1001,7 +1001,7 @@ it.each(
     }
     // Finish this fixture through the real downgrade path so its intentionally
     // queued event cannot intercept the next test's batch/clock barrier.
-    await hello(f, ["10.4"]);
+    await hello(f, ["0.4"]);
     await processSandboxOutboxBatch();
     expect(await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id } })).toMatchObject({
       state: "FAILED",
@@ -1095,7 +1095,7 @@ it("dispatch reads the database clock only after its operation lock", async () =
 });
 
 it.each([false, true])(
-  "ordinary run accepted on 10.5 keeps its version and uses C-26 after downgrade (prior=$prior)",
+  "ordinary run accepted on the current protocol keeps its version and uses C-26 after downgrade (prior=$prior)",
   async (prior) => {
     const { seedTemplateRevision, seedSandboxInstance } = await import(
       "../../../../packages/api/src/sandbox/testing/resource-fixtures"
@@ -1159,7 +1159,7 @@ it.each([false, true])(
           dispatchedConnectionEpoch: 8,
         },
       });
-    await hello(f, ["10.4"]);
+    await hello(f, ["0.4"]);
     vi.mocked(manager.dispatchOperation).mockClear();
     await processSandboxOutboxBatch();
     expect(manager.dispatchOperation).not.toHaveBeenCalled();
@@ -1181,12 +1181,12 @@ it.each(["1.0"])("accepts current-epoch fs/process admission on %s", async (vers
   });
   await expect(admit(f)).resolves.toBeDefined();
   // A stale protocol epoch proves nothing about this epoch's peer: admit and
-  // queue (send still requires current support). Current-epoch 10.7 refuses.
+  // queue (send still requires current support). A non-current version at the current epoch refuses.
   await db.inspect.sandboxHost.update({ where: { id: f.hostId }, data: { relayProtocolEpoch: 7 } });
   await expect(admit(f)).resolves.toBeDefined();
   await db.inspect.sandboxHost.update({
     where: { id: f.hostId },
-    data: { relayProtocolEpoch: 8, relayProtocolVersion: "10.7" },
+    data: { relayProtocolEpoch: 8, relayProtocolVersion: "0.7" },
   });
   await expect(admit(f)).rejects.toMatchObject({ data: { code: "UNSUPPORTED_CAPABILITY" } });
 });

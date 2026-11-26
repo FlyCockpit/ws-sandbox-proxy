@@ -682,7 +682,7 @@ describe("a capture begin that overtakes its own result waits for it (post-landi
     const released = order.release(op.id);
     expect(released).toEqual([early]);
     expect(order.size).toBe(0);
-    // Land round 1: the begin paid its grant budget before it was held; its
+    // The begin paid its grant budget before it was held; its
     // handler does not spend it again (over budget now, it is still granted).
     grantBudget.exhausted = true;
     try {
@@ -1566,7 +1566,7 @@ describe("capture upload failures end with their cause (I1-I4)", () => {
   });
 });
 
-describe("capture uploads survive slow and flaky uplinks (increment B)", () => {
+describe("capture uploads survive slow and flaky uplinks", () => {
   const MiB = 1024 * 1024;
   afterEach(() => {
     vi.unstubAllEnvs();

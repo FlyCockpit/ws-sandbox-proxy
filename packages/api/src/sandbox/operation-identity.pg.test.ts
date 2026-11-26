@@ -114,7 +114,7 @@ async function simulateMove(f: Fixture, sandboxId: string) {
   const generation = sandbox.generation + 1;
   const operation = await db.inspect.sandboxOperation.create({
     data: {
-      digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+      digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
       ...requestDigestMetadata(),
 
       userId: f.id,
@@ -153,7 +153,7 @@ it("I22 a same-key replay of a pre-move CREATE returns the same sandbox; a chang
   expect(op.launchMode).toBe("NEW_ROOT");
   expect(op.digestContext).toMatchObject({
     version: 1,
-    domain: "wssp-request-v2",
+    domain: "wssp-request-v1",
     hostId: f.host.id,
     hostOwnerId: f.id,
     generation: op.generation,
@@ -212,7 +212,7 @@ it("I22 an action receipt after the sandbox moved replays the same receipt", asy
   expect(
     (await db.inspect.sandboxActionReceipt.findUniqueOrThrow({ where: { id: first.operationId } }))
       .digestContext,
-  ).toMatchObject({ domain: "wssp-action-v2", hostId: f.host.id, hostOwnerId: f.id });
+  ).toMatchObject({ domain: "wssp-action-v1", hostId: f.host.id, hostOwnerId: f.id });
   await simulateMove(f, created.id);
   await expect(probeSandboxReceipt(f.owner, input)).resolves.toEqual(first);
 });
@@ -244,7 +244,7 @@ it("CN3 an OFFLOADED sandbox: env-free kill and a hostless restore intent never 
         (
           await tx.sandboxOperation.create({
             data: {
-              digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+              digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
 
               userId: f.id,
               sandboxId: created.id,

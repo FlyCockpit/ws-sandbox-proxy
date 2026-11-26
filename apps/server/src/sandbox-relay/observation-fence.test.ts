@@ -19,7 +19,7 @@ describe("ObservationFence", () => {
     expect(fence.accept(1)).toBe(false);
   });
 
-  /** Codex rc-fu-b r1 #1: a jump past the fenced observation would skip
+  /** A jump past the fenced observation would skip
    * the bound a result just set, so numbering must start at 1 and advance
    * by exactly one. */
   it("refuses a first observation other than 1 and any skipped number", () => {

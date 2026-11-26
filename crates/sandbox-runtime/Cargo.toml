@@ -13,7 +13,7 @@ ring = "0.17.14"
 sandbox-protocol = { path = "../sandbox-protocol" }
 # Credential bundle v1 codec for credential pack/restore.
 login-definition = { path = "../login-definition" }
-# Owner-approved (CLI logins): wipes credential plaintext read from or sent to
+# CLI logins: wipes credential plaintext read from or sent to
 # the guest helper. Already locked; `alloc` for `Zeroizing<Vec<u8>>`.
 zeroize = { version = "1.8", default-features = false, features = ["alloc"] }
 serde.workspace = true

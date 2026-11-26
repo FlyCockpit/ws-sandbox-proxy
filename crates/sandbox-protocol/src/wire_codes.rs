@@ -45,8 +45,8 @@ impl WireCodes {
 mod tests {
     use super::*;
     #[test]
-    fn rejects_old_encoders() {
-        for v in ["10.0", "10.5", "10.7", "11.1"] {
+    fn rejects_non_current_versions() {
+        for v in ["0.9", "0.8", "1.1", "2.0"] {
             assert!(
                 WireCodes::negotiated(v)
                     .encode(

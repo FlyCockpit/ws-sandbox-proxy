@@ -641,7 +641,7 @@ async function applyLocked(ctx, lock, deadline, pollMs) {
   log(`pending migration(s): ${toApply.join(", ")}`);
   if (!backup?.ran) {
     lock.assertHeld("the pre-migration backup");
-    // A brand-new database is not exempt (owner decision): BACKUP_ENABLED=true with
+    // A brand-new database is not exempt: BACKUP_ENABLED=true with
     // no usable destination fails the very first start too, so a broken backup
     // setup shows up on day one rather than at the first upgrade.
     backup = await preMigrateBackup(ctx);

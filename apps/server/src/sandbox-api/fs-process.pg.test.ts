@@ -466,7 +466,7 @@ it("native required-start and rich files refuse every older negotiated host befo
   const f = await seed();
   const count = await db.inspect.sandboxOperation.count({ where: { userId: f.userId } });
   const outbox = await db.inspect.outboxEvent.count({ where: { userId: f.userId } });
-  for (const version of ["10.0", "10.4", "10.5", "10.6", "10.7"]) {
+  for (const version of ["0.0", "0.4", "0.5", "0.6", "0.7"]) {
     await db.inspect.sandboxHost.update({
       where: { id: f.host.id },
       data: { relayProtocolVersion: version },
@@ -521,7 +521,7 @@ it("effective capabilities serialize with host downgrade and reject mismatched p
   await beforeLock.waitReached();
   await db.inspect.sandboxHost.update({
     where: { id: f.host.id },
-    data: { relayProtocolVersion: "10.7" },
+    data: { relayProtocolVersion: "0.7" },
   });
   beforeLock.release();
   const downgraded = await prelockRead;
@@ -544,7 +544,7 @@ it("effective capabilities serialize with host downgrade and reject mismatched p
     db.prisma.$transaction(async (tx) => {
       await tx.sandboxHost.update({
         where: { id: f.host.id },
-        data: { relayProtocolVersion: "10.7" },
+        data: { relayProtocolVersion: "0.7" },
       });
     }),
   );
@@ -564,7 +564,7 @@ it("effective capabilities serialize with host downgrade and reject mismatched p
   expect(afterDowngrade.unavailableReason).toBe("unsupported_runtime");
   for (const feature of ["processes.connect", "processes.kill", "operations.result"])
     expect(afterDowngrade.features).toContain(feature);
-  // Retained server connect and canonical kill remain operational on 10.4.
+  // Retained server connect and canonical kill remain operational after the downgrade.
   expect(
     (await f.request(`${f.base}?generation=1&processId=${f.process.processId}&attempt=1`)).status,
   ).toBe(200);
@@ -762,7 +762,7 @@ it.each([false, true])(
       await db.inspect.sandboxHost.update({
         where: { id: f.host.id },
         data: {
-          relayProtocolVersion: mode === "old" ? "10.7" : "1.0",
+          relayProtocolVersion: mode === "old" ? "0.7" : "1.0",
           relayProtocolEpoch: mode === "unknown" ? null : 1,
           admissionRuntime: mode === "unsupported" ? "UNSUPPORTED" : "FAKE",
         },
@@ -775,7 +775,7 @@ it.each([false, true])(
   },
 );
 
-it("result reads are server capabilities even after a 10.4 downgrade", async () => {
+it("result reads are server capabilities even after a protocol downgrade", async () => {
   const f = await seed();
   await db.inspect.sandboxOperation.update({
     where: { id: f.command.id },
@@ -790,7 +790,7 @@ it("result reads are server capabilities even after a 10.4 downgrade", async () 
   });
   await db.inspect.sandboxHost.update({
     where: { id: f.host.id },
-    data: { relayProtocolVersion: "10.7" },
+    data: { relayProtocolVersion: "0.7" },
   });
   const capabilities = sandboxCapabilitiesSchema.parse(
     await (await f.request(`/sandboxes/${f.sandbox.id}/capabilities`)).json(),

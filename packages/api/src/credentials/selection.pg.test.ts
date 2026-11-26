@@ -364,8 +364,8 @@ describe("credential selection and claims (pg)", () => {
     );
     await db.waitUntilBlocked("pause", { by: "settle" });
     // The pause waits on `earlier` holding nothing after it: `later` is free
-    // (before the fix the UPDATE held it, and the settlement's next lock
-    // closed a deadlock).
+    // (an UPDATE that held it would let the settlement's next lock close a
+    // deadlock).
     const laterFree = await db.inspect
       .$transaction(
         (tx) =>

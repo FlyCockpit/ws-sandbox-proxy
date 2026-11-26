@@ -106,7 +106,7 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
     }
   });
 
-  it("sandbox.offloaded fires for STOPPED → OFFLOADED only (R6, T15)", async () => {
+  it("sandbox.offloaded fires for STOPPED → OFFLOADED only", async () => {
     for (const from of ["STOPPED", "ERROR", "STOPPING"] as const) {
       const sandbox = await seedSandbox(db.inspect, owner, from);
       await db.inspect.webhookEvent.deleteMany({ where: { sandboxId: sandbox.id } });
@@ -212,7 +212,7 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
     };
     const inserted = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
         ...base,
         kind: "RECONNECT_SANDBOX",
@@ -222,7 +222,7 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
     });
     const running = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
         ...base,
         kind: "RUN_COMMAND",
@@ -287,7 +287,7 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
     const other = await seeded(filtered, "READY", { readyAt: new Date() });
     const stat = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         ...base,
@@ -300,7 +300,7 @@ describe("webhook emission triggers (real PostgreSQL)", () => {
     });
     const create = await db.inspect.sandboxOperation.create({
       data: {
-        digestContext: digestContextSnapshot({ domain: "wssp-request-v2" }),
+        digestContext: digestContextSnapshot({ domain: "wssp-request-v1" }),
         ...requestDigestMetadata(),
 
         ...base,

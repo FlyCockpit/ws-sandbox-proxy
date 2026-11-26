@@ -45,7 +45,7 @@ import {
 } from "@/components/terminal-utilities";
 import type { TerminalNotice } from "@/lib/terminal-protocol";
 
-/** Phones get the one-row terminal header (owner 11-24); wider screens keep the actions row. */
+/** Phones get the one-row terminal header; wider screens keep the actions row. */
 export const PHONE_TERMINAL_QUERY = "(max-width: 640px)";
 
 type Status =
@@ -313,7 +313,7 @@ function TerminalMoreMenu({
             <DropdownMenuItem
               data-session="end"
               data-danger=""
-              // Red (owner 11-24). Not variant="destructive": this app's menus render
+              // Red. Not variant="destructive": this app's menus render
               // that variant in the neutral foreground colour.
               className="text-destructive! *:[svg]:text-destructive!"
               onClick={session.onEndSession}
@@ -373,7 +373,7 @@ export function MaximizeButton({
 }
 
 /**
- * The phone terminal header (owner 11-24, demo "After / One menu"): one
+ * The phone terminal header: one
  * fixed row at every phone width — the terminal picker, ⋯ with the Type &
  * view and Session groups, and Maximize/Restore in the corner. Nothing
  * moves into an overflow as the screen narrows.

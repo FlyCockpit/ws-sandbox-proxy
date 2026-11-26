@@ -2819,7 +2819,7 @@ fn exported(f: &Fixture, begin: &DiskUploadBeginV11) -> Vec<u8> {
     std::fs::read(&files[0]).unwrap()
 }
 
-/// The owner decision (11-23): a reconnect in the middle of a non-final
+/// A reconnect in the middle of a non-final
 /// window. The window's PUTs finish, its report is never queued for the new
 /// connection (no part reaches a connection that did not resume), the job
 /// resumes explicitly on the new one, continues from the server's stored
@@ -3092,7 +3092,7 @@ fn a_frame_for_an_older_connection_is_never_queued() {
     assert_eq!(f.images.queued().len(), 1);
 }
 
-/// Codex r1 #1: a reconnect while the begin is still queued. The begin
+/// A reconnect while the begin is still queued. The begin
 /// belongs to the old connection: it is purged and sent again on the new
 /// one, so its grant (the only frame with the session's key) is read.
 #[test]
@@ -3131,7 +3131,7 @@ fn a_reconnect_before_the_begin_is_sent_begins_again_on_the_new_connection() {
     assert_eq!(store.plaintext(KEY), exported(&f, &begin));
 }
 
-/// Codex r1 #2: every resume episode re-hashes the staging, also after a
+/// Every resume episode re-hashes the staging, also after a
 /// resumed window ends in a lapsed URL: staging that changed meanwhile
 /// fails the upload `corrupt` before another part is sent (§3: the session
 /// key never seals other bytes at the same record nonces).
@@ -3164,7 +3164,7 @@ fn a_staging_change_after_a_resumed_window_is_caught_by_the_next_resume() {
     assert!(!store.has(4), "no part after the changed staging");
 }
 
-/// Codex r2: a resume answer that finds nothing new is no progress: lapsed
+/// A resume answer that finds nothing new is no progress: lapsed
 /// URLs again and again back off longer each time (5 s doubling to 60 s in
 /// production; 100 ms doubling here).
 #[test]

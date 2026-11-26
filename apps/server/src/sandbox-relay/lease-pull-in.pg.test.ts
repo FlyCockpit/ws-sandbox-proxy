@@ -542,7 +542,7 @@ it("review #1: without an acknowledged lease the pull-in waits instead of guessi
   expect(await scanLeasePolicy(s.clock)).toBe(0);
 });
 
-it("review round 2 #1: the system renewal is shorten-only on the wire; a host that clamped it to an earlier installed lease is adopted, never a later one", async () => {
+it("the system renewal is shorten-only on the wire; a host that clamped it to an earlier installed lease is adopted, never a later one", async () => {
   const s = await readySandbox();
   // The host installed the user's 10-minute shortening; its ACK is delayed,
   // so the server still believes 20h.

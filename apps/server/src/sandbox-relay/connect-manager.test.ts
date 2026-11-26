@@ -650,7 +650,7 @@ describe("connect manager: credits and ordering", () => {
   });
 });
 
-describe("connect manager: bounds against a misbehaving peer (pre-audit)", () => {
+describe("connect manager: bounds against a misbehaving peer", () => {
   it("unacked bytes of a finished channel leave the budget: many short execs never wedge output", async () => {
     const { connection, client } = connect();
     await settle();
@@ -777,7 +777,7 @@ describe("connect manager: bounds against a misbehaving peer (pre-audit)", () =>
   });
 });
 
-describe("connect manager: review round 1", () => {
+describe("connect manager: late ends, revocation and backpressure", () => {
   it("a revocation after an unreaped normal end still upgrades it to a kill", () => {
     const { connection } = connect();
     const fence = openExec(connection);
@@ -892,7 +892,7 @@ describe("connect manager: review round 1", () => {
   });
 });
 
-describe("connect manager: review round 2", () => {
+describe("connect manager: draining and congestion", () => {
   for (const reaped of [true, false]) {
     it(`output beyond one window drains after a natural exit (reaped: ${reaped})`, () => {
       const { connection, client } = connect();
@@ -966,7 +966,7 @@ describe("connect manager: review round 2", () => {
   });
 });
 
-describe("connect manager: review round 3", () => {
+describe("connect manager: byte budgets and held credit", () => {
   it("a backlogged channel never starves another under the byte rate", async () => {
     vi.useFakeTimers();
     manager.dispose();
@@ -1059,7 +1059,7 @@ describe("connect manager: review round 3", () => {
   });
 });
 
-describe("connect manager: review round 4", () => {
+describe("connect manager: per-direction byte rates", () => {
   function rated() {
     vi.useFakeTimers();
     manager.dispose();
@@ -1144,7 +1144,7 @@ describe("connect manager: review round 4", () => {
   }
 });
 
-describe("connect manager: pre-round-5 audit", () => {
+describe("connect manager: stdin backlog", () => {
   it("bulk stdin waits at the high mark while credit and controls still reach the node", () => {
     const { connection, client } = connect();
     const fence = openPty(connection);
@@ -1747,7 +1747,7 @@ describe("connect manager: tcp and unix relay channels", () => {
   });
 });
 
-describe("connect manager: shared budgets keep a reserve per channel (audit M1)", () => {
+describe("connect manager: shared budgets keep a reserve per channel", () => {
   it("channels whose client stopped reading never freeze another channel's output", async () => {
     const { connection, client } = connect();
     await settle();

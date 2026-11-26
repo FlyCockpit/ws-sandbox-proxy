@@ -41,7 +41,7 @@ describe("createConsumerHeartbeat", () => {
     await heartbeat.start();
     expect(heartbeat.isReady()).toBe(true);
     expect(connection.eval.mock.calls[0]?.[2]).toBe(
-      "wssp:consumers:v2:embedded:reap-expired-auth-tokens",
+      "wssp:consumers:v1:embedded:reap-expired-auth-tokens",
     );
     healthy = false;
     expect(heartbeat.isReady()).toBe(false);
@@ -78,7 +78,7 @@ describe("createConsumerHeartbeat", () => {
     await rejected;
     await stopping;
     expect(connection.zrem).toHaveBeenCalledWith(
-      "wssp:consumers:v2:external:reap-expired-auth-tokens",
+      "wssp:consumers:v1:external:reap-expired-auth-tokens",
       connection.eval.mock.calls[0]?.[3],
     );
     expect(heartbeat.isReady()).toBe(false);
@@ -104,7 +104,7 @@ describe("createConsumerHeartbeat", () => {
     connection.eval.mockResolvedValue(1);
     expect(await hasExternalConsumer(connection, ["reap-expired-auth-tokens"])).toBe(true);
     expect(connection.eval.mock.lastCall?.[2]).toBe(
-      "wssp:consumers:v2:external:reap-expired-auth-tokens",
+      "wssp:consumers:v1:external:reap-expired-auth-tokens",
     );
     expect(connection.eval.mock.lastCall?.[0]).toContain("redis.call('TIME')");
   });
@@ -132,14 +132,14 @@ describe("createConsumerHeartbeat", () => {
     const firstCall = connection.eval.mock.calls[0];
     expect(firstCall?.slice(1, 4)).toEqual([
       2,
-      "wssp:consumers:v2:external:reap-expired-auth-tokens",
-      "wssp:consumers:v2:external:new-queue",
+      "wssp:consumers:v1:external:reap-expired-auth-tokens",
+      "wssp:consumers:v1:external:new-queue",
     ]);
     expect(firstCall?.[4]).not.toBe(connection.eval.mock.calls[1]?.[4]);
     await first.stop();
     expect(connection.zrem.mock.calls).toEqual([
-      ["wssp:consumers:v2:external:reap-expired-auth-tokens", firstCall?.[4]],
-      ["wssp:consumers:v2:external:new-queue", firstCall?.[4]],
+      ["wssp:consumers:v1:external:reap-expired-auth-tokens", firstCall?.[4]],
+      ["wssp:consumers:v1:external:new-queue", firstCall?.[4]],
     ]);
     await second.stop();
   });
@@ -150,5 +150,5 @@ it("includes deletion-notice consumption in external readiness", async () => {
   expect(await hasExternalConsumer(connection, Object.values(QUEUE_NAMES))).toBe(false);
   const call = connection.eval.mock.lastCall;
   expect(call?.[1]).toBe(Object.keys(QUEUE_NAMES).length);
-  expect(call?.slice(2)).toContain("wssp:consumers:v2:external:notify-data-deletions");
+  expect(call?.slice(2)).toContain("wssp:consumers:v1:external:notify-data-deletions");
 });
