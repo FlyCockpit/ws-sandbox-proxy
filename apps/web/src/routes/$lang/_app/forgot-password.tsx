@@ -13,6 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
+import { ensureRouteQuery } from "@/lib/route-query";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { getRouteSession } from "@/server/auth-session";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
@@ -32,7 +33,9 @@ export const Route = createFileRoute("/$lang/_app/forgot-password")({
     }
     // Password reset relies on email delivery. When SMTP isn't configured,
     // there is no reset flow — deflect to login.
-    const cfg = await context.queryClient.ensureQueryData(orpc.appConfig.queryOptions());
+    const cfg = await ensureRouteQuery(context.queryClient, orpc.appConfig.queryKey(), () =>
+      orpc.appConfig.call(),
+    );
     if (!cfg.emailEnabled) {
       throw redirect({ to: "/$lang/login", params: { lang: params.lang }, search });
     }
