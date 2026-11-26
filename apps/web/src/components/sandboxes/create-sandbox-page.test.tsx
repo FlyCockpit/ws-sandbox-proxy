@@ -53,6 +53,14 @@ import {
 
 const server = vi.hoisted(() => ({ current: null as unknown as FakeSandboxServer }));
 const navigate = vi.hoisted(() => vi.fn());
+const blocker = vi.hoisted(() => ({
+  opts: undefined as
+    | undefined
+    | { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean; disabled?: boolean },
+  blocked: false,
+  proceed: vi.fn(),
+  reset: vi.fn(),
+}));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
 // CLI logins are covered by their own tests; here the server has them off.
@@ -62,6 +70,12 @@ vi.mock("@/components/logins/logins-shared", async (importOriginal) => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
+  useBlocker: (opts: { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean }) => {
+    blocker.opts = opts;
+    return blocker.blocked
+      ? { status: "blocked", proceed: blocker.proceed, reset: blocker.reset }
+      : { status: "idle" };
+  },
   Link: ({
     children,
     className,
@@ -260,6 +274,10 @@ beforeEach(() => {
   ];
   navigate.mockReset();
   toast.success.mockReset();
+  blocker.opts = undefined;
+  blocker.blocked = false;
+  blocker.proceed.mockReset();
+  blocker.reset.mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -511,6 +529,61 @@ describe("defaults and layout", () => {
       expect(button.className).toMatch(/h-11|min-h-\[44px\]|min-h-11/);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(enSandboxes.create.title);
   });
+
+  it("leaving with input not yet sent asks first; an untouched form leaves at once", async () => {
+    const user = userEvent.setup();
+    await openCreate(user);
+    expect(blocker.opts?.shouldBlockFn()).toBe(false);
+    expect(blocker.opts?.enableBeforeUnload()).toBe(false);
+    await user.type(form().getByLabelText(enSandboxes.create.name), "half-done");
+    expect(blocker.opts?.shouldBlockFn()).toBe(true);
+    expect(blocker.opts?.enableBeforeUnload()).toBe(true);
+  });
+
+  it("changing only Pool/Host counts as input to keep", async () => {
+    server.current.pools = [{ id: "pool-1", slug: "lab", label: "Lab" }];
+    const user = userEvent.setup();
+    await openCreate(user);
+    await form().findByRole("combobox", { name: enSandboxes.create.pool });
+    expect(blocker.opts?.shouldBlockFn()).toBe(false);
+    await user.click(form().getByRole("button", { name: enSandboxes.create.placementHost }));
+    expect(blocker.opts?.shouldBlockFn()).toBe(true);
+  });
+
+  it("forced 2FA enrolment leaves a half-filled form without the discard prompt", async () => {
+    server.current.errors.createSandbox = [coded("auth.two_factor_required", "FORBIDDEN")];
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickHost(user);
+    await chooseRevision(user, "tpl-1");
+    expect(blocker.opts?.shouldBlockFn()).toBe(true);
+    await submit(user);
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/$lang/settings/security",
+        params: { lang: "en-US" },
+        ignoreBlocker: true,
+      }),
+    );
+  });
+
+  it("a held Cancel or Back shows the discard prompt; Keep editing stays, Discard leaves", async () => {
+    const user = userEvent.setup();
+    await openCreate(user);
+    blocker.blocked = true;
+    await user.type(form().getByLabelText(enSandboxes.create.name), "x");
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText(enCommon.form.leave.title)).toBeTruthy();
+    await user.click(within(confirm).getByRole("button", { name: enCommon.form.leave.stay }));
+    expect(blocker.reset).toHaveBeenCalled();
+    expect(blocker.proceed).not.toHaveBeenCalled();
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: enCommon.form.leave.leave,
+      }),
+    );
+    expect(blocker.proceed).toHaveBeenCalled();
+  });
 });
 
 describe("creating a sandbox", () => {
@@ -570,6 +643,8 @@ describe("creating a sandbox", () => {
     expect(navigate).toHaveBeenCalledWith({
       to: "/$lang/dashboard/sandboxes/$sandboxId",
       params: { lang: "en-US", sandboxId: "sbx-new-1" },
+      // Created: going to it never asks about unsaved changes.
+      ignoreBlocker: true,
     });
     expect(toast.success).toHaveBeenCalledWith(enSandboxes.create.done);
   });

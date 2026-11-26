@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enCredentials from "@wssp/locales/src/en-US/credentials.json";
@@ -189,6 +189,34 @@ describe("WebhooksPage", () => {
     expect(screen.getByText(enWebhooks.event["sandbox.ready"])).toBeTruthy();
     expect(screen.getByText("21 consecutive failures")).toBeTruthy();
     expect(screen.getByText(enWebhooks.status.disabled)).toBeTruthy();
+  });
+
+  it("an enabled endpoint that keeps failing shows a Failing warning, not a calm Enabled", async () => {
+    const endpoint = (id: string, consecutiveFailures: number) => ({
+      id,
+      url: `https://${id}.example.com/wssp`,
+      description: null,
+      events: ["sandbox.ready"],
+      operationKinds: "all",
+      enabled: true,
+      disabledReason: null,
+      health: { consecutiveFailures },
+    });
+    server.endpoints = [endpoint("failing", 53), endpoint("healthy", 0)];
+    renderPage();
+    await screen.findByText("https://failing.example.com/wssp");
+    const card = (id: string) => document.querySelector<HTMLElement>(`[data-webhook-id="${id}"]`)!;
+    const failing = within(card("failing"));
+    const badge = failing.getByText(enWebhooks.status.failing);
+    expect(badge.getAttribute("data-webhook-status")).toBe("failing");
+    expect(badge.className).toContain("text-state-warning");
+    expect(failing.queryByText(enWebhooks.status.enabled)).toBeNull();
+    expect(failing.getByText("53 consecutive failures").className).toContain("text-state-warning");
+    const healthy = within(card("healthy"));
+    expect(healthy.getByText(enWebhooks.status.enabled).getAttribute("data-webhook-status")).toBe(
+      "enabled",
+    );
+    expect(healthy.getByText(enWebhooks.list.healthy).className).toContain("text-muted-foreground");
   });
 
   it("refuses an incomplete draft in the browser, then reveals the secret once", async () => {

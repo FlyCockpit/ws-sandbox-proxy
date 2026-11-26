@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { formatGraceDuration } from "./format-duration";
+import { formatGraceDuration, formatWait } from "./format-duration";
 
 it.each([
   [259200, "en-US", "3 days"],
@@ -13,3 +13,12 @@ it.each([
     expect(formatGraceDuration(seconds, locale)).toBe(expected);
   },
 );
+
+it("a retry wait is one unit, rounded up", () => {
+  expect(formatWait(0, "en-US")).toBe("1 second");
+  expect(formatWait(45, "en-US")).toBe("45 seconds");
+  expect(formatWait(61, "en-US")).toBe("2 minutes");
+  expect(formatWait(3600, "en-US")).toBe("1 hour");
+  expect(formatWait(86_399, "en-US")).toBe("24 hours");
+  expect(formatWait(86_401, "es-MX")).toBe("2 días");
+});

@@ -1,5 +1,6 @@
 import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import {
   contributePoolHostInput,
@@ -24,6 +25,7 @@ import {
   SheetTitle,
 } from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -33,10 +35,11 @@ import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
+import { PageActions } from "@/components/page-actions";
 import { WideSheet } from "@/components/wide-sheet";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
 import { formatDateTime } from "@/lib/format-date-time";
-import { formatGraceDuration } from "@/lib/format-duration";
+import { formatGraceDuration, formatWait } from "@/lib/format-duration";
 import { leaseLimitText, parseLeaseLimit } from "@/lib/lease-duration";
 import { orpc } from "@/utils/orpc";
 import { PoolCapacityDialog } from "./pool-capacity";
@@ -75,9 +78,13 @@ export function SharingNotice({ contribution = false }: { contribution?: boolean
       <p className="text-sm text-muted-foreground" data-sharing-notice="">
         {t(contribution ? "hosts:sharing.contributionNotice" : "hosts:sharing.trust")}
       </p>
-      <p className="text-sm text-muted-foreground" data-node-owner-access="">
-        {t("hosts:sharing.nodeOwnerAccess")}
-      </p>
+      {/* The trust line already says a host's admins reach its sandboxes;
+          contributors are also told the converse for their own host. */}
+      {contribution ? (
+        <p className="text-sm text-muted-foreground" data-node-owner-access="">
+          {t("hosts:sharing.nodeOwnerAccess")}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -106,38 +113,98 @@ function More({
     </>
   );
 }
-function useSharingAction(lang: string) {
+/** Copy keys for a refused sharing write, per operation. */
+type SharingMessages = { conflict: string; tooMany: string };
+const GENERIC_SHARING_MESSAGES: SharingMessages = {
+  conflict: "hosts:sharing.failed",
+  tooMany: "hosts:sharing.tooManyChanges",
+};
+/**
+ * A refused sharing write, in words: too many requests says to wait, a
+ * conflict says what it usually means for this operation (the server keeps
+ * one generic conflict so it never reveals other accounts).
+ */
+function sharingProblem(
+  error: unknown,
+  messages: SharingMessages,
+): { key: string; retryAfterSeconds?: number } {
+  const shape =
+    error && typeof error === "object" ? (error as { code?: unknown; data?: unknown }) : {};
+  if (shape.code === "TOO_MANY_REQUESTS") {
+    // Daily limits can mean a wait of hours: say the server's own wait.
+    const retry =
+      shape.data && typeof shape.data === "object"
+        ? (shape.data as { retryAfterSeconds?: unknown }).retryAfterSeconds
+        : undefined;
+    return typeof retry === "number" && Number.isFinite(retry) && retry > 0
+      ? { key: messages.tooMany, retryAfterSeconds: retry }
+      : { key: `${messages.tooMany}Later` };
+  }
+  if (shape.code === "CONFLICT") return { key: messages.conflict };
+  return { key: "hosts:sharing.failed" };
+}
+function useSharingAction(lang: string, messages: SharingMessages = GENERIC_SHARING_MESSAGES) {
   const { t } = useTranslation("hosts");
   const client = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
   const [pending, setPending] = useState(false);
-  const [problem, setProblem] = useState(false);
+  const [problem, setProblem] = useState<ReturnType<typeof sharingProblem> | null>(null);
   async function run(work: () => Promise<unknown>) {
     setPending(true);
-    setProblem(false);
+    setProblem(null);
     try {
       await work();
       await client.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
     } catch (error) {
-      if (!redirect(error)) setProblem(true);
+      if (!redirect(error)) setProblem(sharingProblem(error, messages));
     } finally {
       setPending(false);
     }
   }
-  return { run, pending, error: problem ? <p role="alert">{t("hosts:sharing.failed")}</p> : null };
+  return {
+    run,
+    pending,
+    error: problem ? (
+      <p role="alert" data-sharing-problem="" className="col-span-full text-sm text-destructive">
+        {problem.retryAfterSeconds === undefined
+          ? t(problem.key)
+          : t(problem.key, { wait: formatWait(problem.retryAfterSeconds, lang) })}
+      </p>
+    ) : null,
+  };
 }
-export function SharedPools({ lang }: { lang: string }) {
-  const pools = useInfiniteQuery({
+/** Pools shared with you; the Pools page reads the same first page to pick its tab. */
+export function useSharedPools() {
+  return useInfiniteQuery({
     ...orpc.sandboxPools.listShared.infiniteOptions({
       ...paging,
       input: (cursor: string | undefined) => ({ cursor, limit: 20 }),
     }),
     meta: { skipGlobalErrorToast: true },
   });
+}
+export function SharedPools({ lang }: { lang: string }) {
+  const pools = useSharedPools();
   const { t } = useTranslation("hosts");
+  const usable = pools.data?.pages.some((page) =>
+    page.items.some((pool) => "share" in pool && pool.share?.canUse),
+  );
   return (
     <>
       <SharingNotice />
+      {usable ? (
+        // Templates are per account: a shared pool lends hosts, not templates.
+        <div data-shared-templates-note="" className="flex min-w-0 flex-col items-start text-sm">
+          <p>{t("hosts:sharing.templatesNotShared")}</p>
+          <Link
+            to="/$lang/dashboard/templates"
+            params={{ lang }}
+            className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+          >
+            {t("hosts:sharing.openTemplates")}
+          </Link>
+        </div>
+      ) : null}
       {pools.isPending ? <p role="status">{t("hosts:sharing.loading")}</p> : null}
       <ul className="flex flex-col gap-4">
         {pools.data?.pages
@@ -181,17 +248,49 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
     meta: { skipGlobalErrorToast: true },
   });
   return (
-    <li className="flex min-w-0 flex-col gap-3 rounded-xl border p-4">
-      {/* Names first; the slug and id are secondary (the id copies). */}
-      <div className="flex min-w-0 flex-col gap-1">
-        <h2 className="break-words font-medium">{pool.label}</h2>
-        {"owner" in pool && pool.owner?.name ? (
-          <p className="text-sm">{t("hosts:sharing.sharedBy", { name: pool.owner.name })}</p>
-        ) : null}
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="break-all font-mono">{pool.slug}</span>
-          <CopyableId value={pool.id} label={t("hosts:sharing.poolId")} />
+    <li
+      data-shared-pool-id={pool.id}
+      className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
+    >
+      {/* As on an owned pool's card: names first, the actions in one row
+          beside them, Leave in the menu. The slug and id are secondary. */}
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h2 className="break-words font-medium">{pool.label}</h2>
+          {"owner" in pool && pool.owner?.name ? (
+            <p className="text-sm">{t("hosts:sharing.sharedBy", { name: pool.owner.name })}</p>
+          ) : null}
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="break-all font-mono">{pool.slug}</span>
+            <span>{t("hosts:sharing.poolIdLabel")}</span>
+            <CopyableId value={pool.id} label={t("hosts:sharing.poolId")} />
+          </div>
         </div>
+        <PageActions
+          primary={
+            "share" in pool && pool.share?.canUse ? (
+              <Button size="touch" variant="outline" onClick={() => setCapacity(true)}>
+                {t("hosts:poolCapacity.open")}
+              </Button>
+            ) : undefined
+          }
+          secondary={
+            "share" in pool && pool.share?.canContribute && !pool.ownHostsOnly ? (
+              <Button size="touch" variant="outline" onClick={() => setContributing(true)}>
+                {t("hosts:sharing.contribute")}
+              </Button>
+            ) : undefined
+          }
+          overflowLabel={t("hosts:pools.actions.more", { label: pool.label })}
+          overflow={[
+            {
+              id: "leave",
+              label: t("hosts:sharing.leave"),
+              destructive: true,
+              onSelect: () => setLeaving(true),
+            },
+          ]}
+        />
       </div>
       {"share" in pool && pool.share ? (
         <div className="flex min-w-0 flex-col gap-1 text-sm">
@@ -228,11 +327,6 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
               duration: formatGraceDuration(pool.disconnectGraceSeconds, lang),
             })}
       </p>
-      {"share" in pool && pool.share?.canUse ? (
-        <Button size="touch" variant="secondary" onClick={() => setCapacity(true)}>
-          {t("hosts:poolCapacity.open")}
-        </Button>
-      ) : null}
       {capacity ? (
         <PoolCapacityDialog
           poolId={pool.id}
@@ -240,11 +334,6 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
           lang={lang}
           onClose={() => setCapacity(false)}
         />
-      ) : null}
-      {"share" in pool && pool.share?.canContribute && !pool.ownHostsOnly ? (
-        <Button size="touch" onClick={() => setContributing(true)}>
-          {t("hosts:sharing.contribute")}
-        </Button>
       ) : null}
       <ul>
         {contributions.data?.pages
@@ -278,9 +367,6 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
           ))}
       </ul>
       <More query={contributions} />
-      <Button size="touch" variant="destructive" onClick={() => setLeaving(true)}>
-        {t("hosts:sharing.leave")}
-      </Button>
       {action.error}
       {editingMember ? (
         <ContributionForm
@@ -328,17 +414,19 @@ const nullableNumber = (max: number) =>
     .string()
     .transform((value) => (value.trim() ? Number(value) : null))
     .pipe(z.number().int().min(1).max(max).nullable());
-const settingsSchema = z
-  .object({
-    canUse: z.boolean(),
-    canContribute: z.boolean(),
-    maxMemoryMiB: nullableNumber(16777216),
-    maxVcpu: nullableNumber(8192),
-    maxDiskGiB: nullableNumber(268435456),
-    email: z.string(),
-    signupAllowed: z.boolean(),
-  })
-  .refine((v) => v.canUse || v.canContribute);
+/** Share settings; `email` checks the recipient address when inviting (unused when editing). */
+const settingsSchema = (email: z.ZodType<string, string>) =>
+  z
+    .object({
+      canUse: z.boolean(),
+      canContribute: z.boolean(),
+      maxMemoryMiB: nullableNumber(16777216),
+      maxVcpu: nullableNumber(8192),
+      maxDiskGiB: nullableNumber(268435456),
+      email,
+      signupAllowed: z.boolean(),
+    })
+    .refine((v) => v.canUse || v.canContribute);
 export function ShareForm({
   poolId,
   share,
@@ -351,7 +439,25 @@ export function ShareForm({
   onClose: () => void;
 }) {
   const { t } = useTranslation(["hosts", "common"]);
-  const action = useSharingAction(lang);
+  // Inviting has its own limits and refusals; editing a share is a plain change.
+  const action = useSharingAction(
+    lang,
+    share
+      ? GENERIC_SHARING_MESSAGES
+      : { conflict: "hosts:sharing.shareConflict", tooMany: "hosts:sharing.tooMany" },
+  );
+  // An empty, mistyped or over-long address is caught here, under the field,
+  // before anything is sent: the server's own email rule, in words.
+  const schema = settingsSchema(
+    share
+      ? z.string()
+      : z
+          .string()
+          .refine(
+            (value) => grantPoolShareInput.shape.email.safeParse(value).success,
+            t("hosts:sharing.invalidEmail"),
+          ),
+  );
   const update = useMutation({
     ...orpc.sandboxPools.updateShare.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -367,10 +473,12 @@ export function ShareForm({
       maxDiskGiB: String(share?.maxDiskGiB ?? ""),
       signupAllowed: false,
     },
-    validators: { onSubmit: settingsSchema },
+    validators: { onSubmit: schema },
+    onSubmitInvalid: () =>
+      focusFirstInvalidField(document.querySelector<HTMLElement>("[data-share-form]")),
     onSubmit: async ({ value }) =>
       action.run(async () => {
-        const settings = settingsSchema.parse(value);
+        const settings = schema.parse(value);
         if (share) {
           await update.mutateAsync(
             updatePoolShareInput.parse({
@@ -466,6 +574,8 @@ export function ShareForm({
                 )}
               </form.Field>
             ))}
+            {/* A refusal shows here, next to what it is about, not below the fold. */}
+            {action.error}
           </FormSection>
           <AdvancedSection
             gridClassName="lg:grid-cols-1"
@@ -509,7 +619,6 @@ export function ShareForm({
             </AdvancedSection>
           ) : null}
           <SharingNotice />
-          {action.error}
         </>
       )}
     </WideSheet>

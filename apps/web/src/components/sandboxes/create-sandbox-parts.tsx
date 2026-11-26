@@ -4,6 +4,7 @@ import { RangeField } from "@wssp/ui/components/range-field";
 import type { FieldLike } from "@wssp/ui/components/text-field";
 import { GIBIBYTE_UNITS, type RangeUnit } from "@wssp/ui/lib/range-scale";
 import type { TFunction } from "i18next";
+import { ChevronRightIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { InlineRetry } from "@/components/inline-retry";
 import { SharingNotice } from "@/components/pools/pool-sharing";
@@ -69,8 +70,13 @@ export function PoolTrustNotice({
   return (
     <div className="flex min-w-0 flex-col gap-1 text-sm text-muted-foreground">
       <p data-pool-trust-line="">{t("sandboxes:create.poolTrustLine")}</p>
-      <details data-pool-trust-more="" className="min-w-0">
-        <summary className="flex min-h-11 cursor-pointer items-center font-medium text-foreground">
+      <details data-pool-trust-more="" className="group/trust min-w-0">
+        {/* The same turning chevron as the Advanced sections, so it reads as a disclosure. */}
+        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 font-medium text-foreground [&::-webkit-details-marker]:hidden">
+          <ChevronRightIcon
+            aria-hidden="true"
+            className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open/trust:rotate-90 motion-reduce:transition-none"
+          />
           {t("sandboxes:create.learnMore")}
         </summary>
         <div className="flex min-w-0 flex-col gap-2 pb-2">

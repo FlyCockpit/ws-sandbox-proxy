@@ -55,7 +55,13 @@
     "warning": "Advertencia"
   },
   "form": {
-    "fixErrors": "Corrige los campos marcados."
+    "fixErrors": "Corrige los campos marcados.",
+    "leave": {
+      "title": "¿Descartar lo que escribiste?",
+      "description": "Todavía no has creado nada. Si sales ahora, se pierden las opciones de esta página.",
+      "stay": "Seguir editando",
+      "leave": "Descartar y salir"
+    }
   },
   "offline": {
     "showingDataFrom": "Sin conexión: mostrando los datos guardados ({{time}}).",

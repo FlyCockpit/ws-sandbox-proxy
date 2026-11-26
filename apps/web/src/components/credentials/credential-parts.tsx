@@ -20,8 +20,8 @@ import { Check, Copy, Eye, EyeOff } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FormSelect } from "@/components/form-select";
+import { LeaveGuardDialog } from "@/components/leave-guard-dialog";
 import { ResourceIdentity } from "@/components/resource-identity";
-import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import type { Orphan } from "@/hooks/use-one-time-secret";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
 import {
@@ -120,33 +120,14 @@ export function OneTimeSecretPanel({
  */
 export function SecretLeaveGuard({ active }: { active: boolean }) {
   const { t } = useTranslation(["credentials"]);
-  const guard = useLeaveGuard(active);
   return (
-    <AlertDialog
-      open={guard.blocked}
-      onOpenChange={(open) => {
-        if (!open) guard.stay();
-      }}
-    >
-      <AlertDialogContent className="max-w-[calc(100%-2rem)]! sm:max-w-md! data-[size=default]:max-w-[calc(100%-2rem)]! data-[size=default]:sm:max-w-md! data-[size=sm]:max-w-[calc(100%-2rem)]!">
-        <AlertDialogHeader>
-          <AlertDialogTitle>{t("credentials:leave.title")}</AlertDialogTitle>
-          <AlertDialogDescription>{t("credentials:leave.description")}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter className="sm:flex-wrap">
-          <AlertDialogCancel className="min-h-[44px] w-full sm:w-auto">
-            {t("credentials:leave.stay")}
-          </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            className="min-h-[44px] w-full sm:w-auto"
-            onClick={guard.leave}
-          >
-            {t("credentials:leave.leave")}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <LeaveGuardDialog
+      active={active}
+      title={t("credentials:leave.title")}
+      description={t("credentials:leave.description")}
+      stayLabel={t("credentials:leave.stay")}
+      leaveLabel={t("credentials:leave.leave")}
+    />
   );
 }
 

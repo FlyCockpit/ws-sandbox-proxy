@@ -168,6 +168,7 @@
   "status": {
     "enabled": "Habilitado",
     "disabled": "Deshabilitado",
+    "failing": "Con fallos",
     "disabledByOwner": "Deshabilitado por ti. Las entregas no se envían mientras esté deshabilitado.",
     "disabledForFailures": "Deshabilitado después de fallas sostenidas en la entrega (72 horas y 20 fallas consecutivas). Corrige el receptor y luego vuelve a habilitarlo."
   },

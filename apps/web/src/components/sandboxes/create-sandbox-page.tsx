@@ -22,6 +22,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
 import { FormPageStatus } from "@/components/form-page-status";
 import { FormSelect } from "@/components/form-select";
+import { UnsavedChangesGuard } from "@/components/leave-guard-dialog";
 import { LoadMore } from "@/components/load-more";
 import { LoginsPicker } from "@/components/logins/login-picker";
 import { useLoginsAvailability } from "@/components/logins/logins-shared";
@@ -250,7 +251,8 @@ export function CreateSandboxPage({
   const { t } = useTranslation(["sandboxes", "hosts", "common"]);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const redirect = useTwoFactorRedirect(lang);
+  // Forced 2FA enrolment wins over the unsaved-changes prompt below.
+  const redirect = useTwoFactorRedirect(lang, { overridesUnsavedInput: true });
   const ids = {
     host: useId(),
     pool: useId(),
@@ -406,6 +408,11 @@ export function CreateSandboxPage({
     },
   });
   const values = useStore(form.store, (state) => state.values);
+  // Cancel, Back or a nav link with input not yet sent asks before it is lost
+  // (Pool/Host lives outside the form, so a changed placement counts too).
+  const formDirty = useStore(form.store, (state) => state.isDirty);
+  const [placementTouched, setPlacementTouched] = useState(false);
+  const dirty = formDirty || placementTouched;
 
   /**
    * Clear the private environment (rows, text mode and the draft's JSON) once
@@ -465,6 +472,8 @@ export function CreateSandboxPage({
       void navigate({
         to: "/$lang/dashboard/sandboxes/$sandboxId",
         params: { lang, sandboxId: sandbox.id },
+        // Created: nothing is lost by leaving, so the unsaved-changes prompt stays out.
+        ignoreBlocker: true,
       });
     },
     onError: (error) => {
@@ -639,14 +648,18 @@ export function CreateSandboxPage({
         ? hostSizeCap(selectedHost, now, storageNow)
         : null;
 
-  useTwoFactorRedirectOnError(lang, [
-    limits.error,
-    hostsQuery.error,
-    poolsQuery.error,
-    templatesQuery.error,
-    revisionsQuery.error,
-    poolCapacity.error,
-  ]);
+  useTwoFactorRedirectOnError(
+    lang,
+    [
+      limits.error,
+      hostsQuery.error,
+      poolsQuery.error,
+      templatesQuery.error,
+      revisionsQuery.error,
+      poolCapacity.error,
+    ],
+    { overridesUnsavedInput: true },
+  );
 
   // Flagged rows, and `.env` lines that did not parse (kept as flagged rows,
   // never sent): either refuses the draft.
@@ -984,6 +997,7 @@ export function CreateSandboxPage({
         </>
       }
     >
+      <UnsavedChangesGuard active={dirty} />
       <FormSection
         title={t("sandboxes:create.sectionTemplate")}
         description={t("sandboxes:create.sectionTemplateHint")}
@@ -1074,7 +1088,10 @@ export function CreateSandboxPage({
           <SegmentedControl
             value={placement}
             ariaLabel={t("sandboxes:create.placement")}
-            onChange={(next) => setPlacementChoice(next)}
+            onChange={(next) => {
+              setPlacementChoice(next);
+              setPlacementTouched(true);
+            }}
             items={[
               { value: "pool", label: t("sandboxes:create.placementPool") },
               { value: "host", label: t("sandboxes:create.placementHost") },

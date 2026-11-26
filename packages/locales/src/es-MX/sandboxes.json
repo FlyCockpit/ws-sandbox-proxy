@@ -541,7 +541,7 @@
     "guestPath": "Ruta en la VM",
     "guestPathHint": "Una ruta absoluta, por ejemplo /home/user/datos.csv.",
     "pathPlaceholder": "/home/user/",
-    "badPath": "Escribe una ruta absoluta sin ..",
+    "badPath": "Escribe una ruta absoluta, como /home/user/data.csv, sin partes “..”.",
     "receiptFailed": "No se pudo leer el estado de esta transferencia.",
     "upload": {
       "title": "Subir",

@@ -7,17 +7,27 @@ import en from "@wssp/locales/src/en-US/hosts.json";
 import esCommon from "@wssp/locales/src/es-MX/common.json";
 import es from "@wssp/locales/src/es-MX/hosts.json";
 import { createInstance } from "i18next";
+import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, expect, it, vi } from "vitest";
 
 const grant = vi.hoisted(() => vi.fn());
 const contribute = vi.hoisted(() => vi.fn());
 const resend = vi.hoisted(() => vi.fn());
+const leaveFn = vi.hoisted(() => vi.fn(async () => ({})));
+const updateShareFn = vi.hoisted(() => vi.fn(async () => ({})));
 const rows = vi.hoisted(() => ({
   contributions: [] as unknown[],
   invites: [] as unknown[],
   shared: null as unknown[] | null,
   shares: [] as unknown[],
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, className, to }: { children: ReactNode; className?: string; to: string }) => (
+    <a className={className} href={to}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirect: () => () => false }));
 vi.mock("@/utils/orpc", () => {
@@ -60,8 +70,8 @@ vi.mock("@/utils/orpc", () => {
         grantShare: { call: grant },
         resendInvite: { call: resend },
         contributeHost: { mutationOptions: () => ({ mutationFn: contribute }) },
-        updateShare: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
-        leave: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
+        updateShare: { mutationOptions: () => ({ mutationFn: updateShareFn }) },
+        leave: { mutationOptions: () => ({ mutationFn: leaveFn }) },
         withdrawHost: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         listShared: page("shared", [
           {
@@ -176,7 +186,13 @@ it("shared views show only own permissions/caps/usage and canonical pool identit
   expect(screen.getByText(/1024/)).toBeTruthy();
   expect(container.querySelector('a[href*="/hosts/"]')).toBeNull();
   expect(screen.queryByRole("button", { name: en.sharing.contribute })).toBeNull();
-  expect(screen.getByRole("button", { name: en.sharing.leave })).toBeTruthy();
+  // Leave is in the card's menu, as Delete is on an owned pool's card.
+  await userEvent
+    .setup()
+    .click(
+      screen.getByRole("button", { name: en.pools.actions.more.replace("{{label}}", "Pool") }),
+    );
+  expect(await screen.findByRole("menuitem", { name: en.sharing.leave })).toBeTruthy();
   expect(container.textContent).not.toMatch(/heartbeat|lastSeen|storage-marker|private-guest/);
 });
 
@@ -330,4 +346,151 @@ it("a resent invitation link is shown with the inviter's forwarding warning, onc
   await user.click(await screen.findByRole("button", { name: en.sharing.resend }));
   await waitFor(() => expect(resend).toHaveBeenCalledTimes(1));
   expect(await screen.findAllByText(en.sharing.forwardingInviter)).toHaveLength(1);
+});
+
+it.each(["", "not-an-email", `${"a".repeat(310)}@example.test`])(
+  "sharing with %j is refused under the email field, focused, and nothing is sent",
+  async (typed) => {
+    const user = userEvent.setup();
+    await mount("form");
+    const email = screen.getByLabelText(en.sharing.email);
+    if (typed) {
+      await user.click(email);
+      await user.paste(typed);
+    }
+    await user.click(screen.getByRole("button", { name: en.sharing.invite }));
+    expect(await screen.findByText(en.sharing.invalidEmail)).toBeTruthy();
+    expect(email.getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(email));
+    expect(grant).not.toHaveBeenCalled();
+    expect(screen.queryByText(en.sharing.failed)).toBeNull();
+    // Fixing the address clears the error and sends the invitation.
+    grant.mockResolvedValue({ kind: "share" });
+    await user.clear(email);
+    await user.type(email, "devon@example.test");
+    const share = screen.getByRole("button", { name: en.sharing.invite }) as HTMLButtonElement;
+    await waitFor(() => expect(share.disabled).toBe(false));
+    await user.click(share);
+    await waitFor(() => expect(grant).toHaveBeenCalledTimes(1));
+    expect(grant.mock.calls[0]?.[0]).toMatchObject({ email: "devon@example.test" });
+  },
+);
+
+it.each([
+  ["CONFLICT", undefined, en.sharing.shareConflict],
+  // The daily invitation limit: the server's wait, rounded up, not "a few minutes".
+  [
+    "TOO_MANY_REQUESTS",
+    { retryAfterSeconds: 80_000 },
+    "Too many invitations for now. Try again in 23 hours.",
+  ],
+  [
+    "TOO_MANY_REQUESTS",
+    { retryAfterSeconds: 42 },
+    "Too many invitations for now. Try again in 42 seconds.",
+  ],
+  ["TOO_MANY_REQUESTS", undefined, en.sharing.tooManyLater],
+  ["INTERNAL_SERVER_ERROR", undefined, en.sharing.failed],
+])("a %s refusal (%j) says what it means, next to the email field", async (code, data, message) => {
+  const user = userEvent.setup();
+  grant.mockRejectedValue(Object.assign(new Error("refused"), { code, data }));
+  await mount("form");
+  await user.type(screen.getByLabelText(en.sharing.email), "someone@example.test");
+  await user.click(screen.getByRole("button", { name: en.sharing.invite }));
+  const alert = await screen.findByText(message);
+  expect(alert.getAttribute("role")).toBe("alert");
+  // It sits in the first section with the field, above Limits and the notice.
+  expect(
+    alert.closest("section, fieldset, div")?.contains(screen.getByLabelText(en.sharing.email)),
+  ).toBe(true);
+});
+
+it("a shared pool card shows its actions in one row, labels the id and states the trust warning once", async () => {
+  rows.shared = [
+    {
+      id: "rykluzikxme5bemtf9diicq5",
+      slug: "team-pool",
+      label: "Team pool",
+      disconnectGraceSeconds: 0,
+      owner: { name: "Ada Admin" },
+      share: {
+        canUse: true,
+        canContribute: true,
+        maxMemoryMiB: null,
+        maxVcpu: null,
+        maxDiskGiB: null,
+        usage: { memoryMiB: "0", vcpu: "0", diskGiB: "0" },
+      },
+    },
+  ];
+  const { container } = await mount("shared");
+  const card = (await screen.findByRole("heading", { name: "Team pool" })).closest("li")!;
+  const actions = card.querySelector("[data-page-actions]")!;
+  expect(
+    within(actions as HTMLElement)
+      .getAllByRole("button")
+      .map((button) => button.textContent || button.getAttribute("aria-label")),
+  ).toEqual([
+    en.poolCapacity.open,
+    en.sharing.contribute,
+    en.pools.actions.more.replace("{{label}}", "Team pool"),
+  ]);
+  // No filled or destructive button on the card itself.
+  for (const button of within(card).getAllByRole("button"))
+    expect(button.className).not.toMatch(/\bbg-primary\b|\bbg-destructive\b/);
+  expect(within(card).getByText(en.sharing.poolIdLabel)).toBeTruthy();
+  expect(screen.getAllByText(en.sharing.trust)).toHaveLength(1);
+  expect(container.querySelector("[data-node-owner-access]")).toBeNull();
+});
+
+it("a rate-limited Leave says to wait, without invitation wording", async () => {
+  const user = userEvent.setup();
+  leaveFn.mockRejectedValueOnce(
+    Object.assign(new Error("slow down"), { code: "TOO_MANY_REQUESTS" }),
+  );
+  await mount("shared");
+  await user.click(
+    await screen.findByRole("button", { name: en.pools.actions.more.replace("{{label}}", "Pool") }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: en.sharing.leave }));
+  const confirm = within(await screen.findByRole("alertdialog"));
+  await user.type(confirm.getByRole("textbox"), "same");
+  await user.click(confirm.getByRole("button", { name: common.actions.delete }));
+  expect(await screen.findByText(en.sharing.tooManyChangesLater)).toBeTruthy();
+  expect(screen.queryByText(/invitations/)).toBeNull();
+});
+
+it("a rate-limited edit of an existing share says to wait, without invitation wording", async () => {
+  updateShareFn.mockRejectedValueOnce(
+    Object.assign(new Error("slow down"), { code: "TOO_MANY_REQUESTS" }),
+  );
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { hosts: en, common } } });
+  const user = userEvent.setup();
+  render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { mutations: { retry: false } } })}
+    >
+      <I18nextProvider i18n={i18n}>
+        <ShareForm
+          poolId="pool-1"
+          lang="en-US"
+          onClose={() => {}}
+          share={
+            {
+              granteeUserId: "user-2",
+              canUse: true,
+              canContribute: false,
+              maxMemoryMiB: null,
+              maxVcpu: null,
+              maxDiskGiB: null,
+            } as Parameters<typeof ShareForm>[0]["share"]
+          }
+        />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  await user.click(screen.getByRole("button", { name: common.actions.save }));
+  expect(await screen.findByText(en.sharing.tooManyChangesLater)).toBeTruthy();
+  expect(screen.queryByText(/invitations/)).toBeNull();
 });

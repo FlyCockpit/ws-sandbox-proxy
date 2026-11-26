@@ -45,4 +45,9 @@ describe("auth card", () => {
     expect(classesOf(html, /data-slot="card-header" class="([^"]*)"/)).toContain("max-sm:px-0");
     expect(classesOf(html, /data-slot="card-content" class="([^"]*)"/)).toContain("max-sm:px-0");
   });
+
+  it("gives the page one h1, its title, inside the unchanged card title", () => {
+    expect(html.match(/<h1\b/g)).toHaveLength(1);
+    expect(html).toMatch(/data-slot="card-title"[^>]*><h1>Welcome<\/h1><\/div>/);
+  });
 });

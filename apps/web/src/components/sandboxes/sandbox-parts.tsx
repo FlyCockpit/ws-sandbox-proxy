@@ -124,6 +124,9 @@ export function ReceiptLine({
       <p className="text-sm text-muted-foreground">{t("sandboxes:receipt.none")}</p>
     );
   }
+  // In a list a finished operation is noise ("Stop: Done" on every card);
+  // only one in flight or one that went wrong is worth a line there.
+  if (compact && receipt.state === "SUCCEEDED") return null;
   const created = new Date(receipt.createdAt).getTime();
   const hint =
     receipt.state === "QUEUED" || receipt.state === "UNKNOWN_OUTCOME" || receipt.state === "FAILED"

@@ -516,7 +516,7 @@
     "guestPath": "Path in the VM",
     "guestPathHint": "An absolute path, for example /home/user/data.csv.",
     "pathPlaceholder": "/home/user/",
-    "badPath": "Enter an absolute path without ..",
+    "badPath": "Enter an absolute path, such as /home/user/data.csv, without “..” parts.",
     "receiptFailed": "Could not read this transfer's status.",
     "upload": {
       "title": "Upload",
