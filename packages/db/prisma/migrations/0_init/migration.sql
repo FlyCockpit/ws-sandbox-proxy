@@ -2852,7 +2852,7 @@ CREATE INDEX "sandbox_mutation_operation_userId_createdAt_idx" ON "sandbox_mutat
 CREATE INDEX "sandbox_mutation_operation_sandboxId_createdAt_idx" ON "sandbox_mutation_operation"("sandboxId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "sandbox_operation_remembered_lease_idx" ON "sandbox_mutation_operation"("sandboxId", "leaseRevisionAccepted" DESC) WHERE ((kind = ANY (ARRAY['CREATE_SANDBOX'::"SandboxOperationKind", 'RECONNECT_SANDBOX'::"SandboxOperationKind"])) AND ("leaseRevisionAccepted" IS NOT NULL) AND ("leaseTimeoutMs" IS NOT NULL));
+CREATE INDEX "sandbox_operation_remembered_lease_idx" ON "sandbox_mutation_operation"("sandboxId", "leaseRevisionAccepted" DESC) WHERE ((kind = ANY (ARRAY['CREATE_SANDBOX'::"SandboxOperationKind", 'RECONNECT_SANDBOX'::"SandboxOperationKind", 'RENEW_SANDBOX_LEASE'::"SandboxOperationKind"])) AND ("leaseRevisionAccepted" IS NOT NULL) AND ("leaseTimeoutMs" IS NOT NULL));
 
 -- CreateIndex
 CREATE UNIQUE INDEX "sandbox_mutation_operation_userId_idempotencyKey_key" ON "sandbox_mutation_operation"("userId", "idempotencyKey");

@@ -91,12 +91,10 @@ it("fresh committed migration, repeat no-op and current domain invariants", asyn
         "SELECT id, migration_name, checksum, started_at, finished_at, applied_steps_count FROM _prisma_migrations ORDER BY migration_name",
       )
     ).rows;
-    // The release baseline comes first; every committed migration (per-PR ones
-    // until the next release squash folds them in) applied once, in order.
-    const committed = committedMigrations();
-    expect(committed[0]).toBe("0_init");
-    expect(history.map((row) => row.migration_name)).toEqual(committed);
-    for (const row of history) expect(row).toMatchObject({ applied_steps_count: 1 });
+    // The release baseline is the only committed migration.
+    expect(committedMigrations()).toEqual(["0_init"]);
+    expect(history.map((row) => row.migration_name)).toEqual(["0_init"]);
+    expect(history[0]).toMatchObject({ migration_name: "0_init", applied_steps_count: 1 });
     for (const row of history) expect(row.finished_at).toBeInstanceOf(Date);
     await inspector.query(
       `INSERT INTO "user" (id,name,email) VALUES ('repeat-probe','Probe','repeat@example.test')`,
