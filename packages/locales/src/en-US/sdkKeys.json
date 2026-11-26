@@ -25,7 +25,10 @@
     "cliLogin": "CLI login",
     "maxLiveSandboxes_one": "Up to {{count}} live sandbox",
     "maxLiveSandboxes_other": "Up to {{count}} live sandboxes",
-    "revoked": "Revoked"
+    "revoked": "Revoked",
+    "showScopes_one": "Show the {{count}} permission",
+    "showScopes_other": "Show all {{count}} permissions",
+    "sandboxes": "Sandboxes"
   },
   "revoke": {
     "title": "Revoke {{name}}?",

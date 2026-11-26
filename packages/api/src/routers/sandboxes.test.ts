@@ -562,6 +562,39 @@ describe("sandboxesRouter", () => {
     expect(whereClauses[3]).toContain('"DELETED"');
   });
 
+  it("filters the dashboard list by a part of the name, owner-scoped, in the name alphabet only", async () => {
+    db.sandbox.findMany.mockResolvedValue([sandboxRow()]);
+    await client().list({ limit: 20, status: "active", nameContains: "night-1" });
+    const where = db.sandbox.findMany.mock.calls[0]![0]!.where as { AND: unknown[] };
+    expect(where.AND).toEqual(
+      expect.arrayContaining([{ userId: "test-user-id" }, { name: { contains: "night-1" } }]),
+    );
+    // The filter is part of the cursor's identity: a cursor never crosses filters.
+    db.sandbox.findMany.mockReset();
+    db.sandbox.findMany.mockResolvedValue(
+      Array.from({ length: 2 }, (_, i) =>
+        sandboxRow({ id: `sbx-${i}`, createdAt: new Date(now.getTime() - i) }),
+      ),
+    );
+    const page = await client().list({ limit: 1, status: "active", nameContains: "sbx" });
+    expect(page.nextCursor).not.toBeNull();
+    await expect(
+      client().list({
+        limit: 1,
+        status: "active",
+        nameContains: "other",
+        cursor: page.nextCursor!,
+      }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    // LIKE wildcards, upper case, spaces and empty input never reach the query.
+    db.sandbox.findMany.mockClear();
+    for (const nameContains of ["%", "a_b", "Night", "a b", "", "x".repeat(64)])
+      await expect(client().list({ limit: 20, nameContains })).rejects.toMatchObject({
+        code: "BAD_REQUEST",
+      });
+    expect(db.sandbox.findMany).not.toHaveBeenCalled();
+  });
+
   it("projects the host summary, template revision and latest lifecycle receipt", async () => {
     const host = {
       id: "host-1",

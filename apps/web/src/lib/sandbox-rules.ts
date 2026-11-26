@@ -962,14 +962,31 @@ export function sandboxTitle(sandbox: { name: string }): string {
 
 const SANDBOX_STATUS_FILTERS = ["active", "deleted", "all"] as const;
 export type SandboxStatusFilter = (typeof SANDBOX_STATUS_FILTERS)[number];
-export type SandboxesSearch = { status?: Exclude<SandboxStatusFilter, "active"> };
+export type SandboxesSearch = { status?: Exclude<SandboxStatusFilter, "active">; name?: string };
+
+/** A sandbox-name fragment the list can filter by: the name alphabet only. */
+const NAME_FILTER = /^[a-z0-9-]{1,63}$/;
 
 /**
- * `?status=` on Sandboxes. Active (every sandbox that is not DELETED) is the
- * default and is never written to the URL; anything unknown reads as Active.
+ * The name filter as typed: trimmed and lower-cased. `invalid` when it holds a
+ * character no sandbox name has (no name can match it).
+ */
+export function sandboxNameFilter(text: string): { value: string; invalid: boolean } {
+  const value = text.trim().toLowerCase();
+  return { value, invalid: value !== "" && !NAME_FILTER.test(value) };
+}
+
+/**
+ * `?status=` and `?name=` on Sandboxes. Active (every sandbox that is not
+ * DELETED) is the default and is never written to the URL; anything unknown
+ * reads as Active. A name outside the name alphabet is dropped.
  */
 export function parseSandboxesSearch(search: Record<string, unknown>): SandboxesSearch {
-  return search.status === "deleted" || search.status === "all" ? { status: search.status } : {};
+  const name = typeof search.name === "string" ? sandboxNameFilter(search.name) : null;
+  return {
+    ...(search.status === "deleted" || search.status === "all" ? { status: search.status } : {}),
+    ...(name && name.value !== "" && !name.invalid ? { name: name.value } : {}),
+  };
 }
 
 export type CreateSandboxSearch = { host?: string };

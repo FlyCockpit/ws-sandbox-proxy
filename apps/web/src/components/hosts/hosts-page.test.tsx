@@ -1143,15 +1143,30 @@ it.each(["en-US", "es-MX"])(
     expect(card.closest("[data-storage-state]")?.getAttribute("data-storage-state")).toBe(
       "healthy",
     );
-    expect(screen.getByText(copy.storage.draining)).toBeTruthy();
-    expect(screen.getByText(copy.storage.limited)).toBeTruthy();
-    expect(screen.getByText(copy.storage.overcommitted.replace("{{value}}", "33"))).toBeTruthy();
+    // Problems stay up front (design review #12): drain, the lowered limit and
+    // the overcommit, outside the folded capacity details.
+    const problem = document.querySelector<HTMLElement>('[data-storage-problem="storage-1"]')!;
+    expect(problem.closest("details")).toBeNull();
+    expect(within(problem).getByText(copy.storage.draining)).toBeTruthy();
+    expect(within(problem).getByText(copy.storage.limited)).toBeTruthy();
+    expect(
+      within(problem).getByText(copy.storage.overcommitted.replace("{{value}}", "33")),
+    ).toBeTruthy();
+    expect(screen.getAllByText(copy.storage.limited)).toHaveLength(1);
     expect(screen.getByText(copy.drain.drainedHint)).toBeTruthy();
-    // IEC units, not raw byte counts; the storage identity sits under Advanced.
-    if (lang === "en-US")
-      expect(screen.getByText("190 GiB used of 200 GiB (10 GiB free)")).toBeTruthy();
-    expect(document.body.textContent).not.toContain(String(190 * 2 ** 30));
+    // The storage internals sit in the closed "All capacity numbers" section.
     const storage = card.closest<HTMLElement>("[data-storage-state]")!;
+    const details = storage.closest("details")!;
+    expect(details.hasAttribute("open")).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe(copy.vmCapacity.details);
+    // The raw disk figure is labelled as the whole disk, in IEC units.
+    if (lang === "en-US")
+      expect(
+        within(storage).getByText(
+          "Raw disk on the host (all files, not only sandboxes): 190 GiB used of 200 GiB (10 GiB free)",
+        ),
+      ).toBeTruthy();
+    expect(document.body.textContent).not.toContain(String(190 * 2 ** 30));
     const advanced = storage.querySelector("details[data-advanced-details]")!;
     expect(advanced.hasAttribute("open")).toBe(false);
     expect(advanced.textContent).toContain("original…");
@@ -1160,6 +1175,52 @@ it.each(["en-US", "es-MX"])(
       reportedAt: new Date(Date.now() - 16000).toISOString(),
     };
     await act(() => client.invalidateQueries());
-    await waitFor(() => expect(screen.getByText(copy.storage.stale)).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        within(
+          document.querySelector<HTMLElement>('[data-storage-problem="storage-1"]')!,
+        ).getByText(copy.storage.stale),
+      ).toBeTruthy(),
+    );
   },
 );
+
+it("a healthy storage pool shows no problem box; only the bars and the retained count", async () => {
+  server.hosts = [
+    fakeHost({
+      retainedRootCount: 3,
+      storagePools: [
+        {
+          id: "storage-ok",
+          name: "default",
+          marker: "m",
+          capacityGiB: 819,
+          totalBasedCapacityGiB: 819,
+          capacitySource: "implicit",
+          derivationTotalBytes: 1024 * 2 ** 30,
+          derivationFreeBytes: 900 * 2 ** 30,
+          derivationCommittedBytes: 0,
+          derivationActualBytes: 0,
+          derivationHeadroomBytes: 10 * 2 ** 30,
+          implicitCeilingGiB: 819,
+          draining: false,
+          health: "healthy",
+          reason: null,
+          totalBytes: 1024 * 2 ** 40,
+          usedBytes: 0,
+          freeBytes: 1024 * 2 ** 40,
+          diskReservedGiB: 99,
+          reportedAt: new Date().toISOString(),
+        },
+      ],
+    }),
+  ];
+  await i18n.changeLanguage("en-US");
+  mount("en-US");
+  await screen.findByText("3 stopped sandbox disks");
+  expect(document.querySelector("[data-storage-problem]")).toBeNull();
+  expect(screen.getByText(enHosts.storage.retainedHint)).toBeTruthy();
+  // The one disk number up front is the bar; the raw disk line is folded away.
+  const raw = screen.getByText(/^Raw disk on the host/);
+  expect(raw.closest("details")?.hasAttribute("open")).toBe(false);
+});

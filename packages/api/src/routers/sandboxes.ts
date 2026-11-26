@@ -12,10 +12,10 @@ import {
   forkSandboxInput,
   killProcessInput,
   killSandboxInput,
+  listDashboardSandboxesInput,
   listDirInput,
   listOperationsInput,
   listProcessesInput,
-  listSandboxesInput,
   mkdirInput,
   movePathInput,
   operationIdInput,
@@ -103,9 +103,11 @@ export const sandboxesRouter = {
     return probeSandbox(sessionPrincipal(context.session.user.id), input);
   }),
   /** Dashboard projection (C47): host summary, template revision, latest lifecycle receipt. */
-  list: protectedProcedure.input(listSandboxesInput).handler(async ({ input, context }) => {
-    return listSandboxViews(sessionPrincipal(context.session.user.id), input);
-  }),
+  list: protectedProcedure
+    .input(listDashboardSandboxesInput)
+    .handler(async ({ input, context }) => {
+      return listSandboxViews(sessionPrincipal(context.session.user.id), input);
+    }),
 
   /** The owner's recent CLI connections to the sandbox (metadata only). */
   listConnectSessions: protectedProcedure

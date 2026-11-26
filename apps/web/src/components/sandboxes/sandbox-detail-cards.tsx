@@ -381,6 +381,42 @@ export function LifetimeCard({
         <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">{hostExpiry}</dl>
       </Card>
     ) : null;
+  const deadlineTerm: LeaseTerm | null =
+    deadline == null
+      ? null
+      : {
+          expiresAt: deadline,
+          onExpire: sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop",
+        };
+  // The server deadline, the request and the host's term usually say the
+  // same thing: then one line, and the breakdown only once they differ.
+  const agreed =
+    !startsAtReady &&
+    lease.ack === "acknowledged" &&
+    lease.requested != null &&
+    deadlineTerm != null &&
+    deadlineTerm.expiresAt === lease.requested.expiresAt &&
+    deadlineTerm.onExpire === lease.requested.onExpire;
+  if (agreed)
+    return (
+      <Card title={t("sandboxes:lifetime.title")} id="sandbox-lifetime">
+        <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
+          {hostExpiry}
+          <Field label={t("sandboxes:lifetime.ends")} wide>
+            <span
+              data-lease-agreed=""
+              data-lease-ack={lease.ack}
+              title={stopped ? undefined : termTitle(lease.requested)}
+            >
+              {stopped ? t("sandboxes:lifetime.stopped") : describe(lease.requested)}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {t("sandboxes:lifetime.ack.acknowledged")}
+            </span>
+          </Field>
+        </dl>
+      </Card>
+    );
   return (
     <Card title={t("sandboxes:lifetime.title")} id="sandbox-lifetime">
       <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
@@ -398,14 +434,7 @@ export function LifetimeCard({
               ? t("sandboxes:lifetime.stopped")
               : startsAtReady
                 ? t("sandboxes:lifetime.startsAtReady")
-                : describe(
-                    deadline == null
-                      ? null
-                      : {
-                          expiresAt: deadline,
-                          onExpire: sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop",
-                        },
-                  )}
+                : describe(deadlineTerm)}
           </span>
         </Field>
         <Field label={t("sandboxes:lifetime.requested")}>

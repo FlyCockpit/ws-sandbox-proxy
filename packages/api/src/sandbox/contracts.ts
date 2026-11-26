@@ -19,6 +19,7 @@ import {
   processRefSchema,
   processSignalSchema,
   resultListOptionsSchema,
+  SANDBOX_NAME_MAX,
   SANDBOX_OFFLOAD_PINS,
   sandboxCursorSchema,
   sandboxListFiltersSchema,
@@ -116,7 +117,22 @@ export const listSandboxesInput = cursorPageInput
     status: z.enum(SANDBOX_LIST_STATUSES).optional(),
   })
   .strict();
-export type ListSandboxesInput = z.infer<typeof listSandboxesInput>;
+/**
+ * The dashboard list adds a name filter (design review #13): a part of a
+ * sandbox name, in the name alphabet only, so it can never act as a LIKE
+ * pattern. /v1 and MCP keep the shared filters above.
+ */
+export const listDashboardSandboxesInput = listSandboxesInput
+  .extend({
+    nameContains: z
+      .string()
+      .min(1)
+      .max(SANDBOX_NAME_MAX)
+      .regex(/^[a-z0-9-]+$/)
+      .optional(),
+  })
+  .strict();
+export type ListSandboxesInput = z.infer<typeof listDashboardSandboxesInput>;
 
 /**
  * Dashboard operation list filter (C48). `state` is either one exact

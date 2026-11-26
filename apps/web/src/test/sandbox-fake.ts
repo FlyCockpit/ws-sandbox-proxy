@@ -662,7 +662,11 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       key: () => ["sandboxes"],
       list: {
         infiniteOptions: pagedInfinite(["sandboxes", "list"], "list", (input) =>
-          sandboxesByStatus(input.status),
+          sandboxesByStatus(input.status).filter(
+            (row) =>
+              typeof input.nameContains !== "string" ||
+              String(row.name).includes(input.nameContains),
+          ),
         ),
         // The getting-started checklist's "any sandbox, ever?" read.
         queryOptions: pagedQuery(["sandboxes", "list"], "list", (input) =>

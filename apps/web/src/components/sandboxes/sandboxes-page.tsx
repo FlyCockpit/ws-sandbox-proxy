@@ -1,7 +1,10 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { buttonVariants } from "@wssp/ui/components/button";
+import { Button, buttonVariants } from "@wssp/ui/components/button";
+import { Input } from "@wssp/ui/components/input";
+import { useDebounce } from "@wssp/ui/hooks/use-async-search";
 import { Plus } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { EmptyState } from "@/components/empty-state";
@@ -18,6 +21,7 @@ import {
   StatePill,
   TemplateText,
 } from "@/components/sandboxes/sandbox-parts";
+import { SandboxQuickAction } from "@/components/sandboxes/sandbox-quick-action";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
@@ -33,6 +37,7 @@ import {
   type SandboxStatusFilter,
   sandboxHostView,
   sandboxLabels,
+  sandboxNameFilter,
   sandboxPhase,
   sandboxTitle,
 } from "@/lib/sandbox-rules";
@@ -63,27 +68,63 @@ export function isSandboxBusy(sandbox: {
   );
 }
 
+/** How long typing pauses before the name filter asks the server. */
+const NAME_FILTER_DEBOUNCE_MS = 300;
+
 export function SandboxesPage({
   lang,
   userId,
   status = "active",
-  onStatusChange,
+  name,
+  onSearchChange,
 }: {
   lang: string;
   /** The signed-in user: whose getting-started checklist this is. */
   userId: string;
   /** From `?status=` (the route owns it, so Back restores the filter). */
   status?: SandboxStatusFilter;
-  onStatusChange: (status: SandboxStatusFilter) => void;
+  /** From `?name=`: a part of the sandbox name, already in the name alphabet. */
+  name?: string;
+  onSearchChange: (search: { status: SandboxStatusFilter; name?: string }) => void;
 }) {
   const { t, i18n } = useTranslation(["sandboxes", "dashboard", "common"]);
+  // What is typed shows at once; the server is asked once typing pauses.
+  const [nameText, setNameText] = useState(name ?? "");
+  // Back/Forward (or a link) can change `?name=` under a mounted page: follow
+  // it, unless it is just what this input last wrote there.
+  const [nameFromUrl, setNameFromUrl] = useState(name);
+  const [nameWritten, setNameWritten] = useState(name);
+  if (name !== nameFromUrl) {
+    setNameFromUrl(name);
+    if (name !== nameWritten) {
+      setNameText(name ?? "");
+      setNameWritten(name);
+    }
+  }
+  const filter = sandboxNameFilter(nameText);
+  const nameContains =
+    useDebounce(filter.invalid ? "" : filter.value, NAME_FILTER_DEBOUNCE_MS) || undefined;
+  const setName = (text: string) => {
+    setNameText(text);
+    const next = sandboxNameFilter(text);
+    const written = next.invalid ? undefined : next.value || undefined;
+    setNameWritten(written);
+    onSearchChange({ status, name: written });
+  };
   const query = useInfiniteQuery({
     ...orpc.sandboxes.list.infiniteOptions({
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage: { nextCursor: string | null }) =>
         lastPage.nextCursor ?? undefined,
-      input: (cursor: string | undefined) => ({ limit: DASHBOARD_PAGE_LIMIT, cursor, status }),
+      input: (cursor: string | undefined) => ({
+        limit: DASHBOARD_PAGE_LIMIT,
+        cursor,
+        status,
+        ...(nameContains ? { nameContains } : {}),
+      }),
     }),
+    // A name nobody can have matches nothing: no request.
+    enabled: !filter.invalid,
     refetchInterval: (current) =>
       current.state.data?.pages.some((page) => page.items.some(isSandboxBusy))
         ? SANDBOX_BUSY_REFETCH_MS
@@ -123,69 +164,126 @@ export function SandboxesPage({
         scope={userId}
         hasSandboxRows={sandboxes ? sandboxes.length > 0 : undefined}
       />
-      <SegmentedControl
-        value={status}
-        onChange={onStatusChange}
-        ariaLabel={t("sandboxes:filter.label")}
-        items={[
-          { value: "active", label: t("sandboxes:filter.active") },
-          { value: "deleted", label: t("sandboxes:filter.deleted") },
-          { value: "all", label: t("sandboxes:filter.all") },
-        ]}
-      />
-      <QueryBoundary
-        query={{
-          data: sandboxes,
-          isPending: query.isPending,
-          isError: query.isError,
-          error: query.error,
-          refetch: query.refetch,
-        }}
-        skeleton={<SkeletonList layout="resource" count={3} className="rounded-xl border" />}
-        errorMessage={t("dashboard:list.loadFailed")}
-        isEmpty={(rows) => rows.length === 0}
-        empty={
-          <EmptyState
-            className="rounded-xl border px-4"
-            title={t(
-              status === "deleted"
-                ? "sandboxes:empty.deletedTitle"
-                : status === "active"
-                  ? "sandboxes:empty.activeTitle"
-                  : "sandboxes:empty.title",
-            )}
-            description={t(
-              status === "deleted"
-                ? "sandboxes:empty.deletedDescription"
-                : status === "active"
-                  ? "sandboxes:empty.activeDescription"
-                  : "sandboxes:empty.description",
-            )}
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <SegmentedControl
+          value={status}
+          onChange={(next) =>
+            onSearchChange({
+              status: next,
+              name: filter.invalid ? undefined : filter.value || undefined,
+            })
+          }
+          ariaLabel={t("sandboxes:filter.label")}
+          items={[
+            { value: "active", label: t("sandboxes:filter.active") },
+            { value: "deleted", label: t("sandboxes:filter.deleted") },
+            { value: "all", label: t("sandboxes:filter.all") },
+          ]}
+        />
+        <div className="flex min-w-0 flex-col gap-1 sm:w-72">
+          <Input
+            type="search"
+            inputMode="search"
+            autoComplete="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            data-sandbox-name-filter=""
+            aria-label={t("sandboxes:filter.name")}
+            aria-invalid={filter.invalid || undefined}
+            aria-describedby={filter.invalid ? "sandbox-name-filter-hint" : undefined}
+            placeholder={t("sandboxes:filter.name")}
+            maxLength={63}
+            value={nameText}
+            onChange={(event) => setName(event.target.value)}
+            className="min-h-11"
           />
-        }
-      >
-        {(rows) => (
-          <>
-            <ul aria-label={t("sandboxes:listRegion")} className="flex min-w-0 flex-col gap-3">
-              {rows.map((sandbox) => (
-                <SandboxRow
-                  key={sandbox.id}
-                  sandbox={sandbox}
-                  lang={lang}
-                  locale={i18n.language}
-                  now={now}
-                />
-              ))}
-            </ul>
-            <LoadMore
-              hasNextPage={query.hasNextPage}
-              isFetchingNextPage={query.isFetchingNextPage}
-              onLoadMore={() => void query.fetchNextPage()}
-            />
-          </>
-        )}
-      </QueryBoundary>
+          {filter.invalid ? (
+            <p id="sandbox-name-filter-hint" className="text-xs text-destructive">
+              {t("sandboxes:filter.nameHint")}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      {filter.invalid ? (
+        <NoNameMatch name={filter.value} onClear={() => setName("")} />
+      ) : (
+        <QueryBoundary
+          query={{
+            data: sandboxes,
+            isPending: query.isPending,
+            isError: query.isError,
+            error: query.error,
+            refetch: query.refetch,
+          }}
+          skeleton={<SkeletonList layout="resource" count={3} className="rounded-xl border" />}
+          errorMessage={t("dashboard:list.loadFailed")}
+          isEmpty={(rows) => rows.length === 0}
+          empty={
+            nameContains ? (
+              <NoNameMatch name={nameContains} onClear={() => setName("")} />
+            ) : (
+              <EmptyState
+                className="rounded-xl border px-4"
+                title={t(
+                  status === "deleted"
+                    ? "sandboxes:empty.deletedTitle"
+                    : status === "active"
+                      ? "sandboxes:empty.activeTitle"
+                      : "sandboxes:empty.title",
+                )}
+                description={t(
+                  status === "deleted"
+                    ? "sandboxes:empty.deletedDescription"
+                    : status === "active"
+                      ? "sandboxes:empty.activeDescription"
+                      : "sandboxes:empty.description",
+                )}
+              />
+            )
+          }
+        >
+          {(rows) => (
+            <>
+              <ul aria-label={t("sandboxes:listRegion")} className="flex min-w-0 flex-col gap-3">
+                {rows.map((sandbox) => (
+                  <SandboxRow
+                    key={sandbox.id}
+                    sandbox={sandbox}
+                    lang={lang}
+                    locale={i18n.language}
+                    now={now}
+                  />
+                ))}
+              </ul>
+              <LoadMore
+                hasNextPage={query.hasNextPage}
+                isFetchingNextPage={query.isFetchingNextPage}
+                onLoadMore={() => void query.fetchNextPage()}
+              />
+            </>
+          )}
+        </QueryBoundary>
+      )}
     </section>
+  );
+}
+
+/** No sandbox name contains the filter: say so and offer the way back. */
+function NoNameMatch({ name, onClear }: { name: string; onClear: () => void }) {
+  const { t } = useTranslation(["sandboxes"]);
+  return (
+    <div role="status" data-sandbox-no-match="">
+      <EmptyState
+        className="rounded-xl border px-4"
+        title={translateText(t, "sandboxes:empty.noMatchTitle", { name })}
+        description={t("sandboxes:empty.noMatchDescription")}
+        action={
+          <Button type="button" variant="outline" size="touch" className="mt-2" onClick={onClear}>
+            {t("sandboxes:empty.clearFilter")}
+          </Button>
+        }
+      />
+    </div>
   );
 }
 
@@ -209,10 +307,12 @@ function SandboxRow({
     <li
       data-sandbox-id={sandbox.id}
       data-sandbox-state={sandbox.state}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
+      className="flex min-w-0 flex-col rounded-xl border bg-card px-4 py-3 text-card-foreground"
     >
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+      {/* Dense by design (design review #13): one row of facts at desktop
+          widths, two columns on a phone, the actions beside the name. */}
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             {/* Under the page's h1, each sandbox is a second-level heading. */}
             <h2 data-sandbox-name="" className="min-w-0 truncate font-mono text-sm font-medium">
@@ -227,8 +327,8 @@ function SandboxRow({
           {sandbox.capacityWait ? (
             <CapacityWaitLine wait={sandbox.capacityWait} lang={lang} />
           ) : null}
-          <dl className="mt-3 grid min-w-0 gap-x-5 gap-y-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-            <div className="min-w-0">
+          <dl className="mt-2 grid min-w-0 grid-cols-2 gap-x-5 gap-y-1.5 text-xs text-muted-foreground lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1.1fr)_minmax(0,1.3fr)_minmax(0,0.8fr)]">
+            <div className="col-span-2 min-w-0 lg:col-span-1">
               <dt>{t("sandboxes:fields.host")}</dt>
               <dd data-sandbox-host="" className="break-words font-medium text-foreground">
                 <HostText
@@ -298,7 +398,7 @@ function SandboxRow({
             </div>
           </dl>
           {labels.length > 0 ? (
-            <ul aria-label={t("sandboxes:fields.labels")} className="mt-3 flex flex-wrap gap-1">
+            <ul aria-label={t("sandboxes:fields.labels")} className="mt-2 flex flex-wrap gap-1">
               {labels.map(([key, value]) => (
                 <li
                   key={key}
@@ -310,7 +410,7 @@ function SandboxRow({
             </ul>
           ) : null}
           {/* Empty (hidden) when the last operation simply succeeded. */}
-          <div className="mt-3 empty:hidden">
+          <div className="mt-2 empty:hidden">
             <ReceiptLine
               receipt={sandbox.lastLifecycleOperation}
               locale={locale}
@@ -327,14 +427,19 @@ function SandboxRow({
             </p>
           ) : null}
         </div>
-        <Link
-          to="/$lang/dashboard/sandboxes/$sandboxId"
-          params={{ lang, sandboxId: sandbox.id }}
-          aria-label={t("sandboxes:openLabel", { id: sandbox.id })}
-          className={buttonVariants({ variant: "outline", size: "touch" })}
-        >
-          {t("sandboxes:open")}
-        </Link>
+        <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:flex-nowrap">
+          {sandbox.state === "DELETED" ? null : (
+            <SandboxQuickAction sandbox={sandbox} lang={lang} />
+          )}
+          <Link
+            to="/$lang/dashboard/sandboxes/$sandboxId"
+            params={{ lang, sandboxId: sandbox.id }}
+            aria-label={t("sandboxes:openLabel", { id: sandbox.id })}
+            className={buttonVariants({ variant: "outline", size: "touch" })}
+          >
+            {t("sandboxes:open")}
+          </Link>
+        </div>
       </div>
     </li>
   );

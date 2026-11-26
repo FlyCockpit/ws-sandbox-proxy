@@ -186,6 +186,7 @@ export function DiskLocationBadge({ disk }: { disk: DiskView | null }) {
   return (
     <Badge
       data-disk-location={disk.location}
+      title={t(`sandboxes:disk.locationHint.${disk.location}`)}
       className={cn(
         "inline-flex items-center rounded-sm border px-2 py-0.5 text-xs font-medium",
         DISK_TONE[disk.location],

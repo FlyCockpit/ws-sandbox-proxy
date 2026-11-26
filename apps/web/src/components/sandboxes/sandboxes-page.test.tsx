@@ -22,12 +22,15 @@ import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import {
+  coded,
   type FakeSandboxServer,
   fakeHost,
   fakeTemplate,
+  NOT_FOUND,
   newFakeSandboxServer,
   sandboxRow,
 } from "@/test/sandbox-fake";
+import { selectOption } from "@/test/select-option";
 
 /**
  * Sandboxes list against a scripted fake server (real TanStack Query and
@@ -85,6 +88,7 @@ vi.mock("@/utils/orpc", async () => {
   };
 });
 
+import { orpc } from "@/utils/orpc";
 import { SandboxesPage } from "./sandboxes-page";
 
 configure({ asyncUtilTimeout: 4_000 });
@@ -107,10 +111,31 @@ beforeAll(async () => {
   });
 });
 
-/** Stands in for the route: `?status=` state, the way the URL holds it. */
+/** The last search the page wrote, as the route would put it in the URL. */
+let lastSearch: { status: "active" | "deleted" | "all"; name?: string } | null = null;
+/** Back/Forward: the route hands the page a new search without the input writing it. */
+let setSearchFromUrl: (search: { status: "active" | "deleted" | "all"; name?: string }) => void =
+  () => {};
+
+/** Stands in for the route: `?status=` and `?name=` state, the way the URL holds them. */
 function StatefulSandboxesPage({ lang }: { lang: string }) {
-  const [status, setStatus] = useState<"active" | "deleted" | "all">("active");
-  return <SandboxesPage lang={lang} userId="user-1" status={status} onStatusChange={setStatus} />;
+  const [search, setSearch] = useState<{
+    status: "active" | "deleted" | "all";
+    name?: string;
+  }>({ status: "active" });
+  setSearchFromUrl = setSearch;
+  return (
+    <SandboxesPage
+      lang={lang}
+      userId="user-1"
+      status={search.status}
+      name={search.name}
+      onSearchChange={(next) => {
+        lastSearch = next;
+        setSearch(next);
+      }}
+    />
+  );
 }
 
 let client: QueryClient;
@@ -244,6 +269,9 @@ describe("sandboxes list", () => {
     // Fake timers from the start: the poll is scheduled when the read first answers.
     vi.useFakeTimers({ shouldAdvanceTime: true });
     onTestFinished(() => {
+      // Timers still pending on the fake clock would be dropped by the switch
+      // back, stranding module-level schedulers (a later Select never opens).
+      vi.runOnlyPendingTimers();
       vi.useRealTimers();
     });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -522,6 +550,399 @@ describe("sandboxes list", () => {
     expect(await screen.findByText("sbx-gone")).toBeTruthy();
     expect(calls("list").at(-1)?.input).toMatchObject({ status: "deleted" });
     expect(within(row("sbx-gone")).queryByRole("button")).toBeNull();
+  });
+});
+
+describe("name filter, quiet receipts and row Start/Stop (design review #13)", () => {
+  const receipt = (kind: string, state: string) => ({
+    id: `op-${kind}-${state}`,
+    kind,
+    state,
+    errorCode: null,
+    createdAt: new Date(),
+    completedAt: state === "SUCCEEDED" ? new Date() : null,
+  });
+
+  it("filters by a part of the name on the server, keeps it in the search, and clears back", async () => {
+    server.current.sandboxes = [
+      sandboxRow(),
+      sandboxRow({ id: "nightly-runner" }),
+      sandboxRow({ id: "agent-scratch" }),
+    ];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const input = screen.getByRole("searchbox", { name: enSandboxes.filter.name });
+    await user.type(input, " Nightly");
+    await vi.waitFor(() =>
+      expect(calls("list").at(-1)?.input).toMatchObject({
+        status: "active",
+        nameContains: "nightly",
+      }),
+    );
+    expect(await screen.findByText("nightly-runner")).toBeTruthy();
+    expect(screen.queryByText("quiet-otter")).toBeNull();
+    expect(lastSearch).toEqual({ status: "active", name: "nightly" });
+    // The status switch keeps the name.
+    await user.click(screen.getByRole("button", { name: enSandboxes.filter.all }));
+    expect(lastSearch).toEqual({ status: "all", name: "nightly" });
+    // No match says so and offers the way back.
+    await user.clear(input);
+    await user.type(input, "zebra");
+    const none = await screen.findByText(
+      enSandboxes.empty.noMatchTitle.replace("{{name}}", "zebra"),
+    );
+    expect(none).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: enSandboxes.empty.clearFilter }));
+    expect(await screen.findByText("quiet-otter")).toBeTruthy();
+    expect((input as HTMLInputElement).value).toBe("");
+    expect(lastSearch).toEqual({ status: "all", name: undefined });
+  });
+
+  it("a character no name has explains the alphabet and asks the server nothing", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const before = calls("list").length;
+    const input = screen.getByRole("searchbox", { name: enSandboxes.filter.name });
+    await user.type(input, "otter_1");
+    expect(await screen.findByText(enSandboxes.filter.nameHint)).toBeTruthy();
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(document.querySelector("[data-sandbox-no-match]")).not.toBeNull();
+    expect(calls("list").filter((call) => "nameContains" in (call.input as object))).toHaveLength(
+      0,
+    );
+    expect(calls("list").length).toBe(before);
+    expect(lastSearch?.name).toBeUndefined();
+  });
+
+  it("a finished request is not repeated on every card; one in flight or failed still shows", async () => {
+    server.current.sandboxes = [
+      sandboxRow({
+        id: "sbx-done",
+        state: "STOPPED",
+        lastLifecycleOperation: receipt("STOP_SANDBOX", "SUCCEEDED"),
+      }),
+      sandboxRow({
+        id: "sbx-run",
+        state: "STOPPING",
+        lastLifecycleOperation: receipt("STOP_SANDBOX", "RUNNING"),
+      }),
+      sandboxRow({
+        id: "sbx-fail",
+        lastLifecycleOperation: receipt("RECONNECT_SANDBOX", "FAILED"),
+      }),
+    ];
+    await mount();
+    await screen.findByText("sbx-done");
+    expect(row("sbx-done").querySelector("[data-receipt-state]")).toBeNull();
+    expect(row("sbx-done").textContent).not.toContain("Stop: Done");
+    expect(row("sbx-run").querySelector('[data-receipt-state="RUNNING"]')).not.toBeNull();
+    expect(row("sbx-fail").querySelector('[data-receipt-state="FAILED"]')).not.toBeNull();
+  });
+
+  it("Stop beside Open asks first, names the sandbox, and sends the detail page's stop", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const stop = within(row("sbx-1")).getByRole("button", { name: "Stop quiet-otter" });
+    expect(stop.dataset.quickAction).toBe("stop");
+    await user.click(stop);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText("Stop quiet-otter?")).toBeTruthy();
+    expect(calls("getSandbox")[0]?.input).toEqual({ id: "sbx-1" });
+    expect(calls("stopSandbox")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: enSandboxes.stop.confirm }));
+    await vi.waitFor(() => expect(calls("stopSandbox")).toHaveLength(1));
+    expect(calls("stopSandbox")[0]?.input).toMatchObject({ id: "sbx-1" });
+    expect(toast.success).toHaveBeenCalledWith(enSandboxes.stop.done);
+  });
+
+  it("Cancel sends nothing; Start on a stopped sandbox opens the lifetime dialog", async () => {
+    server.current.sandboxes = [sandboxRow({ state: "STOPPED" }), sandboxRow({ id: "sbx-2" })];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const start = within(row("sbx-1")).getByRole("button", { name: "Start quiet-otter" });
+    expect(start.textContent).toBe(enSandboxes.start.action);
+    await user.click(start);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Start quiet-otter again?")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: enCommon.actions.cancel }));
+    expect(calls("reconnectSandbox")).toHaveLength(0);
+    // Reopening reads the full view again first (its lease facts may have moved).
+    await user.click(within(row("sbx-1")).getByRole("button", { name: "Start quiet-otter" }));
+    await screen.findByRole("dialog");
+    expect(calls("getSandbox")).toHaveLength(2);
+  });
+
+  it("Back/Forward to another ?name= updates the box and the server filter; its own writes do not reset typing", async () => {
+    server.current.sandboxes = [sandboxRow(), sandboxRow({ id: "nightly-runner" })];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const input = screen.getByRole<HTMLInputElement>("searchbox", {
+      name: enSandboxes.filter.name,
+    });
+    // A character no name has keeps what was typed (the URL drops it).
+    await user.type(input, "Otter_");
+    expect(input.value).toBe("Otter_");
+    expect(lastSearch?.name).toBeUndefined();
+    // History brings back another filter.
+    act(() => setSearchFromUrl({ status: "active", name: "nightly" }));
+    expect(input.value).toBe("nightly");
+    await vi.waitFor(() =>
+      expect(calls("list").at(-1)?.input).toMatchObject({ nameContains: "nightly" }),
+    );
+    expect(await screen.findByText("nightly-runner")).toBeTruthy();
+    expect(screen.queryByText("quiet-otter")).toBeNull();
+    act(() => setSearchFromUrl({ status: "active" }));
+    expect(input.value).toBe("");
+    expect(await screen.findByText("quiet-otter")).toBeTruthy();
+  });
+
+  it("Start keeps the remembered lifetime by default; a committed start whose response was lost is replayed with the same key and body", async () => {
+    server.current.sandboxes = [sandboxRow({ state: "STOPPED" }), sandboxRow({ id: "sbx-2" })];
+    server.current.lostResponses.reconnectSandbox = 1;
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const startOnce = async () => {
+      await user.click(
+        await within(row("sbx-1")).findByRole("button", { name: "Start quiet-otter" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      // Keep: the remembered 5 minutes, sent as no lifetime at all.
+      expect(within(dialog).getByLabelText(enSandboxes.lifetime.field).textContent).toContain(
+        "5 minutes",
+      );
+      await user.click(within(dialog).getByRole("button", { name: enSandboxes.start.confirm }));
+    };
+    await startOnce();
+    await vi.waitFor(() =>
+      expect(row("sbx-1").querySelector("[data-action-problem]")?.textContent).toBe(
+        enSandboxes.problem.generic,
+      ),
+    );
+    // The server queued it; the host's answer is unknown: Start is offered again.
+    Object.assign(server.current.sandboxes[0]!, { state: "STOPPED", generation: 2 });
+    Object.assign(server.current.sandboxes[0]!.lastLifecycleOperation as object, {
+      state: "UNKNOWN_OUTCOME",
+    });
+    await act(() => client.invalidateQueries());
+    await startOnce();
+    await vi.waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(2));
+    const [lost, retried] = calls("reconnectSandbox").map(
+      (call) => call.input as { id: string; mode: string; idempotencyKey: string },
+    );
+    expect(lost).toMatchObject({ id: "sbx-1", mode: "cold" });
+    expect(lost).not.toHaveProperty("timeoutMs");
+    expect(lost?.idempotencyKey).toBeTruthy();
+    expect(retried).toEqual(lost);
+    expect(server.current.operations.filter((op) => op.kind === "RECONNECT_SANDBOX")).toHaveLength(
+      1,
+    );
+  });
+
+  it("Start with a chosen lifetime sends it; the dialog reads the remembered lifetime fresh each time", async () => {
+    server.current.sandboxes = [sandboxRow({ state: "STOPPED" })];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const start = () => within(row("sbx-1")).getByRole("button", { name: "Start quiet-otter" });
+    await user.click(start());
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText(enSandboxes.lifetime.field).textContent).toContain(
+      "5 minutes",
+    );
+    await user.click(within(dialog).getByRole("button", { name: enCommon.actions.cancel }));
+    // Renewed elsewhere since: the next Start shows the new remembered lifetime.
+    Object.assign(server.current.sandboxes[0]!, { rememberedLeaseTimeoutMs: 4 * 3_600_000 });
+    await user.click(start());
+    dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByLabelText(enSandboxes.lifetime.field);
+    expect(field.textContent).toContain("4 hours");
+    await selectOption(user, field, /^1 hour$/);
+    await user.click(within(dialog).getByRole("button", { name: enSandboxes.start.confirm }));
+    await vi.waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]?.input).toMatchObject({
+      id: "sbx-1",
+      mode: "cold",
+      timeoutMs: 3_600_000,
+    });
+  });
+
+  it("a failed re-read offers a retry and opens nothing until a read succeeds", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    const stop = () => within(row("sbx-1")).getByRole("button", { name: "Stop quiet-otter" });
+    await user.click(stop());
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: enCommon.actions.cancel,
+      }),
+    );
+    server.current.errors.getSandbox = [new Error("network")];
+    await user.click(stop());
+    const retry = await within(row("sbx-1")).findByRole("button", {
+      name: enCommon.actions.tryAgain,
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    await user.click(retry);
+    await vi.waitFor(() =>
+      expect(row("sbx-1").querySelector("[data-quick-action-problem]")).toBeNull(),
+    );
+    await user.click(stop());
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    expect(calls("stopSandbox")).toHaveLength(0);
+  });
+
+  it("Restore sends a cold start of the stored sandbox: Keep sends no lifetime, a chosen one its value", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ id: "sbx-store", state: "OFFLOADED", sandboxHostId: null, host: null }),
+      sandboxRow({ id: "sbx-store2", state: "OFFLOADED", sandboxHostId: null, host: null }),
+    ];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("sbx-store");
+    await user.click(within(row("sbx-store")).getByRole("button", { name: "Restore sbx-store" }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Restore sbx-store?")).toBeTruthy();
+    expect(within(dialog).getByText(enSandboxes.start.restoreDescription)).toBeTruthy();
+    await user.click(
+      within(dialog).getByRole("button", { name: enSandboxes.start.restoreConfirm }),
+    );
+    await vi.waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]?.input).toMatchObject({ id: "sbx-store", mode: "cold" });
+    expect(calls("reconnectSandbox")[0]?.input).not.toHaveProperty("timeoutMs");
+    expect(toast.success).toHaveBeenCalledWith(enSandboxes.start.restoreDone);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(within(row("sbx-store2")).getByRole("button", { name: "Restore sbx-store2" }));
+    dialog = await screen.findByRole("dialog");
+    await selectOption(user, within(dialog).getByLabelText(enSandboxes.lifetime.field), /^1 hour$/);
+    await user.click(
+      within(dialog).getByRole("button", { name: enSandboxes.start.restoreConfirm }),
+    );
+    await vi.waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(2));
+    expect(calls("reconnectSandbox")[1]?.input).toMatchObject({
+      id: "sbx-store2",
+      mode: "cold",
+      timeoutMs: 3_600_000,
+    });
+  });
+
+  it("the first click never opens on a cached full view: it waits for a fresh read, and a failed one opens nothing", async () => {
+    server.current.sandboxes = [sandboxRow({ state: "STOPPED" }), sandboxRow({ id: "sbx-2" })];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    // The detail page was visited earlier: its view (5 minutes remembered) is cached.
+    await act(() =>
+      client.fetchQuery(orpc.sandboxes.getSandbox.queryOptions({ input: { id: "sbx-1" } })),
+    );
+    await act(() =>
+      client.fetchQuery(orpc.sandboxes.getSandbox.queryOptions({ input: { id: "sbx-2" } })),
+    );
+    Object.assign(server.current.sandboxes[0]!, { rememberedLeaseTimeoutMs: 4 * 3_600_000 });
+    await user.click(within(row("sbx-1")).getByRole("button", { name: "Start quiet-otter" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText(enSandboxes.lifetime.field).textContent).toContain(
+      "4 hours",
+    );
+    await user.click(within(dialog).getByRole("button", { name: enCommon.actions.cancel }));
+    // A failed fresh read: the cached view opens nothing.
+    server.current.errors.getSandbox = [new Error("network")];
+    await user.click(within(row("sbx-2")).getByRole("button", { name: "Stop sbx-2" }));
+    expect(await within(row("sbx-2")).findByText(enSandboxes.detail.loadFailed)).toBeTruthy();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    // Trying again reads fresh and opens it.
+    await user.click(within(row("sbx-2")).getByRole("button", { name: "Stop sbx-2" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    expect(calls("stopSandbox")).toHaveLength(0);
+  });
+
+  it("the polled row decides the button, not an older full view", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    await user.click(within(row("sbx-1")).getByRole("button", { name: "Stop quiet-otter" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: enSandboxes.stop.confirm,
+      }),
+    );
+    await vi.waitFor(() => expect(calls("stopSandbox")).toHaveLength(1));
+    // The host finishes the stop; only the list is read again.
+    Object.assign(server.current.sandboxes[0]!, { state: "STOPPED", lastLifecycleOperation: null });
+    const reads = calls("getSandbox").length;
+    await act(() => client.invalidateQueries({ queryKey: ["sandboxes", "list"] }));
+    const start = await within(row("sbx-1")).findByRole("button", { name: "Start quiet-otter" });
+    // The row alone decided that: no full-view read yet.
+    expect(calls("getSandbox").length).toBe(reads);
+    await user.click(start);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Start quiet-otter again?")).toBeTruthy();
+    // Opening it read the full view once, fresh.
+    expect(calls("getSandbox").length).toBe(reads + 1);
+  });
+
+  it("a sandbox that is gone or no longer ours shows no row controls", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    server.current.errors.getSandbox = [NOT_FOUND()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    await user.click(within(row("sbx-1")).getByRole("button", { name: "Stop quiet-otter" }));
+    await vi.waitFor(() => expect(row("sbx-1").querySelector("[data-quick-action]")).toBeNull());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(calls("stopSandbox")).toHaveLength(0);
+  });
+
+  it("offers Restore for a stored disk, nothing while a start is in flight, nothing for deleted", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ id: "sbx-store", state: "OFFLOADED", sandboxHostId: null, host: null }),
+      sandboxRow({
+        id: "sbx-starting",
+        state: "STOPPED",
+        lastLifecycleOperation: receipt("RECONNECT_SANDBOX", "RUNNING"),
+      }),
+      sandboxRow({ id: "sbx-gone", state: "DELETED" }),
+    ];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("sbx-store");
+    expect(
+      within(row("sbx-store")).getByRole("button", { name: "Restore sbx-store" }).textContent,
+    ).toBe(enSandboxes.start.restoreAction);
+    expect(row("sbx-starting").querySelector("[data-quick-action]")).toBeNull();
+    await user.click(screen.getByRole("button", { name: enSandboxes.filter.all }));
+    await screen.findByText("sbx-gone");
+    expect(row("sbx-gone").querySelector("[data-quick-action]")).toBeNull();
+  });
+
+  it("a refused stop shows the server's reason on the row", async () => {
+    server.current.sandboxes = [sandboxRow()];
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText("quiet-otter");
+    // The sandbox stopped elsewhere between the list read and the click.
+    server.current.errors.stopSandbox = [coded("sandbox.state_conflict")];
+    await user.click(within(row("sbx-1")).getByRole("button", { name: "Stop quiet-otter" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: enSandboxes.stop.confirm }));
+    const problem = await vi.waitFor(() => {
+      const found = row("sbx-1").querySelector<HTMLElement>("[data-action-problem]");
+      if (!found) throw new Error("no problem");
+      return found;
+    });
+    expect(problem.getAttribute("role")).toBe("alert");
+    expect(problem.dataset.actionProblem).toBe("stateChanged");
+    expect(problem.textContent).toBe(enSandboxes.problem.stateChanged);
   });
 });
 

@@ -25,6 +25,7 @@ import { InlineRetry } from "@/components/inline-retry";
 import { OffloadPolicyText } from "@/components/sandboxes/sandbox-disk";
 import { LifetimeFields, type SandboxView } from "@/components/sandboxes/sandbox-parts";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { translateText } from "@/i18n/translate-text";
 import {
   hasStoredCopy,
   IntentKeys,
@@ -89,12 +90,17 @@ function invalidateSandboxes(queryClient: QueryClient) {
 }
 
 /** The lifecycle mutations, the open dialog and the last problem, for one sandbox. */
-export function useSandboxLifecycle(sandbox: SandboxView, lang: string) {
+export function useSandboxLifecycle(
+  sandbox: SandboxView,
+  lang: string,
+  /** The dialog to open at once (the list's Start/Stop opens its confirmation). */
+  initialOpen: LifecycleDialog | null = null,
+) {
   const { t, i18n } = useTranslation(["sandboxes"]);
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
   const intents = useRef(new IntentKeys());
-  const [open, setOpen] = useState<LifecycleDialog | null>(null);
+  const [open, setOpen] = useState<LifecycleDialog | null>(initialOpen);
   const [problem, setProblem] = useState<SandboxProblem | null>(null);
   // The destroy confirmation types the name shown when the dialog opened (F8):
   // a rename refetched while it is open never changes the token under the user.
@@ -241,7 +247,9 @@ export function SandboxLifecycleDialogs({
       <AlertDialog open={open === "stop"} onOpenChange={(next) => setOpen(next ? "stop" : null)}>
         <AlertDialogContent className={ALERT_WIDTH}>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("sandboxes:stop.title")}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {translateText(t, "sandboxes:stop.title", { name: sandbox.name })}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {t(
                 ["REQUESTED", "SCHEDULED", "PROVISIONING"].includes(sandbox.state)
@@ -461,7 +469,11 @@ function StartDialog({
       <DialogContent closeLabel={t("common:actions.close")} className={DIALOG_CLASS}>
         <DialogHeader>
           <DialogTitle>
-            {t(offloaded ? "sandboxes:start.restoreTitle" : "sandboxes:start.title")}
+            {translateText(
+              t,
+              offloaded ? "sandboxes:start.restoreTitle" : "sandboxes:start.title",
+              { name: sandbox.name },
+            )}
           </DialogTitle>
           <DialogDescription>
             {t(offloaded ? "sandboxes:start.restoreDescription" : "sandboxes:start.description")}
