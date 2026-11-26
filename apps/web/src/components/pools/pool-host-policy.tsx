@@ -27,11 +27,18 @@ const STEP_COMMANDS: Record<Exclude<Capability, "images">, string> = {
   guestSudo: "wssp host config set-allow-guest-sudo-for-others on",
 };
 
+/** How often a shown pool host policy is re-read. */
+export const POOL_HOST_POLICY_REFRESH_MS = 30_000;
+
 export function usePoolHostPolicy(poolId: string) {
   return useQuery({
     ...orpc.sandboxPools.hostPolicy.queryOptions({ input: { id: poolId } }),
     enabled: poolId !== "",
-    staleTime: 30_000,
+    staleTime: POOL_HOST_POLICY_REFRESH_MS,
+    // A host owner changes these at the node and restarts it, from outside
+    // this page: poll, so a corrected host unblocks the member's build (and
+    // the notice) without a reload.
+    refetchInterval: POOL_HOST_POLICY_REFRESH_MS,
     meta: { skipGlobalErrorToast: true },
   });
 }
@@ -103,7 +110,7 @@ export function PoolHostPolicyView({
       data-pool-host-policy={policy.viewer}
       aria-label={t(owner ? "hosts:hostPolicy.titleOwner" : "hosts:hostPolicy.titleMember")}
       className={
-        blocked && policy.ownHosts === 0
+        blocked && (owner || policy.ownHosts === 0)
           ? "flex min-w-0 flex-col gap-2 rounded-md border border-amber-600/40 bg-amber-600/10 p-3 text-sm text-amber-900 dark:text-amber-200"
           : "flex min-w-0 flex-col gap-2 rounded-md border p-3 text-sm"
       }
@@ -135,7 +142,11 @@ export function PoolHostPolicyView({
           ) : null}
           {/* Work can run somewhere: say what to do next; what is refused
               gets its host-side step as well. */}
-          {policy.images !== "none" || policy.ownHosts > 0 ? <ReadyStep owner={owner} /> : null}
+          {/* A member's own hosts run its work; the owner's own hosts never
+              run the invitees' templates, so they don't make the pool ready. */}
+          {policy.images !== "none" || (!owner && policy.ownHosts > 0) ? (
+            <ReadyStep owner={owner} />
+          ) : null}
           {policy.hosts > 0 && steps.length > 0 ? (
             <HostSteps steps={steps} owner={owner} ownerName={ownerName} />
           ) : null}

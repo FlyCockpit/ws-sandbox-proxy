@@ -11,7 +11,11 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_DOCS_URL: undefined } }));
-const policyRead = vi.hoisted(() => ({ fail: false, calls: 0 }));
+const policyRead = vi.hoisted(() => ({
+  fail: false,
+  calls: 0,
+  answer: null as Record<string, unknown> | null,
+}));
 vi.mock("@/utils/orpc", () => ({
   orpc: {
     sandboxPools: {
@@ -21,7 +25,7 @@ vi.mock("@/utils/orpc", () => ({
           queryFn: async () => {
             policyRead.calls += 1;
             if (policyRead.fail) throw new Error("network");
-            return { ...base, images: "none", builds: "none" };
+            return policyRead.answer ?? { ...base, images: "none", builds: "none" };
           },
         }),
       },
@@ -29,7 +33,12 @@ vi.mock("@/utils/orpc", () => ({
   },
 }));
 
-import { type PoolHostPolicy, PoolHostPolicyNotice, PoolHostPolicyView } from "./pool-host-policy";
+import {
+  POOL_HOST_POLICY_REFRESH_MS,
+  type PoolHostPolicy,
+  PoolHostPolicyNotice,
+  PoolHostPolicyView,
+} from "./pool-host-policy";
 
 afterEach(cleanup);
 
@@ -152,4 +161,46 @@ it("no pool chosen renders nothing and reads nothing", async () => {
   );
   expect(container.textContent).toBe("");
   expect(policyRead.calls).toBe(before);
+});
+
+it("a host owner's fix at the node shows up without a reload (Codex r3)", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    policyRead.fail = false;
+    policyRead.answer = null;
+    const i18n = createInstance();
+    await i18n.init({ lng: "en-US", resources: { "en-US": { hosts: en } } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <PoolHostPolicyNotice poolId="pool-2" lang="en-US" ownerName="Ana" />
+        </I18nextProvider>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(en.hostPolicy.member.builds.none)).toBeTruthy();
+    // The owner allows builds and images at the host and restarts it.
+    policyRead.answer = { ...base };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(POOL_HOST_POLICY_REFRESH_MS + 1_000);
+    });
+    expect(await screen.findByText(en.hostPolicy.member.builds.all)).toBeTruthy();
+    expect(screen.queryByText(en.hostPolicy.member.builds.none)).toBeNull();
+  } finally {
+    policyRead.answer = null;
+    vi.useRealTimers();
+  }
+});
+
+it("the owner's own refusing hosts never make the pool look ready for invitees (Codex r3)", async () => {
+  await show({
+    viewer: "owner",
+    hosts: 2,
+    ownHosts: 2,
+    images: "none",
+    builds: "none",
+    allowForeignBuilds: null,
+  });
+  expect(screen.getByText(en.hostPolicy.owner.images.none)).toBeTruthy();
+  expect(screen.queryByText(en.hostPolicy.readyOwner)).toBeNull();
 });
