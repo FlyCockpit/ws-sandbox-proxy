@@ -13,9 +13,11 @@ function SandboxesRoute() {
   const { lang } = Route.useParams();
   const { status } = Route.useSearch();
   const navigate = Route.useNavigate();
+  const { session } = Route.useRouteContext();
   return (
     <SandboxesPage
       lang={lang}
+      userId={session.user.id}
       status={status ?? "active"}
       // The filter lives in the URL (Back restores it); a change replaces the
       // entry instead of stacking history. Active is the default and stays off

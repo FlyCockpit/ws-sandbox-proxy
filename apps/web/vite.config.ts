@@ -198,7 +198,10 @@ export default defineConfig(({ mode }) => {
     // globPatterns png/ico match, so they survive offline even if those globs
     // are narrowed later. Appended to __WB_MANIFEST (injectManifest strategy).
     includeAssets: [
+      // The header logo's 1×/2×/4× (lib/app-logo.ts).
+      "pwa-32x32.png",
       "pwa-64x64.png",
+      "pwa-128x128.png",
       "pwa-192x192.png",
       "pwa-512x512.png",
       "maskable-icon-512x512.png",

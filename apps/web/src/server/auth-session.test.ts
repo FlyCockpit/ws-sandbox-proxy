@@ -4,9 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { twoFactorEnrollmentState } from "@/utils/two-factor-policy";
 
 import {
-  mayCarryAuthSession,
+  hasSessionTokenCookie,
   resolveProtectedRouteSessionFromAuth,
-  resolveRootLandingSession,
   resolveRouteSessionFromAuth,
   toRouteSession,
 } from "./auth-session";
@@ -110,33 +109,6 @@ describe("auth route session server helpers", () => {
     getSessionMock.mockRejectedValue(new Error("auth service unavailable"));
 
     await expect(resolveRouteSessionFromAuth(new Headers(), getSessionMock)).resolves.toEqual({
-      status: "error",
-    });
-  });
-
-  it("root landing: no auth cookie resolves anonymous without a session lookup", async () => {
-    for (const cookie of [null, "", "theme=dark; locale=es-MX"]) {
-      const headers = new Headers(cookie === null ? {} : { cookie });
-      await expect(resolveRootLandingSession(headers, getSessionMock)).resolves.toEqual({
-        status: "resolved",
-        session: null,
-      });
-    }
-    expect(getSessionMock).not.toHaveBeenCalled();
-  });
-
-  it("root landing: a Better Auth cookie resolves the real session", async () => {
-    getSessionMock.mockResolvedValueOnce(fullSession);
-    const headers = new Headers({ cookie: "__Secure-better-auth.session_token=abc" });
-    const resolution = await resolveRootLandingSession(headers, getSessionMock);
-    expect(getSessionMock).toHaveBeenCalledWith({ headers });
-    expect(resolution).toMatchObject({ status: "resolved", session: { user: { id: "user-1" } } });
-  });
-
-  it("root landing: a failed lookup is an error resolution, not a signed-out one", async () => {
-    getSessionMock.mockRejectedValueOnce(new Error("db down"));
-    const headers = new Headers({ cookie: "better-auth.session_token=abc" });
-    await expect(resolveRootLandingSession(headers, getSessionMock)).resolves.toEqual({
       status: "error",
     });
   });
@@ -300,10 +272,14 @@ describe("auth route session server helpers", () => {
     });
   });
 
-  it("recognises the Better Auth session cookie names", () => {
-    expect(mayCarryAuthSession("better-auth.session_token=a")).toBe(true);
-    expect(mayCarryAuthSession("x=1; __Secure-better-auth.session_token=a")).toBe(true);
-    expect(mayCarryAuthSession("x=1")).toBe(false);
-    expect(mayCarryAuthSession(null)).toBe(false);
+  it("recognises a non-empty Better Auth session cookie by exact name", () => {
+    expect(hasSessionTokenCookie("better-auth.session_token=a")).toBe(true);
+    expect(hasSessionTokenCookie("x=1; __Secure-better-auth.session_token=a")).toBe(true);
+    // Empty value (a cleared cookie), look-alike names and other cookies: no.
+    expect(hasSessionTokenCookie("better-auth.session_token=")).toBe(false);
+    expect(hasSessionTokenCookie("better-auth.session_data=a")).toBe(false);
+    expect(hasSessionTokenCookie("x-better-auth.session_token=a")).toBe(false);
+    expect(hasSessionTokenCookie("x=1")).toBe(false);
+    expect(hasSessionTokenCookie(null)).toBe(false);
   });
 });

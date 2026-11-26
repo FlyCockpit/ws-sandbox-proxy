@@ -108,9 +108,8 @@ describe("signed-in routes in the generated route tree", () => {
 
   it("redirects /dashboard to Sandboxes", () => {
     const file = readFileSync(join(authDir, "dashboard/index.tsx"), "utf8");
-    expect(file).toContain(
-      'throw redirect({ to: "/$lang/dashboard/sandboxes", params, replace: true });',
-    );
+    // The signed-in home (lib/app-home.ts) is Sandboxes.
+    expect(file).toContain("throw redirect({ to: APP_HOME, params, replace: true });");
     expect(file).not.toMatch(/component\s*:/);
   });
 

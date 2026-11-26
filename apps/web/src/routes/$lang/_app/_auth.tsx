@@ -7,6 +7,7 @@ import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
 import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
 import { decideProtectedRouteAccess, loginRedirect } from "@/lib/route-session-access";
+import { setSessionHint } from "@/lib/session-hint";
 import { getProtectedRouteSession } from "@/server/auth-session";
 import { clientReadableForcedTwoFactorSettings } from "@/utils/two-factor-policy";
 
@@ -21,6 +22,9 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
     const decision = decideProtectedRouteAccess(await getProtectedRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
+      // Keep the public pages' cookie hint in step with what this gate just
+      // learned (lib/session-hint.ts), both ways.
+      setSessionHint(context.queryClient, false);
       throw redirect(loginRedirect(params.lang, authRedirectHref(location)));
     }
     // Same payload `settings.getAll` returns for this caller: the shell's
@@ -29,6 +33,7 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
       context.orpc.settings.getAll.queryKey(),
       clientReadableForcedTwoFactorSettings(decision.forcedTwoFactorSettings),
     );
+    setSessionHint(context.queryClient, true);
     return {
       session: decision.session,
       forcedTwoFactorSettings: decision.forcedTwoFactorSettings,

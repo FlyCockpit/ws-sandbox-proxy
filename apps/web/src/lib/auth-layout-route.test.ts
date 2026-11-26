@@ -8,8 +8,8 @@ vi.mock("@/lib/auth-client", () => ({ authClient: {} }));
 
 import { Route } from "@/routes/$lang/_app/_auth";
 import { orpc } from "@/utils/orpc";
-
 import type { ProtectedRouteSessionResolution, RouteSession } from "./route-session-access";
+import { SESSION_HINT_QUERY_KEY } from "./session-hint";
 
 const session: RouteSession = {
   user: {
@@ -79,13 +79,22 @@ describe("_auth layout guard (cold dashboard load)", () => {
       .find({ queryKey: orpc.settings.getAll.queryKey(), exact: true });
     expect(query?.state.data).toEqual({ force2faPublicUsers: "true" });
     expect(query?.isStale()).toBe(false);
+    // The public pages' cookie hint follows the confirmed session.
+    expect(queryClient.getQueryData(SESSION_HINT_QUERY_KEY)).toBe(true);
   });
 
   it("redirects an anonymous visitor to login without seeding any settings", async () => {
     const thrown = await guard({ status: "resolved", session: null }).catch((error) => error);
 
     expect(isRedirect(thrown)).toBe(true);
-    expect(queryClient.getQueryCache().getAll()).toHaveLength(0);
+    // Only the public pages' cookie hint, set to what the gate learned.
+    expect(
+      queryClient
+        .getQueryCache()
+        .getAll()
+        .map((query) => query.queryKey),
+    ).toEqual([SESSION_HINT_QUERY_KEY]);
+    expect(queryClient.getQueryData(SESSION_HINT_QUERY_KEY)).toBe(false);
   });
 
   it("turns a failed lookup into a route error, never a page render", async () => {

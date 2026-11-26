@@ -29,7 +29,9 @@ vi.mock("@/hooks/use-auth-session", () => ({
 vi.mock("@/hooks/use-admin-navigation", () => ({ useShowsAdminNavigation: () => false }));
 vi.mock("@/hooks/use-reload-on-identity-change", () => ({ markExplicitSignOut: fixture.mark }));
 vi.mock("@/lib/auth-client", () => ({ authClient: { signOut: fixture.signOut } }));
-vi.mock("@/utils/friendly-error", () => ({ friendly: () => "Please try again" }));
+vi.mock("@/utils/friendly-error", () => ({
+  friendly: (_error: unknown, fallback?: string) => fallback ?? "Please try again",
+}));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { error: fixture.toast } }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -64,17 +66,23 @@ vi.mock("@wssp/ui/components/dropdown-menu", () => {
     DropdownMenuItem: ({
       children,
       variant,
+      inset,
       onClick,
       render,
     }: {
       children: ReactNode;
       variant?: string;
+      inset?: boolean;
       onClick?: () => Promise<void>;
       render?: ReactElement;
     }) => {
       if (variant === "destructive") fixture.signOutClick = onClick;
       if (render) return cloneElement(render, {}, children);
-      return <div data-menu-item="">{children}</div>;
+      return (
+        <div data-menu-item="" data-variant={variant} data-inset={inset ? "" : undefined}>
+          {children}
+        </div>
+      );
     },
   };
 });
@@ -121,7 +129,8 @@ it.each(["response", "throw"])(
     expect(fixture.clear).not.toHaveBeenCalled();
     expect(useOrphanCredentials.getState().epoch).toBe(10);
     expect(fixture.assign).not.toHaveBeenCalled();
-    expect(fixture.toast).toHaveBeenCalledWith("Please try again");
+    // An unrecognised failure says what failed, not just "try again".
+    expect(fixture.toast).toHaveBeenCalledWith("userMenu.signOutFailed");
   },
 );
 
@@ -160,4 +169,17 @@ it("links Help & docs to the configured guide in a new tab, else to the reposito
   expect(link).toContain('href="https://docs.example.test/wssp/guide/README.md"');
   expect(link).toContain('target="_blank"');
   expect(link).toContain('rel="noopener noreferrer"');
+});
+
+it("ends with Sign out, with its icon aligned like the other items (no inset)", () => {
+  fixture.env.VITE_DOCS_URL = "https://docs.example.test/wssp/";
+  const html = renderToStaticMarkup(<UserMenuContent />);
+  const items = [...html.matchAll(/<(?:div data-menu-item=""[^>]*|a [^>]*)>(.*?)<\/(?:div|a)>/g)];
+  const last = items.at(-1)?.[0] ?? "";
+  expect(last).toContain('data-variant="destructive"');
+  expect(last).not.toContain("data-inset");
+  expect(last).toMatch(/<svg[^>]*class="[^"]*lucide-log-out/);
+  expect(last).toContain("userMenu.signOut");
+  // Help & docs comes before it.
+  expect(html.indexOf("userMenu.helpDocs")).toBeLessThan(html.indexOf("userMenu.signOut"));
 });

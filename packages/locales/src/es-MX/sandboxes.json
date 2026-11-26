@@ -486,7 +486,9 @@
     "title": "Aún no hay sandboxes",
     "description": "Los sandboxes se inician desde una plantilla en uno de tus hosts.",
     "deletedTitle": "No hay sandboxes eliminados",
-    "deletedDescription": "Los sandboxes destruidos siguen listados aquí con su historial."
+    "deletedDescription": "Los sandboxes destruidos siguen listados aquí con su historial.",
+    "activeTitle": "No hay sandboxes activos",
+    "activeDescription": "Crea un sandbox para iniciar una VM desde una plantilla. Los sandboxes destruidos están en Eliminados."
   },
   "entry": {
     "name": "Nombre",
@@ -700,7 +702,6 @@
   "onboarding": {
     "title": "Pon en marcha tu primer sandbox",
     "description": "Tres pasos. Cada uno se hace una sola vez.",
-    "done": "listo",
     "host": {
       "action": "Agregar un host",
       "openHosts": "Abrir Hosts",
@@ -717,7 +718,8 @@
     "sandbox": {
       "title": "Crea un sandbox",
       "description": "Inicia una VM desde tu plantilla.",
-      "action": "Crear tu primer sandbox"
+      "action": "Crear tu primer sandbox",
+      "waiting": "Primero completa los pasos anteriores: un sandbox necesita dónde ejecutarse y una plantilla."
     }
   },
   "open": "Abrir",

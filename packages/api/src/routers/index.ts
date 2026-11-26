@@ -3,6 +3,7 @@ import { getSignupEnabled } from "@wssp/auth/signup-policy";
 import { ADMIN_EMAILS } from "@wssp/env/server";
 import { isEmailConfigured } from "@wssp/mailer";
 import { publicProcedure } from "../index";
+import { adminExistsForAppConfig } from "../lib/admin-presence";
 import { adminDataKeysRouter } from "./admin-data-keys";
 import { adminObservabilityRouter } from "./admin-observability";
 import { adminTunnelRouter } from "./admin-tunnel";
@@ -45,7 +46,16 @@ export const appRouter = {
     const signupEnabled = await getSignupEnabled();
     return {
       signupEnabled,
-      adminBootstrapSignupEnabled: !signupEnabled && ADMIN_EMAILS.size > 0,
+      // Sign-up is closed, `ADMIN_EMAILS` names the operator, and no active
+      // administrator exists yet: the landing page leads with "Set up this
+      // server". Once one exists this turns false and the pages show the
+      // invite-only state, so an established server never greets visitors
+      // with a set-up step. Revealing "no admin yet" is acceptable: such a
+      // server is not usable by anyone else either. The DB read is skipped
+      // unless the sign-up rules make bootstrap possible, and a "yes" is
+      // cached (lib/admin-presence.ts).
+      adminBootstrapSignupEnabled:
+        !signupEnabled && ADMIN_EMAILS.size > 0 && !(await adminExistsForAppConfig()),
       // Gates the login challenge's "email me a code" affordance. The delivery
       // unreliability of Better-Auth's send-otp endpoint (it swallows SMTP
       // failures) is handled separately by the `auth.verifyEmailTransport`

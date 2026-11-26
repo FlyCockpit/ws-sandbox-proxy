@@ -27,6 +27,8 @@
     "signUp": "Sign Up",
     "signOut": "Sign Out",
     "open": "{{name}}, account menu",
-    "helpDocs": "Help & docs"
+    "helpDocs": "Help & docs",
+    "openApp": "Open app",
+    "signOutFailed": "Couldn't sign out. Check your connection and try again."
   }
 }

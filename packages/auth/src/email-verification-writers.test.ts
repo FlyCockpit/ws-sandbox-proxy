@@ -18,13 +18,17 @@ const reviewed: Record<string, string> = {
     "2277349e144318dcdea25c423a065ae99bae1cfc9076ef77bcb6020607418d62",
   "apps/web/src/hooks/use-admin-navigation.ts":
     "edda6b0dc1e47f7ce522201510c3d5a4e16c14de20fc3d5652b2ee94eb39235e",
+  // Reviewed 11-26 (home-nav): decideRootLanding removed; the emailVerified reads are unchanged, read only.
   "apps/web/src/lib/route-session-access.ts":
-    "31841cc3a1c9f70a14e7ac982f894cb646639734568156b6a864b8a79e2a6bf7",
+    "052afb3730c95ca4bee2ea7baea3a5f1ca35dd5aa712595c755452ed8e21cc7f",
+  // Reviewed 11-26 (home-nav): root landing probe replaced by a session-cookie presence hint
+  // (no session read); the session projection's emailVerified copy is unchanged, read only.
   "apps/web/src/server/auth-session.ts":
-    "d814bdeff8c464203bcdf31eae102ca8e99b56c77f378de287d30daede452b33",
+    "bfe724c746d71d6d9d40b1b36abff28b5711cfb8a98d7ffa3a2df1af6d2bec20",
   // Reviewed 11-26 (wssp-fix phase B): pending-state staticData added; the emailVerified reads are unchanged, read only.
+  // Reviewed 11-26 (home-nav): the continue link targets APP_HOME; comment-only emailVerified mention unchanged.
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
-    "3990c4ebfced8b9c9cdd0a3bb715993f7f5d30c47a2373bbe6d42029a89ddb05",
+    "93b8e611eac6f763eacc2f601f9f2fd6d52c586fda2e4f05628d316c32b7d5e3",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   "apps/web/src/components/admin/admin-users-page.tsx":
     "5895f67f92935a9de6af500c0b24d90c860f7061bb1ed5aa00bf03b352cf0318",
@@ -49,8 +53,9 @@ const reviewed: Record<string, string> = {
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
   // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.
+  // Reviewed 11-26 (home-nav): the gate writes the public session hint; the emailVerified read is unchanged, read only.
   "apps/web/src/routes/$lang/_app/_auth.tsx":
-    "ffe588302f59acfde55ce2e7a3a9bdfb5205f3051ea9daaf357b1f9b375decc9",
+    "9cab3b6722b07f36b940a3292366a30cd862700adafe67a46d98e12104ffc09d",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
   "packages/api/src/lib/sensitive-session-two-factor-gate.ts":
     "6a51bb5c7a528ca30fda6700413196bda144bbfc9f6f58d77e878250c192cbcf",

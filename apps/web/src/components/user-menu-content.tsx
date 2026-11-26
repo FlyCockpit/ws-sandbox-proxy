@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@wssp/ui/components/dropdown-menu";
 import { toast } from "@wssp/ui/components/sileo";
-import { BookOpen, User } from "lucide-react";
+import { BookOpen, LogOut, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShowsAdminNavigation } from "@/hooks/use-admin-navigation";
 import { useAuthSession } from "@/hooks/use-auth-session";
@@ -108,7 +108,6 @@ export default function UserMenuContent() {
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
-            inset
             onClick={async () => {
               // Dynamic import keeps the sign-out path out of the menu chunk's
               // critical path; the auth client is already warm once the menu
@@ -122,11 +121,14 @@ export default function UserMenuContent() {
                 useOrphanCredentials.getState().clear();
                 window.location.assign(`/${lang}/login`);
               } catch (error) {
+                // Still signed in: undo the mark (so a later identity change
+                // still reloads) and say so.
                 cancelSignOut();
-                toast.error(friendly(error));
+                toast.error(friendly(error, t("userMenu.signOutFailed")));
               }
             }}
           >
+            <LogOut className="size-4" aria-hidden="true" />
             {t("userMenu.signOut")}
           </DropdownMenuItem>
         </DropdownMenuGroup>

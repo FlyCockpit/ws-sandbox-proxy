@@ -743,7 +743,7 @@ try {
     await signIn(owner, ownerEmail, ownerTempPassword);
     // Before anything else, the admin-known password is replaced.
     await waitFor(owner, present("[data-forced-password-change]"), "password change takeover");
-    assert.equal(await evaluate(owner, present("[data-onboarding]")), false);
+    assert.equal(await evaluate(owner, present("[data-getting-started]")), false);
     ownerPassword = secret();
     await abSecret(owner, [
       ["fill", 'input[name="currentPassword"]', ownerTempPassword],
@@ -752,7 +752,7 @@ try {
     ]);
     await clickText(owner, "[data-forced-password-change] button", "Change password");
     await waitFor(owner, `location.pathname.endsWith("/dashboard/sandboxes")`, "invitee signed in");
-    await waitFor(owner, present("[data-onboarding]"), "onboarding checklist");
+    await waitFor(owner, present("[data-getting-started]"), "getting-started checklist");
     assert.equal(await evaluate(owner, present("[data-forced-password-change]")), false);
   });
   await stage("path 2: invitee accepts the pool invitation", async () => {

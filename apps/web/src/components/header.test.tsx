@@ -1,8 +1,16 @@
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const route = vi.hoisted(() => ({ pathname: "/en-US/login", signupEnabled: false }));
+const route = vi.hoisted(() => ({
+  pathname: "/en-US/login",
+  signupEnabled: false,
+  bootstrap: false,
+  /** The public header's session-cookie hint. */
+  signedIn: false,
+  /** The app header's session. */
+  authenticated: false,
+}));
 
 /**
  * Both header rows (the app shell's `Header` and the public pages'
@@ -51,12 +59,27 @@ vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => <i data-control="
 // The real signed-out UserMenu: its Sign Up / Sign In buttons are the
 // controls that must fit one row at phone widths when sign-up is open.
 vi.mock("@/hooks/use-auth-session", () => ({
-  useAuthSession: () => ({ state: { status: "anonymous" } }),
+  useAuthSession: () => ({
+    state: route.authenticated
+      ? { status: "authenticated", session: { user: { id: "u1", name: "Owner" } } }
+      : { status: "anonymous" },
+  }),
 }));
 vi.mock("@/hooks/use-orphan-owner-sync", () => ({ useOrphanOwnerSync: () => undefined }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: { signupEnabled: route.signupEnabled }, isPending: false }),
+  queryOptions: (options: unknown) => options,
+  useQuery: (options: { queryKey?: readonly unknown[] }) =>
+    options?.queryKey?.[0] === "session-cookie-hint"
+      ? { data: route.signedIn }
+      : {
+          data: {
+            signupEnabled: route.signupEnabled,
+            adminBootstrapSignupEnabled: route.bootstrap,
+          },
+          isPending: false,
+        },
 }));
+vi.mock("@/server/auth-session", () => ({ getSessionCookieHint: async () => false }));
 vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
 vi.mock("./main-nav", () => ({ MainNav: () => null }));
 vi.mock("@/components/skip-to-content", () => ({ SkipToContent: () => null }));
@@ -75,10 +98,11 @@ function renderPublic() {
   return renderToStaticMarkup(<PublicLayout />);
 }
 
-const APP_NAME_LINK = /<a data-to="\/\$lang" class="([^"]*)" title="([^"]*)">(.*?)<\/a>/;
+const APP_NAME_LINK =
+  /<a data-to="(\/\$lang(?:\/dashboard\/sandboxes)?)" class="([^"]*)" title="([^"]*)">(.*?)<\/a>/;
 
 function expectAppNameGivesWayFirst(html: string) {
-  const [, classes = "", title = "", inner = ""] = html.match(APP_NAME_LINK) ?? [];
+  const [, , classes = "", title = "", inner = ""] = html.match(APP_NAME_LINK) ?? [];
   const brand = classes.split(" ");
   // A zero basis: it only grows into what the controls leave (up to its own
   // width), never below a 44px target, and the row wraps on that basis, so
@@ -91,7 +115,17 @@ function expectAppNameGivesWayFirst(html: string) {
   // The ellipsis needs a block box: `truncate` on the inline-flex link only
   // clips. The caps sit on the span, so a long name leaves the MainNav room.
   expect(brand).not.toContain("truncate");
-  const span = inner.match(/^<span class="([^"]*)">([^<]*)<\/span>$/);
+  // The logo first: its box declared (no shift when it loads), never
+  // shrinking, named by the app name; the visible name is hidden from
+  // assistive tech, so the link's name is the app name once.
+  const img = inner.match(/^<img ([^>]*)\/>/)?.[1] ?? "";
+  expect(img).toContain('src="/pwa-32x32.png"');
+  expect(img).toContain('srcSet="/pwa-32x32.png 32w, /pwa-64x64.png 64w, /pwa-128x128.png 128w"');
+  expect(img).toContain('sizes="48px"');
+  expect(img).toContain('width="32" height="32"');
+  expect(img).toContain('alt="Northwind Regional Logistics"');
+  expect(img).toMatch(/class="[^"]*\bsize-8\b[^"]*\bshrink-0\b/);
+  const span = inner.match(/<span aria-hidden="true" class="([^"]*)">([^<]*)<\/span>$/);
   expect(span?.[1]?.split(" ").sort()).toEqual(
     ["lg:max-w-80", "max-w-40", "sm:max-w-56", "truncate"].sort(),
   );
@@ -99,9 +133,28 @@ function expectAppNameGivesWayFirst(html: string) {
   expect(title).toBe("Northwind Regional Logistics");
 }
 
+/** Where the app name link goes. */
+const appNameTarget = (html: string) => html.match(APP_NAME_LINK)?.[1];
+
+beforeEach(() => {
+  route.pathname = "/en-US/login";
+  route.signupEnabled = false;
+  route.bootstrap = false;
+  route.signedIn = false;
+  route.authenticated = false;
+});
+
 describe("app header row", () => {
   it("lets the app name give way first at every width", () => {
     expectAppNameGivesWayFirst(renderToStaticMarkup(<Header />));
+  });
+
+  it("sends the app name to the signed-in home when signed in, the landing page otherwise", () => {
+    expect(appNameTarget(renderToStaticMarkup(<Header />))).toBe("/$lang");
+    route.authenticated = true;
+    expect(appNameTarget(renderToStaticMarkup(<Header />))).toBe("/$lang/dashboard/sandboxes");
+    // The server-rendered first frame has no session yet.
+    expect(appNameTarget(renderToStaticMarkup(<Header placeholder />))).toBe("/$lang");
   });
 
   it("as the server-rendered placeholder keeps the row, with the account control as a skeleton", () => {
@@ -127,18 +180,30 @@ describe("public header row", () => {
     expect(nav).toEqual(expect.arrayContaining(["hidden", "sm:block", "min-w-0", "flex-1"]));
   });
 
-  it("gives Sign In the app header's touch metrics", () => {
+  it("gives Sign In the app header's touch metrics: a 44px icon below sm:, the text from sm:", () => {
     const signIn = renderPublic().match(/<a data-to="\/\$lang\/login" class="([^"]*)"/)?.[1];
     const classes = signIn?.split(" ") ?? [];
-    expect(classes).toEqual(expect.arrayContaining(["h-11", "px-3.5", "text-xs", "shrink-0"]));
+    expect(classes).toEqual(
+      expect.arrayContaining(["h-11", "w-11", "px-0", "sm:w-auto", "sm:px-3.5", "text-xs"]),
+    );
     expect(classes).not.toContain("text-sm");
+    expect(classes).not.toContain("hidden");
+  });
+
+  it("offers Open app instead of Sign In to a visitor with a session cookie", () => {
+    route.signedIn = true;
+    const html = renderPublic();
+    expect(html).not.toContain('data-to="/$lang/login"');
+    expect(appNameTarget(html)).toBe("/$lang/dashboard/sandboxes");
+    expect(html).toContain("userMenu.openApp");
   });
 });
 
 /** `{ signup, login }`: each auth button's classes, `undefined` when absent. */
-function authButtons(pathname: string, signupEnabled: boolean) {
+function authButtons(pathname: string, config: { signupEnabled?: boolean; bootstrap?: boolean }) {
   route.pathname = pathname;
-  route.signupEnabled = signupEnabled;
+  route.signupEnabled = config.signupEnabled ?? false;
+  route.bootstrap = config.bootstrap ?? false;
   const html = renderToStaticMarkup(<Header />);
   const classes = (to: string) =>
     html
@@ -147,38 +212,30 @@ function authButtons(pathname: string, signupEnabled: boolean) {
   return { signup: classes("/$lang/signup"), login: classes("/$lang/login") };
 }
 
-/** Shown at every width: a 44px touch target, never hidden below `sm:`. */
-function expectAlways(classes: string[] | undefined) {
-  expect(classes).toEqual(expect.arrayContaining(["inline-flex", "h-11", "min-h-11"]));
+/** Shown at every width: a 44px icon below `sm:`, the text from `sm:`. */
+function expectIconBelowSm(classes: string[] | undefined) {
+  expect(classes).toEqual(
+    expect.arrayContaining(["inline-flex", "h-11", "w-11", "px-0", "sm:w-auto", "sm:px-3.5"]),
+  );
   expect(classes).not.toContain("hidden");
-}
-
-/** Hidden below `sm:` (no gap either), the same touch target from `sm:` up. */
-function expectFromSm(classes: string[] | undefined) {
-  expect(classes).toEqual(expect.arrayContaining(["hidden", "sm:inline-flex", "h-11"]));
-  expect(classes).not.toContain("inline-flex");
 }
 
 describe("signed-out header buttons", () => {
   it("with sign-up closed shows only Sign In, at every width", () => {
     for (const pathname of ["/en-US/login", "/en-US/signup", "/en-US/forgot-password"]) {
-      const { signup, login } = authButtons(pathname, false);
+      const { signup, login } = authButtons(pathname, {});
       expect(signup).toBeUndefined();
-      expectAlways(login);
+      expectIconBelowSm(login);
     }
   });
 
-  it("with sign-up open shows only Sign Up below sm: on /login", () => {
-    const { signup, login } = authButtons("/en-US/login", true);
-    expectAlways(signup);
-    expectFromSm(login);
-  });
-
-  it("with sign-up open shows only Sign In below sm: on /signup and elsewhere", () => {
-    for (const pathname of ["/en-US/signup", "/en-US/signup/", "/en-US/forgot-password"]) {
-      const { signup, login } = authButtons(pathname, true);
-      expectFromSm(signup);
-      expectAlways(login);
+  it("with sign-up open, or the admin bootstrap, shows both on every page and at every width", () => {
+    for (const config of [{ signupEnabled: true }, { bootstrap: true }]) {
+      for (const pathname of ["/en-US/login", "/en-US/signup", "/en-US/forgot-password"]) {
+        const { signup, login } = authButtons(pathname, config);
+        expectIconBelowSm(signup);
+        expectIconBelowSm(login);
+      }
     }
   });
 

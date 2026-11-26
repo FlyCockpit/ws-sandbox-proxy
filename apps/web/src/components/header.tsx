@@ -1,7 +1,9 @@
 import { useParams } from "@tanstack/react-router";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 
+import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { APP_HOME } from "@/lib/app-home";
 
 import { AppNameLink } from "./app-name-link";
 import { LanguageSwitcher } from "./language-switcher";
@@ -30,7 +32,7 @@ export default function Header({ placeholder = false }: { placeholder?: boolean 
             truncates down to 44px before the row wraps, so the header stays
             one row; it wraps only when the controls themselves (e.g. a long
             account name) cannot fit next to that 44px. */}
-        <AppNameLink lang={lang} />
+        {placeholder ? <AppNameLink to="/$lang" lang={lang} /> : <LiveAppNameLink lang={lang} />}
         {placeholder ? null : <MainNav />}
         <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
           <LanguageSwitcher />
@@ -41,4 +43,16 @@ export default function Header({ placeholder = false }: { placeholder?: boolean 
       <hr />
     </div>
   );
+}
+
+/**
+ * Signed in, the app name goes to the signed-in home, never to the public
+ * landing page (which would only forward there). Anonymous visitors on the
+ * auth pages go to the landing page. The server-rendered first frame
+ * (`placeholder`) has no session yet and links to the landing page, which
+ * forwards a signed-in visitor by the cookie hint; the box is the same.
+ */
+function LiveAppNameLink({ lang }: { lang: string }) {
+  const isAuthenticated = useAuthSession().state.status === "authenticated";
+  return <AppNameLink to={isAuthenticated ? APP_HOME : "/$lang"} lang={lang} />;
 }

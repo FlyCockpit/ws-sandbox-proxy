@@ -9,7 +9,6 @@ import {
   decideAnonymousOnlyRouteAccess,
   decideDeviceRouteAccess,
   decideProtectedRouteAccess,
-  decideRootLanding,
   failedRouteSessionResolution,
   loginRedirect,
   type RouteSession,
@@ -148,17 +147,6 @@ describe("route session access decisions", () => {
       decideDeviceRouteAccess(resolvedRouteSession(sessionWith({ emailVerified: false })), {}),
     ).toEqual({ kind: "redirect-to-security" });
   });
-
-  it("sends a signed-in visitor's root to the dashboard and keeps anonymous visitors on the landing page", () => {
-    expect(decideRootLanding(resolvedRouteSession(baseSession))).toEqual({ kind: "dashboard" });
-    // Unverified sessions reach the ordinary app too (see decideProtectedRouteAccess).
-    expect(decideRootLanding(resolvedRouteSession(sessionWith({ emailVerified: false })))).toEqual({
-      kind: "dashboard",
-    });
-    expect(decideRootLanding(resolvedRouteSession(null))).toEqual({ kind: "landing" });
-    // A failed lookup never turns the public page into an error or a redirect.
-    expect(decideRootLanding(failedRouteSessionResolution())).toEqual({ kind: "landing" });
-  });
 });
 
 describe("login redirect round trip — auth redirects preserve the intended route", () => {
@@ -180,15 +168,12 @@ describe("login redirect round trip — auth redirects preserve the intended rou
     expect(safeRedirectTo(options.search.redirectTo, lang)).toBe(href);
   });
 
-  it("falls back to the locale dashboard for foreign, other-locale and auth-page targets", () => {
-    expect(safeRedirectTo("https://evil.example/en-US/dashboard", "en-US")).toBe(
-      "/en-US/dashboard",
-    );
-    expect(safeRedirectTo("//evil.example/en-US/dashboard", "en-US")).toBe("/en-US/dashboard");
-    expect(safeRedirectTo("/es-MX/settings/hosts", "en-US")).toBe("/en-US/dashboard");
-    expect(safeRedirectTo("/en-US/login?redirectTo=/en-US/dashboard", "en-US")).toBe(
-      "/en-US/dashboard",
-    );
-    expect(safeRedirectTo(undefined, "es-MX")).toBe("/es-MX/dashboard");
+  it("falls back to the signed-in home (Sandboxes) for foreign, other-locale and auth-page targets", () => {
+    const home = "/en-US/dashboard/sandboxes";
+    expect(safeRedirectTo("https://evil.example/en-US/dashboard", "en-US")).toBe(home);
+    expect(safeRedirectTo("//evil.example/en-US/dashboard", "en-US")).toBe(home);
+    expect(safeRedirectTo("/es-MX/settings/hosts", "en-US")).toBe(home);
+    expect(safeRedirectTo("/en-US/login?redirectTo=/en-US/dashboard", "en-US")).toBe(home);
+    expect(safeRedirectTo(undefined, "es-MX")).toBe("/es-MX/dashboard/sandboxes");
   });
 });

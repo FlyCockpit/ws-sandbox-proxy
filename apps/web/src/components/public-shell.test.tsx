@@ -23,6 +23,13 @@ vi.mock("@tanstack/react-router", () => ({
   useMatch: () => "/$lang/_app",
   useRouterState: () => [],
 }));
+// The public header's session hint (lib/session-hint.ts) reads "signed out"
+// here: an anonymous render; its two states are in lib/session-hint.test.tsx.
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQuery: () => ({ data: undefined }),
+}));
+vi.mock("@/server/auth-session", () => ({ getSessionCookieHint: async () => false }));
 vi.mock("@tanstack/react-query-devtools", () => ({ ReactQueryDevtools: () => null }));
 vi.mock("@tanstack/react-router-devtools", () => ({ TanStackRouterDevtools: () => null }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));

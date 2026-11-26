@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useLocation, useParams } from "@tanstack/react-router";
+import { Link, useParams } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { cn } from "@wssp/ui/lib/utils";
-import { User } from "lucide-react";
+import { LogIn, User, UserPlus } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -39,50 +39,81 @@ export default function UserMenu() {
   // boolean) so a different account in the same tab gets the closed shell
   // again instead of the lazy menu, which mounts `defaultOpen`.
   const [mountedForUser, setMountedForUser] = useState<string | null>(null);
-  const pathname = useLocation().pathname.replace(/\/+$/, "");
+  // The name of the identity last confirmed in this mount, so a later failing
+  // session check shows the account control (disabled) instead of a loading
+  // skeleton.
+  const [knownName, setKnownName] = useState<string | null>(null);
+  const state = authSession.state;
+  if (state.status === "authenticated" && knownName !== state.session.user.name) {
+    setKnownName(state.session.user.name);
+  }
+  // Confirmed signed out: an error after that is not that identity's.
+  if (state.status === "anonymous" && knownName !== null) setKnownName(null);
 
-  if (authSession.state.status === "pending" || authSession.state.status === "error") {
+  if (state.status === "pending" || (state.status === "error" && knownName === null)) {
     return <Skeleton className="h-11 w-11 md:w-24" />;
   }
 
-  if (authSession.state.status === "anonymous") {
-    // Default to NOT showing Sign Up until the flag is known, so it never
-    // flashes when signup is disabled.
-    const showSignUp = !configPending && configData?.signupEnabled === true;
-    // Below `sm:` both buttons do not fit one row next to Language and Theme
-    // (es-MX labels are long), so only the button for the *other* page shows:
-    // Sign Up on /login, Sign In everywhere else. The login and signup cards
-    // already link to each other.
-    const onLogin = pathname === `/${lang}/login`;
-    const fromSm = "hidden sm:inline-flex";
+  // A known identity whose session check is failing (offline, server
+  // unreachable): the account control stays where it was, disabled. It is not
+  // loading, so no skeleton; and it is not signed out, so no Sign In.
+  if (state.status === "error") {
     return (
-      <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+      <Button
+        variant="outline"
+        size="icon-touch"
+        disabled
+        data-account-unavailable=""
+        aria-label={t("userMenu.open", { name: knownName })}
+      >
+        <User className="size-4" aria-hidden="true" />
+      </Button>
+    );
+  }
+
+  if (state.status === "anonymous") {
+    // Default to NOT showing Sign Up until the flag is known, so it never
+    // flashes when sign-up is disabled. The admin bootstrap counts: it is on
+    // only until an administrator exists (appConfig), and then the operator
+    // needs this way in.
+    const showSignUp =
+      !configPending &&
+      (configData?.signupEnabled === true || configData?.adminBootstrapSignupEnabled === true);
+    return (
+      <div className="flex items-center gap-2">
+        {/* Below `sm:` both are 44px icon buttons, named by `aria-label`, so
+            the row never runs past its trailing line at 320px (es-MX labels
+            are long); the text labels show from `sm:` up. */}
         {showSignUp && (
           <Link
             to="/$lang/signup"
             params={{ lang }}
             search={{ redirectTo: undefined }}
-            className={cn(buttonVariants({ size: "touch" }), !onLogin && fromSm)}
+            aria-label={t("userMenu.signUp")}
+            className={cn(buttonVariants({ size: "touch" }), "w-11 px-0 sm:w-auto sm:px-3.5")}
           >
-            {t("userMenu.signUp")}
+            <UserPlus className="size-4 sm:hidden" aria-hidden="true" />
+            <span className="hidden sm:inline">{t("userMenu.signUp")}</span>
           </Link>
         )}
         <Link
           to="/$lang/login"
           params={{ lang }}
           search={{ redirectTo: undefined }}
+          aria-label={t("userMenu.signIn")}
           className={cn(
             buttonVariants({ size: "touch", variant: "outline" }),
-            showSignUp && onLogin && fromSm,
+            "w-11 px-0 sm:w-auto sm:px-3.5",
           )}
         >
-          {t("userMenu.signIn")}
+          <LogIn className="size-4 sm:hidden" aria-hidden="true" />
+          <span className="hidden sm:inline">{t("userMenu.signIn")}</span>
         </Link>
       </div>
     );
   }
 
-  const session = authSession.state.session;
+  const session = state.session;
 
   // The eager placeholder: visually identical to UserMenuContent's trigger so
   // there is no layout shift when the real control loads. `inert` while the

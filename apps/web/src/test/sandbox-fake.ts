@@ -324,6 +324,14 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
               return clone(handler(input as never));
             },
     });
+  const sandboxesByStatus = (status: unknown) =>
+    server.sandboxes.filter((row) =>
+      status === undefined || status === "active"
+        ? row.state !== "DELETED"
+        : status === "deleted"
+          ? row.state === "DELETED"
+          : status === "all" || row.state === "READY",
+    );
   const sandbox = (id: string) => {
     const row = server.sandboxes.find((candidate) => candidate.id === id);
     if (!row) throw NOT_FOUND();
@@ -654,13 +662,11 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       key: () => ["sandboxes"],
       list: {
         infiniteOptions: pagedInfinite(["sandboxes", "list"], "list", (input) =>
-          server.sandboxes.filter((row) =>
-            input.status === undefined || input.status === "active"
-              ? row.state !== "DELETED"
-              : input.status === "deleted"
-                ? row.state === "DELETED"
-                : input.status === "all" || row.state === "READY",
-          ),
+          sandboxesByStatus(input.status),
+        ),
+        // The getting-started checklist's "any sandbox, ever?" read.
+        queryOptions: pagedQuery(["sandboxes", "list"], "list", (input) =>
+          sandboxesByStatus(input.status),
         ),
       },
       getSandbox: {

@@ -6,7 +6,9 @@
     "title": "No sandboxes yet",
     "description": "Sandboxes start from a template on one of your hosts.",
     "deletedTitle": "No deleted sandboxes",
-    "deletedDescription": "Destroyed sandboxes stay listed here with their history."
+    "deletedDescription": "Destroyed sandboxes stay listed here with their history.",
+    "activeTitle": "No active sandboxes",
+    "activeDescription": "Create a sandbox to start a VM from a template. Destroyed sandboxes are under Deleted."
   },
   "listRegion": "Your sandboxes",
   "filter": {
@@ -778,7 +780,6 @@
   "onboarding": {
     "title": "Get your first sandbox running",
     "description": "Three steps. Each one is done once.",
-    "done": "done",
     "host": {
       "title": "Enroll a host or join a pool",
       "description": "A machine you own, or a pool someone shared with you.",
@@ -795,7 +796,8 @@
     "sandbox": {
       "title": "Create a sandbox",
       "description": "Start a VM from your template.",
-      "action": "Create your first sandbox"
+      "action": "Create your first sandbox",
+      "waiting": "Finish the steps above first: a sandbox needs somewhere to run and a template."
     }
   },
   "guestRoot": {

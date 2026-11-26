@@ -32,7 +32,11 @@
   },
   "home": {
     "title": "WS Sandbox Proxy",
-    "description": "Plano de control autohospedado de sandboxes para VMs Incus KVM."
+    "description": "Plano de control autohospedado de sandboxes para VMs Incus KVM.",
+    "createAccount": "Crear cuenta",
+    "signIn": "Iniciar sesión",
+    "setUp": "Configurar este servidor",
+    "inviteOnly": "Este servidor es solo por invitación. Pide una invitación a un administrador."
   },
   "loading": "Cargando…",
   "optionUnavailable": "Opción no disponible",
@@ -108,5 +112,15 @@
         }
       }
     }
+  },
+  "gettingStarted": {
+    "title": "Primeros pasos",
+    "progress": "{{done}} de {{total}} listos",
+    "stepDone": "Listo",
+    "stepToDo": "Pendiente",
+    "hide": "Ocultar",
+    "hideAriaLabel": "Ocultar la lista de primeros pasos",
+    "hidden": "Se ocultaron los primeros pasos.",
+    "undo": "Deshacer"
   }
 }

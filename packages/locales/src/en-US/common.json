@@ -1,7 +1,11 @@
 {
   "home": {
     "title": "WS Sandbox Proxy",
-    "description": "Self-hosted sandbox control plane for Incus KVM VMs."
+    "description": "Self-hosted sandbox control plane for Incus KVM VMs.",
+    "createAccount": "Create account",
+    "signIn": "Sign in",
+    "setUp": "Set up this server",
+    "inviteOnly": "This server is invite-only. Ask an administrator for an invitation."
   },
   "actions": {
     "back": "Back",
@@ -108,5 +112,15 @@
         }
       }
     }
+  },
+  "gettingStarted": {
+    "title": "Get started",
+    "progress": "{{done}} of {{total}} done",
+    "stepDone": "Done",
+    "stepToDo": "To do",
+    "hide": "Hide",
+    "hideAriaLabel": "Hide the getting-started checklist",
+    "hidden": "Getting started is hidden.",
+    "undo": "Undo"
   }
 }

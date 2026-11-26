@@ -27,6 +27,8 @@
     "signOut": "Cerrar sesión",
     "signUp": "Registrarse",
     "open": "{{name}}, menú de la cuenta",
-    "helpDocs": "Ayuda y documentación"
+    "helpDocs": "Ayuda y documentación",
+    "openApp": "Abrir la app",
+    "signOutFailed": "No se pudo cerrar la sesión. Revisa tu conexión e inténtalo de nuevo."
   }
 }

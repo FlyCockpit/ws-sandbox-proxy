@@ -65,10 +65,13 @@ export function isSandboxBusy(sandbox: {
 
 export function SandboxesPage({
   lang,
+  userId,
   status = "active",
   onStatusChange,
 }: {
   lang: string;
+  /** The signed-in user: whose getting-started checklist this is. */
+  userId: string;
   /** From `?status=` (the route owns it, so Back restores the filter). */
   status?: SandboxStatusFilter;
   onStatusChange: (status: SandboxStatusFilter) => void;
@@ -113,6 +116,13 @@ export function SandboxesPage({
           </Link>
         }
       />
+      {/* The signed-in home's getting-started checklist: above the filter,
+          whatever it shows, until its steps are done or it is hidden. */}
+      <OnboardingChecklist
+        lang={lang}
+        scope={userId}
+        hasSandboxRows={sandboxes ? sandboxes.length > 0 : undefined}
+      />
       <SegmentedControl
         value={status}
         onChange={onStatusChange}
@@ -135,21 +145,23 @@ export function SandboxesPage({
         errorMessage={t("dashboard:list.loadFailed")}
         isEmpty={(rows) => rows.length === 0}
         empty={
-          status === "active" ? (
-            <OnboardingChecklist lang={lang} enabled={sandboxes?.length === 0} />
-          ) : (
-            <EmptyState
-              className="rounded-xl border px-4"
-              title={t(
-                status === "deleted" ? "sandboxes:empty.deletedTitle" : "sandboxes:empty.title",
-              )}
-              description={t(
-                status === "deleted"
-                  ? "sandboxes:empty.deletedDescription"
+          <EmptyState
+            className="rounded-xl border px-4"
+            title={t(
+              status === "deleted"
+                ? "sandboxes:empty.deletedTitle"
+                : status === "active"
+                  ? "sandboxes:empty.activeTitle"
+                  : "sandboxes:empty.title",
+            )}
+            description={t(
+              status === "deleted"
+                ? "sandboxes:empty.deletedDescription"
+                : status === "active"
+                  ? "sandboxes:empty.activeDescription"
                   : "sandboxes:empty.description",
-              )}
-            />
-          )
+            )}
+          />
         }
       >
         {(rows) => (

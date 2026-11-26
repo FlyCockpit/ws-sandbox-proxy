@@ -72,8 +72,6 @@ export type AdminRouteDecision =
   | { kind: "not-found" }
   | { kind: "error" };
 
-export type RootLandingDecision = { kind: "dashboard" } | { kind: "landing" };
-
 export type DeviceRouteDecision =
   | { kind: "allow"; session: RouteSession }
   | { kind: "redirect-to-login" }
@@ -190,17 +188,6 @@ export function showsAdminNavigation(
   if (user?.emailVerified !== true || !isAdminRole(user.role)) return false;
   if (!forcedTwoFactorSettings) return false;
   return twoFactorEnrollmentState(forcedTwoFactorSettings, user, now).status !== "blocked";
-}
-
-/**
- * The public root (`/$lang/`): a signed-in visitor goes to the dashboard; an
- * anonymous visitor sees the landing page. A failed session lookup also shows
- * the landing page: the public page must never become an error screen, and
- * every dashboard route re-runs its own gate anyway.
- */
-export function decideRootLanding(resolution: RouteSessionResolution): RootLandingDecision {
-  if (resolution.status === "resolved" && resolution.session) return { kind: "dashboard" };
-  return { kind: "landing" };
 }
 
 /**

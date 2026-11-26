@@ -3,12 +3,20 @@ import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const auth = vi.hoisted(() => ({ ownerId: "owner-1" as string | null }));
+const auth = vi.hoisted(() => ({
+  ownerId: "owner-1" as string | null,
+  /** Overrides the derived state: a pending or failing session check. */
+  status: undefined as "pending" | "error" | undefined,
+}));
+const config = vi.hoisted(() => ({
+  data: undefined as { signupEnabled: boolean; adminBootstrapSignupEnabled: boolean } | undefined,
+}));
 
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
-    state:
-      auth.ownerId === null
+    state: auth.status
+      ? { status: auth.status }
+      : auth.ownerId === null
         ? { status: "anonymous" }
         : { status: "authenticated", session: { user: { id: auth.ownerId, name: "Owner" } } },
   }),
@@ -16,13 +24,32 @@ vi.mock("@/hooks/use-auth-session", () => ({
 vi.mock("@tanstack/react-router", () => ({
   useLocation: () => ({ pathname: "/en-US/dashboard" }),
   useParams: () => ({ lang: "en-US" }),
-  Link: ({ children }: { children: ReactNode }) => children,
+  Link: ({
+    children,
+    to,
+    className,
+    "aria-label": ariaLabel,
+  }: {
+    children: ReactNode;
+    to: string;
+    className?: string;
+    "aria-label"?: string;
+  }) => (
+    <a data-to={to} className={className} aria-label={ariaLabel}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: undefined, isPending: true }),
+  useQuery: () => ({ data: config.data, isPending: config.data === undefined }),
 }));
 vi.mock("@/utils/orpc", () => ({ orpc: { appConfig: { queryOptions: () => ({}) } } }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: { name?: string }) =>
+      options?.name ? `${key}:${options.name}` : key,
+  }),
+}));
 
 import { useOrphanCredentials } from "@/stores/orphan-credentials";
 
@@ -32,6 +59,8 @@ const store = () => useOrphanCredentials.getState();
 
 beforeEach(() => {
   auth.ownerId = "owner-1";
+  auth.status = undefined;
+  config.data = undefined;
   useOrphanCredentials.setState({ entries: [], ownerId: undefined, epoch: 0 });
 });
 
@@ -64,5 +93,80 @@ describe("user menu", () => {
     expect(trigger?.querySelector("svg")?.getAttribute("class")).toContain("md:hidden");
     expect(trigger?.querySelector("span")?.className).toBe("hidden truncate md:block");
     expect(trigger?.textContent).toBe("Owner");
+  });
+
+  it("names the trigger for the account it opens", () => {
+    const trigger = render(<UserMenu />).container.querySelector("button");
+    expect(trigger?.getAttribute("aria-label")).toBe("userMenu.open:Owner");
+  });
+
+  it("is a skeleton while the session is pending or failing before any identity", () => {
+    for (const status of ["pending", "error"] as const) {
+      auth.status = status;
+      const view = render(<UserMenu />);
+      expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+      expect(view.container.querySelector("button")).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("keeps a known account's control, disabled, when its session check fails", () => {
+    const view = render(<UserMenu />);
+    auth.status = "error";
+    view.rerender(<UserMenu />);
+    const control = view.container.querySelector<HTMLButtonElement>("[data-account-unavailable]");
+    expect(control?.disabled).toBe(true);
+    expect(control?.getAttribute("aria-label")).toBe("userMenu.open:Owner");
+    expect(control?.className.split(" ")).toContain("size-11");
+    expect(view.container.querySelector('[data-slot="skeleton"]')).toBeNull();
+    // Back online: the live trigger again.
+    auth.status = undefined;
+    view.rerender(<UserMenu />);
+    expect(view.container.querySelector("[data-account-unavailable]")).toBeNull();
+    expect(view.container.querySelector("button")?.getAttribute("aria-haspopup")).toBe("menu");
+  });
+
+  describe("signed out", () => {
+    beforeEach(() => {
+      auth.ownerId = null;
+    });
+    const links = (container: HTMLElement) =>
+      [...container.querySelectorAll("a")].map((link) => link.dataset.to);
+
+    it("shows only Sign In until the sign-up flags are known, and while sign-up is closed", () => {
+      expect(links(render(<UserMenu />).container)).toEqual(["/$lang/login"]);
+      config.data = { signupEnabled: false, adminBootstrapSignupEnabled: false };
+      expect(links(render(<UserMenu />).container)).toEqual(["/$lang/login"]);
+    });
+
+    it("adds Sign Up while sign-up is open or the admin bootstrap is", () => {
+      for (const data of [
+        { signupEnabled: true, adminBootstrapSignupEnabled: false },
+        { signupEnabled: false, adminBootstrapSignupEnabled: true },
+      ]) {
+        config.data = data;
+        const view = render(<UserMenu />);
+        expect(links(view.container)).toEqual(["/$lang/signup", "/$lang/login"]);
+        view.unmount();
+      }
+    });
+
+    it("is two 44px named icon buttons below sm, the text from sm, on every page", () => {
+      config.data = { signupEnabled: true, adminBootstrapSignupEnabled: false };
+      const view = render(<UserMenu />);
+      for (const [to, label] of [
+        ["/$lang/signup", "userMenu.signUp"],
+        ["/$lang/login", "userMenu.signIn"],
+      ]) {
+        const link = view.container.querySelector<HTMLElement>(`a[data-to="${to}"]`);
+        expect(link?.getAttribute("aria-label")).toBe(label);
+        const classes = link?.className.split(" ") ?? [];
+        expect(classes).toEqual(expect.arrayContaining(["w-11", "px-0", "sm:w-auto", "h-11"]));
+        expect(classes).not.toContain("hidden");
+        expect(link?.querySelector("svg")?.getAttribute("class")).toContain("sm:hidden");
+        expect(link?.querySelector("span")?.className).toBe("hidden sm:inline");
+        expect(link?.querySelector("span")?.textContent).toBe(label);
+      }
+    });
   });
 });
