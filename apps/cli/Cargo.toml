@@ -74,7 +74,7 @@ tempfile = "3"
 toml = "1"
 # Device login HTTP (no redirects; oRPC exchange polling).
 # Exact pin: the additive root store implements ureq's unversioned transport API.
-ureq = { version = "=3.5.1", features = ["json"] }
+ureq = { version = "=3.5.2", features = ["json"] }
 # Structured logging. `--log-format`, `RUST_LOG`/`WSSP_LOG` filtering.
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }

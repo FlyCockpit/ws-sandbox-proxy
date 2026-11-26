@@ -21,7 +21,7 @@ clap = { version = "4", features = ["derive"] }
 # ureq); same versions and features, so the lockfile gains no package.
 flate2 = "1.1.11"
 sha2 = "0.11.1"
-ureq = "=3.5.1"
+ureq = "=3.5.2"
 # `vendored-russh --check`/`--advisories`/`--update`: Cargo.lock, the
 # manifests and RustSec front matter (toml), advisory version ranges with
 # cargo-deny's semantics (semver), the crates.io index (serde_json). All
