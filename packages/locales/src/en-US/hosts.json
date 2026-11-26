@@ -28,8 +28,6 @@
     "nameLabel": "Name for this host",
     "nameHint": "Lowercase letters, digits and dashes. The command below updates as you type.",
     "advanced": "Private CA and capacity flags",
-    "guidePath": "{{label}}: in the WS Sandbox Proxy source repository at",
-    "copyGuidePath": "Copy guide path",
     "status": {
       "title": "Status",
       "waiting": "Waiting for your host…",

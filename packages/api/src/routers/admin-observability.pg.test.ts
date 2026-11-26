@@ -31,7 +31,7 @@ const db = await pgTestDatabase();
 const { adminObservabilityRouter } = await import("./admin-observability");
 afterAll(() => db.close());
 
-it("pages tied metadata across owners with exact filters and no stored secrets", async () => {
+it("pages tied metadata across owners with exact filters, owner-chosen names and no stored secrets", async () => {
   const id = randomUUID();
   const user = await db.inspect.user.create({
     data: {
@@ -67,7 +67,7 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
           userId,
           status,
           slug: randomUUID(),
-          label: "private-label",
+          label: "rack-label",
           inventoryDigest: "private-inventory",
           memoryReservedMiB: 3072,
           daemonMemoryBudgetMiB: 2048,
@@ -100,11 +100,14 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
       "daemonMemoryBudgetMiB",
       "daemonMaxCpuCount",
       "quarantinedAt",
+      "label",
       "owner",
     ].sort(),
   );
-  // The owner's account name and email join in; owner-chosen labels never do.
+  // The owner's account name and email join in, and so does the host's label
+  // (admins see owner-chosen names; host and pool owners never do).
   expect(first.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
+  expect(first.items[0]!.label).toBe("rack-label");
   expect(first.nextCursor).not.toBeNull();
   await db.inspect.sandboxHost.delete({ where: { id: first.items[0]!.id } });
   const second = await client.listHosts({
@@ -123,7 +126,7 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
     data: {
       userId: ownerId,
       slug: "base",
-      label: "private-template",
+      label: "Template label",
       imageRef: "private-image",
       incusFingerprint: `sha256:${"a".repeat(64)}`,
       retiredAt: new Date(),
@@ -135,6 +138,7 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
       userId: ownerId,
       templateId: template.id,
       originHostId: "gone",
+      name: "quiet-otter",
       metadata: { secret: "private-metadata" },
       lastErrorDetail: "private-error",
       cpuCount: 2,
@@ -171,14 +175,23 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
       "guestSudo",
       "guestSudoReason",
       "guestRoot",
+      "name",
+      "hostLabel",
+      "templateLabel",
       "owner",
     ].sort(),
   );
   expect(sandboxes.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
+  expect(sandboxes.items[0]).toMatchObject({
+    name: "quiet-otter",
+    hostLabel: null,
+    templateLabel: "Template label",
+  });
   expect(JSON.stringify(sandboxes)).not.toContain("private-");
   const operations = await client.listOperations({ ownerId, sandboxId: sandbox.id });
   expect(operations.items).toHaveLength(1);
   expect(operations.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
+  expect(operations.items[0]!.sandboxName).toBe("quiet-otter");
   expect(JSON.stringify(operations)).not.toContain("private-");
 });
 

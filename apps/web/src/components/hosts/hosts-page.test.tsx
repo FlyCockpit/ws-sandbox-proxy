@@ -382,11 +382,11 @@ describe("hosts page query states", () => {
         "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.test/install.sh | sh",
       ),
     ).toBeTruthy();
-    // No docs base in this environment: the guide is a copyable repository path, not dead text.
-    const paths = [...enroll.querySelectorAll("[data-docs-path] [data-slot=copy-field-value]")];
-    expect(paths.map((node) => node.textContent)).toEqual([
-      "docs/guide/hosts.md#quick-start-your-first-host",
-      "docs/guide/hosts.md#run-as-a-service",
+    // No docs base in this environment: the guide links to the repository's docs.
+    const links = [...enroll.querySelectorAll("[data-docs-link]")];
+    expect(links.map((node) => node.getAttribute("href"))).toEqual([
+      "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/hosts.md#quick-start-your-first-host",
+      "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/hosts.md#run-as-a-service",
     ]);
     // A long-lived token only works for an existing host: not offered while enrolling.
     expect(within(enroll).queryByRole("link", { name: enHosts.enroll.tokenLink })).toBeNull();

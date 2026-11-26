@@ -25382,7 +25382,7 @@
                     ]
                   },
                   "timeoutMs": {
-                    "description": "The new relative lease, remembered for later starts. Omitted: the sandbox's remembered lease (the create's `timeoutMs`, or the last one a reconnect named), with the expiry action chosen at create. Relative lease in milliseconds; 0 means no lease timer where policy allows it. Finite leases are capped at 24 days (2073600000 ms) by policy, or lower by the deployment, host or pool: a larger value fails with 400 `lease_exceeds_policy` carrying `maxTimeoutMs`.",
+                    "description": "The new relative lease, remembered for later starts. Omitted: the sandbox's remembered lease (the latest `timeoutMs` its create, a reconnect or a renewal named), with its current expiry action. Relative lease in milliseconds; 0 means no lease timer where policy allows it. Finite leases are capped at 24 days (2073600000 ms) by policy, or lower by the deployment, host or pool: a larger value fails with 400 `lease_exceeds_policy` carrying `maxTimeoutMs`.",
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991

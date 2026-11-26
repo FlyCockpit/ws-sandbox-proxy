@@ -168,7 +168,7 @@
       "hostUnknown": "Conectado, pero este host no ha reportado su capacidad libre recientemente. El servidor la revisa cuando creas."
     },
     "envTitle": "Entorno",
-    "envHint": "Valores predeterminados privados para comandos y terminales: hasta 64 variables. HOME, SHELL y TERM están reservadas. Los valores permanecen privados en el servidor y el host.",
+    "envHint": "Valores predeterminados privados para comandos y terminales: hasta 64 variables. HOME, SHELL y TERM están reservadas. Los valores permanecen privados en el servidor y el host. Hasta que se cree el sandbox, solo quedan en esta página (nunca se guardan en el navegador), también después de un rechazo, y se borran al salir de ella.",
     "envAdd": "Agregar variable",
     "labelsRowsHint": "Etiquetas opcionales para encontrar y agrupar sandboxes: hasta 32. Nunca pongas secretos aquí.",
     "labelsTextUnavailable": "Algunas claves no se pueden escribir como líneas CLAVE=valor; edítalas como filas.",
@@ -224,14 +224,12 @@
       "warnNowhere": "{{template}} aún no está en {{host}}, así que crear ahí probablemente fallará. Elige otro host u otra plantilla."
     },
     "hostUnmeasured": "{{label}} · Conectado, sin reporte de capacidad libre",
-    "envCleared": "Por seguridad, los valores se borran después de una creación rechazada. Ingrésalos de nuevo.",
     "previewPorts": "Puertos de vista previa",
     "previewPortsHint": "Puertos del invitado que podrás compartir después como enlace de vista previa, por ejemplo 3000, 8080. Déjalo vacío si no necesitas enlaces; un reenvío de puerto siempre funciona.",
     "showProblem": "Mostrar",
     "sizeNotSet": "Sin definir: se usa el tamaño de la versión más reciente.",
     "sizeUseTemplateDefault": "Usar el predeterminado de la plantilla",
     "sizeDefaultSource": "versión {{revision}}",
-    "envReenter": "Vuelve a escribir los valores de {{keys}} o quita esas variables.",
     "labelKeyInvalid": "{{key}} no puede ser un nombre de etiqueta: sin espacios, comillas ni =."
   },
   "credentials": {
@@ -456,7 +454,6 @@
     "diskGiB": "Ingresa un tamaño raíz entero de 1 a 2048 GiB, o déjalo vacío.",
     "credentials": "Elige un inicio de sesión en cada fila (cada uno una vez, máximo 8) o quita las filas vacías.",
     "lifetime": "Elige una duración dentro del máximo que este host o grupo permite.",
-    "envsCleared": "Ingresa de nuevo los valores borrados o quita esas filas.",
     "previewPorts": "Ingresa hasta 8 números de puerto distintos del 1 al 65535, separados por comas o espacios."
   },
   "egress": {
@@ -637,7 +634,7 @@
     "hint": "Se cuenta desde que el servidor acepta la solicitud; se aplican los límites de la instalación.",
     "keep": "Conservar su tiempo de vida ({{lifetime}}, luego {{action}})",
     "keepUnlimited": "Conservar su tiempo de vida (sin límite de tiempo)",
-    "keepHint": "Conserva el tiempo de vida y la acción al vencer con los que se inició por última vez (una renovación no se recuerda), salvo que elijas otro; una nueva elección se convierte en su tiempo de vida para los siguientes inicios. Se cuenta cuando el servidor acepta tu solicitud; aplican los límites de la implementación.",
+    "keepHint": "Conserva el tiempo de vida y la acción al vencer más recientes: los de su creación, su último inicio o su última renovación, lo que haya ocurrido al final. Elige otro para reemplazarlo; una nueva elección se convierte en su tiempo de vida para los siguientes inicios. Se cuenta cuando el servidor acepta tu solicitud; aplican los límites de la implementación.",
     "onExpire": "Cuando termine el tiempo de vida",
     "stopOption": "Detener la VM (conservar su disco)",
     "destroyOption": "Destruir la VM y su disco",
@@ -823,7 +820,7 @@
   "renew": {
     "action": "Renovar tiempo de vida",
     "title": "Renovar tiempo de vida",
-    "description": "Elige cuánto tiempo se ejecuta a partir de ahora. Lo que pasa al terminar no cambia.",
+    "description": "Elige cuánto tiempo se ejecuta a partir de ahora. Lo que pasa al terminar no cambia. Los siguientes inicios conservan este tiempo de vida.",
     "submit": "Renovar",
     "pending": "Renovando…",
     "now": "Ahora",
@@ -991,6 +988,5 @@
     "noTunnel": "Este sandbox se creó sin puertos de vista previa, así que no puede tener un enlace para compartir. El reenvío de puertos sí funciona.",
     "guide": "Guía de túneles de vista previa",
     "guideCli": "Guía de la CLI: shells y reenvío de puertos"
-  },
-  "docsPath": "(guía: {{path}} en el repositorio de código fuente de WS Sandbox Proxy)"
+  }
 }

@@ -90,6 +90,7 @@ it("uses exhaustive metadata-only selects with bounded keyset queries", async ()
       "daemonMemoryBudgetMiB",
       "daemonMaxCpuCount",
       "quarantinedAt",
+      "label",
       "User",
     ],
     [
@@ -108,19 +109,42 @@ it("uses exhaustive metadata-only selects with bounded keyset queries", async ()
       "guestSudo",
       "guestSudoReason",
       "guestRoot",
+      "name",
+      "SandboxHost",
+      "SandboxTemplateRevision",
       "User",
     ],
-    ["id", "userId", "createdAt", "sandboxId", "kind", "state", "generation", "updatedAt", "User"],
+    [
+      "id",
+      "userId",
+      "createdAt",
+      "sandboxId",
+      "kind",
+      "state",
+      "generation",
+      "updatedAt",
+      "Sandbox",
+      "User",
+    ],
   ];
   for (const [index, delegate] of [db.sandboxHost, db.sandbox, db.sandboxOperation].entries()) {
     const query = delegate.findMany.mock.calls[0]?.[0];
     expect(Object.keys(query?.select ?? {}).sort()).toEqual(allowed[index]?.sort());
-    // The only join: the owner's account name and email, never owner-chosen labels.
+    // The owner joins in by account name and email only.
     expect(query?.select?.User).toEqual({ select: { name: true, email: true } });
     expect(query?.take).toBe(3);
     expect(query?.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
     expect(query?.where).toMatchObject({ AND: [{ userId: "owner" }] });
   }
+  // The other joins carry one label each, nothing else of the related row.
+  const sandboxSelect = db.sandbox.findMany.mock.calls[0]?.[0]?.select;
+  expect(sandboxSelect?.SandboxHost).toEqual({ select: { label: true } });
+  expect(sandboxSelect?.SandboxTemplateRevision).toEqual({
+    select: { Template: { select: { label: true } } },
+  });
+  expect(db.sandboxOperation.findMany.mock.calls[0]?.[0]?.select?.Sandbox).toEqual({
+    select: { name: true },
+  });
 });
 
 it("returns fixed counters without queue payloads or arbitrary count keys", async () => {
@@ -252,14 +276,59 @@ it("returns the owner's name and email beside each id, and never the relation it
     { id: "host-1", userId: "owner", createdAt, status: "CONNECTED", User: owner },
   ] as never);
   db.sandbox.findMany.mockResolvedValue([
-    { id: "sbx-1", userId: "owner", createdAt, state: "READY", User: owner },
+    {
+      id: "sbx-1",
+      userId: "owner",
+      createdAt,
+      state: "READY",
+      name: "quiet-otter",
+      SandboxHost: { label: "rack-2" },
+      SandboxTemplateRevision: { Template: { label: "Ubuntu 24.04" } },
+      User: owner,
+    },
   ] as never);
   db.sandboxOperation.findMany.mockResolvedValue([
-    { id: "op-1", userId: "owner", createdAt, state: "RUNNING", User: owner },
+    {
+      id: "op-1",
+      userId: "owner",
+      createdAt,
+      state: "RUNNING",
+      Sandbox: { name: "quiet-otter" },
+      User: owner,
+    },
   ] as never);
   for (const list of [client.listHosts, client.listSandboxes, client.listOperations]) {
     const page = await list({ limit: 5 });
     expect(page.items[0]).toMatchObject({ userId: "owner", owner });
-    expect(page.items[0]).not.toHaveProperty("User");
+    for (const relation of ["User", "SandboxHost", "SandboxTemplateRevision", "Sandbox"])
+      expect(page.items[0]).not.toHaveProperty(relation);
   }
+  expect((await client.listSandboxes({ limit: 5 })).items[0]).toMatchObject({
+    name: "quiet-otter",
+    hostLabel: "rack-2",
+    templateLabel: "Ubuntu 24.04",
+  });
+  expect((await client.listOperations({ limit: 5 })).items[0]).toMatchObject({
+    sandboxName: "quiet-otter",
+  });
+});
+
+it("shows no host label for a sandbox without a host", async () => {
+  db.sandbox.findMany.mockResolvedValue([
+    {
+      id: "sbx-2",
+      userId: "owner",
+      createdAt: new Date("2026-11-02T00:00:00.000Z"),
+      state: "WAITING_FOR_CAPACITY",
+      name: "patient-heron",
+      SandboxHost: null,
+      SandboxTemplateRevision: { Template: { label: "Base" } },
+      User: { name: "Ada", email: "ada@example.test" },
+    },
+  ] as never);
+  expect((await client.listSandboxes({ limit: 5 })).items[0]).toMatchObject({
+    name: "patient-heron",
+    hostLabel: null,
+    templateLabel: "Base",
+  });
 });

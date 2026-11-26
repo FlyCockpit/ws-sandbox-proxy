@@ -2,7 +2,7 @@ import { env } from "@wssp/env/web";
 import { CodeSnippet } from "@wssp/ui/components/code-snippet";
 import { CopyField } from "@wssp/ui/components/copy-field";
 import { useTranslation } from "react-i18next";
-import { docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { docsUrl } from "@/lib/docs-links";
 import { hostCommands } from "@/lib/host-status";
 
 /** The `/v1` base URL of this server, derived the same way as the MCP URL. */
@@ -38,13 +38,11 @@ function sdkKeySnippets(serverUrl: string) {
   };
 }
 
-/** A link into the guide, or its repository path when no docs base is configured. */
+/** A link into the guide. */
 function GuideLink({ page, label }: { page: "sdkKeys" | "cli"; label: string }) {
-  const { t } = useTranslation("sdkKeys");
-  const href = docsUrl(env.VITE_DOCS_URL, page);
-  return href ? (
+  return (
     <a
-      href={href}
+      href={docsUrl(env.VITE_DOCS_URL, page)}
       target="_blank"
       rel="noreferrer"
       data-docs-link={page}
@@ -52,10 +50,6 @@ function GuideLink({ page, label }: { page: "sdkKeys" | "cli"; label: string }) 
     >
       {label}
     </a>
-  ) : (
-    <span data-docs-path={page} className="text-sm text-muted-foreground">
-      {t("useKey.docsPath", { path: docsRepoPath(page) })}
-    </span>
   );
 }
 

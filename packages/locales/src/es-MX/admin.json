@@ -329,7 +329,6 @@
     "title": "Configuración del despliegue",
     "description": "Con qué está configurado este servidor. Aquí nunca se muestran valores; cada elemento se define en el entorno del servidor salvo que se indique otra cosa.",
     "docsLink": "Variables de entorno",
-    "docsPath": "Variables de entorno: {{path}} en el repositorio de código de WS Sandbox Proxy.",
     "unknown": "No se pudo cargar este estado. Recarga la página para intentarlo de nuevo.",
     "maintenanceLink": "Abrir Observabilidad › Mantenimiento",
     "settingsLink": "Abrir Configuración",

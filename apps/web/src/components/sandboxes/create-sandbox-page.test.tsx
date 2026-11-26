@@ -44,8 +44,8 @@ import {
  * The Create sandbox page against a scripted fake server (real TanStack
  * Query, Form and i18n). Every behaviour of the dialog it replaced is kept:
  * one request per intent (a lost response replays the first key and input),
- * definite refusals release the intent and clear the private environment,
- * input mistakes keep it, quoted pool grace, guest sudo, egress, capacity
+ * definite refusals release the intent and keep the typed environment in
+ * the open form only (owner decision 2026-11-26), quoted pool grace, guest sudo, egress, capacity
  * wait and revision pinning. New: safe defaults (the only pool preselected,
  * one hour then stop), inline name rules that never rewrite what was typed,
  * KEY=value environment rows, and size sliders capped by the placement.
@@ -1113,14 +1113,47 @@ describe("size sliders", () => {
     expect(size.getByText("This host has 3.5 GiB of memory free.")).toBeTruthy();
     expect(size.getByText("This host has 95 GiB of disk free.")).toBeTruthy();
     const cpu = sizeInput(size, "vCPUs");
-    // More than the host has is lowered to what it has, with the reason.
+    // More than the host has is kept as typed and refused, with the reason
+    // and the cap one click away; it is never lowered silently.
     await typeSize(user, cpu, "8");
+    expect(cpu.value).toBe("8 vCPU");
+    expect(cpu.getAttribute("aria-invalid")).toBe("true");
+    expect(size.getByRole("alert").textContent).toContain("This host has 4 vCPUs free");
+    await submit(user);
+    await waitFor(() => expect(document.activeElement).toBe(cpu));
+    expect(calls("createSandbox")).toHaveLength(0);
+    // A 44px target on phones (this app's small buttons are 28px otherwise).
+    expect(size.getByRole("button", { name: "Use 4 vCPU" }).className).toMatch(/\bh-11\b/);
+    await user.click(size.getByRole("button", { name: "Use 4 vCPU" }));
     expect(cpu.value).toBe("4 vCPU");
-    expect(size.getByRole("status").textContent).toContain("This host has 4 vCPUs free");
+    expect(cpu.getAttribute("aria-invalid")).toBeNull();
+    expect(size.queryByRole("button", { name: "Use 4 vCPU" })).toBeNull();
     await typeSize(user, cpu, "3");
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
     expect(created()).toMatchObject({ cpuCount: 3 });
+  });
+
+  it("a pinned version's size above the host's free capacity blocks the create, typed or untouched", async () => {
+    // The pinned revision asks for 8 vCPUs; Alpha has 4 free.
+    server.current.templates = [fakeTemplate({ cpuCount: 8 })];
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickHost(user);
+    await chooseRevision(user, "tpl-1");
+    const size = await openSection(user, "size");
+    const cpu = sizeInput(size, "vCPUs");
+    expect(cpu.value).toBe("8 vCPU");
+    expect(size.getByRole("alert").textContent).toContain("This host has 4 vCPUs free");
+    // Typing the default itself is "inherit": still the same 8, still blocked.
+    await typeSize(user, cpu, "8");
+    await submit(user);
+    await waitFor(() => expect(document.activeElement).toBe(cpu));
+    expect(calls("createSandbox")).toHaveLength(0);
+    await user.click(size.getByRole("button", { name: "Use 4 vCPU" }));
+    await submit(user);
+    await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
+    expect(created()).toMatchObject({ cpuCount: 4 });
   });
 
   it("a pool caps the sliders at the largest size one host can take, read once per choice", async () => {
@@ -1139,6 +1172,11 @@ describe("size sliders", () => {
     expect(capacityReads.at(-1)?.input).toEqual({ id: "pool-1", template: "revision/tpl-1" });
     const cpu = sizeInput(size, "vCPUs");
     await typeSize(user, cpu, "8");
+    expect(cpu.value).toBe("8 vCPU");
+    expect(size.getByRole("alert").textContent).toBe(
+      "The most any host in this pool can take now is 6 vCPUs.",
+    );
+    await user.click(size.getByRole("button", { name: "Use 6 vCPU" }));
     expect(cpu.value).toBe("6 vCPU");
     await typeSize(user, sizeInput(size, "Memory"), "4");
     // Moving sizes never re-reads the budgeted capacity view.
@@ -1501,7 +1539,7 @@ describe("pools, paging and refusals", () => {
     ["FORBIDDEN", "forbidden"],
     ["NOT_FOUND", "notFound"],
   ] as const)(
-    "%s has bilingual safe copy, clears env and settled mutation state, and releases the intent",
+    "%s has bilingual safe copy, keeps typed env values in the open form only, settles mutation state, and releases the intent",
     async (code, problem) => {
       server.current.pools = [{ id: "pool-a", slug: "a", label: "Pool A" }];
       const user = userEvent.setup();
@@ -1530,16 +1568,11 @@ describe("pools, paging and refusals", () => {
             : copy.problem[problem];
       // At its field (and echoed in the action bar), or in the action bar alone.
       expect((await form().findAllByText(text(enSandboxes))).length).toBeGreaterThan(0);
-      // The value is cleared, never silently: the key stays, Environment
-      // opens and says why.
-      expect(envValues()).not.toContain(sentinel);
-      expect(envValues()).toEqual(["APP", ""]);
-      expect(page().querySelector<HTMLDetailsElement>('details[data-section="envs"]')?.open).toBe(
-        true,
-      );
-      expect(page().querySelector("[data-env-cleared]")?.textContent).toBe(
-        enSandboxes.create.envCleared,
-      );
+      // The typed value stays in the open form (React state only) so the cause
+      // can be fixed and the create sent again.
+      expect(envValues().filter(Boolean)).toEqual(["APP", sentinel]);
+      // Never anywhere new: not in the settled mutation, toasts, page text or
+      // browser storage.
       await waitFor(() =>
         expect(
           JSON.stringify(
@@ -1555,43 +1588,20 @@ describe("pools, paging and refusals", () => {
       expect(JSON.stringify(storage.mock.calls)).not.toContain(sentinel);
       await act(() => i18n.changeLanguage("es-MX"));
       expect(form().getAllByText(text(esSandboxes)).length).toBeGreaterThan(0);
-      expect(page().querySelector("[data-env-cleared]")?.textContent).toBe(
-        esSandboxes.create.envCleared,
-      );
       await act(() => i18n.changeLanguage("en-US"));
-      // A cleared value is never sent as empty: the row asks for it again.
-      await submit(user);
-      expect(page().querySelector('[data-draft-problem="envsCleared"]')?.textContent).toBe(
-        enSandboxes.draft.envsCleared,
-      );
-      // The editor names the keys to fill in again and is marked invalid
-      // (focus lands on it); the value input itself is the shared editor's.
-      expect(page().querySelector('[data-section="envs"]')?.textContent).toContain(
-        enSandboxes.create.envReenter.replace("{{keys}}", "APP"),
-      );
-      expect(
-        page()
-          .querySelector('[data-section="envs"] input[aria-label="Key, row 1"]')
-          ?.getAttribute("aria-invalid"),
-      ).toBe("true");
-      const value = page().querySelector<HTMLInputElement>(
-        '[data-section="envs"] input[aria-label="Value for APP"]',
-      )!;
-      expect(calls("createSandbox")).toHaveLength(1);
-      await user.click(value);
-      await user.paste("typed-again");
-      expect(page().querySelector("[data-env-cleared]")).toBeNull();
+      // Sending again is a new intent with the same values.
       await submit(user);
       await waitFor(() => expect(calls("createSandbox")).toHaveLength(2));
       const inputs = calls("createSandbox").map(
         (call) => call.input as { idempotencyKey: string; envs: Record<string, string> },
       );
       expect(inputs[1]?.idempotencyKey).not.toBe(inputs[0]?.idempotencyKey);
-      expect(inputs[1]?.envs).toEqual({ APP: "typed-again" });
+      expect(inputs[1]?.envs).toEqual({ APP: sentinel });
+      expect(JSON.stringify(storage.mock.calls)).not.toContain(sentinel);
     },
   );
 
-  it("a refused create with environment rows can drop a cleared row instead of retyping it", async () => {
+  it("a refused create keeps the env rows; one can still be removed before sending again", async () => {
     server.current.errors.createSandbox = [coded("sandbox.host_capacity")];
     const user = userEvent.setup();
     await openCreate(user);
@@ -1604,13 +1614,12 @@ describe("pools, paging and refusals", () => {
     await user.click(
       envs.getByRole("button", { name: enCommon.forms.keyValue.remove.replace("{{key}}", "APP") }),
     );
-    expect(page().querySelector("[data-env-cleared]")).toBeNull();
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(2));
     expect(created(1)).toMatchObject({ envs: {} });
   });
 
-  it("a cleared value stays required after switching to .env text and editing it", async () => {
+  it("the kept values show in .env text mode after a refusal and are sent as edited", async () => {
     server.current.errors.createSandbox = [coded("sandbox.host_capacity")];
     const user = userEvent.setup();
     await openCreate(user);
@@ -1622,18 +1631,28 @@ describe("pools, paging and refusals", () => {
     const envs = await openSection(user, "envs");
     await user.click(envs.getByRole("button", { name: enCommon.forms.keyValue.textMode }));
     const text = envs.getByRole("textbox", { name: enSandboxes.create.envTitle });
-    expect((text as HTMLTextAreaElement).value).toBe("TOKEN=");
-    // Every text edit makes new rows: the cleared key, not a row id, is what waits.
-    await user.type(text, "{Enter}");
-    expect(page().querySelector("[data-env-cleared]")).not.toBeNull();
-    await submit(user);
-    expect(calls("createSandbox")).toHaveLength(1);
-    expect(page().querySelector('[data-draft-problem="envsCleared"]')).not.toBeNull();
+    expect((text as HTMLTextAreaElement).value).toBe("TOKEN=synthetic-private-text");
     fireEvent.change(text, { target: { value: "TOKEN=typed-again" } });
-    expect(page().querySelector("[data-env-cleared]")).toBeNull();
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(2));
     expect(created(1)).toMatchObject({ envs: { TOKEN: "typed-again" } });
+  });
+
+  it("kept values are gone once the page is left after a refusal", async () => {
+    server.current.errors.createSandbox = [coded("sandbox.host_capacity")];
+    const user = userEvent.setup();
+    await openCreate(user);
+    await pickHost(user);
+    await chooseRevision(user, "tpl-1");
+    await typeEnv(user, "APP", "synthetic-private-leave");
+    await submit(user);
+    await body().findByText(enSandboxes.problem.hostCapacity);
+    expect(envValues().filter(Boolean)).toEqual(["APP", "synthetic-private-leave"]);
+    cleanup();
+    await openCreate(user);
+    await openSection(user, "envs");
+    expect(envValues()).not.toContain("synthetic-private-leave");
+    expect(envValues()).not.toContain("APP");
   });
 
   it.each([
@@ -1720,7 +1739,7 @@ describe("pools, paging and refusals", () => {
   );
 
   it.each(["host_runtime_unsupported", "future_refusal"])(
-    "a host or unfamiliar domain refusal %s still clears env values even with BAD_REQUEST status",
+    "a host or unfamiliar domain refusal %s is definite even with BAD_REQUEST status and keeps env values",
     async (code) => {
       const user = userEvent.setup();
       await openCreate(user);
@@ -1737,7 +1756,7 @@ describe("pools, paging and refusals", () => {
       await submit(user);
       // Not placed at a field: the action bar says it.
       expect(await form().findByText(enSandboxes.problem.invalid)).toBeTruthy();
-      expect(envValues()).toEqual(["APP", ""]);
+      expect(envValues().filter(Boolean)).toEqual(["APP", "synthetic-settled-private"]);
     },
   );
 
@@ -1775,9 +1794,9 @@ describe("pools, paging and refusals", () => {
       form().getByRole("combobox", { name: enSandboxes.create.template }),
     );
     expect(summary()?.textContent).toContain(expected);
-    // Not an input mistake: the values are cleared (keys kept), and the warning
+    // A definite refusal: the values stay in the open form, and the warning
     // gives way to the refusal itself.
-    expect(envValues()).toEqual(["APP", ""]);
+    expect(envValues().filter(Boolean)).toEqual(["APP", "synthetic-off-host"]);
     expect(page().querySelector("[data-template-off-host]")).toBeNull();
     await waitFor(() =>
       expect(document.activeElement).toBe(
@@ -2011,7 +2030,7 @@ describe("first-time walk fixes", () => {
     );
   });
 
-  it("typing above the host's free memory is lowered to it at once, with the reason", async () => {
+  it("typing above the host's free memory keeps the value, blocks the create and offers the cap", async () => {
     const user = userEvent.setup();
     await openCreate(user);
     await pickHost(user);
@@ -2019,9 +2038,16 @@ describe("first-time walk fixes", () => {
     const size = await openSection(user, "size");
     const memory = sizeInput(size, "Memory");
     await typeSize(user, memory, "3.75");
-    expect(memory.value).toBe("3.5 GiB");
+    expect(memory.value).toBe("3.75 GiB");
+    expect(memory.getAttribute("aria-invalid")).toBe("true");
+    // Said once, as the field's error.
     expect(size.getAllByText("This host has 3.5 GiB of memory free.")).toHaveLength(1);
-    expect(size.getByRole("status").textContent).toContain("Set to 3.5 GiB");
+    expect(size.getByRole("alert").textContent).toBe("This host has 3.5 GiB of memory free.");
+    await submit(user);
+    await waitFor(() => expect(document.activeElement).toBe(memory));
+    expect(calls("createSandbox")).toHaveLength(0);
+    await user.click(size.getByRole("button", { name: "Use 3.5 GiB" }));
+    expect(memory.value).toBe("3.5 GiB");
     await submit(user);
     await waitFor(() => expect(calls("createSandbox")).toHaveLength(1));
     expect(created()).toMatchObject({ memoryMiB: 3584 });

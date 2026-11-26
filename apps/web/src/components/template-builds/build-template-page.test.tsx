@@ -240,7 +240,7 @@ describe("BuildTemplateForm", () => {
     expect(creates()).toEqual([]);
     const text = screen.getByRole("textbox", { name: "Build args" });
     expect(text.getAttribute("aria-invalid")).toBe("true");
-    expect(document.activeElement).toBe(text);
+    await waitFor(() => expect(document.activeElement).toBe(text));
     fireEvent.change(text, { target: { value: "V=1\nW=2" } });
     await user.click(screen.getByRole("button", { name: "Start build" }));
     await waitFor(() => expect(creates()).toHaveLength(1));
@@ -353,7 +353,7 @@ describe("BuildTemplateForm", () => {
     expect(await screen.findByText("Choose where the build runs.")).toBeTruthy();
     const picker = screen.getByRole("combobox", { name: "Build on" });
     expect(picker.getAttribute("aria-invalid")).toBe("true");
-    expect(document.activeElement).toBe(picker);
+    await waitFor(() => expect(document.activeElement).toBe(picker));
     expect(creates()).toEqual([]);
   });
 });
@@ -373,7 +373,7 @@ describe("BuildTemplateForm FROM and ARG errors", () => {
     await chooseHost(user);
     await user.click(screen.getByRole("button", { name: "Start build" }));
     expect(creates()).toEqual([]);
-    expect(document.activeElement).toBe(source());
+    await waitFor(() => expect(document.activeElement).toBe(source()));
   });
 
   it("a template with no ready version is refused at FROM too", async () => {

@@ -22,6 +22,7 @@ export function useRangeFieldLabels(): RangeFieldLabels {
       defaultState: (source) =>
         source ? t("forms.range.defaultFrom", { source }) : t("forms.range.default"),
       limit: (limit) => t("forms.range.limit", { limit }),
+      applyCap: (value) => t("forms.range.applyCap", { value }),
       errors: {
         notANumber: t("forms.range.errors.notANumber"),
         belowMin: (min) => t("forms.range.errors.belowMin", { min }),

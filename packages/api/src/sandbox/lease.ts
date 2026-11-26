@@ -33,6 +33,7 @@ import {
 import { hashEnvFreeBody, requestDigestMetadata } from "./idempotency";
 import {
   accessExpiryIdempotencyKey,
+  LEASE_POLICY_KEY_PREFIX,
   leaseExpiryIdempotencyKey,
   readinessFailureIdempotencyKey,
   teardownRetryIdempotencyKey,
@@ -108,12 +109,13 @@ export function acceptedLeaseFields(input: {
 
 /**
  * The relative lease a reconnect without `timeoutMs` re-arms: the one the
- * latest accepted create or reconnect of this sandbox carried (a renewal is
- * not remembered), else the create default. Derived from the operation rows
- * every release writes, so it needs no column of its own. "Latest" is the
- * lease revision, which every acceptance raises under the sandbox lock (never
- * the acceptance clock). Read it under the locks that serialize this
- * sandbox's lease acceptances.
+ * latest accepted create, reconnect or renewal of this sandbox carried, else
+ * the create default. A system lease-policy pull-in is not a choice and is
+ * not remembered (its reserved `lease-policy:` key marks it). Derived from
+ * the operation rows every release writes, so it needs no column of its own.
+ * "Latest" is the lease revision, which every acceptance raises under the
+ * sandbox lock (never the acceptance clock). Read it under the locks that
+ * serialize this sandbox's lease acceptances.
  */
 export async function rememberedLeaseTimeoutMs(
   tx: Prisma.TransactionClient,
@@ -123,9 +125,10 @@ export async function rememberedLeaseTimeoutMs(
     where: {
       sandboxId: sandbox.id,
       userId: sandbox.userId,
-      kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX"] },
+      kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX", "RENEW_SANDBOX_LEASE"] },
       leaseRevisionAccepted: { not: null },
       leaseTimeoutMs: { not: null },
+      NOT: { idempotencyKey: { startsWith: LEASE_POLICY_KEY_PREFIX } },
     },
     // `sandbox_operation_remembered_lease_idx`.
     orderBy: { leaseRevisionAccepted: "desc" },

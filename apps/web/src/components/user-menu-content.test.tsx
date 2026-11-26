@@ -150,8 +150,10 @@ it("uses a 44px icon trigger below md and the name from md, named for the accoun
   expect(trigger).toMatch(/<span class="hidden truncate md:block">Owner<\/span>/);
 });
 
-it("links Help & docs to the configured guide in a new tab, and hides it with no docs base", () => {
-  expect(renderToStaticMarkup(<UserMenuContent />)).not.toContain("userMenu.helpDocs");
+it("links Help & docs to the configured guide in a new tab, else to the repository's guide", () => {
+  expect(renderToStaticMarkup(<UserMenuContent />)).toContain(
+    'href="https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/README.md"',
+  );
   fixture.env.VITE_DOCS_URL = "https://docs.example.test/wssp/";
   const html = renderToStaticMarkup(<UserMenuContent />);
   const link = /<a [^>]*>.*?userMenu\.helpDocs<\/a>/.exec(html)?.[0] ?? "";

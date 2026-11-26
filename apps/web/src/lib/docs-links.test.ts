@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { DOC_PAGES, docsRepoPath, docsUrl } from "./docs-links";
+import { DEFAULT_DOCS_URL, DOC_PAGES, docsUrl } from "./docs-links";
 
 describe("docs links", () => {
-  it("no docs base means no link, only the repository path", () => {
-    expect(docsUrl(undefined, "templates")).toBeNull();
-    expect(docsUrl("", "templates")).toBeNull();
-    expect(docsRepoPath("templates")).toBe("docs/operations/templates.md");
+  it("no docs base links to the canonical repository's docs", () => {
+    expect(DEFAULT_DOCS_URL).toBe("https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs");
+    expect(docsUrl(undefined, "templates")).toBe(`${DEFAULT_DOCS_URL}/operations/templates.md`);
+    expect(docsUrl("", "templates")).toBe(`${DEFAULT_DOCS_URL}/operations/templates.md`);
   });
 
   it("joins the configured base and the page without doubled slashes", () => {
@@ -30,7 +30,7 @@ describe("docs links", () => {
         .replace(/[^\p{L}\p{N}\s-]/gu, "")
         .replace(/\s/g, "-");
     for (const page of Object.keys(DOC_PAGES) as (keyof typeof DOC_PAGES)[]) {
-      const [file, anchor] = docsRepoPath(page).split("#");
+      const [file, anchor] = `docs/${DOC_PAGES[page]}`.split("#");
       const path = fileURLToPath(new URL(`../../../../${file}`, import.meta.url));
       expect(existsSync(path), path).toBe(true);
       if (anchor) {
@@ -52,8 +52,8 @@ describe("docs links", () => {
     );
     const base = /^VITE_DOCS_URL=(\S+)$/m.exec(defaults)?.[1];
     expect(base).toMatch(/^https:\/\//);
-    // The repository's default branch is `main`.
-    expect(base).toBe("https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs");
+    // The repository's default branch is `main`; the stack sets the default explicitly.
+    expect(base).toBe(DEFAULT_DOCS_URL);
     expect(docsUrl(base, "templates")).toBe(`${base}/operations/templates.md`);
   });
 });

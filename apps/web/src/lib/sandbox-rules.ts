@@ -429,7 +429,6 @@ export type SandboxDraftProblem =
   | "labelsSyntax"
   | "labels"
   | "envs"
-  | "envsCleared"
   | "egress"
   | "previewPorts"
   | "cpuCount"
@@ -474,7 +473,7 @@ export function lifetimeMs(
 /**
  * The Start/Restore choice that keeps the sandbox's remembered lease: the
  * request omits `timeoutMs` and the server re-arms the lifetime and expiry
- * action it last accepted at create or start.
+ * action it last accepted at create, start or renewal.
  */
 export const KEEP_LIFETIME = "keep";
 
@@ -901,7 +900,7 @@ export function sandboxProblem(error: unknown): SandboxProblem {
 /**
  * Create validation refusals that happen before dispatch. Use catalog codes,
  * not HTTP 400 alone: a host image/runtime refusal can also be a 400, and an
- * unfamiliar domain code must keep the existing clearing behavior.
+ * unfamiliar domain code must not be shown as "your input is invalid".
  */
 export function isCreateInputMistake(error: unknown): boolean {
   const domain = domainCode(error);

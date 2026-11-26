@@ -23,7 +23,6 @@
     "tools": "sh, setsid, stat, find, mkdir, mv, rm, kill, sync and python3 are installed.",
     "readiness": "Registration checks only the image on the host; the guest agent, user and tools are checked when each sandbox starts, and a sandbox that fails them is not reported ready.",
     "docsLink": "How to qualify an image",
-    "docsPath": "How to qualify an image: {{path}} in the WS Sandbox Proxy source repository.",
     "about": "About templates and image requirements"
   },
   "usability": {

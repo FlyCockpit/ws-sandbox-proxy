@@ -2,7 +2,6 @@ import { Link } from "@tanstack/react-router";
 import { env } from "@wssp/env/web";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { CodeSnippet } from "@wssp/ui/components/code-snippet";
-import { CopyField } from "@wssp/ui/components/copy-field";
 import { Input } from "@wssp/ui/components/input";
 import { Label } from "@wssp/ui/components/label";
 import { cn } from "@wssp/ui/lib/utils";
@@ -12,7 +11,7 @@ import { Trans, useTranslation } from "react-i18next";
 import { AdvancedDetails } from "@/components/advanced-details";
 import { PageHeader } from "@/components/page-shell";
 import { useHostEnrolmentWatch } from "@/hooks/use-host-enrolment-watch";
-import { type DocPage, docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { type DocPage, docsUrl } from "@/lib/docs-links";
 import { GUARD_INSTALL_COMMAND, hostCommands } from "@/lib/host-status";
 import { HostsBackLink } from "./hosts-back-link";
 
@@ -157,13 +156,11 @@ function Command({ value }: { value: string }) {
   );
 }
 
-/** A link into the host guide, or its copyable repository path when no docs base is configured. */
+/** A link into the host guide. */
 function GuideLink({ page, label }: { page: DocPage; label: string }) {
-  const { t } = useTranslation("hosts");
-  const href = docsUrl(env.VITE_DOCS_URL, page);
-  return href ? (
+  return (
     <a
-      href={href}
+      href={docsUrl(env.VITE_DOCS_URL, page)}
       target="_blank"
       rel="noreferrer"
       data-docs-link=""
@@ -172,11 +169,6 @@ function GuideLink({ page, label }: { page: DocPage; label: string }) {
       {label}
       <ExternalLink aria-hidden="true" className="size-3.5" />
     </a>
-  ) : (
-    <div data-docs-path="" className="flex min-w-0 flex-col gap-1">
-      <span className="text-xs text-muted-foreground">{t("enroll.guidePath", { label })}</span>
-      <CopyField value={docsRepoPath(page)} copyLabel={t("enroll.copyGuidePath")} />
-    </div>
   );
 }
 

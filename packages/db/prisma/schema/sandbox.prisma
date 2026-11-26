@@ -849,7 +849,8 @@ model Sandbox {
   /// Owner-chosen or generated name: lowercase DNS label, 1-63 chars. Unique per
   /// owner among live WORKLOAD sandboxes. The DB default only names rows that no
   /// app insert named; app creates always pass
-  /// an adjective-noun name. Owner content: never in admin or host-guest selects.
+  /// an adjective-noun name. Owner content: admin observability shows it
+  /// (owner decision 2026-11-26); never in host-guest or pool-owner selects.
   name                       String                    @default(dbgenerated("('sandbox-'::text || substr(md5((random())::text), 1, 12))"))
   /// Per-sandbox offload sequence; never reused.
   offloadSeq                 Int                       @default(0)
@@ -1062,8 +1063,9 @@ model SandboxOperation {
   @@index([userId, createdAt])
   @@index([sandboxId, createdAt])
   /// The remembered lease (`rememberedLeaseTimeoutMs`): the latest accepted
-  /// create or reconnect lease of one sandbox, without scanning its commands.
-  @@index([sandboxId, leaseRevisionAccepted(sort: Desc)], map: "sandbox_operation_remembered_lease_idx", where: raw("((kind = ANY (ARRAY['CREATE_SANDBOX'::\"SandboxOperationKind\", 'RECONNECT_SANDBOX'::\"SandboxOperationKind\"])) AND (\"leaseRevisionAccepted\" IS NOT NULL) AND (\"leaseTimeoutMs\" IS NOT NULL))"))
+  /// create, reconnect or renewal lease of one sandbox, without scanning its
+  /// commands.
+  @@index([sandboxId, leaseRevisionAccepted(sort: Desc)], map: "sandbox_operation_remembered_lease_idx", where: raw("((kind = ANY (ARRAY['CREATE_SANDBOX'::\"SandboxOperationKind\", 'RECONNECT_SANDBOX'::\"SandboxOperationKind\", 'RENEW_SANDBOX_LEASE'::\"SandboxOperationKind\"])) AND (\"leaseRevisionAccepted\" IS NOT NULL) AND (\"leaseTimeoutMs\" IS NOT NULL))"))
   @@map("sandbox_mutation_operation")
 }
 

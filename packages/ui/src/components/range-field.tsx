@@ -43,10 +43,15 @@ export type RangeFieldLabels = {
   /** Why the track stops early, e.g. "This host allows at most 16 GiB". */
   limit: (formattedLimit: string) => string;
   /**
-   * Notice after a typed value was changed to the nearest allowed one.
-   * `reason` is the rule it broke (the limit text, or an `errors` message);
-   * `formattedValue` is what was set instead: "Must be at most 32 GiB. Set to
-   * 32 GiB."
+   * The one-click fix next to an over-cap error: "Use 16 GiB". Receives the
+   * highest allowed value, formatted.
+   */
+  applyCap: (formattedCap: string) => string;
+  /**
+   * Notice after a typed value was changed to the nearest allowed one (below
+   * `min` or off `step`; a value above the cap is kept and flagged instead).
+   * `reason` is the rule it broke (an `errors` message); `formattedValue` is
+   * what was set instead: "Must be at least 512 MiB. Set to 512 MiB."
    */
   adjusted: (formattedValue: string, reason: string) => string;
   errors: {
@@ -63,6 +68,7 @@ export const rangeFieldEnglishLabels: RangeFieldLabels = {
   reset: "Reset to default",
   defaultState: (defaultLabel) => (defaultLabel ? `Default (from ${defaultLabel})` : "Default"),
   limit: (formattedLimit) => `This host allows at most ${formattedLimit}`,
+  applyCap: (formattedCap) => `Use ${formattedCap}`,
   adjusted: (formattedValue, reason) =>
     `${reason.replace(/[.!]+$/, "")}. Set to ${formattedValue}.`,
   errors: {
@@ -104,9 +110,9 @@ export type RangeFieldProps = {
   defaultLabel?: string;
   /**
    * Dynamic max — what the chosen host/pool allows. The track above it is
-   * hatched and unreachable, and a typed value above it is lowered to the
-   * highest allowed one (with a notice). A current value already above it
-   * (the limit dropped) is flagged, not changed.
+   * hatched and unreachable. A value above it (typed, or the limit dropped
+   * under the current value) is kept and flagged with an inline error and a
+   * "Use <cap>" button; it is never lowered silently.
    */
   limit?: number;
   /** Overrides `labels.limit(formattedLimit)` for the limit explanation. */
@@ -179,14 +185,16 @@ export type RangeInputOutcome =
 
 /**
  * What committing typed text does — the escape hatch's whole decision, kept
- * pure so it is testable without a DOM. The field never ends up holding a
- * value the UI rejects, and the input always shows what will be submitted:
+ * pure so it is testable without a DOM. The input always shows what the field
+ * holds:
  *
  * - empty text reverts;
  * - text that is not a number is an error (the field keeps its value);
- * - above `max` or `limit` commits the highest allowed value (the effective
- *   max snapped down to `step`), below `min` commits `min`, and off `step`
- *   commits the nearest on-step value — each with a notice saying so;
+ * - above `max` or `limit` commits the value **as typed**: the field then
+ *   shows the over-cap error and a "Use <cap>" button (see `overCap`), and the
+ *   caller's schema blocks the submit — a cap is never applied silently;
+ * - below `min` commits `min`, and off `step` commits the nearest on-step
+ *   value — each with a notice saying so;
  * - anything else commits as typed.
  *
  * A bare number is read in the unit the current value is shown in. Snap stops
@@ -208,20 +216,18 @@ export function interpretRangeInput(
   if (!parsed.ok) return { kind: "error", message: labels.errors.notANumber };
   const typed = parsed.value;
   const code = validateRangeValue(typed, { min, max, step, limit });
-  if (code === null) return { kind: "commit", value: typed };
+  // Over the cap: keep what was typed; the field flags it and offers the cap.
+  if (code === null || code === "above-max" || code === "above-limit")
+    return { kind: "commit", value: typed };
 
   const upper = effectiveMax(max, limit);
   const highest = snapDownToStep(upper, step, min);
   // No value is allowed at all (the limit is below `min`): nothing to set.
   if (highest < min) return { kind: "error", message: rangeErrorMessage(code, context) };
 
-  const limitBinds = limit !== undefined && limit < max;
   let value: number;
   let reason: string;
-  if (typed > upper) {
-    value = highest;
-    reason = limitBinds ? context.limitText : labels.errors.aboveMax(format(max));
-  } else if (typed < min) {
+  if (typed < min) {
     value = min;
     reason = labels.errors.belowMin(format(min));
   } else {
@@ -229,6 +235,39 @@ export function interpretRangeInput(
     reason = labels.errors.offStep(format(step));
   }
   return { kind: "commit", value, notice: labels.adjusted(format(value), reason) };
+}
+
+export type OverCap = {
+  /** What is wrong, with the cap and its reason: the limit text, or "Must be at most 64 GiB". */
+  message: string;
+  /** The highest allowed value (on `step`), or `null` when no value is allowed at all. */
+  cap: number | null;
+};
+
+/**
+ * Whether `value` is above the effective cap (`max`, lowered to `limit`), and
+ * if so the message to show and the value the "Use <cap>" button sets. A
+ * binding limit is always the stated reason, even for a value above `max`.
+ * Pass an exact `format`: the message and the button name the value set.
+ */
+export function overCap(
+  value: number,
+  { labels, format, min, max, step, limitText, limit }: RangeMessageContext & { limit?: number },
+): OverCap | null {
+  const isOver = (candidate: number) => {
+    const code = validateRangeValue(candidate, { min, max, step, limit });
+    return code === "above-max" || code === "above-limit";
+  };
+  if (!isOver(value)) return null;
+  const limitBinds = limit !== undefined && limit < max;
+  let highest = snapDownToStep(effectiveMax(max, limit), step, min);
+  // Snapping tolerates float noise, so a cap a hair under a step (16383.9999999)
+  // can snap up onto it; the offered value must itself be allowed.
+  if (isOver(highest)) highest = snapDownToStep(highest - step, step, min);
+  return {
+    message: limitBinds ? limitText : labels.errors.aboveMax(format(max)),
+    cap: highest >= min ? highest : null,
+  };
 }
 
 type Tick = { value: number; fraction: number; edge: "start" | "end" | null };
@@ -297,21 +336,28 @@ function trackTicks(scale: RangeScale, min: number, max: number): Tick[] {
  *   suffixes ("4 GiB", "4096 MiB", "4g"); a bare number is read in the unit
  *   currently shown, since the `decimal` phone keyboard has no letters. Text
  *   that is not a number shows an inline error and the input goes back to the
- *   field value. A number outside `min`/`max`/`limit` or off `step` commits
- *   the nearest allowed value with a polite notice ("… Set to 32 GiB."), so
- *   the input always shows what will be submitted. Snap stops do **not** apply
- *   here: any on-`step` value in range is accepted, between stops included.
+ *   field value. A number below `min` or off `step` commits the nearest
+ *   allowed value with a polite notice ("… Set to 512 MiB."). Snap stops do
+ *   **not** apply here: any on-`step` value in range is accepted, between
+ *   stops included.
+ * - **Over the cap** (`max`, or `limit` when lower): a typed value above it is
+ *   kept, never clamped. The field shows an inline error with the cap and its
+ *   reason, both controls are `aria-invalid`, and a "Use <cap>" button sets
+ *   the highest allowed value in one click. The slider itself still cannot go
+ *   past the cap. **The caller's schema must reject values above `max` and
+ *   `limit`** (`validateRangeValue` does both) so the submit is blocked while
+ *   the field is over.
  * - **`limit`**: the track above it is hatched and the slider's own max is the
  *   highest position at or below it; the explanation is always shown, and
- *   turns into an error (both controls `aria-invalid`) if the current value is
- *   above it (the host changed, say). That value is not changed for the user;
- *   the form schema blocks the submit.
+ *   turns into the over-cap error if the current value is above it (typed, or
+ *   the host changed). That value is not changed for the user.
  * - **`defaultValue`**: a tick on the track, a "Default (from …)" state when
  *   the value equals it, otherwise a "Reset to default" button (disabled when
  *   the default itself is not allowed, e.g. above the limit).
  *
- * The caller's schema stays the source of truth for submit-time validation;
- * this component only stops the user from producing out-of-range values.
+ * The caller's schema stays the source of truth for submit-time validation:
+ * it must refuse values above `max` and `limit`, which this component keeps
+ * (flagged) when they are typed.
  */
 export function RangeField({
   field,
@@ -360,16 +406,30 @@ export function RangeField({
 
   const constraints = { min, max, step, limit };
   const limited = limit !== undefined && limit < max;
-  const limitText = limitMessage ?? labels.limit(format(effectiveMax(max, limit)));
+  // Exact, like the cap button: "at most 0.125", never a rounded "0.13".
+  const limitText = limitMessage ?? labels.limit(formatExact(effectiveMax(max, limit)));
   const messageContext = { labels, format, min, max, step, limitText };
-  const valueCode = validateRangeValue(value, constraints);
-  const aboveLimit = valueCode === "above-limit";
+  // Exact formatting: "Use 0.125", never a rounded "0.13" that is not what it sets.
+  const over = overCap(value, { ...messageContext, format: formatExact, limit });
+  const overCapValue = over?.cap ?? null;
 
   // The slider's own max is the highest position the limit still allows, so
   // dragging, End, and Page Up all stop there.
-  const allowedMaxPosition = limited
+  let allowedMaxPosition = limited
     ? (scale.positionAtOrBelow(limit) ?? scale.minPosition)
     : scale.maxPosition;
+  // Snapping tolerates float noise, so a max or limit a hair under a step can
+  // snap up onto it (as in `overCap`): the slider's end must itself be allowed.
+  const endCode =
+    allowedMaxPosition > scale.minPosition
+      ? validateRangeValue(scale.toValue(allowedMaxPosition), constraints)
+      : null;
+  if (endCode === "above-max" || endCode === "above-limit") {
+    allowedMaxPosition -= scale.positionStep;
+    // Float noise must not leave a sliver above `minPosition` (0.1 + 2.5 - 2.5).
+    if (allowedMaxPosition - scale.minPosition < scale.positionStep / 2)
+      allowedMaxPosition = scale.minPosition;
+  }
   const sliderLocked = allowedMaxPosition <= scale.minPosition;
   const fullSpan = scale.maxPosition - scale.minPosition;
   const allowedFraction =
@@ -383,16 +443,21 @@ export function RangeField({
   const isDefault = hasDefault && value === defaultValue;
   const defaultAllowed = hasDefault && validateRangeValue(defaultValue, constraints) === null;
 
-  const fieldErrorCount = field.state.meta.errors.length;
-  const invalid = fieldErrorCount > 0 || typedError !== null || aboveLimit;
+  // The limit / over-cap line already says it; a schema error with the same
+  // text is not repeated.
+  const fieldErrors = field.state.meta.errors.filter((error) => {
+    const text = error && typeof error === "object" && "message" in error ? error.message : error;
+    return !((limited && text === limitText) || (over && text === over.message));
+  });
+  const invalid = field.state.meta.errors.length > 0 || typedError !== null || over !== null;
   const describedBy =
     [
       description ? descriptionId : null,
       isDefault ? stateId : null,
-      limited ? limitId : null,
+      limited || over ? limitId : null,
       typedError ? typedErrorId : null,
       notice ? noticeId : null,
-      fieldErrorCount > 0 ? errorId : null,
+      fieldErrors.length > 0 ? errorId : null,
     ]
       .filter(Boolean)
       .join(" ") || undefined;
@@ -454,7 +519,8 @@ export function RangeField({
             type="button"
             variant="ghost"
             size="sm"
-            className="md:-my-1"
+            // wssp: this app's sm Button is 28px at every width; 44px on phones.
+            className="h-11 md:-my-1 md:h-7"
             disabled={disabled || !defaultAllowed}
             onClick={() => setValue(defaultValue)}
           >
@@ -468,7 +534,8 @@ export function RangeField({
             (Base UI sets aria-invalid there from the field state). */}
         <FieldPrimitive.Root invalid={invalid} disabled={disabled} className="min-w-0 flex-1">
           <SliderPrimitive.Root
-            value={scale.toPosition(value)}
+            // An over-cap value sits at the end of the reachable track.
+            value={Math.min(scale.toPosition(value), allowedMaxPosition)}
             min={scale.minPosition}
             // Base UI needs max > min; a fully locked slider is disabled anyway.
             max={sliderLocked ? scale.minPosition + scale.positionStep : allowedMaxPosition}
@@ -604,12 +671,33 @@ export function RangeField({
         />
       </div>
 
-      {limited ? (
-        <p
-          id={limitId}
-          data-slot="range-field-limit"
-          className={cn("text-xs", aboveLimit ? "text-destructive" : "text-muted-foreground")}
-        >
+      {over ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p
+            id={limitId}
+            role="alert"
+            data-slot="range-field-limit"
+            className="text-sm text-destructive"
+          >
+            {over.message}
+          </p>
+          {overCapValue !== null ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-slot="range-field-use-cap"
+              // wssp: this app's sm Button is 28px at every width; 44px on phones.
+              className="h-11 md:h-7"
+              disabled={disabled}
+              onClick={() => setValue(overCapValue)}
+            >
+              {labels.applyCap(formatExact(overCapValue))}
+            </Button>
+          ) : null}
+        </div>
+      ) : limited ? (
+        <p id={limitId} data-slot="range-field-limit" className="text-xs text-muted-foreground">
           {limitText}
         </p>
       ) : null}
@@ -628,25 +716,7 @@ export function RangeField({
           {description}
         </div>
       ) : null}
-      {/* The limit line above already says it (in red when the value is over
-          the limit); a schema error with the same text is not repeated. */}
-      <FieldError
-        id={errorId}
-        errors={
-          limited
-            ? field.state.meta.errors.filter(
-                (error) =>
-                  error !== limitText &&
-                  !(
-                    error &&
-                    typeof error === "object" &&
-                    "message" in error &&
-                    error.message === limitText
-                  ),
-              )
-            : field.state.meta.errors
-        }
-      />
+      <FieldError id={errorId} errors={fieldErrors} />
     </div>
   );
 }

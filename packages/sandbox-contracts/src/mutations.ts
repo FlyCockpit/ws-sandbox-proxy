@@ -50,7 +50,7 @@ export const sandboxTimeoutSchema = z
   });
 
 const RECONNECT_TIMEOUT_DESCRIPTION =
-  "The new relative lease, remembered for later starts. Omitted: the sandbox's remembered lease (the create's `timeoutMs`, or the last one a reconnect named), with the expiry action chosen at create.";
+  "The new relative lease, remembered for later starts. Omitted: the sandbox's remembered lease (the latest `timeoutMs` its create, a reconnect or a renewal named), with its current expiry action.";
 
 /** A well-formed lease timeout no policy can admit (`lease_exceeds_policy`). */
 export function leaseTimeoutBeyondFiniteMax(value: unknown): value is number {
@@ -167,9 +167,9 @@ export const reconnectBodySchema = z
     mode: z.enum(["warm", "cold"]).optional(),
     /**
      * The new relative lease, remembered for later starts. Omitted: the
-     * sandbox's remembered lease (the create's `timeoutMs`, or the last one
-     * a reconnect named) with its expiry action, so stop then start keeps the
-     * lifetime chosen earlier.
+     * sandbox's remembered lease (the latest `timeoutMs` its create, a
+     * reconnect or a renewal named) with its expiry action, so stop then
+     * start keeps the lifetime chosen last.
      */
     timeoutMs: sandboxTimeoutSchema.optional().meta({
       description: `${RECONNECT_TIMEOUT_DESCRIPTION} ${sandboxTimeoutSchema.description}`,

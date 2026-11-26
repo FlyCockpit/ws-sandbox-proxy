@@ -1046,6 +1046,9 @@ function GrantEditor({
   );
   const actions = (
     <>
+      <Button type="button" variant="outline" size="touch" onClick={close}>
+        {t(mode === "consent" ? "agents:consent.deny" : "common:actions.cancel")}
+      </Button>
       <form.Subscribe selector={(state) => state.isSubmitting}>
         {(submitting) => (
           <Button type="submit" size="touch" disabled={submitting}>
@@ -1055,9 +1058,6 @@ function GrantEditor({
           </Button>
         )}
       </form.Subscribe>
-      <Button type="button" variant="outline" size="touch" onClick={close}>
-        {t(mode === "consent" ? "agents:consent.deny" : "common:actions.cancel")}
-      </Button>
     </>
   );
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1093,8 +1093,8 @@ function GrantEditor({
             <SheetDescription className="text-sm">{t(`${ns}:mint.description`)}</SheetDescription>
           </SheetHeader>
           <SheetBody className="space-y-8 pt-4">{fields}</SheetBody>
-          <SheetFooter className="min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-2 sm:justify-start">
-            <div className="flex flex-wrap gap-2">{actions}</div>
+          {/* Status first, then the actions with the primary last (shell rules). */}
+          <SheetFooter className="min-w-0 flex-row flex-wrap items-center gap-x-4 gap-y-2">
             <p className="min-w-0 flex-1 text-sm text-muted-foreground" data-sheet-status="">
               {attempted && (invalidCount > 0 || expiryInvalid)
                 ? t("common:form.fixErrors")
@@ -1103,6 +1103,7 @@ function GrantEditor({
                     { count: values.scopes.length },
                   )}`}
             </p>
+            <div className="flex flex-wrap gap-2">{actions}</div>
           </SheetFooter>
         </form>
       </SheetContent>

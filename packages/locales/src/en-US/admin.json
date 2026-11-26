@@ -20,7 +20,6 @@
     "title": "Deployment setup",
     "description": "What this server is configured with. Values are never shown here; each item is set in the server's environment unless it says otherwise.",
     "docsLink": "Environment variables",
-    "docsPath": "Environment variables: {{path}} in the WS Sandbox Proxy source repository.",
     "unknown": "Couldn't load this status. Reload the page to try again.",
     "maintenanceLink": "Open Observability › Maintenance",
     "settingsLink": "Open Settings",

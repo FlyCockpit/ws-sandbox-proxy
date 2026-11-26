@@ -44,7 +44,9 @@ sandbox, operation and transfer belongs to exactly one user account.
 - Admin routes (`/{lang}/admin`) answer not found to everyone who is not a
   verified, unbanned, 2FA-satisfying administrator. Admin views are metadata
   only: no commands, output, files, terminals or credential values of other
-  owners.
+  owners. Metadata includes the owner's account name and email and the
+  owner-chosen names (sandbox names, host and template labels), so a row
+  reads as a thing; host and pool owners never see another owner's names.
 
 ## SDK plane
 

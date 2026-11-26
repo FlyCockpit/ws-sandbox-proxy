@@ -65,6 +65,7 @@
       "default": "Default",
       "defaultFrom": "Default (from {{source}})",
       "limit": "At most {{limit}} is available here",
+      "applyCap": "Use {{value}}",
       "errors": {
         "notANumber": "Enter a number",
         "belowMin": "Must be at least {{min}}",

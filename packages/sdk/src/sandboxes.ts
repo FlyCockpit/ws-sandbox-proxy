@@ -82,8 +82,8 @@ export type ConnectOptions = MutationOptions & {
   /**
    * The new relative lease sent as the body's `timeoutMs` (bounded by the
    * lease policy), remembered for later connects. Omitted: the sandbox's
-   * remembered lease (its create's `timeoutMs`, or the last one a connect
-   * named). Independent of `waitTimeoutMs`, the SDK wait budget.
+   * remembered lease (the latest `timeoutMs` its create, a connect or a
+   * setTimeout renewal named). Independent of `waitTimeoutMs`, the SDK wait budget.
    */
   leaseTimeoutMs?: ReconnectInput["timeoutMs"];
   /**

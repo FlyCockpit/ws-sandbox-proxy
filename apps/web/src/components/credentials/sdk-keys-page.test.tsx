@@ -1472,9 +1472,9 @@ describe("use this key (design-review2 #5)", () => {
     expect(block.textContent).toContain(`createWsspClient({ baseUrl: "${origin}"`);
     expect(block.textContent).toContain("/install.sh | sh");
     expect(block.textContent).toContain(`wssp login --server ${origin}`);
-    // No docs base in tests: the guide is named by its repository path.
-    expect(block.querySelector('[data-docs-path="sdkKeys"]')?.textContent).toContain(
-      "docs/guide/auth-planes.md#sdk-plane",
+    // No docs base in tests: the guide links to the repository's docs.
+    expect(block.querySelector('[data-docs-link="sdkKeys"]')?.getAttribute("href")).toBe(
+      "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/auth-planes.md#sdk-plane",
     );
     expect(block.textContent).not.toContain("wssp_sdk_");
   });

@@ -1,19 +1,17 @@
 import { env } from "@wssp/env/web";
 import { CopyField } from "@wssp/ui/components/copy-field";
 import { useTranslation } from "react-i18next";
-import { type DocPage, docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { type DocPage, docsUrl } from "@/lib/docs-links";
 import { shellWord } from "@/lib/host-status";
 
 /** The example port in the forward command (the hint says to replace it). */
 const EXAMPLE_PORT = 8080;
 
-/** A link into the product guide, or its repository path when no docs base is configured. */
+/** A link into the product guide. */
 export function SandboxDocLink({ page, label }: { page: DocPage; label: string }) {
-  const { t } = useTranslation(["sandboxes"]);
-  const href = docsUrl(env.VITE_DOCS_URL, page);
-  return href ? (
+  return (
     <a
-      href={href}
+      href={docsUrl(env.VITE_DOCS_URL, page)}
       target="_blank"
       rel="noreferrer"
       data-docs-link={page}
@@ -21,10 +19,6 @@ export function SandboxDocLink({ page, label }: { page: DocPage; label: string }
     >
       {label}
     </a>
-  ) : (
-    <span data-docs-path={page} className="text-muted-foreground">
-      {label} {t("sandboxes:docsPath", { path: docsRepoPath(page) })}
-    </span>
   );
 }
 

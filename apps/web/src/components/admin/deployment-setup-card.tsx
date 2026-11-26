@@ -14,7 +14,7 @@ import { CheckCircle2, CircleDashed, ListChecks, TriangleAlert } from "lucide-re
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { DEFAULT_OBSERVABILITY_SEARCH } from "@/lib/admin-observability-search";
-import { docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { docsUrl } from "@/lib/docs-links";
 import { orpc } from "@/utils/orpc";
 
 /** `ok`: set up; `optional`: off, and fine to leave off; `missing`: off, and something needs it; `problem`: on but not working. */
@@ -106,20 +106,14 @@ export function DeploymentSetupCard({ lang }: { lang: string }) {
         </div>
         <CardDescription>
           {t("setup.description")}{" "}
-          {docsHref ? (
-            <a
-              href={docsHref}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-            >
-              {t("setup.docsLink")}
-            </a>
-          ) : (
-            <span data-docs-path="">
-              {t("setup.docsPath", { path: docsRepoPath("environment") })}
-            </span>
-          )}
+          <a
+            href={docsHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+          >
+            {t("setup.docsLink")}
+          </a>
         </CardDescription>
       </CardHeader>
       <CardContent>

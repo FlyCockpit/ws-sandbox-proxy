@@ -272,8 +272,11 @@ Accepted snapshots survive stop/reconnect and host restart. Appending a
 revision or moving a tag never changes an existing sandbox. They are private
 plaintext inside the DB/host operator and backup boundary, absent from public
 and admin projections, and have no dashboard readback. The editor and mutation
-state are cleared after safe settlement; uncertain create retains only its
-in-memory exact retry until resolved or closed. Browser storage is not used.
+state are cleared after a success. After a definite refusal the Create sandbox
+page keeps the typed values in its open form (React state only) so the request
+can be sent again, until the page is left; the template editor still clears
+them. Uncertain create retains only its in-memory exact retry until resolved or
+closed. Browser storage is not used.
 See [SDK resource grants and private defaults](../guide/auth-planes.md#minting-sdk-resource-grants).
 Pools add no deployment environment variable. Capacity remains the effective
 host limit; overlapping pools share the same reservations.

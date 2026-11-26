@@ -519,7 +519,7 @@ it("a revision not verified on the host is 'not on this host', not 'not valid'",
     data: { code: "sandbox.template_image_rejected" },
   };
   expect(sandboxProblem(error)).toBe("templateNotOnHost");
-  // Not an input mistake: a definite refusal, so private values are cleared.
+  // Not an input mistake: a definite refusal (named at the template, not as "invalid").
   expect(isCreateInputMistake(error)).toBe(false);
   expect(enSandboxes.problem.templateNotOnHost).toBeTruthy();
   expect(esSandboxes.problem.templateNotOnHost).toBeTruthy();

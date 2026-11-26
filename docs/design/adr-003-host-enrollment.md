@@ -367,7 +367,10 @@ An offline host remains a deletion blocker; rejection leaves credentials usable.
 
 `adminObservability` exposes fixed counters and cursor-paged hosts, sandboxes and
 operations, filtered by bounded owner/resource IDs and state. It selects only
-IDs, state, timestamps, generation and host capacity metadata. User management
+IDs, state, timestamps, generation, host capacity metadata, the owner's account
+name and email, and the owner-chosen names (host labels, sandbox names,
+template labels; owner decision 2026-11-26). Host and pool owners never see
+another owner's names. User management
 retains its existing bounded users list. Maintenance jobs expose state/timestamps/
 attempt counts, never payloads, results, stack traces or raw failure text. No admin
 procedure exposes guest commands, output, file content, arbitrary resource JSON,
@@ -393,9 +396,12 @@ use a Sheet; availability distinguishes verified from pending evidence.
 The SDK key page displays exact revision/pool IDs and selected-host association
 status. A pooled ALLOWLIST key needs the pool, current host and exact revision
 grants together. See [minting SDK resource grants](../guide/auth-planes.md#minting-sdk-resource-grants).
-Create envs remain transient browser form/mutation state: safe settlement clears
-them; uncertain requests retain exact input for replay, with no browser storage,
-values in toasts or detail readback. The sandbox detail shows safe retained
+Create envs remain transient browser form state: a success clears them; a
+definite refusal (no capacity, say) keeps the typed values in the open form so
+the user can fix the cause and send again (owner decision 2026-11-26); leaving
+the page drops them. Uncertain requests retain exact input for replay. Values
+live only in React state and the in-flight request: never browser storage,
+toasts, the settled mutation cache or detail readback. The sandbox detail shows safe retained
 pool/revision identity without querying a foreign resource.
 
 ## Integrated sharing and terminal policy

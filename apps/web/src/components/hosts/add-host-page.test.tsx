@@ -135,7 +135,12 @@ it("numbers the steps, wraps every command and names the guide by a copyable pat
   ]);
   for (const command of document.querySelectorAll("[data-enroll-command] pre"))
     expect(command.className).toMatch(/whitespace-pre-wrap/);
-  expect(document.querySelectorAll("[data-docs-path]")).toHaveLength(2);
+  expect(
+    [...document.querySelectorAll("[data-docs-link]")].map((link) => link.getAttribute("href")),
+  ).toEqual([
+    "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/hosts.md#quick-start-your-first-host",
+    "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/hosts.md#run-as-a-service",
+  ]);
   expect(screen.queryByText(/Prefer a long-lived token/)).toBeNull();
   // The back link is at the top.
   expect(screen.getByRole("link", { name: enHosts.title }).getAttribute("href")).toBe(

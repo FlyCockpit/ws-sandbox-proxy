@@ -605,7 +605,10 @@ function MintHostTokenDialog({
               {t(`credentials:problem.${problem}`)}
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="touch" onClick={close}>
+              {t("common:actions.cancel")}
+            </Button>
             <form.Subscribe selector={(state) => state.isSubmitting}>
               {(submitting) => (
                 <Button type="submit" size="touch" disabled={submitting}>
@@ -613,9 +616,6 @@ function MintHostTokenDialog({
                 </Button>
               )}
             </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={close}>
-              {t("common:actions.cancel")}
-            </Button>
           </div>
         </form>
       </DialogContent>

@@ -197,7 +197,7 @@
     "copyApiUrl": "Copy API base URL",
     "curl": "Check the key with curl (prints its name, scopes and expiry):",
     "copyCurl": "Copy curl command",
-    "sdk": "TypeScript SDK (@wssp/sdk, Node 22+). It is not on npm yet: depend on it from the wssp repository as \"@wssp/sdk\": \"workspace:*\".",
+    "sdk": "TypeScript SDK (@wssp/sdk, Node 22+). It is not on npm yet (it will be published there): until then, depend on it from the wssp repository as \"@wssp/sdk\": \"workspace:*\".",
     "copySdk": "Copy SDK example",
     "cli": "The wssp CLI: install it, then use the key from scripts and CI:",
     "copyCliInstall": "Copy install command",
@@ -205,8 +205,7 @@
     "cliLogin": "On your own computer, sign in with wssp login instead. It creates its own key.",
     "copyCliLogin": "Copy login command",
     "sdkDocs": "SDK keys and scopes guide",
-    "cliDocs": "CLI guide",
-    "docsPath": "See {{path}} in the wssp repository."
+    "cliDocs": "CLI guide"
   },
   "scopeTitle": {
     "hosts": {

@@ -165,8 +165,10 @@ it("rejects an invalid tag or a relative path without sending anything", async (
   expect(screen.getByText(en.capture.invalidPaths)).toBeTruthy();
   expect(server.captures).toHaveLength(0);
   // The refused option's section opens and the first invalid field takes focus.
-  expect(document.querySelector<HTMLDetailsElement>("[data-capture-options]")?.open).toBe(true);
-  expect(document.activeElement).toBe(tag);
+  await waitFor(() =>
+    expect(document.querySelector<HTMLDetailsElement>("[data-capture-options]")?.open).toBe(true),
+  );
+  await waitFor(() => expect(document.activeElement).toBe(tag));
 });
 
 it("explains a busy refusal and a retry is a new intent", async () => {

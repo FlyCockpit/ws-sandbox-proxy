@@ -273,7 +273,7 @@ describe("register an existing image", () => {
     expect((await page().findByText(enTemplates.draft.noHost)).getAttribute("role")).toBe("alert");
     const host = page().getByLabelText(enTemplates.form.host);
     expect(host.getAttribute("aria-invalid")).toBe("true");
-    expect(document.activeElement).toBe(host);
+    await waitFor(() => expect(document.activeElement).toBe(host));
     const image = page().getByLabelText(enTemplates.form.imageRef);
     expect(image.getAttribute("aria-invalid")).toBe("true");
     expect(page().getByText(enTemplates.draft.imageRef)).toBeTruthy();
@@ -475,7 +475,7 @@ describe("register an existing image", () => {
           .replace("{{reason}}", enCommon.forms.keyValue.errors.lineReasons["missing-equals"]),
       ),
     ).toBeTruthy();
-    expect(document.activeElement).toBe(text);
+    await waitFor(() => expect(document.activeElement).toBe(text));
     fireEvent.change(text, { target: { value: "FOO=bar\nREQUIRED_SECRET=s3" } });
     await submit(user);
     await waitFor(() => expect(calls("createTemplate")).toHaveLength(1));

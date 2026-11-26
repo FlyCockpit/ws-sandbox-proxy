@@ -5,6 +5,7 @@ import {
   interpretRangeInput,
   labelMidStop,
   liveTypedEntry,
+  overCap,
   RangeField,
   type RangeFieldProps,
   rangeErrorMessage,
@@ -169,11 +170,115 @@ describe("RangeField markup", () => {
 
   it("flags a value already above the limit on both controls, without changing it", () => {
     const html = render({ value: 32768, limit: 16384 });
-    expect(html).toMatch(/class="text-xs text-destructive">This host allows at most 16 GiB</);
+    expect(html).toMatch(
+      /role="alert"[^>]*class="text-sm text-destructive">This host allows at most 16 GiB</,
+    );
     expect(textInput(html)).toContain('aria-invalid="true"');
     expect(textInput(html)).toContain('value="32 GiB"');
     expect(rangeInput(html)).toContain('aria-invalid="true"');
     expect(rangeInput(html)).toContain('aria-valuetext="32 GiB"');
+    // The thumb stays on the reachable track (position 5 = 16 GiB).
+    expect(rangeInput(html)).toContain('value="5"');
+  });
+
+  it("offers the cap in one click next to the over-cap error", () => {
+    const html = render({ value: 32768, limit: 16384 });
+    expect(html).toMatch(
+      /<button[^>]*type="button"[^>]*data-slot="range-field-use-cap"[^>]*>Use 16 GiB<\/button>/,
+    );
+    const limitId = attr(html, /<p id="([^"]+)" role="alert"[^>]*data-slot="range-field-limit"/);
+    expect(attr(textInput(html), /aria-describedby="([^"]+)"/)?.split(" ")).toContain(limitId);
+  });
+
+  it("flags a value above max with the max as the reason when no limit binds", () => {
+    const html = render({ value: 131072 });
+    expect(html).toMatch(/role="alert"[^>]*>Must be at most 64 GiB</);
+    expect(html).toContain(">Use 64 GiB</button>");
+    expect(textInput(html)).toContain('value="128 GiB"');
+    expect(textInput(html)).toContain('aria-invalid="true"');
+    expect(rangeInput(html)).toContain('value="7"');
+  });
+
+  it("does not repeat a schema error that says the same as the over-cap line", () => {
+    const html = render({ value: 131072, errors: [{ message: "Must be at most 64 GiB" }] });
+    expect(html.match(/Must be at most 64 GiB/g)).toHaveLength(1);
+    // Every id the input points at exists (the dropped duplicate is not referenced).
+    const ids = attr(textInput(html), /aria-describedby="([^"]+)"/)?.split(" ") ?? [];
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(html).toContain(`id="${id}"`);
+    expect(textInput(html)).toContain('aria-invalid="true"');
+  });
+
+  it("disables the cap button with the field", () => {
+    const html = render({ value: 32768, limit: 16384, disabled: true });
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-slot="range-field-use-cap"/);
+  });
+
+  it("ends a linear slider below a limit a hair under a step", () => {
+    const html = render({ stops: undefined, value: 4096, limit: 16383.9999999 });
+    // 16128 is the highest on-step value the limit allows (16384 is over it).
+    expect(rangeInput(html)).toContain('max="16128"');
+  });
+
+  it("ends a linear slider below a max and limit both a hair under a step", () => {
+    const html = render({
+      stops: undefined,
+      value: 4096,
+      max: 16383.99999995,
+      limit: 16383.9999999,
+    });
+    expect(rangeInput(html)).toContain('max="16128"');
+  });
+
+  it("locks the slider when the corrected end is min (fractional origin)", () => {
+    const html = render({
+      min: 0.1,
+      max: 2.599999998,
+      step: 2.5,
+      stops: undefined,
+      units: [],
+      value: 0.1,
+    });
+    expect(rangeInput(html)).toContain("disabled");
+  });
+
+  it("states a binding limit exactly, like the cap button", () => {
+    const html = render({
+      min: 0,
+      max: 1,
+      step: 0.001,
+      stops: undefined,
+      units: [],
+      value: 0.5,
+      limit: 0.125,
+    });
+    expect(html).toMatch(/role="alert"[^>]*>This host allows at most 0.125</);
+    expect(html).toContain(">Use 0.125</button>");
+  });
+
+  it("names the exact cap it sets, never a rounded one", () => {
+    const html = render({
+      min: 0,
+      max: 0.125,
+      step: 0.001,
+      stops: undefined,
+      units: [],
+      value: 0.5,
+    });
+    expect(html).toContain(">Use 0.125</button>");
+    expect(html).toMatch(/role="alert"[^>]*>Must be at most 0.125</);
+  });
+
+  it("shows no cap button when no value is allowed at all", () => {
+    const html = render({ value: 1024, limit: 256 });
+    expect(html).toMatch(/role="alert"[^>]*>This host allows at most/);
+    expect(html).not.toContain("range-field-use-cap");
+  });
+
+  it("shows no over-cap error or button for an allowed value", () => {
+    const html = render({ value: 16384, limit: 16384 });
+    expect(html).not.toContain("range-field-use-cap");
+    expect(html).not.toContain('role="alert"');
   });
 
   it("ends an off-step track at the last on-step value", () => {
@@ -267,49 +372,18 @@ describe("interpretRangeInput", () => {
     expect(interpretRangeInput("4 PiB", at)).toEqual({ kind: "error", message: "Enter a number" });
   });
 
-  it("commits the highest allowed value above the limit, with the limit as the reason", () => {
+  it("keeps a typed value above the limit as typed, never clamped", () => {
     const at = { ...context, currentValue: 4096 };
-    expect(interpretRangeInput("32 GiB", at)).toEqual({
-      kind: "commit",
-      value: 16384,
-      notice: "This host allows at most 16 GiB. Set to 16384.",
-    });
-    // Above max too: the limit is still what binds.
-    expect(interpretRangeInput("128 GiB", at)).toEqual({
-      kind: "commit",
-      value: 16384,
-      notice: "This host allows at most 16 GiB. Set to 16384.",
-    });
+    expect(interpretRangeInput("32 GiB", at)).toEqual({ kind: "commit", value: 32768 });
+    // Above max too.
+    expect(interpretRangeInput("128 GiB", at)).toEqual({ kind: "commit", value: 131072 });
+    // Off step as well as over the cap: still as typed (the cap is the error to fix).
+    expect(interpretRangeInput("20000 MiB", at)).toEqual({ kind: "commit", value: 20000 });
   });
 
-  it("commits max above max when no limit binds", () => {
+  it("keeps a typed value above max when no limit binds", () => {
     const at = { ...context, limit: undefined, currentValue: 4096 };
-    expect(interpretRangeInput("128 GiB", at)).toEqual({
-      kind: "commit",
-      value: 65536,
-      notice: "Must be at most 65536. Set to 65536.",
-    });
-  });
-
-  it("snaps the highest allowed value down to step (typing 999 into 1..32)", () => {
-    const vcpu = {
-      ...context,
-      units: [],
-      min: 1,
-      max: 32,
-      step: 1,
-      limit: undefined,
-      currentValue: 4,
-    };
-    expect(interpretRangeInput("999", vcpu)).toEqual({
-      kind: "commit",
-      value: 32,
-      notice: "Must be at most 32. Set to 32.",
-    });
-    // A limit off the step grid: 16300 MiB allows at most 16128 (512 + 61 × 256).
-    expect(interpretRangeInput("32 GiB", { ...context, limit: 16300, currentValue: 4096 })).toEqual(
-      expect.objectContaining({ kind: "commit", value: 16128 }),
-    );
+    expect(interpretRangeInput("128 GiB", at)).toEqual({ kind: "commit", value: 131072 });
   });
 
   it("commits min below min", () => {
@@ -335,10 +409,65 @@ describe("interpretRangeInput", () => {
     );
   });
 
-  it("errors when no value is allowed at all", () => {
-    expect(interpretRangeInput("1 GiB", { ...context, limit: 256, currentValue: 512 })).toEqual({
+  it("errors on a below-min value when no value is allowed at all", () => {
+    expect(interpretRangeInput("256 MiB", { ...context, limit: 256, currentValue: 512 })).toEqual({
       kind: "error",
+      message: "Must be at least 512",
+    });
+  });
+});
+
+describe("overCap", () => {
+  const context = {
+    labels: rangeFieldEnglishLabels,
+    format: (value: number) => `${value}`,
+    min: 512,
+    max: 65536,
+    step: 256,
+    limitText: "This host allows at most 16 GiB",
+  };
+
+  it("is null for allowed, below-min and off-step values", () => {
+    expect(overCap(16384, { ...context, limit: 16384 })).toBeNull();
+    expect(overCap(256, context)).toBeNull();
+    expect(overCap(1000, context)).toBeNull();
+  });
+
+  it("names the limit as the reason whenever it binds, even above max", () => {
+    expect(overCap(32768, { ...context, limit: 16384 })).toEqual({
       message: "This host allows at most 16 GiB",
+      cap: 16384,
+    });
+    expect(overCap(131072, { ...context, limit: 16384 })).toEqual({
+      message: "This host allows at most 16 GiB",
+      cap: 16384,
+    });
+  });
+
+  it("names max when no limit binds", () => {
+    expect(overCap(131072, context)).toEqual({ message: "Must be at most 65536", cap: 65536 });
+    expect(overCap(131072, { ...context, limit: 1_000_000 })).toEqual({
+      message: "Must be at most 65536",
+      cap: 65536,
+    });
+  });
+
+  it("snaps the cap down to step (a limit off the step grid)", () => {
+    // 16300 MiB allows at most 16128 (512 + 61 × 256).
+    expect(overCap(32768, { ...context, limit: 16300 })?.cap).toBe(16128);
+    const vcpu = { ...context, min: 1, max: 32, step: 1 };
+    expect(overCap(999, vcpu)).toEqual({ message: "Must be at most 32", cap: 32 });
+  });
+
+  it("never offers a cap above the limit when the limit is a hair under a step", () => {
+    const cap = overCap(32768, { ...context, limit: 16383.9999999 })?.cap;
+    expect(cap).toBe(16128);
+  });
+
+  it("has no cap when the limit is below min", () => {
+    expect(overCap(1024, { ...context, limit: 256 })).toEqual({
+      message: "This host allows at most 16 GiB",
+      cap: null,
     });
   });
 });
@@ -380,6 +509,10 @@ describe("rangeErrorMessage", () => {
 describe("rangeFieldEnglishLabels", () => {
   it("falls back to a plain default state without a source", () => {
     expect(rangeFieldEnglishLabels.defaultState(undefined)).toBe("Default");
+  });
+
+  it("labels the cap button with the formatted cap", () => {
+    expect(rangeFieldEnglishLabels.applyCap("16 GiB")).toBe("Use 16 GiB");
   });
 
   it("explains an adjusted value without doubling punctuation", () => {

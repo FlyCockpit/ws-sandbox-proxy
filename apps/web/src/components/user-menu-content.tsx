@@ -51,7 +51,7 @@ export default function UserMenuContent() {
     isAuthenticated: true,
     showsAdmin,
   });
-  // The product guide, when the deployment publishes the docs (VITE_DOCS_URL).
+  // The product guide: the deployment's docs (VITE_DOCS_URL), else the repository's.
   const helpHref = docsUrl(env.VITE_DOCS_URL, "guide");
 
   return (
@@ -97,16 +97,14 @@ export default function UserMenuContent() {
               {t(item.labelKey)}
             </DropdownMenuItem>
           ))}
-          {helpHref ? (
-            <DropdownMenuItem
-              // A real link: opens the docs in a new tab with the browser's
-              // own link behaviour (middle-click, copy link address).
-              render={<a href={helpHref} target="_blank" rel="noopener noreferrer" />}
-            >
-              <BookOpen className="size-4" aria-hidden="true" />
-              {t("userMenu.helpDocs")}
-            </DropdownMenuItem>
-          ) : null}
+          <DropdownMenuItem
+            // A real link: opens the docs in a new tab with the browser's
+            // own link behaviour (middle-click, copy link address).
+            render={<a href={helpHref} target="_blank" rel="noopener noreferrer" />}
+          >
+            <BookOpen className="size-4" aria-hidden="true" />
+            {t("userMenu.helpDocs")}
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"

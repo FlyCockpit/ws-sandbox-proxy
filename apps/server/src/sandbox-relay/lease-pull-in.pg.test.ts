@@ -68,7 +68,9 @@ const { updatePool, updatePoolMember } = await import(
   "../../../../packages/api/src/sandbox/services/pools"
 );
 const { pullInSandboxLease, scanLeasePolicy } = await import("@wssp/api/sandbox/lease-pull-in");
-const { reclaimExpiredSandboxLeases } = await import("@wssp/api/sandbox/lease");
+const { reclaimExpiredSandboxLeases, rememberedLeaseTimeoutMs } = await import(
+  "@wssp/api/sandbox/lease"
+);
 const { systemDispatchAllowed } = await import("@wssp/api/sandbox/outbox");
 const { reconcileSandboxAccess } = await import("@wssp/api/sandbox/sharing-access");
 const { processSandboxOutboxBatch: processOutbox } = await import("./outbox-processor.js");
@@ -199,6 +201,26 @@ it("T5 (M2/N1): a warm re-arm over the limit is pulled in at the end of the same
     s.clock,
   );
   expect(await s.ops("RENEW_SANDBOX_LEASE")).toHaveLength(renewals.length);
+});
+
+it("a system pull-in is never the lease a start re-arms; a user renewal is", async () => {
+  const s = await readySandbox();
+  const remembered = () =>
+    db.prisma.$transaction((tx) => rememberedLeaseTimeoutMs(tx, { id: s.id, userId: s.f.id }));
+  expect(await remembered()).toBe(H20);
+  await db.inspect.sandboxPool.update({ where: { id: s.f.pool.id }, data: { maxLeaseMs: H2 } });
+  expect(await scanLeasePolicy(s.clock)).toBe(1);
+  const [pullIn] = await s.ops("RENEW_SANDBOX_LEASE");
+  expect(pullIn!.idempotencyKey.startsWith("lease-policy:")).toBe(true);
+  expect(pullIn!.leaseTimeoutMs).toBeLessThanOrEqual(H2);
+  // The policy shortened the running lease; the user's choice is still 20 h.
+  expect(await remembered()).toBe(H20);
+  await setSandboxTimeout(
+    s.f.owner,
+    { id: s.id, idempotencyKey: randomUUID(), timeoutMs: H1 },
+    s.clock,
+  );
+  expect(await remembered()).toBe(H1);
 });
 
 it("T6 (M3): the sweep keys on the enforced deadline, skips an in-flight pull-in and retries a failed one", async () => {

@@ -1197,12 +1197,12 @@ function MemberLeaseSheet({
                 {t(`hosts:pools.problem.${problem}`)}
               </p>
             ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
-                {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
-              </Button>
+            <div className="flex flex-wrap justify-end gap-2">
               <Button type="button" size="touch" variant="outline" onClick={onClose}>
                 {t("common:actions.cancel")}
+              </Button>
+              <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
+                {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
               </Button>
             </div>
           </form>

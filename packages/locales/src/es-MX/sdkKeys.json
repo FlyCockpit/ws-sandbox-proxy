@@ -197,7 +197,7 @@
     "copyApiUrl": "Copiar URL base de la API",
     "curl": "Comprueba la clave con curl (muestra su nombre, permisos y vencimiento):",
     "copyCurl": "Copiar comando curl",
-    "sdk": "SDK de TypeScript (@wssp/sdk, Node 22+). Aún no está en npm: úsalo desde el repositorio de wssp como \"@wssp/sdk\": \"workspace:*\".",
+    "sdk": "SDK de TypeScript (@wssp/sdk, Node 22+). Aún no está en npm (se publicará ahí): mientras tanto, úsalo desde el repositorio de wssp como \"@wssp/sdk\": \"workspace:*\".",
     "copySdk": "Copiar ejemplo del SDK",
     "cli": "La CLI wssp: instálala y luego usa la clave desde scripts y CI:",
     "copyCliInstall": "Copiar comando de instalación",
@@ -205,8 +205,7 @@
     "cliLogin": "En tu propia computadora, inicia sesión con wssp login. Crea su propia clave.",
     "copyCliLogin": "Copiar comando de inicio de sesión",
     "sdkDocs": "Guía de claves de SDK y permisos",
-    "cliDocs": "Guía de la CLI",
-    "docsPath": "Consulta {{path}} en el repositorio de wssp."
+    "cliDocs": "Guía de la CLI"
   },
   "scopeTitle": {
     "hosts": {

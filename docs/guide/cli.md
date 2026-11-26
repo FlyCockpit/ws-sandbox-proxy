@@ -137,8 +137,8 @@ with `--wait` it follows the operation and then the sandbox until it is
 READY. `--timeout` is the lease (`30m`, `2h`, `1d`; `0` only where policy
 allows no lease). `start` re-arms the lease counted from when the start is
 accepted (a create counts from READY where the host supports it): without
-`--timeout` it reuses the sandbox's remembered lease (the create's `--timeout`,
-or the last one a start named) and keeps its expiry action; `start --timeout`
+`--timeout` it reuses the sandbox's remembered lease (the latest one its
+create, a start or a renewal named) and keeps its expiry action; `start --timeout`
 sets a new lease, which later starts then reuse. A login with a live sandbox limit that is reached fails with
 `sandbox.key_limit_reached` (exit 9). Lists are bounded pages; a further page
 prints its `--cursor`.

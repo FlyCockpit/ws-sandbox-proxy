@@ -524,18 +524,28 @@ function OwnerCell({
   );
 }
 
-/** An opaque id in a copy chip, plus an action that narrows the view to it. */
+/**
+ * An opaque id in a copy chip, under its owner-chosen name when it has one,
+ * plus an action that narrows the view to it.
+ */
 function IdCell({
   id,
   idLabel,
+  name,
   action,
 }: {
   id: string;
   idLabel: string;
+  name?: string | null;
   action?: { text: string; label: string; onClick: () => void };
 }) {
   return (
     <div className="flex min-w-0 flex-col items-start">
+      {name ? (
+        <span data-admin-name="" className="max-w-full truncate font-medium" title={name}>
+          {name}
+        </span>
+      ) : null}
       <CopyableId value={id} label={idLabel} />
       {action ? (
         <button
@@ -909,6 +919,7 @@ function HostTable({
                   <IdCell
                     id={row.id}
                     idLabel={t("observability.ids.host")}
+                    name={row.label}
                     action={{
                       text: t("observability.rowActions.sandboxes"),
                       label: t("observability.showHostSandboxes", { id: row.id }),
@@ -1014,6 +1025,7 @@ function SandboxTable({
                   <IdCell
                     id={row.id}
                     idLabel={t("admin:observability.ids.sandbox")}
+                    name={row.name}
                     action={{
                       text: t("admin:observability.rowActions.operations"),
                       label: t("admin:observability.showSandboxOperations", { id: row.id }),
@@ -1036,6 +1048,7 @@ function SandboxTable({
                     <IdCell
                       id={row.sandboxHostId}
                       idLabel={t("admin:observability.ids.host")}
+                      name={row.hostLabel}
                       action={{
                         text: t("admin:observability.rowActions.filter"),
                         label: t("admin:observability.filterByHost", { id: row.sandboxHostId }),
@@ -1047,7 +1060,11 @@ function SandboxTable({
                   )}
                 </td>
                 <td className={TD}>
-                  <IdCell id={row.templateId} idLabel={t("admin:observability.ids.template")} />
+                  <IdCell
+                    id={row.templateId}
+                    idLabel={t("admin:observability.ids.template")}
+                    name={row.templateLabel}
+                  />
                   <p className="text-muted-foreground">{t("admin:observability.revisionOf")}</p>
                   <IdCell
                     id={row.templateRevisionId}
@@ -1131,6 +1148,7 @@ function OperationTable({
                     <IdCell
                       id={row.sandboxId}
                       idLabel={t("admin:observability.ids.sandbox")}
+                      name={row.sandboxName}
                       action={{
                         text: t("admin:observability.rowActions.filter"),
                         label: t("admin:observability.filterBySandbox", { id: row.sandboxId }),

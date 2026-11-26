@@ -620,7 +620,6 @@
     "tools": "sh, setsid, stat, find, mkdir, mv, rm, kill, sync y python3 están instalados.",
     "readiness": "El registro solo verifica la imagen en el host; el agente, el usuario y las herramientas se verifican al iniciar cada sandbox, y un sandbox que no los cumple no se reporta como listo.",
     "docsLink": "Cómo preparar una imagen",
-    "docsPath": "Cómo calificar una imagen: {{path}} en el repositorio de código de WS Sandbox Proxy.",
     "image": "Usa una imagen de VM que ya esté en el almacén local de Incus del host. En un host propio, ingresa un alias (se rechazan las huellas digitales); el host lo resuelve y lo fija. En un miembro de grupo compartido, ingresa sha256: seguido de la huella digital exacta de 64 caracteres en minúsculas (se rechazan los alias). Los cambios posteriores de alias no cambian una revisión registrada.",
     "about": "Acerca de las plantillas y los requisitos de imagen"
   },

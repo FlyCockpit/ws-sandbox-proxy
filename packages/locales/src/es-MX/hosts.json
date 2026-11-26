@@ -134,8 +134,6 @@
     "nameLabel": "Nombre para este host",
     "nameHint": "Letras minúsculas, dígitos y guiones. El comando de abajo se actualiza mientras escribes.",
     "advanced": "CA privada y opciones de capacidad",
-    "guidePath": "{{label}}: en el repositorio de código de WS Sandbox Proxy, en",
-    "copyGuidePath": "Copiar ruta de la guía",
     "status": {
       "title": "Estado",
       "waiting": "Esperando a tu host…",

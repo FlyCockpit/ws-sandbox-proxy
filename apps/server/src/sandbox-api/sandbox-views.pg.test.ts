@@ -326,7 +326,7 @@ it("create requires the exact lease ACK and the detail view exposes the durable 
   });
 });
 
-it("the detail view shows the lease a start re-arms: the create's, never a renewal's", async () => {
+it("the detail view shows the lease a start re-arms: the create's, then a renewal's", async () => {
   const f = await fixture(2 * 3_600_000);
   expect(await applyOperationResult(await f.dispatch())).toEqual({ written: true });
   expect((await getSandboxView(f.owner, { id: f.sandbox.id })).rememberedLeaseTimeoutMs).toBe(
@@ -338,7 +338,7 @@ it("the detail view shows the lease a start re-arms: the create's, never a renew
     timeoutMs: 6 * 3_600_000,
   });
   expect((await getSandboxView(f.owner, { id: f.sandbox.id })).rememberedLeaseTimeoutMs).toBe(
-    2 * 3_600_000,
+    6 * 3_600_000,
   );
 });
 

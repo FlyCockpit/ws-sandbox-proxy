@@ -157,7 +157,7 @@
     "hint": "Counted from when the server accepts your request; deployment limits apply.",
     "keep": "Keep its lifetime ({{lifetime}}, then {{action}})",
     "keepUnlimited": "Keep its lifetime (no time limit)",
-    "keepHint": "It keeps the lifetime and expiry action it last started with (a renewal is not remembered) unless you choose another; a new choice becomes its lifetime for later starts. Counted when the server accepts your request; deployment limits apply.",
+    "keepHint": "It keeps the lifetime and expiry action it last had: from its create, its last start or its last renewal, whichever came last. Choose another to replace it; a new choice becomes its lifetime for later starts. Counted when the server accepts your request; deployment limits apply.",
     "onExpire": "When the lifetime ends",
     "stopOption": "Stop the VM (keep its disk)",
     "destroyOption": "Destroy the VM and its disk",
@@ -170,7 +170,7 @@
   "renew": {
     "action": "Renew lifetime",
     "title": "Renew lifetime",
-    "description": "Choose how long it runs from now. What happens when it ends stays the same.",
+    "description": "Choose how long it runs from now. What happens when it ends stays the same. Later starts keep this lifetime.",
     "submit": "Renew",
     "pending": "Renewing…",
     "now": "Now",
@@ -425,7 +425,7 @@
       "hostUnknown": "Connected, but this host hasn't reported its free capacity recently. The server checks when you create."
     },
     "envTitle": "Environment",
-    "envHint": "Private defaults for commands and terminals: up to 64 variables. HOME, SHELL and TERM are reserved. Values stay private on the server and host.",
+    "envHint": "Private defaults for commands and terminals: up to 64 variables. HOME, SHELL and TERM are reserved. Values stay private on the server and host. Until the sandbox is created they stay only in this page (never saved in the browser), also after a refused create, and are gone when you leave it.",
     "envAdd": "Add variable",
     "labelsRowsHint": "Optional labels to find and group sandboxes: up to 32. Never put secrets here.",
     "labelsTextUnavailable": "Some keys can't be written as KEY=value lines; edit them as rows.",
@@ -481,14 +481,12 @@
       "warnNowhere": "{{template}} isn't on {{host}} yet, so creating there will likely fail. Choose another host or template."
     },
     "hostUnmeasured": "{{label}} · Connected, free capacity not reported",
-    "envCleared": "For safety, values are cleared after a refused create. Enter them again.",
     "previewPorts": "Preview ports",
     "previewPortsHint": "Guest ports you may share later as a preview link, for example 3000, 8080. Leave blank if you don't need links; a port forward always works.",
     "showProblem": "Show",
     "sizeNotSet": "Not set: the latest version's own size is used.",
     "sizeUseTemplateDefault": "Use template default",
     "sizeDefaultSource": "version {{revision}}",
-    "envReenter": "Enter the values for {{keys}} again, or remove those variables.",
     "labelKeyInvalid": "{{key}} can't be a label name: no spaces, quotes or =."
   },
   "draft": {
@@ -507,7 +505,6 @@
     "memoryMiB": "Enter 512–65536 MiB in steps of 256, or leave it blank.",
     "diskGiB": "Enter a whole root size from 1 to 2048 GiB, or leave blank.",
     "credentials": "Choose a login in every login row (each login once, at most 8), or remove the empty rows.",
-    "envsCleared": "Enter the cleared values again, or remove those rows.",
     "previewPorts": "Enter up to 8 different port numbers from 1 to 65535, separated by commas or spaces."
   },
   "files": {
@@ -991,6 +988,5 @@
     "noTunnel": "This sandbox was created without preview ports, so it cannot get a shareable link. A port forward still works.",
     "guide": "Preview tunnels guide",
     "guideCli": "CLI guide: shells and port forwards"
-  },
-  "docsPath": "(guide: {{path}} in the WS Sandbox Proxy source repository)"
+  }
 }

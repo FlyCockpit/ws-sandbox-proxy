@@ -35,8 +35,10 @@ either field or both).
 - Uniqueness is per owner, across all your keys. A key that is allowed to
   create or rename can therefore learn that one of your live sandboxes already
   uses a name.
-- Names are yours: admins and the owners of hosts or pools your sandboxes run
-  on never see them. Sandboxes created before names existed got a
+- Names are yours: the owners of hosts or pools your sandboxes run on never
+  see them. Administrators do: admin observability shows sandbox names and
+  host and template labels beside their ids (metadata only, never commands,
+  output or files). Sandboxes created before names existed got a
   `sandbox-<12 hex>` name; rename them freely.
 
 ## Dashboard VM size
@@ -54,8 +56,11 @@ revision's minimum up to 2048 GiB). Each dimension you leave alone is omitted
 from the request and inherited from the revision the server accepts; Reset
 returns a dimension to that. Values above what the chosen placement can take
 now (a host's free capacity, or for a pool the most any one eligible host can
-place, from the pool capacity read's `largest`) are greyed out with a one-line
-reason. The server still validates every request. A lost-response retry
+place, from the pool capacity read's `largest`) are greyed out on the slider
+with a one-line reason. A larger value typed into the box is kept, not lowered:
+the field shows the cap and its reason as an error with a **Use <cap>** button,
+and Create stays blocked until the value fits. The server still validates
+every request. A lost-response retry
 preserves the exact original body and key, including omitted fields, even
 after template discovery changes.
 
@@ -362,12 +367,14 @@ action. Create defaults to **300000 ms (five minutes)** and
 the disk on timeout. Explicit stop keeps disk; it does not preserve RAM/processes.
 
 - Create/connect accept relative `timeoutMs`. Create defaults to 300000; the
-  sandbox remembers its create's `timeoutMs`, and a connect that names one
-  replaces it. A connect without `timeoutMs` reuses the remembered lease, so
-  stop then start (CLI `wssp sandbox start <id>`, SDK `connect()`) keeps the
-  lifetime chosen earlier instead of falling back to five minutes. `setTimeout`
-  takes `{timeoutMs}` relative to server acceptance, may shorten, and is not
-  remembered. READY connect only extends; STOPPED connect boots the sandbox's
+  sandbox remembers its create's `timeoutMs`, and a connect or a renewal
+  (`setTimeout`, the dashboard's Renew) that names one replaces it. A connect
+  without `timeoutMs` reuses the remembered lease, so stop then start (CLI
+  `wssp sandbox start <id>`, SDK `connect()`, the dashboard's Start) keeps the
+  lifetime chosen last instead of falling back to five minutes. `setTimeout`
+  takes `{timeoutMs}` relative to server acceptance and may shorten. A system
+  lease-policy pull-in (the policy dropped under a running lease) is not a
+  choice and is not remembered. READY connect only extends; STOPPED connect boots the sandbox's
   disk on the host that holds it (OFFLOADED connect restores it onto an
   eligible host) with a new generation. Connect keeps the existing timeout
   action. A remembered lease is never shortened to fit a policy that was

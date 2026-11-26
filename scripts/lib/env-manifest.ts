@@ -1700,7 +1700,7 @@ export const ENV_VARS: EnvVar[] = [
       "Base URL of the product docs: where the repository's docs/ directory is",
       "published (a docs site, or a repository browser URL ending in /docs).",
       "The dashboard links pages below it, e.g. <base>/operations/templates.md.",
-      "Leave unset to show doc paths as plain text instead of links.",
+      "Unset: links (and Help & docs) go to the canonical repository's docs on GitHub.",
     ],
   },
 ];

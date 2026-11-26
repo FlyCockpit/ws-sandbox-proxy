@@ -163,8 +163,8 @@ pub struct StartArgs {
     pub lifecycle: LifecycleArgs,
 
     /// New lease, counted from when the start is accepted: `30m`, `2h`, `1d` (`0`: no lease timer where policy
-    /// allows it). Later starts reuse it. Default: the sandbox's remembered lease (the create's `--timeout`, or the
-    /// last one a start set).
+    /// allows it). Later starts reuse it. Default: the sandbox's remembered lease (the latest one its create, a
+    /// start or a renewal set).
     #[arg(long, value_name = "DUR", value_parser = parse_duration_ms)]
     pub timeout: Option<u64>,
 }

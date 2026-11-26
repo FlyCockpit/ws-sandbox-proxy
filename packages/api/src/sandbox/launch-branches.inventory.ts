@@ -273,6 +273,8 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
       "launch-mode-routed",
     'operation.kind === "RECONNECT_SANDBOX"': "launch-mode-routed",
     'kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX"] },': "kind-agnostic",
+    'kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX", "RENEW_SANDBOX_LEASE"] },':
+      "kind-agnostic",
   },
   "packages/api/src/sandbox/operation-transaction.ts": {
     'request.kind === "CREATE_SANDBOX" ? "sandboxes.createIntent" : request.action,': "create-only",

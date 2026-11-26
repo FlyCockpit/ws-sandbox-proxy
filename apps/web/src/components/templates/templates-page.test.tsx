@@ -512,11 +512,10 @@ describe("templates list", () => {
     expect(await screen.findByText(enTemplates.empty.title)).toBeTruthy();
     expect(screen.getByText(enTemplates.requirements.image)).toBeTruthy();
     expect(calls("listTemplates")[0]?.input).toMatchObject({ status: "active", limit: 50 });
-    // No docs base configured: the repository path is text, never a guessed URL.
-    expect(screen.queryByRole("link", { name: enTemplates.requirements.docsLink })).toBeNull();
-    expect(document.querySelector("[data-docs-path]")?.textContent).toBe(
-      enTemplates.requirements.docsPath.replace("{{path}}", "docs/operations/templates.md"),
-    );
+    // No docs base configured: the link goes to the repository's docs.
+    expect(
+      screen.getByRole("link", { name: enTemplates.requirements.docsLink }).getAttribute("href"),
+    ).toBe("https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/operations/templates.md");
   });
 
   it("links the image docs below the configured docs base", async () => {
@@ -547,9 +546,9 @@ describe("templates list", () => {
     expect(await screen.findByText(esTemplates.empty.title)).toBeTruthy();
     expect(screen.getByText(esTemplates.requirements.title)).toBeTruthy();
     expect(screen.getByText(esTemplates.requirements.image)).toBeTruthy();
-    expect(document.querySelector("[data-docs-path]")?.textContent).toContain(
-      "docs/operations/templates.md",
-    );
+    expect(
+      screen.getByRole("link", { name: esTemplates.requirements.docsLink }).getAttribute("href"),
+    ).toBe("https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/operations/templates.md");
     cleanup();
     server.listError = new Error("network");
     await mount("es-MX");

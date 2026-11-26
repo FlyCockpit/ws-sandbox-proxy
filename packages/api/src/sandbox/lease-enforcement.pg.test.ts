@@ -514,14 +514,25 @@ it("a start without timeoutMs reuses the create's lease and expiry action; an ex
   expect(again.row.leaseExpiresAt?.getTime()).toBe(last.getTime() + 600_000);
 });
 
-it("a renewal is not remembered: a later start without timeoutMs uses the create's lease", async () => {
+it("a renewal is remembered: a later start without timeoutMs uses the renewed lease", async () => {
   const s = await leasedSandbox(H2, "kill");
   await renew(s.f, s.id, 600_000);
   await s.stop();
   const at = new Date(Date.now() + 60_000);
   const started = await s.start(at);
   expect(started.row).toMatchObject({ leaseExpireAction: "DESTROY" });
-  expect(started.row.leaseExpiresAt?.getTime()).toBe(at.getTime() + H2);
+  expect(started.operation).toMatchObject({ leaseTimeoutMs: 600_000 });
+  expect(started.row.leaseExpiresAt?.getTime()).toBe(at.getTime() + 600_000);
+  // A start that names a lease after the renewal replaces it again.
+  await ready(s.id);
+  await s.stop();
+  const later = new Date(at.getTime() + 60_000);
+  await s.start(later, H1);
+  await ready(s.id);
+  await s.stop();
+  const last = new Date(later.getTime() + 60_000);
+  const again = await s.start(last);
+  expect(again.row.leaseExpiresAt?.getTime()).toBe(last.getTime() + H1);
 });
 
 it("a remembered lease the policy no longer allows is refused, not shortened", async () => {
@@ -612,8 +623,9 @@ it("the remembered-lease lookup is served by its partial index", async () => {
     return tx.$queryRawUnsafe<{ "QUERY PLAN": string }[]>(
       `EXPLAIN SELECT "leaseTimeoutMs" FROM sandbox_mutation_operation
        WHERE "sandboxId" = 'sbx' AND "userId" = 'owner'
-         AND kind IN ('CREATE_SANDBOX', 'RECONNECT_SANDBOX')
+         AND kind IN ('CREATE_SANDBOX', 'RECONNECT_SANDBOX', 'RENEW_SANDBOX_LEASE')
          AND "leaseRevisionAccepted" IS NOT NULL AND "leaseTimeoutMs" IS NOT NULL
+         AND NOT ("idempotencyKey" LIKE 'lease-policy:%')
        ORDER BY "leaseRevisionAccepted" DESC LIMIT 1`,
     );
   });

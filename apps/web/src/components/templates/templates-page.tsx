@@ -49,7 +49,7 @@ import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
 import { EmptyTemplateNote, TemplateBuildsSection } from "@/components/template-builds/build-parts";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
-import { docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { docsUrl } from "@/lib/docs-links";
 import { dateTimeTitle } from "@/lib/format-date-time";
 import { toMs } from "@/lib/host-status";
 import { isLaunchableRevision } from "@/lib/template-build-rules";
@@ -267,21 +267,15 @@ function AboutTemplates() {
       </ul>
       <p className="text-sm text-muted-foreground">
         {t("templates:requirements.readiness")}{" "}
-        {docsHref ? (
-          <a
-            href={docsHref}
-            target="_blank"
-            rel="noreferrer"
-            data-docs-link=""
-            className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-          >
-            {t("templates:requirements.docsLink")}
-          </a>
-        ) : (
-          <span data-docs-path="">
-            {t("templates:requirements.docsPath", { path: docsRepoPath("templates") })}
-          </span>
-        )}
+        <a
+          href={docsHref}
+          target="_blank"
+          rel="noreferrer"
+          data-docs-link=""
+          className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+        >
+          {t("templates:requirements.docsLink")}
+        </a>
       </p>
     </AdvancedSection>
   );

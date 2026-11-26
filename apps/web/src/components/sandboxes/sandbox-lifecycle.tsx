@@ -339,7 +339,10 @@ export function SandboxLifecycleDialogs({
             keepTimeoutMs={sandbox.rememberedLeaseTimeoutMs}
             disabled={start.isPending}
           />
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button type="button" variant="outline" size="touch" onClick={() => setOpen(null)}>
+              {t("common:actions.cancel")}
+            </Button>
             <Button
               type="button"
               size="touch"
@@ -362,9 +365,6 @@ export function SandboxLifecycleDialogs({
               {start.isPending
                 ? t(offloaded ? "sandboxes:start.restorePending" : "sandboxes:start.pending")
                 : t(offloaded ? "sandboxes:start.restoreConfirm" : "sandboxes:start.confirm")}
-            </Button>
-            <Button type="button" variant="outline" size="touch" onClick={() => setOpen(null)}>
-              {t("common:actions.cancel")}
             </Button>
           </div>
         </DialogContent>
@@ -568,7 +568,15 @@ function RenewDialog({
             </dl>
           </>
         )}
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="touch"
+            onClick={() => (confirming ? setConfirming(false) : setOpen(null))}
+          >
+            {confirming ? t("common:actions.back") : t("common:actions.cancel")}
+          </Button>
           {confirming ? (
             <Button
               type="button"
@@ -590,14 +598,6 @@ function RenewDialog({
               {renew.isPending ? t("sandboxes:renew.pending") : t("sandboxes:renew.submit")}
             </Button>
           )}
-          <Button
-            type="button"
-            variant="outline"
-            size="touch"
-            onClick={() => (confirming ? setConfirming(false) : setOpen(null))}
-          >
-            {confirming ? t("common:actions.back") : t("common:actions.cancel")}
-          </Button>
         </div>
       </DialogContent>
     </Dialog>

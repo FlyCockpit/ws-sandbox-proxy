@@ -160,7 +160,6 @@ const DRAFT_PLACE: Record<SandboxDraftProblem, ProblemPlace> = {
   labelsSyntax: "labels",
   labels: "labels",
   envs: "envs",
-  envsCleared: "envs",
   egress: "network",
   previewPorts: "network",
   cpuCount: "size",
@@ -237,21 +236,6 @@ const entriesJson = (entries: readonly KeyValueEntry[]) => {
   const record = entriesToRecord(entries);
   return Object.keys(record).length > 0 ? JSON.stringify(record) : "";
 };
-/**
- * Cleared keys that still wait for a value: a key leaves the set once an
- * entry with it has a value, or no entry has it any more. Keys, not rows: the
- * `.env` text mode makes new entries on every edit.
- */
-const stillCleared = (cleared: ReadonlySet<string>, entries: readonly KeyValueEntry[]) => {
-  if (cleared.size === 0) return cleared;
-  const next = new Set<string>();
-  for (const key of cleared) {
-    const same = entries.filter((entry) => entry.key === key);
-    if (same.length > 0 && same.every((entry) => entry.value === "")) next.add(key);
-  }
-  return next.size === cleared.size ? cleared : next;
-};
-
 const sizeNumber = (text: string): number | null => (text.trim() ? Number(text) : null);
 const lineCount = (text: string) => text.split("\n").filter((line) => line.trim()).length;
 
@@ -290,9 +274,7 @@ export function CreateSandboxPage({
   const [problem, setProblem] = useState<SandboxProblem | null>(null);
   const [loginProblemKey, setLoginProblemKey] = useState<string | null>(null);
   const [envRows, setEnvRows] = useState<KeyValueEntry[]>([]);
-  // Keys whose value a refused create cleared: they stay and must be typed
-  // again (or removed) before the next submit.
-  const [envCleared, setEnvCleared] = useState<ReadonlySet<string>>(new Set());
+  // Bumped to remount the env editor (and drop its .env text) when cleared.
   const [envEditor, setEnvEditor] = useState(0);
   const [labelRows, setLabelRows] = useState<KeyValueEntry[]>([]);
   // Set by `submit` for its own pass through the form: the pool capacity it
@@ -425,29 +407,16 @@ export function CreateSandboxPage({
   });
   const values = useStore(form.store, (state) => state.values);
 
-  /** Clear the private environment (rows, text mode and the draft's JSON). */
+  /**
+   * Clear the private environment (rows, text mode and the draft's JSON) once
+   * the sandbox is created. After a definite refusal the values stay in this
+   * open form (React state only, never browser storage) so the user can fix
+   * the cause and send again (ADR-003); leaving the page drops them.
+   */
   const clearEnvs = () => {
     setEnvRows([]);
-    setEnvCleared(new Set());
     setEnvEditor((current) => current + 1);
     form.setFieldValue("envs", "");
-  };
-  /**
-   * After a definite refusal the values are private input that is never kept
-   * (ADR-003: safe settlement clears them), but the keys stay so nothing is
-   * lost silently: the rows ask for their values again, and the Environment
-   * section opens with a notice.
-   */
-  const clearEnvValues = () => {
-    // Unread `.env` lines may hold a value: they go with the values.
-    const kept = envRows
-      .filter((entry) => entry.key !== "")
-      .map((entry) => ({ key: entry.key, value: "" }));
-    setEnvRows(kept);
-    setEnvCleared(new Set(kept.map((entry) => entry.key)));
-    setEnvEditor((current) => current + 1);
-    form.setFieldValue("envs", entriesJson(kept));
-    if (kept.length > 0) openSection("envs");
   };
   /** Open an Advanced section (a native `<details>`, so its fields stay mounted). */
   const openSection = (name: Section) => {
@@ -509,7 +478,6 @@ export function CreateSandboxPage({
       reveal(loginKey ? "logins" : (SERVER_PLACE[next] ?? null));
       if (DEFINITE.has(next)) {
         lastSubmitted.current = null;
-        if (!inputMistake) clearEnvValues();
         create.reset();
         intents.current.settle();
         void hostsQuery.refetch();
@@ -683,14 +651,6 @@ export function CreateSandboxPage({
   // Flagged rows, and `.env` lines that did not parse (kept as flagged rows,
   // never sent): either refuses the draft.
   const envInvalid = hasKeyValueErrors(envRows, ENV_VALIDATION);
-  /** Keys a refused create cleared that still have no value. */
-  const envAwaiting = [
-    ...new Set(
-      envRows
-        .filter((entry) => envCleared.has(entry.key) && entry.value === "")
-        .map((entry) => entry.key),
-    ),
-  ];
   const labelsInvalid = hasKeyValueErrors(labelRows, LABEL_VALIDATION);
   /** Is this an exact replay of a request whose response was lost? */
   const isReplay = (candidate: SandboxDraft) =>
@@ -716,16 +676,24 @@ export function CreateSandboxPage({
     if (candidate.poolId && !pools.some((pool) => pool.id === candidate.poolId))
       issues.push("unknownPool");
     if (envInvalid && !issues.includes("envs")) issues.push("envs");
-    if (envAwaiting.length > 0) issues.push("envsCleared");
     if (labelsInvalid && !issues.includes("labelsSyntax")) issues.push("labelsSyntax");
     return issues;
   };
-  /** Size values above `against` (untouched sizes are the server's to resolve). */
-  const aboveCap = (candidate: SandboxDraft, against: SizeCap): (keyof SizeValues)[] =>
-    (["cpuCount", "memoryMiB", "diskGiB"] as const).filter((field) => {
-      const value = sizeNumber(candidate[field]);
+  /** Size values above `against` (untouched sizes under Latest are the server's to resolve). */
+  const aboveCap = (candidate: SandboxDraft, against: SizeCap): (keyof SizeValues)[] => {
+    // A pinned revision's size is what an untouched (or default-equal) field
+    // sends; with Latest it is unknown here and the server resolves it.
+    const pin =
+      candidate.templateMode === "revision"
+        ? revisions.find((item) => item.id === candidate.templateId)
+        : undefined;
+    return (["cpuCount", "memoryMiB", "diskGiB"] as const).filter((field) => {
+      const value =
+        sizeNumber(candidate[field]) ??
+        (pin ? (field === "diskGiB" ? pin.defaultDiskGiB : pin[field]) : null);
       return value !== null && value > against[field];
     });
+  };
   /**
    * Size values over the placement's capacity (the server would refuse them).
    * `against` replaces the cached cap ("unknown": a fresh read failed, so
@@ -1450,35 +1418,12 @@ export function CreateSandboxPage({
                 : t("sandboxes:create.summary.none")
             }
           >
-            {envAwaiting.length > 0 ? (
-              <p
-                role="status"
-                data-env-cleared=""
-                className="text-sm text-amber-700 dark:text-amber-400"
-              >
-                {t("sandboxes:create.envCleared")}
-              </p>
-            ) : null}
             <KeyValueEditor
               key={envEditor}
-              field={stateField(
-                "envs",
-                envRows,
-                envAwaiting.length > 0
-                  ? [
-                      t("sandboxes:create.envReenter", {
-                        keys: new Intl.ListFormat(lang, { type: "conjunction" }).format(
-                          envAwaiting,
-                        ),
-                      }),
-                    ]
-                  : [],
-                (entries) => {
-                  setEnvRows(entries);
-                  setEnvCleared((current) => stillCleared(current, entries));
-                  form.setFieldValue("envs", entriesJson(entries));
-                },
-              )}
+              field={stateField("envs", envRows, [], (entries) => {
+                setEnvRows(entries);
+                form.setFieldValue("envs", entriesJson(entries));
+              })}
               label={t("sandboxes:create.envTitle")}
               description={t("sandboxes:create.envHint")}
               labels={envLabels}

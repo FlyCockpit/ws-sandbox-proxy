@@ -79,8 +79,10 @@ it("marks a fully configured deployment and leaves optional features optional", 
   expect(state(container, "backups")).toBe("optional");
   expect(state(container, "tunnels")).toBe("optional");
   expect(screen.getByText(enAdmin.setup.imageStore.s3)).toBeTruthy();
-  // No docs base configured: the repository path is shown as text.
-  expect(container.querySelector("[data-docs-path]")).not.toBeNull();
+  // No docs base configured: the link goes to the repository's docs.
+  expect(screen.getByRole("link", { name: enAdmin.setup.docsLink }).getAttribute("href")).toBe(
+    "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/operations/environment-variables.md",
+  );
 });
 
 it("names what a missing email, image store or data key turns off", async () => {

@@ -65,6 +65,7 @@
       "default": "Predeterminado",
       "defaultFrom": "Predeterminado (de {{source}})",
       "limit": "Aquí hay como máximo {{limit}} disponible",
+      "applyCap": "Usar {{value}}",
       "errors": {
         "notANumber": "Escribe un número",
         "belowMin": "Debe ser al menos {{min}}",

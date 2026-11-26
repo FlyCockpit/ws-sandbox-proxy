@@ -9,8 +9,9 @@ your sandboxes.
 Every code block on this page is a compiled file under
 [`examples/`](./examples/): `pnpm check-types` type-checks them against the
 package's real exports, and a test fails when this page and a file differ.
-The package is not on npm yet (no release has been published); inside this
-repository depend on it as `"@wssp/sdk": "workspace:*"`.
+The package is not on npm yet (no release has been published); it will be
+published there. Until then, inside this repository depend on it as
+`"@wssp/sdk": "workspace:*"`.
 
 ## Keys and scopes
 
@@ -607,9 +608,9 @@ if (first.nextCursor) {
   renewal `effective` describes that operation's ACK; `sandbox.lease.effective`
   may already describe a later revision. READY must be the same boot generation.
 - Create defaults to 300000 ms and `lifecycle: {onTimeout: "kill"}`. Connect
-  without `leaseTimeoutMs` reuses the sandbox's remembered lease (the create's
-  `timeoutMs`, or the last `leaseTimeoutMs` a connect named), so stop then
-  connect keeps the lifetime chosen earlier. Choose `"stop"` at create to retain disk on
+  without `leaseTimeoutMs` reuses the sandbox's remembered lease (the latest
+  `timeoutMs` its create, a connect or a setTimeout renewal named), so stop then
+  connect keeps the lifetime chosen last. Choose `"stop"` at create to retain disk on
   timeout. Connect preserves the policy, extends only while READY, and boots the
   original disk while STOPPED. Omitted mode adapts to those states. setTimeout
   takes relative `{timeoutMs}` and may shorten or extend. `timeoutMs: 0` means no

@@ -15,11 +15,14 @@ import { destinationHost } from "../webhooks/destination-policy";
 
 // Deliberate field allowlists: no arbitrary JSON, guest paths, request bodies,
 // output, errors, inventory digests or credentials may cross this boundary.
-// Owner-chosen labels (host, template, sandbox names) stay out too; only the
-// owner's account name and email join in, which admins already see on Users.
+// Names join in so a row reads as a thing, not an id (owner decision
+// 2026-11-26): the owner's account name and email (admins already see them on
+// Users), and the owner-chosen host label, template label and sandbox name.
+// Those are admin-only: host and pool owners never see another owner's names.
 const ownerSelect = { select: { name: true, email: true } } as const;
 const hostSelect = {
   id: true,
+  label: true,
   userId: true,
   createdAt: true,
   status: true,
@@ -52,6 +55,9 @@ const sandboxSelect = {
   guestSudo: true,
   guestSudoReason: true,
   guestRoot: true,
+  name: true,
+  SandboxHost: { select: { label: true } },
+  SandboxTemplateRevision: { select: { Template: { select: { label: true } } } },
   User: ownerSelect,
 } satisfies Prisma.SandboxSelect;
 const operationSelect = {
@@ -63,6 +69,7 @@ const operationSelect = {
   state: true,
   generation: true,
   updatedAt: true,
+  Sandbox: { select: { name: true } },
   User: ownerSelect,
 } satisfies Prisma.SandboxOperationSelect;
 // Webhook endpoints: metadata only. The URL is read solely to derive its HOST;
@@ -139,6 +146,28 @@ function withOwner<T extends { User: { name: string; email: string } }>({
   ...row
 }: T): Omit<T, "User"> & { owner: { name: string; email: string } } {
   return { ...row, owner: { name: User.name, email: User.email } };
+}
+
+/** A sandbox row with its host and template labels flattened (the relations never cross). */
+function sandboxRow<
+  T extends {
+    User: { name: string; email: string };
+    SandboxHost: { label: string } | null;
+    SandboxTemplateRevision: { Template: { label: string } };
+  },
+>({ SandboxHost, SandboxTemplateRevision, ...row }: T) {
+  return {
+    ...withOwner(row),
+    hostLabel: SandboxHost?.label ?? null,
+    templateLabel: SandboxTemplateRevision.Template.label,
+  };
+}
+
+/** An operation row with its sandbox's name flattened (the relation never crosses). */
+function operationRow<
+  T extends { User: { name: string; email: string }; Sandbox: { name: string } },
+>({ Sandbox, ...row }: T) {
+  return { ...withOwner(row), sandboxName: Sandbox.name };
 }
 
 const filterId = entityId.regex(/^[A-Za-z0-9_-]+$/);
@@ -321,7 +350,7 @@ export const adminObservabilityRouter = {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
       const page = cursorPage(rows, limit, "createdAt");
-      return { ...page, items: page.items.map(withOwner) };
+      return { ...page, items: page.items.map(sandboxRow) };
     }),
   listOperations: adminOr404Procedure
     .input(
@@ -358,6 +387,6 @@ export const adminObservabilityRouter = {
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
       const page = cursorPage(rows, limit, "createdAt");
-      return { ...page, items: page.items.map(withOwner) };
+      return { ...page, items: page.items.map(operationRow) };
     }),
 };

@@ -41,13 +41,16 @@ export function accessExpiryIdempotencyKey(
   return `access-expire:${sandboxId}:${generation}:${action}:${deadline?.getTime() ?? "ban"}`;
 }
 
+/** Prefix of every system lease pull-in key (`leasePolicyIdempotencyKey`). */
+export const LEASE_POLICY_KEY_PREFIX = INTERNAL_IDEMPOTENCY_KEY_PREFIXES[4];
+
 /** System lease pull-in (§3.4): unique per attempt because the revision advances. */
 export function leasePolicyIdempotencyKey(
   sandboxId: string,
   generation: number,
   leaseRevision: number,
 ): string {
-  return `${INTERNAL_IDEMPOTENCY_KEY_PREFIXES[4]}${sandboxId}:${generation}:${leaseRevision}`;
+  return `${LEASE_POLICY_KEY_PREFIX}${sandboxId}:${generation}:${leaseRevision}`;
 }
 
 /** The `retry`-th (1-based) system retry of a failed stop/kill, queued at

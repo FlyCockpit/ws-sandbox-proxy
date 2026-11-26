@@ -2376,8 +2376,8 @@ describe("ports & previews, connect and usage (design review #4, #11, #22)", () 
     expect(within(card).getByRole("button", { name: enSandboxes.ports.copyForward })).toBeTruthy();
     expect(within(card).getByText(enSandboxes.ports.cliOnly)).toBeTruthy();
     expect(within(card).getByText(enSandboxes.ports.noTunnel)).toBeTruthy();
-    expect(card.querySelector('[data-docs-path="tunnels"]')?.textContent).toContain(
-      "docs/guide/tunnels.md",
+    expect(card.querySelector('[data-docs-link="tunnels"]')?.getAttribute("href")).toBe(
+      "https://github.com/FlyCockpit/ws-sandbox-proxy/blob/main/docs/guide/tunnels.md",
     );
   });
 

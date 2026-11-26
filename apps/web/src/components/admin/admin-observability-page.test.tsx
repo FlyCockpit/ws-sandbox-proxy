@@ -391,6 +391,9 @@ describe("admin observability", () => {
         cpuCount: 2,
         memoryMiB: 3072,
         diskGiB: 32,
+        name: "quiet-otter",
+        hostLabel: "rack-2",
+        templateLabel: "Ubuntu 24.04",
       },
     ];
     mount();
@@ -413,6 +416,41 @@ describe("admin observability", () => {
     expect(screen.getByText(enSandboxes.state.READY)).toBeTruthy();
     expect(screen.getByText("Generation 7")).toBeTruthy();
     expect(screen.getByText("2 vCPU · 3072 MiB · 32 GiB")).toBeTruthy();
+    // Owner-chosen names sit above their id chips.
+    const row = document.querySelector('tr[data-row-id="sbx-1"]') as HTMLElement;
+    const names = [...row.querySelectorAll("[data-admin-name]")].map((node) => node.textContent);
+    expect(names).toEqual(["quiet-otter", "rack-2", "Ubuntu 24.04"]);
+  });
+
+  it("shows a host's label above its id, and a sandbox's name on its operations", async () => {
+    server.hostPages = {
+      "": { items: [host("h-9", { label: "Basement box" }), host("h-8")], nextCursor: null },
+    };
+    mount();
+    await screen.findByText("h-9");
+    const labelled = document.querySelector('tr[data-row-id="h-9"] [data-admin-name]');
+    expect(labelled?.textContent).toBe("Basement box");
+    expect(document.querySelector('tr[data-row-id="h-8"] [data-admin-name]')).toBeNull();
+    cleanup();
+    server.operations = [
+      {
+        id: "op-1",
+        userId: "owner-1",
+        owner: OWNER,
+        createdAt: new Date("2026-02-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-02-01T00:00:00.000Z"),
+        sandboxId: "sbx-1",
+        sandboxName: "quiet-otter",
+        kind: "RUN_COMMAND",
+        state: "RUNNING",
+        generation: 1,
+      },
+    ];
+    mount({ tab: "operations" });
+    await screen.findByText("op-1");
+    expect(document.querySelector('tr[data-row-id="op-1"] [data-admin-name]')?.textContent).toBe(
+      "quiet-otter",
+    );
   });
 
   it("shows filter labels, not raw values, and clears one tab's filters when switching tabs (M7-S15)", async () => {
