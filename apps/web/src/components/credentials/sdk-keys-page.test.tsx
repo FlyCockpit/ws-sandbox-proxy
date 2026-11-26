@@ -437,6 +437,70 @@ describe("sdk key list", () => {
     expect(document.body.innerHTML).not.toContain("DIGEST-NOT-SHOWN");
   });
 
+  it("a preset key leads with its preset and count and folds its chips; a Custom key shows every permission", async () => {
+    const { presetScopes } = await import("@/lib/credential-rules");
+    const now = Date.now();
+    const base = {
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      poolIds: [],
+      lookupPrefix: "wssp_sdk_abcdefghijkl",
+      lastUsedAt: null,
+      revokedAt: null,
+      expiresAt: null,
+      createdAt: new Date(now - 86_400_000),
+      hostAllowlist: [],
+      revisionAllowlist: [],
+    };
+    const run = presetScopes("runSandboxes");
+    server.keys = [
+      { ...base, id: "key-run", name: "run key", scopes: [...run] },
+      {
+        ...base,
+        id: "key-custom",
+        name: "custom key",
+        scopes: [...run, "hosts:read", "hosts:execute", "sandboxes:connect"],
+      },
+    ];
+    mount();
+    await screen.findByRole("list", { name: enSdkKeys.title });
+    const preset = row("key-run");
+    const summary = preset.querySelector<HTMLElement>("[data-scope-summary]")!;
+    expect(summary.dataset.scopeSummary).toBe("runSandboxes");
+    expect(summary.textContent).toContain(
+      `${enSdkKeys.form.preset.runSandboxes.title} · ${run.length} permissions`,
+    );
+    expect(summary.textContent).toContain(enSdkKeys.form.preset.runSandboxes.description);
+    // Every chip is still there, behind a closed disclosure that names the count.
+    const details = preset.querySelector<HTMLDetailsElement>("[data-scope-details]")!;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe(
+      `Show all ${run.length} permissions`,
+    );
+    expect(
+      [...details.querySelectorAll("[data-scope]")].map((node) => node.getAttribute("data-scope")),
+    ).toEqual(run);
+    // Custom (here: host access and CLI shells) keeps every permission in view.
+    const custom = row("key-custom");
+    expect(custom.querySelector<HTMLElement>("[data-scope-summary]")?.dataset.scopeSummary).toBe(
+      "custom",
+    );
+    expect(custom.querySelector("[data-scope-summary]")?.textContent).toContain(
+      `${enSdkKeys.form.preset.custom.title} · ${run.length + 3} permissions`,
+    );
+    expect(custom.querySelector("[data-scope-details]")).toBeNull();
+    for (const scope of ["hosts:execute", "sandboxes:connect"]) {
+      const chip = custom.querySelector(`[data-scope="${scope}"]`);
+      expect(chip?.closest("details")).toBeNull();
+    }
+    expect(within(custom).getByText(enSdkKeys.scopeTitle.hosts.execute)).toBeTruthy();
+    expect(within(custom).getByText(enSdkKeys.scopeTitle.sandboxes.connect)).toBeTruthy();
+    // Reach is labelled: resources, pools and other sandboxes.
+    expect(within(preset).getByText(enSdkKeys.list.allOwned)).toBeTruthy();
+    expect(within(preset).getByText(enSdkKeys.poolMode.ALL_USABLE)).toBeTruthy();
+    expect(within(preset).getByText(enSdkKeys.list.otherSandboxes)).toBeTruthy();
+  });
+
   it("marks a CLI-login key and shows its live-sandbox limit; a dashboard key shows neither", async () => {
     const now = Date.now();
     const base = {
@@ -1346,7 +1410,8 @@ describe("create form (design-review2 #1, #21)", () => {
     await submit(user);
     const name = within(dialog()).getByLabelText(enCredentials.form.name);
     expect(name.getAttribute("aria-invalid")).toBe("true");
-    expect(document.activeElement).toBe(name);
+    // Focus moves after the invalid render commits (timing-only under load).
+    await waitFor(() => expect(document.activeElement).toBe(name));
     // Each error sits under its own field, not in a list at the bottom.
     expect(
       document.getElementById(name.getAttribute("aria-describedby")!.split(" ").at(-1)!)

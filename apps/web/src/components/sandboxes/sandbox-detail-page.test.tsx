@@ -1117,9 +1117,16 @@ describe("lifecycle", () => {
       leaseExpireActionEffective: sandbox().leaseExpireActionRequested,
     });
     await refetch();
-    expect(document.querySelector("[data-lease-effective]")?.getAttribute("data-lease-ack")).toBe(
-      "acknowledged",
-    );
+    // Deadline, request and host term now agree: one line, no repeated breakdown.
+    const agreed = document.querySelector("[data-lease-agreed]");
+    expect(agreed?.getAttribute("data-lease-ack")).toBe("acknowledged");
+    expect(agreed?.textContent).toMatch(/in 4 hours, then stop/);
+    expect(screen.getByText(enSandboxes.lifetime.ends)).toBeTruthy();
+    expect(screen.getByText(enSandboxes.lifetime.ack.acknowledged)).toBeTruthy();
+    expect(document.querySelector("[data-lease-effective]")).toBeNull();
+    expect(document.querySelector("[data-lease-requested]")).toBeNull();
+    expect(screen.queryByText(enSandboxes.lifetime.deadline)).toBeNull();
+    expect(screen.queryByText("Revision 2")).toBeNull();
   });
 
   it("two expiry cycles: each expiry is shown, and each cold start is its own request", async () => {
@@ -1363,6 +1370,8 @@ describe("disk offload (C8)", () => {
     const badge = document.querySelector<HTMLElement>("[data-disk-location]");
     expect(badge?.dataset.diskLocation).toBe("store");
     expect(badge?.textContent).toBe(enSandboxes.disk.location.store);
+    // The badge explains itself on hover (design review #15).
+    expect(badge?.title).toBe(enSandboxes.disk.locationHint.store);
     expect(screen.getByText(enSandboxes.disk.locationHint.store)).toBeTruthy();
     // No stop for a hostless sandbox; Start reads Restore.
     expect(await offered(enSandboxes.stop.action)).toBe(false);

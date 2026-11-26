@@ -124,6 +124,9 @@ export function ReceiptLine({
       <p className="text-sm text-muted-foreground">{t("sandboxes:receipt.none")}</p>
     );
   }
+  // In the list a finished request ("Stop: Done") repeats what the state
+  // already says; only one in flight or one that went wrong is worth a line.
+  if (compact && receipt.state === "SUCCEEDED") return null;
   const created = new Date(receipt.createdAt).getTime();
   const hint =
     receipt.state === "QUEUED" || receipt.state === "UNKNOWN_OUTCOME" || receipt.state === "FAILED"
@@ -183,6 +186,7 @@ export function DiskLocationBadge({ disk }: { disk: DiskView | null }) {
   return (
     <Badge
       data-disk-location={disk.location}
+      title={t(`sandboxes:disk.locationHint.${disk.location}`)}
       className={cn(
         "inline-flex items-center rounded-sm border px-2 py-0.5 text-xs font-medium",
         DISK_TONE[disk.location],

@@ -4,7 +4,7 @@ import type { Prisma } from "@wssp/db";
 import { metadataSchema, SANDBOX_STATES } from "@wssp/sandbox-contracts";
 import { cursorWhere } from "../lib/pagination";
 import { serviceResourceFilter } from "../lib/sdk-key-access";
-import { type ListSandboxesInput, listSandboxesInput, type Principal } from "./contracts";
+import { type ListSandboxesInput, listDashboardSandboxesInput, type Principal } from "./contracts";
 import { managedSandboxListFilter } from "./managed-sandbox";
 import { recordedKeyIdOf, viewerOf } from "./principal-kinds";
 
@@ -14,7 +14,7 @@ function invalidCursor(): never {
 
 /** One SQL predicate shared by discovery and the dashboard, before cursor/take. */
 function sandboxListQuery(owner: Principal, raw: ListSandboxesInput) {
-  const parsed = listSandboxesInput.safeParse(raw);
+  const parsed = listDashboardSandboxesInput.safeParse(raw);
   if (!parsed.success) throw new ORPCError("BAD_REQUEST");
   const input = parsed.data;
   const states = [...new Set(input.states ?? (input.status ? SANDBOX_STATES : ["READY" as const]))]
@@ -55,6 +55,7 @@ function sandboxListQuery(owner: Principal, raw: ListSandboxesInput) {
         templateId: input.templateId ?? null,
         templateRevisionId: input.templateRevisionId ?? null,
         poolId: input.poolId ?? null,
+        nameContains: input.nameContains ?? null,
         startedAfter,
         order,
       }),
@@ -67,6 +68,7 @@ function sandboxListQuery(owner: Principal, raw: ListSandboxesInput) {
     ...metadata.map(([key, value]) => ({ metadata: { path: [key], equals: value } })),
   ];
   if (input.poolId) AND.push({ originPoolId: input.poolId });
+  if (input.nameContains) AND.push({ name: { contains: input.nameContains } });
   if (input.templateId) AND.push({ templateId: input.templateId });
   if (input.templateRevisionId) AND.push({ templateRevisionId: input.templateRevisionId });
   if (startedAfter) AND.push({ startedAt: { gt: new Date(startedAfter) } });

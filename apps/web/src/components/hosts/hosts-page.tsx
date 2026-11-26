@@ -575,20 +575,27 @@ export function HostCard({
               max: VM_SIZE_LIMITS.hostVcpuBudgetMax,
             })}
           </p>
+          {/* Storage internals (limit inputs, raw disk, identity) live here;
+              the bars above and any storage problem below stay up front. */}
+          <section aria-label={t("hosts:storage.title")} className="flex min-w-0 flex-col gap-3">
+            <h3 className="text-sm font-medium">{t("hosts:storage.title")}</h3>
+            {host.storagePools.map((pool) => (
+              <StorageCard key={pool.id} pool={pool} now={now} locale={locale} />
+            ))}
+          </section>
         </AdvancedDetails>
+        {host.storagePools.length === 0 ? (
+          <p data-storage-empty="" className="text-sm text-muted-foreground">
+            {t("hosts:storage.empty")}
+          </p>
+        ) : null}
+        {host.storagePools.map((pool) => (
+          <StorageProblem key={pool.id} pool={pool} now={now} />
+        ))}
         <p data-retained-roots="" className="text-sm">
           {t("hosts:storage.roots", { count: host.retainedRootCount })}
         </p>
         <p className="text-xs text-muted-foreground">{t("hosts:storage.retainedHint")}</p>
-        <section aria-label={t("hosts:storage.title")} className="flex min-w-0 flex-col gap-3">
-          <h3 className="text-sm font-medium">{t("hosts:storage.title")}</h3>
-          {host.storagePools.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("hosts:storage.empty")}</p>
-          ) : null}
-          {host.storagePools.map((pool) => (
-            <StorageCard key={pool.id} pool={pool} now={now} locale={locale} />
-          ))}
-        </section>
       </section>
       {locked ? null : (
         <section
@@ -792,6 +799,37 @@ function HostNetwork({ host, connected }: { host: HostItem; connected: boolean }
   );
 }
 
+/**
+ * A storage pool that needs attention, shown above the capacity details:
+ * unavailable or stale, draining, over its limit, or held to a lower limit
+ * than its disk size allows. Nothing for a healthy pool.
+ */
+function StorageProblem({ pool, now }: { pool: StorageSummary; now: number }) {
+  const { t } = useTranslation("hosts");
+  const state = storageDisplayState(pool, now);
+  const over = Math.max(0, pool.diskReservedGiB - pool.capacityGiB);
+  const limited =
+    pool.capacitySource === "implicit" && pool.capacityGiB < (pool.totalBasedCapacityGiB ?? 0);
+  if (state === "healthy" && !pool.draining && over === 0 && !pool.reason && !limited) return null;
+  return (
+    <div
+      data-storage-problem={pool.id}
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-state-warning/50 bg-state-warning-bg p-3 text-sm"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="break-all font-medium">{t("storage.meter", { name: pool.name })}</span>
+        {state === "healthy" ? null : <Badge variant="destructive">{t(`storage.${state}`)}</Badge>}
+        {pool.draining ? <Badge variant="outline">{t("storage.draining")}</Badge> : null}
+        {over > 0 ? (
+          <Badge variant="destructive">{t("storage.overcommitted", { value: over })}</Badge>
+        ) : null}
+      </div>
+      {pool.reason ? <p>{t(`storage.reason.${pool.reason}`)}</p> : null}
+      {limited ? <p data-storage-limited="">{t("storage.limited")}</p> : null}
+    </div>
+  );
+}
+
 function StorageCard({ pool, now, locale }: { pool: StorageSummary; now: number; locale: string }) {
   const { t } = useTranslation("hosts");
   const state = storageDisplayState(pool, now);
@@ -831,11 +869,6 @@ function StorageCard({ pool, now, locale }: { pool: StorageSummary; now: number;
               ceiling: pool.implicitCeilingGiB,
             })}
           </p>
-          {pool.capacityGiB < (pool.totalBasedCapacityGiB ?? 0) ? (
-            <p data-storage-limited="" className="text-state-warning">
-              {t("storage.limited")}
-            </p>
-          ) : null}
           <details>
             <summary className="flex min-h-11 cursor-pointer items-center">
               {t("storage.derivation")}

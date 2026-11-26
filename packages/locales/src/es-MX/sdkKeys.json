@@ -94,7 +94,10 @@
     "cliLogin": "Inicio de sesión de la CLI",
     "maxLiveSandboxes_one": "Hasta {{count}} sandbox activo",
     "maxLiveSandboxes_other": "Hasta {{count}} sandboxes activos",
-    "revoked": "Revocada"
+    "revoked": "Revocada",
+    "showScopes_one": "Mostrar {{count}} permiso",
+    "showScopes_other": "Mostrar los {{count}} permisos",
+    "sandboxes": "Sandboxes"
   },
   "mint": {
     "action": "Crear clave de SDK",

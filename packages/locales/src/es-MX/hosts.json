@@ -551,21 +551,21 @@
     "stale": "Reporte de almacenamiento desactualizado",
     "draining": "Drenando discos raíz nuevos",
     "overcommitted": "{{value}} GiB por encima del límite",
-    "commitments": "{{reserved}} / {{capacity}} GiB comprometidos · {{free}} GiB disponibles",
+    "commitments": "{{reserved}} de {{capacity}} GiB reservados para discos de sandbox · quedan {{free}} GiB",
     "source": {
-      "explicit": "Definido en el archivo de configuración del host (capacity_gib)",
-      "implicit": "Capacidad de raíz de perfil automático"
+      "explicit": "Límite definido en el archivo de configuración del host (capacity_gib)",
+      "implicit": "Límite calculado automáticamente a partir del tamaño del disco"
     },
-    "derived": "Máximo por total {{total}} GiB · efectivo {{effective}} GiB · techo persistido {{ceiling}} GiB",
-    "limited": "El espacio libre o el techo persistido limita esta capacidad. Solo un capacity_gib explícito local puede aumentarla; revisa el espacio del almacenamiento compartido y vuelve a conectar.",
-    "derivation": "Valores de capacidad al conectar",
-    "derivationTotalBytes": "Total del almacenamiento (T)",
-    "derivationFreeBytes": "Bytes libres (F)",
-    "derivationCommittedBytes": "Compromisos retenidos (C)",
-    "derivationActualBytes": "Uso medido de discos contabilizados (A ≤ C)",
-    "derivationHeadroomBytes": "Margen operativo (H)",
-    "usageUnknown": "Uso físico no disponible.",
-    "usage": "{{used}} usados de {{total}} ({{free}} libres)",
+    "derived": "Límite para discos de sandbox: {{effective}} GiB. El tamaño del disco permite {{total}} GiB; el límite nunca sube por sí solo por encima del más bajo guardado, {{ceiling}} GiB.",
+    "limited": "Este límite es menor de lo que permite el tamaño del disco, porque el espacio libre fue o es bajo. Solo se sube definiendo capacity_gib en el archivo de configuración del host: revisa el espacio libre del disco, defínelo y vuelve a conectar el host.",
+    "derivation": "Cómo se calculó el límite",
+    "derivationTotalBytes": "Tamaño del disco (T)",
+    "derivationFreeBytes": "Espacio libre (F)",
+    "derivationCommittedBytes": "Reservado para discos de sandbox (C)",
+    "derivationActualBytes": "Uso medido de discos de sandbox (A ≤ C)",
+    "derivationHeadroomBytes": "Reservado libre para el host (H)",
+    "usageUnknown": "El uso del disco del host en bruto no está disponible.",
+    "usage": "Disco del host en bruto (todos los archivos, no solo sandboxes): {{used}} usados de {{total}} ({{free}} libres)",
     "reported": "Última observación del almacenamiento: {{age}}",
     "hint": "Este límite cuenta cada disco de sandbox con su tamaño completo; no los separa físicamente. Deja espacio libre para las imágenes en caché. Al drenar, los sandboxes nuevos dejan de usar este almacenamiento, y un sandbox detenido necesita almacenamiento sano para volver a iniciar.",
     "reason": {
@@ -577,7 +577,7 @@
       "incomplete": "La inicialización o la evidencia del almacenamiento está incompleta. Se requiere revisión del operador."
     },
     "identityLabel": "ID del almacenamiento",
-    "retainedHint": "Los sandboxes detenidos e inciertos retienen sus compromisos de raíz. Solo la eliminación confirmada en el grupo original saludable los libera; el almacenamiento no disponible puede bloquear la eliminación del host indefinidamente.",
+    "retainedHint": "Un sandbox detenido, o uno con un estado incierto, mantiene reservado su espacio en disco en este host hasta que se confirma que su disco ya no está aquí: cuando destruyes el sandbox, o cuando su disco se copia al almacén de imágenes y se quita de este host. Si el almacenamiento no está disponible, el espacio sigue reservado y no se puede eliminar el host.",
     "meter": "Disco ({{name}})",
     "meterValue": "{{used}} GiB en uso de {{total}} GiB · {{free}} GiB libres"
   },

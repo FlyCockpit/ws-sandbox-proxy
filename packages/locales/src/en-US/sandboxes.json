@@ -8,14 +8,19 @@
     "deletedTitle": "No deleted sandboxes",
     "deletedDescription": "Destroyed sandboxes stay listed here with their history.",
     "activeTitle": "No active sandboxes",
-    "activeDescription": "Create a sandbox to start a VM from a template. Destroyed sandboxes are under Deleted."
+    "activeDescription": "Create a sandbox to start a VM from a template. Destroyed sandboxes are under Deleted.",
+    "noMatchTitle": "No sandbox name contains “{{name}}”",
+    "noMatchDescription": "Check the spelling, or look under All if it was deleted.",
+    "clearFilter": "Clear the filter"
   },
   "listRegion": "Your sandboxes",
   "filter": {
     "label": "Show sandboxes",
     "active": "Active",
     "deleted": "Deleted",
-    "all": "All"
+    "all": "All",
+    "name": "Filter by name",
+    "nameHint": "Sandbox names use only lowercase letters, digits and hyphens."
   },
   "open": "Open",
   "openLabel": "Open sandbox {{id}}",
@@ -167,7 +172,8 @@
     "days_one": "{{count}} day",
     "days_other": "{{count}} days",
     "stopped": "Not running: the lifetime starts again at the next start.",
-    "notRunning": "Not running"
+    "notRunning": "Not running",
+    "ends": "Ends"
   },
   "renew": {
     "action": "Renew lifetime",
@@ -189,27 +195,30 @@
   },
   "stop": {
     "action": "Stop",
-    "title": "Stop this sandbox?",
+    "title": "Stop {{name}}?",
     "description": "Stop shuts down the VM. A retained disk ends as Stopped so you can start it again.",
     "bootDescription": "Stop interrupts boot. A retained disk ends as Stopped so you can start it again. If no instance was created, the sandbox ends as Deleted.",
     "confirm": "Stop",
     "pending": "Stopping…",
     "done": "Stop requested.",
-    "offloadPolicy": "Disk copy to the store:"
+    "offloadPolicy": "Disk copy to the store:",
+    "actionNamed": "Stop {{name}}"
   },
   "start": {
     "action": "Start",
-    "title": "Start this sandbox again?",
+    "title": "Start {{name}} again?",
     "description": "The VM boots from its kept disk and keeps its lifetime unless you choose another.",
     "confirm": "Start",
     "pending": "Starting…",
     "done": "Start requested.",
     "restoreAction": "Restore",
-    "restoreTitle": "Restore this sandbox?",
+    "restoreTitle": "Restore {{name}}?",
     "restoreDescription": "Its disk is in the image store. Restoring downloads it to a host this sandbox may use, then boots it. It keeps its lifetime unless you choose another.",
     "restoreConfirm": "Restore",
     "restorePending": "Restoring…",
-    "restoreDone": "Restore requested."
+    "restoreDone": "Restore requested.",
+    "actionNamed": "Start {{name}}",
+    "restoreActionNamed": "Restore {{name}}"
   },
   "reconnect": {
     "action": "Reconnect",

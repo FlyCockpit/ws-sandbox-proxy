@@ -488,7 +488,10 @@
     "deletedTitle": "No hay sandboxes eliminados",
     "deletedDescription": "Los sandboxes destruidos siguen listados aquí con su historial.",
     "activeTitle": "No hay sandboxes activos",
-    "activeDescription": "Crea un sandbox para iniciar una VM desde una plantilla. Los sandboxes destruidos están en Eliminados."
+    "activeDescription": "Crea un sandbox para iniciar una VM desde una plantilla. Los sandboxes destruidos están en Eliminados.",
+    "noMatchTitle": "Ningún nombre de sandbox contiene “{{name}}”",
+    "noMatchDescription": "Revisa cómo está escrito, o búscalo en Todos si se eliminó.",
+    "clearFilter": "Quitar el filtro"
   },
   "entry": {
     "name": "Nombre",
@@ -584,7 +587,9 @@
     "label": "Mostrar sandboxes",
     "active": "Activos",
     "deleted": "Eliminados",
-    "all": "Todos"
+    "all": "Todos",
+    "name": "Filtrar por nombre",
+    "nameHint": "Los nombres de sandbox usan solo letras minúsculas, dígitos y guiones."
   },
   "guestRoot": {
     "title": "Root en el invitado",
@@ -644,7 +649,8 @@
     "days_one": "{{count}} día",
     "days_other": "{{count}} días",
     "stopped": "No está en ejecución: el tiempo de vida empieza de nuevo en el siguiente inicio.",
-    "notRunning": "No está en ejecución"
+    "notRunning": "No está en ejecución",
+    "ends": "Termina"
   },
   "listRegion": "Tus sandboxes",
   "observations": {
@@ -872,17 +878,19 @@
   },
   "start": {
     "action": "Iniciar",
-    "title": "¿Iniciar este sandbox de nuevo?",
+    "title": "¿Iniciar {{name}} de nuevo?",
     "description": "La VM arranca desde su disco conservado y conserva su tiempo de vida, salvo que elijas otro.",
     "confirm": "Iniciar",
     "pending": "Iniciando…",
     "done": "Inicio solicitado.",
     "restoreAction": "Restaurar",
-    "restoreTitle": "¿Restaurar este sandbox?",
+    "restoreTitle": "¿Restaurar {{name}}?",
     "restoreDescription": "Su disco está en el almacén de imágenes. Restaurar lo descarga en un host que este sandbox puede usar y luego lo arranca. Conserva su tiempo de vida, salvo que elijas otro.",
     "restoreConfirm": "Restaurar",
     "restorePending": "Restaurando…",
-    "restoreDone": "Restauración solicitada."
+    "restoreDone": "Restauración solicitada.",
+    "actionNamed": "Iniciar {{name}}",
+    "restoreActionNamed": "Restaurar {{name}}"
   },
   "state": {
     "REQUESTED": "Solicitado",
@@ -910,13 +918,14 @@
   },
   "stop": {
     "action": "Detener",
-    "title": "¿Detener este sandbox?",
+    "title": "¿Detener {{name}}?",
     "description": "Detener apaga la VM. Si el disco se conserva, el sandbox termina como Detenido para que puedas iniciarlo de nuevo.",
     "bootDescription": "Detener interrumpe el arranque. Si el disco se conserva, el sandbox termina como Detenido para que puedas iniciarlo de nuevo. Si no se creó una instancia, el sandbox termina como Eliminado.",
     "confirm": "Detener",
     "pending": "Deteniendo…",
     "done": "Detención solicitada.",
-    "offloadPolicy": "Copia del disco al almacén:"
+    "offloadPolicy": "Copia del disco al almacén:",
+    "actionNamed": "Detener {{name}}"
   },
   "storageUnknown": "Sin vinculación de almacenamiento retenido.",
   "templateArchived": "{{label}} (archivada)",

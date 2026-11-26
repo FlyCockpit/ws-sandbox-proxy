@@ -1,5 +1,6 @@
 import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isKnownServiceScope } from "@wssp/api/lib/service-scopes";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import type { AgentTokenExpiryPolicy } from "@wssp/config/agent-token-limits";
 import { Badge } from "@wssp/ui/components/badge";
@@ -19,7 +20,7 @@ import {
 } from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
 import { FIRST_INVALID_SELECTOR, focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
-import { Plus } from "lucide-react";
+import { ChevronRight, Plus } from "lucide-react";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -263,6 +264,24 @@ function SdkKeyRow({
   const expired = expires != null && expires <= now;
   const revoked = sdkKey.revokedAt != null;
   const blockedByPolicy = agent && !revoked && sdkKey.blockedByPolicy === true;
+  // A scope this page does not know never folds into a preset name.
+  const knownScopes = sdkKey.scopes.filter(isKnownServiceScope);
+  const access =
+    knownScopes.length === sdkKey.scopes.length ? accessChoiceFor(knownScopes) : "custom";
+  const scopeChips = (
+    <ul aria-label={t("sdkKeys:list.scopes")} className="flex min-w-0 flex-wrap gap-1.5">
+      {sdkKey.scopes.map((scope) => (
+        <li
+          key={scope}
+          data-scope={scope}
+          title={scope}
+          className="inline-flex items-center rounded-sm border px-2 py-0.5 text-xs"
+        >
+          {t(`sdkKeys:scopeTitle.${scope.replace(":", ".")}`)}
+        </li>
+      ))}
+    </ul>
+  );
   return (
     <li
       data-credential-id={sdkKey.id}
@@ -303,87 +322,117 @@ function SdkKeyRow({
           </Button>
         )}
       </div>
-      <ul aria-label={t("sdkKeys:list.scopes")} className="flex min-w-0 flex-wrap gap-1.5">
-        {sdkKey.scopes.map((scope) => (
-          <li
-            key={scope}
-            data-scope={scope}
-            title={scope}
-            className="inline-flex items-center rounded-sm border px-2 py-0.5 text-xs"
-          >
-            {t(`sdkKeys:scopeTitle.${scope.replace(":", ".")}`)}
-          </li>
-        ))}
-      </ul>
-      {sdkKey.resourceMode === "ALL_OWNED" ? (
-        <p className="text-sm" data-resource-mode={sdkKey.resourceMode}>
-          {t("sdkKeys:list.allOwned")}
+      {/* Design review #14: lead with what the key can do. A preset key folds
+          its chips (the preset names exactly that set); a Custom key keeps
+          every permission in view, so host access or CLI shells never hide. */}
+      <div className="flex min-w-0 flex-col gap-1" data-scope-summary={access}>
+        <p className="text-sm font-medium">
+          {t(`sdkKeys:form.preset.${access}.title`)} ·{" "}
+          {t("sdkKeys:form.scopeCount", { count: sdkKey.scopes.length })}
         </p>
+        {access === "custom" ? null : (
+          <p className="text-sm text-muted-foreground">
+            {t(`sdkKeys:form.preset.${access}.description`)}
+          </p>
+        )}
+      </div>
+      {access === "custom" ? (
+        scopeChips
       ) : (
-        <div className="min-w-0 text-sm" data-resource-mode={sdkKey.resourceMode}>
-          <p>{t("sdkKeys:list.allowlistTitle")}</p>
-          <p data-allowlist="hosts" className="break-words text-muted-foreground">
-            {t("sdkKeys:list.allowlistHosts", {
-              names: listNames(
-                sdkKey.hostAllowlist.map((host) =>
-                  translateText(t, "credentials:host.label", {
-                    label: host.label,
-                    slug: host.slug,
-                  }),
-                ),
-                locale,
-              ),
-            })}
-          </p>
-          <p data-allowlist="templates" className="break-words text-muted-foreground">
-            {t("sdkKeys:list.allowlistTemplates", {
-              names: listNames(
-                sdkKey.revisionAllowlist.map((revision) =>
-                  translateText(t, "sdkKeys:resourceIdentity", {
-                    label: revision.label,
-                    id: revision.id,
-                  }),
-                ),
-                locale,
-              ),
-            })}
-          </p>
-        </div>
+        <details data-scope-details="" className="group/scopes min-w-0 text-sm">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 font-medium text-muted-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight
+              aria-hidden="true"
+              className="size-4 shrink-0 transition-transform duration-150 group-open/scopes:rotate-90 motion-reduce:transition-none"
+            />
+            {t("sdkKeys:list.showScopes", { count: sdkKey.scopes.length })}
+          </summary>
+          {scopeChips}
+        </details>
       )}
-      <p className="text-sm" data-pool-mode={sdkKey.poolMode}>
-        {t(
-          sdkKey.poolMode === "ALL_USABLE"
-            ? "sdkKeys:poolMode.ALL_USABLE"
-            : "sdkKeys:poolMode.SELECTED",
-        )}
-      </p>
-      {sdkKey.resourceMode === "ALLOWLIST" && (sdkKey.credentialAllowlist ?? []).length > 0 ? (
-        <p data-allowlist="logins" className="break-words text-muted-foreground">
-          {translateText(t, "sdkKeys:list.allowlistLogins", {
-            names: listNames(
-              (sdkKey.credentialAllowlist ?? []).map((login) => login.name),
-              locale,
-            ),
-          })}
-        </p>
-      ) : null}
-      {sdkKey.poolMode === "SELECTED" ? (
-        <p data-allowlist="pools" className="break-words text-muted-foreground">
-          {t("sdkKeys:list.allowlistPools", {
-            names: listNames(
-              (sdkKey.poolAllowlist ?? []).map((pool) =>
-                translateText(t, "sdkKeys:resourceIdentity", { label: pool.label, id: pool.id }),
-              ),
-              locale,
-            ),
-          })}
-        </p>
-      ) : null}
-      <p className="text-sm">
-        {t(
-          sdkKey.ownSandboxesOnly ? "sdkKeys:form.ownSandboxesOnly" : "sdkKeys:list.otherSandboxes",
-        )}
-      </p>
+      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
+        <div className="min-w-0" data-resource-mode={sdkKey.resourceMode}>
+          <dt className="text-xs text-muted-foreground">{t("sdkKeys:form.resources")}</dt>
+          {sdkKey.resourceMode === "ALL_OWNED" ? (
+            <dd>{t("sdkKeys:list.allOwned")}</dd>
+          ) : (
+            <dd className="min-w-0">
+              <p>{t("sdkKeys:list.allowlistTitle")}</p>
+              <p data-allowlist="hosts" className="break-words text-muted-foreground">
+                {t("sdkKeys:list.allowlistHosts", {
+                  names: listNames(
+                    sdkKey.hostAllowlist.map((host) =>
+                      translateText(t, "credentials:host.label", {
+                        label: host.label,
+                        slug: host.slug,
+                      }),
+                    ),
+                    locale,
+                  ),
+                })}
+              </p>
+              <p data-allowlist="templates" className="break-words text-muted-foreground">
+                {t("sdkKeys:list.allowlistTemplates", {
+                  names: listNames(
+                    sdkKey.revisionAllowlist.map((revision) =>
+                      translateText(t, "sdkKeys:resourceIdentity", {
+                        label: revision.label,
+                        id: revision.id,
+                      }),
+                    ),
+                    locale,
+                  ),
+                })}
+              </p>
+              {(sdkKey.credentialAllowlist ?? []).length > 0 ? (
+                <p data-allowlist="logins" className="break-words text-muted-foreground">
+                  {translateText(t, "sdkKeys:list.allowlistLogins", {
+                    names: listNames(
+                      (sdkKey.credentialAllowlist ?? []).map((login) => login.name),
+                      locale,
+                    ),
+                  })}
+                </p>
+              ) : null}
+            </dd>
+          )}
+        </div>
+        <div className="min-w-0" data-pool-mode={sdkKey.poolMode}>
+          <dt className="text-xs text-muted-foreground">{t("sdkKeys:form.pools")}</dt>
+          <dd>
+            {t(
+              sdkKey.poolMode === "ALL_USABLE"
+                ? "sdkKeys:poolMode.ALL_USABLE"
+                : "sdkKeys:poolMode.SELECTED",
+            )}
+            {sdkKey.poolMode === "SELECTED" ? (
+              <span data-allowlist="pools" className="block break-words text-muted-foreground">
+                {t("sdkKeys:list.allowlistPools", {
+                  names: listNames(
+                    (sdkKey.poolAllowlist ?? []).map((pool) =>
+                      translateText(t, "sdkKeys:resourceIdentity", {
+                        label: pool.label,
+                        id: pool.id,
+                      }),
+                    ),
+                    locale,
+                  ),
+                })}
+              </span>
+            ) : null}
+          </dd>
+        </div>
+        <div className="min-w-0" data-own-sandboxes-only={sdkKey.ownSandboxesOnly ? "on" : "off"}>
+          <dt className="text-xs text-muted-foreground">{t("sdkKeys:list.sandboxes")}</dt>
+          <dd>
+            {t(
+              sdkKey.ownSandboxesOnly
+                ? "sdkKeys:form.ownSandboxesOnly"
+                : "sdkKeys:list.otherSandboxes",
+            )}
+          </dd>
+        </div>
+      </dl>
       {sdkKey.maxLiveSandboxes != null ? (
         <p className="text-sm" data-max-live-sandboxes={sdkKey.maxLiveSandboxes}>
           {t("sdkKeys:list.maxLiveSandboxes", { count: sdkKey.maxLiveSandboxes })}
