@@ -127,7 +127,9 @@ describe("signed-in routes in the generated route tree", () => {
 
   it("keeps the _auth layout's login redirect carrying the intended href", () => {
     const authLayout = readFileSync(join(src, "routes/$lang/_app/_auth.tsx"), "utf8");
-    expect(authLayout).toContain("decideProtectedRouteAccess(await getProtectedRouteSession())");
+    expect(authLayout).toContain(
+      "decideProtectedRouteAccess(await resolveProtectedRouteSession())",
+    );
     expect(authLayout).toContain(
       "throw redirect(loginRedirect(params.lang, authRedirectHref(location)))",
     );

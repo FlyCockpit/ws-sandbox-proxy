@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { env } from "@wssp/env/web";
 import { Button } from "@wssp/ui/components/button";
@@ -16,11 +15,10 @@ import { BookOpen, LogOut, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShowsAdminNavigation } from "@/hooks/use-admin-navigation";
 import { useAuthSession } from "@/hooks/use-auth-session";
-import { markExplicitSignOut } from "@/hooks/use-reload-on-identity-change";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { docsUrl } from "@/lib/docs-links";
+import { signOutAndLeave } from "@/lib/explicit-sign-out";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
-import { useOrphanCredentials } from "@/stores/orphan-credentials";
 import { friendly } from "@/utils/friendly-error";
 
 /**
@@ -31,7 +29,6 @@ import { friendly } from "@/utils/friendly-error";
  * second click. Only rendered when a session is present.
  */
 export default function UserMenuContent() {
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   // `strict: false` so the menu renders under both prefixed and (briefly) the
   // top-level `/` redirect route without throwing.
@@ -109,23 +106,13 @@ export default function UserMenuContent() {
           <DropdownMenuItem
             variant="destructive"
             onClick={async () => {
-              // Dynamic import keeps the sign-out path out of the menu chunk's
-              // critical path; the auth client is already warm once the menu
-              // is reachable for a signed-in user.
-              const { authClient } = await import("@/lib/auth-client");
-              const cancelSignOut = markExplicitSignOut();
-              try {
-                const result = await authClient.signOut();
-                if (result.error) throw result.error;
-                queryClient.clear();
-                useOrphanCredentials.getState().clear();
-                window.location.assign(`/${lang}/login`);
-              } catch (error) {
-                // Still signed in: undo the mark (so a later identity change
-                // still reloads) and say so.
-                cancelSignOut();
-                toast.error(friendly(error, t("userMenu.signOutFailed")));
-              }
+              // A full page load to localized login, once the sign-out
+              // succeeded (lib/explicit-sign-out.ts): it drops every byte of
+              // the old user's in-memory state without leaving mounted queries
+              // refetching or stuck pending on a cleared cache. Still signed in
+              // after a failure: say so.
+              const result = await signOutAndLeave(`/${lang}/login`);
+              if (!result.ok) toast.error(friendly(result.error, t("userMenu.signOutFailed")));
             }}
           >
             <LogOut className="size-4" aria-hidden="true" />

@@ -12,6 +12,7 @@ const fake = vi.hoisted(() => ({
   proceed: vi.fn(),
   signOut: vi.fn(),
   undo: vi.fn(),
+  leave: vi.fn(),
 }));
 vi.mock("@/lib/auth-client", () => ({
   authClient: { oauth2: { continue: fake.proceed }, signOut: fake.signOut },
@@ -27,7 +28,10 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-vi.mock("@/hooks/use-reload-on-identity-change", () => ({ markExplicitSignOut: () => fake.undo }));
+vi.mock("@/lib/document-identity", () => ({
+  markExplicitSignOut: () => fake.undo,
+  leaveDocument: fake.leave,
+}));
 
 import { McpLoginPage } from "./mcp-login-page";
 
@@ -80,5 +84,20 @@ it("offers fresh sign-in for revoked generations and retains private state when 
   expect(fake.signOut).toHaveBeenCalledWith({ disableRedirect: true });
   expect(await screen.findByText(en.login.reauthFailed)).toBeTruthy();
   expect(fake.undo).toHaveBeenCalledOnce();
+  expect(fake.leave).not.toHaveBeenCalled();
   expect(client.getQueryData(["private"])).toBe("retained");
+});
+it("re-authentication full-loads login through the quarantine, keeping the signed transaction", async () => {
+  fake.authenticated = true;
+  const raw = "?client_id=client&scope=sandboxes%3Aread&sig=signed";
+  window.history.replaceState(null, "", `/en-US/mcp-login${raw}`);
+  fake.signOut.mockResolvedValue({ data: { success: true }, error: null });
+  await mount();
+  await userEvent.setup().click(screen.getByRole("button", { name: en.login.reauthenticate }));
+  await vi.waitFor(() =>
+    expect(fake.leave).toHaveBeenCalledExactlyOnceWith(
+      `/en-US/login?redirectTo=${encodeURIComponent(`/en-US/mcp-login${raw}`)}`,
+    ),
+  );
+  expect(fake.undo).not.toHaveBeenCalled();
 });

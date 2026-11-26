@@ -144,7 +144,8 @@ export function hasSessionTokenCookie(cookieHeader: string | null | undefined): 
  * where to send someone, and **never** an access check. A stale or forged
  * cookie just sends the visitor to the signed-in home, whose `_auth` gate does
  * the real check and sends them to login. Do not use this to show or hide
- * data; use {@link getRouteSession} or a procedure for that.
+ * data; use a route guard (`resolveRouteSession()`, lib/route-session.ts) or a
+ * procedure for that.
  *
  * Cache safety: `apps/server/src/ssr-cache.ts` never caches a request that
  * carries a Better-Auth cookie, so a page rendered from this hint is never

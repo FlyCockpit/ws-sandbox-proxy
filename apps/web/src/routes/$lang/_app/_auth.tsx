@@ -6,9 +6,9 @@ import { ForcedPasswordChange } from "@/components/forced-password-change";
 import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
 import { RouteContentSkeleton } from "@/components/route-content-skeleton";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
+import { resolveProtectedRouteSession } from "@/lib/route-session";
 import { decideProtectedRouteAccess, loginRedirect } from "@/lib/route-session-access";
 import { setSessionHint } from "@/lib/session-hint";
-import { getProtectedRouteSession } from "@/server/auth-session";
 import { clientReadableForcedTwoFactorSettings } from "@/utils/two-factor-policy";
 
 export const Route = createFileRoute("/$lang/_app/_auth")({
@@ -19,7 +19,7 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
     // One round trip resolves the session AND the forced-2FA settings the
     // layout gates on, so the page's own queries start as soon as this
     // returns instead of waiting on a separate `settings.getAll` request.
-    const decision = decideProtectedRouteAccess(await getProtectedRouteSession());
+    const decision = decideProtectedRouteAccess(await resolveProtectedRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-to-login") {
       // Keep the public pages' cookie hint in step with what this gate just

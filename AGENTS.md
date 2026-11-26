@@ -152,8 +152,8 @@ Safe alternatives:
 - Do not use `git commit --no-verify`.
 - Do not disable pinch-zoom (`maximum-scale` / `user-scalable=no`).
 - Do not use `@ts-ignore`. Use `@ts-expect-error` with a reason.
-- Route files must not call `authClient.getSession()`. Use `getRouteSession()`
-  from `apps/web/src/server/auth-session.ts`.
+- Route guards use `apps/web/src/lib/route-session.ts` (`resolveRouteSession()`
+  and siblings), never `authClient.getSession()` or the bare server probes.
 - Do not call `.useSession()` except inside
   `apps/web/src/hooks/use-auth-session.ts`. Everyone else uses `useAuthSession()`.
 - Do not loosen CSP directives in `apps/server/src/security-headers.ts` to
@@ -350,10 +350,10 @@ Safe alternatives:
   and SheetContent close buttons require caller-supplied translated closeLabel;
   CommandDialog forwards the same requirement. Header and fixed BottomNav respect
   all safe-area edges; overlays stay bounded and keep actions reachable by scroll.
-- One lazily enabled root identity boundary persists after first app use.
-  Confirmed identity loss/change discards private client state; pending, offline,
-  degraded or refetch/error states alone do not. Explicit signout clears state
-  only after success and full-loads localized login; failure undoes its marker.
+- One lazily enabled root identity boundary persists after first app use; the
+  baseline lives in lib/document-identity.ts. Confirmed identity loss/change
+  quarantines then reloads; pending, offline, degraded or refetch/error states
+  alone do not. Sign-outs use signOutAndLeave (shell-rules § Query cache follows identity).
 - Retain loaded content on transient query errors with inline retry, but hide it
   on access/not-found errors. QueryBoundary requires the original error, including
   through reduced projections; detail pages apply the same rule. Never present a

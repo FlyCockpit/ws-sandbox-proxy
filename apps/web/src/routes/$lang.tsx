@@ -5,7 +5,7 @@ import { loadLocaleInto } from "@/i18n";
 import { isSupportedLocale, type Locale } from "@/i18n/config";
 import { decideLocaleRedirect } from "@/i18n/redirect-to-default";
 import { hideAdminRoute } from "@/lib/hidden-admin";
-import { getRouteAdminAccess } from "@/server/admin-route-access";
+import { resolveRouteAdminAccess } from "@/lib/route-session";
 
 /**
  * Locale-prefix layout. Every URL in the app lives under `/$lang/...` —
@@ -56,8 +56,9 @@ export const Route = createFileRoute("/$lang")({
     // Hidden admin pages answer exactly like an unknown URL: HTTP 404 and
     // this route's PublicNotFoundPage. Only the server render needs this check —
     // the `_app` subtree is client-rendered, so the admin route's own guard
-    // (which throws the same notFound on the client) never runs in SSR.
-    if (import.meta.env.SSR) await hideAdminRoute(matches, getRouteAdminAccess);
+    // (which throws the same notFound on the client) never runs in SSR. The
+    // identity check inside is a no-op on the server (no document there).
+    if (import.meta.env.SSR) await hideAdminRoute(matches, resolveRouteAdminAccess);
   },
   // Unknown URLs under a locale and hidden admin pages both land here. An
   // unknown URL matches no layout under `$lang`, so the router renders this in

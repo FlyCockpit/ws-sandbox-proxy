@@ -17,9 +17,9 @@ import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
 import { ensureRouteQuery } from "@/lib/route-query";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { signupNotice } from "@/lib/signup-notice";
-import { getRouteSession } from "@/server/auth-session";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { safeRedirectTo } from "@/utils/safe-redirect";
@@ -30,7 +30,7 @@ export const Route = createFileRoute("/$lang/_app/signup")({
     redirectTo: typeof search.redirectTo === "string" ? search.redirectTo : undefined,
   }),
   beforeLoad: async ({ context, params, search }) => {
-    const decision = decideAnonymousOnlyRouteAccess(await getRouteSession());
+    const decision = decideAnonymousOnlyRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-authenticated") {
       throw redirect({ href: safeRedirectTo(search.redirectTo, params.lang) });

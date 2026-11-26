@@ -1,19 +1,17 @@
 import { cloneElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({
   signOut: vi.fn(),
-  clear: vi.fn(),
   mark: vi.fn(),
   cancel: vi.fn(),
-  assign: vi.fn(),
+  leave: vi.fn(),
   toast: vi.fn(),
   signOutClick: undefined as (() => Promise<void>) | undefined,
   env: { VITE_DOCS_URL: undefined as string | undefined },
 }));
 vi.mock("@wssp/env/web", () => ({ env: fixture.env }));
-vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ clear: fixture.clear }) }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
   useParams: () => ({ lang: "es-MX" }),
@@ -27,7 +25,10 @@ vi.mock("@/hooks/use-auth-session", () => ({
   }),
 }));
 vi.mock("@/hooks/use-admin-navigation", () => ({ useShowsAdminNavigation: () => false }));
-vi.mock("@/hooks/use-reload-on-identity-change", () => ({ markExplicitSignOut: fixture.mark }));
+vi.mock("@/lib/document-identity", () => ({
+  markExplicitSignOut: fixture.mark,
+  leaveDocument: fixture.leave,
+}));
 vi.mock("@/lib/auth-client", () => ({ authClient: { signOut: fixture.signOut } }));
 vi.mock("@/utils/friendly-error", () => ({
   friendly: (_error: unknown, fallback?: string) => fallback ?? "Please try again",
@@ -87,18 +88,14 @@ vi.mock("@wssp/ui/components/dropdown-menu", () => {
   };
 });
 
-import { useOrphanCredentials } from "@/stores/orphan-credentials";
 import UserMenuContent from "./user-menu-content";
 
 beforeEach(() => {
   vi.clearAllMocks();
   fixture.env.VITE_DOCS_URL = undefined;
   fixture.mark.mockReturnValue(fixture.cancel);
-  useOrphanCredentials.setState({ entries: [], ownerId: "owner-1", epoch: 10 });
-  vi.stubGlobal("window", { location: { assign: fixture.assign } });
 });
-afterEach(() => vi.unstubAllGlobals());
-it("waits for successful signout, clears client state, then full-loads localized login once", async () => {
+it("waits for successful signout, then leaves for localized login once (quarantined full load)", async () => {
   let finish: ((result: { error: null }) => void) | undefined;
   fixture.signOut.mockReturnValue(
     new Promise((resolve) => {
@@ -108,15 +105,15 @@ it("waits for successful signout, clears client state, then full-loads localized
   renderToStaticMarkup(<UserMenuContent />);
   const pending = fixture.signOutClick?.();
   await vi.waitFor(() => expect(fixture.signOut).toHaveBeenCalledOnce());
-  expect(fixture.clear).not.toHaveBeenCalled();
-  expect(useOrphanCredentials.getState().epoch).toBe(10);
+  // Nothing is dropped before the server confirmed the sign-out.
+  expect(fixture.leave).not.toHaveBeenCalled();
   finish?.({ error: null });
   await pending;
   expect(fixture.mark).toHaveBeenCalledOnce();
   expect(fixture.cancel).not.toHaveBeenCalled();
-  expect(fixture.clear).toHaveBeenCalledOnce();
-  expect(useOrphanCredentials.getState().epoch).not.toBe(10);
-  expect(fixture.assign).toHaveBeenCalledExactlyOnceWith("/es-MX/login");
+  // lib/document-identity.ts hides the page and drops the query cache and the
+  // orphan-credential store (router.tsx) before the load.
+  expect(fixture.leave).toHaveBeenCalledExactlyOnceWith("/es-MX/login");
 });
 it.each(["response", "throw"])(
   "unmarks failed signout (%s) and retains cached state with friendly retry",
@@ -126,9 +123,7 @@ it.each(["response", "throw"])(
     renderToStaticMarkup(<UserMenuContent />);
     await fixture.signOutClick?.();
     expect(fixture.cancel).toHaveBeenCalledOnce();
-    expect(fixture.clear).not.toHaveBeenCalled();
-    expect(useOrphanCredentials.getState().epoch).toBe(10);
-    expect(fixture.assign).not.toHaveBeenCalled();
+    expect(fixture.leave).not.toHaveBeenCalled();
     // An unrecognised failure says what failed, not just "try again".
     expect(fixture.toast).toHaveBeenCalledWith("userMenu.signOutFailed");
   },

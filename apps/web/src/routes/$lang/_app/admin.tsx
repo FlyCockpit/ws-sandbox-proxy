@@ -7,8 +7,8 @@ import { useTranslation } from "react-i18next";
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
 import { DashboardFrame } from "@/components/dashboard-frame";
 import { HIDDEN_ROUTE_NOT_FOUND_ID } from "@/lib/hidden-admin";
+import { resolveRouteAdminAccess } from "@/lib/route-session";
 import { decideAdminRouteAccess } from "@/lib/route-session-access";
-import { getRouteAdminAccess } from "@/server/admin-route-access";
 
 export const Route = createFileRoute("/$lang/_app/admin")({
   // Only the defaults: /admin's first frame equals any unframed URL's.
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/$lang/_app/admin")({
   beforeLoad: async () => {
     // The verdict comes from the server's `isAdminSessionAuthorized`, the same
     // gate every admin procedure uses, so page and API agree on who is hidden.
-    const decision = decideAdminRouteAccess(await getRouteAdminAccess());
+    const decision = decideAdminRouteAccess(await resolveRouteAdminAccess());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     // 404-hide the entire admin tree from everyone the gate refuses. Throwing
     // notFound() (instead of redirect) at the `$lang` boundary means an

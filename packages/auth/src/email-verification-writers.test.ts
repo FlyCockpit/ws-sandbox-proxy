@@ -23,8 +23,9 @@ const reviewed: Record<string, string> = {
     "052afb3730c95ca4bee2ea7baea3a5f1ca35dd5aa712595c755452ed8e21cc7f",
   // Reviewed 11-26 (home-nav): root landing probe replaced by a session-cookie presence hint
   // (no session read); the session projection's emailVerified copy is unchanged, read only.
+  // Reviewed 11-26 (identity-cache): a JSDoc points to resolveRouteSession; emailVerified copy unchanged, read only.
   "apps/web/src/server/auth-session.ts":
-    "bfe724c746d71d6d9d40b1b36abff28b5711cfb8a98d7ffa3a2df1af6d2bec20",
+    "78630ae45d0d2c05b2d9c169be7cabc11c6eb4690bdbb4d6e6380c726be0ea40",
   // Reviewed 11-26 (wssp-fix phase B): pending-state staticData added; the emailVerified reads are unchanged, read only.
   // Reviewed 11-26 (home-nav): the continue link targets APP_HOME; comment-only emailVerified mention unchanged.
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
@@ -55,8 +56,9 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
   // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.
   // Reviewed 11-26 (home-nav): the gate writes the public session hint; the emailVerified read is unchanged, read only.
+  // Reviewed 11-26 (identity-cache): the gate probes through resolveProtectedRouteSession; the emailVerified read is unchanged, read only.
   "apps/web/src/routes/$lang/_app/_auth.tsx":
-    "9cab3b6722b07f36b940a3292366a30cd862700adafe67a46d98e12104ffc09d",
+    "1e1610631d0f0fafef95705f5a297437d46029576cb7eaee9b721d3a7001c5a0",
   // Webhooks: isAdminAccountAuthorized reads the gate snapshot's emailVerified (read only).
   "packages/api/src/lib/sensitive-session-two-factor-gate.ts":
     "6a51bb5c7a528ca30fda6700413196bda144bbfc9f6f58d77e878250c192cbcf",

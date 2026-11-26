@@ -1,8 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { DevicePage } from "@/components/device-page";
+import { resolveRouteSession } from "@/lib/route-session";
 import { decideDeviceRouteAccess, loginRedirect } from "@/lib/route-session-access";
-import { getRouteSession } from "@/server/auth-session";
 import { getRouteForcedTwoFactorSettings } from "@/server/route-forced-two-factor-settings";
 
 export const Route = createFileRoute("/$lang/_app/device")({
@@ -13,7 +13,7 @@ export const Route = createFileRoute("/$lang/_app/device")({
   },
   beforeLoad: async ({ params, location }) => {
     const [sessionResolution, forcedTwoFactorSettings] = await Promise.all([
-      getRouteSession(),
+      resolveRouteSession(),
       getRouteForcedTwoFactorSettings(),
     ]);
     const decision = decideDeviceRouteAccess(sessionResolution, forcedTwoFactorSettings);
