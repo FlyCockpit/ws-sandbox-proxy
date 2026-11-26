@@ -446,7 +446,8 @@ describe("minting a host token", () => {
     // Each error sits under its field (aria-invalid + described by it); Name gets focus.
     const name = within(dialog()).getByLabelText(enCredentials.form.name);
     await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
-    expect(document.activeElement).toBe(name);
+    // focusFirstInvalidField moves focus one animation frame after the submit.
+    await waitFor(() => expect(document.activeElement).toBe(name));
     const host = within(dialog()).getByLabelText(enHostCredentials.mint.host);
     expect(host.getAttribute("aria-invalid")).toBe("true");
     const describedText = (element: HTMLElement) =>

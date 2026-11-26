@@ -211,9 +211,8 @@ export async function withBrowser(
 }
 
 /**
- * Signs the session in as a mock `role` (the `starter-mock` cookie) and
- * records a decided cookie consent, so the banner is not part of what a check
- * measures. Leaves the browser on the sign-in page.
+ * Signs the session in as a mock `role` (the `starter-mock` cookie). Leaves
+ * the browser on the sign-in page.
  */
 export async function mockSession(
   { base, browser }: CheckRun,
@@ -234,8 +233,4 @@ export async function mockSession(
     "/",
   ]);
   await browser.run(["open", `${base}/en-US/login`]);
-  await browser.run([
-    "eval",
-    "localStorage.setItem('starter.consent.v1', JSON.stringify({ v: 1, analytics: false, decidedAt: Date.now() })); true",
-  ]);
 }
