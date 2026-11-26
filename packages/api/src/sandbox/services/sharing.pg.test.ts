@@ -693,7 +693,11 @@ it("host policy aggregates the usable switched-on hosts' consent for other accou
   await db.inspect.sandboxHost.update({
     where: { id: f.host.id },
     data: {
-      daemonFeatures: { image: { build: true, acceptForeign: false, acceptForeignBuilds: false } },
+      daemonFeatures: {
+        guestSudo: true,
+        egressOpen: true,
+        image: { build: true, acceptForeign: false, acceptForeignBuilds: false },
+      },
       daemonOpenEgressForOthers: false,
       daemonGuestSudoForOthers: true,
     },
@@ -715,6 +719,7 @@ it("host policy aggregates the usable switched-on hosts' consent for other accou
     where: { id: f.host.id },
     data: {
       daemonFeatures: { image: { build: true, acceptForeign: true, acceptForeignBuilds: true } },
+      daemonOpenEgressForOthers: true,
     },
   });
   expect(await getPoolHostPolicy(session(f.a.id), { id: f.pool.id })).toMatchObject({
@@ -723,6 +728,9 @@ it("host policy aggregates the usable switched-on hosts' consent for other accou
     ownHosts: 0,
     images: "all",
     builds: "all",
+    // Consent without the capability counts for nothing: this host stopped advertising either.
+    openEgress: "none",
+    guestSudo: "none",
     allowForeignBuilds: null,
   });
   // A switched-off member is not described; contribute-only grantees read nothing.

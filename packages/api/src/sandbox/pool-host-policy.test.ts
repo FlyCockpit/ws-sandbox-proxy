@@ -6,10 +6,15 @@ const member = (
   image: Record<string, boolean> | null,
   openEgress = false,
   guestSudo = true,
+  capable: { egressOpen?: boolean; guestSudo?: boolean } = {},
 ): PoolHostPolicyMember => ({
   hostOwnerId,
   Host: {
-    daemonFeatures: image ? { image } : null,
+    daemonFeatures: {
+      egressOpen: capable.egressOpen ?? true,
+      guestSudo: capable.guestSudo ?? true,
+      ...(image ? { image } : {}),
+    },
     daemonOpenEgressForOthers: openEgress,
     daemonGuestSudoForOthers: guestSudo,
   },
@@ -18,6 +23,20 @@ const closed = { build: true, acceptForeign: false, acceptForeignBuilds: false }
 const open = { build: true, acceptForeign: true, acceptForeignBuilds: true };
 
 describe("summarizePoolHostPolicy", () => {
+  it("consent counts only on a host that can serve open egress or guest root (e2e5-fups r1)", () => {
+    const policy = summarizePoolHostPolicy(
+      "member",
+      "owner",
+      [
+        member("owner", open, true, true, { egressOpen: false, guestSudo: false }),
+        member("owner", open, true, true),
+      ],
+      true,
+    );
+    expect(policy.openEgress).toBe("some");
+    expect(policy.guestSudo).toBe("some");
+  });
+
   it("a member on hosts that refuse other accounts sees none for images and builds", () => {
     const policy = summarizePoolHostPolicy(
       "member",

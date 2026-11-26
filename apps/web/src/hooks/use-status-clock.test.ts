@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
-import { useStatusClock } from "./use-status-clock";
+import { REFRESH_GRACE_MS, useStatusClock } from "./use-status-clock";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -23,4 +23,24 @@ it("judges cached data as of its fetch while a refetch replaces it", () => {
   // The refetch settled (or failed): the wall clock again.
   expect(renderHook(() => useStatusClock(4_000, false)).result.current).toBe(100_000);
   expect(renderHook(() => useStatusClock(0, true)).result.current).toBe(100_000);
+});
+
+it("a refetch that hangs past the grace is judged by the wall clock again (Codex r1)", async () => {
+  vi.useFakeTimers({ now: 100_000 });
+  try {
+    vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(true);
+    const { result } = renderHook(() => useStatusClock(4_000, true));
+    expect(result.current).toBe(4_000);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(REFRESH_GRACE_MS - 1_000);
+    });
+    expect(result.current).toBe(4_000);
+    // No other render happens: the hook's own timer ends the grace.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(result.current).toBe(100_000 + REFRESH_GRACE_MS + 1_000);
+  } finally {
+    vi.useRealTimers();
+  }
 });

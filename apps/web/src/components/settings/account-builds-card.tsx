@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,6 +23,7 @@ import { Switch } from "@wssp/ui/components/switch";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InlineRetry } from "@/components/inline-retry";
+import { useImagePolicySaved } from "@/hooks/use-image-policy-saved";
 import { disabledReasonKey } from "@/lib/template-build-rules";
 import { orpc } from "@/utils/orpc";
 
@@ -35,7 +36,7 @@ import { orpc } from "@/utils/orpc";
 export function AccountBuildsCard() {
   const { t } = useTranslation(["settings", "templates", "common"]);
   const switchId = useId();
-  const queryClient = useQueryClient();
+  const imagePolicySaved = useImagePolicySaved();
   const [confirming, setConfirming] = useState(false);
   const usage = useQuery({
     ...orpc.templateBuilds.usage.queryOptions(),
@@ -49,10 +50,7 @@ export function AccountBuildsCard() {
       toast.success(t("settings:builds.saved"));
     },
     onError: () => toast.error(t("settings:builds.saveError")),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: orpc.templateBuilds.usage.key() });
-      void queryClient.invalidateQueries({ queryKey: orpc.settings.imagePolicy.key() });
-    },
+    onSettled: imagePolicySaved,
   });
   const data = usage.data;
   return (

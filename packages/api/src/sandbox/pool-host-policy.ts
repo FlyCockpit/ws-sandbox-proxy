@@ -24,9 +24,16 @@ export type PoolHostPolicy = {
   images: HostPolicyLevel;
   /** Builds other accounts' templates (builder on, `accept_foreign_builds` and `accept_foreign_images`). */
   builds: HostPolicyLevel;
-  /** Open internet for other accounts' sandboxes (`allow_open_egress_for_others`). */
+  /**
+   * Open internet for other accounts' sandboxes: `allow_open_egress_for_others`
+   * on a host that can serve open mode (`daemonFeatures.egressOpen`), the same
+   * two facts `resolveEffectiveEgress` degrades on.
+   */
   openEgress: HostPolicyLevel;
-  /** Guest root (sudo) for other accounts' sandboxes (`allow_guest_sudo_for_others`). */
+  /**
+   * Guest root (sudo) for other accounts' sandboxes: `allow_guest_sudo_for_others`
+   * on a host that advertises `daemonFeatures.guestSudo`, as `resolveEffectiveGuestSudo`.
+   */
   guestSudo: HostPolicyLevel;
   /** Member view only: the caller's own "Run my builds on other people's builder hosts". */
   allowForeignBuilds: boolean | null;
@@ -47,6 +54,15 @@ export const poolHostPolicyMemberSelect = {
 export type PoolHostPolicyMember = Prisma.SandboxPoolMemberGetPayload<{
   select: typeof poolHostPolicyMemberSelect;
 }>;
+
+function featureFlag(features: Prisma.JsonValue | null, key: string): boolean {
+  return (
+    features !== null &&
+    typeof features === "object" &&
+    !Array.isArray(features) &&
+    (features as Record<string, Prisma.JsonValue>)[key] === true
+  );
+}
 
 function level(
   hosts: readonly PoolHostPolicyMember[],
@@ -78,8 +94,18 @@ export function summarizePoolHostPolicy(
       const features = image(member);
       return Boolean(features?.build && features.acceptForeignBuilds && features.acceptForeign);
     }),
-    openEgress: level(described, (member) => member.Host.daemonOpenEgressForOthers),
-    guestSudo: level(described, (member) => member.Host.daemonGuestSudoForOthers),
+    openEgress: level(
+      described,
+      (member) =>
+        member.Host.daemonOpenEgressForOthers &&
+        featureFlag(member.Host.daemonFeatures, "egressOpen"),
+    ),
+    guestSudo: level(
+      described,
+      (member) =>
+        member.Host.daemonGuestSudoForOthers &&
+        featureFlag(member.Host.daemonFeatures, "guestSudo"),
+    ),
     allowForeignBuilds: viewer === "member" ? allowForeignBuilds : null,
   };
 }

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -14,6 +14,7 @@ import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
+import { useImagePolicySaved } from "@/hooks/use-image-policy-saved";
 import { formatBytes } from "@/lib/format-bytes";
 import { orpc } from "@/utils/orpc";
 
@@ -26,7 +27,7 @@ const GIB = 1024 ** 3;
 export function AccountImagePolicyCard({ lang }: { lang: string }) {
   const { t } = useTranslation(["settings", "common"]);
   const placementId = useId();
-  const queryClient = useQueryClient();
+  const imagePolicySaved = useImagePolicySaved();
   const policy = useQuery({
     ...orpc.settings.imagePolicy.queryOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -35,8 +36,7 @@ export function AccountImagePolicyCard({ lang }: { lang: string }) {
     ...orpc.settings.setImagePolicy.mutationOptions(),
     onSuccess: () => toast.success(t("settings:images.saved")),
     onError: () => toast.error(t("settings:images.saveError")),
-    onSettled: () =>
-      void queryClient.invalidateQueries({ queryKey: orpc.settings.imagePolicy.key() }),
+    onSettled: imagePolicySaved,
   });
   const data = policy.data;
   return (

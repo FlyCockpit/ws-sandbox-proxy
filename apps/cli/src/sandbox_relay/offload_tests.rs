@@ -2091,7 +2091,9 @@ fn a_cached_start_right_after_stored_settles_the_uploaded_entry_before_the_ack()
     let fingerprint = upload(&f);
     let d = cold(&fingerprint, 1);
     drop(f.offload.preempt(SBX, None, &|| true).unwrap());
-    assert!(f.offload.entry(SBX).is_none());
+    // `Uploaded` can precede the job leaving `jobs.active`; then the cancelled
+    // job's own cleanup removes the entry after preempt returns.
+    wait_until("preempted", || f.offload.entry(SBX).is_none());
     assert_eq!(intent(&f, &d).unwrap_err().message, DISK_STALE);
 
     // Another offload's expectation never settles this entry.
