@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enTemplates from "@wssp/locales/src/en-US/templates.json";
 import { createInstance, type i18n as I18n } from "i18next";
+import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { selectChoices, selectOption } from "@/test/select-option";
@@ -25,12 +26,21 @@ const server = vi.hoisted(() => ({
   mode: "s3",
   createError: null as unknown,
   refreshOutcome: { kind: "skipped", reason: "unchanged" } as Record<string, unknown>,
+  pool: { id: "pool_a", label: "Pool A", slug: "pool-a", memberCount: 1 },
+  hosts: [] as unknown[],
 }));
 const navigate = vi.hoisted(() => vi.fn());
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), message: vi.fn() }));
 
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => navigate,
+  Link: ({ children, className }: { children: ReactNode; className?: string }) => (
+    <a className={className} href="#link">
+      {children}
+    </a>
+  ),
+}));
 vi.mock("@/utils/orpc", () => {
   const query = (key: string, data: () => unknown) => ({
     queryOptions: (options?: { input?: unknown }) => ({
@@ -73,11 +83,15 @@ vi.mock("@/utils/orpc", () => {
       settings: { imagePolicy: query("imagePolicy", () => ({ mode: server.mode })) },
       sandboxHosts: {
         listHosts: query("hosts", () => ({
-          items: [{ id: "host_a", label: "Host A", slug: "host-a", deletionRequestedAt: null }],
+          items: server.hosts,
           nextCursor: null,
         })),
       },
-      sandboxPools: { listUsable: query("pools", () => ({ items: [], nextCursor: null })) },
+      sandboxPools: {
+        listUsable: query("pools", () => ({ items: [server.pool], nextCursor: null })),
+        getUsable: query("pool", () => server.pool),
+        listUsableMembers: query("members", () => ({ items: [], nextCursor: null })),
+      },
     },
   };
 });
@@ -115,6 +129,8 @@ beforeEach(() => {
   server.mode = "s3";
   server.createError = null;
   server.refreshOutcome = { kind: "skipped", reason: "unchanged" };
+  server.pool = { id: "pool_a", label: "Pool A", slug: "pool-a", memberCount: 1 };
+  server.hosts = [{ id: "host_a", label: "Host A", slug: "host-a", deletionRequestedAt: null }];
   navigate.mockReset();
   for (const fn of Object.values(toast)) fn.mockReset();
 });
@@ -172,6 +188,45 @@ describe("CreateCommunityTemplateDialog", () => {
     expect(calls("create")).toEqual([]);
   });
 
+  it("refuses a pool with no hosts before sending anything", async () => {
+    const user = userEvent.setup();
+    server.pool = { ...server.pool, memberCount: 0 };
+    wrap(<CreateCommunityTemplateDialog lang="en-US" onClose={vi.fn()} />);
+    await selectOption(
+      user,
+      await screen.findByRole("combobox", { name: "Image" }),
+      "Ubuntu 26.04 LTS · x86_64",
+    );
+    await user.click(screen.getByRole("button", { name: "A pool" }));
+    await selectOption(user, screen.getByRole("combobox", { name: "Build on" }), /Pool A/);
+    expect(await screen.findByText(/Pool A has no hosts/)).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Create template" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(calls("create")).toEqual([]);
+  });
+
+  it("starts at A pool for someone with no hosts, and builds there", async () => {
+    const user = userEvent.setup();
+    server.hosts = [];
+    wrap(<CreateCommunityTemplateDialog lang="en-US" onClose={vi.fn()} />);
+    await selectOption(
+      user,
+      await screen.findByRole("combobox", { name: "Image" }),
+      "Ubuntu 26.04 LTS · x86_64",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "A pool" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+    expect(screen.queryByText(enTemplates.builds.dialog.noHosts)).toBeNull();
+    await selectOption(user, screen.getByRole("combobox", { name: "Build on" }), /Pool A/);
+    await user.click(screen.getByRole("button", { name: "Create template" }));
+    await waitFor(() => expect(calls("create")).toHaveLength(1));
+    expect(calls("create")[0]?.input).toMatchObject({ target: { poolId: "pool_a" } });
+  });
+
   it("explains a disabled deployment and cannot submit", async () => {
     server.images = { images: [tested], disabledReason: "image_distribution_off" };
     wrap(<CreateCommunityTemplateDialog lang="en-US" onClose={vi.fn()} />);
@@ -190,7 +245,9 @@ describe("CreateCommunityTemplateDialog", () => {
     server.mode = "peer";
     server.createError = { code: "FORBIDDEN", data: { code: "template.community_key_scope" } };
     wrap(<CreateCommunityTemplateDialog lang="en-US" onClose={vi.fn()} />);
-    expect(await screen.findByText(/stores images on peer hosts/)).toBeTruthy();
+    // Said as something a user can act on, not an operator's S3 advice.
+    expect(await screen.findByText(enTemplates.community.dialog.peerWarning)).toBeTruthy();
+    expect(document.body.textContent).not.toContain("S3");
     await selectOption(
       user,
       await screen.findByRole("combobox", { name: "Image" }),

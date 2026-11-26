@@ -2,6 +2,7 @@ import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Button } from "@wssp/ui/components/button";
+import { CodeSnippet } from "@wssp/ui/components/code-snippet";
 import { TextField } from "@wssp/ui/components/text-field";
 import { Trans, useTranslation } from "react-i18next";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import { TerminalPanel } from "@/components/terminal-panel";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
+import { useStatusClock } from "@/hooks/use-status-clock";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { formatDateTime } from "@/lib/format-date-time";
 import { formatLeaseDuration, isUnlimitedLeaseEnd } from "@/lib/lease-duration";
@@ -20,7 +22,11 @@ import { orpc } from "@/utils/orpc";
 import { HostAgentAccess, QueuedHostCommands } from "./host-agent-access";
 import { HostAuditList } from "./host-audit-list";
 import { HostImageCacheCard } from "./host-image-cache-card";
+import { HostsBackLink } from "./hosts-back-link";
 import { HostCard } from "./hosts-page";
+
+/** The detail page's sections, in page order; "On this page" links to each. */
+const HOST_SECTIONS = ["overview", "capacity", "network", "access", "images"] as const;
 
 export function HostDetailPage({ hostId, lang }: { hostId: string; lang: string }) {
   const { t } = useTranslation(["hosts", "terminal"]);
@@ -30,48 +36,87 @@ export function HostDetailPage({ hostId, lang }: { hostId: string; lang: string 
     meta: { skipGlobalErrorToast: true },
   });
   useTwoFactorRedirectOnError(lang, [host.error]);
+  const now = useStatusClock(host.dataUpdatedAt);
   if (host.isPending) return <SkeletonList count={3} />;
   if ((host.isError && isQueryAccessError(host.error)) || !host.data)
-    return <InlineRetry message={t("hosts:loadFailed")} onRetry={() => void host.refetch()} />;
+    return (
+      <div className="flex min-w-0 flex-col gap-4">
+        <HostsBackLink lang={lang} />
+        <InlineRetry message={t("hosts:loadFailed")} onRetry={() => void host.refetch()} />
+      </div>
+    );
+  const deleting = host.data.deletionRequestedAt != null;
   return (
     <div className="flex min-w-0 flex-col gap-6">
       {host.isError ? (
         <InlineRetry message={t("hosts:loadFailed")} onRetry={() => void host.refetch()} />
       ) : null}
-      <PageHeader title={host.data.label} description={host.data.slug} />
-      <ul aria-label={t("hosts:title")}>
-        <HostCard host={host.data} lang={lang} now={Date.now()} locale={lang} />
-      </ul>
-      {host.data.lease ? (
-        <HostLease lease={host.data.lease} draining={host.data.draining} lang={lang} />
-      ) : null}
-      <HostAgentAccess host={host.data} lang={lang} />
-      <QueuedHostCommands hostId={hostId} lang={lang} policy={host.data.terminalPolicy} />
-      <HostAuditList
-        entries={host.data.recentAudit}
-        lang={lang}
-        onRetry={() => void host.refetch()}
+      <PageHeader
+        back={<HostsBackLink lang={lang} />}
+        title={host.data.label}
+        description={host.data.slug !== host.data.label ? host.data.slug : undefined}
       />
-      <HostImageCacheCard hostId={hostId} lang={lang} />
-      <HostGuests hostId={hostId} lang={lang} />
-      <HostTerminal
-        key={`${hostId}:${host.data.terminalPolicy?.policyRevision ?? "offline"}`}
-        hostId={hostId}
-        name={host.data.label}
-        lang={lang}
-        policy={host.data.terminalPolicy}
-      />
-      <Link
-        to="/$lang/settings/hosts"
-        params={{ lang }}
-        className="inline-flex min-h-11 items-center underline"
+      <nav
+        aria-label={t("hosts:sections.onThisPage")}
+        data-host-toc=""
+        className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-sm"
       >
-        {t("hosts:title")}
-      </Link>
+        <span className="me-1 text-muted-foreground">{t("hosts:sections.onThisPage")}</span>
+        {HOST_SECTIONS.filter((id) => !(deleting && id === "network")).map((id) => (
+          <a
+            key={id}
+            href={`#host-${id}`}
+            className="inline-flex min-h-11 items-center rounded-md px-2 font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t(`hosts:sections.${id}`)}
+          </a>
+        ))}
+      </nav>
+      <ul aria-label={t("hosts:title")} className="min-w-0">
+        <HostCard
+          host={host.data}
+          lang={lang}
+          now={now}
+          locale={lang}
+          overviewExtra={
+            host.data.lease ? (
+              <HostLease lease={host.data.lease} draining={host.data.draining} lang={lang} />
+            ) : null
+          }
+        />
+      </ul>
+      <section
+        id="host-access"
+        aria-labelledby="host-access-title"
+        className="flex min-w-0 scroll-mt-4 flex-col gap-6"
+      >
+        <h2 id="host-access-title" className="text-base font-semibold">
+          {t("hosts:sections.access")}
+        </h2>
+        <HostAgentAccess host={host.data} lang={lang} />
+        <QueuedHostCommands hostId={hostId} lang={lang} policy={host.data.terminalPolicy} />
+        <HostAuditList
+          entries={host.data.recentAudit}
+          lang={lang}
+          onRetry={() => void host.refetch()}
+        />
+        <HostGuests hostId={hostId} lang={lang} />
+        <div className="flex min-w-0 flex-col gap-3">
+          <HostTerminal
+            key={`${hostId}:${host.data.terminalPolicy?.policyRevision ?? "offline"}`}
+            hostId={hostId}
+            name={host.data.label}
+            lang={lang}
+            policy={host.data.terminalPolicy}
+          />
+        </div>
+      </section>
+      <div id="host-images" className="min-w-0 scroll-mt-4">
+        <HostImageCacheCard hostId={hostId} lang={lang} />
+      </div>
     </div>
   );
 }
-
 /**
  * Read-only host lease ceiling (set on the machine with the CLI, never from
  * the dashboard) and, while draining, when the host will be empty.
@@ -123,6 +168,9 @@ function HostLease({
   );
 }
 
+/** Run in a local login on the host; the only way host terminals turn on. */
+const HOST_TERMINAL_ON_COMMAND = "wssp host config set-host-terminal on";
+
 type Policy = {
   hostTerminal: boolean;
   requireHostTerminalTotp: boolean;
@@ -147,7 +195,7 @@ export function HostTerminal({
   typeCommand?: string;
   pretypeOnAttach?: boolean;
 }) {
-  const { t } = useTranslation(["terminal", "common"]);
+  const { t } = useTranslation(["terminal", "hosts", "common"]);
   const unavailable = useSensitiveAccessUnavailable();
   const { state: auth } = useAuthSession();
   const client = useQueryClient();
@@ -167,6 +215,22 @@ export function HostTerminal({
   const needsEnrollment =
     required && auth.status === "authenticated" && auth.session.user.twoFactorEnabled !== true;
   if (unavailable) return <p role="status">{t("terminal:host.refused")}</p>;
+  // Turned off at the node: no code form or Attach that can only fail, just
+  // how to turn it on (only at the node; the dashboard can never raise it).
+  if (policy && !policy.hostTerminal)
+    return (
+      <section
+        data-host-terminal-off=""
+        aria-labelledby={`${hostId}-host-terminal-off`}
+        className="flex min-w-0 flex-col gap-2 rounded-xl border p-4"
+      >
+        <h3 id={`${hostId}-host-terminal-off`} className="text-sm font-medium">
+          {t("terminal:host.title")}
+        </h3>
+        <p className="text-sm">{t("terminal:host.offHint")}</p>
+        <CodeSnippet code={HOST_TERMINAL_ON_COMMAND} copyLabel={t("terminal:host.copyOnCommand")} />
+      </section>
+    );
   return (
     <>
       <p>
@@ -206,9 +270,11 @@ export function HostTerminal({
           policy?.hostTerminal === true && !needsEnrollment && (!required || /^\d{6}$/.test(code))
         }
         unavailableMessage={
-          policy?.hostTerminal
-            ? t(needsEnrollment ? "terminal:host.enrollment" : "terminal:host.fresh")
-            : undefined
+          policy === null
+            ? t("terminal:host.offline")
+            : policy.hostTerminal
+              ? t(needsEnrollment ? "terminal:host.enrollment" : "terminal:host.fresh")
+              : t("hosts:terminalOff")
         }
         attachCode={() => {
           const value = required ? form.getFieldValue("code") : undefined;
@@ -233,13 +299,17 @@ export function HostTerminal({
                   />
                 )}
               </form.Field>
-              <Link
-                to="/$lang/settings/security"
-                params={{ lang }}
-                className="inline-flex min-h-11 items-center underline"
-              >
-                {t("terminal:host.enroll")}
-              </Link>
+              {/* Only someone without an authenticator is sent to set one up. */}
+              {needsEnrollment ? (
+                <Link
+                  to="/$lang/settings/security"
+                  params={{ lang }}
+                  data-host-terminal-enroll=""
+                  className="inline-flex min-h-11 items-center underline"
+                >
+                  {t("terminal:host.enroll")}
+                </Link>
+              ) : null}
             </div>
           ) : (
             <p>{t("terminal:host.optional")}</p>
@@ -261,13 +331,18 @@ function HostGuests({ hostId, lang }: { hostId: string; lang: string }) {
     meta: { skipGlobalErrorToast: true },
   });
   return (
-    <section>
-      <h2>{t("hosts:sharing.foreignGuests")}</h2>
-      <ul>
+    <section aria-labelledby="host-guests-title" className="flex min-w-0 flex-col gap-2">
+      <h3 id="host-guests-title" className="font-semibold">
+        {t("hosts:sharing.foreignGuests")}
+      </h3>
+      {guests.data?.pages[0]?.items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("hosts:sharing.noForeignGuests")}</p>
+      ) : null}
+      <ul className="flex min-w-0 flex-col gap-2">
         {guests.data?.pages
           .flatMap((p) => p.items)
           .map((guest) => (
-            <li key={guest.id} className="break-all border p-3">
+            <li key={guest.id} className="break-all rounded-lg border p-3 text-sm">
               {guest.id} · {t(`hosts:sharing.purpose.${guest.purpose}`)} ·{" "}
               {t(`hosts:guestStates.${guest.state}`)} ·{" "}
               {t("hosts:sharing.guestAllocation", {

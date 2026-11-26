@@ -305,6 +305,25 @@ describe("admin users mutations", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
+  it("an invite with a bad email shows it under the field, and the corrected invite is sent", async () => {
+    const u = userEvent.setup();
+    mount();
+    await screen.findByText("One");
+    await u.click(screen.getByRole("button", { name: enAdmin.users.invite }));
+    const dialog = await screen.findByRole("dialog");
+    await u.type(within(dialog).getByLabelText(enAdmin.users.nameLabel), "New");
+    const email = within(dialog).getByLabelText(enAdmin.users.emailLabel);
+    await u.type(email, "not-an-email");
+    await waitFor(() => expect(email.getAttribute("aria-invalid")).toBe("true"));
+    expect(calls("invite")).toHaveLength(0);
+    await u.clear(email);
+    await u.type(email, "new@example.com");
+    await waitFor(() => expect(email.getAttribute("aria-invalid")).not.toBe("true"));
+    await u.click(within(dialog).getByRole("button", { name: enAdmin.users.sendInvite }));
+    await waitFor(() => expect(calls("invite")).toHaveLength(1));
+    expect(calls("invite")[0]?.input).toMatchObject({ name: "New", email: "new@example.com" });
+  });
+
   it("labels the invite role select and formats join dates in the UI locale (M7-S15, M7-S16)", async () => {
     const u = userEvent.setup();
     mount();

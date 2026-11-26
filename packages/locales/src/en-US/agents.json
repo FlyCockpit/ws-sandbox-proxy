@@ -3,13 +3,13 @@
   "description": "Scoped credentials for agents using MCP. At most 10 active tokens.",
   "empty": {
     "title": "No agent tokens yet",
-    "description": "Mint a token to connect an agent. Revoked tokens are not listed."
+    "description": "Create a token to connect an agent."
   },
   "mint": {
-    "action": "Mint agent token",
-    "title": "Mint an agent token",
+    "action": "Create agent token",
+    "title": "Create an agent token",
     "description": "Choose only the scopes and resources your agent needs, and select an expiry.",
-    "submit": "Mint token",
+    "submit": "Create token",
     "secretLabel": "Your new agent token",
     "usageHint": "Send it as Authorization: Bearer <token> to /mcp. Store it securely; it is shown only once."
   },
@@ -75,7 +75,12 @@
     "liftTitle": "Allow access again?",
     "liftDescription": "This only lifts the dashboard block. The node setting must still be turned on in a local login session on the node. Allowing again does not turn it on.",
     "liftUnavailable": "Allow again requires the node to be online and report this setting off. Run {{command}} at the node first, then wait for its off report.",
-    "tamperWarning": "Something on the node turned it back on. The dashboard block still refuses access and keeps sending the turn-off request. Investigate the node and revoke its credential if needed. Run {{command}} at the node before allowing access again."
+    "tamperWarning": "Something on the node turned it back on. The dashboard block still refuses access and keeps sending the turn-off request. Investigate the node and revoke its credential if needed. Run {{command}} at the node before allowing access again.",
+    "keepOff": "Keep off from the dashboard",
+    "keepOffNamed": "Keep off from the dashboard: {{setting}}",
+    "keepTitle": "Keep host access off?",
+    "keepDescription": "This adds a dashboard block: even if someone turns the setting on at the node, access stays refused until you choose Allow again.",
+    "keepOffHint": "Already off at the node. This adds a dashboard block, so it stays refused even if someone turns it on at the node."
   },
   "queue": {
     "title": "Queued commands",
@@ -150,6 +155,10 @@
     "limit": "Dated tokens must expire within {{days}} days.",
     "invalid": "Choose a future expiry within the allowed date range.",
     "close": "Cancel",
-    "blockedByPolicy": "Blocked by policy: this server no longer allows tokens without an expiry, so this token is refused. It is not revoked and works again if the operator allows no-expiry tokens. Mint a dated token to keep the agent working."
+    "blockedByPolicy": "Blocked by policy: this server no longer allows tokens without an expiry, so this token is refused. It is not revoked and works again if the operator allows no-expiry tokens. Create a dated token to keep the agent working."
+  },
+  "emptyActive": {
+    "title": "No active agent tokens",
+    "description": "Your revoked tokens are hidden. Choose Include revoked to see them."
   }
 }

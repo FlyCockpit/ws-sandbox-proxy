@@ -1,4 +1,4 @@
-import { useForm } from "@tanstack/react-form";
+import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import {
@@ -15,6 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
+import { AdvancedSection, FormSection } from "@wssp/ui/components/form-page";
 import {
   Sheet,
   SheetContent,
@@ -27,10 +28,12 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { CopyableId } from "@/components/copyable-id";
 import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
 import { EmptyState } from "@/components/empty-state";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
+import { WideSheet } from "@/components/wide-sheet";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
 import { formatDateTime } from "@/lib/format-date-time";
 import { formatGraceDuration } from "@/lib/format-duration";
@@ -179,20 +182,30 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
   });
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-xl border p-4">
-      <h2>{pool.label}</h2>
-      <p className="break-all">
-        {pool.slug} · {"owner" in pool ? pool.owner?.name : ""} · {pool.id}
-      </p>
+      {/* Names first; the slug and id are secondary (the id copies). */}
+      <div className="flex min-w-0 flex-col gap-1">
+        <h2 className="break-words font-medium">{pool.label}</h2>
+        {"owner" in pool && pool.owner?.name ? (
+          <p className="text-sm">{t("hosts:sharing.sharedBy", { name: pool.owner.name })}</p>
+        ) : null}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="break-all font-mono">{pool.slug}</span>
+          <CopyableId value={pool.id} label={t("hosts:sharing.poolId")} />
+        </div>
+      </div>
       {"share" in pool && pool.share ? (
-        <>
+        <div className="flex min-w-0 flex-col gap-1 text-sm">
           <p>
-            {t("hosts:sharing.permissions", {
-              use: t(pool.share.canUse ? "hosts:sharing.yes" : "hosts:sharing.no"),
-              contribute: t(pool.share.canContribute ? "hosts:sharing.yes" : "hosts:sharing.no"),
-            })}
+            {t(
+              pool.share.canUse && pool.share.canContribute
+                ? "hosts:sharing.youCanBoth"
+                : pool.share.canUse
+                  ? "hosts:sharing.youCanUse"
+                  : "hosts:sharing.youCanContribute",
+            )}
           </p>
           <p>
-            {t("hosts:sharing.caps", {
+            {t("hosts:sharing.yourLimits", {
               memory:
                 pool.share.maxMemoryMiB == null
                   ? t("hosts:sharing.unlimited")
@@ -204,14 +217,16 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
                   : `${pool.share.maxDiskGiB} GiB`,
             })}
           </p>
-          <p>{t("hosts:sharing.usage", pool.share.usage)}</p>
-        </>
+          <p>{t("hosts:sharing.yourUsage", pool.share.usage)}</p>
+        </div>
       ) : null}
-      {pool.ownHostsOnly ? <p>{t("hosts:sharing.ownHostsOnly")}</p> : null}
-      <p>
-        {t("hosts:sharing.grace", {
-          duration: formatGraceDuration(pool.disconnectGraceSeconds, lang),
-        })}
+      {pool.ownHostsOnly ? <p className="text-sm">{t("hosts:sharing.ownHostsOnly")}</p> : null}
+      <p className="text-sm text-muted-foreground">
+        {pool.disconnectGraceSeconds === 0
+          ? t("hosts:sharing.graceNone")
+          : t("hosts:sharing.gracePlain", {
+              duration: formatGraceDuration(pool.disconnectGraceSeconds, lang),
+            })}
       </p>
       {"share" in pool && pool.share?.canUse ? (
         <Button size="touch" variant="secondary" onClick={() => setCapacity(true)}>
@@ -382,8 +397,39 @@ export function ShareForm({
         }
       }),
   });
-  const fields = (
-    <div className="flex flex-col gap-4 p-4">
+  const values = useStore(form.store, (state) => state.values);
+  const unlimited = t("hosts:sharing.unlimited");
+  const capsSummary = [
+    values.maxMemoryMiB.trim() ? `${values.maxMemoryMiB.trim()} MiB` : unlimited,
+    values.maxVcpu.trim() ? `${values.maxVcpu.trim()} vCPU` : unlimited,
+    values.maxDiskGiB.trim() ? `${values.maxDiskGiB.trim()} GiB` : unlimited,
+  ].join(" · ");
+  return (
+    <WideSheet
+      data-share-form=""
+      title={t(share ? "hosts:sharing.edit" : "hosts:sharing.add")}
+      description={t(share ? "hosts:sharing.nullCaps" : "hosts:sharing.forwardingInviter")}
+      closeLabel={t("common:actions.close")}
+      busy={action.pending}
+      onClose={onClose}
+      onSubmit={secret ? undefined : () => void form.handleSubmit()}
+      actions={
+        secret ? undefined : (
+          <>
+            <form.Subscribe selector={(state) => state.isValid}>
+              {(valid) => (
+                <Button size="touch" type="submit" disabled={action.pending || !valid}>
+                  {t(share ? "common:actions.save" : "hosts:sharing.invite")}
+                </Button>
+              )}
+            </form.Subscribe>
+            <Button size="touch" variant="outline" type="button" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
+          </>
+        )
+      }
+    >
       {secret ? (
         <>
           <OneTimeSecretPanel
@@ -394,125 +440,92 @@ export function ShareForm({
           <p role="status">{t(secret.sent ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</p>
         </>
       ) : (
-        <form
-          className="flex flex-col gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void form.handleSubmit();
-          }}
-        >
+        <>
+          <FormSection title={t("hosts:sharing.essential")}>
+            {!share ? (
+              <form.Field name="email">
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t("hosts:sharing.email")}
+                    type="email"
+                    autoComplete="email"
+                    inputClassName="min-h-11"
+                    required
+                  />
+                )}
+              </form.Field>
+            ) : null}
+            {(["canUse", "canContribute"] as const).map((name) => (
+              <form.Field key={name} name={name}>
+                {(field) => (
+                  <label className="flex min-h-11 items-center gap-3 text-sm">
+                    <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
+                    {t(`hosts:sharing.${name}`)}
+                  </label>
+                )}
+              </form.Field>
+            ))}
+          </FormSection>
+          <AdvancedSection title={t("hosts:sharing.limits")} summary={capsSummary}>
+            <p className="text-sm text-muted-foreground">{t("hosts:sharing.nullCaps")}</p>
+            {(["maxMemoryMiB", "maxVcpu", "maxDiskGiB"] as const).map((name) => (
+              <form.Field key={name} name={name}>
+                {(field) => (
+                  <TextField
+                    field={field}
+                    label={t(`hosts:sharing.${name}`)}
+                    type="number"
+                    min={1}
+                    autoComplete="off"
+                    inputClassName="min-h-11"
+                  />
+                )}
+              </form.Field>
+            ))}
+          </AdvancedSection>
           {!share ? (
-            <form.Field name="email">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("hosts:sharing.email")}
-                  type="email"
-                  autoComplete="email"
-                  inputClassName="min-h-11"
-                  required
-                />
+            <AdvancedSection
+              title={t("hosts:sharing.invitation")}
+              summary={t(
+                values.signupAllowed
+                  ? "hosts:sharing.signupAllowedShort"
+                  : "hosts:sharing.signupClosedShort",
               )}
-            </form.Field>
-          ) : null}
-          {(["canUse", "canContribute"] as const).map((name) => (
-            <form.Field key={name} name={name}>
-              {(field) => (
-                <label className="flex min-h-11 items-center gap-3">
-                  <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
-                  {t(`hosts:sharing.${name}`)}
-                </label>
-              )}
-            </form.Field>
-          ))}
-          <p>{t("hosts:sharing.nullCaps")}</p>
-          {(["maxMemoryMiB", "maxVcpu", "maxDiskGiB"] as const).map((name) => (
-            <form.Field key={name} name={name}>
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t(`hosts:sharing.${name}`)}
-                  type="number"
-                  min={1}
-                  autoComplete="off"
-                  inputClassName="min-h-11"
-                />
-              )}
-            </form.Field>
-          ))}
-          {!share ? (
-            <form.Field name="signupAllowed">
-              {(field) => (
-                <label className="flex min-h-11 items-center gap-3">
-                  <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
-                  {t("hosts:sharing.signupAllowed")}
-                </label>
-              )}
-            </form.Field>
+            >
+              <form.Field name="signupAllowed">
+                {(field) => (
+                  <label className="flex min-h-11 items-center gap-3 text-sm">
+                    <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
+                    {t("hosts:sharing.signupAllowed")}
+                  </label>
+                )}
+              </form.Field>
+            </AdvancedSection>
           ) : null}
           <SharingNotice />
           {action.error}
-          <form.Subscribe selector={(state) => state.isValid}>
-            {(valid) => (
-              <Button size="touch" type="submit" disabled={action.pending || !valid}>
-                {t("common:actions.save")}
-              </Button>
-            )}
-          </form.Subscribe>
-          <Button size="touch" variant="outline" type="button" onClick={onClose}>
-            {t("common:actions.cancel")}
-          </Button>
-        </form>
+        </>
       )}
-    </div>
-  );
-  return share ? (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <SheetContent showCloseButton={false} className="overflow-x-hidden overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>{t("hosts:sharing.edit")}</SheetTitle>
-          <SheetDescription>{t("hosts:sharing.nullCaps")}</SheetDescription>
-        </SheetHeader>
-        {fields}
-      </SheetContent>
-    </Sheet>
-  ) : (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent
-        showCloseButton={false}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto"
-      >
-        <DialogHeader>
-          <DialogTitle>{t("hosts:sharing.add")}</DialogTitle>
-          <DialogDescription>{t("hosts:sharing.forwardingInviter")}</DialogDescription>
-        </DialogHeader>
-        {fields}
-      </DialogContent>
-    </Dialog>
+    </WideSheet>
   );
 }
 export function PoolSharing({
   poolId,
+  poolLabel,
   lang,
   onClose,
 }: {
   poolId: string;
+  poolLabel: string;
   lang: string;
   onClose: () => void;
 }) {
   const { t } = useTranslation(["hosts", "common"]);
   const [editing, setEditing] = useState<Share | "new" | null>(null);
-  const [revoking, setRevoking] = useState<{ id: string; grantee?: string } | null>(null);
+  const [revoking, setRevoking] = useState<{ id: string; grantee?: string; name: string } | null>(
+    null,
+  );
   const [secret, setSecret] = useState<{ link: string; sent: boolean } | null>(null);
   const action = useSharingAction(lang);
   const revokeShare = useMutation({
@@ -537,170 +550,192 @@ export function PoolSharing({
     }),
     meta: { skipGlobalErrorToast: true },
   });
+  const noPeople =
+    shares.data?.pages[0]?.items.length === 0 && invites.data?.pages[0]?.items.length === 0;
   return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <WideSheet
+      data-pool-people=""
+      title={t("hosts:sharing.peopleTitle", { label: poolLabel })}
+      description={t("hosts:sharing.manageDescription")}
+      closeLabel={t("common:actions.close")}
+      onClose={onClose}
+      actions={
+        <>
+          <Button size="touch" onClick={() => setEditing("new")}>
+            {t("hosts:sharing.add")}
+          </Button>
+          <Button size="touch" variant="outline" onClick={onClose}>
+            {t("common:actions.close")}
+          </Button>
+        </>
+      }
     >
-      <DialogContent
-        showCloseButton={false}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto"
-      >
-        <DialogHeader>
-          <DialogTitle>{t("hosts:sharing.manage")}</DialogTitle>
-          <DialogDescription>{t("hosts:sharing.manageDescription")}</DialogDescription>
-        </DialogHeader>
-        <Button size="touch" onClick={() => setEditing("new")}>
-          {t("hosts:sharing.add")}
-        </Button>
-        {secret ? (
-          <>
-            <OneTimeSecretPanel
-              secret={secret.link}
-              label={t("hosts:sharing.copyLink")}
-              onDone={() => setSecret(null)}
-            />
-            <p>{t(secret.sent ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</p>
-            {/* Shown beside every revealed link: a new invitation or a resend. */}
-            <p className="text-sm text-muted-foreground" data-invite-forwarding="">
-              {t("hosts:sharing.forwardingInviter")}
-            </p>
-          </>
-        ) : null}
-        <ul className="flex flex-col gap-3">
-          {shares.data?.pages
-            .flatMap((p) => p.items)
-            .map((share) => (
-              <li key={share.id} className="flex flex-col gap-2 border p-3">
-                <span className="break-all">
-                  {share.Grantee?.name} · {share.Grantee?.email} · {share.granteeUserId}
-                </span>
-                <p>{t("hosts:sharing.usage", share.usage)}</p>
-                <p>
-                  {t("hosts:sharing.permissions", {
-                    use: t(share.canUse ? "hosts:sharing.yes" : "hosts:sharing.no"),
-                    contribute: t(share.canContribute ? "hosts:sharing.yes" : "hosts:sharing.no"),
-                  })}
-                </p>
-                <p>
-                  {t("hosts:sharing.caps", {
-                    memory:
-                      share.maxMemoryMiB == null
-                        ? t("hosts:sharing.unlimited")
-                        : `${share.maxMemoryMiB} MiB`,
-                    vcpu: share.maxVcpu ?? t("hosts:sharing.unlimited"),
-                    disk:
-                      share.maxDiskGiB == null
-                        ? t("hosts:sharing.unlimited")
-                        : `${share.maxDiskGiB} GiB`,
-                  })}
-                </p>
+      {secret ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <OneTimeSecretPanel
+            secret={secret.link}
+            label={t("hosts:sharing.copyLink")}
+            onDone={() => setSecret(null)}
+          />
+          <p>{t(secret.sent ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</p>
+          {/* Shown beside every revealed link: a new invitation or a resend. */}
+          <p className="text-sm text-muted-foreground" data-invite-forwarding="">
+            {t("hosts:sharing.forwardingInviter")}
+          </p>
+        </div>
+      ) : null}
+      {noPeople ? (
+        <p className="text-sm text-muted-foreground">{t("hosts:sharing.noPeople")}</p>
+      ) : null}
+      <ul className="grid min-w-0 gap-3 lg:grid-cols-2">
+        {shares.data?.pages
+          .flatMap((p) => p.items)
+          .map((share) => (
+            <li
+              key={share.id}
+              className="flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm"
+            >
+              <span className="break-all font-medium">
+                {share.Grantee?.name} · {share.Grantee?.email}
+              </span>
+              {/* The owner reads each person's usage: theirs, not "yours". */}
+              <p>
+                {t("hosts:sharing.usageOf", {
+                  ...share.usage,
+                  name:
+                    share.Grantee?.name || share.Grantee?.email || t("hosts:sharing.thisPerson"),
+                })}
+              </p>
+              <p>
+                {t("hosts:sharing.permissions", {
+                  use: t(share.canUse ? "hosts:sharing.yes" : "hosts:sharing.no"),
+                  contribute: t(share.canContribute ? "hosts:sharing.yes" : "hosts:sharing.no"),
+                })}
+              </p>
+              <p>
+                {t("hosts:sharing.caps", {
+                  memory:
+                    share.maxMemoryMiB == null
+                      ? t("hosts:sharing.unlimited")
+                      : `${share.maxMemoryMiB} MiB`,
+                  vcpu: share.maxVcpu ?? t("hosts:sharing.unlimited"),
+                  disk:
+                    share.maxDiskGiB == null
+                      ? t("hosts:sharing.unlimited")
+                      : `${share.maxDiskGiB} GiB`,
+                })}
+              </p>
+              <div className="flex flex-wrap gap-2">
                 <Button size="touch" variant="outline" onClick={() => setEditing(share)}>
                   {t("hosts:sharing.edit")}
                 </Button>
                 <Button
                   size="touch"
                   variant="destructive"
-                  onClick={() => setRevoking({ id: share.id, grantee: share.granteeUserId })}
+                  onClick={() =>
+                    setRevoking({
+                      id: share.id,
+                      grantee: share.granteeUserId,
+                      name: share.Grantee?.email ?? share.granteeUserId,
+                    })
+                  }
                 >
                   {t("hosts:sharing.revoke")}
                 </Button>
-              </li>
-            ))}
-        </ul>
-        <More query={shares} />
-        <ul className="flex flex-col gap-3">
-          {invites.data?.pages
-            .flatMap((p) => p.items)
-            .map((invite) => (
-              <li key={invite.id} className="flex flex-col gap-2 border p-3">
-                <span>{invite.email}</span>
-                {invite.acceptedAt ? (
-                  <span>{t("hosts:sharing.inviteAccepted")}</span>
-                ) : (
-                  <span>
-                    {t("hosts:sharing.expires", {
-                      date: formatDateTime(invite.expiresAt, lang),
-                    })}
-                  </span>
-                )}
-                {!invite.acceptedAt ? (
-                  <span>{t(invite.sentAt ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</span>
-                ) : null}
-                {!invite.acceptedAt && !invite.revokedAt && !invite.expiredAt ? (
-                  <>
-                    <Button
-                      size="touch"
-                      variant="outline"
-                      disabled={action.pending}
-                      onClick={() =>
-                        void action.run(async () => {
-                          const result = await orpc.sandboxPools.resendInvite.call({
-                            poolId,
-                            inviteId: invite.id,
-                          });
-                          setSecret({
-                            link: `${window.location.origin}/${lang}/settings/pools/invite#${result.token}`,
-                            sent: result.sent,
-                          });
-                        })
-                      }
-                    >
-                      {t("hosts:sharing.resend")}
-                    </Button>
-                    <Button
-                      size="touch"
-                      variant="destructive"
-                      onClick={() => setRevoking({ id: invite.id })}
-                    >
-                      {t("hosts:sharing.revoke")}
-                    </Button>
-                  </>
-                ) : null}
-              </li>
-            ))}
-        </ul>
-        <More query={invites} />
-        {action.error}
-        <Button size="touch" variant="outline" onClick={onClose}>
-          {t("common:actions.close")}
-        </Button>
-        {editing ? (
-          <ShareForm
-            poolId={poolId}
-            lang={lang}
-            share={editing === "new" ? undefined : editing}
-            onClose={() => setEditing(null)}
-          />
-        ) : null}
-        <ConfirmDeleteDialog
-          open={!!revoking}
-          onOpenChange={(open) => {
-            if (!open) setRevoking(null);
-          }}
-          title={t("hosts:sharing.revoke")}
-          description={t("hosts:sharing.contributionNotice")}
-          confirmToken={revoking?.id ?? ""}
-          typePrompt={t("hosts:pools.confirm")}
-          copyAriaLabel={t("hosts:pools.copy")}
-          isPending={action.pending}
-          onConfirm={() =>
-            void action.run(async () => {
-              if (!revoking) return;
-              if (revoking.grantee)
-                await revokeShare.mutateAsync({
-                  poolId,
-                  granteeUserId: revoking.grantee,
-                });
-              else await revokeInvite.mutateAsync({ poolId, inviteId: revoking.id });
-              setRevoking(null);
-            })
-          }
+              </div>
+            </li>
+          ))}
+      </ul>
+      <More query={shares} />
+      <ul className="grid min-w-0 gap-3 lg:grid-cols-2">
+        {invites.data?.pages
+          .flatMap((p) => p.items)
+          .map((invite) => (
+            <li
+              key={invite.id}
+              className="flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm"
+            >
+              <span className="break-all font-medium">{invite.email}</span>
+              {invite.acceptedAt ? (
+                <span>{t("hosts:sharing.inviteAccepted")}</span>
+              ) : (
+                <span>
+                  {t("hosts:sharing.expires", {
+                    date: formatDateTime(invite.expiresAt, lang),
+                  })}
+                </span>
+              )}
+              {!invite.acceptedAt ? (
+                <span>{t(invite.sentAt ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</span>
+              ) : null}
+              {!invite.acceptedAt && !invite.revokedAt && !invite.expiredAt ? (
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="touch"
+                    variant="outline"
+                    disabled={action.pending}
+                    onClick={() =>
+                      void action.run(async () => {
+                        const result = await orpc.sandboxPools.resendInvite.call({
+                          poolId,
+                          inviteId: invite.id,
+                        });
+                        setSecret({
+                          link: `${window.location.origin}/${lang}/settings/pools/invite#${result.token}`,
+                          sent: result.sent,
+                        });
+                      })
+                    }
+                  >
+                    {t("hosts:sharing.resend")}
+                  </Button>
+                  <Button
+                    size="touch"
+                    variant="destructive"
+                    onClick={() => setRevoking({ id: invite.id, name: invite.email })}
+                  >
+                    {t("hosts:sharing.revoke")}
+                  </Button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+      </ul>
+      <More query={invites} />
+      {action.error}
+      {editing ? (
+        <ShareForm
+          poolId={poolId}
+          lang={lang}
+          share={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
         />
-      </DialogContent>
-    </Dialog>
+      ) : null}
+      <ConfirmDeleteDialog
+        open={!!revoking}
+        onOpenChange={(open) => {
+          if (!open) setRevoking(null);
+        }}
+        title={t("hosts:sharing.revokeTitle", { name: revoking?.name ?? "", pool: poolLabel })}
+        description={t("hosts:sharing.contributionNotice")}
+        confirmToken={revoking?.name ?? ""}
+        typePrompt={t("hosts:sharing.confirmEmail")}
+        copyAriaLabel={t("hosts:sharing.copyEmail")}
+        isPending={action.pending}
+        onConfirm={() =>
+          void action.run(async () => {
+            if (!revoking) return;
+            if (revoking.grantee)
+              await revokeShare.mutateAsync({
+                poolId,
+                granteeUserId: revoking.grantee,
+              });
+            else await revokeInvite.mutateAsync({ poolId, inviteId: revoking.id });
+            setRevoking(null);
+          })
+        }
+      />
+    </WideSheet>
   );
 }
 function ContributionForm({

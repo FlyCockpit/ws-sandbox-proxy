@@ -18,6 +18,7 @@ export function AgentTokenExpirySelect({
   onChange,
   customDate,
   onCustomDateChange,
+  invalid = false,
 }: {
   id: string;
   policy: AgentTokenExpiryPolicy;
@@ -25,15 +26,24 @@ export function AgentTokenExpirySelect({
   onChange: (value: string) => void;
   customDate: string;
   onCustomDateChange: (value: string) => void;
+  /** After a failed submit: the choice is not a future date within the policy. */
+  invalid?: boolean;
 }) {
   const { t } = useTranslation(["agents", "credentials"]);
   const dateId = useId();
   const limitId = useId();
+  const errorId = useId();
   const now = new Date();
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>{t("credentials:form.expiry")}</Label>
-      <FormSelect id={id} value={value} onValueChange={onChange}>
+      <FormSelect
+        id={id}
+        value={value}
+        onValueChange={onChange}
+        aria-invalid={(invalid && value !== "custom") || undefined}
+        aria-describedby={invalid && value !== "custom" ? errorId : undefined}
+      >
         {agentTokenExpiryPresets(policy.maxLifetimeDays).map((preset) => (
           <SelectItem key={preset} value={preset}>
             {t(`credentials:expiry.${preset}`)}
@@ -55,10 +65,16 @@ export function AgentTokenExpirySelect({
             value={customDate}
             min={localDateInputValue(now)}
             max={localDateInputValue(latestAgentTokenCustomDate(now, policy.maxLifetimeDays))}
-            aria-describedby={limitId}
+            aria-invalid={invalid || undefined}
+            aria-describedby={invalid ? `${errorId} ${limitId}` : limitId}
             onChange={(event) => onCustomDateChange(event.target.value)}
           />
         </>
+      ) : null}
+      {invalid ? (
+        <p id={errorId} role="alert" className="text-sm text-destructive">
+          {t("agents:expiry.invalid")}
+        </p>
       ) : null}
       {value === "never" ? (
         <p role="note" className="text-sm text-muted-foreground">

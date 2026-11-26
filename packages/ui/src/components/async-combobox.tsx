@@ -37,6 +37,8 @@ interface AsyncComboboxProps<T> {
   className?: string;
   /** Whether the combobox is disabled. */
   disabled?: boolean;
+  /** The id of the visible label that names the trigger (a combobox does not take its name from its text). */
+  "aria-labelledby"?: string;
 }
 
 function AsyncCombobox<T>({
@@ -51,6 +53,7 @@ function AsyncCombobox<T>({
   getLabel,
   className,
   disabled = false,
+  "aria-labelledby": ariaLabelledBy,
 }: AsyncComboboxProps<T>) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
@@ -87,6 +90,7 @@ function AsyncCombobox<T>({
             variant="outline"
             role="combobox"
             aria-expanded={open}
+            aria-labelledby={ariaLabelledBy}
             disabled={disabled}
             className={cn(
               "w-full justify-between font-normal",

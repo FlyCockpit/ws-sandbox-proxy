@@ -4,12 +4,7 @@
   },
   "nav": {
     "ariaLabel": "Navegación principal",
-    "templates": "Plantillas",
-    "sandboxes": "Sandboxes",
     "collapseSidebar": "Contraer barra lateral",
-    "expandSidebar": "Expandir barra lateral",
-    "activity": "Actividad",
-    "terminals": "Terminales",
-    "settings": "Configuración"
+    "expandSidebar": "Expandir barra lateral"
   }
 }

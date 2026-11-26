@@ -27,11 +27,13 @@ import {
   canCancelBuild,
   isBuildActive,
   plainTail,
+  shownStepState,
 } from "@/lib/template-build-rules";
 import { orpc } from "@/utils/orpc";
 import {
   BuildErrorDetailText,
   BuildErrorText,
+  BuildFailureNextStep,
   BuildPhaseText,
   BuildStatePill,
   buildName,
@@ -39,6 +41,7 @@ import {
   type TemplateBuild,
   useBuildProblemText,
 } from "./build-parts";
+import { PlacingHint } from "./placing-hint";
 
 /**
  * One template build: state and progress phase, the
@@ -163,9 +166,10 @@ function BuildDetail({
     onMutate: () => setProblem(null),
     onSuccess: (updated) => {
       setConfirming(false);
+      // Cancel answers without the browser-only target; keep the loaded one.
       queryClient.setQueryData(
         orpc.templateBuilds.get.queryKey({ input: { id: build.id } }),
-        updated,
+        (current) => (current ? { ...updated, target: current.target } : current),
       );
       toast.success(t("templates:builds.detail.cancel.done"));
     },
@@ -221,6 +225,7 @@ function BuildDetail({
           </span>
         ) : null}
       </div>
+      <PlacingHint build={build} lang={lang} />
       {build.state === "AWAITING_CONTEXT" ? (
         <p role="status" className="text-sm text-muted-foreground">
           {t("templates:builds.detail.awaitingContext")}
@@ -312,6 +317,7 @@ function BuildDetail({
           <p className="text-sm">
             <BuildErrorText build={build} />
           </p>
+          <BuildFailureNextStep build={build} lang={lang} />
           {failureStep !== null ? (
             <p className="text-sm">
               {build.failureExitCode !== null
@@ -395,11 +401,12 @@ function BuildSteps({
       <ol className="flex min-w-0 flex-col gap-3">
         {build.steps.map((step) => {
           const shown = open.has(step.n) !== (step.n === running);
+          const state = shownStepState(build.state, step.state);
           return (
             <li
               key={step.n}
               data-build-step={step.n}
-              data-step-state={step.state}
+              data-step-state={state}
               className="flex min-w-0 flex-col gap-2 rounded-xl border p-3"
             >
               <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
@@ -411,9 +418,7 @@ function BuildSteps({
                   })}
                 </p>
                 <span className="flex flex-wrap items-center gap-2 text-xs">
-                  <span data-step-state-label="">
-                    {t(`templates:builds.stepState.${step.state}`)}
-                  </span>
+                  <span data-step-state-label="">{t(`templates:builds.stepState.${state}`)}</span>
                   {step.exitCode !== null ? (
                     <span className="font-mono">
                       {t("templates:builds.detail.exitCode", { code: step.exitCode })}
@@ -447,7 +452,11 @@ function BuildSteps({
                 </>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  {t("templates:builds.detail.noOutput")}
+                  {t(
+                    state === "notRun"
+                      ? "templates:builds.detail.notRun"
+                      : "templates:builds.detail.noOutput",
+                  )}
                 </p>
               )}
             </li>

@@ -25,7 +25,14 @@ import {
   BuildStatePill,
   useBuildProblemText,
 } from "@/components/template-builds/build-parts";
+import {
+  BuildTargetNote,
+  blocksBuild,
+  useHostBuildCheck,
+  usePoolBuildCheck,
+} from "@/components/template-builds/build-target-check";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
+import { HOST_STATUS_REFETCH_MS } from "@/lib/host-status";
 import { newIntentKey } from "@/lib/sandbox-rules";
 import {
   BUILD_LIST_REFETCH_MS,
@@ -103,6 +110,9 @@ export function CreateCommunityTemplateDialog({
   });
   const hosts = useQuery({
     ...orpc.sandboxHosts.listHosts.queryOptions({ input: { limit: PICKER_LIMIT } }),
+    // Connection is judged from heartbeat age: poll like the Hosts page.
+    refetchInterval: HOST_STATUS_REFETCH_MS,
+    staleTime: 0,
     meta: { skipGlobalErrorToast: true },
   });
   const pools = useQuery({
@@ -133,7 +143,22 @@ export function CreateCommunityTemplateDialog({
     },
   });
   const values = useStore(form.store, (state) => state.values);
-  const target = values.targetKind === "host" ? values.hostId : values.poolId;
+  // Someone with no hosts of their own builds on a pool: until they pick,
+  // "Build on" starts at A pool instead of "You have no hosts."
+  const [kindChosen, setKindChosen] = useState(false);
+  const targetKind: Draft["targetKind"] =
+    !kindChosen && hosts.isSuccess && hostItems.length === 0 && poolItems.length > 0
+      ? "pool"
+      : values.targetKind;
+  const target = targetKind === "host" ? values.hostId : values.poolId;
+  const poolPreflight = usePoolBuildCheck(targetKind === "pool" ? values.poolId : "");
+  const chosenHost = hostItems.find((host) => host.id === values.hostId);
+  const hostPreflight = useHostBuildCheck(
+    targetKind === "host" ? chosenHost : undefined,
+    hosts.dataUpdatedAt,
+  );
+  const targetCheck = targetKind === "pool" ? poolPreflight.check : hostPreflight;
+  const targetBlocked = blocksBuild(targetCheck);
 
   const create = useMutation({
     ...orpc.communityTemplates.create.mutationOptions(),
@@ -185,16 +210,14 @@ export function CreateCommunityTemplateDialog({
             event.stopPropagation();
             setAttempted(true);
             await form.handleSubmit();
-            if (!form.state.isValid || target === "" || disabled) return;
+            if (!form.state.isValid || target === "" || disabled || targetBlocked) return;
             const value = form.state.values;
             const label = value.label.trim();
             create.mutate({
               source: value.source,
               idempotencyKey: intentKey,
               target:
-                value.targetKind === "host"
-                  ? { sandboxHostId: value.hostId }
-                  : { poolId: value.poolId },
+                targetKind === "host" ? { sandboxHostId: value.hostId } : { poolId: value.poolId },
               ...(label ? { label } : {}),
             });
           }}
@@ -259,15 +282,18 @@ export function CreateCommunityTemplateDialog({
             <div className="flex min-w-0 flex-col gap-2">
               <Label htmlFor={targetId}>{t("templates:community.dialog.target")}</Label>
               <SegmentedControl
-                value={values.targetKind}
-                onChange={(next) => form.setFieldValue("targetKind", next)}
+                value={targetKind}
+                onChange={(next) => {
+                  setKindChosen(true);
+                  form.setFieldValue("targetKind", next);
+                }}
                 ariaLabel={t("templates:community.dialog.target")}
                 items={[
                   { value: "host", label: t("templates:builds.dialog.targetHost") },
                   { value: "pool", label: t("templates:builds.dialog.targetPool") },
                 ]}
               />
-              {values.targetKind === "host" ? (
+              {targetKind === "host" ? (
                 hosts.isSuccess && hostItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     {t("templates:builds.dialog.noHosts")}
@@ -313,6 +339,7 @@ export function CreateCommunityTemplateDialog({
                   {t("templates:builds.dialog.targetRequired")}
                 </p>
               ) : null}
+              <BuildTargetNote check={targetCheck} lang={lang} />
             </div>
           </fieldset>
           {problem ? (
@@ -328,7 +355,11 @@ export function CreateCommunityTemplateDialog({
             <Button type="button" size="touch" variant="outline" onClick={onClose}>
               {t("common:actions.cancel")}
             </Button>
-            <Button type="submit" size="touch" disabled={create.isPending || disabled}>
+            <Button
+              type="submit"
+              size="touch"
+              disabled={create.isPending || disabled || targetBlocked}
+            >
               {create.isPending
                 ? t("templates:community.dialog.pending")
                 : t("templates:community.dialog.submit")}

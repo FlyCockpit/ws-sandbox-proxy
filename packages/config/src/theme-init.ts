@@ -58,4 +58,14 @@ export const THEME_INIT_SCRIPT = `(() => {
     }
     m.setAttribute("content", dark ? "#0c0c0c" : "#ffffff");
   } catch {}
+  try {
+    // Sidebar width on the first frame. The signed-in shell is client-rendered,
+    // so the server sends its loading frame (header, sidebar, bottom nav), and
+    // that frame sizes the sidebar from this attribute rather than guessing.
+    // Keep the key and shape in lockstep with apps/web/src/stores/ui-preferences.ts.
+    const p = JSON.parse(localStorage.getItem("ui-preferences") || "null");
+    if (p && p.state && p.state.sidebarCollapsed === true) {
+      document.documentElement.setAttribute("data-sidebar", "collapsed");
+    }
+  } catch {}
 })();`;

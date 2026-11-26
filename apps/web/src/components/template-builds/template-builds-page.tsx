@@ -1,9 +1,10 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Button } from "@wssp/ui/components/button";
+import { Link } from "@tanstack/react-router";
+import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { Hammer } from "lucide-react";
-import { useId, useState } from "react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { EmptyState } from "@/components/empty-state";
@@ -23,7 +24,6 @@ import {
 } from "@/lib/template-build-rules";
 import { orpc } from "@/utils/orpc";
 import { BuildRow } from "./build-parts";
-import { BuildTemplateDialog } from "./build-template-dialog";
 
 /**
  * Template builds: every build of the owner, newest first, with
@@ -41,7 +41,6 @@ export function TemplateBuildsPage({
 }) {
   const { t, i18n } = useTranslation(["templates", "dashboard"]);
   const stateId = useId();
-  const [building, setBuilding] = useState(false);
   const query = useInfiniteQuery({
     ...orpc.templateBuilds.list.infiniteOptions({
       initialPageParam: undefined as string | undefined,
@@ -69,10 +68,14 @@ export function TemplateBuildsPage({
         title={t("templates:builds.title")}
         description={t("templates:builds.description")}
         actions={
-          <Button type="button" size="touch" onClick={() => setBuilding(true)}>
+          <Link
+            to="/$lang/dashboard/templates/new/build"
+            params={{ lang }}
+            className={buttonVariants({ size: "touch" })}
+          >
             <Hammer aria-hidden="true" />
             {t("templates:builds.newAction")}
-          </Button>
+          </Link>
         }
       />
       <div className="flex min-w-0 flex-wrap items-end gap-4">
@@ -158,7 +161,6 @@ export function TemplateBuildsPage({
           </>
         )}
       </QueryBoundary>
-      {building ? <BuildTemplateDialog lang={lang} onClose={() => setBuilding(false)} /> : null}
     </div>
   );
 }

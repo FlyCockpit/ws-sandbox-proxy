@@ -17,7 +17,9 @@ vi.mock("./lease-policy", async (original) => ({
 
 const { default: prisma } = await import("@wssp/db");
 const db = vi.mocked(prisma, true);
-const { dominantShareAfter, poolCapacityView } = await import("./capacity-view");
+const { dominantShareAfter, hostLargest, poolCapacityView, shareCappedLargest } = await import(
+  "./capacity-view"
+);
 const { sessionPrincipal } = await import("./contracts");
 const size = { cpuCount: 2, memoryMiB: 4096, diskGiB: 32 };
 
@@ -73,6 +75,7 @@ it.each([true, false])(
           memoryReserved: 0,
           vcpuBudget: 64,
           vcpuReserved: 0,
+          maxCpu: 16,
           rootCount: 0,
           liveCount: 0,
           memoryCap: null,
@@ -103,9 +106,13 @@ it.each([true, false])(
     const view = await poolCapacityView(sessionPrincipal("owner-1"), { id: "pool-1", ...size });
     expect(view.hosts[0]?.schedulable).toBe(guard);
     if (guard) {
+      // 16 vCPU per-VM maximum; 64 GiB budget less the VM overhead, in 256 MiB
+      // steps; the storage pool less the root overhead.
+      expect(view.largest).toEqual({ cpuCount: 16, memoryMiB: 65536 - 512, diskGiB: 999 });
       expect(view.fits).toBeGreaterThan(0);
       expect(view.aggregate.free.memoryMiB).toBeGreaterThan(0);
     } else {
+      expect(view.largest).toBeNull();
       expect(view.fits).toBe(0);
       expect(view.aggregate).toEqual({
         free: { memoryMiB: 0, vcpu: 0, diskGiB: 0 },
@@ -139,3 +146,56 @@ it.each([true, false])(
     );
   },
 );
+
+it("hostLargest is one sandbox's largest size per dimension: free, per-VM maximum and create limits", () => {
+  const host = { maxCpu: 8, memoryBudget: 16384 };
+  const pools = [
+    { capacityGiB: 100, reservedGiB: 90 },
+    { capacityGiB: 500, reservedGiB: 100 },
+  ];
+  // vCPU: free 6 below the per-VM 8; memory: free 4000 less 320 overhead,
+  // floored to 256 MiB; disk: the freest pool (400 GiB) less 1 GiB root overhead.
+  expect(hostLargest(host, 4000, 6, pools)).toEqual({
+    cpuCount: 6,
+    memoryMiB: 3584,
+    diskGiB: 399,
+  });
+  // The per-VM caps and the create limits bound a roomy host.
+  expect(
+    hostLargest({ maxCpu: 128, memoryBudget: 1_048_576 }, 1_000_000, 500, [
+      { capacityGiB: 100_000, reservedGiB: 0 },
+    ]),
+  ).toEqual({ cpuCount: 32, memoryMiB: 65536, diskGiB: 2048 });
+  // Nothing free, no per-VM report, no usable storage: zeros, never negative.
+  expect(hostLargest({ maxCpu: null, memoryBudget: null }, 0, 0, [])).toEqual({
+    cpuCount: 0,
+    memoryMiB: 0,
+    diskGiB: 0,
+  });
+});
+
+it("shareCappedLargest keeps one sandbox within the caller's remaining share caps", () => {
+  const largest = { cpuCount: 16, memoryMiB: 32768, diskGiB: 500 };
+  expect(
+    shareCappedLargest(
+      largest,
+      { maxMemoryMiB: 8192, maxVcpu: 6, maxDiskGiB: 100 },
+      { memoryMiB: 2048n, vcpu: 2n, diskGiB: 40n },
+    ),
+  ).toEqual({ cpuCount: 4, memoryMiB: 5632, diskGiB: 59 });
+  expect(
+    shareCappedLargest(
+      largest,
+      { maxMemoryMiB: null, maxVcpu: null, maxDiskGiB: null },
+      { memoryMiB: 0n, vcpu: 0n, diskGiB: 0n },
+    ),
+  ).toEqual(largest);
+  // An exhausted share leaves nothing.
+  expect(
+    shareCappedLargest(
+      largest,
+      { maxMemoryMiB: 1024, maxVcpu: 1, maxDiskGiB: 1 },
+      { memoryMiB: 1024n, vcpu: 1n, diskGiB: 1n },
+    ),
+  ).toEqual({ cpuCount: 0, memoryMiB: 0, diskGiB: 0 });
+});

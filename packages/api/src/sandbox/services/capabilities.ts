@@ -61,6 +61,8 @@ export const getSandboxLimits = serviceProcedure(
     capacityWaitMaxMs: deploymentWaitMaxMs(),
     capacityQueuePerKey: deploymentQueuePerKey(),
     capacityQueuePerOwner: deploymentQueuePerOwner(),
+    /** A tunnel server is configured: creates may declare preview ports. */
+    previewTunnels: await tunnelConfigured(),
   }),
 );
 

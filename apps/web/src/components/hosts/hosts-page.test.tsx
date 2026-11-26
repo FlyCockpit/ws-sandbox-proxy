@@ -117,6 +117,14 @@ vi.mock("@/utils/orpc", () => {
       sandboxHosts: {
         listHosts: {
           key: () => ["sandboxHosts", "listHosts"],
+          queryOptions: (options: { input: unknown }) => ({
+            queryKey: ["sandboxHosts", "listHosts", "watch"],
+            queryFn: async () => {
+              record("listHosts", options.input);
+              if (server.listError) throw server.listError;
+              return { items: structuredClone(server.hosts), nextCursor: null };
+            },
+          }),
           infiniteOptions: (options: {
             input: (cursor: string | undefined) => unknown;
             initialPageParam: unknown;
@@ -310,6 +318,12 @@ async function confirmDrain(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(confirm).getByRole("button", { name: enHosts.drain.drain }));
 }
 
+/** Open a host's "More actions" menu and choose an item. */
+async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole("button", { name: enCommon.actions.more }));
+  await user.click(await screen.findByRole("menuitem", { name }));
+}
+
 const listCalls = () => server.calls.filter((call) => call.procedure === "listHosts").length;
 const card = (id: string) => document.querySelector<HTMLElement>(`li[data-host-id="${id}"]`)!;
 const statusOf = (id: string) =>
@@ -368,17 +382,16 @@ describe("hosts page query states", () => {
         "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://api.example.test/install.sh | sh",
       ),
     ).toBeTruthy();
-    // No docs base in this environment: the guide is named by its repository path.
-    expect(
-      within(enroll).getByText(
-        enHosts.enroll.docsPath.replace(
-          "{{path}}",
-          "docs/guide/hosts.md#quick-start-your-first-host",
-        ),
-      ),
-    ).toBeTruthy();
-    const link = within(enroll).getByRole("link", { name: enHosts.enroll.tokenLink });
-    expect(link.getAttribute("href")).toBe("/en-US/settings/host-credentials");
+    // No docs base in this environment: the guide is a copyable repository path, not dead text.
+    const paths = [...enroll.querySelectorAll("[data-docs-path] [data-slot=copy-field-value]")];
+    expect(paths.map((node) => node.textContent)).toEqual([
+      "docs/guide/hosts.md#quick-start-your-first-host",
+      "docs/guide/hosts.md#run-as-a-service",
+    ]);
+    // A long-lived token only works for an existing host: not offered while enrolling.
+    expect(within(enroll).queryByRole("link", { name: enHosts.enroll.tokenLink })).toBeNull();
+    // The live status row waits for the new host.
+    expect(enroll.querySelector("[data-enroll-status]")).not.toBeNull();
     expect(screen.queryByRole("list", { name: enHosts.listRegion })).toBeNull();
   });
 
@@ -449,8 +462,14 @@ describe("hosts page query states", () => {
     expect(
       within(card("deleting"))
         .queryAllByRole("button")
-        .map((button) => button.textContent),
-    ).toEqual([enHosts.forget.action]);
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual([enCommon.actions.more]);
+    await userEvent
+      .setup()
+      .click(within(card("deleting")).getByRole("button", { name: enCommon.actions.more }));
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+      enHosts.forget.action,
+    ]);
     expect(within(card("deleting")).getByText(enHosts.statusHint.deleting)).toBeTruthy();
   });
 
@@ -700,7 +719,7 @@ describe("mutations", () => {
     const user = userEvent.setup();
     server.hosts = [fakeHost()];
     mount();
-    await user.click(await screen.findByRole("button", { name: enHosts.edit.action }));
+    await chooseAction(user, enHosts.edit.action);
     expect(screen.queryByRole("spinbutton")).toBeNull();
     const label = await screen.findByLabelText(enHosts.edit.label);
     await user.clear(label);
@@ -751,10 +770,12 @@ describe("mutations", () => {
   });
 
   it("forget is offered only for an unreachable host", async () => {
+    const user = userEvent.setup();
     server.hosts = [fakeHost()];
     mount();
-    await screen.findByRole("button", { name: enHosts.delete.action });
-    expect(screen.queryByRole("button", { name: enHosts.forget.action })).toBeNull();
+    await user.click(await screen.findByRole("button", { name: enCommon.actions.more }));
+    await screen.findByRole("menuitem", { name: enHosts.delete.action });
+    expect(screen.queryByRole("menuitem", { name: enHosts.forget.action })).toBeNull();
   });
 
   it("forget of an offline host needs the typed slug and reports detached sandboxes", async () => {
@@ -764,7 +785,7 @@ describe("mutations", () => {
       fakeHost({ status: "DISCONNECTED", lastConnectedAt: long, lastHeartbeatAt: long }),
     ];
     mount();
-    await user.click(await screen.findByRole("button", { name: enHosts.forget.action }));
+    await chooseAction(user, enHosts.forget.action);
     const dialog = await screen.findByRole("alertdialog");
     const confirm = within(dialog).getByRole("button", { name: enHosts.forget.confirm });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
@@ -788,7 +809,7 @@ describe("mutations", () => {
       fakeHost({ status: "DISCONNECTED", lastConnectedAt: long, lastHeartbeatAt: long }),
     ];
     mount();
-    await user.click(await screen.findByRole("button", { name: enHosts.forget.action }));
+    await chooseAction(user, enHosts.forget.action);
     const dialog = await screen.findByRole("alertdialog");
     await user.type(within(dialog).getByRole("textbox"), "desk-01");
     server.mutationError = Object.assign(new Error("unsafe"), {
@@ -837,11 +858,12 @@ describe("mutations", () => {
   });
 
   it("delete is unavailable while sandboxes are live, and explains why", async () => {
+    const user = userEvent.setup();
     server.hosts = [fakeHost({ liveSandboxCount: 1, drained: false })];
     mount();
-    const button = await screen.findByRole("button", { name: enHosts.delete.action });
-    expect((button as HTMLButtonElement).disabled).toBe(true);
-    expect(button.getAttribute("aria-describedby")).toBe("host-delete-blocked-host-1");
+    await user.click(await screen.findByRole("button", { name: enCommon.actions.more }));
+    const item = await screen.findByRole("menuitem", { name: enHosts.delete.action });
+    expect(item.getAttribute("aria-disabled")).toBe("true");
     expect(screen.getByText(enHosts.delete.blockedLive)).toBeTruthy();
   });
 
@@ -850,7 +872,7 @@ describe("mutations", () => {
     server.deletePending = true;
     server.hosts = [fakeHost()];
     mount();
-    await user.click(await screen.findByRole("button", { name: enHosts.delete.action }));
+    await chooseAction(user, enHosts.delete.action);
     const dialog = await screen.findByRole("alertdialog");
     const confirm = within(dialog).getByRole("button", { name: enCommon.actions.delete });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
@@ -868,7 +890,7 @@ describe("mutations", () => {
     const user = userEvent.setup();
     server.hosts = [fakeHost()];
     mount();
-    await user.click(await screen.findByRole("button", { name: enHosts.delete.action }));
+    await chooseAction(user, enHosts.delete.action);
     const dialog = await screen.findByRole("alertdialog");
     await user.type(within(dialog).getByRole("textbox"), "desk-01");
     server.mutationError = Object.assign(new Error("conflict"), {
@@ -919,11 +941,15 @@ describe("commands and layout", () => {
       // No full card: no actions, storage or connect commands in the list.
       expect(within(row).queryByRole("button")).toBeNull();
       expect(row.querySelector('[data-slot="copy-field"]')).toBeNull();
-      expect(row.querySelector('[data-host-meter="memory"]')).not.toBeNull();
+      // Used and free are named; a bare "2 of 4" read as either in the walk.
+      expect(row.querySelector('[data-host-meter="memory"]')?.textContent).toContain(
+        "2 GiB used of 4 GiB · 2 GiB free",
+      );
       // The vCPU number is the daemon's schedulable budget (by default CPU
       // threads × 2), never presented as bare vCPU or as CPU threads.
       const vcpu = row.querySelector<HTMLElement>('[data-host-meter="vcpu"]')!;
       expect(vcpu.textContent).toContain(enHosts.row.vcpu);
+      expect(vcpu.textContent).toContain("2 used of 8 vCPU · 6 free");
       expect(enHosts.row.vcpu).toBe("vCPU budget");
       expect(vcpu.getAttribute("title")).toBe(
         enHosts.vmCapacity.vcpuBudgetHint
@@ -933,14 +959,11 @@ describe("commands and layout", () => {
       expect(vcpu.getAttribute("title")).toContain("2 × the host's CPU threads");
     }
     expect(document.querySelector("[data-host-enroll]")).toBeNull();
-    await user.click(screen.getByRole("button", { name: enHosts.enroll.action }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(enHosts.enroll.title)).toBeTruthy();
-    expect(
-      within(dialog).getByText("wssp host enroll --slug my-host --server https://api.example.test"),
-    ).toBeTruthy();
-    for (const flag of ["--ca-file <path>", "--sandbox-memory-mib"])
-      expect(within(dialog).getByText(flag, { selector: "code" })).toBeTruthy();
+    // Add host is its own page (deep-linkable, back works), not a narrow dialog.
+    const add = screen.getByRole("link", { name: enHosts.enroll.action });
+    expect(add.getAttribute("href")).toBe("/en-US/settings/hosts/add");
+    expect(add.className).toContain("h-11");
+    void user;
   });
 
   it("per-host connect commands are copyable, nonsecret and link to Host credentials", async () => {
@@ -978,8 +1001,8 @@ describe("commands and layout", () => {
     for (const button of within(host)
       .getAllByRole("button")
       .filter((b) => !b.closest('[data-slot="copy-field"]')))
-      expect(button.className).toMatch(/\bh-11\b/);
-    const actions = within(host).getByRole("button", { name: enHosts.edit.action }).parentElement!;
+      expect(button.className).toMatch(/\b(h-11|size-11)\b/);
+    const actions = host.querySelector<HTMLElement>("[data-page-actions]")!;
     expect(actions.className).toMatch(/\bflex-wrap\b/);
     for (const text of host.querySelectorAll("p.truncate"))
       expect(text.className).toMatch(/\btruncate\b/);
@@ -1015,12 +1038,12 @@ it.each(["en-US", "es-MX"])(
     ];
     await i18n.changeLanguage(lang);
     mount(lang);
-    await screen.findByText("Desk");
+    await waitFor(() => expect(document.querySelector("[data-host-memory]")).not.toBeNull());
     const field = (name: string) =>
       document.querySelector(`[data-capacity-field="${name}"]`)?.textContent;
-    expect(field("memoryBudgetMiB")).toBe("4096 MiB");
-    expect(field("memoryReservedMiB")).toBe("3072 MiB");
-    expect(field("memoryAvailableMiB")).toBe("1024 MiB");
+    expect(field("memoryBudgetMiB")).toBe("4 GiB");
+    expect(field("memoryReservedMiB")).toBe("3 GiB");
+    expect(field("memoryAvailableMiB")).toBe("1 GiB");
     expect(field("maxCpuCount")).toBe("4 vCPU");
     expect(field("vcpuBudget")).toBe("8 vCPU");
     const budgetHint = document.querySelector("[data-vcpu-budget-hint]")?.textContent;
@@ -1039,9 +1062,9 @@ it.each(["en-US", "es-MX"])(
     };
     // Both the page timer and a query refetch preserve the server's numeric projection.
     await act(() => client.invalidateQueries());
-    await waitFor(() => expect(field("memoryOvercommittedMiB")).toBe("1024 MiB"));
-    expect(field("memoryReservedMiB")).toBe("3072 MiB");
-    expect(field("memoryAvailableMiB")).toBe("0 MiB");
+    await waitFor(() => expect(field("memoryOvercommittedMiB")).toBe("1 GiB"));
+    expect(field("memoryReservedMiB")).toBe("3 GiB");
+    expect(field("memoryAvailableMiB")).toBe("0 GiB");
     expect(
       document.querySelector("[data-capacity-state]")?.getAttribute("data-capacity-state"),
     ).toBe("stale");
@@ -1067,7 +1090,7 @@ it("marks a never-reported budget separately from zero available memory", async 
     }),
   ];
   mount();
-  await screen.findByText("Desk");
+  await waitFor(() => expect(document.querySelector("[data-host-memory]")).not.toBeNull());
   expect(document.querySelector("[data-capacity-state]")?.getAttribute("data-capacity-state")).toBe(
     "never",
   );
@@ -1075,7 +1098,7 @@ it("marks a never-reported budget separately from zero available memory", async 
     enHosts.daemon.notReported,
   );
   expect(document.querySelector('[data-capacity-field="memoryReservedMiB"]')?.textContent).toBe(
-    "1024 MiB",
+    "1 GiB",
   );
 });
 

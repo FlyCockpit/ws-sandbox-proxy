@@ -198,3 +198,25 @@ export function switchObservabilityTab(
     ...extra,
   };
 }
+
+/**
+ * An age in seconds as one or two coarse units in the UI locale
+ * ("45 sec", "12 min", "3 hr 5 min", "2 days 4 hr"), for "oldest pending".
+ */
+export function formatAgeSeconds(seconds: number, locale: string): string {
+  const unit = (value: number, name: "second" | "minute" | "hour" | "day") =>
+    new Intl.NumberFormat(locale, { style: "unit", unit: name, unitDisplay: "short" }).format(
+      value,
+    );
+  const whole = Math.max(0, Math.floor(seconds));
+  if (whole < 60) return unit(whole, "second");
+  if (whole < 3_600) return unit(Math.floor(whole / 60), "minute");
+  if (whole < 86_400) {
+    const hours = Math.floor(whole / 3_600);
+    const minutes = Math.floor((whole % 3_600) / 60);
+    return minutes ? `${unit(hours, "hour")} ${unit(minutes, "minute")}` : unit(hours, "hour");
+  }
+  const days = Math.floor(whole / 86_400);
+  const hours = Math.floor((whole % 86_400) / 3_600);
+  return hours ? `${unit(days, "day")} ${unit(hours, "hour")}` : unit(days, "day");
+}

@@ -21,6 +21,7 @@ import {
   type SandboxState,
   sandboxPhase,
 } from "@/lib/sandbox-rules";
+import type { SandboxDisplayOverride } from "@/lib/sandbox-status";
 import { formatRelativeTime } from "@/utils/relative-time";
 
 /** Shared pieces of the Sandboxes list and detail pages (C47). */
@@ -40,17 +41,32 @@ const PHASE_TONE: Record<SandboxPhase, string> = {
   problem: "border-destructive/40 bg-destructive/10 text-destructive",
 };
 
-export function StatePill({ state }: { state: SandboxState }) {
+/**
+ * The sandbox's state. `display` names a request in flight that the stored
+ * state does not show (a start of a stopped sandbox, a destroy that the
+ * server stores as stopping); `data-sandbox-state` stays the server's state.
+ */
+export function StatePill({
+  state,
+  display,
+}: {
+  state: SandboxState;
+  display?: SandboxDisplayOverride | null;
+}) {
   const { t } = useTranslation(["sandboxes"]);
+  const tone = display
+    ? PHASE_TONE[display === "DESTROYING" ? "stopping" : "starting"]
+    : PHASE_TONE[sandboxPhase(state)];
   return (
     <Badge
       data-sandbox-state={state}
+      data-sandbox-display={display ?? undefined}
       className={cn(
         "inline-flex items-center rounded-sm border px-2 py-0.5 text-xs font-medium",
-        PHASE_TONE[sandboxPhase(state)],
+        tone,
       )}
     >
-      {t(`sandboxes:state.${state}`)}
+      {display ? t(`sandboxes:displayState.${display}`) : t(`sandboxes:state.${state}`)}
     </Badge>
   );
 }
@@ -187,6 +203,8 @@ export function LifetimeFields({
   onOnExpire,
   keepTimeoutMs,
   disabled,
+  hint,
+  error,
 }: {
   maxTimeoutMs: number;
   /** The target allows "no time limit" (timeoutMs 0). */
@@ -201,10 +219,15 @@ export function LifetimeFields({
    */
   keepTimeoutMs?: number;
   disabled?: boolean;
+  /** Replaces the default hint (Create states its own default). */
+  hint?: string;
+  /** An inline problem with the chosen lifetime (marks the field invalid). */
+  error?: string | null;
 }) {
   const { t, i18n } = useTranslation(["sandboxes"]);
   const lifetimeId = useId();
   const hintId = useId();
+  const errorId = useId();
   const radioName = useId();
   const expireLabelId = useId();
   return (
@@ -216,7 +239,8 @@ export function LifetimeFields({
           autoComplete="off"
           value={minutes}
           disabled={disabled}
-          aria-describedby={hintId}
+          aria-describedby={error ? `${hintId} ${errorId}` : hintId}
+          aria-invalid={error ? true : undefined}
           onValueChange={(value) => onMinutes(value)}
         >
           {keepTimeoutMs === undefined ? null : (
@@ -242,10 +266,18 @@ export function LifetimeFields({
           ))}
         </FormSelect>
         <p id={hintId} className="text-xs text-muted-foreground">
-          {t(
-            keepTimeoutMs === undefined ? "sandboxes:lifetime.hint" : "sandboxes:lifetime.keepHint",
-          )}
+          {hint ??
+            t(
+              keepTimeoutMs === undefined
+                ? "sandboxes:lifetime.hint"
+                : "sandboxes:lifetime.keepHint",
+            )}
         </p>
+        {error ? (
+          <p id={errorId} role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
       </div>
       {onOnExpire && (
         <div className="flex min-w-0 flex-col gap-1">

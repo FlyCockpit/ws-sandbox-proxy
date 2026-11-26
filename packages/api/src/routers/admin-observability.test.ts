@@ -90,6 +90,7 @@ it("uses exhaustive metadata-only selects with bounded keyset queries", async ()
       "daemonMemoryBudgetMiB",
       "daemonMaxCpuCount",
       "quarantinedAt",
+      "User",
     ],
     [
       "id",
@@ -107,12 +108,15 @@ it("uses exhaustive metadata-only selects with bounded keyset queries", async ()
       "guestSudo",
       "guestSudoReason",
       "guestRoot",
+      "User",
     ],
-    ["id", "userId", "createdAt", "sandboxId", "kind", "state", "generation", "updatedAt"],
+    ["id", "userId", "createdAt", "sandboxId", "kind", "state", "generation", "updatedAt", "User"],
   ];
   for (const [index, delegate] of [db.sandboxHost, db.sandbox, db.sandboxOperation].entries()) {
     const query = delegate.findMany.mock.calls[0]?.[0];
     expect(Object.keys(query?.select ?? {}).sort()).toEqual(allowed[index]?.sort());
+    // The only join: the owner's account name and email, never owner-chosen labels.
+    expect(query?.select?.User).toEqual({ select: { name: true, email: true } });
     expect(query?.take).toBe(3);
     expect(query?.orderBy).toEqual([{ createdAt: "desc" }, { id: "desc" }]);
     expect(query?.where).toMatchObject({ AND: [{ userId: "owner" }] });
@@ -203,6 +207,7 @@ it("lists webhook endpoints as metadata only: URL host, never path, query or sec
       consecutiveFailures: 2,
       failingSince: null,
       lastSuccessAt: null,
+      User: { name: "Ada", email: "ada@example.test" },
     },
   ] as never);
   const page = await client.listWebhookEndpoints({ limit: 5 });
@@ -210,6 +215,7 @@ it("lists webhook endpoints as metadata only: URL host, never path, query or sec
     {
       id: "whe-1",
       ownerId: "owner",
+      owner: { name: "Ada", email: "ada@example.test" },
       createdAt: new Date("2026-11-02T00:00:00.000Z"),
       host: "hooks.example.com",
       state: "enabled",
@@ -237,4 +243,23 @@ it("returns 404 for a non-admin before reading observability data", async () => 
   db.user.findUnique.mockResolvedValueOnce({ id: "admin", role: "user" } as never);
   await expect(client.listHosts()).rejects.toMatchObject({ code: "NOT_FOUND" });
   expect(db.sandboxHost.findMany).not.toHaveBeenCalled();
+});
+
+it("returns the owner's name and email beside each id, and never the relation itself", async () => {
+  const createdAt = new Date("2026-11-02T00:00:00.000Z");
+  const owner = { name: "Ada", email: "ada@example.test" };
+  db.sandboxHost.findMany.mockResolvedValue([
+    { id: "host-1", userId: "owner", createdAt, status: "CONNECTED", User: owner },
+  ] as never);
+  db.sandbox.findMany.mockResolvedValue([
+    { id: "sbx-1", userId: "owner", createdAt, state: "READY", User: owner },
+  ] as never);
+  db.sandboxOperation.findMany.mockResolvedValue([
+    { id: "op-1", userId: "owner", createdAt, state: "RUNNING", User: owner },
+  ] as never);
+  for (const list of [client.listHosts, client.listSandboxes, client.listOperations]) {
+    const page = await list({ limit: 5 });
+    expect(page.items[0]).toMatchObject({ userId: "owner", owner });
+    expect(page.items[0]).not.toHaveProperty("User");
+  }
 });

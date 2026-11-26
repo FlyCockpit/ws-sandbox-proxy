@@ -4,7 +4,7 @@ A WS Sandbox Proxy template is an owner-local logical identity with immutable re
 Each revision pins an Incus virtual-machine fingerprint and guest identity;
 separate availability records say which enrolled hosts verified that exact image.
 You prepare the first image on a host with Incus, then register it from the
-dashboard (**Templates → Register template**) or with `POST /v1/templates`
+dashboard (**Templates → New template → Register an existing image**) or with `POST /v1/templates`
 (see [native HTTP contract](../design/native-http-contract.md)). After that,
 WS Sandbox Proxy can copy the exact image to other eligible hosts when a create needs it
 ([image distribution](#image-distribution)), keep it in an S3-compatible image
@@ -76,9 +76,12 @@ for selecting exact revisions and hosts.
 
 ## Dashboard revision size defaults
 
-**Templates → Register template** has explicit **Default vCPUs** and
-**Default memory (MiB)**, **Default root disk (GiB)** and **Minimum root disk
-(GiB, optional)** inputs, initially 1, 1024, 32 and blank. The minimum is the
+**Templates → New template → Register an existing image** has explicit
+**Default vCPUs** and **Default memory (MiB)**, **Default root disk (GiB)** and
+**Minimum root disk (GiB, optional)** inputs under **More options → Default
+size**, initially 1, 1024, 32 and blank. Default environment variables are
+KEY=value rows (or `.env` text) under **Environment**; the API keeps a JSON
+map. The minimum is the
 image's own root size (creates below it are refused; blank: the default is the
 minimum, since wssp cannot see inside a registered image). CPU is a whole count
 from 1 to 32; memory is 512–65536 MiB in 256 MiB steps. For the browser
@@ -86,8 +89,8 @@ recipe, enter 2 and 2048. Registration verifies the image without starting a
 VM or reserving memory; the defaults may exceed the verification host's cap.
 
 Each paged revision card shows its saved CPU/RAM/root defaults and its minimum
-root disk. **Add revision**
-starts a new registration form with explicit 1/1024/32 values. **Append with these
+root disk. **Register a version** (in a template's **More actions** menu)
+starts a new registration page with explicit 1/1024/32 values. **New version with these
 defaults** copies only that revision's CPU/RAM/root into the new form; choose a
 verification host and image alias again. You can edit the copied values before
 submitting. Both actions append an immutable revision and move `latest`; they
@@ -342,7 +345,7 @@ For a tested browser workload, see the [agent-browser template recipe](../guide/
 
 ## Community bases
 
-**Create from community image** (Templates page) or
+**New template → From a community image** (Templates page) or
 `POST /v1/templates/community` (SDK `templates.createFromCommunity`; scopes
 `templates:write` and `templates:build`, not an allowlist key) makes a base
 template for you from a tested community image, without a prep VM. The
@@ -445,8 +448,11 @@ sandboxes keep their original revision, disk and private configuration.
 Archiving the logical template (`retireTemplate`) prevents new selector
 resolution, even while retained sandboxes use it. It does not remove host
 associations, release live VM slots or destroy existing sandboxes. Exact
-revisions remain readable by `sandboxTemplates.getTemplateRevision`. There is
-no template delete; resources are removed with their owner's account.
+revisions remain readable by `sandboxTemplates.getTemplateRevision`. In the
+dashboard, **Archive** sits in the template's **More actions** menu and is
+confirmed first. There is no unarchive and no template delete; resources are
+removed with their owner's account. To use an archived template's image
+again, register or build a new template from it.
 
 A latest/tag selector resolves only once at acceptance. Moving a tag never
 changes replay or an existing sandbox. An ALLOWLIST key must grant the resolved

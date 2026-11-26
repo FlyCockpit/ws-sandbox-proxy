@@ -36,6 +36,7 @@ const server = vi.hoisted(() => ({
   sandboxes: [] as unknown[],
   operations: [] as unknown[],
   listError: null as unknown,
+  users: [] as { id: string; name: string; email: string }[],
 }));
 
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -60,6 +61,22 @@ vi.mock("@/utils/orpc", () => {
   });
   return {
     orpc: {
+      users: {
+        list: {
+          call: async (input: { search?: string; limit: number }) => {
+            server.calls.push({ procedure: "users.list", input });
+            const query = input.search?.toLowerCase() ?? "";
+            return {
+              users: server.users.filter(
+                (user) =>
+                  user.name.toLowerCase().includes(query) ||
+                  user.email.toLowerCase().includes(query),
+              ),
+              nextCursor: null,
+            };
+          },
+        },
+      },
       adminObservability: {
         counters: list("counters", () => ({
           users: 3,
@@ -97,6 +114,7 @@ vi.mock("@/utils/orpc", () => {
                 {
                   id: "whe-1",
                   ownerId: "owner-9",
+                  owner: { name: "Grace", email: "grace@example.test" },
                   createdAt: new Date(0),
                   host: "hooks.example.com",
                   state: "sustained_failures",
@@ -147,10 +165,22 @@ beforeAll(async () => {
   });
 });
 
+const OWNER = { name: "Ada Lovelace", email: "ada@example.test" };
+
+// The owner picker's command list measures itself; jsdom has neither API.
+class NoopResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= NoopResizeObserver as unknown as typeof ResizeObserver;
+Element.prototype.scrollIntoView ??= () => {};
+
 function host(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
     userId: "owner-1",
+    owner: OWNER,
     createdAt: new Date("2026-02-01T00:00:00.000Z"),
     status: "CONNECTED",
     lastHeartbeatAt: new Date("2026-02-01T00:00:00.000Z"),
@@ -201,6 +231,7 @@ const rowIds = () =>
 beforeEach(() => {
   server.calls = [];
   server.listError = null;
+  server.users = [];
   server.sandboxes = [];
   server.operations = [];
   server.hostPages = {
@@ -219,6 +250,7 @@ describe("admin observability", () => {
       {
         id: "op-1",
         userId: "owner-1",
+        owner: OWNER,
         kind: "CREATE_SANDBOX",
         state: "QUEUED",
         generation: 1,
@@ -306,17 +338,27 @@ describe("admin observability", () => {
     expect(await screen.findByText("Page 1")).toBeTruthy();
   });
 
-  it("queries a typed owner id once, after the typing pause", async () => {
+  it("filters by an owner picked by name or email, and shows them by name", async () => {
+    server.users = [
+      { id: "owner-9", name: "Grace Hopper", email: "grace@example.test" },
+      { id: "owner-1", name: "Ada Lovelace", email: "ada@example.test" },
+    ];
     const u = userEvent.setup();
     mount();
     await screen.findByText("h-3");
-    const before = hostCalls().length;
-    await u.type(screen.getByLabelText(enAdmin.observability.filters.owner), "owner-9");
+    await u.click(screen.getByRole("combobox", { name: enAdmin.observability.filters.owner }));
+    await u.type(
+      await screen.findByPlaceholderText(enAdmin.observability.filters.ownerSearch),
+      "grace",
+    );
+    await u.click(await screen.findByRole("option", { name: /Grace Hopper/ }));
     expect(currentSearch.owner).toBe("owner-9");
     await waitFor(() => expect(hostCalls().at(-1)?.input?.ownerId).toBe("owner-9"));
-    const typed = hostCalls().slice(before);
-    // No request per keystroke: only the settled value (plus none partial).
-    expect(typed.map((call) => call.input?.ownerId)).toEqual(["owner-9"]);
+    expect(document.querySelector('[data-owner-filter="owner-9"]')?.textContent).toContain(
+      "Grace Hopper (grace@example.test)",
+    );
+    await u.click(screen.getByRole("button", { name: enAdmin.observability.filters.ownerClear }));
+    expect(currentSearch.owner).toBe("");
   });
 
   it("does not query with an id no row could have, and says why", async () => {
@@ -324,8 +366,8 @@ describe("admin observability", () => {
     expect(await screen.findByText(enAdmin.observability.filters.fixToSearch)).toBeTruthy();
     expect(screen.getByText(enAdmin.observability.filters.invalidId)).toBeTruthy();
     expect(
-      screen.getByLabelText(enAdmin.observability.filters.owner).getAttribute("aria-invalid"),
-    ).toBe("true");
+      document.querySelector('[data-owner-filter] [aria-invalid="true"]')?.textContent,
+    ).toContain("bad id!");
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     });
@@ -338,6 +380,7 @@ describe("admin observability", () => {
       {
         id: "sbx-1",
         userId: "owner-1",
+        owner: OWNER,
         createdAt: new Date("2026-02-01T00:00:00.000Z"),
         sandboxHostId: "h-3",
         templateId: "tpl-1",
@@ -429,4 +472,51 @@ it("shows webhook counters and endpoint hosts as metadata only", async () => {
   expect(row?.textContent).toContain(enAdmin.observability.webhooks.state.sustained_failures);
   expect(row?.textContent).not.toMatch(/\/|\?|token/);
   expect(document.querySelector('[data-counter="disabledForFailures"]')?.textContent).toBe("1");
+});
+
+it("shows owners by name with ids in copy chips, full labels, durations and singular counts", async () => {
+  server.hostPages = {
+    "": { items: [host("h-9", { liveCount: 1, rootCount: 1 })], nextCursor: null },
+  };
+  const u = userEvent.setup();
+  mount();
+  const row = await waitFor(() => {
+    const found = document.querySelector<HTMLElement>('tr[data-row-id="h-9"]');
+    if (!found) throw new Error("no row");
+    return found;
+  });
+  // The owner's name comes first and filters; the id sits in a copy chip.
+  expect(within(row).getByText("Ada Lovelace")).toBeTruthy();
+  expect(within(row).getByText("ada@example.test")).toBeTruthy();
+  expect(within(row).getByRole("button", { name: "Copy owner ID" })).toBeTruthy();
+  expect(within(row).getByRole("button", { name: "Copy host ID" })).toBeTruthy();
+  expect(row.textContent).toContain("1 live sandbox · 1 stopped sandbox disk");
+  // Connected is the same green as on the Hosts page.
+  expect(within(row).getByText(enAdmin.observability.hostStatus.CONNECTED).className).toContain(
+    "emerald",
+  );
+  // KPI labels wrap instead of truncating; the oldest pending delivery is a duration.
+  const oldest = document.querySelector('[data-counter="oldestPending"]');
+  expect(oldest?.textContent).toBe("30 sec");
+  const label = oldest?.parentElement?.querySelector("p");
+  expect(label?.textContent).toBe(enAdmin.observability.webhooks.oldestPending);
+  expect(label?.className).not.toContain("truncate");
+  // Clicking the owner's name narrows to them and the filter shows the name.
+  await u.click(
+    within(row).getByRole("button", {
+      name: enAdmin.observability.filterByOwner.replace("{{id}}", "owner-1"),
+    }),
+  );
+  expect(currentSearch.owner).toBe("owner-1");
+  expect(document.querySelector('[data-owner-filter="owner-1"]')?.textContent).toContain(
+    "Ada Lovelace (ada@example.test)",
+  );
+});
+
+it("formats ages as coarse durations", async () => {
+  const { formatAgeSeconds } = await import("@/lib/admin-observability-search");
+  expect(formatAgeSeconds(30, "en-US")).toBe("30 sec");
+  expect(formatAgeSeconds(125, "en-US")).toBe("2 min");
+  expect(formatAgeSeconds(3 * 3600 + 5 * 60, "en-US")).toBe("3 hr 5 min");
+  expect(formatAgeSeconds(2 * 86400 + 4 * 3600, "en-US")).toBe("2 days 4 hr");
 });

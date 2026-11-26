@@ -74,8 +74,11 @@ const SAME_TERM: readonly (readonly string[])[] = [
   ["hosts:drain.draining", "admin:observability.draining"],
   ["hosts:status.stale", "admin:observability.hostStatus.STALE"],
   ["hosts:tabs.hostCredentials", "hostCredentials:title", "hosts:enroll.tokenLink"],
-  ["dashboard:nav.settings", "nav:items.settings", "settings:hub.title", "settings:hub.back"],
-  ["dashboard:nav.activity", "operations:title"],
+  ["nav:items.settings", "settings:hub.title", "settings:hub.back"],
+  ["nav:items.activity", "operations:title"],
+  ["nav:items.sandboxes", "sandboxes:title"],
+  ["nav:items.templates", "templates:title"],
+  ["nav:items.hosts", "settings:hub.items.hosts.label"],
   ["settings:hub.items.logins.label", "settings:hub.groups.logins", "logins:title"],
   ["settings:hub.items.pools.label", "hosts:pools.title"],
   ["settings:navImages", "settings:hub.items.images.label"],
@@ -162,11 +165,21 @@ describe("guide UI labels match en-US", () => {
     [
       "operations/templates.md",
       "templates",
-      ["appendRevision", "appendWithSize", "manageRevision", "form.cpuCount", "form.memoryMiB"],
+      [
+        "card.registerVersion",
+        "appendWithSize",
+        "manageRevision",
+        "form.cpuCount",
+        "form.memoryMiB",
+      ],
     ],
-    ["guide/pools.md", "hosts", ["pools.members", "pools.add", "pools.create"]],
+    [
+      "guide/pools.md",
+      "hosts",
+      ["pools.actions.hosts", "pools.actions.people", "pools.add", "pools.create"],
+    ],
     ["guide/pools.md", "sandboxes", ["create.latest"]],
-    ["guide/sandboxes.md", "sandboxes", ["create.latest", "create.size", "fields.allocation"]],
+    ["guide/sandboxes.md", "sandboxes", ["create.latest", "create.sizeTitle", "fields.allocation"]],
     ["guide/terminal.md", "terminal", ["actions.attach", "actions.reattach", "actions.copy"]],
   ] as const)("%s uses %s labels", (path, ns, keys) => {
     const guide = readFileSync(join(root, "../../../docs", path), "utf8").replace(/\s+/g, " ");

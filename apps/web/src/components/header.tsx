@@ -1,4 +1,5 @@
 import { useParams } from "@tanstack/react-router";
+import { Skeleton } from "@wssp/ui/components/skeleton";
 
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 
@@ -8,7 +9,13 @@ import { MainNav } from "./main-nav";
 import { ModeToggle } from "./mode-toggle";
 import UserMenu from "./user-menu";
 
-export default function Header() {
+/**
+ * The app header row. `placeholder` is the server-rendered first frame of the
+ * client-only app shell (see `app-shell.tsx`): the same row with the account
+ * control as the skeleton UserMenu itself shows while the session resolves,
+ * so the swap to the live header moves nothing.
+ */
+export default function Header({ placeholder = false }: { placeholder?: boolean }) {
   // `strict: false` lets this component render under any route (including the
   // top-level `/` redirect) without throwing when the `lang` param is absent.
   const params = useParams({ strict: false });
@@ -22,11 +29,11 @@ export default function Header() {
             one row; it wraps only when the controls themselves (e.g. a long
             account name) cannot fit next to that 44px. */}
         <AppNameLink lang={lang} />
-        <MainNav />
+        {placeholder ? null : <MainNav />}
         <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2">
           <LanguageSwitcher />
           <ModeToggle />
-          <UserMenu />
+          {placeholder ? <Skeleton className="h-11 w-11 md:w-24" /> : <UserMenu />}
         </div>
       </div>
       <hr />

@@ -15,12 +15,14 @@ import { toast } from "@wssp/ui/components/sileo";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
 import { cn } from "@wssp/ui/lib/utils";
-import { useId, useState } from "react";
+import { Scissors, Settings2 } from "lucide-react";
+import { type ReactNode, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { FormSelect } from "@/components/form-select";
 import { InlineRetry } from "@/components/inline-retry";
+import type { OverflowAction } from "@/components/page-actions";
 import { useTwoFactorRedirect } from "@/hooks/use-two-factor-redirect";
 import { formatBytes } from "@/lib/format-bytes";
 import { isLaunchableRevision } from "@/lib/template-build-rules";
@@ -179,14 +181,14 @@ export function PublishRevisionButton({ revision, lang }: { revision: Revision; 
   );
 }
 
-/** Settings and Prune now for one active template. */
-export function TemplateImageActions({
-  template,
-  lang,
-}: {
-  template: { id: string; slug: string; label: string };
-  lang: string;
-}) {
+/**
+ * Image settings and Prune now for one active template, as overflow-menu
+ * entries plus the sheet and confirm they open (nothing when images are off).
+ */
+export function useTemplateImageActions(
+  template: { id: string; slug: string; label: string },
+  lang: string,
+): { actions: OverflowAction[]; dialogs: ReactNode } {
   const { t } = useTranslation(["templates", "common"]);
   const mode = useImageMode();
   const queryClient = useQueryClient();
@@ -206,37 +208,47 @@ export function TemplateImageActions({
     },
     onSettled: () => invalidateTemplateImages(queryClient),
   });
-  if (mode === undefined || mode === "off") return null;
-  return (
-    <>
-      <Button type="button" size="touch" variant="secondary" onClick={() => setEditing(true)}>
-        {t("templates:images.settings.action")}
-      </Button>
-      <Button type="button" size="touch" variant="outline" onClick={() => setPruning(true)}>
-        {t("templates:images.prune.action")}
-      </Button>
-      {editing ? (
-        <TemplateImageSettingsSheet
-          template={template}
-          lang={lang}
-          onClose={() => setEditing(false)}
+  if (mode === undefined || mode === "off") return { actions: [], dialogs: null };
+  return {
+    actions: [
+      {
+        id: "image-settings",
+        label: t("templates:images.settings.action"),
+        icon: Settings2,
+        onSelect: () => setEditing(true),
+      },
+      {
+        id: "prune",
+        label: t("templates:images.prune.action"),
+        icon: Scissors,
+        onSelect: () => setPruning(true),
+      },
+    ],
+    dialogs: (
+      <>
+        {editing ? (
+          <TemplateImageSettingsSheet
+            template={template}
+            lang={lang}
+            onClose={() => setEditing(false)}
+          />
+        ) : null}
+        <ConfirmDeleteDialog
+          open={pruning}
+          onOpenChange={setPruning}
+          title={t("templates:images.prune.title", { label: template.label })}
+          description={t("templates:images.prune.description")}
+          confirmToken={template.slug}
+          typePrompt={t("templates:images.prune.typePrompt")}
+          copyAriaLabel={t("templates:images.prune.copy")}
+          confirmLabel={t("templates:images.prune.confirm")}
+          pendingLabel={t("templates:images.prune.pending")}
+          isPending={prune.isPending}
+          onConfirm={() => prune.mutate({ templateId: template.id })}
         />
-      ) : null}
-      <ConfirmDeleteDialog
-        open={pruning}
-        onOpenChange={setPruning}
-        title={t("templates:images.prune.title", { label: template.label })}
-        description={t("templates:images.prune.description")}
-        confirmToken={template.slug}
-        typePrompt={t("templates:images.prune.typePrompt")}
-        copyAriaLabel={t("templates:images.prune.copy")}
-        confirmLabel={t("templates:images.prune.confirm")}
-        pendingLabel={t("templates:images.prune.pending")}
-        isPending={prune.isPending}
-        onConfirm={() => prune.mutate({ templateId: template.id })}
-      />
-    </>
-  );
+      </>
+    ),
+  };
 }
 
 function TemplateImageSettingsSheet({

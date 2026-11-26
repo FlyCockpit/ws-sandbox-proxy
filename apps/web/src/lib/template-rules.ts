@@ -304,6 +304,48 @@ export function templateProblem(error: unknown): TemplateProblem {
 }
 
 /**
+ * Search of the New template pages: `template` adds a version to that template
+ * instead of creating one; `from` (register only) prefills the default size
+ * of that version. Anything that is not a plain id is dropped.
+ */
+export type NewTemplateSearch = { template?: string; from?: string };
+const SEARCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export function parseNewTemplateSearch(search: Record<string, unknown>): NewTemplateSearch {
+  const pick = (value: unknown) =>
+    typeof value === "string" && SEARCH_ID.test(value) ? value : undefined;
+  const template = pick(search.template);
+  const from = template ? pick(search.from) : undefined;
+  return { ...(template ? { template } : {}), ...(from ? { from } : {}) };
+}
+
+/** `/templates?new=true` opens the New template chooser (a deep link from Create sandbox). */
+export type TemplatesSearch = { new?: true };
+export function parseTemplatesSearch(search: Record<string, unknown>): TemplatesSearch {
+  return search.new === true || search.new === "true" ? { new: true } : {};
+}
+
+/** Lowercase, hyphenated slug from a display name (the register page's default slug). */
+export function slugFromName(name: string): string {
+  return name
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/g, "");
+}
+
+/** Key/value rows ↔ the draft's JSON env text (the API keeps a JSON string map). */
+export function envRowsToDraft(record: Record<string, string>): string {
+  return Object.keys(record).length === 0 ? "" : JSON.stringify(record);
+}
+
+/** Env keys the server refuses on stored defaults. */
+export const RESERVED_DEFAULT_ENV = new Set(["HOME", "SHELL", "TERM"]);
+export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
  * A template revision as people read it: `slug vN` (the revision's per-template
  * number). Its cuid stays behind a copy button where it is needed at all.
  */

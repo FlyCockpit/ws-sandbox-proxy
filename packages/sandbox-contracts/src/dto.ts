@@ -1437,6 +1437,20 @@ export const poolCapacitySchema = z
     aggregate: z.object({ free: resourceTriple, budget: resourceTriple }).strict(),
     /** Request-size sandboxes that fit now (capped by your share caps); null without a size. */
     fits: z.number().int().min(0).nullable(),
+    /**
+     * The largest vCPU count, memory (MiB, in 256 MiB steps) and root disk
+     * (GiB) one currently schedulable eligible host could place now, each
+     * dimension on its own (they may come from different hosts), after member
+     * caps, per-VM limits and your share caps. Aggregate only: no host is
+     * named. Null when no host is eligible.
+     */
+    largest: z
+      .strictObject({
+        cpuCount: z.number().int().min(0).max(VM_SIZE_LIMITS.cpuCountMax),
+        memoryMiB: z.number().int().min(0).max(VM_SIZE_LIMITS.memoryMiBMax),
+        diskGiB: z.number().int().min(0).max(VM_SIZE_LIMITS.diskGiBMax),
+      })
+      .nullable(),
     lease: z.strictObject({
       maxTimeoutMs: z.number().int().min(LEASE_LIMIT_MIN_MS).max(LEASE_FINITE_MAX_MS),
       timeoutZero: z.boolean(),

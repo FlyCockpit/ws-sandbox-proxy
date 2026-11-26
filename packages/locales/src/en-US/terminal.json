@@ -98,7 +98,9 @@
     "locked": "Proof attempts are locked. Wait at least fifteen minutes and retry with a new code after the lock expires.",
     "refused": "Host terminal refused. Check your session, local policy and fresh code before a manual retry.",
     "unavailable": "Connect the host and enable local host terminals before attaching.",
-    "regionLabel": "Host terminal"
+    "regionLabel": "Host terminal",
+    "offHint": "Host terminals are off on this host. To turn them on, run this command in a local login on the host itself (the dashboard can't turn them on). This page updates once the host reports the change.",
+    "copyOnCommand": "Copy the command that turns host terminals on"
   },
   "utilities": {
     "button": "Utilities",

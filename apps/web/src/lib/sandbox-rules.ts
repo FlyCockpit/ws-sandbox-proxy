@@ -319,7 +319,23 @@ export function lifetimeOptions(maxTimeoutMs: number, allowUnlimited = false): n
 }
 /** The effective lease limit the form validates against before the server re-checks. */
 export type LifetimeLimit = { maxTimeoutMs: number; allowUnlimited: boolean };
-export const DEFAULT_LIFETIME_MINUTES = LEASE_DEFAULT_MS / 60_000;
+/**
+ * The Create page's lifetime (design-review2 #2): one hour, then stop and keep
+ * the disk. Renew and Start keep their own defaults.
+ */
+const CREATE_LIFETIME_MINUTES = 60;
+
+/**
+ * The Create default within the placement's limit: one hour, or the longest
+ * preset the limit allows when it is shorter (no time limit is never picked
+ * on its own).
+ */
+export function createLifetimeDefault(limit: LifetimeLimit): string {
+  const finite = lifetimeOptions(limit.maxTimeoutMs).filter(
+    (minutes) => minutes > 0 && minutes <= CREATE_LIFETIME_MINUTES,
+  );
+  return String(finite[finite.length - 1] ?? CREATE_LIFETIME_MINUTES);
+}
 
 export type SandboxDraft = {
   /** Blank lets the server pick a free adjective-noun name. */
@@ -335,6 +351,7 @@ export type SandboxDraft = {
   diskGiB: string;
   lifetimeMinutes: string;
   onExpire: "stop" | "destroy";
+  /** Labels as a JSON object of strings (blank: none), like `envs`. */
   labels: string;
   envs: string;
   /**
@@ -355,6 +372,11 @@ export type SandboxDraft = {
   capacityWait?: CapacityWaitChoice;
   /** CLI logins (≤ 8, one per login); empty account/instance mean "Any available". */
   credentials?: readonly { credentialId: string; accountId: string; instanceId: string }[];
+  /**
+   * Preview ports (`network.tunnelPorts`): guest port numbers separated by
+   * commas or spaces. Blank sends nothing (not a tunnel sandbox).
+   */
+  previewPorts: string;
 };
 
 /** "If the pool is full" choices; `none` fails at once (today's behavior). */
@@ -385,14 +407,15 @@ export const DEFAULT_SANDBOX_DRAFT: SandboxDraft = {
   cpuCount: "",
   memoryMiB: "",
   diskGiB: "",
-  lifetimeMinutes: String(DEFAULT_LIFETIME_MINUTES),
-  onExpire: "destroy",
+  lifetimeMinutes: String(CREATE_LIFETIME_MINUTES),
+  onExpire: "stop",
   labels: "",
   envs: "",
   internetAccess: true,
   egressDomains: "",
   egressCidrs: "",
   guestSudo: true,
+  previewPorts: "",
 };
 
 export type SandboxDraftProblem =
@@ -406,24 +429,32 @@ export type SandboxDraftProblem =
   | "labelsSyntax"
   | "labels"
   | "envs"
+  | "envsCleared"
   | "egress"
+  | "previewPorts"
   | "cpuCount"
   | "memoryMiB"
   | "diskGiB"
   | "credentials";
 
-/** `key=value` per line; blank lines are ignored. Values stay strings. */
+/**
+ * The draft's labels: a JSON object of strings (blank: none). JSON keeps a
+ * value exactly, newlines included, so one label never splits into two.
+ * Anything else (not an object, an empty key, a non-string value) is null.
+ */
 export function parseLabels(text: string): Record<string, string> | null {
+  let value: unknown;
+  try {
+    value = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   // Null prototype: a `__proto__` key stays an own key (the server schema refuses it).
   const labels = Object.create(null) as Record<string, string>;
-  for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const at = line.indexOf("=");
-    if (at <= 0) return null;
-    const key = line.slice(0, at).trim();
-    if (!key || Object.hasOwn(labels, key)) return null;
-    labels[key] = line.slice(at + 1).trim();
+  for (const [key, item] of Object.entries(value)) {
+    if (!key || typeof item !== "string") return null;
+    labels[key] = item;
   }
   return labels;
 }
@@ -489,6 +520,19 @@ function egressInput(draft: SandboxDraft): {
   return egress;
 }
 
+/**
+ * Preview ports as the create input's `network.tunnelPorts`: `undefined` for
+ * a blank field (nothing sent), null when a token is not a port, a port
+ * repeats, or there are more than the server allows.
+ */
+export function parsePreviewPorts(text: string | undefined): number[] | null | undefined {
+  const tokens = (text ?? "").split(/[\s,]+/).filter(Boolean);
+  if (tokens.length === 0) return undefined;
+  if (!tokens.every((token) => /^\d{1,5}$/.test(token))) return null;
+  const ports = tokens.map(Number);
+  return createSandboxInput.shape.network.safeParse({ tunnelPorts: ports }).success ? ports : null;
+}
+
 /** JSON preserves whitespace and multiline values; diagnostics never echo input. */
 function parseSandboxEnvs(text: string): Record<string, string> | null {
   try {
@@ -520,7 +564,10 @@ export function sandboxDraftInput(draft: SandboxDraft, key: string, limit?: Life
   // 0 means "no time limit": an invalid draft must never fall back to it.
   const timeoutMs = lifetimeMs(draft.lifetimeMinutes, limit);
   if (timeoutMs === null) throw new RangeError("Lifetime exceeds the allowed maximum.");
+  const tunnelPorts = parsePreviewPorts(draft.previewPorts);
+  if (tunnelPorts === null) throw new RangeError("Preview ports are not valid.");
   return createSandboxInput.parse({
+    ...(tunnelPorts ? { network: { tunnelPorts } } : {}),
     template: `${draft.templateMode === "logical" ? "template" : "revision"}/${draft.templateId}`,
     ...(draft.name ? { name: draft.name } : {}),
     ...(draft.poolId
@@ -598,6 +645,7 @@ export function sandboxDraftProblems(
     problems.push("labels");
   if (parseSandboxEnvs(draft.envs) == null) problems.push("envs");
   if (egressInput(draft) == null) problems.push("egress");
+  if (parsePreviewPorts(draft.previewPorts) === null) problems.push("previewPorts");
   const logins = draft.credentials ?? [];
   if (
     logins.length > 8 ||
@@ -651,6 +699,11 @@ export class IntentKeys {
       this.current = { signature: full, key, input: build(key) };
     }
     return this.current.input as TInput;
+  }
+
+  /** Is this exact intent still held (its outcome uncertain, not settled or replaced)? */
+  holds(action: string, signature: string): boolean {
+    return this.current?.signature === `${action}\n${signature}`;
   }
 
   settle() {
@@ -716,6 +769,8 @@ export type SandboxProblem =
   | "invalid"
   | "forbidden"
   | "imageMissing"
+  | "templateNotOnHost"
+  | "tunnelUnavailable"
   | "leaseExceedsPolicy"
   | "capacityReserved"
   | "templateUnavailable"
@@ -764,6 +819,10 @@ export function sandboxProblem(error: unknown): SandboxProblem {
       return "sizeMismatch";
     case "sandbox.template_image_missing":
       return "imageMissing";
+    // No verified copy of the revision on this host's connection (or the host
+    // refused the image): the template cannot start there.
+    case "sandbox.template_image_rejected":
+      return "templateNotOnHost";
     case "sandbox.not_found":
       return "notFound";
     case "sandbox.state_conflict":
@@ -827,6 +886,8 @@ export function sandboxProblem(error: unknown): SandboxProblem {
         if (reason === "open_egress_not_permitted") return "openEgressNotPermitted";
         return "hostNoEgress";
       }
+      // Preview ports: tunnels are off here, or no usable host runs them.
+      if (domainField(error, "capability") === "tunnel") return "tunnelUnavailable";
       break;
   }
   const shape = shapeOf(error);
@@ -910,4 +971,13 @@ export type SandboxesSearch = { status?: Exclude<SandboxStatusFilter, "active"> 
  */
 export function parseSandboxesSearch(search: Record<string, unknown>): SandboxesSearch {
   return search.status === "deleted" || search.status === "all" ? { status: search.status } : {};
+}
+
+export type CreateSandboxSearch = { host?: string };
+
+/** `/sandboxes/new?host=<id>`: a resource id only; anything else is dropped. */
+export function parseCreateSandboxSearch(search: Record<string, unknown>): CreateSandboxSearch {
+  return typeof search.host === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(search.host)
+    ? { host: search.host }
+    : {};
 }

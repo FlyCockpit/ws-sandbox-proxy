@@ -22,6 +22,9 @@ const server = vi.hoisted(() => ({
   build: null as Record<string, unknown> | null,
   tail: null as string | null,
   calls: [] as { procedure: string; input: unknown }[],
+  pool: { id: "pool_1", label: "Pool A", slug: "pool-a", memberCount: 1 },
+  members: [] as Record<string, unknown>[],
+  host: null as Record<string, unknown> | null,
 }));
 
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -55,8 +58,25 @@ vi.mock("@/components/operations/command-output-view", () => ({
 vi.mock("@/utils/orpc", () => {
   const record = (procedure: string, input: unknown) => server.calls.push({ procedure, input });
   const notFound = Object.assign(new Error("not found"), { code: "NOT_FOUND", status: 404 });
+  const query = (key: string, data: () => unknown) => ({
+    queryOptions: ({ input }: { input: unknown }) => ({
+      queryKey: [key, input],
+      queryFn: async () => {
+        record(key, input);
+        return structuredClone(data());
+      },
+    }),
+  });
   return {
     orpc: {
+      sandboxPools: {
+        getUsable: query("getUsable", () => server.pool),
+        listUsableMembers: query("listUsableMembers", () => ({
+          items: server.members,
+          nextCursor: null,
+        })),
+      },
+      sandboxHosts: { getHost: query("getHost", () => server.host) },
       templateBuilds: {
         key: () => ["templateBuilds"],
         get: {
@@ -144,6 +164,7 @@ function build(overrides: Record<string, unknown> = {}) {
     updatedAt: "2026-11-03T10:01:00.000Z",
     completedAt: null,
     egressModeReason: null,
+    target: { poolId: null, hostId: null },
     ...overrides,
   };
 }
@@ -166,6 +187,9 @@ beforeEach(() => {
   server.build = build();
   server.tail = null;
   server.calls = [];
+  server.pool = { id: "pool_1", label: "Pool A", slug: "pool-a", memberCount: 1 };
+  server.members = [];
+  server.host = null;
 });
 afterEach(() => cleanup());
 
@@ -344,6 +368,43 @@ describe("TemplateBuildDetailPage", () => {
     expect(await screen.findByText("Detail: upload_something_new")).toBeTruthy();
   });
 
+  it("explains 'no builder' in words with a next step, and marks unrun steps Not run", async () => {
+    server.build = build({
+      state: "FAILED",
+      phase: null,
+      stepIndex: -1,
+      errorCode: "build_placement_failed",
+      errorDetail: "template.build_no_builder",
+      steps: [
+        { n: 0, stepIndex: 0, kind: "run", state: "pending", operationId: null, exitCode: null },
+        { n: 1, stepIndex: 1, kind: "run", state: "pending", operationId: null, exitCode: null },
+      ],
+      cleanupState: "DONE",
+      completedAt: "2026-11-03T10:02:00.000Z",
+    });
+    renderPage();
+    expect(await screen.findByText(enTemplates.builds.nextStep.noBuilder)).toBeTruthy();
+    expect(screen.getByText(enTemplates.builds.nextStep.openImageSettings)).toBeTruthy();
+    // The raw code is never shown as text.
+    expect(document.body.textContent).not.toContain("template.build_no_builder");
+    const steps = document.querySelectorAll("[data-build-step]");
+    expect(steps).toHaveLength(2);
+    for (const step of steps) {
+      expect(step.getAttribute("data-step-state")).toBe("notRun");
+      expect(step.textContent).toContain(enTemplates.builds.stepState.notRun);
+      expect(step.textContent).not.toContain(enTemplates.builds.stepState.pending);
+    }
+  });
+
+  it("keeps a running build's later steps Pending", async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(document.querySelector("[data-build-step='2']")?.getAttribute("data-step-state")).toBe(
+        "pending",
+      ),
+    );
+  });
+
   it("says when the build VM ran with the allowlist under node policy (§6.3)", async () => {
     server.build = build({ egressModeReason: "node_policy" });
     renderPage();
@@ -371,5 +432,72 @@ describe("TemplateBuildDetailPage", () => {
     server.build = null;
     renderPage();
     expect(await screen.findByText("Build not found")).toBeTruthy();
+  });
+
+  it("explains a build stuck in Placing on a pool with no hosts, with the next step", async () => {
+    server.pool = { ...server.pool, memberCount: 0 };
+    server.build = build({
+      state: "PLACING",
+      phase: "placing",
+      stepIndex: -1,
+      createdAt: new Date(Date.now() - 120_000).toISOString(),
+      target: { poolId: "pool_1", hostId: null },
+    });
+    renderPage();
+    expect(
+      await screen.findByText(/^Nothing can run this build: Pool A has no hosts\./),
+    ).toBeTruthy();
+    expect(screen.getByText("Open Pools")).toBeTruthy();
+  });
+
+  it("says a placing build waits for room on a pool that has a connected host", async () => {
+    server.members = [{ id: "m1", enabled: true, Host: { status: "CONNECTED" } }];
+    server.build = build({
+      state: "QUEUED",
+      phase: "queued",
+      stepIndex: -1,
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      target: { poolId: "pool_1", hostId: null },
+    });
+    renderPage();
+    expect(
+      await screen.findByText(/^Still waiting for a host in Pool A with room for the build VM/),
+    ).toBeTruthy();
+  });
+
+  it("names an offline host a placing build waits for", async () => {
+    server.host = {
+      id: "host_1",
+      label: "Host A",
+      status: "DISCONNECTED",
+      lastConnectedAt: null,
+      lastHeartbeatAt: null,
+      deletionRequestedAt: null,
+      draining: false,
+    };
+    server.build = build({
+      state: "PLACING",
+      phase: "placing",
+      stepIndex: -1,
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      target: { poolId: null, hostId: "host_1" },
+    });
+    renderPage();
+    expect(await screen.findByText(/^Still waiting: Host A isn't connected/)).toBeTruthy();
+    expect(screen.getByText("Open Hosts")).toBeTruthy();
+  });
+
+  it("says nothing extra in the first 30 seconds of placing", async () => {
+    server.build = build({
+      state: "PLACING",
+      phase: "placing",
+      stepIndex: -1,
+      createdAt: new Date(Date.now() - 5_000).toISOString(),
+      target: { poolId: "pool_1", hostId: null },
+    });
+    const view = renderPage();
+    await screen.findByText("Build of tpl_1:latest");
+    expect(view.container.querySelector("[data-build-placing]")).toBeNull();
+    expect(server.calls.some((call) => call.procedure === "getUsable")).toBe(false);
   });
 });

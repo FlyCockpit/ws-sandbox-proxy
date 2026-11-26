@@ -15,6 +15,9 @@ import { destinationHost } from "../webhooks/destination-policy";
 
 // Deliberate field allowlists: no arbitrary JSON, guest paths, request bodies,
 // output, errors, inventory digests or credentials may cross this boundary.
+// Owner-chosen labels (host, template, sandbox names) stay out too; only the
+// owner's account name and email join in, which admins already see on Users.
+const ownerSelect = { select: { name: true, email: true } } as const;
 const hostSelect = {
   id: true,
   userId: true,
@@ -30,6 +33,7 @@ const hostSelect = {
   liveCount: true,
   daemonMaxCpuCount: true,
   quarantinedAt: true,
+  User: ownerSelect,
 } satisfies Prisma.SandboxHostSelect;
 const sandboxSelect = {
   id: true,
@@ -48,6 +52,7 @@ const sandboxSelect = {
   guestSudo: true,
   guestSudoReason: true,
   guestRoot: true,
+  User: ownerSelect,
 } satisfies Prisma.SandboxSelect;
 const operationSelect = {
   id: true,
@@ -58,6 +63,7 @@ const operationSelect = {
   state: true,
   generation: true,
   updatedAt: true,
+  User: ownerSelect,
 } satisfies Prisma.SandboxOperationSelect;
 // Webhook endpoints: metadata only. The URL is read solely to derive its HOST;
 // path, query, secrets, bodies, excerpts and resolved addresses never cross.
@@ -71,6 +77,7 @@ const webhookEndpointSelect = {
   consecutiveFailures: true,
   failingSince: true,
   lastSuccessAt: true,
+  User: ownerSelect,
 } satisfies Prisma.WebhookEndpointSelect;
 const WEBHOOK_DELIVERY_STATE_LIST = [
   "PENDING",
@@ -124,6 +131,14 @@ async function webhookCounters(now: Date) {
       count: row._count._all,
     })),
   };
+}
+
+/** The joined owner as `owner: { name, email }` (the relation itself never crosses). */
+function withOwner<T extends { User: { name: string; email: string } }>({
+  User,
+  ...row
+}: T): Omit<T, "User"> & { owner: { name: string; email: string } } {
+  return { ...row, owner: { name: User.name, email: User.email } };
 }
 
 const filterId = entityId.regex(/^[A-Za-z0-9_-]+$/);
@@ -227,6 +242,7 @@ export const adminObservabilityRouter = {
         items: page.items.map((row) => ({
           id: row.id,
           ownerId: row.userId,
+          owner: { name: row.User.name, email: row.User.email },
           createdAt: row.createdAt,
           host: destinationHost(row.url),
           state:
@@ -262,7 +278,8 @@ export const adminObservabilityRouter = {
         take: pageTake(limit),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
-      return cursorPage(rows, limit, "createdAt");
+      const page = cursorPage(rows, limit, "createdAt");
+      return { ...page, items: page.items.map(withOwner) };
     }),
   listSandboxes: adminOr404Procedure
     .input(
@@ -303,7 +320,8 @@ export const adminObservabilityRouter = {
         take: pageTake(limit),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
-      return cursorPage(rows, limit, "createdAt");
+      const page = cursorPage(rows, limit, "createdAt");
+      return { ...page, items: page.items.map(withOwner) };
     }),
   listOperations: adminOr404Procedure
     .input(
@@ -339,6 +357,7 @@ export const adminObservabilityRouter = {
         take: pageTake(limit),
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       });
-      return cursorPage(rows, limit, "createdAt");
+      const page = cursorPage(rows, limit, "createdAt");
+      return { ...page, items: page.items.map(withOwner) };
     }),
 };

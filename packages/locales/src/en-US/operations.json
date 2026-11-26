@@ -42,7 +42,7 @@
     "RUN_COMMAND": "Run command",
     "GET_FILE": "Download file",
     "PUT_FILE": "Upload file",
-    "RECONNECT_SANDBOX": "Reconnect sandbox",
+    "RECONNECT_SANDBOX": "Start or reconnect sandbox",
     "STOP_SANDBOX": "Stop sandbox",
     "RENEW_SANDBOX_LEASE": "Renew lifetime",
     "LIST_DIR": "List directory",

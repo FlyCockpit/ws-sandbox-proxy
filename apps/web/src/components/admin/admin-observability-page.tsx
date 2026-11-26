@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
+import { AsyncCombobox } from "@wssp/ui/components/async-combobox";
 import { Button } from "@wssp/ui/components/button";
 import { Input } from "@wssp/ui/components/input";
 import { Label } from "@wssp/ui/components/label";
@@ -13,16 +14,18 @@ import {
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { useDebounce } from "@wssp/ui/hooks/use-async-search";
 import { cn } from "@wssp/ui/lib/utils";
-import { Boxes, ListChecks, Server, Timer, Users, Webhook } from "lucide-react";
+import { Boxes, ListChecks, Server, Timer, Users, Webhook, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { CopyableId } from "@/components/copyable-id";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader, PageShell } from "@/components/page-shell";
 import { SegmentedControl } from "@/components/segmented-control";
 import { WideContent } from "@/components/wide-content";
 import {
+  formatAgeSeconds,
   HOST_STATUSES,
   hostListInput,
   invalidObservabilityFilters,
@@ -87,15 +90,22 @@ export function AdminObservabilityPage({
     setTyping(name);
     onSearch({ [name]: value });
   };
+  // Display names of owners seen in rows or picked in the filter, so the
+  // owner filter shows a person, not an id.
+  const [ownerNames, setOwnerNames] = useState<Record<string, Owner>>({});
+  const filterByOwner = (id: string, owner?: Owner) => {
+    if (owner) setOwnerNames((known) => ({ ...known, [id]: owner }));
+    apply({ owner: id });
+  };
 
   return (
-    <PageShell width="wide" className="min-w-0">
+    <PageShell inFrame width="wide" className="min-w-0">
       <PageHeader
         title={t("admin:observability.title")}
         description={t("admin:observability.description")}
       />
       <Counters />
-      <WebhookEndpoints />
+      <WebhookEndpoints onOwner={filterByOwner} />
 
       <SegmentedControl
         value={search.tab}
@@ -113,7 +123,14 @@ export function AdminObservabilityPage({
         <MaintenanceStatus />
       ) : (
         <>
-          <Filters search={search} invalid={invalid} onSearch={apply} onType={type} />
+          <Filters
+            search={search}
+            invalid={invalid}
+            onSearch={apply}
+            onType={type}
+            owner={ownerNames[search.owner]}
+            onOwner={filterByOwner}
+          />
           {/* Keyed by the filter set: any filter change remounts the list and
               drops its cursor stack, so paging never mixes filter sets. */}
           <ObservabilityList
@@ -122,6 +139,7 @@ export function AdminObservabilityPage({
             blocked={invalid.length > 0 || invalidObservabilityFilters(effective).length > 0}
             settling={settling}
             onSearch={apply}
+            onOwner={filterByOwner}
           />
         </>
       )}
@@ -130,7 +148,7 @@ export function AdminObservabilityPage({
 }
 
 function Counters() {
-  const { t } = useTranslation("admin");
+  const { t, i18n } = useTranslation("admin");
   const counters = useQuery({
     ...orpc.adminObservability.counters.queryOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -187,11 +205,17 @@ function Counters() {
             { key: "pending24h", value: counters.data?.webhooks.deliveries24h.PENDING },
             { key: "failed24h", value: counters.data?.webhooks.deliveries24h.FAILED },
             {
-              key: "oldestPendingSeconds",
-              value:
+              key: "oldestPending",
+              value: counters.data === undefined ? undefined : 0,
+              display:
                 counters.data === undefined
                   ? undefined
-                  : (counters.data.webhooks.oldestPendingAgeSeconds ?? 0),
+                  : counters.data.webhooks.oldestPendingAgeSeconds === null
+                    ? t("observability.webhooks.oldestPendingNone")
+                    : formatAgeSeconds(
+                        counters.data.webhooks.oldestPendingAgeSeconds,
+                        i18n.language,
+                      ),
             },
           ].map((tile) => ({ ...tile, icon: Webhook }))}
           prefix="webhooks"
@@ -206,7 +230,7 @@ function Counters() {
  * state, failure health). No path, query, secret, body, excerpt or address.
  * Admins get no test, redeliver or edit actions.
  */
-function WebhookEndpoints() {
+function WebhookEndpoints({ onOwner }: { onOwner: (id: string, owner: Owner) => void }) {
   const { t, i18n } = useTranslation("admin");
   const endpoints = useInfiniteQuery({
     ...orpc.adminObservability.listWebhookEndpoints.infiniteOptions({
@@ -242,7 +266,7 @@ function WebhookEndpoints() {
               className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 p-3"
             >
               <span className="break-all font-medium">{row.host}</span>
-              <span className="font-mono text-xs text-muted-foreground">{row.ownerId}</span>
+              <OwnerCell ownerId={row.ownerId} owner={row.owner} onFilter={onOwner} />
               <span>{t(`observability.webhooks.state.${row.state}`)}</span>
               <span className="text-muted-foreground">
                 {t("observability.webhooks.failures", {
@@ -267,7 +291,13 @@ function CounterTiles({
   tiles,
   prefix = "summary",
 }: {
-  tiles: readonly { key: string; icon: typeof Users; value: number | undefined }[];
+  /** `display` replaces the formatted number (a duration, "None"). */
+  tiles: readonly {
+    key: string;
+    icon: typeof Users;
+    value: number | undefined;
+    display?: string;
+  }[];
   prefix?: "summary" | "leases" | "webhooks";
 }) {
   const { t, i18n } = useTranslation("admin");
@@ -278,7 +308,7 @@ function CounterTiles({
         <div key={tile.key} className="min-w-0 rounded-md border p-4">
           <div className="flex items-center gap-2 text-muted-foreground">
             <tile.icon aria-hidden className="size-4 shrink-0" />
-            <p className="truncate text-xs font-medium">
+            <p className="min-w-0 text-xs font-medium text-pretty [overflow-wrap:anywhere]">
               {t(`observability.${prefix}.${tile.key}`)}
             </p>
           </div>
@@ -286,7 +316,7 @@ function CounterTiles({
             <Skeleton className="mt-2 h-8 w-16" />
           ) : (
             <p className="mt-2 text-2xl font-semibold tabular-nums" data-counter={tile.key}>
-              {number.format(tile.value)}
+              {tile.display ?? number.format(tile.value)}
             </p>
           )}
         </div>
@@ -303,13 +333,14 @@ function IdFilter({
   onChange,
 }: {
   id: string;
-  name: ObservabilityIdFilter;
+  name: Exclude<ObservabilityIdFilter, "owner">;
   value: string;
   invalid: boolean;
   onChange: (value: string) => void;
 }) {
   const { t } = useTranslation("admin");
   const hintId = `${id}-hint`;
+  const helpId = `${id}-help`;
   return (
     <div className="min-w-0 space-y-1">
       <Label htmlFor={id} className="text-xs">
@@ -324,7 +355,7 @@ function IdFilter({
         maxLength={64}
         value={value}
         aria-invalid={invalid || undefined}
-        aria-describedby={invalid ? hintId : undefined}
+        aria-describedby={invalid ? `${hintId} ${helpId}` : helpId}
         placeholder={t(`observability.filters.${name}Placeholder`)}
         onChange={(event) => onChange(event.target.value)}
         className="min-h-[44px] font-mono"
@@ -334,6 +365,9 @@ function IdFilter({
           {t("observability.filters.invalidId")}
         </p>
       ) : null}
+      <p id={helpId} className="text-xs text-muted-foreground">
+        {t("observability.filters.idHint")}
+      </p>
     </div>
   );
 }
@@ -379,16 +413,159 @@ function SelectFilter({
   );
 }
 
+type Owner = { name: string; email: string };
+type UserChoice = Owner & { id: string };
+
+/**
+ * The owner filter: search users by name or email (the admin user list) and
+ * pick one. The URL keeps the id; a known owner is shown by name.
+ */
+function OwnerFilter({
+  ownerId,
+  owner,
+  invalid,
+  onChange,
+}: {
+  ownerId: string;
+  owner: Owner | undefined;
+  invalid: boolean;
+  onChange: (id: string, owner?: Owner) => void;
+}) {
+  const { t } = useTranslation("admin");
+  const hintId = "observability-owner-hint";
+  return (
+    <div className="min-w-0 space-y-1">
+      <p id="observability-owner-label" className="text-xs font-medium">
+        {t("observability.filters.owner")}
+      </p>
+      {ownerId ? (
+        <div
+          data-owner-filter={ownerId}
+          className="flex min-h-[44px] min-w-0 items-center gap-2 rounded-md border px-3"
+        >
+          <span
+            className="min-w-0 flex-1 truncate text-sm"
+            aria-invalid={invalid || undefined}
+            aria-describedby={invalid ? hintId : undefined}
+          >
+            {owner
+              ? `${owner.name} (${owner.email})`
+              : t("observability.filters.ownerId", { id: ownerId })}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-touch"
+            aria-label={t("observability.filters.ownerClear")}
+            onClick={() => onChange("")}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        </div>
+      ) : (
+        <AsyncCombobox<UserChoice>
+          aria-labelledby="observability-owner-label"
+          className="min-h-[44px]"
+          placeholder={t("observability.filters.ownerPlaceholder")}
+          searchPlaceholder={t("observability.filters.ownerSearch")}
+          emptyText={t("observability.filters.ownerEmpty")}
+          onSearch={async (query, signal) => {
+            const page = await orpc.users.list.call(
+              { limit: 8, search: query.trim() || undefined },
+              { signal },
+            );
+            return page.users.map((user) => ({ id: user.id, name: user.name, email: user.email }));
+          }}
+          onSelect={(user) => onChange(user.id, { name: user.name, email: user.email })}
+          getKey={(user) => user.id}
+          getLabel={(user) => user.name || user.email}
+          renderItem={(user) => (
+            <span className="min-w-0">
+              <span className="block truncate">{user.name}</span>
+              <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
+            </span>
+          )}
+        />
+      )}
+      {invalid ? (
+        <p id={hintId} className="text-xs text-destructive">
+          {t("observability.filters.invalidId")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Owner name (filters to them) and email, with the id in a copy chip. */
+function OwnerCell({
+  ownerId,
+  owner,
+  onFilter,
+}: {
+  ownerId: string;
+  owner: Owner;
+  onFilter: (id: string, owner: Owner) => void;
+}) {
+  const { t } = useTranslation("admin");
+  return (
+    <div className="flex min-w-0 flex-col items-start">
+      <button
+        type="button"
+        onClick={() => onFilter(ownerId, owner)}
+        aria-label={t("observability.filterByOwner", { id: ownerId })}
+        title={t("observability.filterByOwner", { id: ownerId })}
+        className="inline-flex min-h-[44px] max-w-full items-center truncate rounded-sm text-left font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {owner.name || owner.email}
+      </button>
+      <span className="max-w-full truncate text-muted-foreground">{owner.email}</span>
+      <CopyableId value={ownerId} label={t("observability.ids.owner")} />
+    </div>
+  );
+}
+
+/** An opaque id in a copy chip, plus an action that narrows the view to it. */
+function IdCell({
+  id,
+  idLabel,
+  action,
+}: {
+  id: string;
+  idLabel: string;
+  action?: { text: string; label: string; onClick: () => void };
+}) {
+  return (
+    <div className="flex min-w-0 flex-col items-start">
+      <CopyableId value={id} label={idLabel} />
+      {action ? (
+        <button
+          type="button"
+          onClick={action.onClick}
+          aria-label={action.label}
+          title={action.label}
+          className="inline-flex min-h-[44px] items-center rounded-sm text-xs font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {action.text}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 function Filters({
   search,
   invalid,
   onSearch,
   onType,
+  owner,
+  onOwner,
 }: {
   search: ObservabilitySearch;
   invalid: ObservabilityIdFilter[];
   onSearch: (patch: ObservabilitySearchPatch) => void;
   onType: (name: ObservabilityIdFilter, value: string) => void;
+  owner: Owner | undefined;
+  onOwner: (id: string, owner?: Owner) => void;
 }) {
   const { t } = useTranslation(["admin", "operations", "sandboxes"]);
   const hasFilters =
@@ -399,12 +576,11 @@ function Filters({
   return (
     <div className="rounded-md border p-4">
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[repeat(3,minmax(0,1fr))_auto] lg:items-start">
-        <IdFilter
-          id="observability-owner"
-          name="owner"
-          value={search.owner}
+        <OwnerFilter
+          ownerId={search.owner}
+          owner={owner}
           invalid={invalid.includes("owner")}
-          onChange={(value) => onType("owner", value)}
+          onChange={onOwner}
         />
         {search.tab === "hosts" ? (
           <SelectFilter
@@ -510,11 +686,13 @@ function ObservabilityList({
   blocked,
   settling,
   onSearch,
+  onOwner,
 }: {
   search: ObservabilitySearch;
   blocked: boolean;
   settling: boolean;
   onSearch: (patch: ObservabilitySearchPatch) => void;
+  onOwner: (id: string, owner: Owner) => void;
 }) {
   // Cursor stack for keyset paging: [] is page 1; each Next pushes the page's
   // nextCursor, Previous pops. The parent remounts this list on filter change.
@@ -548,10 +726,12 @@ function ObservabilityList({
 
   if (blocked) return settling ? null : <InvalidFilterNotice />;
   if (search.tab === "hosts")
-    return <HostTable query={hosts} paging={paging} onSearch={onSearch} />;
+    return <HostTable query={hosts} paging={paging} onSearch={onSearch} onOwner={onOwner} />;
   if (search.tab === "sandboxes")
-    return <SandboxTable query={sandboxes} paging={paging} onSearch={onSearch} />;
-  return <OperationTable query={operations} paging={paging} onSearch={onSearch} />;
+    return <SandboxTable query={sandboxes} paging={paging} onSearch={onSearch} onOwner={onOwner} />;
+  return (
+    <OperationTable query={operations} paging={paging} onSearch={onSearch} onOwner={onOwner} />
+  );
 }
 
 function InvalidFilterNotice() {
@@ -673,7 +853,9 @@ function Pill({ tone, children }: { tone: "ok" | "warn" | "muted" | "bad"; child
     <span
       className={cn(
         "inline-flex min-h-6 items-center rounded-sm border px-2 text-xs font-medium",
-        tone === "ok" && "border-primary/20 bg-primary/10 text-primary",
+        // The same green as a ready host on the Hosts page.
+        tone === "ok" &&
+          "border-emerald-600/40 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400",
         tone === "warn" && "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         tone === "bad" && "border-destructive/30 bg-destructive/10 text-destructive",
         tone === "muted" && "bg-muted text-muted-foreground",
@@ -681,21 +863,6 @@ function Pill({ tone, children }: { tone: "ok" | "warn" | "muted" | "bad"; child
     >
       {children}
     </span>
-  );
-}
-
-/** An id that narrows the view to it: owner → this tab, host → sandboxes, sandbox → operations. */
-function IdLink({ label, id, onClick }: { label: string; id: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className="inline-flex min-h-[44px] max-w-full items-center truncate rounded-sm font-mono text-xs underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {id}
-    </button>
   );
 }
 
@@ -712,17 +879,19 @@ function HostTable({
   query,
   paging,
   onSearch,
+  onOwner,
 }: {
   query: ListQuery<HostPage>;
   paging: Paging;
   onSearch: (patch: ObservabilitySearchPatch) => void;
+  onOwner: (id: string, owner: Owner) => void;
 }) {
   const { t } = useTranslation("admin");
   const formatDate = useDateFormatter();
   return (
     <DataShell title={t("observability.tables.hosts")} query={query} paging={paging} columns={6}>
       {(data) => (
-        <table className="w-full min-w-[920px] text-left text-xs">
+        <table className="w-full min-w-[880px] text-left text-xs">
           <thead className="border-b text-muted-foreground">
             <tr>
               <th className={TH}>{t("observability.columns.host")}</th>
@@ -737,18 +906,19 @@ function HostTable({
             {data.items.map((row) => (
               <tr key={row.id} data-row-id={row.id}>
                 <td className={TD}>
-                  <IdLink
+                  <IdCell
                     id={row.id}
-                    label={t("observability.showHostSandboxes", { id: row.id })}
-                    onClick={() => onSearch(switchObservabilityTab("sandboxes", { host: row.id }))}
+                    idLabel={t("observability.ids.host")}
+                    action={{
+                      text: t("observability.rowActions.sandboxes"),
+                      label: t("observability.showHostSandboxes", { id: row.id }),
+                      onClick: () =>
+                        onSearch(switchObservabilityTab("sandboxes", { host: row.id })),
+                    }}
                   />
                 </td>
                 <td className={TD}>
-                  <IdLink
-                    id={row.userId}
-                    label={t("observability.filterByOwner", { id: row.userId })}
-                    onClick={() => onSearch({ owner: row.userId })}
-                  />
+                  <OwnerCell ownerId={row.userId} owner={row.owner} onFilter={onOwner} />
                 </td>
                 <td className={TD}>
                   <div className="flex flex-wrap gap-1">
@@ -763,10 +933,8 @@ function HostTable({
                 </td>
                 <td className={`${TD} tabular-nums`}>{formatDate(row.lastHeartbeatAt)}</td>
                 <td className={`${TD} tabular-nums`}>
-                  {t("observability.capacity", {
-                    live: row.liveCount,
-                    roots: row.rootCount,
-                  })}
+                  {t("observability.capacityLive", { count: row.liveCount })} ·{" "}
+                  {t("observability.capacityStopped", { count: row.rootCount })}
                   <p data-admin-host-memory="">
                     {t("observability.memoryReserved", { value: row.memoryReservedMiB })}
                   </p>
@@ -810,10 +978,12 @@ function SandboxTable({
   query,
   paging,
   onSearch,
+  onOwner,
 }: {
   query: ListQuery<SandboxPage>;
   paging: Paging;
   onSearch: (patch: ObservabilitySearchPatch) => void;
+  onOwner: (id: string, owner: Owner) => void;
 }) {
   const { t } = useTranslation(["admin", "sandboxes"]);
   const formatDate = useDateFormatter();
@@ -822,10 +992,10 @@ function SandboxTable({
       title={t("admin:observability.tables.sandboxes")}
       query={query}
       paging={paging}
-      columns={8}
+      columns={7}
     >
       {(data) => (
-        <table className="w-full min-w-[980px] text-left text-xs">
+        <table className="w-full min-w-[880px] text-left text-xs">
           <thead className="border-b text-muted-foreground">
             <tr>
               <th className={TH}>{t("admin:observability.columns.sandbox")}</th>
@@ -833,7 +1003,6 @@ function SandboxTable({
               <th className={TH}>{t("admin:observability.columns.state")}</th>
               <th className={TH}>{t("admin:observability.columns.host")}</th>
               <th className={TH}>{t("admin:observability.columns.template")}</th>
-              <th className={TH}>{t("admin:observability.columns.templateRevision")}</th>
               <th className={TH}>{t("admin:observability.columns.allocation")}</th>
               <th className={TH}>{t("admin:observability.columns.created")}</th>
             </tr>
@@ -842,40 +1011,49 @@ function SandboxTable({
             {data.items.map((row) => (
               <tr key={row.id} data-row-id={row.id}>
                 <td className={TD}>
-                  <IdLink
+                  <IdCell
                     id={row.id}
-                    label={t("admin:observability.showSandboxOperations", { id: row.id })}
-                    onClick={() =>
-                      onSearch(switchObservabilityTab("operations", { sandbox: row.id }))
-                    }
+                    idLabel={t("admin:observability.ids.sandbox")}
+                    action={{
+                      text: t("admin:observability.rowActions.operations"),
+                      label: t("admin:observability.showSandboxOperations", { id: row.id }),
+                      onClick: () =>
+                        onSearch(switchObservabilityTab("operations", { sandbox: row.id })),
+                    }}
                   />
                   <p className="text-muted-foreground tabular-nums">
                     {t("admin:observability.generation", { generation: row.generation })}
                   </p>
                 </td>
                 <td className={TD}>
-                  <IdLink
-                    id={row.userId}
-                    label={t("admin:observability.filterByOwner", { id: row.userId })}
-                    onClick={() => onSearch({ owner: row.userId })}
-                  />
+                  <OwnerCell ownerId={row.userId} owner={row.owner} onFilter={onOwner} />
                 </td>
                 <td className={TD}>
                   <Pill tone={sandboxTone(row.state)}>{t(`sandboxes:state.${row.state}`)}</Pill>
                 </td>
                 <td className={TD}>
                   {row.sandboxHostId ? (
-                    <IdLink
+                    <IdCell
                       id={row.sandboxHostId}
-                      label={t("admin:observability.filterByHost", { id: row.sandboxHostId })}
-                      onClick={() => onSearch({ host: row.sandboxHostId ?? "" })}
+                      idLabel={t("admin:observability.ids.host")}
+                      action={{
+                        text: t("admin:observability.rowActions.filter"),
+                        label: t("admin:observability.filterByHost", { id: row.sandboxHostId }),
+                        onClick: () => onSearch({ host: row.sandboxHostId ?? "" }),
+                      }}
                     />
                   ) : (
                     t("admin:observability.notAvailable")
                   )}
                 </td>
-                <td className={`${TD} font-mono`}>{row.templateId}</td>
-                <td className={`${TD} font-mono`}>{row.templateRevisionId}</td>
+                <td className={TD}>
+                  <IdCell id={row.templateId} idLabel={t("admin:observability.ids.template")} />
+                  <p className="text-muted-foreground">{t("admin:observability.revisionOf")}</p>
+                  <IdCell
+                    id={row.templateRevisionId}
+                    idLabel={t("admin:observability.ids.revision")}
+                  />
+                </td>
                 <td data-admin-allocation="" className={`${TD} tabular-nums`}>
                   {t("admin:observability.allocation", {
                     cpuCount: row.cpuCount,
@@ -904,10 +1082,12 @@ function OperationTable({
   query,
   paging,
   onSearch,
+  onOwner,
 }: {
   query: ListQuery<OperationPage>;
   paging: Paging;
   onSearch: (patch: ObservabilitySearchPatch) => void;
+  onOwner: (id: string, owner: Owner) => void;
 }) {
   const { t } = useTranslation(["admin", "operations"]);
   const formatDate = useDateFormatter();
@@ -919,7 +1099,7 @@ function OperationTable({
       columns={6}
     >
       {(data) => (
-        <table className="w-full min-w-[980px] text-left text-xs">
+        <table className="w-full min-w-[880px] text-left text-xs">
           <thead className="border-b text-muted-foreground">
             <tr>
               <th className={TH}>{t("admin:observability.columns.operation")}</th>
@@ -933,18 +1113,14 @@ function OperationTable({
           <tbody className="divide-y">
             {data.items.map((row) => (
               <tr key={row.id} data-row-id={row.id}>
-                <td className={`${TD} font-mono`}>
-                  {row.id}
-                  <p className="font-sans text-muted-foreground tabular-nums">
+                <td className={TD}>
+                  <IdCell id={row.id} idLabel={t("admin:observability.ids.operation")} />
+                  <p className="text-muted-foreground tabular-nums">
                     {t("admin:observability.generation", { generation: row.generation })}
                   </p>
                 </td>
                 <td className={TD}>
-                  <IdLink
-                    id={row.userId}
-                    label={t("admin:observability.filterByOwner", { id: row.userId })}
-                    onClick={() => onSearch({ owner: row.userId })}
-                  />
+                  <OwnerCell ownerId={row.userId} owner={row.owner} onFilter={onOwner} />
                 </td>
                 <td className={TD}>{t(`operations:kind.${row.kind}`)}</td>
                 <td className={TD}>
@@ -952,10 +1128,14 @@ function OperationTable({
                 </td>
                 <td className={TD}>
                   {row.sandboxId ? (
-                    <IdLink
+                    <IdCell
                       id={row.sandboxId}
-                      label={t("admin:observability.filterBySandbox", { id: row.sandboxId })}
-                      onClick={() => onSearch({ sandbox: row.sandboxId ?? "" })}
+                      idLabel={t("admin:observability.ids.sandbox")}
+                      action={{
+                        text: t("admin:observability.rowActions.filter"),
+                        label: t("admin:observability.filterBySandbox", { id: row.sandboxId }),
+                        onClick: () => onSearch({ sandbox: row.sandboxId ?? "" }),
+                      }}
                     />
                   ) : (
                     t("admin:observability.notAvailable")

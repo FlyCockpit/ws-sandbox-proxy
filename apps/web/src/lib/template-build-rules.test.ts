@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildArgsFromRows,
   buildPhase,
   buildProblem,
   canCancelBuild,
   canRetryCommunity,
+  checkBuildBase,
   checkBuildSource,
   communityRefreshSkip,
   composeBuildSource,
   disabledReasonKey,
   dockerfileEnvNames,
   isLaunchableRevision,
-  parseBuildArgs,
   parseTemplateBuildsSearch,
   plainTail,
   recipeCodeKey,
@@ -92,22 +93,74 @@ describe("checkBuildSource (the server's recipe package, in the browser)", () =>
     expect(checkBuildSource({ dockerfile: "FROM base\nCOPY app/ /app/\n" }, {})).toEqual({
       problem: null,
       hasCopy: true,
+      from: { template: "base" },
     });
-    expect(checkBuildSource({ dockerfile: "FROM base\nRUN true\n" }, {})).toEqual({
+    expect(checkBuildSource({ dockerfile: "FROM base:v2\nRUN true\n" }, {})).toEqual({
       problem: null,
       hasCopy: false,
+      from: { template: "base", tag: "v2" },
     });
+  });
+
+  it("names the build args no ARG declares", () => {
+    expect(
+      checkBuildSource({ dockerfile: "FROM base\nARG A\nRUN true\n" }, { A: "1", B: "2", C: "3" })
+        .problem,
+    ).toMatchObject({ kind: "recipe", code: "recipe_arg_undeclared", names: ["B", "C"] });
+  });
+});
+
+describe("checkBuildBase (FROM must name one of your templates)", () => {
+  const templates = [
+    { id: "tpl_1", slug: "ubuntu-base", versions: { count: 2 } },
+    { id: "tpl_2", slug: "empty", versions: { count: 0 } },
+    { id: "tpl_3", slug: "node", versions: { count: 1 } },
+    { id: "tpl_4", slug: "go", versions: { count: 1 } },
+  ];
+  it("refuses a registry image, suggesting ready templates", () => {
+    expect(checkBuildBase({ template: "ubuntu", tag: "24.04" }, templates)).toEqual({
+      kind: "fromUnknown",
+      from: "ubuntu:24.04",
+      examples: ["ubuntu-base", "node"],
+    });
+  });
+  it("refuses a template with no ready version", () => {
+    expect(checkBuildBase({ template: "empty" }, templates)?.kind).toBe("fromNoVersion");
+  });
+  it("accepts a ready template by slug or id, and leaves the rest to the server", () => {
+    expect(checkBuildBase({ template: "ubuntu-base", tag: "v3" }, templates)).toBeNull();
+    expect(checkBuildBase({ template: "tpl_3" }, templates)).toBeNull();
+    expect(checkBuildBase({ revisionId: "rev_1" }, templates)).toBeNull();
+    // An incomplete or unloaded list cannot say a slug is missing.
+    expect(checkBuildBase({ template: "ubuntu" }, null)).toBeNull();
+  });
+  it("maps a template miss on build create to the FROM base, elsewhere to not found", () => {
+    const error = { code: "NOT_FOUND", status: 404, data: { code: "sandbox.template_not_found" } };
+    expect(buildProblem(error, "createBuild")).toEqual({ kind: "baseNotFound" });
+    expect(buildProblem(error)).toEqual({ kind: "notFound" });
+    expect(
+      buildProblem(
+        { code: "NOT_FOUND", status: 404, data: { code: "sandbox.host_not_found" } },
+        "createBuild",
+      ),
+    ).toEqual({ kind: "notFound" });
   });
 });
 
 describe("build args and secret names", () => {
-  it("parses NAME=value lines and reports the first bad line", () => {
-    expect(parseBuildArgs("A=1\n\nB_2=x=y\n")).toEqual({
-      args: { A: "1", B_2: "x=y" },
-      invalidLine: null,
+  it("takes rows exactly (newlines kept), skips blank rows and reports the first bad row", () => {
+    const row = (id: string, key: string, value: string) => ({ id, key, value });
+    expect(
+      buildArgsFromRows([row("a", "A", "1"), row("b", "", ""), row("c", " B_2 ", "x=y\nz")]),
+    ).toEqual({ args: { A: "1", B_2: "x=y\nz" }, invalidId: null });
+    expect(buildArgsFromRows([row("a", "A", "1"), row("b", "2B", "x")])).toEqual({
+      args: {},
+      invalidId: "b",
     });
-    expect(parseBuildArgs("A=1\n2B=x")).toEqual({ args: {}, invalidLine: 2 });
-    expect(parseBuildArgs("NOEQUALS")).toEqual({ args: {}, invalidLine: 1 });
+    expect(buildArgsFromRows([row("a", "A", "v".repeat(4097))])).toEqual({
+      args: {},
+      invalidId: "a",
+    });
   });
 
   it("flags secret-looking names from args and Dockerfile ENV/ARG", () => {

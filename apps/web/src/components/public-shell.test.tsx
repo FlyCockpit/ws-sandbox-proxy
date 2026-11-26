@@ -26,6 +26,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock("@wssp/env/web", () => ({ env: { VITE_APP_NAME: "WS Sandbox Proxy" } }));
 vi.mock("@/components/bottom-nav", () => ({ default: () => null }));
 vi.mock("@/components/header", () => ({ default: () => null }));
+vi.mock("@/components/offline-banner", () => ({ OfflineBanner: () => null }));
 vi.mock("@/components/language-switcher", () => ({ LanguageSwitcher: () => null }));
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => null }));
 vi.mock("@/hooks/use-document-lang", () => ({ useDocumentLang: () => {} }));

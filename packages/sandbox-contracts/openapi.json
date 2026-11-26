@@ -34880,6 +34880,39 @@
               }
             ]
           },
+          "largest": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "cpuCount": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 32
+                  },
+                  "memoryMiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 65536
+                  },
+                  "diskGiB": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2048
+                  }
+                },
+                "required": [
+                  "cpuCount",
+                  "memoryMiB",
+                  "diskGiB"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "lease": {
             "type": "object",
             "properties": {
@@ -35207,6 +35240,7 @@
           "size",
           "aggregate",
           "fits",
+          "largest",
           "lease",
           "queue",
           "hosts"

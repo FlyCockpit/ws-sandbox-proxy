@@ -60,6 +60,8 @@ it.each(["en-US", "es-MX"])(
     await mount(true, lang);
     expect(screen.getByText(copy.host.enrollment)).toBeTruthy();
     expect(screen.queryByText(copy.host.unavailable)).toBeNull();
+    // Only someone without an authenticator is sent to set one up.
+    expect(screen.getByRole("link", { name: copy.host.enroll })).toBeTruthy();
     expect(screen.getByRole("button", { name: copy.actions.attach }).hasAttribute("disabled")).toBe(
       true,
     );
@@ -113,7 +115,8 @@ it.each(["en-US", "es-MX"])(
     const { client } = await mount(true, lang);
     expect(mint).not.toHaveBeenCalled();
     expect(FakeTerminalView.instances).toHaveLength(0);
-    expect(screen.getByRole("link", { name: copy.host.enroll })).toBeTruthy();
+    // Two-factor is already on: no "Set up an authenticator" link.
+    expect(screen.queryByRole("link", { name: copy.host.enroll })).toBeNull();
     const code = screen.getByLabelText(copy.host.code);
     expect(code.getAttribute("autocomplete")).toBe("one-time-code");
     await user.type(code, "654321");
@@ -210,3 +213,26 @@ it.each(["env -u ENV /bin/sh -c 'echo safe'", "echo unsafe\n", "echo café"])(
     expect(pasted).toHaveLength(/^[\x20-\x7e]+$/.test(command) ? 1 : 0);
   },
 );
+
+it("host terminals off at the node: no code form or Attach, just how to turn them on", async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { terminal: en } } });
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <I18nextProvider i18n={i18n}>
+        <HostTerminal
+          hostId="host-1"
+          lang="en-US"
+          policy={{ hostTerminal: false, requireHostTerminalTotp: true, policyRevision: 3 }}
+        />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  expect(screen.getByText(en.host.offHint)).toBeTruthy();
+  expect(screen.getByText("wssp host config set-host-terminal on")).toBeTruthy();
+  expect(screen.queryByLabelText(en.host.code)).toBeNull();
+  expect(screen.queryByRole("button", { name: en.actions.attach })).toBeNull();
+  // Said once, not as both a status line and a panel note.
+  expect(screen.queryByText(en.host.disabled)).toBeNull();
+  expect(screen.queryByText(en.host.required)).toBeNull();
+});

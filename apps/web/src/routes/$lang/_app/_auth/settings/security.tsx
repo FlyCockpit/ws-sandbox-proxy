@@ -8,18 +8,18 @@ import {
   CardHeader,
   CardTitle,
 } from "@wssp/ui/components/card";
-import { Input } from "@wssp/ui/components/input";
-import { Label } from "@wssp/ui/components/label";
 import { toast } from "@wssp/ui/components/sileo";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { ShieldCheck, ShieldOff } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { InlineInputField } from "@/components/auth/inline-input-field";
 import { AccountSettingsLayout } from "@/components/settings/account-settings-layout";
 import { ChangePasswordCard } from "@/components/settings/change-password-card";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { authClient } from "@/lib/auth-client";
+import { twoFactorCodeError, twoFactorPasswordError } from "@/lib/two-factor-errors";
 import { orpc } from "@/utils/orpc";
 
 export const Route = createFileRoute("/$lang/_app/_auth/settings/security")({
@@ -118,10 +118,26 @@ function Enable2FASection() {
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [verifyCode, setVerifyCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Errors sit under the field they are about; focus moves there.
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation(["settings", "auth", "common"]);
+
+  const failPassword = (error: unknown) => {
+    setPasswordError(twoFactorPasswordError(error, t, "settings:security.couldNotStartSetup"));
+    passwordRef.current?.focus();
+  };
+
+  const failCode = (error: unknown) => {
+    setCodeError(twoFactorCodeError(error, t));
+    codeRef.current?.focus();
+  };
 
   const handleEnable = async () => {
     setIsLoading(true);
+    setPasswordError(null);
     try {
       const result = await authClient.twoFactor.enable({
         password,
@@ -129,11 +145,11 @@ function Enable2FASection() {
       });
       if (result.error) {
         console.error("[settings.security.twoFactor.enable]", result.error);
-        toast.error(t("settings:security.couldNotStartSetup"));
+        failPassword(result.error);
         return;
       }
       if (result.data?.method !== "totp") {
-        toast.error(t("settings:security.couldNotStartSetup"));
+        failPassword(null);
         return;
       }
       setTotpURI(result.data.totpURI || "");
@@ -141,7 +157,7 @@ function Enable2FASection() {
       setStep("setup");
     } catch (err) {
       console.error("[settings.security.twoFactor.enable]", err);
-      toast.error(t("settings:security.couldNotStartSetup"));
+      failPassword(err);
     } finally {
       setIsLoading(false);
     }
@@ -149,20 +165,21 @@ function Enable2FASection() {
 
   const handleVerify = async () => {
     setIsLoading(true);
+    setCodeError(null);
     try {
       const result = await authClient.twoFactor.verifyTotp({
         code: verifyCode,
       });
       if (result.error) {
         console.error("[settings.security.twoFactor.verifyTotp]", result.error);
-        toast.error(t("auth:errors.invalidTotp"));
+        failCode(result.error);
         return;
       }
       toast.success(t("settings:security.enabledSuccess"));
       window.location.reload();
     } catch (err) {
       console.error("[settings.security.twoFactor.verifyTotp]", err);
-      toast.error(t("auth:errors.invalidTotp"));
+      failCode(err);
     } finally {
       setIsLoading(false);
     }
@@ -182,19 +199,22 @@ function Enable2FASection() {
         <p className="text-sm text-muted-foreground">
           {t("settings:security.confirmPasswordPrompt")}
         </p>
-        <div className="space-y-2">
-          <Label htmlFor="confirm-password">{t("auth:fields.password")}</Label>
-          <Input
-            id="confirm-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleEnable();
-            }}
-          />
-        </div>
+        <InlineInputField
+          id="confirm-password"
+          label={t("auth:fields.password")}
+          error={passwordError}
+          inputRef={passwordRef}
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setPasswordError(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleEnable();
+          }}
+        />
         <div className="flex gap-2">
           <Button className="min-h-[44px]" onClick={handleEnable} disabled={isLoading}>
             {isLoading ? t("auth:twoFactor.settingUp") : t("auth:twoFactor.continue")}
@@ -228,22 +248,25 @@ function Enable2FASection() {
   return (
     <div className="space-y-4 max-w-sm">
       <p className="text-sm text-muted-foreground">{t("settings:security.verifyPrompt")}</p>
-      <div className="space-y-2">
-        <Label htmlFor="setup-verify-code">{t("auth:fields.verificationCode")}</Label>
-        <Input
-          id="setup-verify-code"
-          placeholder="000000"
-          value={verifyCode}
-          onChange={(e) => setVerifyCode(e.target.value)}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          maxLength={6}
-          className="text-center text-lg tracking-widest"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && verifyCode.length === 6) handleVerify();
-          }}
-        />
-      </div>
+      <InlineInputField
+        id="setup-verify-code"
+        label={t("auth:fields.verificationCode")}
+        error={codeError}
+        inputRef={codeRef}
+        placeholder="000000"
+        value={verifyCode}
+        onChange={(e) => {
+          setVerifyCode(e.target.value);
+          setCodeError(null);
+        }}
+        inputMode="numeric"
+        autoComplete="one-time-code"
+        maxLength={6}
+        className="text-center text-lg tracking-widest"
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && verifyCode.length === 6) handleVerify();
+        }}
+      />
       <Button
         className="min-h-[44px]"
         onClick={handleVerify}
@@ -259,24 +282,31 @@ function Disable2FASection() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation(["settings", "auth", "common"]);
 
   const handleDisable = async () => {
     setIsLoading(true);
+    setPasswordError(null);
     try {
       const result = await authClient.twoFactor.disable({
         password,
       });
       if (result.error) {
         console.error("[settings.security.twoFactor.disable]", result.error);
-        toast.error(t("settings:security.couldNotDisable"));
+        setPasswordError(
+          twoFactorPasswordError(result.error, t, "settings:security.couldNotDisable"),
+        );
+        passwordRef.current?.focus();
         return;
       }
       toast.success(t("settings:security.disabledSuccess"));
       window.location.reload();
     } catch (err) {
       console.error("[settings.security.twoFactor.disable]", err);
-      toast.error(t("settings:security.couldNotDisable"));
+      setPasswordError(twoFactorPasswordError(err, t, "settings:security.couldNotDisable"));
+      passwordRef.current?.focus();
     } finally {
       setIsLoading(false);
     }
@@ -293,19 +323,22 @@ function Disable2FASection() {
   return (
     <div className="space-y-4 max-w-sm">
       <p className="text-sm text-muted-foreground">{t("settings:security.disablePrompt")}</p>
-      <div className="space-y-2">
-        <Label htmlFor="disable-password">{t("auth:fields.password")}</Label>
-        <Input
-          id="disable-password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleDisable();
-          }}
-        />
-      </div>
+      <InlineInputField
+        id="disable-password"
+        label={t("auth:fields.password")}
+        error={passwordError}
+        inputRef={passwordRef}
+        type="password"
+        autoComplete="current-password"
+        value={password}
+        onChange={(e) => {
+          setPassword(e.target.value);
+          setPasswordError(null);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleDisable();
+        }}
+      />
       <div className="flex gap-2">
         <Button
           className="min-h-[44px]"

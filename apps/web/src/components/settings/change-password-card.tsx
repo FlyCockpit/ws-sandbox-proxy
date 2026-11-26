@@ -7,13 +7,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@wssp/ui/components/card";
-import { Input } from "@wssp/ui/components/input";
-import { Label } from "@wssp/ui/components/label";
 import { toast } from "@wssp/ui/components/sileo";
+import { TextField } from "@wssp/ui/components/text-field";
 import { KeyRound } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 
+import { FormAlert } from "@/components/auth/form-alert";
 import { authClient } from "@/lib/auth-client";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
 
@@ -32,6 +33,9 @@ export function ChangePasswordCard({
   onChanged?: () => void;
 } = {}) {
   const { t } = useTranslation(["settings", "validation"]);
+  const formRef = useRef<HTMLFormElement>(null);
+  // A failure that belongs to no one field, shown next to the button.
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm({
     defaultValues: {
@@ -52,6 +56,15 @@ export function ChangePasswordCard({
         }),
     },
     onSubmit: async ({ value }) => {
+      setFormError(null);
+      // A refusal about one field goes under it, focused, and clears on edit.
+      const failField = (name: "currentPassword" | "newPassword", message: string) => {
+        form.setFieldMeta(name, (meta) => ({
+          ...meta,
+          errorMap: { ...meta.errorMap, onSubmit: message },
+        }));
+        formRef.current?.querySelector<HTMLInputElement>(`input[name="${name}"]`)?.focus();
+      };
       try {
         const result = await authClient.changePassword({
           currentPassword: value.currentPassword,
@@ -60,15 +73,17 @@ export function ChangePasswordCard({
         });
 
         if (result.error) {
-          const message =
-            result.error.code === "INVALID_PASSWORD"
-              ? t("settings:security.currentPasswordMismatch")
-              : result.error.code === "PASSWORD_REUSED"
-                ? t("settings:security.passwordReused")
-                : isRateLimit(result.error)
-                  ? friendly(result.error, t("settings:security.passwordChangeError"))
-                  : t("settings:security.passwordChangeError");
-          toast.error(message);
+          if (result.error.code === "INVALID_PASSWORD") {
+            failField("currentPassword", t("settings:security.currentPasswordMismatch"));
+          } else if (result.error.code === "PASSWORD_REUSED") {
+            failField("newPassword", t("settings:security.passwordReused"));
+          } else {
+            setFormError(
+              isRateLimit(result.error)
+                ? friendly(result.error, t("settings:security.passwordChangeError"))
+                : t("settings:security.passwordChangeError"),
+            );
+          }
           return;
         }
 
@@ -76,7 +91,7 @@ export function ChangePasswordCard({
         form.reset();
         onChanged?.();
       } catch (error) {
-        toast.error(
+        setFormError(
           isRateLimit(error)
             ? friendly(error, t("settings:security.passwordChangeError"))
             : t("settings:security.passwordChangeError"),
@@ -98,6 +113,8 @@ export function ChangePasswordCard({
       </CardHeader>
       <CardContent className="max-w-lg">
         <form
+          ref={formRef}
+          noValidate
           className="space-y-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -107,79 +124,48 @@ export function ChangePasswordCard({
         >
           <form.Field name="currentPassword">
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.currentPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="current-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
+              <TextField
+                field={field}
+                label={t("settings:security.currentPasswordLabel")}
+                type="password"
+                autoComplete="current-password"
+                onChange={() => setFormError(null)}
+                inputClassName="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
+              />
             )}
           </form.Field>
 
           <form.Field name="newPassword">
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.newPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
+              <TextField
+                field={field}
+                label={t("settings:security.newPasswordLabel")}
+                type="password"
+                autoComplete="new-password"
+                onChange={() => setFormError(null)}
+                inputClassName="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
+              />
             )}
           </form.Field>
 
           <form.Field name="confirmPassword">
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>{t("settings:security.confirmPasswordLabel")}</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  inputMode="text"
-                  autoComplete="new-password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => field.handleChange(event.target.value)}
-                  className="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-sm text-destructive">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
+              <TextField
+                field={field}
+                label={t("settings:security.confirmPasswordLabel")}
+                type="password"
+                autoComplete="new-password"
+                onChange={() => setFormError(null)}
+                inputClassName="autofill:shadow-[inset_0_0_0px_1000px_var(--color-background)]"
+              />
             )}
           </form.Field>
 
           <p className="text-sm text-muted-foreground">
             {t("settings:security.passwordSessionRevocation")}
           </p>
+
+          <FormAlert message={formError} />
 
           <form.Subscribe
             selector={(state) => ({

@@ -10,6 +10,14 @@ import { HOST_HEARTBEAT_STALE_AFTER_MS } from "@wssp/config/host-status";
 
 export { HOST_HEARTBEAT_STALE_AFTER_MS };
 
+/**
+ * How often a view that judges host connection refetches the host list. A
+ * heartbeat older than HOST_HEARTBEAT_STALE_AFTER_MS reads as stale, so a
+ * list fetched once and judged minutes later calls every connected host
+ * disconnected (the build form did). Every such view polls at this cadence.
+ */
+export const HOST_STATUS_REFETCH_MS = 15_000;
+
 export type HostConnectionFields = {
   status: "DISCONNECTED" | "CONNECTED" | "STALE" | "REVOKED";
   lastConnectedAt: Date | string | null;
@@ -321,11 +329,18 @@ export function storageDisplayState(
   return pool.health;
 }
 
-/** An estimate from discovery only; authority/source/epoch/fit are rechecked on acceptance. */
+/**
+ * An estimate from discovery only; authority/source/epoch/fit are rechecked on
+ * acceptance. RAM and vCPU are checked before storage, so a host whose memory
+ * is full says so (not "no storage"). `storageNow` is when the storage reports
+ * were read (the list's fetch time): a report that was current then does not
+ * read as "no storage" just because the browser's copy aged between refetches.
+ */
 export function hostResourceFit(
   host: HostConnectionFields & Pick<HostSummary, "capacity" | "storagePools" | "retainedRootCount">,
   size: { cpuCount?: number; memoryMiB?: number; diskGiB?: number },
   now: number,
+  storageNow: number = now,
 ): "unknown" | "size" | "storage" | "ram" | "ceiling" | "vcpu" | "disk" | "fits" {
   if (hostCapacityState(host, now) !== "current") return "unknown";
   const { capacity } = host;
@@ -334,17 +349,17 @@ export function hostResourceFit(
     (size.memoryMiB !== undefined && size.memoryMiB > (capacity.maxMemoryMiB ?? 0))
   )
     return "size";
-  const pools = host.storagePools.filter(
-    (pool) => storageDisplayState(pool, now) === "healthy" && !pool.draining,
-  );
-  if (!pools.length) return "storage";
   if (
     size.memoryMiB !== undefined &&
     size.memoryMiB + VM_SIZE_LIMITS.vmHostOverheadMiB > (capacity.memoryAvailableMiB ?? 0)
   )
     return "ram";
-  if (host.retainedRootCount >= VM_SIZE_LIMITS.hostManagedSandboxCeiling) return "ceiling";
   if (size.cpuCount !== undefined && size.cpuCount > (capacity.vcpuAvailable ?? 0)) return "vcpu";
+  const pools = host.storagePools.filter(
+    (pool) => storageDisplayState(pool, storageNow) === "healthy" && !pool.draining,
+  );
+  if (!pools.length) return "storage";
+  if (host.retainedRootCount >= VM_SIZE_LIMITS.hostManagedSandboxCeiling) return "ceiling";
   const diskGiB = size.diskGiB;
   if (
     diskGiB !== undefined &&

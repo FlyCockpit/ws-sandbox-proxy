@@ -139,7 +139,22 @@ vi.mock("@/utils/orpc", () => {
   };
 });
 
-import { PoolsPage } from "./pools-page";
+import { PoolsPage, poolSlugFromLabel } from "./pools-page";
+
+/** Open the (only or named) pool's "More actions" menu and choose an item. */
+async function choosePoolAction(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  item: string,
+  copy: typeof en = en,
+) {
+  await user.click(
+    await screen.findByRole("button", {
+      name: copy.pools.actions.more.replace("{{label}}", label),
+    }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -198,28 +213,36 @@ it("creates a pool, edits in a sheet, and adds/enables/removes a host with confi
   await mount();
   await user.click(screen.getByRole("button", { name: en.pools.create }));
   let dialog = within(await screen.findByRole("dialog"));
-  await user.type(dialog.getByLabelText(en.pools.slug), "test");
+  // The label comes first and fills in the slug.
   await user.type(dialog.getByLabelText(en.pools.label), "Test pool");
-  await user.click(dialog.getByRole("button", { name: common.actions.save }));
+  expect((dialog.getByLabelText(en.pools.slug) as HTMLInputElement).value).toBe("test-pool");
+  await user.click(dialog.getByRole("button", { name: en.pools.create }));
   await screen.findByRole("heading", { name: "Test pool" });
-  await user.click(screen.getByRole("button", { name: en.pools.edit }));
+  expect(state.calls[0]?.input).toEqual({ slug: "test-pool", label: "Test pool" });
+  await choosePoolAction(user, "Test pool", en.pools.edit.action);
   expect((await screen.findByRole("dialog")).getAttribute("data-slot")).toBe("sheet-content");
   dialog = within(screen.getByRole("dialog"));
   await user.clear(dialog.getByLabelText(en.pools.label));
   await user.type(dialog.getByLabelText(en.pools.label), "Updated");
   await user.click(dialog.getByRole("button", { name: common.actions.save }));
   await screen.findByRole("heading", { name: "Updated" });
-  await user.click(screen.getByRole("button", { name: en.pools.members }));
+  await user.click(screen.getByRole("button", { name: en.pools.actions.hosts }));
   await user.click(screen.getByRole("button", { name: en.pools.add }));
   const dialogs = await screen.findAllByRole("dialog");
   dialog = within(dialogs.at(-1)!);
   await selectOption(user, dialog.getByLabelText(en.pools.host), "Host (lab)");
-  await user.click(dialog.getByRole("button", { name: en.pools.add }));
+  await user.click(dialog.getByRole("button", { name: en.pools.addSubmit }));
   const disable = await screen.findByRole("button", { name: en.pools.disable });
   await user.click(disable);
   await screen.findByRole("button", { name: en.pools.enable });
   await user.click(screen.getByRole("button", { name: en.pools.remove }));
   const confirm = within(await screen.findByRole("alertdialog"));
+  // The confirmation names the host and the pool.
+  expect(
+    confirm.getByText(
+      en.pools.removeTitle.replace("{{host}}", "Host").replace("{{pool}}", "Updated"),
+    ),
+  ).toBeTruthy();
   const action = confirm.getByRole("button", { name: common.actions.delete });
   expect(action.hasAttribute("disabled")).toBe(true);
   await user.type(confirm.getByLabelText(en.pools.confirm), "lab");
@@ -243,10 +266,14 @@ it.each(["en-US", "es-MX"])(
     await user.click(screen.getByRole("button", { name: text.pools.create }));
     const form = within(await screen.findByRole("dialog"));
     await user.type(form.getByLabelText(text.pools.slug), "UPPER");
-    await user.click(form.getByRole("button", { name: actions.actions.save }));
+    await user.click(form.getByRole("button", { name: text.pools.create }));
     expect(await form.findByText(text.pools.invalidSlug)).toBeTruthy();
     expect(await form.findByText(text.pools.invalidLabel)).toBeTruthy();
+    expect(text.pools.invalidLabel).toMatch(lang === "en-US" ? /label/ : /etiqueta/);
+    // Focus moves to the first invalid field (the label).
+    await waitFor(() => expect(document.activeElement).toBe(form.getByLabelText(text.pools.label)));
     expect(state.calls).toHaveLength(0);
+    void actions;
   },
 );
 
@@ -272,7 +299,7 @@ it("pages pools, members and host choices with bounded cursor requests", async (
   expect(screen.queryByRole("heading", { name: "Pool B" })).toBeNull();
   await user.click(screen.getByRole("button", { name: common.actions.loadMore }));
   const poolB = (await screen.findByRole("heading", { name: "Pool B" })).closest("li")!;
-  await user.click(within(poolB).getByRole("button", { name: en.pools.members }));
+  await user.click(within(poolB).getByRole("button", { name: en.pools.actions.hosts }));
   let popup = within(await screen.findByRole("dialog"));
   await popup.findByText("Member 1");
   expect(popup.queryByText("Member 2")).toBeNull();
@@ -286,7 +313,7 @@ it("pages pools, members and host choices with bounded cursor requests", async (
   expect(firstChoices.some((option) => option.textContent?.includes("Rack (rack)"))).toBe(false);
   await user.click(popup.getByRole("button", { name: common.actions.loadMore }));
   await selectOption(user, popup.getByLabelText(en.pools.host), "Rack (rack)");
-  await user.click(popup.getByRole("button", { name: en.pools.add }));
+  await user.click(popup.getByRole("button", { name: en.pools.addSubmit }));
   await waitFor(() =>
     expect(state.calls.at(-1)).toEqual({
       kind: "add",
@@ -330,7 +357,7 @@ it("an owner-local member says caps do not apply; a contributed member shows its
   ];
   const user = userEvent.setup();
   await mount();
-  await user.click(await screen.findByRole("button", { name: en.pools.members }));
+  await user.click(await screen.findByRole("button", { name: en.pools.actions.hosts }));
   const popup = within(await screen.findByRole("dialog"));
   const own = (await popup.findByText("Own")).closest("li")!;
   const shared = popup.getByText("Shared").closest("li")!;
@@ -344,7 +371,7 @@ it("refuses a host choice removed by a refetch before issuing a member write", a
   state.pools = [{ id: "pool-1", slug: "a", label: "Pool" }];
   const user = userEvent.setup();
   const { client } = await mount();
-  await user.click(await screen.findByRole("button", { name: en.pools.members }));
+  await user.click(await screen.findByRole("button", { name: en.pools.actions.hosts }));
   await screen.findByText(en.pools.noMembers);
   await user.click(screen.getByRole("button", { name: en.pools.add }));
   const popup = within((await screen.findAllByRole("dialog")).at(-1)!);
@@ -355,7 +382,7 @@ it("refuses a host choice removed by a refetch before issuing a member write", a
   const choices = await selectChoices(user, select);
   expect(choices.some((option) => option.textContent?.includes("Rack (rack)"))).toBe(true);
   expect(choices.some((option) => option.textContent?.includes("Host (lab)"))).toBe(false);
-  const add = popup.getByRole("button", { name: en.pools.add });
+  const add = popup.getByRole("button", { name: en.pools.addSubmit });
   expect(add.hasAttribute("disabled")).toBe(false);
   await user.click(add);
   expect(await popup.findByRole("alert")).toHaveProperty("textContent", en.pools.chooseHost);
@@ -374,7 +401,7 @@ it.each(["en-US", "es-MX"])(
     ];
     const user = userEvent.setup();
     await mount(lang);
-    await user.click(await screen.findByRole("button", { name: copy.pools.edit }));
+    await choosePoolAction(user, "Pool", copy.pools.edit.action, copy);
     const popup = within(await screen.findByRole("dialog"));
     await user.click(popup.getByRole("button", { name: actions.actions.save }));
     expect(await popup.findByRole("alert")).toHaveProperty(
@@ -395,12 +422,15 @@ it("focus stays in a localized touch-sized create dialog and returns to its open
   const popup = await screen.findByRole("dialog");
   await waitFor(() => expect(popup.contains(document.activeElement)).toBe(true));
   for (const button of within(popup).getAllByRole("button"))
-    expect(button.className).toMatch(/h-11|min-h-\[44px\]/);
+    expect(button.className).toMatch(/h-11|size-11|min-h-\[44px\]/);
   for (const input of popup.querySelectorAll("input")) {
     expect(input.getAttribute("autocomplete")).toBe("off");
     expect(input.className).toContain("min-h-11");
   }
-  expect(within(popup).queryByRole("button", { name: "Close" })).toBeNull();
+  // Save and Cancel sit in one row on desktop (the dialog footer).
+  expect(
+    within(popup).getByRole("button", { name: esCommon.actions.cancel }).parentElement!.className,
+  ).toMatch(/sm:flex-row/);
   await user.click(within(popup).getByRole("button", { name: esCommon.actions.cancel }));
   await waitFor(() => expect(document.activeElement).toBe(opener));
 });
@@ -418,14 +448,14 @@ it("excludes every existing member, including unloaded and disabled members, and
   }));
   const user = userEvent.setup();
   await mount();
-  await user.click(await screen.findByRole("button", { name: en.pools.members }));
+  await user.click(await screen.findByRole("button", { name: en.pools.actions.hosts }));
   await user.click(screen.getByRole("button", { name: en.pools.add }));
   const popup = within((await screen.findAllByRole("dialog")).at(-1)!);
   await popup.findByText(en.pools.noHostsToAdd);
   expect(popup.getByRole("combobox", { name: en.pools.host }).hasAttribute("disabled")).toBe(true);
-  expect((popup.getByRole("button", { name: en.pools.add }) as HTMLButtonElement).disabled).toBe(
-    true,
-  );
+  expect(
+    (popup.getByRole("button", { name: en.pools.addSubmit }) as HTMLButtonElement).disabled,
+  ).toBe(true);
   expect(state.reads).toEqual(
     expect.arrayContaining([
       { kind: "hosts", input: { cursor: undefined, limit: 100, excludePoolId: "pool-1" } },
@@ -445,11 +475,11 @@ it.each(["en-US", "es-MX"])(
     // A fresh cached query must be explicitly invalidated. Remounting the
     // picker must not hide this regression by automatically refetching stale data.
     client.setQueryDefaults(["hosts"], { staleTime: Infinity });
-    await user.click(await screen.findByRole("button", { name: text.pools.members }));
+    await user.click(await screen.findByRole("button", { name: text.pools.actions.hosts }));
     await user.click(screen.getByRole("button", { name: text.pools.add }));
     let popup = within((await screen.findAllByRole("dialog")).at(-1)!);
     await selectOption(user, popup.getByLabelText(text.pools.host), "Host (lab)");
-    await user.click(popup.getByRole("button", { name: text.pools.add }));
+    await user.click(popup.getByRole("button", { name: text.pools.addSubmit }));
     await screen.findByRole("button", { name: text.pools.disable });
     await user.click(screen.getByRole("button", { name: text.pools.add }));
     popup = within((await screen.findAllByRole("dialog")).at(-1)!);
@@ -487,7 +517,7 @@ it("pool lifetime: lowering shows the preview before saving; blank means no limi
   ];
   state.previewAffected = 3;
   await mount();
-  await user.click(await screen.findByRole("button", { name: en.pools.edit }));
+  await choosePoolAction(user, "Lab", en.pools.edit.action);
   const sheet = within(await screen.findByRole("dialog"));
   await user.type(sheet.getByLabelText(en.lease.poolField), "6h");
   await user.click(sheet.getByRole("button", { name: common.actions.save }));
@@ -524,7 +554,7 @@ it("pool lifetime: an invalid value is refused locally", async () => {
     },
   ];
   await mount();
-  await user.click(await screen.findByRole("button", { name: en.pools.edit }));
+  await choosePoolAction(user, "Lab", en.pools.edit.action);
   const sheet = within(await screen.findByRole("dialog"));
   const field = sheet.getByLabelText(en.lease.poolField);
   expect((field as HTMLInputElement).value).toBe("6h");
@@ -533,4 +563,106 @@ it("pool lifetime: an invalid value is refused locally", async () => {
   await user.click(sheet.getByRole("button", { name: common.actions.save }));
   expect(await sheet.findByText(en.lease.invalid)).toBeTruthy();
   expect(state.calls).toEqual([]);
+});
+
+it("the pool card summarizes hosts, people, capacity and the longest lifetime, with Hosts as its one primary action", async () => {
+  state.pools = [
+    {
+      id: "pool-1",
+      slug: "lab",
+      label: "Lab",
+      summary: {
+        hosts: { total: 2, enabled: 2, connected: 1 },
+        people: 3,
+        capacity: { memoryMiB: 98_304, vcpu: 96 },
+        lease: { maxTimeoutMs: 86_400_000, timeoutZero: false },
+      },
+    },
+    {
+      id: "pool-2",
+      slug: "empty",
+      label: "Empty",
+      summary: {
+        hosts: { total: 0, enabled: 0, connected: 0 },
+        people: 0,
+        capacity: { memoryMiB: 0, vcpu: 0 },
+        lease: { maxTimeoutMs: 3_600_000, timeoutZero: true },
+      },
+    },
+  ];
+  const user = userEvent.setup();
+  await mount();
+  const lab = (await screen.findByRole("heading", { name: "Lab" })).closest("li")!;
+  const text = (name: string) =>
+    lab.querySelector(`[data-pool-summary-${name}]`)?.textContent ?? null;
+  expect(text("hosts")).toBe("2 hosts · 1 connected");
+  expect(text("people")).toBe("Shared with 3 people");
+  expect(text("capacity")).toBe("96 GiB RAM · 96 vCPU");
+  expect(text("lease")).toBe("24 hours");
+  const empty = screen.getByRole("heading", { name: "Empty" }).closest("li")!;
+  expect(empty.querySelector("[data-pool-summary-hosts]")?.textContent).toBe(
+    en.pools.summary.hostsNone,
+  );
+  expect(empty.querySelector("[data-pool-summary-people]")?.textContent).toBe(
+    en.pools.summary.peopleNone,
+  );
+  expect(empty.querySelector("[data-pool-summary-lease]")?.textContent).toBe(
+    en.pools.summary.leaseUnlimited,
+  );
+  // One primary (Hosts), one secondary (People); the rest in a menu, delete last.
+  const buttons = within(lab)
+    .getAllByRole("button")
+    .map((button) => button.textContent || button.getAttribute("aria-label"));
+  expect(buttons).toEqual([
+    en.pools.actions.hosts,
+    en.pools.actions.people,
+    en.pools.actions.more.replace("{{label}}", "Lab"),
+  ]);
+  await user.click(
+    within(lab).getByRole("button", { name: en.pools.actions.more.replace("{{label}}", "Lab") }),
+  );
+  expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+    en.poolCapacity.open,
+    en.pools.edit.action,
+    en.pools.delete,
+  ]);
+  await user.click(screen.getByRole("menuitem", { name: en.pools.delete }));
+  // The delete confirmation names the pool.
+  const confirm = within(await screen.findByRole("alertdialog"));
+  expect(confirm.getByText(en.pools.deleteTitle.replace("{{label}}", "Lab"))).toBeTruthy();
+  // The page says what a pool is, once.
+  expect(screen.getByText(en.pools.description)).toBeTruthy();
+});
+
+it("edit shows the lifetime sandboxes actually get next to the pool's own limit, and keeps expert fields collapsed", async () => {
+  state.pools = [
+    {
+      id: "pool-1",
+      slug: "lab",
+      label: "Lab",
+      maxLeaseMs: null,
+      summary: {
+        hosts: { total: 1, enabled: 1, connected: 1 },
+        people: 0,
+        capacity: { memoryMiB: 4096, vcpu: 8 },
+        lease: { maxTimeoutMs: 86_400_000, timeoutZero: false },
+      },
+    },
+  ];
+  const user = userEvent.setup();
+  await mount();
+  await choosePoolAction(user, "Lab", en.pools.edit.action);
+  const sheet = await screen.findByRole("dialog");
+  expect(sheet.querySelector("[data-pool-effective-lease]")?.textContent).toBe(
+    en.pools.edit.effectiveLease.replace("{{value}}", "24 hours"),
+  );
+  const sections = [...sheet.querySelectorAll<HTMLDetailsElement>("details")];
+  expect(sections.map((section) => section.open)).toEqual([false, false, false, false]);
+  expect(sections.map((section) => section.querySelector("summary")?.textContent)).toEqual([
+    `${en.pools.edit.lifetime}${en.lease.unlimitedOwner}`,
+    `${en.pools.edit.placement}${en.pools.edit.preferOwn}`,
+    `${en.pools.edit.images}${en.pools.edit.noPoolLimit}`,
+    `${en.pools.edit.queue}${Array(3).fill(en.pools.edit.operatorLimit).join(" · ")}`,
+  ]);
+  expect(poolSlugFromLabel("Équipe Lab #2")).toBe("equipe-lab-2");
 });

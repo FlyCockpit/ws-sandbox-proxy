@@ -2,7 +2,7 @@
   "description": "Claves con alcance limitado para la API del SDK /v1.",
   "empty": {
     "title": "Aún no hay claves de SDK",
-    "description": "Las claves de SDK autorizan la API /v1 para tus sandboxes. Las claves revocadas no se muestran."
+    "description": "Las claves de SDK autorizan la API /v1 para tus sandboxes."
   },
   "form": {
     "scopes": "Alcances",
@@ -43,7 +43,44 @@
     "moreLogins": "Cargar más inicios de sesión",
     "ownSandboxesOnly": "Solo sandboxes propios",
     "ownSandboxesOnlyHint": "Solo sandboxes creados originalmente con esta clave, incluidos comandos, archivos y operaciones. Esta opción no limita los comandos del host.",
-    "hostScopeWarning": "El usuario del daemon es administrador de Incus. Los comandos y las herramientas de archivos del host pueden acceder a todos los sandboxes del nodo, incluidos los de otras personas en pools compartidos. “Solo sandboxes propios” no limita el acceso al host. También debes habilitar la opción en el nodo."
+    "hostScopeWarning": "El usuario del daemon es administrador de Incus. Los comandos y las herramientas de archivos del host pueden acceder a todos los sandboxes del nodo, incluidos los de otras personas en pools compartidos. “Solo sandboxes propios” no limita el acceso al host. También debes habilitar la opción en el nodo.",
+    "access": "Acceso",
+    "preset": {
+      "readOnly": {
+        "title": "Solo lectura",
+        "description": "Ver sandboxes, plantillas, grupos, comandos, archivos y operaciones. No cambia nada."
+      },
+      "runSandboxes": {
+        "title": "Ejecutar sandboxes",
+        "description": "Crear sandboxes, ejecutar comandos en ellos, transferir archivos y destruirlos."
+      },
+      "fullAccess": {
+        "title": "Acceso completo",
+        "description": "Todo excepto el acceso al host y los shells de la CLI: también plantillas, enlaces de vista previa, webhooks e inicios de sesión de CLI."
+      },
+      "custom": {
+        "title": "Personalizado",
+        "description": "Elige cada permiso tú mismo, incluido el acceso al host."
+      }
+    },
+    "scopeCount_one": "{{count}} permiso",
+    "scopeCount_other": "{{count}} permisos",
+    "sections": {
+      "key": "Clave",
+      "keyHint": "Lo que toda clave necesita.",
+      "limits": "Límites",
+      "limitsHint": "Opcional: limita lo que alcanza la clave. Los valores predeterminados sirven para la mayoría.",
+      "resources": "Recursos",
+      "pools": "Grupos",
+      "sandboxes": "Sandboxes"
+    },
+    "summary": {
+      "allowlist_one": "Solo recursos seleccionados ({{count}} elegido)",
+      "allowlist_other": "Solo recursos seleccionados ({{count}} elegidos)",
+      "pools_one": "{{count}} grupo seleccionado",
+      "pools_other": "{{count}} grupos seleccionados",
+      "allSandboxes": "Todos los sandboxes dentro de sus permisos"
+    }
   },
   "list": {
     "scopes": "Alcances",
@@ -56,12 +93,13 @@
     "otherSandboxes": "Puede acceder a tus otros sandboxes dentro de los recursos autorizados",
     "cliLogin": "Inicio de sesión de la CLI",
     "maxLiveSandboxes_one": "Hasta {{count}} sandbox activo",
-    "maxLiveSandboxes_other": "Hasta {{count}} sandboxes activos"
+    "maxLiveSandboxes_other": "Hasta {{count}} sandboxes activos",
+    "revoked": "Revocada"
   },
   "mint": {
     "action": "Crear clave de SDK",
     "title": "Crear una clave de SDK",
-    "description": "Elige solo los permisos y recursos que necesita tu código. El acceso a comandos y archivos del host requiere un host propio y consentimiento del nodo.",
+    "description": "Elige qué puede hacer la clave. El acceso al host y los shells de la CLI solo están en Personalizado.",
     "submit": "Crear clave",
     "secretLabel": "Tu nueva clave de SDK",
     "usageHint": "Envíala como Authorization: Bearer <clave> a la API /v1."
@@ -147,5 +185,70 @@
       "use": "Selecciona también sandboxes:manage."
     }
   },
-  "title": "Claves de SDK"
+  "title": "Claves de SDK",
+  "emptyActive": {
+    "title": "No hay claves de SDK activas",
+    "description": "Tus claves revocadas están ocultas. Elige Incluir revocadas para verlas."
+  },
+  "useKey": {
+    "title": "Usar esta clave",
+    "description": "Envía la clave como Authorization: Bearer <clave>. Guárdala en un almacén de secretos o en una variable de entorno, nunca en el código.",
+    "apiUrl": "URL base de la API",
+    "copyApiUrl": "Copiar URL base de la API",
+    "curl": "Comprueba la clave con curl (muestra su nombre, permisos y vencimiento):",
+    "copyCurl": "Copiar comando curl",
+    "sdk": "SDK de TypeScript (@wssp/sdk, Node 22+). Aún no está en npm: úsalo desde el repositorio de wssp como \"@wssp/sdk\": \"workspace:*\".",
+    "copySdk": "Copiar ejemplo del SDK",
+    "cli": "La CLI wssp: instálala y luego usa la clave desde scripts y CI:",
+    "copyCliInstall": "Copiar comando de instalación",
+    "copyCliUse": "Copiar ejemplo de la CLI",
+    "cliLogin": "En tu propia computadora, inicia sesión con wssp login. Crea su propia clave.",
+    "copyCliLogin": "Copiar comando de inicio de sesión",
+    "sdkDocs": "Guía de claves de SDK y permisos",
+    "cliDocs": "Guía de la CLI",
+    "docsPath": "Consulta {{path}} en el repositorio de wssp."
+  },
+  "scopeTitle": {
+    "hosts": {
+      "read": "Ver hosts",
+      "execute": "Ejecutar comandos en hosts",
+      "files": "Leer y cambiar archivos del host"
+    },
+    "pools": {
+      "read": "Ver grupos"
+    },
+    "templates": {
+      "read": "Ver plantillas",
+      "write": "Registrar plantillas",
+      "build": "Compilar plantillas"
+    },
+    "sandboxes": {
+      "read": "Ver sandboxes",
+      "create": "Crear sandboxes",
+      "manage": "Administrar sandboxes",
+      "destroy": "Destruir sandboxes",
+      "tunnel": "Compartir puertos de sandboxes",
+      "connect": "Abrir shells de la CLI"
+    },
+    "commands": {
+      "read": "Ver comandos",
+      "execute": "Ejecutar comandos"
+    },
+    "files": {
+      "read": "Leer archivos",
+      "write": "Cambiar archivos"
+    },
+    "operations": {
+      "read": "Ver operaciones",
+      "cancel": "Cancelar operaciones"
+    },
+    "webhooks": {
+      "write": "Administrar webhooks"
+    },
+    "credentials": {
+      "read": "Ver inicios de sesión de CLI",
+      "write": "Administrar inicios de sesión de CLI",
+      "use": "Usar inicios de sesión de CLI en sandboxes"
+    }
+  }
 }

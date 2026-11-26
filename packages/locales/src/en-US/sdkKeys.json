@@ -3,13 +3,13 @@
   "description": "Scoped keys for the /v1 SDK API.",
   "empty": {
     "title": "No SDK keys yet",
-    "description": "SDK keys authorize the /v1 API for your sandboxes. Revoked keys are not listed."
+    "description": "SDK keys authorize the /v1 API for your sandboxes."
   },
   "mint": {
-    "action": "Mint SDK key",
-    "title": "Mint an SDK key",
-    "description": "Choose only the scopes and resources your code needs. Host command and file access requires your own host and node consent.",
-    "submit": "Mint key",
+    "action": "Create SDK key",
+    "title": "Create an SDK key",
+    "description": "Pick what the key may do. Host access and CLI shells are only under Custom.",
+    "submit": "Create key",
     "secretLabel": "Your new SDK key",
     "usageHint": "Send it as Authorization: Bearer <key> to the /v1 API."
   },
@@ -24,7 +24,8 @@
     "otherSandboxes": "May access your other sandboxes within its resource grants",
     "cliLogin": "CLI login",
     "maxLiveSandboxes_one": "Up to {{count}} live sandbox",
-    "maxLiveSandboxes_other": "Up to {{count}} live sandboxes"
+    "maxLiveSandboxes_other": "Up to {{count}} live sandboxes",
+    "revoked": "Revoked"
   },
   "revoke": {
     "title": "Revoke {{name}}?",
@@ -72,7 +73,44 @@
     "moreLogins": "Load more logins",
     "ownSandboxesOnly": "Own sandboxes only",
     "ownSandboxesOnlyHint": "Only sandboxes originally created with this key, including commands, files and operations. Host commands are not limited by this option.",
-    "hostScopeWarning": "The daemon user is an Incus admin. Host commands and host file tools can reach every sandbox on the node, including other users’ sandboxes in shared pools. “Own sandboxes only” does not limit host access. Host access also requires the setting to be enabled on the node."
+    "hostScopeWarning": "The daemon user is an Incus admin. Host commands and host file tools can reach every sandbox on the node, including other users’ sandboxes in shared pools. “Own sandboxes only” does not limit host access. Host access also requires the setting to be enabled on the node.",
+    "access": "Access",
+    "preset": {
+      "readOnly": {
+        "title": "Read-only",
+        "description": "See sandboxes, templates, pools, commands, files and operations. Changes nothing."
+      },
+      "runSandboxes": {
+        "title": "Run sandboxes",
+        "description": "Create sandboxes, run commands in them, transfer files and destroy them."
+      },
+      "fullAccess": {
+        "title": "Full access",
+        "description": "Everything except host access and CLI shells: also templates, preview links, webhooks and CLI logins."
+      },
+      "custom": {
+        "title": "Custom",
+        "description": "Choose each permission yourself, including host access."
+      }
+    },
+    "scopeCount_one": "{{count}} permission",
+    "scopeCount_other": "{{count}} permissions",
+    "sections": {
+      "key": "Key",
+      "keyHint": "What every key needs.",
+      "limits": "Limits",
+      "limitsHint": "Optional: narrow what the key reaches. The defaults suit most keys.",
+      "resources": "Resources",
+      "pools": "Pools",
+      "sandboxes": "Sandboxes"
+    },
+    "summary": {
+      "allowlist_one": "Only selected resources ({{count}} chosen)",
+      "allowlist_other": "Only selected resources ({{count}} chosen)",
+      "pools_one": "{{count}} selected pool",
+      "pools_other": "{{count}} selected pools",
+      "allSandboxes": "All sandboxes within its grants"
+    }
   },
   "scopeGroup": {
     "hosts": "Hosts",
@@ -147,5 +185,70 @@
     "SELECTED": "Selected pools only",
     "immutable": "Keys are immutable. Losing a grant removes future pool access; regrant requires a new selected key. Retained creator work stays bound to its original create key.",
     "revisionContext": "Pool to discover your exact revisions on foreign hosts"
+  },
+  "emptyActive": {
+    "title": "No active SDK keys",
+    "description": "Your revoked keys are hidden. Choose Include revoked to see them."
+  },
+  "useKey": {
+    "title": "Use this key",
+    "description": "Send the key as Authorization: Bearer <key>. Keep it in a secret store or an environment variable, never in code.",
+    "apiUrl": "API base URL",
+    "copyApiUrl": "Copy API base URL",
+    "curl": "Check the key with curl (prints its name, scopes and expiry):",
+    "copyCurl": "Copy curl command",
+    "sdk": "TypeScript SDK (@wssp/sdk, Node 22+). It is not on npm yet: depend on it from the wssp repository as \"@wssp/sdk\": \"workspace:*\".",
+    "copySdk": "Copy SDK example",
+    "cli": "The wssp CLI: install it, then use the key from scripts and CI:",
+    "copyCliInstall": "Copy install command",
+    "copyCliUse": "Copy CLI example",
+    "cliLogin": "On your own computer, sign in with wssp login instead. It creates its own key.",
+    "copyCliLogin": "Copy login command",
+    "sdkDocs": "SDK keys and scopes guide",
+    "cliDocs": "CLI guide",
+    "docsPath": "See {{path}} in the wssp repository."
+  },
+  "scopeTitle": {
+    "hosts": {
+      "read": "View hosts",
+      "execute": "Run commands on hosts",
+      "files": "Read and change host files"
+    },
+    "pools": {
+      "read": "View pools"
+    },
+    "templates": {
+      "read": "View templates",
+      "write": "Register templates",
+      "build": "Build templates"
+    },
+    "sandboxes": {
+      "read": "View sandboxes",
+      "create": "Create sandboxes",
+      "manage": "Manage sandboxes",
+      "destroy": "Destroy sandboxes",
+      "tunnel": "Share sandbox ports",
+      "connect": "Open CLI shells"
+    },
+    "commands": {
+      "read": "View commands",
+      "execute": "Run commands"
+    },
+    "files": {
+      "read": "Read files",
+      "write": "Change files"
+    },
+    "operations": {
+      "read": "View operations",
+      "cancel": "Cancel operations"
+    },
+    "webhooks": {
+      "write": "Manage webhooks"
+    },
+    "credentials": {
+      "read": "View CLI logins",
+      "write": "Manage CLI logins",
+      "use": "Use CLI logins in sandboxes"
+    }
   }
 }

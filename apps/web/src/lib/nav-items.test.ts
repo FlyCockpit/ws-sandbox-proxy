@@ -46,6 +46,7 @@ describe("nav-items", () => {
 
     expect(userItems).toEqual(["/settings"]);
     expect(adminItems).toEqual(["/settings", "/admin"]);
+    expect(getNavItems({ placement: "userMenu", isAuthenticated: false })).toEqual([]);
   });
 
   it("builds typed locale-prefixed routes", () => {
@@ -93,17 +94,54 @@ describe("nav-items", () => {
     expect(stripLangPrefix("/en-US/settings/privacy")).toBe("/settings/privacy");
   });
 
-  it("puts Sandboxes first, then Templates, Activity, Terminals and Settings", () => {
-    expect(primaryNavItems.map((item) => [item.id, item.path])).toEqual([
-      ["sandboxes", "/dashboard/sandboxes"],
-      ["templates", "/dashboard/templates"],
-      ["activity", "/dashboard/operations"],
-      ["terminals", "/dashboard/terminals"],
-      ["settings", "/settings"],
+  it("puts Sandboxes first, then Templates, Activity, Hosts, Terminals, and Settings at the bottom", () => {
+    expect(primaryNavItems.map((item) => [item.id, item.path, item.group])).toEqual([
+      ["sandboxes", "/dashboard/sandboxes", "main"],
+      ["templates", "/dashboard/templates", "main"],
+      ["activity", "/dashboard/operations", "main"],
+      ["hosts", "/settings/hosts", "main"],
+      ["terminals", "/dashboard/terminals", "main"],
+      ["settings", "/settings", "footer"],
     ]);
     // Every section stays active on its children.
     expect(primaryNavItems.every((item) => !item.exact)).toBe(true);
-    expect(new Set(primaryNavItems.map((item) => item.labelKey)).size).toBe(5);
+    expect(new Set(primaryNavItems.map((item) => item.labelKey)).size).toBe(6);
+  });
+
+  it("pins Admin under Settings in the sidebar footer, for admins only", () => {
+    const sidebar = (showsAdmin: boolean) =>
+      getNavItems({ placement: "sidebar", isAuthenticated: true, showsAdmin }).map((i) => i.id);
+    expect(sidebar(false)).toEqual([
+      "sandboxes",
+      "templates",
+      "activity",
+      "hosts",
+      "terminals",
+      "settings",
+    ]);
+    expect(sidebar(true)).toEqual([
+      "sandboxes",
+      "templates",
+      "activity",
+      "hosts",
+      "terminals",
+      "settings",
+      "admin",
+    ]);
+    expect(getNavItems({ placement: "sidebar", isAuthenticated: false })).toEqual([]);
+  });
+
+  it("gives phones four tabs; the other sidebar sections go to More (five slots at most)", () => {
+    for (const showsAdmin of [false, true]) {
+      const tabs = getNavItems({ placement: "tabs", isAuthenticated: true, showsAdmin });
+      expect(tabs.map((i) => i.id)).toEqual(["sandboxes", "templates", "activity", "settings"]);
+      const sidebar = getNavItems({ placement: "sidebar", isAuthenticated: true, showsAdmin });
+      const more = sidebar.filter((item) => !tabs.includes(item));
+      expect(more.map((i) => i.id)).toEqual(
+        showsAdmin ? ["hosts", "terminals", "admin"] : ["hosts", "terminals"],
+      );
+      expect(tabs.length + 1).toBeLessThanOrEqual(5);
+    }
   });
 
   it.each([
@@ -111,14 +149,20 @@ describe("nav-items", () => {
     ["/es-MX/dashboard/sandboxes/abc", "sandboxes"],
     ["/en-US/dashboard/templates/builds/b1", "templates"],
     ["/en-US/dashboard/operations/op1", "activity"],
-    ["/es-MX/dashboard/terminals", "terminals"],
+    ["/en-US/dashboard/terminals", "terminals"],
     ["/en-US/settings", "settings"],
-    ["/en-US/settings/hosts/h1", "settings"],
+    ["/en-US/settings/hosts", "hosts"],
+    ["/en-US/settings/hosts/h1", "hosts"],
+    ["/en-US/settings/host-credentials", "hosts"],
+    ["/en-US/settings/hostsx", "settings"],
+    ["/en-US/settings/pools", "settings"],
     ["/en-US/settings/logins/sessions/s1", "settings"],
     ["/settings/security", "settings"],
+    ["/en-US/admin", "admin"],
+    ["/en-US/admin/users", "admin"],
     ["/en-US/dashboard", null],
     ["/en-US/dashboard/sandboxesx", null],
-    ["/en-US/admin", null],
+    ["/en-US/administrator", null],
     ["/en-US", null],
   ])("maps %s to the %s section", (pathname, section) => {
     expect(primarySectionFor(pathname)).toBe(section);

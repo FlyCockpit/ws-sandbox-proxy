@@ -91,7 +91,7 @@ function ConnectedApp({ lang, grant }: { lang: string; grant: Grant }) {
   );
   return (
     <li className="flex min-w-0 flex-col gap-2 rounded-xl border p-4">
-      <p className="break-words font-medium">{grant.SdkKey.name}</p>
+      <p className="font-medium [overflow-wrap:anywhere]">{grant.SdkKey.name}</p>
       <p className="break-all font-mono text-xs text-muted-foreground">{grant.clientId}</p>
       <ul className="flex flex-wrap gap-2">
         {grant.SdkKey.scopes.map((scope) => (
@@ -110,6 +110,7 @@ function ConnectedApp({ lang, grant }: { lang: string; grant: Grant }) {
         size="touch"
         variant="destructive"
         className="sm:self-start"
+        aria-label={t("credentials:revoke.actionNamed", { name: grant.SdkKey.name })}
         onClick={() => revoke.setConfirming(true)}
       >
         {t("credentials:revoke.action")}

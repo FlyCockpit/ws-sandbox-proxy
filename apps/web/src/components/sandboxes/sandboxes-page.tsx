@@ -1,15 +1,13 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Button, buttonVariants } from "@wssp/ui/components/button";
+import { buttonVariants } from "@wssp/ui/components/button";
 import { Plus } from "lucide-react";
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { EmptyState } from "@/components/empty-state";
 import { LoadMore } from "@/components/load-more";
 import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
-import { CreateSandboxDialog } from "@/components/sandboxes/create-sandbox-dialog";
 import { OnboardingChecklist } from "@/components/sandboxes/onboarding-checklist";
 import {
   CapacityWaitLine,
@@ -23,6 +21,7 @@ import {
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
+import { useStatusClock } from "@/hooks/use-status-clock";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { dateTimeTitle } from "@/lib/format-date-time";
@@ -34,8 +33,10 @@ import {
   type SandboxStatusFilter,
   sandboxHostView,
   sandboxLabels,
+  sandboxPhase,
   sandboxTitle,
 } from "@/lib/sandbox-rules";
+import { sandboxDisplayOverride } from "@/lib/sandbox-status";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -73,7 +74,6 @@ export function SandboxesPage({
   onStatusChange: (status: SandboxStatusFilter) => void;
 }) {
   const { t, i18n } = useTranslation(["sandboxes", "dashboard", "common"]);
-  const [creating, setCreating] = useState(false);
   const query = useInfiniteQuery({
     ...orpc.sandboxes.list.infiniteOptions({
       initialPageParam: undefined as string | undefined,
@@ -89,7 +89,7 @@ export function SandboxesPage({
   });
   useTwoFactorRedirectOnError(lang, [query.error]);
   const sandboxes = query.data?.pages.flatMap((page) => page.items);
-  const now = Date.now();
+  const now = useStatusClock(query.dataUpdatedAt);
   useRerenderAt(
     nextHostStateChangeAt(
       (sandboxes ?? []).flatMap((sandbox) => (sandbox.host ? [sandbox.host] : [])),
@@ -103,10 +103,14 @@ export function SandboxesPage({
         title={t("sandboxes:title")}
         description={t("sandboxes:description")}
         actions={
-          <Button type="button" size="touch" onClick={() => setCreating(true)}>
+          <Link
+            to="/$lang/dashboard/sandboxes/new"
+            params={{ lang }}
+            className={buttonVariants({ size: "touch" })}
+          >
             <Plus aria-hidden="true" className="size-4" />
             {t("sandboxes:create.action")}
-          </Button>
+          </Link>
         }
       />
       <SegmentedControl
@@ -132,11 +136,7 @@ export function SandboxesPage({
         isEmpty={(rows) => rows.length === 0}
         empty={
           status === "active" ? (
-            <OnboardingChecklist
-              lang={lang}
-              enabled={sandboxes?.length === 0}
-              onCreate={() => setCreating(true)}
-            />
+            <OnboardingChecklist lang={lang} enabled={sandboxes?.length === 0} />
           ) : (
             <EmptyState
               className="rounded-xl border px-4"
@@ -173,7 +173,6 @@ export function SandboxesPage({
           </>
         )}
       </QueryBoundary>
-      {creating ? <CreateSandboxDialog lang={lang} onClose={() => setCreating(false)} /> : null}
     </section>
   );
 }
@@ -192,6 +191,7 @@ function SandboxRow({
   const { t } = useTranslation(["sandboxes", "hosts"]);
   const labels = sandboxLabels(sandbox.metadata);
   const deadline = sandbox.leaseExpiresAt ? new Date(sandbox.leaseExpiresAt).getTime() : null;
+  const stopped = sandboxPhase(sandbox.state) === "stopped";
   const offline = sandbox.state !== "DELETED" && sandboxHostView(sandbox.host, now) === "offline";
   return (
     <li
@@ -205,7 +205,7 @@ function SandboxRow({
             <h3 data-sandbox-name="" className="min-w-0 truncate font-mono text-sm font-medium">
               {sandboxTitle(sandbox)}
             </h3>
-            <StatePill state={sandbox.state} />
+            <StatePill state={sandbox.state} display={sandboxDisplayOverride(sandbox)} />
             {/* Only a stored disk is worth a badge in the list (disk offload). */}
             {sandbox.disk && sandbox.disk.location !== "host" ? (
               <DiskLocationBadge disk={sandbox.disk} />
@@ -244,8 +244,10 @@ function SandboxRow({
             <div className="min-w-0">
               <dt>{t("sandboxes:fields.expires")}</dt>
               <dd
+                data-sandbox-lifetime=""
                 className="font-medium text-foreground"
                 title={
+                  stopped ||
                   sandbox.state === "DELETED" ||
                   deadline == null ||
                   sandbox.leasePendingReady ||
@@ -254,18 +256,22 @@ function SandboxRow({
                     : dateTimeTitle(deadline, locale)
                 }
               >
-                {sandbox.state === "DELETED" || deadline == null
-                  ? "—"
-                  : sandbox.leasePendingReady
-                    ? t("sandboxes:lifetime.startsAtReady")
-                    : isUnlimitedLeaseEnd(deadline)
-                      ? t("sandboxes:expiry.unlimited")
-                      : t("sandboxes:expiry.at", {
-                          when: formatRelativeTime(deadline, locale, now),
-                          action: t(
-                            `sandboxes:expiry.action.${sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop"}`,
-                          ),
-                        })}
+                {/* A stopped VM has no running lifetime (as on its detail page):
+                    its next Start arms a new one. */}
+                {stopped
+                  ? t("sandboxes:lifetime.stopped")
+                  : sandbox.state === "DELETED" || deadline == null
+                    ? "—"
+                    : sandbox.leasePendingReady
+                      ? t("sandboxes:lifetime.startsAtReady")
+                      : isUnlimitedLeaseEnd(deadline)
+                        ? t("sandboxes:expiry.unlimited")
+                        : t("sandboxes:expiry.at", {
+                            when: formatRelativeTime(deadline, locale, now),
+                            action: t(
+                              `sandboxes:expiry.action.${sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop"}`,
+                            ),
+                          })}
               </dd>
             </div>
             <div className="min-w-0">

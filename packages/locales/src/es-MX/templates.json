@@ -1,11 +1,10 @@
 {
-  "appendRevision": "Agregar revisión",
-  "appendWithSize": "Agregar con estos valores",
+  "appendWithSize": "Nueva versión con estos valores",
   "archive": {
     "action": "Archivar",
     "title": "¿Archivar {{label}}?",
-    "description": "Impide nuevas creaciones mediante esta plantilla lógica. Se conservan sus revisiones, asociaciones de hosts y sandboxes existentes. Esto no se puede deshacer.",
-    "confirm": "Archivar",
+    "description": "Después de esto, ningún sandbox nuevo podrá arrancar desde {{label}}. Los sandboxes que ya la usan siguen funcionando, y sus versiones quedan listadas en Archivadas. Archivar no se puede deshacer: para volver a usar la imagen, crea una plantilla nueva a partir de ella.",
+    "confirm": "Archivar plantilla",
     "pending": "Archivando…",
     "done": "{{label}} archivada",
     "blockedInUse": "Primero elimina los sandboxes que usan esta plantilla (los detenidos también cuentan)."
@@ -18,7 +17,7 @@
   },
   "availabilityFailed": "No se pudo cargar la disponibilidad de la imagen.",
   "builds": {
-    "action": "Compilación",
+    "action": "Compilar nueva versión",
     "newAction": "Compilar una plantilla",
     "title": "Compilaciones de plantilla",
     "description": "Una compilación ejecuta una receta o Dockerfile en una VM de compilación y captura el resultado como una nueva revisión de la plantilla.",
@@ -130,7 +129,8 @@
       "pending": "Pendiente",
       "running": "En ejecución",
       "succeeded": "Exitoso",
-      "failed": "Fallido"
+      "failed": "Fallido",
+      "notRun": "No se ejecutó"
     },
     "disabled": {
       "off": "Las compilaciones de plantilla están desactivadas en este servidor.",
@@ -183,7 +183,9 @@
         "timeout_invalid": "El límite de tiempo es inválido.",
         "wait_needs_pool": "Esperar capacidad necesita un destino de grupo.",
         "other": "La receta fue rechazada."
-      }
+      },
+      "argUndeclared_one": "El argumento de compilación {{names}} no está declarado. Agrega la línea {{fix}} al Dockerfile o quita el argumento.",
+      "argUndeclared_other": "Los argumentos de compilación {{names}} no están declarados. Agrega las líneas {{fix}} al Dockerfile o quita los argumentos."
     },
     "problem": {
       "empty": "Ingresa un Dockerfile o receta.",
@@ -207,7 +209,8 @@
       "invalid": "Algunos campos son inválidos.",
       "generic": "Algo salió mal. Inténtalo de nuevo.",
       "communityKeyScope": "Las plantillas de la comunidad necesitan acceso a todas las plantillas y revisiones.",
-      "communityManaged": "WS Sandbox Proxy administra esta plantilla de la comunidad. Solo cambia con Actualizar ahora y Reintentar."
+      "communityManaged": "WS Sandbox Proxy administra esta plantilla de la comunidad. Solo cambia con Actualizar ahora y Reintentar.",
+      "baseNotFound": "FROM no coincidió con una versión lista de tus plantillas."
     },
     "revisionBadge": {
       "build": "Compilación",
@@ -253,7 +256,7 @@
       "noPools": "No puedes usar ningún grupo.",
       "targetRequired": "Elige dónde se ejecuta la compilación.",
       "args": "Argumentos de compilación",
-      "argsHint": "Un NOMBRE=valor por línea. Cada nombre debe estar declarado con ARG.",
+      "argsHint": "Cada nombre debe declararse con una línea ARG en el Dockerfile.",
       "argsInvalid": "Línea {{line}}: usa NOMBRE=valor (letras, dígitos y _; máximo 64 argumentos).",
       "secretWarning": "Estos nombres parecen secretos: {{names}}. Los argumentos de compilación y ENV se almacenan y se muestran en texto plano. Nunca pongas secretos en una compilación.",
       "egress": "Egress de red",
@@ -345,11 +348,25 @@
       "copyTail": "Copiar la salida del paso fallido",
       "buildId": "ID de compilación",
       "contextDigest": "Resumen del contexto",
-      "resultRevisionId": "ID de revisión"
+      "resultRevisionId": "ID de revisión",
+      "notRun": "Este paso no se ejecutó: la compilación terminó antes."
+    },
+    "base": {
+      "fromUnknown": "FROM {{from}} no es una de tus plantillas. FROM debe nombrar una de tus plantillas, no una imagen de registro.",
+      "fromNoVersion": "FROM {{from}} nombra una plantilla que aún no tiene una versión lista. Compila o prepara una versión primero, o nombra otra plantilla.",
+      "fromNotFound": "FROM {{from}} no coincidió con una versión lista de tus plantillas. FROM debe nombrar una de tus plantillas (slug o slug:etiqueta).",
+      "example": "Por ejemplo: {{examples}}.",
+      "none": "Aún no tienes una plantilla lista: crea una a partir de una imagen de la comunidad primero."
+    },
+    "nextStep": {
+      "noBuilder": "Ningún host pudo ejecutar la compilación. Las compilaciones se ejecutan en un host conectado que te pertenece y tiene las compilaciones activadas. Para usar hosts de otras personas en un pool compartido, activa \"Ejecutar mis compilaciones en hosts de compilación de otras personas\" en Configuración › Imágenes y compilaciones (su host también debe aceptar compilaciones de otros), o pregunta al propietario del pool.",
+      "hostCapacity": "El host de compilación no tenía suficiente memoria, vCPU o disco libres. Espera a que se detengan los sandboxes ahí, compila en otro host o pool, o pide menos en Recursos de compilación. Luego compila de nuevo.",
+      "placementTimeout": "Ningún host de compilación tomó la compilación antes de su límite de tiempo. Comprueba que el host esté conectado o compila en otro host o pool. Luego compila de nuevo.",
+      "hostUnavailable": "El host de compilación no estaba disponible (sin conexión, vaciándose o desactivado para este pool). Revísalo en la página de Hosts o compila en otro host o pool. Luego compila de nuevo.",
+      "openImageSettings": "Abrir Configuración › Imágenes y compilaciones"
     }
   },
   "community": {
-    "action": "Crear desde imagen de la comunidad",
     "badge": "Comunidad",
     "badgeHint": "Una imagen base que WS Sandbox Proxy administra a partir de una imagen de la comunidad probada.",
     "unavailable": {
@@ -373,7 +390,7 @@
       "pending": "Creando…",
       "started": "Preparación iniciada.",
       "existing": "Ya tienes esta plantilla de la comunidad.",
-      "peerWarning": "Este servidor guarda las imágenes en hosts pares. Una base de la comunidad solo está tan disponible como los hosts que la guardan; se recomienda el almacenamiento S3."
+      "peerWarning": "Este servidor guarda las imágenes en los hosts, no en un almacenamiento compartido, así que esta plantilla funciona solo mientras esté conectado un host que tenga su imagen. Mantén conectado el host o pool donde compilas."
     },
     "header": {
       "refresh": "Actualizar automáticamente",
@@ -433,7 +450,7 @@
     "title": "Aún no hay plantillas",
     "retiredTitle": "No hay plantillas archivadas",
     "retiredDescription": "Las plantillas que archives siguen apareciendo aquí y en los sandboxes que las usaron.",
-    "description": "La forma más rápida de tener una primera plantilla es Crear desde imagen de la comunidad: una imagen de Ubuntu probada, preparada para ti en uno de tus hosts o grupos. O registra una imagen de VM que ya esté en el almacén de Incus de un host."
+    "description": "La forma más rápida de tener una primera plantilla: Nueva plantilla y luego Desde una imagen de la comunidad. Es una imagen de Ubuntu probada, preparada para ti en uno de tus hosts o grupos."
   },
   "fields": {
     "fingerprint": "Huella fijada",
@@ -484,8 +501,6 @@
     "guestShell": "Shell",
     "guestVersion": "Versión del invitado (opcional)",
     "guestVersionHint": "Una nota libre, por ejemplo la fecha de creación de la imagen.",
-    "envs": "Variables predeterminadas (JSON)",
-    "envsHint": "Mapa JSON privado de texto: máximo 64 entradas, nombres de 128 bytes UTF-8, valores de 4096 bytes y JSON ordenado de 16384 bytes en total. Los valores del sandbox y del comando sustituyen estos valores. HOME, SHELL y TERM están reservados. Cambiar los valores requiere una revisión nueva.",
     "cpuCount": "vCPU predeterminadas",
     "memoryMiB": "Memoria predeterminada (MiB)",
     "sizeHint": "Valores de revisión: 1–32 vCPU, 512–65536 MiB en pasos de 256 y un disco raíz predeterminado de 1–2048 GiB (32 si no se cambia). El disco raíz mínimo es la raíz propia de la imagen: los sandboxes no pueden ser más pequeños, y una raíz más grande se amplía en el primer arranque. Déjalo vacío para usar el predeterminado como mínimo. Cada revisión nueva es inmutable; los campos no heredan otra revisión.",
@@ -564,7 +579,6 @@
   },
   "invalidTag": "Usa de 1 a 64 letras, números, puntos, guiones bajos o guiones; empieza con una letra o un número.",
   "listRegion": "Plantillas registradas",
-  "logicalActive": "Plantilla activa",
   "manageRevision": "Administrar revisión",
   "manageRevisionDescription": "Etiquetas, imágenes en hosts y retiro de esta revisión.",
   "manageRevisionTitle": "Administrar {{revision}}",
@@ -587,7 +601,6 @@
     "imageMissing": "La imagen falta en este host. Restáurala en el almacén local de imágenes del host e inténtalo de nuevo."
   },
   "register": {
-    "action": "Registrar plantilla",
     "title": "Registrar una plantilla",
     "description": "El host busca la imagen en su almacén local de Incus e informa su huella y arquitectura. No se descarga ni se construye nada.",
     "submit": "Verificar y registrar",
@@ -608,7 +621,8 @@
     "readiness": "El registro solo verifica la imagen en el host; el agente, el usuario y las herramientas se verifican al iniciar cada sandbox, y un sandbox que no los cumple no se reporta como listo.",
     "docsLink": "Cómo preparar una imagen",
     "docsPath": "Cómo calificar una imagen: {{path}} en el repositorio de código de WS Sandbox Proxy.",
-    "image": "Usa una imagen de VM que ya esté en el almacén local de Incus del host. En un host propio, ingresa un alias (se rechazan las huellas digitales); el host lo resuelve y lo fija. En un miembro de grupo compartido, ingresa sha256: seguido de la huella digital exacta de 64 caracteres en minúsculas (se rechazan los alias). Los cambios posteriores de alias no cambian una revisión registrada."
+    "image": "Usa una imagen de VM que ya esté en el almacén local de Incus del host. En un host propio, ingresa un alias (se rechazan las huellas digitales); el host lo resuelve y lo fija. En un miembro de grupo compartido, ingresa sha256: seguido de la huella digital exacta de 64 caracteres en minúsculas (se rechazan los alias). Los cambios posteriores de alias no cambian una revisión registrada.",
+    "about": "Acerca de las plantillas y los requisitos de imagen"
   },
   "retirePrompt": "Escribe el ID de la revisión para confirmar",
   "retireRevision": "Retirar revisión",
@@ -617,7 +631,7 @@
   "revisionNumber": "Revisión {{revision}}",
   "revisionSize": "Valores predeterminados: {{cpuCount}} vCPU · {{memoryMiB}} MiB · disco de {{defaultDiskGiB}} GiB",
   "revisionMinDisk": "Disco mínimo: {{minDiskGiB}} GiB (la raíz de la imagen; se rechazan sandboxes más pequeños)",
-  "revisions": "Versiones de la plantilla",
+  "revisions": "Versiones",
   "revisionsFailed": "No se pudieron cargar las revisiones.",
   "sandboxCount_one": "{{count}} sandbox (no eliminado)",
   "sandboxCount_other": "{{count}} sandboxes (no eliminados)",
@@ -646,5 +660,123 @@
     "hostStale": "Su host no ha enviado un latido reciente. No pueden iniciarse sandboxes nuevos hasta que se reconecte.",
     "hostOffline": "Su host no está conectado. No pueden iniciarse sandboxes nuevos hasta que ejecute wssp host run."
   },
-  "verifyAvailability": "Verificar esta revisión en el host"
+  "verifyAvailability": "Verificar esta revisión en el host",
+  "subtitle": "Imágenes con las que arrancan tus sandboxes.",
+  "chooser": {
+    "action": "Nueva plantilla",
+    "title": "Nueva plantilla",
+    "description": "Elige de dónde viene la imagen.",
+    "community": "Desde una imagen de la comunidad",
+    "communityDetail": "Una imagen de Ubuntu probada, preparada y verificada para ti en uno de tus hosts o grupos.",
+    "recommended": "Recomendado",
+    "build": "Compilar desde una receta",
+    "buildDetail": "Parte de una plantilla que puedas usar y agrega pasos con un Dockerfile o una receta.",
+    "register": "Registrar una imagen existente",
+    "registerDetail": "Avanzado: usa una imagen de VM que ya está en el almacén local de Incus de un host."
+  },
+  "status": {
+    "ready": "Lista",
+    "noVersions": "Sin versiones aún",
+    "archived": "Archivada"
+  },
+  "card": {
+    "registerVersion": "Registrar una versión",
+    "more": "Más acciones para {{label}}",
+    "versions_one": "{{count}} versión · la más reciente v{{latest}}",
+    "versions_other": "{{count}} versiones · la más reciente v{{latest}}",
+    "noVersions": "Sin versiones aún",
+    "noVersionsHint": "Aún no hay versiones. Compila una o registra una imagen para poder usar esta plantilla.",
+    "created": "creada {{when}}",
+    "archived": "archivada {{when}}",
+    "showDetails": "Mostrar versiones y compilaciones",
+    "hideDetails": "Ocultar versiones y compilaciones",
+    "noVersionsBuilding": "Su primera versión se está compilando ahora.",
+    "noVersionsLastBuild": "Su última compilación falló, así que aún no tiene versión.",
+    "viewBuild": "Ver la compilación",
+    "watchBuild": "Seguir la compilación",
+    "buildAgain": "Compilar de nuevo",
+    "noVersionsCancelled": "Su última compilación se canceló, así que aún no tiene versión."
+  },
+  "registerPage": {
+    "back": "Plantillas",
+    "titleNew": "Registrar una imagen existente",
+    "titleVersion": "Agregar una versión a {{label}}",
+    "description": "Usa una imagen de VM que ya está en el almacén local de Incus de un host. El host la verifica al registrarla; no se descarga ni se compila nada.",
+    "templateFailed": "No se pudo cargar esta plantilla. Puede que esté archivada.",
+    "where": "Dónde está la imagen",
+    "whereHint": "El host (o miembro del grupo) que tiene la imagen la verifica e informa su huella digital y arquitectura.",
+    "whereHost": "Uno de mis hosts",
+    "wherePool": "Un miembro de un grupo",
+    "name": "Nombre de la plantilla",
+    "nameHint": "Se muestra en listas y selectores. El nombre corto que usan la CLI y la API se genera a partir de él; cámbialo en Nombre y detalles de la imagen.",
+    "versionOf": "Agrega una versión nueva a {{label}} ({{slug}}). Los sandboxes que ya usan una versión anterior la conservan.",
+    "advanced": "Más opciones",
+    "advancedHint": "Ya tienen valores predeterminados seguros. Abre una sección para cambiarla.",
+    "sections": {
+      "size": "Tamaño predeterminado",
+      "env": "Entorno",
+      "guest": "Usuario invitado",
+      "details": "Nombre y detalles de la imagen"
+    },
+    "summary": {
+      "size": "{{cpu}} vCPU · {{memory}} MiB · disco de {{disk}} GiB",
+      "envNone": "Sin variables",
+      "env_one": "{{count}} variable",
+      "env_other": "{{count}} variables",
+      "guest": "uid {{uid}} · gid {{gid}} · {{home}} · {{shell}}",
+      "details": "{{architecture}} · {{slug}}"
+    },
+    "envLabel": "Variables de entorno predeterminadas",
+    "envHint": "Valores privados predeterminados para comandos y terminales en los sandboxes que arrancan desde esta versión; los valores del sandbox y del comando los reemplazan. Los valores se mantienen privados en el servidor y el host. HOME, SHELL y TERM están reservadas.",
+    "addVariable": "Agregar variable",
+    "status": "El host verifica la imagen al registrarla. No se descarga ni se compila nada.",
+    "statusHost": "{{host}} verifica la imagen al registrarla. No se descarga ni se compila nada.",
+    "openTemplates": "Abrir plantillas",
+    "startSandbox": "Iniciar un sandbox"
+  },
+  "buildPage": {
+    "addArg": "Agregar argumento",
+    "recipe": "Qué compilar",
+    "targetKind": "Compilar en un host o en un grupo",
+    "targetHint": "Ahí se ejecuta una VM de compilación. Un grupo elige uno de sus hosts con espacio.",
+    "advancedHint": "La mayoría de las compilaciones los dejan como están.",
+    "sections": {
+      "tag": "Etiqueta de la versión",
+      "args": "Argumentos de compilación",
+      "network": "Red",
+      "resources": "Recursos de compilación",
+      "context": "Contexto de compilación (.tar)"
+    },
+    "summary": {
+      "argsNone": "Ninguno",
+      "args_one": "{{count}} argumento",
+      "args_other": "{{count}} argumentos",
+      "egress": "{{mode}} · {{count}} permitidos",
+      "resources": "Tamaño de la imagen base · hasta {{minutes}} min",
+      "resourcesCustom": "Tamaño personalizado · hasta {{minutes}} min",
+      "contextNone": "No se necesita",
+      "contextNeeded": "Se necesita: la receta tiene COPY"
+    },
+    "plan": "Se compila en {{target}} · reserva hasta {{minutes}} minutos de compilación ({{used}} de {{limit}} usados este mes)",
+    "planNoTarget": "Reserva hasta {{minutes}} minutos de compilación. Elige dónde compilar."
+  },
+  "preflight": {
+    "emptyPool": "{{label}} no tiene hosts, así que nada puede ejecutar esta compilación. Agrega un host al grupo o elige otro grupo.",
+    "poolDisabled": "Todos los hosts de {{label}} están desactivados para el grupo, así que nada puede ejecutar esta compilación. Activa uno o elige otro grupo.",
+    "poolOffline": "Ningún host de {{label}} está conectado ahora. La compilación espera hasta que uno se reconecte.",
+    "hostOffline": "{{label}} no está conectado ahora. La compilación espera hasta que se reconecte.",
+    "hostDraining": "{{label}} se está vaciando y no acepta trabajo nuevo. Quítale el vaciado o elige otro host.",
+    "openPools": "Abrir Grupos",
+    "openHosts": "Abrir Hosts"
+  },
+  "placing": {
+    "emptyPool": "Nada puede ejecutar esta compilación: {{label}} no tiene hosts. Agrega un host al grupo, o cancela esta compilación e iníciala en otro host o grupo.",
+    "poolDisabled": "Nada puede ejecutar esta compilación: todos los hosts de {{label}} están desactivados para el grupo. Activa uno, o cancela esta compilación y compila en otro lugar.",
+    "poolOffline": "Sigue esperando: ningún host de {{label}} está conectado. La compilación empieza cuando uno se reconecte.",
+    "hostOffline": "Sigue esperando: {{label}} no está conectado. La compilación empieza cuando se reconecte, o cancélala y compila en otro lugar.",
+    "hostDraining": "Sigue esperando: {{label}} se está vaciando y no acepta trabajo nuevo. Quítale el vaciado, o cancela esta compilación y compila en otro lugar.",
+    "waitPool": "Sigue esperando un host de {{label}} con espacio para la VM de compilación. Empieza cuando uno tenga espacio, o falla si ninguno se libera a tiempo.",
+    "waitHost": "Sigue esperando a que {{label}} tenga espacio para la VM de compilación. Empieza cuando haya espacio, o falla si no se libera a tiempo.",
+    "unknown": "Sigue esperando un host de compilación. Comprueba que el host o el grupo que elegiste esté conectado y tenga capacidad libre."
+  }
 }

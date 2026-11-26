@@ -330,7 +330,13 @@
       "timeoutRange": "Enter a whole number of minutes from 1 to {{max}}.",
       "uploadHint": "Open the instance's Upload to store a value directly.",
       "submit": "Start login",
-      "submitting": "Starting…"
+      "submitting": "Starting…",
+      "networkSection": "Network",
+      "networkNone": "No extra domains",
+      "networkSummary_one": "{{count}} extra domain",
+      "networkSummary_other": "{{count}} extra domains",
+      "lifetimeSection": "Lifetime",
+      "lifetimeSummary": "Ends after {{minutes}} min"
     }
   },
   "leases": {

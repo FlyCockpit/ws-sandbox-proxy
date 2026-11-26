@@ -6,21 +6,45 @@
     "description": "Enroll a machine below. It appears here once enrolled, and is ready when its daemon is connected."
   },
   "enroll": {
-    "title": "Enroll a machine",
-    "description": "Run these on the Linux machine that will host sandboxes, in this order.",
-    "tokenAlternative": "Prefer a long-lived token? Mint one on the Host credentials page.",
+    "description": "Turn a Linux machine into a host for your sandboxes. Run these steps on that machine, in order; this page shows when it connects.",
     "tokenLink": "Host credentials",
     "copyCommand": "Copy command",
     "action": "Add host",
     "steps": {
       "install": "On a Linux machine with KVM, Incus 6.14 or newer and the br_netfilter module, install wssp from this server as the user that will run the daemon (not root). The installer checks the download's checksum and prints the next steps.",
-      "enroll": "Enroll it (replace my-host with a name for it). The command prints a link and a code: open the link while signed in here and approve.",
+      "enroll": "The command prints a link and a code. Open the link while signed in here and approve it.",
       "guard": "Install the egress guard once, as root. Without it the host connects but can't start any sandbox.",
       "run": "Start the daemon. To keep it running across logouts and reboots, run it as a systemd user service."
     },
     "guideLink": "Requirements and install",
     "serviceLink": "Run as a service",
-    "docsPath": "(guide: {{path}} in the WS Sandbox Proxy source repository)"
+    "pageTitle": "Add a host",
+    "stepTitles": {
+      "install": "Install wssp",
+      "enroll": "Enroll the machine",
+      "guard": "Install the network guard (once, as root)",
+      "run": "Start the host daemon"
+    },
+    "nameLabel": "Name for this host",
+    "nameHint": "Lowercase letters, digits and dashes. The command below updates as you type.",
+    "advanced": "Private CA and capacity flags",
+    "guidePath": "{{label}}: in the WS Sandbox Proxy source repository at",
+    "copyGuidePath": "Copy guide path",
+    "status": {
+      "title": "Status",
+      "waiting": "Waiting for your host…",
+      "hint": "This page checks every few seconds. It updates when the machine from step 2 is enrolled.",
+      "enrolled": "{{label}} is enrolled. Waiting for it to connect…",
+      "enrolledHint": "Finish steps 3 and 4 on the machine.",
+      "connected": "{{label}} is connected.",
+      "createSandbox": "Create a sandbox on it",
+      "openHost": "Open host",
+      "expired": "Still nothing after 30 minutes. Check the output of the commands on the machine, then check again.",
+      "checkAgain": "Check again",
+      "failed": "Couldn't check for your host.",
+      "retry": "Retry"
+    },
+    "namePlaceholder": "my-host"
   },
   "status": {
     "ready": "Connected",
@@ -170,7 +194,8 @@
     "device": "Device login (re-enrolls this host by its slug), then start the daemon:",
     "token": "With a host token from Host credentials, stored in WSSP_HOST_TOKEN:",
     "copyCommand": "Copy command",
-    "vmCapacityHint": "<code>wssp host run</code> detects RAM, total vCPU (threads × 2) and a per-VM CPU cap. Override independently with <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> and <code>--max-sandbox-cpu-count</code>. Storage is configured in local TOML; reconnect after changes. Each works alone; supply all three if all detection fails."
+    "vmCapacityHint": "<code>wssp host run</code> detects RAM, total vCPU (threads × 2) and a per-VM CPU cap. Override independently with <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> and <code>--max-sandbox-cpu-count</code>. Storage is configured in local TOML; reconnect after changes. Each works alone; supply all three if all detection fails.",
+    "reconnectTitle": "Reconnect or move this host"
   },
   "problem": {
     "capacity": "The host lacks resource capacity. Its report was refreshed.",
@@ -185,18 +210,16 @@
   "listRegion": "Your hosts",
   "pools": {
     "title": "Pools & sharing",
-    "description": "Group your hosts for least-loaded placement. Draining hosts accept no new sandboxes.",
+    "description": "A pool groups hosts so each new sandbox starts on whichever has room, and lets you share those hosts with other people.",
     "create": "Create pool",
-    "edit": "Edit pool",
     "slug": "Slug",
     "label": "Label",
     "failed": "Couldn't complete the pool request. Refresh and try again.",
     "empty": "No pools yet.",
     "emptyDescription": "A pool groups hosts so sandboxes go to the least-loaded one, and lets you share them with other accounts. Enroll a host first, then add it to a pool.",
-    "members": "Manage members",
-    "membersTitle": "Members of {{label}}",
-    "memberHint": "Enable hosts for future placement. Existing sandboxes keep their original host.",
-    "add": "Add host",
+    "membersTitle": "Hosts in {{label}}",
+    "memberHint": "Sandboxes start on enabled hosts. Turning a host off here keeps its running sandboxes where they are.",
+    "add": "Add a host to this pool",
     "host": "Host",
     "chooseHost": "Choose a host",
     "enabled": "Enabled",
@@ -210,7 +233,7 @@
     "confirm": "Type the slug to confirm.",
     "copy": "Copy slug",
     "invalidSlug": "Use 1–63 lowercase letters, numbers and hyphens.",
-    "invalidLabel": "Enter a name of 1–120 characters without control characters.",
+    "invalidLabel": "Enter a label of 1–120 characters without control characters.",
     "noMembers": "No member hosts yet. Add an enrolled host.",
     "problem": {
       "notFound": "This pool or host does not exist or is not yours. Reload the list.",
@@ -226,7 +249,47 @@
     "noHostsOnPage": "No hosts to add on this page. Load more hosts.",
     "imageCacheField": "Image cache per member (GiB)",
     "imageCacheHint": "Most GiB of other accounts' images cached on each contributed host. Leave empty for no pool limit.",
-    "imageCacheInvalid": "Enter a whole number from 0 to 1048576, or leave it empty."
+    "imageCacheInvalid": "Enter a whole number from 0 to 1048576, or leave it empty.",
+    "createDescription": "Give the pool a label. You add hosts and people after creating it.",
+    "slugHint": "Used by the API and CLI. Filled in from the label.",
+    "edit": {
+      "action": "Edit pool",
+      "title": "Edit {{label}}",
+      "essential": "Pool",
+      "lifetime": "Lifetime",
+      "placement": "Placement",
+      "images": "Images",
+      "queue": "Capacity queue",
+      "preferOwn": "Your own hosts first",
+      "anyHost": "Least-loaded host",
+      "ownOnly": "Only your hosts",
+      "noPoolLimit": "No pool limit",
+      "gib": "{{value}} GiB",
+      "operatorLimit": "operator limit",
+      "effectiveLease": "Right now a sandbox in this pool can run at most {{value}} (hosts' own limits included)."
+    },
+    "actions": {
+      "hosts": "Hosts",
+      "people": "People",
+      "more": "More actions for {{label}}"
+    },
+    "summary": {
+      "hosts": "Hosts",
+      "hostsNone": "No hosts yet",
+      "hostsValue_one": "{{count}} host · {{connected}} connected",
+      "hostsValue_other": "{{count}} hosts · {{connected}} connected",
+      "people": "People",
+      "peopleNone": "Only you",
+      "peopleValue_one": "Shared with {{count}} person",
+      "peopleValue_other": "Shared with {{count}} people",
+      "capacity": "Capacity",
+      "capacityValue": "{{memory}} GiB RAM · {{vcpu}} vCPU",
+      "lease": "Longest lifetime",
+      "leaseUnlimited": "No time limit"
+    },
+    "addSubmit": "Add host",
+    "deleteTitle": "Delete {{label}}?",
+    "removeTitle": "Remove {{host}} from {{pool}}?"
   },
   "vmCapacity": {
     "title": "Live resource capacity",
@@ -240,14 +303,15 @@
     "maxCpuCount": "Per-VM CPU cap",
     "maxMemoryMiB": "Per-VM memory cap",
     "cpuValue": "{{value}} vCPU",
-    "memoryValue": "{{value}} MiB",
+    "memoryValue": "{{value}} GiB",
     "hint": "RAM holds include guest RAM plus fixed host overhead. vCPU is summed independently of the per-VM cap. These are commitments, not measured usage. Shrinking a budget preserves existing holds.",
     "overcommitted": "Running sandboxes use more than this host allows",
     "vcpuBudget": "Total vCPU budget",
     "vcpuBudgetHint": "The vCPU budget is schedulable vCPU, not CPU threads. Unless the operator sets --sandbox-vcpu-budget (or sandbox_vcpu_budget in the daemon's TOML), the daemon sets it to {{multiplier}} × the host's CPU threads (at most {{max}}), so sandboxes may overcommit the CPUs up to {{multiplier}}×.",
     "vcpuReserved": "Reserved vCPU",
     "vcpuAvailable": "Available vCPU",
-    "vcpuOvercommitted": "vCPU over the limit"
+    "vcpuOvercommitted": "vCPU over the limit",
+    "details": "All capacity numbers"
   },
   "storage": {
     "title": "Local storage pools",
@@ -285,7 +349,9 @@
       "io": "Storage could not be read. Commitments remain held.",
       "incomplete": "Storage initialization or evidence is incomplete. Operator inspection is required."
     },
-    "identityLabel": "Storage ID"
+    "identityLabel": "Storage ID",
+    "meter": "Disk ({{name}})",
+    "meterValue": "{{used}} GiB used of {{total}} GiB · {{free}} GiB free"
   },
   "loadFailed": "Could not load this host.",
   "sharing": {
@@ -305,7 +371,6 @@
     "nullCaps": "Leave resource caps blank for unlimited. RAM/vCPU count running holds; disk includes stopped guests.",
     "unlimited": "Unlimited",
     "caps": "Caps: RAM {{memory}} · vCPU {{vcpu}} · disk {{disk}}",
-    "usage": "Your usage: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · retained disk {{diskGiB}} GiB",
     "permissions": "Use: {{use}} · Contribute: {{contribute}}",
     "yes": "Yes",
     "no": "No",
@@ -325,7 +390,7 @@
     "percentages": "Pool limits on your host: RAM {{memory}}% · vCPU {{vcpu}}%",
     "ownerLocalCaps": "Your own host: RAM and vCPU limits don't apply in your own pool.",
     "contributionNotice": "Contributing allows foreign guests to consume your host budget and send traffic from your network/IP. Withdrawal or lost access stops guests only when no other permitted pool path fits. Foreign disks remain for the accepted pool grace, up to 30 days. Host deletion waits for positive cleanup proof, potentially longer with offline or dead storage.",
-    "trust": "Users of a pool with foreign hosts must trust those host operators. An incus-admin host user can reach every VM on that host. API restrictions and disabling dashboard host terminals do not isolate guests from local administrators. The pool owner manages the operator set; current membership does not guarantee future operators.",
+    "trust": "The hosts in a shared pool belong to other people. Anyone with admin access on a host machine can reach every sandbox on it, whatever the dashboard settings say, so only run what you'd trust those people with. The pool owner decides which hosts are in the pool, and that can change.",
     "forwarding": "Accept explicitly after signing in. Bearer acceptance can grant access to a different account than the invited email; forwarding the link can transfer that access. Email-only acceptance requires the verified target email.",
     "forwardingInviter": "The invitation link works like a key: anyone who has it and an account here can accept it with the bearer option, so send it only to the person you invite. The email-only option needs the invited address, verified.",
     "copyLink": "One-time invitation link",
@@ -371,7 +436,30 @@
     "nodeOwnerAccess": "The node owner has full access to sandboxes other users run on their node.",
     "invitedBy": "{{inviter}} invited you to the pool {{pool}}.",
     "notAddressedToYou": "This invitation was sent to a different email address, so it can only be accepted as a bearer link.",
-    "previewUnavailable": "This invitation can't be shown. It may have expired, been revoked or already been accepted; ask the owner for a new one."
+    "previewUnavailable": "This invitation can't be shown. It may have expired, been revoked or already been accepted; ask the owner for a new one.",
+    "noForeignGuests": "None right now.",
+    "peopleTitle": "People in {{label}}",
+    "noPeople": "Not shared with anyone yet.",
+    "essential": "Who and what",
+    "limits": "Limits",
+    "invitation": "Invitation",
+    "invite": "Share",
+    "signupAllowedShort": "May sign up",
+    "signupClosedShort": "Existing accounts only",
+    "revokeTitle": "Remove {{name}} from {{pool}}?",
+    "confirmEmail": "Type the email to confirm.",
+    "copyEmail": "Copy email",
+    "sharedBy": "Shared with you by {{name}}",
+    "poolId": "pool ID",
+    "youCanBoth": "You can run sandboxes here and add your own hosts.",
+    "youCanUse": "You can run sandboxes here.",
+    "youCanContribute": "You can add your own hosts here (not run sandboxes).",
+    "yourLimits": "Your limits here: RAM {{memory}} · vCPU {{vcpu}} · disk {{disk}}",
+    "yourUsage": "You're using: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · disk kept {{diskGiB}} GiB",
+    "usageOf": "{{name}}'s usage: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · disk kept {{diskGiB}} GiB",
+    "thisPerson": "This person",
+    "gracePlain": "If you lose access, your sandboxes' disks are kept for {{duration}} before they are deleted. Lowering this later doesn't shorten it for disks you already have.",
+    "graceNone": "If you lose access, your sandboxes' disks may be deleted right away."
   },
   "guestStates": {
     "REQUESTED": "Requested",
@@ -394,7 +482,7 @@
     "ceiling": "Lifetime ceiling: {{value}} (set on the host with <code>wssp host config set-max-lease</code>)",
     "ceilingHint": "Only the machine owner can raise or lower this, on the host itself. Pools and memberships can only lower it further.",
     "unlimited": "no time limit",
-    "noLimit": "no limit",
+    "noLimit": "none",
     "drainEmpty": "Empty now: no sandbox holds this host.",
     "drainBy": "Empty by {{date}} at the latest.",
     "drainNever_one": "Never empty on its own: {{count}} sandbox has no time limit.",
@@ -414,7 +502,7 @@
     "saveAnyway": "Save and shorten",
     "editMember": "Edit lifetime limit",
     "memberDescription": "Limit how long sandboxes may run on this host through this pool.",
-    "memberValue": "Maximum lifetime: {{value}}",
+    "memberValue": "Extra lifetime limit on this host: {{value}}",
     "lowerWarning": "Lowering it shortens running sandboxes on this host in this pool; raising it needs the pool's current consent."
   },
   "imageCache": {
@@ -449,10 +537,9 @@
     "title": "Pool capacity",
     "description": "What you can place now. Totals cover hosts you can schedule on; only your own hosts are listed individually.",
     "template": "Template",
-    "templateHint": "Optional selector, e.g. base:latest or revision/<id>, to see how many fit now.",
-    "check": "Check",
+    "templateHint": "Pick a template to see how many of its sandboxes fit now.",
     "failed": "Couldn't load this pool's capacity.",
-    "schedulable": "Schedulable capacity",
+    "schedulable": "Capacity on hosts you can use",
     "ram": "RAM",
     "vcpu": "vCPU",
     "disk": "Disk",
@@ -503,7 +590,13 @@
     "waitField": "Longest wait (minutes)",
     "perKeyField": "Waiting creates per key",
     "perOwnerField": "Waiting creates per account",
-    "limitHint": "Blank uses the operator limit. 0 turns it off for this pool."
+    "limitHint": "Blank uses the operator limit. 0 turns it off for this pool.",
+    "anyTemplate": "Any template",
+    "templateOption": "{{label}} ({{slug}})",
+    "usedFree": "{{used}} {{unit}} used of {{total}} {{unit}} · {{free}} {{unit}} free",
+    "largest": "Largest sandbox that fits now: {{cpu}} vCPU · {{memory}} GiB RAM · {{disk}} GiB disk",
+    "largestNone": "No sandbox fits right now. Wait for running sandboxes to stop, or add a host to this pool.",
+    "largestHint": "Each limit is the most one host can take now; vCPU, RAM and disk may come from different hosts."
   },
   "tabs": {
     "label": "Host pages",
@@ -515,7 +608,16 @@
     "heartbeat": "Last seen {{age}}",
     "ram": "RAM",
     "vcpu": "vCPU budget",
-    "memoryUse": "{{used}} of {{total}} MiB",
-    "vcpuUse": "{{used}} of {{total}} vCPU"
-  }
+    "memoryUse": "{{used}} GiB used of {{total}} GiB · {{free}} GiB free",
+    "vcpuUse": "{{used}} used of {{total}} vCPU · {{free}} free"
+  },
+  "sections": {
+    "onThisPage": "On this page",
+    "overview": "Overview",
+    "capacity": "Capacity",
+    "network": "Network",
+    "access": "Access",
+    "images": "Images"
+  },
+  "terminalOff": "Host terminals are off on this host. Turn them on at the host with wssp host config set-host-terminal on."
 }

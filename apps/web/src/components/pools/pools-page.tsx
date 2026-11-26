@@ -1,4 +1,4 @@
-import { useForm } from "@tanstack/react-form";
+import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import { createPoolInput } from "@wssp/api/sandbox/pool-input";
@@ -9,11 +9,12 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
+import { AdvancedSection, FormSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
-import { ResponsiveDialog } from "@wssp/ui/components/responsive-dialog";
 import { SelectItem } from "@wssp/ui/components/select";
 import {
   Sheet,
@@ -24,18 +25,21 @@ import {
 } from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
 import { Plus } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { FormSelect } from "@/components/form-select";
+import { formatGiB } from "@/components/hosts/host-row";
 import { InlineRetry } from "@/components/inline-retry";
 import { LoadMore } from "@/components/load-more";
+import { PageActions } from "@/components/page-actions";
 import { PageHeader } from "@/components/page-shell";
 import { ResourceIdentity } from "@/components/resource-identity";
 import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
+import { WideSheet } from "@/components/wide-sheet";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { type CredentialProblem, credentialProblem } from "@/lib/credential-rules";
 import { formatLeaseDuration, leaseLimitText, parseLeaseLimit } from "@/lib/lease-duration";
@@ -44,6 +48,7 @@ import { PoolCapacityDialog } from "./pool-capacity";
 import { PoolSharing, SharedPools, SharingNotice } from "./pool-sharing";
 
 type Pool = Awaited<ReturnType<AppRouterClient["sandboxPools"]["list"]>>["items"][number];
+type PoolSummary = NonNullable<Pool["summary"]>;
 
 /** Blank inherits the operator limit (null); otherwise a whole number up to `max`. */
 function parseLimit(text: string, max: number): number | null | undefined {
@@ -59,11 +64,33 @@ function scaled(value: number | null | undefined, unit: number): number | null {
 function limitText(value: number | null | undefined, unit = 1): string {
   return value === null || value === undefined ? "" : String(Math.floor(value / unit));
 }
+/** A pool slug from its label, the way the API accepts one. */
+export function poolSlugFromLabel(label: string): string {
+  return label
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/g, "");
+}
 type Member = Awaited<ReturnType<AppRouterClient["sandboxPools"]["listMembers"]>>["items"][number];
 const paging = {
   initialPageParam: undefined as string | undefined,
   getNextPageParam: (page: { nextCursor: string | null }) => page.nextCursor ?? undefined,
 };
+
+/** The longest lifetime a sandbox in this pool can have, in words: one answer everywhere. */
+function useLongestLifetime(lang: string) {
+  const { t } = useTranslation("hosts");
+  return (summary: PoolSummary | null) =>
+    summary == null
+      ? null
+      : summary.lease.timeoutZero
+        ? t("pools.summary.leaseUnlimited")
+        : formatLeaseDuration(summary.lease.maxTimeoutMs, lang);
+}
 
 export function PoolsPage({
   lang,
@@ -91,7 +118,7 @@ export function PoolsPage({
         title={t("hosts:pools.title")}
         description={t("hosts:pools.description")}
         actions={
-          <Button size="touch" onClick={() => setCreating(true)}>
+          <Button size="touch" className="self-start" onClick={() => setCreating(true)}>
             <Plus aria-hidden="true" />
             {t("hosts:pools.create")}
           </Button>
@@ -142,21 +169,132 @@ export function PoolsPage({
           />
         </>
       )}
-      {creating ? <PoolForm lang={lang} onClose={() => setCreating(false)} /> : null}
+      {creating ? <CreatePoolDialog lang={lang} onClose={() => setCreating(false)} /> : null}
     </div>
   );
 }
 
-function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose: () => void }) {
+const labelSchema = (t: (key: string) => string) =>
+  z
+    .string()
+    .refine(
+      (value) => createPoolInput.shape.label.safeParse(value).success,
+      t("hosts:pools.invalidLabel"),
+    );
+const slugSchema = (t: (key: string) => string) =>
+  z
+    .string()
+    .refine(
+      (value) => createPoolInput.shape.slug.safeParse(value).success,
+      t("hosts:pools.invalidSlug"),
+    );
+
+/** Create → Dialog: two fields (label first; the slug follows it until edited). */
+function CreatePoolDialog({ lang, onClose }: { lang: string; onClose: () => void }) {
   const { t } = useTranslation(["hosts", "common"]);
-  const unlimitedId = useId();
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
+  const root = useRef<HTMLFormElement>(null);
   const [problem, setProblem] = useState<CredentialProblem | null>(null);
+  const [slugEdited, setSlugEdited] = useState(false);
   const create = useMutation({
     ...orpc.sandboxPools.create.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
   });
+  const form = useForm({
+    defaultValues: { label: "", slug: "" },
+    validators: { onSubmit: z.object({ label: labelSchema(t), slug: slugSchema(t) }) },
+    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
+    onSubmit: async ({ value }) => {
+      setProblem(null);
+      try {
+        await create.mutateAsync({ slug: value.slug, label: value.label });
+        await queryClient.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
+        onClose();
+      } catch (error) {
+        if (!redirect(error)) setProblem(credentialProblem(error));
+      }
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(open) => (open || create.isPending ? undefined : onClose())}>
+      <DialogContent closeLabel={t("common:actions.close")}>
+        <DialogHeader>
+          <DialogTitle>{t("hosts:pools.create")}</DialogTitle>
+          <DialogDescription>{t("hosts:pools.createDescription")}</DialogDescription>
+        </DialogHeader>
+        <form
+          ref={root}
+          noValidate
+          data-pool-form="create"
+          className="flex min-w-0 flex-col gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void form.handleSubmit();
+          }}
+        >
+          <form.Field name="label">
+            {(field) => (
+              <TextField
+                inputClassName="min-h-11"
+                field={field}
+                label={t("hosts:pools.label")}
+                autoComplete="off"
+                inputMode="text"
+                maxLength={120}
+                onChange={(event) => {
+                  if (!slugEdited)
+                    form.setFieldValue("slug", poolSlugFromLabel(event.target.value));
+                }}
+              />
+            )}
+          </form.Field>
+          <form.Field name="slug">
+            {(field) => (
+              <TextField
+                inputClassName="min-h-11 font-mono"
+                field={field}
+                label={t("hosts:pools.slug")}
+                description={t("hosts:pools.slugHint")}
+                autoComplete="off"
+                inputMode="text"
+                maxLength={63}
+                onChange={() => setSlugEdited(true)}
+              />
+            )}
+          </form.Field>
+          {problem ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t(`hosts:pools.problem.${problem}`)}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" size="touch" variant="outline" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
+            <Button type="submit" size="touch" disabled={create.isPending}>
+              {t("hosts:pools.create")}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Edit → wide sheet. Essential: label, slug and the pool's lifetime limit
+ * (next to the lifetime sandboxes actually get). Everything else sits in
+ * named Advanced sections that summarize their current values.
+ */
+function EditPoolSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onClose: () => void }) {
+  const { t } = useTranslation(["hosts", "common"]);
+  const unlimitedId = useId();
+  const queryClient = useQueryClient();
+  const redirect = useTwoFactorRedirect(lang);
+  const root = useRef<HTMLDivElement>(null);
+  const longest = useLongestLifetime(lang);
+  const [problem, setProblem] = useState<CredentialProblem | null>(null);
   const update = useMutation({
     ...orpc.sandboxPools.update.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -168,25 +306,24 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
   // Operator ceilings shown beside the pool's own queue limits.
   const limits = useQuery({
     ...orpc.sandboxes.getLimits.queryOptions(),
-    enabled: pool != null,
     meta: { skipGlobalErrorToast: true },
   });
   // A lowering is saved only after its impact on running sandboxes was shown.
   const [warning, setWarning] = useState<{ affected: number; more: boolean } | null>(null);
   const form = useForm({
     defaultValues: {
-      slug: pool?.slug ?? "",
-      label: pool?.label ?? "",
-      ownHostsOnly: pool?.ownHostsOnly ?? false,
-      disconnectGraceSeconds: String(pool?.disconnectGraceSeconds ?? 259200),
-      maxLease: leaseLimitText(pool?.maxLeaseMs ?? null),
-      unlimitedLeaseForShares: pool?.unlimitedLeaseForShares ? "shares" : "owner",
+      slug: pool.slug,
+      label: pool.label,
+      ownHostsOnly: pool.ownHostsOnly ?? false,
+      disconnectGraceSeconds: String(pool.disconnectGraceSeconds ?? 259200),
+      maxLease: leaseLimitText(pool.maxLeaseMs ?? null),
+      unlimitedLeaseForShares: pool.unlimitedLeaseForShares ? "shares" : "owner",
       memberImageCacheMaxGiB:
-        pool?.memberImageCacheMaxGiB == null ? "" : String(pool.memberImageCacheMaxGiB),
-      preferOwnHosts: pool?.preferOwnHosts ?? true,
-      capacityWaitMinutes: limitText(pool?.capacityWaitMaxMs, 60_000),
-      capacityQueuePerKey: limitText(pool?.capacityQueuePerKeyMax),
-      capacityQueuePerOwner: limitText(pool?.capacityQueuePerOwnerMax),
+        pool.memberImageCacheMaxGiB == null ? "" : String(pool.memberImageCacheMaxGiB),
+      preferOwnHosts: pool.preferOwnHosts ?? true,
+      capacityWaitMinutes: limitText(pool.capacityWaitMaxMs, 60_000),
+      capacityQueuePerKey: limitText(pool.capacityQueuePerKeyMax),
+      capacityQueuePerOwner: limitText(pool.capacityQueuePerOwnerMax),
     },
     validators: {
       onSubmit: z.object({
@@ -225,29 +362,18 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
             (v) => Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 2592000,
             t("hosts:sharing.invalidGrace"),
           ),
-        slug: z
-          .string()
-          .refine(
-            (value) => createPoolInput.shape.slug.safeParse(value).success,
-            t("hosts:pools.invalidSlug"),
-          ),
-        label: z
-          .string()
-          .refine(
-            (value) => createPoolInput.shape.label.safeParse(value).success,
-            t("hosts:pools.invalidLabel"),
-          ),
+        slug: slugSchema(t),
+        label: labelSchema(t),
       }),
     },
+    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
     onSubmit: async ({ value }) => {
       setProblem(null);
       try {
         const maxLeaseMs = parseLeaseLimit(value.maxLease) ?? null;
-        const lowering =
-          pool != null &&
-          maxLeaseMs !== null &&
-          (pool.maxLeaseMs === null || maxLeaseMs < pool.maxLeaseMs);
-        if (pool && lowering && warning === null) {
+        const current = pool.maxLeaseMs ?? null;
+        const lowering = maxLeaseMs !== null && (current === null || maxLeaseMs < current);
+        if (lowering && warning === null) {
           const impact = await preview.mutateAsync({
             scope: "pool",
             poolId: pool.id,
@@ -258,25 +384,23 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
             return;
           }
         }
-        if (pool)
-          await update.mutateAsync({
-            slug: value.slug,
-            label: value.label,
-            ownHostsOnly: value.ownHostsOnly,
-            disconnectGraceSeconds: Number(value.disconnectGraceSeconds),
-            maxLeaseMs,
-            unlimitedLeaseForShares: value.unlimitedLeaseForShares === "shares",
-            memberImageCacheMaxGiB:
-              value.memberImageCacheMaxGiB.trim() === ""
-                ? null
-                : Number(value.memberImageCacheMaxGiB),
-            preferOwnHosts: value.preferOwnHosts,
-            capacityWaitMaxMs: scaled(parseLimit(value.capacityWaitMinutes, 34_560), 60_000),
-            capacityQueuePerKeyMax: parseLimit(value.capacityQueuePerKey, 100_000) ?? null,
-            capacityQueuePerOwnerMax: parseLimit(value.capacityQueuePerOwner, 100_000) ?? null,
-            id: pool.id,
-          });
-        else await create.mutateAsync({ slug: value.slug, label: value.label });
+        await update.mutateAsync({
+          slug: value.slug,
+          label: value.label,
+          ownHostsOnly: value.ownHostsOnly,
+          disconnectGraceSeconds: Number(value.disconnectGraceSeconds),
+          maxLeaseMs,
+          unlimitedLeaseForShares: value.unlimitedLeaseForShares === "shares",
+          memberImageCacheMaxGiB:
+            value.memberImageCacheMaxGiB.trim() === ""
+              ? null
+              : Number(value.memberImageCacheMaxGiB),
+          preferOwnHosts: value.preferOwnHosts,
+          capacityWaitMaxMs: scaled(parseLimit(value.capacityWaitMinutes, 34_560), 60_000),
+          capacityQueuePerKeyMax: parseLimit(value.capacityQueuePerKey, 100_000) ?? null,
+          capacityQueuePerOwnerMax: parseLimit(value.capacityQueuePerOwner, 100_000) ?? null,
+          id: pool.id,
+        });
         await queryClient.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
         onClose();
       } catch (error) {
@@ -284,58 +408,53 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
       }
     },
   });
-  const fields = (
-    <form
-      className="flex min-w-0 flex-col gap-4 p-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void form.handleSubmit();
-      }}
-    >
-      <form.Field name="slug">
-        {(field) => (
-          <TextField
-            inputClassName="min-h-11"
-            field={field}
-            label={t("hosts:pools.slug")}
-            autoComplete="off"
-            inputMode="text"
-            maxLength={63}
-          />
-        )}
-      </form.Field>
-      <form.Field name="label">
-        {(field) => (
-          <TextField
-            inputClassName="min-h-11"
-            field={field}
-            label={t("hosts:pools.label")}
-            autoComplete="off"
-            inputMode="text"
-            maxLength={120}
-          />
-        )}
-      </form.Field>
-      {pool ? (
+  const values = useStore(form.store, (state) => state.values);
+  const pending = update.isPending || preview.isPending;
+  const operatorLimit = t("hosts:pools.edit.operatorLimit");
+  const effective = longest(pool.summary);
+  return (
+    <WideSheet
+      title={t("hosts:pools.edit.title", { label: pool.label })}
+      description={t("hosts:pools.description")}
+      closeLabel={t("common:actions.close")}
+      busy={pending}
+      onClose={onClose}
+      onSubmit={() => void form.handleSubmit()}
+      actions={
         <>
-          <form.Field name="ownHostsOnly">
-            {(field) => (
-              <label className="flex min-h-11 items-center gap-3">
-                <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
-                {t("hosts:sharing.ownHostsOnly")}
-              </label>
-            )}
-          </form.Field>
-          <form.Field name="disconnectGraceSeconds">
+          <Button type="submit" size="touch" disabled={pending}>
+            {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
+          </Button>
+          <Button type="button" size="touch" variant="outline" onClick={onClose}>
+            {t("common:actions.cancel")}
+          </Button>
+        </>
+      }
+    >
+      <div ref={root} data-pool-form="edit" className="flex min-w-0 flex-col gap-6">
+        <FormSection title={t("hosts:pools.edit.essential")}>
+          <form.Field name="label">
             {(field) => (
               <TextField
-                field={field}
-                label={t("hosts:sharing.graceSeconds")}
-                type="number"
-                min={0}
-                max={2592000}
-                autoComplete="off"
                 inputClassName="min-h-11"
+                field={field}
+                label={t("hosts:pools.label")}
+                autoComplete="off"
+                inputMode="text"
+                maxLength={120}
+              />
+            )}
+          </form.Field>
+          <form.Field name="slug">
+            {(field) => (
+              <TextField
+                inputClassName="min-h-11 font-mono"
+                field={field}
+                label={t("hosts:pools.slug")}
+                description={t("hosts:pools.slugHint")}
+                autoComplete="off"
+                inputMode="text"
+                maxLength={63}
               />
             )}
           </form.Field>
@@ -344,7 +463,16 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
               <TextField
                 field={field}
                 label={t("hosts:lease.poolField")}
-                description={t("hosts:lease.fieldHint")}
+                description={
+                  <>
+                    {t("hosts:lease.fieldHint")}
+                    {effective ? (
+                      <span data-pool-effective-lease="" className="block">
+                        {t("hosts:pools.edit.effectiveLease", { value: effective })}
+                      </span>
+                    ) : null}
+                  </>
+                }
                 autoComplete="off"
                 inputMode="text"
                 maxLength={12}
@@ -353,6 +481,15 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
               />
             )}
           </form.Field>
+        </FormSection>
+        <AdvancedSection
+          title={t("hosts:pools.edit.lifetime")}
+          summary={t(
+            values.unlimitedLeaseForShares === "shares"
+              ? "hosts:lease.unlimitedShares"
+              : "hosts:lease.unlimitedOwner",
+          )}
+        >
           <form.Field name="unlimitedLeaseForShares">
             {(field) => (
               <div className="flex min-w-0 flex-col gap-2">
@@ -374,6 +511,54 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
               </div>
             )}
           </form.Field>
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("hosts:pools.edit.placement")}
+          summary={[
+            t(values.preferOwnHosts ? "hosts:pools.edit.preferOwn" : "hosts:pools.edit.anyHost"),
+            values.ownHostsOnly ? t("hosts:pools.edit.ownOnly") : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        >
+          <form.Field name="preferOwnHosts">
+            {(field) => (
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
+                {t("hosts:poolCapacity.preferOwnHosts")}
+              </label>
+            )}
+          </form.Field>
+          <form.Field name="ownHostsOnly">
+            {(field) => (
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
+                {t("hosts:sharing.ownHostsOnly")}
+              </label>
+            )}
+          </form.Field>
+          <form.Field name="disconnectGraceSeconds">
+            {(field) => (
+              <TextField
+                field={field}
+                label={t("hosts:sharing.graceSeconds")}
+                type="number"
+                min={0}
+                max={2592000}
+                autoComplete="off"
+                inputClassName="min-h-11"
+              />
+            )}
+          </form.Field>
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("hosts:pools.edit.images")}
+          summary={
+            values.memberImageCacheMaxGiB.trim() === ""
+              ? t("hosts:pools.edit.noPoolLimit")
+              : t("hosts:pools.edit.gib", { value: values.memberImageCacheMaxGiB.trim() })
+          }
+        >
           <form.Field name="memberImageCacheMaxGiB">
             {(field) => (
               <TextField
@@ -389,14 +574,15 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
               />
             )}
           </form.Field>
-          <form.Field name="preferOwnHosts">
-            {(field) => (
-              <label className="flex min-h-11 items-center gap-3">
-                <Checkbox checked={field.state.value} onCheckedChange={field.handleChange} />
-                {t("hosts:poolCapacity.preferOwnHosts")}
-              </label>
-            )}
-          </form.Field>
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("hosts:pools.edit.queue")}
+          summary={[
+            values.capacityWaitMinutes.trim() || operatorLimit,
+            values.capacityQueuePerKey.trim() || operatorLimit,
+            values.capacityQueuePerOwner.trim() || operatorLimit,
+          ].join(" · ")}
+        >
           <p className="text-sm text-muted-foreground">
             {t("hosts:poolCapacity.operatorLimits", {
               wait:
@@ -428,64 +614,28 @@ function PoolForm({ pool, lang, onClose }: { pool?: Pool; lang: string; onClose:
               )}
             </form.Field>
           ))}
-          {warning ? (
-            <p role="alert" data-lease-warning="">
-              {t(warning.more ? "hosts:lease.previewMore" : "hosts:lease.preview", {
-                count: warning.affected,
-              })}
-            </p>
-          ) : null}
-          <SharingNotice contribution />
-        </>
-      ) : null}
-      {problem ? <p role="alert">{t(`hosts:pools.problem.${problem}`)}</p> : null}
-      <Button
-        type="submit"
-        size="touch"
-        disabled={create.isPending || update.isPending || preview.isPending}
-      >
-        {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
-      </Button>
-      <Button type="button" size="touch" variant="outline" onClick={onClose}>
-        {t("common:actions.cancel")}
-      </Button>
-    </form>
-  );
-  return pool ? (
-    <Sheet
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <SheetContent showCloseButton={false} className="overflow-x-hidden overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>{t("hosts:pools.edit")}</SheetTitle>
-          <SheetDescription>{t("hosts:pools.description")}</SheetDescription>
-        </SheetHeader>
-        {fields}
-      </SheetContent>
-    </Sheet>
-  ) : (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
-    >
-      <DialogContent showCloseButton={false}>
-        <DialogHeader>
-          <DialogTitle>{t("hosts:pools.create")}</DialogTitle>
-          <DialogDescription>{t("hosts:pools.description")}</DialogDescription>
-        </DialogHeader>
-        {fields}
-      </DialogContent>
-    </Dialog>
+        </AdvancedSection>
+        {warning ? (
+          <p role="alert" data-lease-warning="" className="text-sm text-destructive">
+            {t(warning.more ? "hosts:lease.previewMore" : "hosts:lease.preview", {
+              count: warning.affected,
+            })}
+          </p>
+        ) : null}
+        <SharingNotice contribution />
+        {problem ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(`hosts:pools.problem.${problem}`)}
+          </p>
+        ) : null}
+      </div>
+    </WideSheet>
   );
 }
 
+/** One owned pool: what it is made of, one primary action and the rest in a menu. */
 function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
-  const { t } = useTranslation(["hosts", "common"]);
+  const { t, i18n } = useTranslation(["hosts", "common"]);
   const [editing, setEditing] = useState(false);
   const [members, setMembers] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -494,6 +644,7 @@ function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
   const [problem, setProblem] = useState<CredentialProblem | null>(null);
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
+  const longest = useLongestLifetime(lang);
   const remove = useMutation({
     ...orpc.sandboxPools.delete.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -505,40 +656,105 @@ function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
       if (!redirect(error)) setProblem(credentialProblem(error));
     },
   });
+  const summary = pool.summary;
   return (
-    <li className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground">
-      <h2 className="break-words font-medium">{pool.label}</h2>
-      <p className="break-all font-mono text-xs text-muted-foreground">{pool.slug}</p>
-      <div className="flex flex-wrap gap-2">
-        <Button size="touch" variant="secondary" onClick={() => setSharing(true)}>
-          {t("hosts:sharing.manage")}
-        </Button>
-        <Button size="touch" variant="secondary" onClick={() => setMembers(true)}>
-          {t("hosts:pools.members")}
-        </Button>
-        <Button size="touch" variant="secondary" onClick={() => setCapacity(true)}>
-          {t("hosts:poolCapacity.open")}
-        </Button>
-        <Button size="touch" variant="outline" onClick={() => setEditing(true)}>
-          {t("hosts:pools.edit")}
-        </Button>
-        <Button size="touch" variant="destructive" onClick={() => setDeleting(true)}>
-          {t("common:actions.delete")}
-        </Button>
+    <li
+      data-pool-id={pool.id}
+      className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
+    >
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-words font-medium">{pool.label}</h2>
+          <p className="break-all font-mono text-xs text-muted-foreground">{pool.slug}</p>
+        </div>
+        <PageActions
+          primary={
+            <Button size="touch" onClick={() => setMembers(true)}>
+              {t("hosts:pools.actions.hosts")}
+            </Button>
+          }
+          secondary={
+            <Button size="touch" variant="outline" onClick={() => setSharing(true)}>
+              {t("hosts:pools.actions.people")}
+            </Button>
+          }
+          overflowLabel={t("hosts:pools.actions.more", { label: pool.label })}
+          overflow={[
+            {
+              id: "capacity",
+              label: t("hosts:poolCapacity.open"),
+              onSelect: () => setCapacity(true),
+            },
+            { id: "edit", label: t("hosts:pools.edit.action"), onSelect: () => setEditing(true) },
+            {
+              id: "delete",
+              label: t("hosts:pools.delete"),
+              destructive: true,
+              onSelect: () => setDeleting(true),
+            },
+          ]}
+        />
       </div>
-      {problem ? <p role="alert">{t(`hosts:pools.problem.${problem}`)}</p> : null}
-      {sharing ? (
-        <PoolSharing poolId={pool.id} lang={lang} onClose={() => setSharing(false)} />
+      {summary ? (
+        <dl data-pool-summary="" className="grid min-w-0 gap-3 text-sm sm:grid-cols-4">
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:pools.summary.hosts")}</dt>
+            <dd data-pool-summary-hosts="">
+              {summary.hosts.total === 0
+                ? t("hosts:pools.summary.hostsNone")
+                : t("hosts:pools.summary.hostsValue", {
+                    count: summary.hosts.total,
+                    connected: summary.hosts.connected,
+                  })}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:pools.summary.people")}</dt>
+            <dd data-pool-summary-people="">
+              {summary.people === 0
+                ? t("hosts:pools.summary.peopleNone")
+                : t("hosts:pools.summary.peopleValue", { count: summary.people })}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:pools.summary.capacity")}</dt>
+            <dd data-pool-summary-capacity="" className="tabular-nums">
+              {summary.hosts.enabled === 0
+                ? "—"
+                : t("hosts:pools.summary.capacityValue", {
+                    memory: formatGiB(summary.capacity.memoryMiB, i18n.language),
+                    vcpu: summary.capacity.vcpu,
+                  })}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:pools.summary.lease")}</dt>
+            <dd data-pool-summary-lease="">{longest(summary)}</dd>
+          </div>
+        </dl>
       ) : null}
-      {editing ? <PoolForm pool={pool} lang={lang} onClose={() => setEditing(false)} /> : null}
-      {members ? <MembersDialog pool={pool} lang={lang} onClose={() => setMembers(false)} /> : null}
+      {problem ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t(`hosts:pools.problem.${problem}`)}
+        </p>
+      ) : null}
+      {sharing ? (
+        <PoolSharing
+          poolId={pool.id}
+          poolLabel={pool.label}
+          lang={lang}
+          onClose={() => setSharing(false)}
+        />
+      ) : null}
+      {editing ? <EditPoolSheet pool={pool} lang={lang} onClose={() => setEditing(false)} /> : null}
+      {members ? <MembersSheet pool={pool} lang={lang} onClose={() => setMembers(false)} /> : null}
       {capacity ? (
         <PoolCapacityDialog poolId={pool.id} owner lang={lang} onClose={() => setCapacity(false)} />
       ) : null}
       <ConfirmDeleteDialog
         open={deleting}
         onOpenChange={setDeleting}
-        title={t("hosts:pools.delete")}
+        title={t("hosts:pools.deleteTitle", { label: pool.label })}
         description={t("hosts:pools.deleteHint")}
         confirmToken={pool.slug}
         typePrompt={t("hosts:pools.confirm")}
@@ -550,7 +766,8 @@ function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
   );
 }
 
-function MembersDialog({ pool, lang, onClose }: { pool: Pool; lang: string; onClose: () => void }) {
+/** "Hosts": the pool's member hosts (was "Manage members"), in a wide sheet. */
+function MembersSheet({ pool, lang, onClose }: { pool: Pool; lang: string; onClose: () => void }) {
   const { t } = useTranslation(["hosts", "common"]);
   const [adding, setAdding] = useState(false);
   const members = useInfiniteQuery({
@@ -562,51 +779,50 @@ function MembersDialog({ pool, lang, onClose }: { pool: Pool; lang: string; onCl
   });
   useTwoFactorRedirectOnError(lang, [members.error]);
   return (
-    <ResponsiveDialog
-      open
-      onOpenChange={(open) => {
-        if (!open) onClose();
-      }}
+    <WideSheet
+      data-pool-members=""
       title={t("hosts:pools.membersTitle", { label: pool.label })}
       description={t("hosts:pools.memberHint")}
       closeLabel={t("common:actions.close")}
-      footer={
-        <Button type="button" size="touch" variant="outline" onClick={onClose}>
-          {t("common:actions.close")}
-        </Button>
+      onClose={onClose}
+      actions={
+        <>
+          <Button size="touch" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            {t("hosts:pools.add")}
+          </Button>
+          <Button type="button" size="touch" variant="outline" onClick={onClose}>
+            {t("common:actions.close")}
+          </Button>
+        </>
       }
     >
-      <div className="flex min-w-0 flex-col gap-4">
-        <Button size="touch" onClick={() => setAdding(true)}>
-          {t("hosts:pools.add")}
-        </Button>
-        {members.data?.pages[0]?.items.length === 0 ? <p>{t("hosts:pools.noMembers")}</p> : null}
-        {members.isPending ? (
-          <SkeletonList count={2} />
-        ) : members.isError ? (
-          <InlineRetry message={t("hosts:pools.failed")} onRetry={() => void members.refetch()} />
-        ) : (
-          <ul className="flex min-w-0 flex-col gap-3">
-            {members.data?.pages
-              .flatMap((p) => p.items)
-              .map((member) => (
-                <MemberRow key={member.id} member={member} lang={lang} />
-              ))}
-          </ul>
-        )}
-        <LoadMore
-          hasNextPage={members.hasNextPage}
-          isFetchingNextPage={members.isFetchingNextPage}
-          onLoadMore={() => void members.fetchNextPage()}
-        />
-
-        {adding ? (
-          <AddMember poolId={pool.id} lang={lang} onClose={() => setAdding(false)} />
-        ) : null}
-      </div>
-    </ResponsiveDialog>
+      {members.data?.pages[0]?.items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("hosts:pools.noMembers")}</p>
+      ) : null}
+      {members.isPending ? (
+        <SkeletonList count={2} />
+      ) : members.isError ? (
+        <InlineRetry message={t("hosts:pools.failed")} onRetry={() => void members.refetch()} />
+      ) : (
+        <ul className="grid min-w-0 gap-3 lg:grid-cols-2">
+          {members.data?.pages
+            .flatMap((p) => p.items)
+            .map((member) => (
+              <MemberRow key={member.id} member={member} pool={pool} lang={lang} />
+            ))}
+        </ul>
+      )}
+      <LoadMore
+        hasNextPage={members.hasNextPage}
+        isFetchingNextPage={members.isFetchingNextPage}
+        onLoadMore={() => void members.fetchNextPage()}
+      />
+      {adding ? <AddMember poolId={pool.id} lang={lang} onClose={() => setAdding(false)} /> : null}
+    </WideSheet>
   );
 }
+
 function AddMember({
   poolId,
   lang,
@@ -673,7 +889,7 @@ function AddMember({
         if (!open) onClose();
       }}
     >
-      <DialogContent showCloseButton={false}>
+      <DialogContent closeLabel={t("common:actions.close")}>
         <DialogHeader>
           <DialogTitle>{t("hosts:pools.add")}</DialogTitle>
           <DialogDescription>{t("hosts:pools.memberHint")}</DialogDescription>
@@ -685,7 +901,7 @@ function AddMember({
             void form.handleSubmit();
           }}
         >
-          <label htmlFor={id}>{t("hosts:pools.host")}</label>
+          <Label htmlFor={id}>{t("hosts:pools.host")}</Label>
           <form.Field name="sandboxHostId">
             {(field) => (
               <>
@@ -705,7 +921,9 @@ function AddMember({
                   ))}
                 </FormSelect>
                 {field.state.meta.errors.length ? (
-                  <p role="alert">{t("hosts:pools.chooseHost")}</p>
+                  <p role="alert" className="text-sm text-destructive">
+                    {t("hosts:pools.chooseHost")}
+                  </p>
                 ) : null}
               </>
             )}
@@ -722,19 +940,25 @@ function AddMember({
             isFetchingNextPage={hosts.isFetchingNextPage}
             onLoadMore={() => void hosts.fetchNextPage()}
           />
-          {problem ? <p role="alert">{t(`hosts:pools.problem.${problem}`)}</p> : null}
-          <Button size="touch" type="submit" disabled={add.isPending || choices.length === 0}>
-            {t("hosts:pools.add")}
-          </Button>
-          <Button type="button" size="touch" variant="outline" onClick={onClose}>
-            {t("common:actions.cancel")}
-          </Button>
+          {problem ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t(`hosts:pools.problem.${problem}`)}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" size="touch" variant="outline" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
+            <Button size="touch" type="submit" disabled={add.isPending || choices.length === 0}>
+              {t("hosts:pools.addSubmit")}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
   );
 }
-function MemberRow({ member, lang }: { member: Member; lang: string }) {
+function MemberRow({ member, pool, lang }: { member: Member; pool: Pool; lang: string }) {
   const { t } = useTranslation(["hosts", "common"]);
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
@@ -765,11 +989,13 @@ function MemberRow({ member, lang }: { member: Member; lang: string }) {
   });
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-3">
-      <p className="break-words">
+      <p className="break-words font-medium">
         <ResourceIdentity label={member.Host.label} slug={member.Host.slug} />
       </p>
-      <p>{member.Host.User?.name}</p>
-      <p data-member-caps="">
+      {member.Host.User?.name ? (
+        <p className="text-sm text-muted-foreground">{member.Host.User.name}</p>
+      ) : null}
+      <p data-member-caps="" className="text-sm">
         {/* Owner-local members are exempt from member caps (placement and the
             capacity view ignore them), so none can be set or shown. */}
         {member.hostOwnerId != null && member.hostOwnerId === member.userId
@@ -779,7 +1005,7 @@ function MemberRow({ member, lang }: { member: Member; lang: string }) {
               vcpu: member.vcpuCapPercent ?? 100,
             })}
       </p>
-      <p data-member-lease="">
+      <p data-member-lease="" className="text-sm">
         {t("hosts:lease.memberValue", {
           value:
             member.maxLeaseMs == null
@@ -835,11 +1061,15 @@ function MemberRow({ member, lang }: { member: Member; lang: string }) {
       {editingLease ? (
         <MemberLeaseSheet member={member} lang={lang} onClose={() => setEditingLease(false)} />
       ) : null}
-      {problem ? <p role="alert">{t(`hosts:pools.problem.${problem}`)}</p> : null}
+      {problem ? (
+        <p role="alert" className="text-sm text-destructive">
+          {t(`hosts:pools.problem.${problem}`)}
+        </p>
+      ) : null}
       <ConfirmDeleteDialog
         open={removing}
         onOpenChange={setRemoving}
-        title={t("hosts:pools.remove")}
+        title={t("hosts:pools.removeTitle", { host: member.Host.label, pool: pool.label })}
         description={t("hosts:pools.deleteHint")}
         confirmToken={member.Host.slug}
         typePrompt={t("hosts:pools.confirm")}
@@ -955,13 +1185,19 @@ function MemberLeaseSheet({
               })}
             </p>
           ) : null}
-          {problem ? <p role="alert">{t(`hosts:pools.problem.${problem}`)}</p> : null}
-          <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
-            {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
-          </Button>
-          <Button type="button" size="touch" variant="outline" onClick={onClose}>
-            {t("common:actions.cancel")}
-          </Button>
+          {problem ? (
+            <p role="alert" className="text-sm text-destructive">
+              {t(`hosts:pools.problem.${problem}`)}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" size="touch" disabled={update.isPending || preview.isPending}>
+              {t(warning ? "hosts:lease.saveAnyway" : "common:actions.save")}
+            </Button>
+            <Button type="button" size="touch" variant="outline" onClick={onClose}>
+              {t("common:actions.cancel")}
+            </Button>
+          </div>
         </form>
       </SheetContent>
     </Sheet>

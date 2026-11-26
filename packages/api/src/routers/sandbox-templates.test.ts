@@ -98,6 +98,31 @@ it("requires a browser session", async () => {
     }),
   ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
 });
+it("lists each template's launchable live versions, owner-scoped", async () => {
+  db.sandboxTemplate.findMany.mockResolvedValue([
+    { id: "tpl-a", slug: "a", label: "A", archivedAt: null, createdAt: now },
+    { id: "tpl-b", slug: "b", label: "B", archivedAt: null, createdAt: now },
+  ] as never);
+  db.sandboxTemplateRevision.groupBy.mockResolvedValue([
+    { templateId: "tpl-a", _count: { _all: 2 }, _max: { revision: 3 } },
+  ] as never);
+  const page = await client().listTemplates({ limit: 20 });
+  expect(page.items.map((item) => [item.id, item.versions])).toEqual([
+    ["tpl-a", { count: 2, latest: 3 }],
+    ["tpl-b", { count: 0, latest: null }],
+  ]);
+  expect(db.sandboxTemplateRevision.groupBy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: {
+        userId: "test-user-id",
+        templateId: { in: ["tpl-a", "tpl-b"] },
+        retiredAt: null,
+        sourceKind: { not: "UPSTREAM" },
+        pendingVerifyBuildId: null,
+      },
+    }),
+  );
+});
 it("registers logical identity, immutable revision, defaults and explicit latest", async () => {
   db.sandboxTemplate.create.mockResolvedValue({
     id: "template-1",

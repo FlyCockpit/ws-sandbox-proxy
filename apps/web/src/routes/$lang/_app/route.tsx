@@ -1,20 +1,23 @@
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
-import { cn } from "@wssp/ui/lib/utils";
+import { AppShellFrame, AppShellPending } from "@/components/app-shell";
 import BottomNav from "@/components/bottom-nav";
 import Header from "@/components/header";
-import { SkipToContent } from "@/components/skip-to-content";
+import { OfflineBanner } from "@/components/offline-banner";
 import { useDocumentLang } from "@/hooks/use-document-lang";
 import { useMobileKeyboard } from "@/hooks/use-mobile-keyboard";
 import { useUserLocaleSync } from "@/hooks/use-user-locale-sync";
-import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 
 export const Route = createFileRoute("/$lang/_app")({
   // App/auth/admin surfaces depend on browser-only auth, PWA, viewport, and
   // navigation side effects. Keep this branch client-rendered while public
   // pages remain SSR-capable under `/$lang/_public`.
   ssr: false,
+  // What the server sends for this client-only branch, and the first frame of
+  // a hard refresh: the shell itself (header, sidebar, bottom nav) with only
+  // the page body as a skeleton, never a bare skeleton list.
+  pendingComponent: AppShellPending,
   component: AppShellLayout,
 });
 
@@ -27,34 +30,18 @@ function AppShellLayout() {
 
   return (
     <>
-      <SkipToContent />
-      <div
-        className={cn(
-          "grid h-svh min-w-0 grid-rows-[auto_1fr_auto] md:grid-rows-[auto_1fr] md:pb-[var(--safe-area-bottom)]",
-          !mobileKeyboardOpen && "pb-[calc(3.5rem_+_var(--safe-area-bottom))]",
-        )}
-        style={{
-          paddingTop: "var(--safe-area-top)",
-          paddingLeft: "var(--safe-area-left)",
-          paddingRight: "var(--safe-area-right)",
-        }}
+      <AppShellFrame
+        mobileKeyboardOpen={mobileKeyboardOpen}
+        header={
+          <>
+            <Header />
+            <OfflineBanner />
+          </>
+        }
+        bottomNav={<BottomNav hidden={mobileKeyboardOpen} />}
       >
-        <div>
-          <Header />
-        </div>
-        {/* No `scrollbar-gutter: stable`: the 2FA banner and the admin
-            section nav inside the scroller are full-bleed. This shell has no
-            footer: phones get the BottomNav. See docs/design/shell-rules.md */}
-        <main
-          id="main-content"
-          tabIndex={-1}
-          data-scroll-restoration-id={MAIN_SCROLLER_ID}
-          className="relative [container-type:size] min-h-0 min-w-0 overflow-y-auto overflow-x-clip overscroll-contain"
-        >
-          <Outlet />
-        </main>
-        <BottomNav hidden={mobileKeyboardOpen} />
-      </div>
+        <Outlet />
+      </AppShellFrame>
       {import.meta.env.DEV && (
         <>
           <TanStackRouterDevtools position="bottom-left" />

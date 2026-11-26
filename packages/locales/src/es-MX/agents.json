@@ -3,7 +3,7 @@
   "description": "Credenciales con permisos limitados para agentes que usan MCP. Máximo 10 tokens activos.",
   "empty": {
     "title": "Aún no hay tokens de agentes",
-    "description": "Crea un token para conectar un agente. No se muestran los tokens revocados."
+    "description": "Crea un token para conectar un agente."
   },
   "mint": {
     "action": "Crear token de agente",
@@ -75,7 +75,12 @@
     "liftTitle": "¿Permitir el acceso de nuevo?",
     "liftDescription": "Esto solo quita el bloqueo del panel. La opción del nodo debe activarse desde una sesión de inicio local en el nodo. Permitir de nuevo no la activa.",
     "liftUnavailable": "Permitir de nuevo requiere que el nodo esté en línea e informe que esta opción está desactivada. Primero ejecuta {{command}} en el nodo y espera su informe de desactivación.",
-    "tamperWarning": "Algo en el nodo volvió a activarlo. El bloqueo del panel sigue impidiendo el acceso y enviando la solicitud para desactivarlo. Investiga el nodo y revoca su credencial si es necesario. Ejecuta {{command}} en el nodo antes de permitir el acceso de nuevo."
+    "tamperWarning": "Algo en el nodo volvió a activarlo. El bloqueo del panel sigue impidiendo el acceso y enviando la solicitud para desactivarlo. Investiga el nodo y revoca su credencial si es necesario. Ejecuta {{command}} en el nodo antes de permitir el acceso de nuevo.",
+    "keepOff": "Mantener apagado desde el panel",
+    "keepOffNamed": "Mantener apagado desde el panel: {{setting}}",
+    "keepTitle": "¿Mantener desactivado el acceso al host?",
+    "keepDescription": "Esto agrega un bloqueo desde el panel: aunque alguien active el ajuste en el nodo, el acceso sigue rechazado hasta que elijas Permitir de nuevo.",
+    "keepOffHint": "Ya está apagado en el nodo. Esto agrega un bloqueo del panel, así que sigue rechazado aunque alguien lo encienda en el nodo."
   },
   "queue": {
     "title": "Comandos en cola",
@@ -151,5 +156,9 @@
     "invalid": "Elige una fecha futura dentro del intervalo permitido.",
     "close": "Cancelar",
     "blockedByPolicy": "Bloqueado por la política: este servidor ya no permite tokens sin vencimiento, así que este token se rechaza. No está revocado y vuelve a funcionar si el operador permite tokens sin vencimiento. Crea un token con fecha para que el agente siga funcionando."
+  },
+  "emptyActive": {
+    "title": "No hay tokens de agente activos",
+    "description": "Tus tokens revocados están ocultos. Elige Incluir revocadas para verlos."
   }
 }

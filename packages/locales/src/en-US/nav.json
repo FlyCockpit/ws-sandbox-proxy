@@ -2,8 +2,14 @@
   "skipToContent": "Skip to content",
   "items": {
     "home": "Home",
+    "sandboxes": "Sandboxes",
+    "templates": "Templates",
+    "activity": "Activity",
+    "hosts": "Hosts",
+    "terminals": "Terminals",
     "settings": "Settings",
-    "admin": "Admin"
+    "admin": "Admin",
+    "more": "More"
   },
   "languageLabel": "Language",
   "mainNav": {
@@ -19,6 +25,8 @@
     "myAccount": "My Account",
     "signIn": "Sign In",
     "signUp": "Sign Up",
-    "signOut": "Sign Out"
+    "signOut": "Sign Out",
+    "open": "{{name}}, account menu",
+    "helpDocs": "Help & docs"
   }
 }

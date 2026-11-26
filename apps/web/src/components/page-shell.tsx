@@ -9,16 +9,23 @@ const WIDTH_CLASS = {
 
 type PageShellProps = {
   width?: keyof typeof WIDTH_CLASS;
+  /** Inside `DashboardFrame`, which already owns the container and padding. */
+  inFrame?: boolean;
   className?: string;
   children: ReactNode;
 };
 
-export function PageShell({ width = "default", className, children }: PageShellProps) {
+export function PageShell({
+  width = "default",
+  inFrame = false,
+  className,
+  children,
+}: PageShellProps) {
   return (
     <div
       className={cn(
-        "container mx-auto min-w-0 space-y-6 px-4 py-6 md:py-8",
-        WIDTH_CLASS[width],
+        inFrame ? "min-w-0 space-y-6" : "container mx-auto min-w-0 space-y-6 px-4 py-6 md:py-8",
+        !inFrame && WIDTH_CLASS[width],
         className,
       )}
     >

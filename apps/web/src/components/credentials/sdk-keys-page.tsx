@@ -5,25 +5,28 @@ import type { AgentTokenExpiryPolicy } from "@wssp/config/agent-token-limits";
 import { Badge } from "@wssp/ui/components/badge";
 import { Button } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@wssp/ui/components/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@wssp/ui/components/dialog";
+import { AdvancedSection, FormSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { RadioGroup, RadioGroupItem } from "@wssp/ui/components/radio-group";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@wssp/ui/components/sheet";
 import { TextField } from "@wssp/ui/components/text-field";
 import { Plus } from "lucide-react";
-import { useId, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { z } from "zod";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import {
   CredentialDates,
   ExpirySelect,
   OneTimeSecretPanel,
   OrphanedCredentialsAlert,
+  SecretLeaveGuard,
   useRevoke,
 } from "@/components/credentials/credential-parts";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
@@ -33,6 +36,7 @@ import { LoadMore } from "@/components/load-more";
 import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { ResourceIdentity } from "@/components/resource-identity";
+import { SegmentedControl } from "@/components/segmented-control";
 import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
 import { type OneTimeSecret, useOneTimeSecret } from "@/hooks/use-one-time-secret";
@@ -40,14 +44,19 @@ import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-t
 import { translateText } from "@/i18n/translate-text";
 import { agentTokenExpiry, agentTokenExpiryPresets } from "@/lib/agent-token-expiry";
 import {
+  type AccessChoice,
   API_KEY_ONLY_SCOPES,
+  accessChoiceFor,
   CREDENTIAL_NAME_MAX,
   type CredentialProblem,
   credentialProblem,
   credentialsUseRevealsValues,
   DESCRIBED_SCOPE_GROUPS,
+  draftProblemField,
   offeredScopeGroups,
+  presetScopes,
   type ResourceMode,
+  SCOPE_PRESETS,
   type SdkKeyDraft,
   type ServiceScope,
   scopeKey,
@@ -61,6 +70,7 @@ import { toMs } from "@/lib/host-status";
 import { isQueryAccessError } from "@/lib/query-access-error";
 import { orpc } from "@/utils/orpc";
 import { AgentTokenExpirySelect } from "./agent-token-expiry-select";
+import { UseSdkKey } from "./use-sdk-key";
 
 /**
  * SDK keys (C45): owner-scoped `wssp_sdk_` keys for the /v1 API, with scopes,
@@ -72,7 +82,7 @@ import { AgentTokenExpirySelect } from "./agent-token-expiry-select";
  */
 
 /**
- * The mint form's allowlist pickers page hosts and templates with Load more,
+ * The create form's allowlist pickers page hosts and templates with Load more,
  * the same cursor paging as the lists (the procedure maximum per page).
  */
 const PICKER_LIMIT = 100;
@@ -83,14 +93,21 @@ const pickerPages = {
 
 type KeyPage = Awaited<ReturnType<AppRouterClient["sdkKeys"]["list"]>>;
 type KeyItem = KeyPage["items"][number];
+type ListFilter = "active" | "all";
 
 export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boolean }) {
   const api = agent ? orpc.agentTokens : orpc.sdkKeys;
   const ns = agent ? "agents" : "sdkKeys";
   const { t, i18n } = useTranslation(["sdkKeys", "agents", "credentials", "dashboard", "common"]);
+  const [filter, setFilter] = useState<ListFilter>("active");
+  const includeRevoked = filter === "all";
   const keys = useInfiniteQuery({
     ...api.list.infiniteOptions({
-      input: (cursor: string | undefined) => ({ limit: DASHBOARD_PAGE_LIMIT, cursor }),
+      input: (cursor: string | undefined) => ({
+        limit: DASHBOARD_PAGE_LIMIT,
+        cursor,
+        includeRevoked,
+      }),
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (lastPage: { nextCursor: string | null }) =>
         lastPage.nextCursor ?? undefined,
@@ -111,6 +128,15 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
   });
   const now = Date.now();
   const rows = keys.data?.pages.flatMap((page) => page.items);
+  // An empty active list may still hide revoked keys: one bounded probe tells
+  // "nothing yet" from "nothing active".
+  const revokedProbe = useQuery({
+    ...api.list.queryOptions({ input: { limit: 1, includeRevoked: true } }),
+    enabled: !includeRevoked && rows?.length === 0,
+    meta: { skipGlobalErrorToast: true },
+  });
+  const hasRevoked = (revokedProbe.data?.items.length ?? 0) > 0;
+  const revealed = oneTime.revealed;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -122,7 +148,7 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
           <Button
             type="button"
             size="touch"
-            disabled={oneTime.revealed != null}
+            disabled={revealed != null}
             onClick={() => setMinting(true)}
           >
             <Plus aria-hidden="true" />
@@ -130,16 +156,29 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
           </Button>
         }
       />
-      {oneTime.revealed ? (
-        <OneTimeSecretPanel
-          secret={oneTime.revealed.secret}
-          label={t(`${ns}:mint.secretLabel`)}
-          onDone={oneTime.clear}
-        >
-          <p className="text-sm text-muted-foreground">{t(`${ns}:mint.usageHint`)}</p>
-        </OneTimeSecretPanel>
+      <SecretLeaveGuard active={revealed != null} />
+      {revealed ? (
+        <>
+          <OneTimeSecretPanel
+            secret={revealed.secret}
+            label={t(`${ns}:mint.secretLabel`)}
+            onDone={oneTime.clear}
+          >
+            <p className="text-sm text-muted-foreground">{t(`${ns}:mint.usageHint`)}</p>
+          </OneTimeSecretPanel>
+          {agent ? null : <UseSdkKey />}
+        </>
       ) : null}
       <OrphanedCredentialsAlert orphans={oneTime.orphans} onRetry={oneTime.retryOrphan} />
+      <SegmentedControl
+        value={filter}
+        onChange={setFilter}
+        ariaLabel={t("credentials:filter.label")}
+        items={[
+          { value: "active", label: t("credentials:filter.active") },
+          { value: "all", label: t("credentials:filter.all") },
+        ]}
+      />
       <QueryBoundary
         query={{
           data: rows,
@@ -154,8 +193,10 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
         empty={
           <EmptyState
             className="rounded-xl border px-4"
-            title={t(`${ns}:empty.title`)}
-            description={t(`${ns}:empty.description`)}
+            title={t(hasRevoked ? `${ns}:emptyActive.title` : `${ns}:empty.title`)}
+            description={t(
+              hasRevoked ? `${ns}:emptyActive.description` : `${ns}:empty.description`,
+            )}
           />
         }
       >
@@ -181,6 +222,7 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
           </>
         )}
       </QueryBoundary>
+      {agent || revealed ? null : <UseSdkKey />}
       {minting ? (
         <CredentialGrantEditor
           mode={agent ? "agent" : "sdk"}
@@ -216,21 +258,28 @@ function SdkKeyRow({
   );
   const expires = toMs(sdkKey.expiresAt);
   const expired = expires != null && expires <= now;
-  const blockedByPolicy = agent && sdkKey.blockedByPolicy === true;
+  const revoked = sdkKey.revokedAt != null;
+  const blockedByPolicy = agent && !revoked && sdkKey.blockedByPolicy === true;
   return (
     <li
       data-credential-id={sdkKey.id}
       data-expired={expired ? "true" : undefined}
+      data-revoked={revoked ? "true" : undefined}
       data-blocked-by-policy={blockedByPolicy ? "true" : undefined}
       className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
     >
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <p className="truncate text-sm font-medium">{sdkKey.name}</p>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{sdkKey.name}</p>
             {sdkKey.origin === "CLI_LOGIN" ? (
               <Badge data-origin={sdkKey.origin} className="shrink-0">
                 {t("sdkKeys:list.cliLogin")}
+              </Badge>
+            ) : null}
+            {revoked ? (
+              <Badge variant="outline" data-revoked-badge="" className="shrink-0">
+                {t("sdkKeys:list.revoked")}
               </Badge>
             ) : null}
           </div>
@@ -238,24 +287,28 @@ function SdkKeyRow({
             {t("credentials:prefix", { prefix: sdkKey.lookupPrefix })}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="destructive"
-          size="touch"
-          disabled={revoke.mutation.isPending}
-          onClick={() => revoke.setConfirming(true)}
-        >
-          {t("credentials:revoke.action")}
-        </Button>
+        {revoked ? null : (
+          <Button
+            type="button"
+            variant="destructive"
+            size="touch"
+            aria-label={t("credentials:revoke.actionNamed", { name: sdkKey.name })}
+            disabled={revoke.mutation.isPending}
+            onClick={() => revoke.setConfirming(true)}
+          >
+            {t("credentials:revoke.action")}
+          </Button>
+        )}
       </div>
       <ul aria-label={t("sdkKeys:list.scopes")} className="flex min-w-0 flex-wrap gap-1.5">
         {sdkKey.scopes.map((scope) => (
           <li
             key={scope}
             data-scope={scope}
-            className="inline-flex items-center rounded-sm border px-2 py-0.5 font-mono text-xs"
+            title={scope}
+            className="inline-flex items-center rounded-sm border px-2 py-0.5 text-xs"
           >
-            {scope}
+            {t(`sdkKeys:scopeTitle.${scope.replace(":", ".")}`)}
           </li>
         ))}
       </ul>
@@ -356,19 +409,21 @@ function SdkKeyRow({
           {t(`credentials:problem.${revoke.problem}`)}
         </p>
       ) : null}
-      <ConfirmDeleteDialog
-        open={revoke.confirming}
-        onOpenChange={revoke.setConfirming}
-        title={t("sdkKeys:revoke.title", { name: sdkKey.name })}
-        description={t("sdkKeys:revoke.description")}
-        confirmToken={sdkKey.name}
-        typePrompt={t(agent ? "agents:revoke.typePrompt" : "sdkKeys:revoke.typePrompt")}
-        copyAriaLabel={t(agent ? "agents:revoke.copyName" : "sdkKeys:revoke.copyName")}
-        confirmLabel={t("credentials:revoke.confirm")}
-        pendingLabel={t("credentials:revoke.pending")}
-        isPending={revoke.mutation.isPending}
-        onConfirm={() => revoke.mutation.mutate(sdkKey.id)}
-      />
+      {revoked ? null : (
+        <ConfirmDeleteDialog
+          open={revoke.confirming}
+          onOpenChange={revoke.setConfirming}
+          title={t("sdkKeys:revoke.title", { name: sdkKey.name })}
+          description={t("sdkKeys:revoke.description")}
+          confirmToken={sdkKey.name}
+          typePrompt={t(agent ? "agents:revoke.typePrompt" : "sdkKeys:revoke.typePrompt")}
+          copyAriaLabel={t(agent ? "agents:revoke.copyName" : "sdkKeys:revoke.copyName")}
+          confirmLabel={t("credentials:revoke.confirm")}
+          pendingLabel={t("credentials:revoke.pending")}
+          isPending={revoke.mutation.isPending}
+          onConfirm={() => revoke.mutation.mutate(sdkKey.id)}
+        />
+      )}
     </li>
   );
 }
@@ -384,9 +439,12 @@ function toggle<T>(list: readonly T[], value: T, on: boolean): T[] {
     : list.filter((item) => item !== value);
 }
 
+/** The preset a new key starts from: enough to run sandboxes, no host access. */
+const DEFAULT_ACCESS = "runSandboxes" as const;
+
 const DEFAULT_DRAFT: SdkKeyDraft = {
   name: "",
-  scopes: [],
+  scopes: presetScopes(DEFAULT_ACCESS),
   resourceMode: "ALL_OWNED",
   hostIds: [],
   templateRevisionIds: [],
@@ -447,6 +505,31 @@ function AgentTokenGrantEditor(props: CredentialGrantEditorProps) {
   );
 }
 
+/** Inline field errors, shown after the first submit attempt. */
+function FieldProblems({ id, messages }: { id: string; messages: readonly string[] }) {
+  if (messages.length === 0) return null;
+  return (
+    <div id={id} role="alert" className="flex flex-col gap-1">
+      {messages.map((message) => (
+        <p key={message} className="text-sm text-destructive">
+          {message}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/** Consent renders the same fields without the create sheet's section columns. */
+function PlainSection({
+  children,
+}: {
+  title: ReactNode;
+  description?: ReactNode;
+  children: ReactNode;
+}) {
+  return <div className="flex min-w-0 flex-col gap-4">{children}</div>;
+}
+
 function GrantEditor({
   lang,
   oneTime,
@@ -460,7 +543,13 @@ function GrantEditor({
   const { t } = useTranslation(["sdkKeys", "agents", "credentials", "common"]);
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
+  const formRef = useRef<HTMLFormElement>(null);
   const expiryId = useId();
+  const errorIds = {
+    scopes: useId(),
+    resources: useId(),
+    pools: useId(),
+  };
   const ns = mode === "agent" ? "agents" : "sdkKeys";
   const api = mode === "agent" ? orpc.agentTokens : orpc.sdkKeys;
   const [agentExpiryChoice, setAgentExpiryChoice] = useState(() => {
@@ -471,6 +560,10 @@ function GrantEditor({
   const [revisionPoolId, setRevisionPoolId] = useState("");
   const [problem, setProblem] = useState<CredentialProblem | null>(null);
   const [attempted, setAttempted] = useState(false);
+  // Consent picks from the requested scopes; the create forms start from a preset.
+  const [access, setAccess] = useState<AccessChoice>(
+    mode === "consent" ? "custom" : DEFAULT_ACCESS,
+  );
   const hostsQuery = useInfiniteQuery({
     ...orpc.sandboxHosts.listHosts.infiniteOptions({
       ...pickerPages,
@@ -480,34 +573,29 @@ function GrantEditor({
   });
   const hosts = selectableHosts(hostsQuery.data?.pages.flatMap((page) => page.items) ?? []);
 
-  const draftValidator = z.custom<SdkKeyDraft>().superRefine((draft, context) => {
-    for (const issue of sdkKeyDraftProblems(draft, options))
-      context.addIssue({ code: "custom", message: t(`credentials:draft.${issue}`) });
-  });
   const initialDraft: SdkKeyDraft = {
     ...DEFAULT_DRAFT,
     name: consentName,
     ownSandboxesOnly: mode !== "sdk",
     // Never preselected: host scopes, and API-key-only scopes outside the SDK key form.
     scopes:
-      requestedScopes?.filter(
-        (scope) =>
-          !scope.startsWith("hosts:") && (mode === "sdk" || !API_KEY_ONLY_SCOPES.includes(scope)),
-      ) ?? [],
+      mode === "consent"
+        ? (requestedScopes?.filter(
+            (scope) => !scope.startsWith("hosts:") && !API_KEY_ONLY_SCOPES.includes(scope),
+          ) ?? [])
+        : DEFAULT_DRAFT.scopes,
   };
+  const agentExpiryInvalid = () =>
+    mode === "agent" &&
+    (!expiryPolicy ||
+      agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy) === undefined);
+  // No form-level validators: a pathless schema issue lands on a field named ""
+  // that no field ever revalidates, so one failed submit blocked every later
+  // one (design-review2 #1). The draft rules run here, at submit, instead.
   const form = useForm({
     defaultValues: initialDraft,
-    validators: { onChange: draftValidator, onSubmit: draftValidator },
     onSubmit: async ({ value }) => {
-      setAttempted(true);
-      if (sdkKeyDraftProblems(value, options).length > 0) return;
-      if (
-        mode === "agent" &&
-        (!expiryPolicy ||
-          agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy) ===
-            undefined)
-      )
-        return;
+      if (sdkKeyDraftProblems(value, options).length > 0 || agentExpiryInvalid()) return;
       setProblem(null);
       try {
         if (mode === "consent" && onConsent) {
@@ -528,10 +616,10 @@ function GrantEditor({
             return orpc.sdkKeys.create.call(input);
           },
           (result) => ({ secret: result.secret, meta: { id: result.key.id } }),
-          // Closed while minting: nobody saw this key, so revoke the orphan.
+          // Closed while creating: nobody saw this key, so revoke the orphan.
           (result) => ({ id: result.key.id, label: result.key.name }),
         );
-        // The page now shows the key inline; the dialog's job is done.
+        // The page now shows the key inline; the sheet's job is done.
         if (outcome === "revealed") onClose();
       } catch (error) {
         if (!redirect(error)) {
@@ -542,7 +630,7 @@ function GrantEditor({
             void hostsQuery.refetch();
             void templatesQuery.refetch();
           }
-          // The deployment's expiry policy changed under the open dialog: reload it.
+          // The deployment's expiry policy changed under the open sheet: reload it.
           if (next === "agentExpiryPolicy")
             void queryClient.invalidateQueries({
               queryKey: orpc.agentTokens.expiryPolicy.queryKey(),
@@ -585,210 +673,150 @@ function GrantEditor({
   useTwoFactorRedirectOnError(lang, [hostsQuery.error, templatesQuery.error, poolsQuery.error]);
 
   const problems = attempted ? sdkKeyDraftProblems(values, options) : [];
-  // Cancelling discards a mint still in flight (it is revoked, never shown).
+  const messagesFor = (field: ReturnType<typeof draftProblemField>) =>
+    problems
+      .filter((item) => draftProblemField(item) === field)
+      .map((item) => t(`credentials:draft.${item}`));
+  const errors = {
+    name: messagesFor("name"),
+    scopes: messagesFor("scopes"),
+    resources: messagesFor("resources"),
+    pools: messagesFor("pools"),
+  };
+  const expiryInvalid = attempted && agentExpiryInvalid();
+  // Cancelling discards a create still in flight (it is revoked, never shown).
   const close = () => {
     oneTime?.discardPending();
     onClose();
   };
+  const chooseAccess = (next: AccessChoice) => {
+    setAccess(next);
+    if (next !== "custom") form.setFieldValue("scopes", presetScopes(next));
+  };
+  const submit = () => {
+    flushSync(() => setAttempted(true));
+    // The first invalid field gets focus (its Advanced section opens); a
+    // valid draft goes to the server.
+    if (!focusFirstInvalid(formRef.current)) void form.handleSubmit();
+  };
 
-  const content = (
-    <form
-      noValidate
-      className="flex min-w-0 flex-col gap-4"
-      onSubmit={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setAttempted(true);
-        void form.handleSubmit();
-      }}
-    >
-      {mode !== "consent" ? (
-        <form.Field name="name">
-          {(field) => (
-            <TextField
-              inputClassName="min-h-11"
-              field={field}
-              label={t("credentials:form.name")}
-              autoComplete="off"
-              inputMode="text"
-              maxLength={CREDENTIAL_NAME_MAX}
-            />
-          )}
-        </form.Field>
-      ) : null}
-      <form.Field name="scopes">
-        {(field) => (
-          <ScopePicker
-            form={mode}
-            offered={requestedScopes}
-            value={field.state.value}
-            onChange={field.handleChange}
-          />
-        )}
-      </form.Field>
-      <form.Field name="poolMode">
-        {(field) => (
-          <fieldset>
-            <legend>{t("sdkKeys:poolMode.title")}</legend>
-            {(["ALL_USABLE", "SELECTED"] as const).map((mode) => (
-              <label key={mode} className="flex min-h-11 items-center gap-3">
-                <input
-                  type="radio"
-                  name="poolMode"
-                  autoComplete="off"
-                  checked={field.state.value === mode}
-                  onChange={() => field.handleChange(mode)}
-                />
-                {t(`sdkKeys:poolMode.${mode}`)}
-              </label>
-            ))}
-          </fieldset>
-        )}
-      </form.Field>
-      <p>{t("sdkKeys:poolMode.immutable")}</p>
-      {values.poolMode === "SELECTED" ? (
-        <form.Field name="poolIds">
-          {(field) => (
-            <PoolGrantPicker
-              pools={pools}
-              query={poolsQuery}
-              selected={field.state.value ?? []}
-              onChange={field.handleChange}
-            />
-          )}
-        </form.Field>
-      ) : null}
-      {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
-        <label className="flex min-h-11 flex-col gap-2">
-          {t("sdkKeys:poolMode.revisionContext")}
-          <select
-            className="min-h-11 rounded border bg-background"
-            autoComplete="off"
-            value={revisionPoolId}
-            onChange={(e) => setRevisionPoolId(e.target.value)}
-          >
-            <option value="">{t("sdkKeys:form.pools")}</option>
-            {pools.map((pool) => (
-              <option key={pool.id} value={pool.id}>
-                {pool.label} · {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} ·{" "}
-                {pool.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
-      <form.Field name="resourceMode">
-        {(field) => (
-          <div className="flex min-w-0 flex-col gap-1">
-            <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
+  const Section = mode === "consent" ? PlainSection : FormSection;
+  const resourceSummary =
+    values.resourceMode === "ALL_OWNED"
+      ? t("sdkKeys:form.mode.ALL_OWNED")
+      : t("sdkKeys:form.summary.allowlist", {
+          count:
+            values.hostIds.length +
+            values.templateRevisionIds.length +
+            (values.credentialIds?.length ?? 0),
+        });
+  const poolSummary =
+    values.poolMode === "SELECTED"
+      ? t("sdkKeys:form.summary.pools", { count: values.poolIds?.length ?? 0 })
+      : t("sdkKeys:poolMode.ALL_USABLE");
+  const sandboxSummary = values.ownSandboxesOnly
+    ? t("sdkKeys:form.ownSandboxesOnly")
+    : t("sdkKeys:form.summary.allSandboxes");
+  const presetInvalid = errors.scopes.length > 0 && access !== "custom";
+
+  const fields = (
+    <>
+      <Section
+        title={t("sdkKeys:form.sections.key")}
+        description={t("sdkKeys:form.sections.keyHint")}
+      >
+        {mode !== "consent" ? (
+          <form.Field name="name">
+            {(field) => (
+              <TextField
+                inputClassName="min-h-11"
+                field={{
+                  name: field.name,
+                  state: { value: field.state.value, meta: { errors: errors.name } },
+                  handleBlur: field.handleBlur,
+                  handleChange: field.handleChange,
+                }}
+                label={t("credentials:form.name")}
+                description={t("credentials:form.nameHint", {
+                  max: CREDENTIAL_NAME_MAX,
+                  count: field.state.value.trim().length,
+                })}
+                autoComplete="off"
+                inputMode="text"
+              />
+            )}
+          </form.Field>
+        ) : null}
+        {mode !== "consent" ? (
+          <fieldset className="flex min-w-0 flex-col gap-1" data-access={access}>
+            <legend className="mb-1 text-sm font-medium">{t("sdkKeys:form.access")}</legend>
             <RadioGroup
-              aria-label={t("sdkKeys:form.resources")}
-              name="resourceMode"
-              value={field.state.value}
-              onValueChange={(value: ResourceMode) => field.handleChange(value)}
+              aria-label={t("sdkKeys:form.access")}
+              name="access"
+              value={access}
+              onValueChange={(value: AccessChoice) => chooseAccess(value)}
             >
-              {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
-                (mode) => (
-                  <label key={mode} className="flex min-h-11 items-start gap-3 text-sm">
-                    <RadioGroupItem value={mode} className="mt-1" />
-                    <span className="min-w-0">
-                      <span className="block">{t(`sdkKeys:form.mode.${mode}`)}</span>
-                      <span className="block text-xs text-muted-foreground">
-                        {t(`sdkKeys:form.modeHint.${mode}`)}
-                      </span>
+              {([...SCOPE_PRESETS, "custom"] as const).map((choice) => (
+                <label key={choice} className="flex min-h-11 items-start gap-3 py-1 text-sm">
+                  <RadioGroupItem
+                    value={choice}
+                    className="mt-1"
+                    aria-invalid={(presetInvalid && choice === access) || undefined}
+                    aria-describedby={
+                      presetInvalid && choice === access ? errorIds.scopes : undefined
+                    }
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-medium">
+                      {t(`sdkKeys:form.preset.${choice}.title`)}
                     </span>
-                  </label>
-                ),
-              )}
+                    <span className="block text-xs text-muted-foreground">
+                      {t(`sdkKeys:form.preset.${choice}.description`)}
+                      {choice === "custom"
+                        ? null
+                        : ` ${t("sdkKeys:form.scopeCount", { count: presetScopes(choice).length })}`}
+                    </span>
+                  </span>
+                </label>
+              ))}
             </RadioGroup>
-          </div>
-        )}
-      </form.Field>
-      {values.resourceMode === "ALLOWLIST" ? (
-        <AllowlistPicker
-          hosts={hosts}
-          templates={templates}
-          hostIds={values.hostIds}
-          templateRevisionIds={values.templateRevisionIds}
-          hostsFailed={hostsQuery.isError}
-          templatesFailed={templatesQuery.isError}
-          loading={hostsQuery.isPending || templatesQuery.isPending}
-          onRetry={() => {
-            void hostsQuery.refetch();
-            void templatesQuery.refetch();
-          }}
-          moreHosts={{
-            hasNextPage: hostsQuery.hasNextPage,
-            isFetchingNextPage: hostsQuery.isFetchingNextPage,
-            onLoadMore: () => void hostsQuery.fetchNextPage(),
-          }}
-          moreTemplates={{
-            hasNextPage: templatesQuery.hasNextPage,
-            isFetchingNextPage: templatesQuery.isFetchingNextPage,
-            onLoadMore: () => void templatesQuery.fetchNextPage(),
-          }}
-          onHosts={(hostIds) => {
-            form.setFieldValue("hostIds", hostIds);
-            // A template runs only on its own host: drop templates
-            // whose host is no longer selected.
-            const allowed = new Set(
-              selectableTemplates(templates, hostIds).map((template) => template.id),
-            );
-            form.setFieldValue(
-              "templateRevisionIds",
-              values.templateRevisionIds.filter((id) => allowed.has(id)),
-            );
-          }}
-          onTemplates={(templateRevisionIds) =>
-            form.setFieldValue("templateRevisionIds", templateRevisionIds)
-          }
-        />
-      ) : null}
-      {credentialsUseRevealsValues(values.scopes) ? (
-        <p
-          role="note"
-          data-credentials-use-disclosure=""
-          className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
-        >
-          {t("sdkKeys:form.credentialsUseDisclosure")}
-        </p>
-      ) : null}
-      {values.resourceMode === "ALLOWLIST" ? (
-        <form.Field name="credentialIds">
-          {(field) => (
-            <LoginAllowlistPicker
-              lang={lang}
-              selected={field.state.value ?? []}
-              required={values.scopes.includes("credentials:use")}
-              onChange={field.handleChange}
-            />
-          )}
-        </form.Field>
-      ) : null}
-      <form.Field name="ownSandboxesOnly">
-        {(field) => (
-          <label className="flex min-h-11 items-center gap-3 text-sm">
-            <Checkbox
-              checked={field.state.value ?? false}
-              onCheckedChange={(value) => field.handleChange(value === true)}
-            />
-            <span>{t("sdkKeys:form.ownSandboxesOnly")}</span>
-          </label>
-        )}
-      </form.Field>
-      <p className="text-xs text-muted-foreground">{t("sdkKeys:form.ownSandboxesOnlyHint")}</p>
-      {/* The consent page already shows this warning above the form. */}
-      {mode !== "consent" &&
-      values.scopes.some((scope) => scope === "hosts:execute" || scope === "hosts:files") ? (
-        <p
-          role="note"
-          className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
-        >
-          {t("sdkKeys:form.hostScopeWarning")}
-        </p>
-      ) : null}
-      {mode === "agent" && expiryPolicy ? (
-        <>
+          </fieldset>
+        ) : null}
+        {access === "custom" ? (
+          <form.Field name="scopes">
+            {(field) => (
+              <ScopePicker
+                form={mode}
+                offered={requestedScopes}
+                value={field.state.value}
+                onChange={field.handleChange}
+                invalid={errors.scopes.length > 0}
+                errorId={errors.scopes.length > 0 ? errorIds.scopes : undefined}
+              />
+            )}
+          </form.Field>
+        ) : null}
+        <FieldProblems id={errorIds.scopes} messages={errors.scopes} />
+        {credentialsUseRevealsValues(values.scopes) ? (
+          <p
+            role="note"
+            data-credentials-use-disclosure=""
+            className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
+          >
+            {t("sdkKeys:form.credentialsUseDisclosure")}
+          </p>
+        ) : null}
+        {/* The consent page already shows this warning above the form. */}
+        {mode !== "consent" &&
+        values.scopes.some((scope) => scope === "hosts:execute" || scope === "hosts:files") ? (
+          <p
+            role="note"
+            className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
+          >
+            {t("sdkKeys:form.hostScopeWarning")}
+          </p>
+        ) : null}
+        {mode === "agent" && expiryPolicy ? (
           <AgentTokenExpirySelect
             id={expiryId}
             policy={expiryPolicy}
@@ -796,69 +824,277 @@ function GrantEditor({
             onChange={setAgentExpiryChoice}
             customDate={agentCustomDate}
             onCustomDateChange={setAgentCustomDate}
+            invalid={expiryInvalid}
           />
-          {attempted &&
-          agentTokenExpiry(agentExpiryChoice, agentCustomDate, Date.now(), expiryPolicy) ===
-            undefined ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t("agents:expiry.invalid")}
-            </p>
+        ) : mode !== "consent" ? (
+          <form.Field name="expiry">
+            {(field) => (
+              <ExpirySelect id={expiryId} value={field.state.value} onChange={field.handleChange} />
+            )}
+          </form.Field>
+        ) : null}
+      </Section>
+      <Section
+        title={t("sdkKeys:form.sections.limits")}
+        description={t("sdkKeys:form.sections.limitsHint")}
+      >
+        <AdvancedSection
+          title={t("sdkKeys:form.sections.resources")}
+          summary={resourceSummary}
+          data-section="resources"
+        >
+          <form.Field name="resourceMode">
+            {(field) => (
+              <div className="flex min-w-0 flex-col gap-1">
+                <p className="text-sm font-medium">{t("sdkKeys:form.resources")}</p>
+                <RadioGroup
+                  aria-label={t("sdkKeys:form.resources")}
+                  name="resourceMode"
+                  value={field.state.value}
+                  onValueChange={(value: ResourceMode) => field.handleChange(value)}
+                >
+                  {(["ALL_OWNED", "ALLOWLIST"] as const satisfies readonly ResourceMode[]).map(
+                    (resourceMode) => (
+                      <label key={resourceMode} className="flex min-h-11 items-start gap-3 text-sm">
+                        <RadioGroupItem
+                          value={resourceMode}
+                          className="mt-1"
+                          aria-invalid={
+                            (errors.resources.length > 0 && resourceMode === field.state.value) ||
+                            undefined
+                          }
+                          aria-describedby={
+                            errors.resources.length > 0 && resourceMode === field.state.value
+                              ? errorIds.resources
+                              : undefined
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span className="block">{t(`sdkKeys:form.mode.${resourceMode}`)}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {t(`sdkKeys:form.modeHint.${resourceMode}`)}
+                          </span>
+                        </span>
+                      </label>
+                    ),
+                  )}
+                </RadioGroup>
+              </div>
+            )}
+          </form.Field>
+          {values.resourceMode === "ALLOWLIST" && !values.hostIds.length ? (
+            <label className="flex min-h-11 flex-col gap-2 text-sm">
+              {t("sdkKeys:poolMode.revisionContext")}
+              <select
+                className="min-h-11 rounded border bg-background"
+                autoComplete="off"
+                value={revisionPoolId}
+                onChange={(e) => setRevisionPoolId(e.target.value)}
+              >
+                <option value="">{t("sdkKeys:form.pools")}</option>
+                {pools.map((pool) => (
+                  <option key={pool.id} value={pool.id}>
+                    {pool.label} ·{" "}
+                    {"owner" in pool ? pool.owner?.name : t("sdkKeys:form.ownedPool")} · {pool.id}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
-        </>
-      ) : mode !== "consent" ? (
-        <form.Field name="expiry">
-          {(field) => (
-            <ExpirySelect id={expiryId} value={field.state.value} onChange={field.handleChange} />
-          )}
-        </form.Field>
-      ) : null}
-      {problems.length > 0 ? (
-        <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
-          {problems.map((item) => (
-            <li key={item}>{t(`credentials:draft.${item}`)}</li>
-          ))}
-        </ul>
-      ) : null}
+          {values.resourceMode === "ALLOWLIST" ? (
+            <AllowlistPicker
+              hosts={hosts}
+              templates={templates}
+              hostIds={values.hostIds}
+              templateRevisionIds={values.templateRevisionIds}
+              hostsFailed={hostsQuery.isError}
+              templatesFailed={templatesQuery.isError}
+              loading={hostsQuery.isPending || templatesQuery.isPending}
+              onRetry={() => {
+                void hostsQuery.refetch();
+                void templatesQuery.refetch();
+              }}
+              moreHosts={{
+                hasNextPage: hostsQuery.hasNextPage,
+                isFetchingNextPage: hostsQuery.isFetchingNextPage,
+                onLoadMore: () => void hostsQuery.fetchNextPage(),
+              }}
+              moreTemplates={{
+                hasNextPage: templatesQuery.hasNextPage,
+                isFetchingNextPage: templatesQuery.isFetchingNextPage,
+                onLoadMore: () => void templatesQuery.fetchNextPage(),
+              }}
+              onHosts={(hostIds) => {
+                form.setFieldValue("hostIds", hostIds);
+                // A template runs only on its own host: drop templates
+                // whose host is no longer selected.
+                const allowed = new Set(
+                  selectableTemplates(templates, hostIds).map((template) => template.id),
+                );
+                form.setFieldValue(
+                  "templateRevisionIds",
+                  values.templateRevisionIds.filter((id) => allowed.has(id)),
+                );
+              }}
+              onTemplates={(templateRevisionIds) =>
+                form.setFieldValue("templateRevisionIds", templateRevisionIds)
+              }
+            />
+          ) : null}
+          {values.resourceMode === "ALLOWLIST" ? (
+            <form.Field name="credentialIds">
+              {(field) => (
+                <LoginAllowlistPicker
+                  lang={lang}
+                  selected={field.state.value ?? []}
+                  required={values.scopes.includes("credentials:use")}
+                  onChange={field.handleChange}
+                />
+              )}
+            </form.Field>
+          ) : null}
+          <FieldProblems id={errorIds.resources} messages={errors.resources} />
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("sdkKeys:form.sections.pools")}
+          summary={poolSummary}
+          data-section="pools"
+        >
+          <form.Field name="poolMode">
+            {(field) => (
+              <fieldset className="flex min-w-0 flex-col">
+                <legend className="text-sm font-medium">{t("sdkKeys:poolMode.title")}</legend>
+                {(["ALL_USABLE", "SELECTED"] as const).map((poolMode) => (
+                  <label key={poolMode} className="flex min-h-11 items-center gap-3 text-sm">
+                    <input
+                      type="radio"
+                      name="poolMode"
+                      autoComplete="off"
+                      checked={field.state.value === poolMode}
+                      aria-invalid={
+                        (errors.pools.length > 0 && field.state.value === poolMode) || undefined
+                      }
+                      aria-describedby={
+                        errors.pools.length > 0 && field.state.value === poolMode
+                          ? errorIds.pools
+                          : undefined
+                      }
+                      onChange={() => field.handleChange(poolMode)}
+                    />
+                    {t(`sdkKeys:poolMode.${poolMode}`)}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+          </form.Field>
+          <p className="text-xs text-muted-foreground">{t("sdkKeys:poolMode.immutable")}</p>
+          {values.poolMode === "SELECTED" ? (
+            <form.Field name="poolIds">
+              {(field) => (
+                <PoolGrantPicker
+                  pools={pools}
+                  query={poolsQuery}
+                  selected={field.state.value ?? []}
+                  onChange={field.handleChange}
+                />
+              )}
+            </form.Field>
+          ) : null}
+          <FieldProblems id={errorIds.pools} messages={errors.pools} />
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("sdkKeys:form.sections.sandboxes")}
+          summary={sandboxSummary}
+          data-section="sandboxes"
+        >
+          <form.Field name="ownSandboxesOnly">
+            {(field) => (
+              <label className="flex min-h-11 items-center gap-3 text-sm">
+                <Checkbox
+                  checked={field.state.value ?? false}
+                  onCheckedChange={(value) => field.handleChange(value === true)}
+                />
+                <span>{t("sdkKeys:form.ownSandboxesOnly")}</span>
+              </label>
+            )}
+          </form.Field>
+          <p className="text-xs text-muted-foreground">{t("sdkKeys:form.ownSandboxesOnlyHint")}</p>
+        </AdvancedSection>
+      </Section>
       {problem ? (
         <p role="alert" className="text-sm text-destructive">
           {t(`credentials:problem.${problem}`)}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <form.Subscribe selector={(state) => state.isSubmitting}>
-          {(submitting) => (
-            <Button type="submit" size="touch" disabled={submitting}>
-              {submitting
-                ? t("credentials:form.minting")
-                : t(mode === "consent" ? "agents:consent.allow" : `${ns}:mint.submit`)}
-            </Button>
-          )}
-        </form.Subscribe>
-        <Button type="button" variant="outline" size="touch" onClick={close}>
-          {t(mode === "consent" ? "agents:consent.deny" : "common:actions.cancel")}
-        </Button>
-      </div>
-    </form>
+    </>
   );
-  if (mode === "consent") return content;
+  const actions = (
+    <>
+      <form.Subscribe selector={(state) => state.isSubmitting}>
+        {(submitting) => (
+          <Button type="submit" size="touch" disabled={submitting}>
+            {submitting
+              ? t("credentials:form.minting")
+              : t(mode === "consent" ? "agents:consent.allow" : `${ns}:mint.submit`)}
+          </Button>
+        )}
+      </form.Subscribe>
+      <Button type="button" variant="outline" size="touch" onClick={close}>
+        {t(mode === "consent" ? "agents:consent.deny" : "common:actions.cancel")}
+      </Button>
+    </>
+  );
+  const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    submit();
+  };
+  if (mode === "consent")
+    return (
+      <form ref={formRef} noValidate className="flex min-w-0 flex-col gap-4" onSubmit={onSubmit}>
+        {fields}
+        <div className="flex flex-wrap gap-2">{actions}</div>
+      </form>
+    );
+  const invalidCount =
+    errors.name.length + errors.scopes.length + errors.resources.length + errors.pools.length;
   return (
-    <Dialog
+    <Sheet
       open
       onOpenChange={(open) => {
         if (!open) close();
       }}
     >
-      <DialogContent
-        showCloseButton={false}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
+      <SheetContent
+        side="right"
+        closeLabel={t("common:actions.close")}
+        className="gap-0 overflow-hidden data-[side=right]:w-full data-[side=right]:sm:max-w-3xl"
       >
-        <DialogHeader>
-          <DialogTitle>{t(`${ns}:mint.title`)}</DialogTitle>
-          <DialogDescription>{t(`${ns}:mint.description`)}</DialogDescription>
-        </DialogHeader>
-        {content}
-      </DialogContent>
-    </Dialog>
+        <form ref={formRef} noValidate className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit}>
+          <SheetHeader className="border-b pt-[max(1rem,var(--safe-area-top))]">
+            <SheetTitle className="text-base">{t(`${ns}:mint.title`)}</SheetTitle>
+            <SheetDescription className="text-sm">{t(`${ns}:mint.description`)}</SheetDescription>
+          </SheetHeader>
+          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-x-hidden overflow-y-auto overscroll-contain p-4">
+            {fields}
+          </div>
+          <div
+            data-slot="sheet-actions"
+            className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-t p-4 pb-[max(1rem,var(--safe-area-bottom))]"
+          >
+            <div className="flex flex-wrap gap-2">{actions}</div>
+            <p className="min-w-0 flex-1 text-sm text-muted-foreground" data-sheet-status="">
+              {attempted && (invalidCount > 0 || expiryInvalid)
+                ? t("common:form.fixErrors")
+                : `${t(`sdkKeys:form.preset.${accessChoiceFor(values.scopes)}.title`)} · ${t(
+                    "sdkKeys:form.scopeCount",
+                    { count: values.scopes.length },
+                  )}`}
+            </p>
+          </div>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -867,20 +1103,33 @@ export function ScopePicker({
   onChange,
   offered,
   form = "consent",
+  invalid = false,
+  errorId,
 }: {
-  /** Which mint form: only `sdk` offers API-key-only scopes (`sandboxes:connect`). */
+  /** Which form: only `sdk` offers API-key-only scopes (`sandboxes:connect`). */
   form?: "sdk" | "agent" | "consent";
   offered?: readonly ServiceScope[];
   value: readonly ServiceScope[];
   onChange: (next: ServiceScope[]) => void;
+  /** After a failed submit: the scope set is refused (marks the offending boxes). */
+  invalid?: boolean;
+  errorId?: string;
 }) {
   const { t } = useTranslation(["sdkKeys"]);
   const unusable = new Set(unusableScopes(value));
+  const groups = offeredScopeGroups(form, offered);
+  // Which boxes carry the error: the unusable ones, webhooks:write when it is
+  // the refused one, else the first box (nothing chosen).
+  const flagged = new Set<ServiceScope>(unusable);
+  if (invalid && value.includes("webhooks:write") && flagged.size === 0)
+    flagged.add("webhooks:write");
+  const first = groups[0]?.scopes[0];
+  if (invalid && flagged.size === 0 && first) flagged.add(first);
   return (
-    <fieldset className="flex min-w-0 flex-col gap-3">
+    <fieldset className="flex min-w-0 flex-col gap-3" data-scope-picker="">
       <legend className="text-sm font-medium">{t("sdkKeys:form.scopes")}</legend>
       <p className="text-xs text-muted-foreground">{t("sdkKeys:form.scopesHint")}</p>
-      {offeredScopeGroups(form, offered).map((group) => (
+      {groups.map((group) => (
         <div key={group.id} data-scope-group={group.id} className="flex min-w-0 flex-col gap-1">
           <p className="text-xs font-medium text-muted-foreground">
             {t(`sdkKeys:scopeGroup.${group.id}`)}
@@ -893,6 +1142,13 @@ export function ScopePicker({
           {group.scopes.map((scope) => {
             const key = scopeKey(scope);
             const base = `scope-${key.replace(".", "-")}`;
+            const describedBy = [
+              `${base}-text`,
+              unusable.has(scope) ? `${base}-hint` : null,
+              flagged.has(scope) && errorId ? errorId : null,
+            ]
+              .filter(Boolean)
+              .join(" ");
             return (
               <div key={scope} className="flex min-w-0 flex-col">
                 <label className="flex min-h-11 items-start gap-3 text-sm">
@@ -900,17 +1156,20 @@ export function ScopePicker({
                     name="scopes"
                     value={scope}
                     checked={value.includes(scope)}
-                    aria-labelledby={`${base}-name`}
-                    aria-describedby={
-                      unusable.has(scope) ? `${base}-text ${base}-hint` : `${base}-text`
-                    }
-                    aria-invalid={unusable.has(scope) || undefined}
+                    aria-labelledby={`${base}-name ${base}-id`}
+                    aria-describedby={describedBy}
+                    aria-invalid={flagged.has(scope) || undefined}
                     onCheckedChange={(checked) => onChange(toggle(value, scope, checked))}
                     className="mt-1"
                   />
                   <span className="min-w-0">
-                    <span id={`${base}-name`} className="block font-mono text-xs">
-                      {scope}
+                    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                      <span id={`${base}-name`} className="font-medium">
+                        {t(`sdkKeys:scopeTitle.${key}`)}
+                      </span>
+                      <span id={`${base}-id`} className="font-mono text-xs text-muted-foreground">
+                        {scope}
+                      </span>
                     </span>
                     <span id={`${base}-text`} className="block text-xs text-muted-foreground">
                       {t(`sdkKeys:scope.${key}`)}

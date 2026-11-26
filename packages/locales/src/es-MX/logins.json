@@ -362,7 +362,13 @@
       "timeoutRange": "Escribe un número entero de minutos de 1 a {{max}}.",
       "uploadHint": "Abre Subir en la instancia para guardar un valor directamente.",
       "submit": "Iniciar sesión",
-      "submitting": "Iniciando…"
+      "submitting": "Iniciando…",
+      "networkSection": "Red",
+      "networkNone": "Sin dominios adicionales",
+      "networkSummary_one": "{{count}} dominio adicional",
+      "networkSummary_other": "{{count}} dominios adicionales",
+      "lifetimeSection": "Duración",
+      "lifetimeSummary": "Termina después de {{minutes}} min"
     }
   },
   "settings": {

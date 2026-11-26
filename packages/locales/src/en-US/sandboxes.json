@@ -48,12 +48,13 @@
     "labels": "Labels",
     "noLabels": "No labels",
     "created": "Created",
-    "expires": "Expires",
+    "expires": "Lifetime ends",
     "noHost": "No host (the sandbox has been removed from it)",
     "noHostWaiting": "None yet (waiting in the pool queue)",
     "error": "Last error",
     "allocation": "Allocated VM size",
-    "storage": "Retained storage"
+    "storage": "Retained storage",
+    "acceptedGrace": "Disk kept after pool access loss"
   },
   "hostLabel": "{{label}} ({{slug}})",
   "hostOffline": "Host {{host}} is not connected ({{state}}). What you see may be out of date, and requested actions wait until the host is back.",
@@ -103,7 +104,7 @@
       "CREATE_SANDBOX": "Create",
       "KILL_SANDBOX": "Destroy",
       "STOP_SANDBOX": "Stop",
-      "RECONNECT_SANDBOX": "Reconnect",
+      "RECONNECT_SANDBOX": "Start",
       "RENEW_SANDBOX_LEASE": "Renew lifetime"
     },
     "state": {
@@ -153,24 +154,36 @@
     "hours_one": "{{count}} hour",
     "hours_other": "{{count}} hours",
     "field": "Lifetime",
-    "hint": "Counted when the server accepts your request. Five minutes by default; deployment limits apply.",
+    "hint": "Counted from when the server accepts your request; deployment limits apply.",
     "keep": "Keep its lifetime ({{lifetime}}, then {{action}})",
     "keepUnlimited": "Keep its lifetime (no time limit)",
-    "keepHint": "It keeps the lifetime and expiry action it last started with unless you choose another; a new choice becomes its lifetime for later starts. Counted when the server accepts your request; deployment limits apply.",
+    "keepHint": "It keeps the lifetime and expiry action it last started with (a renewal is not remembered) unless you choose another; a new choice becomes its lifetime for later starts. Counted when the server accepts your request; deployment limits apply.",
     "onExpire": "When the lifetime ends",
     "stopOption": "Stop the VM (keep its disk)",
     "destroyOption": "Destroy the VM and its disk",
     "unlimited": "No time limit",
     "days_one": "{{count}} day",
-    "days_other": "{{count}} days"
+    "days_other": "{{count}} days",
+    "stopped": "Not running: the lifetime starts again at the next start.",
+    "notRunning": "Not running"
   },
   "renew": {
     "action": "Renew lifetime",
     "title": "Renew lifetime",
-    "description": "Set a new lifetime from acceptance. It may shorten the lease; the timeout action stays unchanged.",
+    "description": "Choose how long it runs from now. What happens when it ends stays the same.",
     "submit": "Renew",
     "pending": "Renewing…",
-    "done": "Renewal requested. The host acknowledges it when it next hears from the server."
+    "now": "Now",
+    "next": "New",
+    "termStop": "stops at {{time}}",
+    "termDestroy": "destroyed at {{time}}",
+    "termUnlimited": "no time limit",
+    "shortenTitle": "Shorten the lifetime?",
+    "shortenDescription": "The new lifetime ends earlier than the current one ({{from}} → {{to}}). The sandbox stops sooner.",
+    "shortenConfirm": "Shorten lifetime",
+    "doneStop": "Lifetime renewed. It now stops at {{time}}.",
+    "doneDestroy": "Lifetime renewed. It is now destroyed at {{time}}.",
+    "doneUnlimited": "Lifetime renewed. It now has no time limit."
   },
   "stop": {
     "action": "Stop",
@@ -199,7 +212,10 @@
   "reconnect": {
     "action": "Reconnect",
     "pending": "Reconnecting…",
-    "done": "Reconnect requested."
+    "done": "Reconnect requested.",
+    "title": "Reconnect to this sandbox?",
+    "description": "Reconnect asks the host to check the running VM again. Use it when the terminal or files stop answering; nothing in the VM restarts.",
+    "confirm": "Reconnect"
   },
   "destroy": {
     "recoveryDescription": "The previous teardown outcome is unknown. Retry destruction to remove the VM and its disk. Capacity stays reserved until the host confirms deletion.",
@@ -210,9 +226,8 @@
     "waitingTitle": "Cancel this queued create?",
     "waitingDescription": "The create leaves the pool queue and the sandbox ends as Deleted. No VM or disk exists yet. This cannot be undone.",
     "waitingConfirm": "Cancel create",
-    "prompt": "Type the sandbox name to confirm",
-    "copy": "Copy sandbox name",
-    "confirm": "Destroy",
+    "prompt": "Type {{name}} to confirm",
+    "confirm": "Destroy sandbox",
     "pending": "Destroying…",
     "done": "Destroy requested.",
     "storedCopy": "Destroy also deletes the stored copy of its disk in the image store."
@@ -222,7 +237,8 @@
     "title": "Rename sandbox",
     "description": "Names are unique among your sandboxes. Renaming changes nothing inside the VM.",
     "label": "Name",
-    "done": "Sandbox renamed."
+    "done": "Sandbox renamed.",
+    "hint": "Lowercase letters, digits and hyphens, up to 63 characters. Unique among your sandboxes."
   },
   "actionsLabel": "Sandbox actions",
   "problem": {
@@ -271,7 +287,9 @@
     "templateUnavailable": "This template revision isn't on any host in this pool. Verify it on a member host or choose another template.",
     "queueFull": "Too many creates are already waiting. Cancel one, or try again later.",
     "waitExceedsPolicy": "That wait is longer than this pool allows. Choose a shorter one.",
-    "diskUnavailable": "The stored disk can't be used on this deployment right now. Ask an administrator to check the image store and the data encryption key."
+    "diskUnavailable": "The stored disk can't be used on this deployment right now. Ask an administrator to check the image store and the data encryption key.",
+    "templateNotOnHost": "This template isn't on that host. Choose another host or template.",
+    "tunnelUnavailable": "Preview links can't be used here: they are off on this deployment, or no host you can use runs them. Remove the preview ports, or choose another host."
   },
   "detail": {
     "title": "Sandbox",
@@ -294,33 +312,29 @@
     "placementHostUnknown": "Chosen host",
     "sandboxId": "Sandbox ID",
     "poolId": "Pool ID",
-    "storageId": "Storage ID"
+    "storageId": "Storage ID",
+    "activityHint": "Every lifecycle request, file transfer and command for this sandbox, with its result."
   },
   "create": {
     "action": "Create sandbox",
     "title": "Create a sandbox",
-    "description": "Choose a template independently of a pool or explicit host.",
     "name": "Name (optional)",
     "nameHint": "Lowercase letters, digits and hyphens, up to 63 characters. Leave blank for a generated name such as quiet-otter.",
     "host": "Host",
     "chooseHost": "Choose a host",
-    "hostOption": "{{label}} ({{slug}}) — {{state}}",
-    "hostOptionDraining": "{{label}} ({{slug}}) — {{state}} · draining",
     "moreHosts": "Load more hosts",
     "noHosts": "You have no host that can run a sandbox yet.",
     "hostsFailed": "Couldn't load your hosts.",
     "template": "Template",
     "chooseTemplate": "Choose a template",
-    "pickHostFirst": "Choose a host to see its templates.",
-    "noTemplates": "No active templates. Register one on the Templates page.",
+    "noTemplates": "You have no template you can use yet. Templates belong to your account: a pool shared with you doesn't share its owner's templates.",
     "moreTemplates": "Load more templates",
     "templatesFailed": "Couldn't load your templates.",
     "labels": "Labels",
-    "labelsHint": "Optional string labels: one key=value per line. Up to 32 entries, 64 UTF-16 units per key, 1024 per value, 8192 UTF-8 bytes of JSON total. Never put secrets here.",
     "egress": "Outbound network access",
     "internetAccess": "Internet access",
     "internetAccessOnHint": "The sandbox can reach the public internet. Private networks, cloud metadata and the host's own addresses stay blocked. Fixed at creation.",
-    "fallbackSummary": "If this lands on another user's host that only allows listed destinations, allow:",
+    "fallbackSummary": "Allowed destinations on hosts that block open internet",
     "fallbackHint": "Used only on such a host, where the sandbox runs in allowlist mode with these entries. Leave both empty to block all outbound traffic there.",
     "egressHint": "Only the destinations listed below are reachable; listing nothing blocks all outbound traffic. Fixed at creation.",
     "egressDomains": "Allowed domains",
@@ -330,10 +344,8 @@
     "submit": "Create",
     "pending": "Creating…",
     "done": "Sandbox requested. It shows Ready once the host reports it.",
-    "hostWaits": "This host is not connected. A new launch requires a fresh connection and verified image; reconnect its daemon before creating.",
+    "hostWaits": "This host isn't connected right now ({{state}}). A new sandbox needs a fresh connection and a verified image: reconnect its daemon, then create.",
     "drainingHosts": "Draining hosts accept no new sandboxes and cannot be chosen. Undrain one on the Hosts page.",
-    "envs": "Environment variables (JSON)",
-    "envsHint": "Private defaults for commands and terminals. JSON string map: up to 64 entries, 128 UTF-8 bytes per name, 4096 per value, 16384 bytes of sorted JSON total. HOME, SHELL and TERM are reserved. Values stay private on the server and host.",
     "placement": "Placement",
     "direct": "Explicit host",
     "pool": "Pool",
@@ -342,28 +354,12 @@
     "selectorHint": "Use its latest tag or pin an exact revision. The server checks compatibility at placement; changing placement keeps your selection.",
     "logicalOption": "{{label}} ({{slug}})",
     "revision": "Revision",
-    "latest": "Latest tag (resolved once at acceptance)",
+    "latest": "Latest version (chosen when you create)",
     "revisionOption": "Revision {{revision}} · {{architecture}} · {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB (min {{minDiskGiB}})",
     "revisionDiskHint": "Root disk: {{defaultDiskGiB}} GiB if left blank; at least {{minDiskGiB}} GiB (the image's own root). A larger disk grows the root filesystem on first boot.",
     "revisionsFailed": "Couldn't load revisions.",
     "moreRevisions": "Load more revisions",
-    "hostOptionCapacity": "{{label}} ({{slug}}) · {{state}} · {{live}} live · {{fit}}",
-    "size": "VM size overrides",
-    "cpuCount": "vCPUs (optional)",
-    "memoryMiB": "Memory (MiB, optional)",
-    "sizeHint": "Leave any field blank to inherit it independently from the accepted revision. CPU: 1–32; RAM: 512–65536 MiB in steps of 256; root: the revision's minimum to 2048 GiB (blank: the revision's default). Stop and cold start preserve size and storage.",
-    "latestSizeHint": "Latest is resolved at acceptance. Choose an exact revision to see its defaults; the returned sandbox shows the actual allocation.",
-    "diskGiB": "Root disk (GiB, optional)",
-    "fit": {
-      "unknown": "Fit requires current size and reports",
-      "size": "Per-VM size exceeds cap",
-      "storage": "No healthy eligible storage",
-      "ram": "Not enough free RAM",
-      "ceiling": "Retained allocation guard reached",
-      "vcpu": "Insufficient vCPU",
-      "disk": "Insufficient disk budget",
-      "fits": "Resources appear to fit; server rechecks"
-    },
+    "latestSizeHint": "The latest version's size is known only when you create. Pin a version under Template version to see its size here.",
     "capacityWait": "If the pool is full",
     "capacityWaitHint": "Waiting keeps your place in line; the lifetime starts when the sandbox is placed. Destroy it to stop waiting.",
     "wait": {
@@ -378,7 +374,118 @@
     "guestSudo": "Allow root for the guest user (sudo)",
     "guestSudoOnHint": "The guest user can run commands as root inside the VM with passwordless <code>sudo</code>. Commands, files and terminals still run as the guest user. Fixed at creation.",
     "guestSudoOffHint": "WS Sandbox Proxy gives the guest user no root. Fixed at creation.",
-    "guestRootTainted": "Root may still be reachable in this template: this revision was built with root steps or captured from a sandbox that could run as root."
+    "guestRootTainted": "Root may still be reachable in this template: this revision was built with root steps or captured from a sandbox that could run as root.",
+    "pageDescription": "Pick a template and where it runs. Everything else has a safe default you can change under Advanced.",
+    "back": "Back to sandboxes",
+    "sectionTemplate": "Template",
+    "sectionTemplateHint": "The image the VM boots. Its latest version is used unless you pin one under Advanced.",
+    "sectionPlacement": "Where it runs",
+    "sectionPlacementHint": "A pool picks its least-loaded host for you; a host runs it exactly there.",
+    "sectionBasics": "Name and lifetime",
+    "sectionBasicsHint": "When the lifetime ends the VM stops and keeps its disk, unless you choose otherwise.",
+    "sectionAdvanced": "Advanced",
+    "sectionAdvancedHint": "Optional. Each line shows what will be used.",
+    "placementPool": "Pool",
+    "placementHost": "Host",
+    "hostAvailable": "{{label}} · Available",
+    "hostOffline": "{{label}} · {{state}}",
+    "hostUnavailable": "{{label}} · Unavailable: {{reason}}",
+    "unavailable": {
+      "draining": "draining",
+      "storage": "no storage",
+      "size": "too small for this size",
+      "ram": "not enough free memory",
+      "vcpu": "not enough free vCPUs",
+      "disk": "not enough free disk",
+      "ceiling": "too many sandboxes"
+    },
+    "poolOption": "{{label}} · {{owner}}",
+    "noPools": "No pool is shared with you yet. Choose Host, or ask a pool owner to share one.",
+    "poolTrustLine": "A shared pool may run your sandbox on someone else's host, and that host's operators can reach it.",
+    "learnMore": "Learn more",
+    "offline": "You're offline. Reconnect, then try again.",
+    "sizeTitle": "Size",
+    "sizeIntro": "Starts at the template's size. Leave a value alone to use the template's default.",
+    "vcpu": "vCPUs",
+    "memory": "Memory",
+    "disk": "Root disk",
+    "templateDefault": "Template default",
+    "resetDefault": "Use template default",
+    "capacity": {
+      "hostCpu_one": "This host has {{count}} vCPU free.",
+      "hostCpu_other": "This host has {{count}} vCPUs free.",
+      "hostMemory": "This host has {{amount}} GiB of memory free.",
+      "hostDisk": "This host has {{amount}} GiB of disk free.",
+      "poolCpu_one": "The most any host in this pool can take now is {{count}} vCPU.",
+      "poolCpu_other": "The most any host in this pool can take now is {{count}} vCPUs.",
+      "poolMemory": "The most any host in this pool can take now is {{amount}} GiB of memory.",
+      "poolDisk": "The most any host in this pool can take now is {{amount}} GiB of disk.",
+      "poolFailed": "Couldn't check this pool's free capacity. The server still checks when you create.",
+      "poolNone": "No host in this pool can take a new sandbox right now.",
+      "poolWaits": "More than any host in this pool can take now: the create will wait for room.",
+      "hostFree": "Free on this host now: {{cpu}} vCPU · {{memory}} GiB memory · {{disk}} GiB disk.",
+      "hostUnknown": "Connected, but this host hasn't reported its free capacity recently. The server checks when you create."
+    },
+    "envTitle": "Environment",
+    "envHint": "Private defaults for commands and terminals: up to 64 variables. HOME, SHELL and TERM are reserved. Values stay private on the server and host.",
+    "envAdd": "Add variable",
+    "labelsRowsHint": "Optional labels to find and group sandboxes: up to 32. Never put secrets here.",
+    "labelsAdd": "Add label",
+    "networkTitle": "Network",
+    "accessTitle": "Access",
+    "loginsTitle": "CLI logins",
+    "versionTitle": "Template version",
+    "chooseTemplateFirst": "Choose a template first.",
+    "lifetimeHint": "Counted when the server accepts your request. One hour by default; the host or pool may allow less.",
+    "summary": {
+      "templateDefault": "Template default",
+      "size": "{{cpu}} vCPU · {{memory}} GiB · {{disk}} GiB disk",
+      "none": "None",
+      "envs_one": "{{count}} variable",
+      "envs_other": "{{count}} variables",
+      "labels_one": "{{count}} label",
+      "labels_other": "{{count}} labels",
+      "internet": "Internet access",
+      "internetFallback_one": "Internet access · {{count}} fallback entry",
+      "internetFallback_other": "Internet access · {{count}} fallback entries",
+      "allowlist_one": "Allowlist: {{count}} entry",
+      "allowlist_other": "Allowlist: {{count}} entries",
+      "denyAll": "No outbound access",
+      "sudoOn": "Root with sudo",
+      "sudoOff": "No root",
+      "logins_one": "{{count}} login",
+      "logins_other": "{{count}} logins",
+      "latest": "Latest",
+      "revision": "Revision {{revision}}",
+      "ports_one": "{{count}} preview port",
+      "ports_other": "{{count}} preview ports",
+      "cpu": "{{count}} vCPU",
+      "memory": "{{amount}} GiB",
+      "disk": "{{amount}} GiB disk",
+      "restFromTemplate": "rest from the template"
+    },
+    "status": {
+      "pool": "Pool {{label}}",
+      "host": "Host {{label}}",
+      "noPlacement": "No place chosen yet",
+      "templateSize": "template size",
+      "stops": "stops after {{lifetime}}",
+      "destroys": "destroyed after {{lifetime}}",
+      "unlimited": "no time limit"
+    },
+    "noTemplatesLink": "Create a template",
+    "noVersions": "{{label}} · No versions yet",
+    "templateOffHost": {
+      "elsewhere": "{{template}} isn't on {{host}}. Choose {{hosts}} or another template.",
+      "nowhere": "{{template}} isn't on {{host}}. Choose another host or template.",
+      "warnElsewhere": "{{template}} isn't on {{host}} yet, so creating there will likely fail. Choose {{hosts}} or another template.",
+      "warnNowhere": "{{template}} isn't on {{host}} yet, so creating there will likely fail. Choose another host or template."
+    },
+    "hostUnmeasured": "{{label}} · Connected, free capacity not reported",
+    "envCleared": "For safety, values are cleared after a refused create. Enter them again.",
+    "previewPorts": "Preview ports",
+    "previewPortsHint": "Guest ports you may share later as a preview link, for example 3000, 8080. Leave blank if you don't need links; a port forward always works.",
+    "showProblem": "Show"
   },
   "draft": {
     "noHost": "Choose a pool or an explicit host.",
@@ -395,7 +502,9 @@
     "cpuCount": "Enter a whole vCPU count from 1 to 32, or leave it blank.",
     "memoryMiB": "Enter 512–65536 MiB in steps of 256, or leave it blank.",
     "diskGiB": "Enter a whole root size from 1 to 2048 GiB, or leave blank.",
-    "credentials": "Choose a login in every login row (each login once, at most 8), or remove the empty rows."
+    "credentials": "Choose a login in every login row (each login once, at most 8), or remove the empty rows.",
+    "envsCleared": "Enter the cleared values again, or remove those rows.",
+    "previewPorts": "Enter up to 8 different port numbers from 1 to 65535, separated by commas or spaces."
   },
   "files": {
     "title": "Files",
@@ -524,7 +633,6 @@
   "storageUnknown": "No retained storage binding.",
   "sharing": {
     "loss": "Pool access lost. Guest IO is unavailable; disk deletion is scheduled no earlier than {{date}}. Restore a fitting access path before deletion commits to retain the disk. Offline cleanup may take longer.",
-    "accepted": "Accepted disk grace after access loss: {{duration}}.",
     "restored": "Access-loss deletion deadline cleared. A fresh start still checks current permissions, caps and the original disk; no restart is automatic."
   },
   "capture": {
@@ -575,7 +683,10 @@
       "uploading_disk": "Uploading the disk",
       "fetching_disk": "Downloading the disk",
       "importing_disk": "Importing the disk"
-    }
+    },
+    "options": "Options",
+    "optionsSummary": "Tag {{tag}} · {{disk}} GiB default disk · {{count}} extra paths",
+    "openTemplates": "Open templates"
   },
   "capacityWait": {
     "line": "Number {{position}} in line · waits until {{deadline}} · blocked by {{blocker}}",
@@ -613,7 +724,14 @@
     "label": "Connect commands",
     "shellCommand": "wssp sandbox shell {{target}}",
     "sshCommand": "ssh {{target}}.wssp",
-    "sshSetup": "For ssh, scp, rsync and editors such as VS Code, run <code>wssp ssh-config --install</code> once. No SSH keys are needed."
+    "sshSetup": "For ssh, scp, rsync and editors such as VS Code, run this once (no SSH keys needed):",
+    "copyShell": "Copy shell command",
+    "copySsh": "Copy ssh command",
+    "copySetup": "Copy ssh setup command",
+    "getCli": "Get the wssp CLI",
+    "getCliHint": "Install it on your computer, then log in once:",
+    "copyInstall": "Copy install command",
+    "copyLogin": "Copy login command"
   },
   "connections": {
     "heading": "Recent connections",
@@ -799,5 +917,76 @@
   "retryCleanup": {
     "action": "Retry cleanup",
     "done": "Cleanup queued again."
-  }
+  },
+  "displayState": {
+    "STARTING": "Starting",
+    "RESTORING": "Restoring",
+    "DESTROYING": "Destroying"
+  },
+  "displayHint": {
+    "STARTING": "The host is booting the VM from its kept disk. It shows Ready once the guest reports ready.",
+    "RESTORING": "The host is downloading the stored disk and booting the VM. It shows Ready once the guest reports ready.",
+    "DESTROYING": "The host is deleting the VM and its disk. Nothing is final until the host reports it."
+  },
+  "progress": {
+    "label": "Start progress",
+    "placed": "Placed on a host",
+    "creating": "Creating the VM",
+    "booting": "Booting",
+    "ready": "Ready",
+    "status": {
+      "done": "(done)",
+      "current": "(in progress)",
+      "todo": "(not yet)"
+    },
+    "elapsed": "{{time}} so far. This usually takes a few minutes.",
+    "usually": "This usually takes a few minutes."
+  },
+  "summary": {
+    "label": "Lifetime:",
+    "stopsAt": "Stops at {{time}}",
+    "destroysAt": "Destroyed at {{time}}",
+    "left": "in {{span}}",
+    "endingNow": "ending now",
+    "renew": "Renew",
+    "stopped": "Not running. A start gives it {{lifetime}} again unless you choose another.",
+    "stoppedUnlimited": "Not running. A start gives it no time limit again unless you choose another."
+  },
+  "sections": {
+    "label": "On this page",
+    "overview": "Overview",
+    "terminal": "Terminal",
+    "previews": "Ports & previews",
+    "files": "Files",
+    "configuration": "Configuration",
+    "activity": "Activity"
+  },
+  "openTerminal": "Open terminal",
+  "usage": {
+    "title": "Usage",
+    "allocated": "Allocated",
+    "allocatedHint": "Reserved for this sandbox on its host, used or not.",
+    "running": "Running time",
+    "runningFor": "{{span}} since the last start",
+    "runningUnknown": "Running (the start time is not shown after a renewal)",
+    "notRunning": "Not running",
+    "measured": "Measured use",
+    "measuredNone": "CPU, memory, disk and network use are not measured per sandbox yet.",
+    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB memory · {{diskGiB}} GiB disk"
+  },
+  "ports": {
+    "title": "Ports & previews",
+    "description": "Reach a web app, API or database running in this sandbox from your computer with the wssp CLI:",
+    "forwardLabel": "Forward a port to your computer",
+    "forwardHint": "Replace 8080 with the port your app listens on inside the sandbox, then open http://localhost:8080.",
+    "copyForward": "Copy port forward command",
+    "declared": "Preview ports declared at create: {{ports}}",
+    "linkLabel": "Share a preview of port {{port}}",
+    "copyLink": "Copy preview link command for port {{port}}",
+    "cliOnly": "Shareable preview links are made with the wssp CLI or the API today; the dashboard cannot create them yet.",
+    "noTunnel": "This sandbox was created without preview ports, so it cannot get a shareable link. A port forward still works.",
+    "guide": "Preview tunnels guide",
+    "guideCli": "CLI guide: shells and port forwards"
+  },
+  "docsPath": "(guide: {{path}} in the WS Sandbox Proxy source repository)"
 }

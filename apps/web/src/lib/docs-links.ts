@@ -12,6 +12,12 @@ export const DOC_PAGES = {
   environment: "operations/environment-variables.md",
   hostsQuickStart: "guide/hosts.md#quick-start-your-first-host",
   hostsService: "guide/hosts.md#run-as-a-service",
+  guide: "guide/README.md",
+  sdkKeys: "guide/auth-planes.md#sdk-plane",
+  cli: "guide/cli.md#install",
+  tunnels: "guide/tunnels.md",
+  connect: "guide/connect.md",
+  cliInstall: "guide/cli.md#install",
 } as const;
 
 export type DocPage = keyof typeof DOC_PAGES;

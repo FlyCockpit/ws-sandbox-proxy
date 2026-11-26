@@ -86,7 +86,7 @@ export function RenameSandboxSheet({
               <TextField
                 field={field}
                 label={t("sandboxes:rename.label")}
-                description={t("sandboxes:create.nameHint")}
+                description={t("sandboxes:rename.hint")}
                 inputMode="text"
                 autoComplete="off"
                 autoCapitalize="none"

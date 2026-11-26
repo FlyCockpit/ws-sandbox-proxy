@@ -71,6 +71,75 @@ export function offeredScopeGroups(
   })).filter((group) => group.scopes.length > 0);
 }
 
+/**
+ * Access presets on the mint forms, derived from the scope catalog so a new
+ * scope lands in the right preset (or none) by its name alone. No preset ever
+ * holds host access (`hosts:*`: needs node consent and reaches every sandbox
+ * on the node) or an API-key-only scope (`sandboxes:connect`, never
+ * preselected); those stay a deliberate Custom choice.
+ *  - readOnly: every `:read` scope.
+ *  - runSandboxes: work inside sandboxes (sandboxes, commands, files,
+ *    operations) plus discovering pools and templates; no preview tunnels,
+ *    template writes, webhooks or CLI logins.
+ *  - fullAccess: everything else too.
+ */
+export const SCOPE_PRESETS = ["readOnly", "runSandboxes", "fullAccess"] as const;
+export type ScopePreset = (typeof SCOPE_PRESETS)[number];
+export type AccessChoice = ScopePreset | "custom";
+
+const RUN_RESOURCES: ReadonlySet<string> = new Set([
+  "sandboxes",
+  "commands",
+  "files",
+  "operations",
+]);
+const RUN_EXCLUDED: ReadonlySet<ServiceScope> = new Set(["sandboxes:tunnel"]);
+
+function presetEligible(scope: ServiceScope): boolean {
+  return !scope.startsWith("hosts:") && !API_KEY_ONLY_SCOPES.includes(scope);
+}
+
+export function presetScopes(preset: ScopePreset): ServiceScope[] {
+  const eligible = SERVICE_SCOPES.filter(presetEligible);
+  if (preset === "fullAccess") return eligible;
+  if (preset === "readOnly") return eligible.filter((scope) => scope.endsWith(":read"));
+  return eligible.filter((scope) => {
+    const resource = scope.slice(0, scope.indexOf(":"));
+    if (RUN_RESOURCES.has(resource)) return !RUN_EXCLUDED.has(scope);
+    return scope === "pools:read" || scope === "templates:read";
+  });
+}
+
+/** The preset whose scope set is exactly `scopes`, or "custom". */
+export function accessChoiceFor(scopes: readonly ServiceScope[]): AccessChoice {
+  const set = new Set(scopes);
+  return (
+    SCOPE_PRESETS.find((preset) => {
+      const wanted = presetScopes(preset);
+      return wanted.length === set.size && wanted.every((scope) => set.has(scope));
+    }) ?? "custom"
+  );
+}
+
+/** Which form field a draft problem belongs to (inline errors, focus order). */
+export function draftProblemField(
+  problem: SdkKeyDraftProblem,
+): "name" | "scopes" | "resources" | "pools" {
+  switch (problem) {
+    case "nameRequired":
+    case "nameTooLong":
+      return "name";
+    case "noScopes":
+    case "unusableScopes":
+    case "webhooksRequireAllOwned":
+      return "scopes";
+    case "unknownPool":
+      return "pools";
+    default:
+      return "resources";
+  }
+}
+
 /** i18n-safe key for a scope: `commands:read` → `commands.read`. */
 export function scopeKey(scope: ServiceScope): string {
   return scope.replace(":", ".");

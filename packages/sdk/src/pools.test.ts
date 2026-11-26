@@ -117,6 +117,7 @@ it("reads pool capacity with a numeric query, strictly decoded", async () => {
       budget: { memoryMiB: 8192, vcpu: 16, diskGiB: 200 },
     },
     fits: 3,
+    largest: { cpuCount: 8, memoryMiB: 3584, diskGiB: 99 },
     lease: { maxTimeoutMs: 86_400_000, timeoutZero: false },
     queue: {
       waiting: 2,

@@ -78,6 +78,7 @@ type HostRow = {
   memoryReserved: number;
   vcpuBudget: number | null;
   vcpuReserved: number;
+  maxCpu: number | null;
   rootCount: number;
   liveCount: number;
   memoryCap: number | null;
@@ -104,6 +105,72 @@ type StorageRow = {
 };
 
 const floorDiv = (a: number, b: number) => (b <= 0 ? 0 : Math.max(0, Math.floor(a / b)));
+
+type Largest = NonNullable<PoolCapacityDto["largest"]>;
+const floorStep = (value: number, step: number) => Math.max(0, Math.floor(value / step) * step);
+
+/**
+ * The largest single sandbox one eligible host could take now, per dimension:
+ * vCPU within its free vCPU and per-VM maximum, memory within its free budget
+ * and per-VM ceiling less the VM overhead (in 256 MiB steps), root disk within
+ * the freest usable storage pool less the root overhead, all within the
+ * create limits.
+ */
+export function hostLargest(
+  host: { maxCpu: number | null; memoryBudget: number | null },
+  memoryFree: number,
+  vcpuFree: number,
+  usablePools: readonly { capacityGiB: number; reservedGiB: number }[],
+): Largest {
+  const overhead = VM_SIZE_LIMITS.vmHostOverheadMiB;
+  return {
+    cpuCount: Math.max(0, Math.min(vcpuFree, host.maxCpu ?? 0, VM_SIZE_LIMITS.cpuCountMax)),
+    memoryMiB: floorStep(
+      Math.min(
+        VM_SIZE_LIMITS.memoryMiBMax,
+        (host.memoryBudget ?? 0) - overhead,
+        memoryFree - overhead,
+      ),
+      VM_SIZE_LIMITS.memoryMiBStep,
+    ),
+    diskGiB: Math.min(
+      VM_SIZE_LIMITS.diskGiBMax,
+      Math.max(
+        0,
+        ...usablePools.map(
+          (row) => row.capacityGiB - row.reservedGiB - VM_SIZE_LIMITS.rootDiskOverheadGiB,
+        ),
+      ),
+    ),
+  };
+}
+
+/** `largest` within what the caller's share caps still leave (one sandbox's charge). */
+export function shareCappedLargest(
+  largest: Largest,
+  share: { maxMemoryMiB: number | null; maxVcpu: number | null; maxDiskGiB: number | null },
+  used: { memoryMiB: bigint; vcpu: bigint; diskGiB: bigint },
+): Largest {
+  const left = (cap: number | null, spent: bigint, overhead: number) =>
+    cap === null ? Number.POSITIVE_INFINITY : cap - Number(spent) - overhead;
+  return {
+    cpuCount: Math.max(0, Math.min(largest.cpuCount, left(share.maxVcpu, used.vcpu, 0))),
+    memoryMiB: floorStep(
+      Math.min(
+        largest.memoryMiB,
+        left(share.maxMemoryMiB, used.memoryMiB, VM_SIZE_LIMITS.vmHostOverheadMiB),
+      ),
+      VM_SIZE_LIMITS.memoryMiBStep,
+    ),
+    diskGiB: Math.max(
+      0,
+      Math.min(
+        largest.diskGiB,
+        left(share.maxDiskGiB, used.diskGiB, VM_SIZE_LIMITS.rootDiskOverheadGiB),
+      ),
+    ),
+  };
+}
 
 /**
  * The capacity view (§6). One query over the placement visibility
@@ -171,7 +238,7 @@ export async function poolCapacityView(
     SELECT h.id, h.slug, h.label, h.status::text AS status, h.draining,
       (h."userId" = ${owner.ownerId}) AS own, (h."userId" = pool."userId") AS "ownerLocal",
       h."daemonMemoryBudgetMiB" AS "memoryBudget", h."memoryReservedMiB" AS "memoryReserved",
-      h."daemonVcpuBudget" AS "vcpuBudget", h."vcpuReserved", h."rootCount", h."liveCount",
+      h."daemonVcpuBudget" AS "vcpuBudget", h."vcpuReserved", h."daemonMaxCpuCount" AS "maxCpu", h."rootCount", h."liveCount",
       m."memoryCapPercent" AS "memoryCap", m."vcpuCapPercent" AS "vcpuCap",
       m."maxLeaseMs" AS "memberMaxLeaseMs", usage.memory AS "usageMemory", usage.vcpu AS "usageVcpu",
       ${flag(sql.stages.enabled)} AS enabled, ${flag(sql.stages.compatible)} AS compatible,
@@ -200,6 +267,7 @@ export async function poolCapacityView(
   const free = { memoryMiB: 0, vcpu: 0, diskGiB: 0 };
   const budget = { memoryMiB: 0, vcpu: 0, diskGiB: 0 };
   let fits = 0;
+  let largest: Largest | null = null;
   const detail: PoolCapacityDto["hosts"] = [];
   for (const host of hosts) {
     const pools = storage.filter((row) => row.hostId === host.id);
@@ -263,6 +331,21 @@ export async function poolCapacityView(
           ? 0
           : null;
     fits += hostFits ?? 0;
+    if (
+      schedulable &&
+      host.leaseFits &&
+      !reserved.has(host.id) &&
+      host.rootCount < VM_SIZE_LIMITS.hostManagedSandboxCeiling
+    ) {
+      const one = hostLargest(host, memoryFree, vcpuFree, usablePools);
+      largest = largest
+        ? {
+            cpuCount: Math.max(largest.cpuCount, one.cpuCount),
+            memoryMiB: Math.max(largest.memoryMiB, one.memoryMiB),
+            diskGiB: Math.max(largest.diskGiB, one.diskGiB),
+          }
+        : one;
+    }
     const hostDetail = grantOf(owner).has("hosts:read");
     if (host.own && hostDetail) {
       const chosen = usablePools
@@ -321,21 +404,24 @@ export async function poolCapacityView(
       });
     }
   }
-  if (size && poolOwner.userId !== owner.ownerId) {
+  if ((size || largest) && poolOwner.userId !== owner.ownerId) {
     const share = await prisma.share.findUnique({
       where: { poolId_granteeUserId: { poolId: pool.id, granteeUserId: owner.ownerId } },
       select: { maxMemoryMiB: true, maxVcpu: true, maxDiskGiB: true },
     });
     if (share) {
       const used = await shareUsage(prisma, pool.id, owner.ownerId);
-      const remaining = (cap: number | null, used: bigint, each: number) =>
-        cap === null ? Number.POSITIVE_INFINITY : floorDiv(cap - Number(used), each);
-      fits = Math.min(
-        fits,
-        remaining(share.maxMemoryMiB, used.memoryMiB, charge),
-        remaining(share.maxVcpu, used.vcpu, size.cpuCount),
-        remaining(share.maxDiskGiB, used.diskGiB, root),
-      );
+      if (size) {
+        const remaining = (cap: number | null, used: bigint, each: number) =>
+          cap === null ? Number.POSITIVE_INFINITY : floorDiv(cap - Number(used), each);
+        fits = Math.min(
+          fits,
+          remaining(share.maxMemoryMiB, used.memoryMiB, charge),
+          remaining(share.maxVcpu, used.vcpu, size.cpuCount),
+          remaining(share.maxDiskGiB, used.diskGiB, root),
+        );
+      }
+      if (largest) largest = shareCappedLargest(largest, share, used);
     }
   }
   const lease = (await poolLeaseViews(prisma, viewerOf(owner), [pool], now)).get(pool.id) ?? {
@@ -365,6 +451,7 @@ export async function poolCapacityView(
     size,
     aggregate: { free, budget },
     fits: size ? fits : null,
+    largest,
     lease,
     queue: {
       waiting,

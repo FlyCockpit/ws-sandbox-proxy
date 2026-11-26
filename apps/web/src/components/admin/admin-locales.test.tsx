@@ -87,6 +87,7 @@ const data: Record<string, unknown> = {
       {
         id: "h-1",
         userId: "u-1",
+        owner: { name: "User One", email: "one@example.test" },
         createdAt: at,
         status: "STALE",
         lastHeartbeatAt: null,
@@ -108,6 +109,7 @@ const data: Record<string, unknown> = {
       {
         id: "s-1",
         userId: "u-1",
+        owner: { name: "User One", email: "one@example.test" },
         createdAt: at,
         sandboxHostId: "h-1",
         templateId: "t-1",
@@ -181,6 +183,7 @@ vi.mock("@/utils/orpc", () => {
                 {
                   id: "whe-1",
                   ownerId: "owner-1",
+                  owner: { name: "Owner One", email: "owner@example.test" },
                   createdAt: at,
                   host: "hooks.example.com",
                   state: "enabled",

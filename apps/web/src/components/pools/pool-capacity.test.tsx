@@ -17,6 +17,7 @@ const capacity = {
     budget: { memoryMiB: 8192, vcpu: 8, diskGiB: 200 },
   },
   fits: null,
+  largest: { cpuCount: 6, memoryMiB: 3584, diskGiB: 99 },
   lease: { maxTimeoutMs: 86_400_000, timeoutZero: false },
   queue: {
     waiting: 3,
@@ -47,6 +48,19 @@ const capacity = {
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirectOnError: () => {} }));
 vi.mock("@/utils/orpc", () => ({
   orpc: {
+    sandboxTemplates: {
+      listTemplates: {
+        infiniteOptions: (options: { initialPageParam: unknown }) => ({
+          queryKey: ["templates"],
+          initialPageParam: options.initialPageParam,
+          getNextPageParam: () => undefined,
+          queryFn: async () => ({
+            items: [{ id: "tpl-1", slug: "base", label: "Base" }],
+            nextCursor: null,
+          }),
+        }),
+      },
+    },
     sandboxPools: {
       capacity: {
         queryOptions: ({ input }: { input: unknown }) => ({
@@ -124,4 +138,39 @@ it("a grantee never reads the owner's queue list", async () => {
   expect(reads.capacity).toBe(1);
   expect(reads.queue).toBe(0);
   expect(document.querySelector("[data-queue-entry]")).toBeNull();
+});
+
+it("picks the template to check from a list instead of free text, in GiB", async () => {
+  const { default: userEvent } = await import("@testing-library/user-event");
+  const { selectOption } = await import("@/test/select-option");
+  const user = userEvent.setup();
+  await mount(true);
+  await screen.findByText(en.poolCapacity.schedulable);
+  expect(screen.queryByRole("textbox", { name: en.poolCapacity.template })).toBeNull();
+  // Used and free are named; a bare "4 / 8" read as available in the walk.
+  expect(screen.getAllByText("4 GiB used of 8 GiB · 4 GiB free").length).toBeGreaterThan(0);
+  const before = reads.capacity;
+  await selectOption(user, screen.getByLabelText(en.poolCapacity.template), "Base (base)");
+  await waitFor(() => expect(reads.capacity).toBeGreaterThan(before));
+});
+
+it("names the largest sandbox that fits now, or says nothing fits", async () => {
+  await mount(false);
+  await screen.findByText(en.poolCapacity.schedulable);
+  expect(document.querySelector("[data-capacity-largest]")?.textContent).toBe(
+    "Largest sandbox that fits now: 6 vCPU · 3.5 GiB RAM · 99 GiB disk",
+  );
+  expect(screen.getAllByText("2 vCPU used of 8 vCPU · 6 vCPU free").length).toBeGreaterThan(0);
+  cleanup();
+  const saved = capacity.largest;
+  (capacity as { largest: typeof saved | null }).largest = null;
+  try {
+    await mount(false);
+    await screen.findByText(en.poolCapacity.schedulable);
+    expect(document.querySelector("[data-capacity-largest='none']")?.textContent).toBe(
+      en.poolCapacity.largestNone,
+    );
+  } finally {
+    (capacity as { largest: typeof saved | null }).largest = saved;
+  }
 });

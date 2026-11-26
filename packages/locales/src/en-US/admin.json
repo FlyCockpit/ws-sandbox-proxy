@@ -159,12 +159,12 @@
     },
     "summaryLoadFailed": "Failed to load totals.",
     "filters": {
-      "owner": "Owner ID",
-      "ownerPlaceholder": "Exact user ID",
+      "owner": "Owner",
+      "ownerPlaceholder": "Search users by name or email",
       "host": "Host ID",
-      "hostPlaceholder": "Exact host ID",
+      "hostPlaceholder": "Paste a host ID",
       "sandbox": "Sandbox ID",
-      "sandboxPlaceholder": "Exact sandbox ID",
+      "sandboxPlaceholder": "Paste a sandbox ID",
       "hostStatus": "Connection",
       "sandboxState": "State",
       "operationState": "State",
@@ -172,7 +172,12 @@
       "allStates": "All states",
       "invalidId": "IDs use only letters, digits, - and _.",
       "fixToSearch": "Fix the highlighted filter to see results.",
-      "clear": "Clear filters"
+      "clear": "Clear filters",
+      "ownerSearch": "Name or email",
+      "ownerEmpty": "No matching users.",
+      "ownerClear": "Clear owner filter",
+      "ownerId": "User {{id}}",
+      "idHint": "Or use Sandboxes / Operations on a row."
     },
     "tables": {
       "hosts": "Hosts",
@@ -203,7 +208,6 @@
     },
     "quarantined": "Quarantined",
     "draining": "Draining",
-    "capacity": "{{live}} live · {{roots}} stopped sandbox disks",
     "generation": "Generation {{generation}}",
     "filterByOwner": "Show only owner {{id}}",
     "filterByHost": "Show only host {{id}}",
@@ -264,7 +268,6 @@
       "disabledForFailures": "Disabled for failures",
       "pending24h": "Pending deliveries (24 h)",
       "failed24h": "Failed deliveries (24 h)",
-      "oldestPendingSeconds": "Oldest pending (seconds)",
       "listLabel": "Webhook endpoints (host only)",
       "empty": "No webhook endpoints.",
       "loadFailed": "Failed to load webhook endpoints.",
@@ -273,8 +276,29 @@
         "enabled": "Enabled",
         "disabled": "Disabled by owner",
         "sustained_failures": "Disabled for failures"
-      }
-    }
+      },
+      "oldestPending": "Oldest pending delivery",
+      "oldestPendingNone": "None"
+    },
+    "capacityLive_one": "{{count}} live sandbox",
+    "capacityLive_other": "{{count}} live sandboxes",
+    "capacityStopped_one": "{{count}} stopped sandbox disk",
+    "capacityStopped_other": "{{count}} stopped sandbox disks",
+    "ids": {
+      "owner": "owner ID",
+      "host": "host ID",
+      "sandbox": "sandbox ID",
+      "template": "template ID",
+      "revision": "revision ID",
+      "operation": "operation ID",
+      "endpoint": "endpoint ID"
+    },
+    "rowActions": {
+      "sandboxes": "Sandboxes",
+      "operations": "Operations",
+      "filter": "Filter"
+    },
+    "revisionOf": "Revision"
   },
   "settings": {
     "title": "Settings",

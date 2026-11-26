@@ -5,6 +5,7 @@ import { protectedProcedure } from "../index";
 import { sessionPrincipal } from "../sandbox";
 import { idempotencyKey } from "../sandbox/contracts";
 import {
+  buildTargetOf,
   cancelTemplateBuild,
   createTemplateBuild,
   getTemplateBuild,
@@ -64,14 +65,11 @@ export const templateBuildsRouter = {
         needsContext: accepted.needsContext,
       };
     }),
-  get: protectedProcedure
-    .input(templateBuildIdInput)
-    .handler(async ({ input, context }) =>
-      named(
-        context.session.user.id,
-        await getTemplateBuild(sessionPrincipal(context.session.user.id), input),
-      ),
-    ),
+  get: protectedProcedure.input(templateBuildIdInput).handler(async ({ input, context }) => {
+    const ownerId = context.session.user.id;
+    const build = await named(ownerId, await getTemplateBuild(sessionPrincipal(ownerId), input));
+    return { ...build, target: await buildTargetOf(ownerId, build.id) };
+  }),
   list: protectedProcedure.input(listTemplateBuildsInput).handler(async ({ input, context }) => {
     const page = await listTemplateBuilds(sessionPrincipal(context.session.user.id), input);
     return {

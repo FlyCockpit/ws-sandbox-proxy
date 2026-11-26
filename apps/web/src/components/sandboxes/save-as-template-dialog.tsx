@@ -1,5 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { VM_SIZE_LIMITS } from "@wssp/api/sandbox/contracts";
 import { Button } from "@wssp/ui/components/button";
 import {
@@ -9,6 +10,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
+import { AdvancedSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
@@ -167,9 +169,12 @@ export function SaveAsTemplateDialog({
         ) : (
           <form
             className="flex min-w-0 flex-col gap-4"
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              void form.handleSubmit();
+              const root = event.currentTarget;
+              await form.handleSubmit();
+              // A refused option opens its section and takes focus.
+              if (!form.state.isValid) focusFirstInvalid(root);
             }}
           >
             <p
@@ -201,50 +206,64 @@ export function SaveAsTemplateDialog({
                 </div>
               )}
             </form.Field>
-            <form.Field name="tag">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("sandboxes:capture.tag")}
-                  description={t("sandboxes:capture.tagHint")}
-                  autoComplete="off"
-                  inputMode="text"
-                  maxLength={63}
-                  inputClassName="min-h-11 font-mono"
-                />
+            <form.Subscribe selector={(state) => state.values}>
+              {(current) => (
+                <AdvancedSection
+                  title={t("sandboxes:capture.options")}
+                  data-capture-options=""
+                  summary={t("sandboxes:capture.optionsSummary", {
+                    tag: current.tag || "—",
+                    disk: current.defaultDiskGiB.trim() || sandbox.diskGiB,
+                    count: splitPaths(current.scrubPaths).length,
+                  })}
+                >
+                  <form.Field name="tag">
+                    {(field) => (
+                      <TextField
+                        field={field}
+                        label={t("sandboxes:capture.tag")}
+                        description={t("sandboxes:capture.tagHint")}
+                        autoComplete="off"
+                        inputMode="text"
+                        maxLength={63}
+                        inputClassName="min-h-11 font-mono"
+                      />
+                    )}
+                  </form.Field>
+                  <form.Field name="defaultDiskGiB">
+                    {(field) => (
+                      <TextField
+                        field={field}
+                        label={t("sandboxes:capture.defaultDisk")}
+                        description={t("sandboxes:capture.minDiskHint", {
+                          diskGiB: sandbox.diskGiB,
+                        })}
+                        type="number"
+                        inputMode="numeric"
+                        min={sandbox.diskGiB}
+                        max={VM_SIZE_LIMITS.diskGiBMax}
+                        step={1}
+                        autoComplete="off"
+                        inputClassName="min-h-11"
+                      />
+                    )}
+                  </form.Field>
+                  <form.Field name="scrubPaths">
+                    {(field) => (
+                      <TextareaField
+                        field={field}
+                        label={t("sandboxes:capture.scrubPaths")}
+                        description={t("sandboxes:capture.scrubPathsHint")}
+                        autoComplete="off"
+                        rows={3}
+                        maxLength={16_384}
+                        inputClassName="font-mono"
+                      />
+                    )}
+                  </form.Field>
+                </AdvancedSection>
               )}
-            </form.Field>
-            <p data-capture-min-disk="" className="text-xs text-muted-foreground">
-              {t("sandboxes:capture.minDiskHint", { diskGiB: sandbox.diskGiB })}
-            </p>
-            <form.Field name="defaultDiskGiB">
-              {(field) => (
-                <TextField
-                  field={field}
-                  label={t("sandboxes:capture.defaultDisk")}
-                  type="number"
-                  inputMode="numeric"
-                  min={sandbox.diskGiB}
-                  max={VM_SIZE_LIMITS.diskGiBMax}
-                  step={1}
-                  autoComplete="off"
-                  inputClassName="min-h-11"
-                />
-              )}
-            </form.Field>
-            <form.Field name="scrubPaths">
-              {(field) => (
-                <TextareaField
-                  field={field}
-                  label={t("sandboxes:capture.scrubPaths")}
-                  description={t("sandboxes:capture.scrubPathsHint")}
-                  autoComplete="off"
-                  rows={3}
-                  maxLength={16_384}
-                  inputClassName="font-mono"
-                />
-              )}
-            </form.Field>
+            </form.Subscribe>
             {problem ? (
               <p role="alert" data-capture-problem={problem} className="text-sm text-destructive">
                 {t(`sandboxes:capture.problem.${problem}`)}
@@ -289,9 +308,16 @@ function CaptureProgress({
   return (
     <div className="flex min-w-0 flex-col gap-3" aria-live="polite">
       {data?.state === "SUCCEEDED" ? (
-        <p role="status" data-capture-state="succeeded" className="text-sm">
-          {t("sandboxes:capture.succeeded")}
-        </p>
+        <div role="status" data-capture-state="succeeded" className="flex flex-col gap-1 text-sm">
+          <p>{t("sandboxes:capture.succeeded")}</p>
+          <Link
+            to="/$lang/dashboard/templates"
+            params={{ lang }}
+            className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+          >
+            {t("sandboxes:capture.openTemplates")}
+          </Link>
+        </div>
       ) : settled ? (
         <p role="alert" data-capture-state="failed" className="text-sm text-destructive">
           {data?.errorMessage ?? t("sandboxes:capture.failed")}

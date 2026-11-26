@@ -192,7 +192,7 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
   const allUsers = (listQuery.data?.pages.flatMap((page) => page.users) ?? []) as UserRow[];
 
   return (
-    <PageShell width="wide">
+    <PageShell inFrame width="wide">
       <PageHeader
         title={t("admin:users.title")}
         description={t("admin:users.description")}

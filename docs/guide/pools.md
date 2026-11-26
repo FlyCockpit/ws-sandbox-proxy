@@ -129,6 +129,11 @@ between the read and request, or refuse requested credentials/lease policy.
   Hosts the queue holds for an older waiting create (the strict-head
   reservation a create would refuse with `pool_full` reason `reserved`) count
   as fitting nothing.
+- `largest`: the largest vCPU count, memory (MiB, 256 MiB steps) and root disk
+  (GiB) one currently schedulable host you may use could place now, each on its
+  own (they may come from different hosts), after member caps, per-VM limits
+  and your share caps; `null` when no host is eligible. It names no host. The
+  dashboard's create page uses it to cap its size sliders.
 - `lease`: the same lease view as the pool itself.
 - `queue`: waiting creates in the pool, how many are yours, your oldest
   position, the effective wait/queue limits and `preferOwnHosts`.
@@ -268,11 +273,14 @@ reservation until evidence resolves them. See the
 
 ## Dashboard walkthrough
 
-1. Open **Pools → Create pool**. Choose an owner-local slug and a label. Open
-   **Manage members → Add host** to select enrolled hosts; use **Load more** in each
-   list or picker to reach later pages. Enable/disable a member without removing
-   it, or remove it after typing its host slug. Edit pool settings in a sheet;
-   deleting a pool requires its slug and keeps accepted sandbox history.
+1. Open **Pools → Create pool**. Give it a label (the owner-local slug is
+   filled in from it and stays editable). Each pool card shows its hosts,
+   people, capacity and longest sandbox lifetime. Open **Hosts → Add a host to
+   this pool** to select enrolled hosts; use **Load more** in each list or
+   picker to reach later pages. Enable/disable a member without removing it,
+   or remove it after typing its host slug. Edit pool settings from the card's
+   More menu (a sheet with the expert settings collapsed); deleting a pool
+   requires its slug and keeps accepted sandbox history.
 2. On **Templates**, register a logical template, then use **Manage revision**
    on its exact revision to verify the same fingerprint on each intended member.
    **Verification pending** permits minting a grant but does not prove launch readiness;
@@ -280,7 +288,7 @@ reservation until evidence resolves them. See the
    distribution on, a member without the image can still be chosen and fetches
    it at create time; a fetched copy then shows as a cached copy.
 3. On **Sandboxes → Create sandbox**, choose the logical template independently
-   of placement. Keep **Latest tag (resolved once at acceptance)** to resolve `latest` once at acceptance, or
+   of placement. Keep **Latest version (chosen when you create)** to resolve `latest` once at acceptance, or
    choose an exact revision ID. Then select **Pool** or **Explicit host**.
    Changing placement preserves the template choice. Revision choices are
    paged, and retirement/compatibility/admission are rechecked by the server.
@@ -311,7 +319,7 @@ snapshot of accepted work.
 
 ### Inviting someone and joining a pool
 
-1. The pool owner opens **Manage sharing → Share or invite**, enters the
+1. The pool owner opens **People → Share or invite**, enters the
    person's email and the permissions (use, contribute hosts, optional RAM,
    vCPU and disk caps), and saves. If an account with that verified email
    already exists, the share is granted at once: no invitation, and the pool

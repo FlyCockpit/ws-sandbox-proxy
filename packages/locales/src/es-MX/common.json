@@ -18,7 +18,8 @@
     "saving": "Guardando…",
     "tryAgain": "Intentar de nuevo",
     "loadMore": "Cargar más",
-    "loadingMore": "Cargando…"
+    "loadingMore": "Cargando…",
+    "more": "Más acciones"
   },
   "advanced": {
     "summary": "Avanzado"
@@ -48,5 +49,38 @@
     "error": "Error",
     "info": "Información",
     "warning": "Advertencia"
+  },
+  "keyValue": {
+    "key": "Clave",
+    "value": "Valor",
+    "add": "Agregar",
+    "remove": "Quitar {{key}}",
+    "rowsMode": "Filas",
+    "textMode": "Texto .env",
+    "textHint": "Un CLAVE=valor por línea. Pega aquí un archivo .env; # inicia un comentario.",
+    "show": "Mostrar valor",
+    "hide": "Ocultar valor",
+    "lineProblem": "Línea {{line}}: se esperaba CLAVE=valor.",
+    "empty": "Nada todavía.",
+    "unwritableKeys": "Algunas claves no se pueden escribir como líneas CLAVE=valor; edítalas como filas.",
+    "problem": {
+      "emptyKey": "Agrega una clave para este valor.",
+      "invalidKey": "{{key}} no es una clave válida.",
+      "duplicateKey": "{{key}} ya está definida arriba.",
+      "reservedKey": "{{key}} está reservada.",
+      "valueCleared": "Ingresa de nuevo el valor de {{key}}."
+    }
+  },
+  "range": {
+    "default": "Predeterminado",
+    "reset": "Restablecer al predeterminado",
+    "outOfRange": "Elige un valor de {{min}} a {{max}}."
+  },
+  "form": {
+    "fixErrors": "Corrige los campos marcados."
+  },
+  "offline": {
+    "showingDataFrom": "Sin conexión: mostrando los datos guardados ({{time}}).",
+    "noData": "Sin conexión. Las páginas volverán a cargar cuando regrese la conexión."
   }
 }

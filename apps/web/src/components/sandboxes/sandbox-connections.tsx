@@ -1,13 +1,17 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { env } from "@wssp/env/web";
 import { Badge } from "@wssp/ui/components/badge";
+import { CopyField } from "@wssp/ui/components/copy-field";
 import { Trans, useTranslation } from "react-i18next";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { LoadMore } from "@/components/load-more";
 import { QueryBoundary } from "@/components/query-boundary";
+import { SandboxDocLink } from "@/components/sandboxes/sandbox-ports";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { formatBytes } from "@/lib/format-bytes";
 import { dateTimeTitle } from "@/lib/format-date-time";
+import { hostCommands, shellWord } from "@/lib/host-status";
 import { orpc } from "@/utils/orpc";
 import { formatRelativeTime } from "@/utils/relative-time";
 
@@ -17,6 +21,9 @@ import { formatRelativeTime } from "@/utils/relative-time";
  * Metadata only (key, origin, times, end reason, channel counts, forwarded
  * guest ports, bytes): the server never records what ran.
  */
+
+/** One-time ssh setup (`docs/guide/connect.md`). */
+const SSH_CONFIG_INSTALL = "wssp ssh-config --install";
 
 /** The server keeps at most 16 forwarded ports per connection; never show more. */
 const FORWARDED_PORTS_SHOWN = 16;
@@ -59,9 +66,13 @@ function bytes(value: string, locale: string): string {
  */
 export function SandboxConnectHint({ target }: { target: string }) {
   const { t } = useTranslation(["sandboxes"]);
+  const cli = hostCommands(env.VITE_SERVER_URL);
   const commands = [
-    t("sandboxes:connect.shellCommand", { target }),
-    t("sandboxes:connect.sshCommand", { target }),
+    {
+      value: t("sandboxes:connect.shellCommand", { target }),
+      copy: t("sandboxes:connect.copyShell"),
+    },
+    { value: t("sandboxes:connect.sshCommand", { target }), copy: t("sandboxes:connect.copySsh") },
   ];
   return (
     <section
@@ -69,26 +80,33 @@ export function SandboxConnectHint({ target }: { target: string }) {
       data-sandbox-connect=""
       className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card p-4 text-card-foreground"
     >
-      <h2 id="sandbox-connect" className="text-sm font-medium">
+      <h3 id="sandbox-connect" className="font-heading text-sm font-semibold">
         {t("sandboxes:connect.heading")}
-      </h2>
+      </h3>
       <p className="text-sm text-muted-foreground">{t("sandboxes:connect.description")}</p>
-      <ul aria-label={t("sandboxes:connect.label")} className="flex min-w-0 flex-col gap-1">
+      <ul aria-label={t("sandboxes:connect.label")} className="flex min-w-0 flex-col gap-2">
         {commands.map((command) => (
-          <li key={command} className="min-w-0">
-            <code className="block min-w-0 break-all rounded-md bg-muted px-2 py-1 font-mono text-xs">
-              {command}
-            </code>
+          <li key={command.value} className="min-w-0">
+            <CopyField value={command.value} copyLabel={command.copy} />
           </li>
         ))}
       </ul>
-      <p className="text-sm text-muted-foreground">
-        <Trans
-          t={t}
-          i18nKey="sandboxes:connect.sshSetup"
-          components={{ code: <code className="whitespace-nowrap" /> }}
-        />
-      </p>
+      <p className="text-sm text-muted-foreground">{t("sandboxes:connect.sshSetup")}</p>
+      <CopyField value={SSH_CONFIG_INSTALL} copyLabel={t("sandboxes:connect.copySetup")} />
+      <details data-get-cli="" className="group min-w-0 text-sm">
+        <summary className="inline-flex min-h-11 cursor-pointer items-center font-medium underline-offset-4 hover:underline">
+          {t("sandboxes:connect.getCli")}
+        </summary>
+        <div className="flex min-w-0 flex-col gap-2 pt-1">
+          <p className="text-muted-foreground">{t("sandboxes:connect.getCliHint")}</p>
+          <CopyField value={cli.install} copyLabel={t("sandboxes:connect.copyInstall")} />
+          <CopyField
+            value={`wssp login --server ${shellWord(env.VITE_SERVER_URL)}`}
+            copyLabel={t("sandboxes:connect.copyLogin")}
+          />
+          <SandboxDocLink page="cliInstall" label={t("sandboxes:connect.getCli")} />
+        </div>
+      </details>
     </section>
   );
 }

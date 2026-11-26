@@ -236,7 +236,10 @@ describe("DataKeyCard", () => {
     expect(within(dialog).getByText(/2 quarantined captures are sealed to it/)).toBeTruthy();
     const confirm = within(dialog).getByRole("button", { name: "Destroy anyway" });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
-    await user.type(within(dialog).getByPlaceholderText(R1), R1);
+    const typed = within(dialog).getByLabelText(enAdmin.dataKey.returnKeys.destroyPrompt);
+    // The token is shown above the field, never as its placeholder (it would look prefilled).
+    expect(typed.getAttribute("placeholder")).toBeNull();
+    await user.type(typed, R1);
     expect((confirm as HTMLButtonElement).disabled).toBe(false);
     await user.click(confirm);
     await waitFor(() =>

@@ -100,8 +100,11 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
       "daemonMemoryBudgetMiB",
       "daemonMaxCpuCount",
       "quarantinedAt",
+      "owner",
     ].sort(),
   );
+  // The owner's account name and email join in; owner-chosen labels never do.
+  expect(first.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
   expect(first.nextCursor).not.toBeNull();
   await db.inspect.sandboxHost.delete({ where: { id: first.items[0]!.id } });
   const second = await client.listHosts({
@@ -168,11 +171,14 @@ it("pages tied metadata across owners with exact filters and no stored secrets",
       "guestSudo",
       "guestSudoReason",
       "guestRoot",
+      "owner",
     ].sort(),
   );
+  expect(sandboxes.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
   expect(JSON.stringify(sandboxes)).not.toContain("private-");
   const operations = await client.listOperations({ ownerId, sandboxId: sandbox.id });
   expect(operations.items).toHaveLength(1);
+  expect(operations.items[0]!.owner).toEqual({ name: "Owner", email: `${ownerId}@example.test` });
   expect(JSON.stringify(operations)).not.toContain("private-");
 });
 

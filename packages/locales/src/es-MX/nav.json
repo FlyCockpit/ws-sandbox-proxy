@@ -2,8 +2,14 @@
   "skipToContent": "Saltar al contenido",
   "items": {
     "home": "Inicio",
+    "sandboxes": "Sandboxes",
+    "templates": "Plantillas",
+    "activity": "Actividad",
+    "hosts": "Hosts",
+    "terminals": "Terminales",
     "settings": "Configuración",
-    "admin": "Administración"
+    "admin": "Administración",
+    "more": "Más"
   },
   "languageLabel": "Idioma",
   "mainNav": {
@@ -19,6 +25,8 @@
     "myAccount": "Mi cuenta",
     "signIn": "Iniciar sesión",
     "signOut": "Cerrar sesión",
-    "signUp": "Registrarse"
+    "signUp": "Registrarse",
+    "open": "{{name}}, menú de la cuenta",
+    "helpDocs": "Ayuda y documentación"
   }
 }

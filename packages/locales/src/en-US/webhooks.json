@@ -48,16 +48,31 @@
     "urlRequired": "Enter the endpoint URL.",
     "urlTooLong": "Use at most 2048 characters.",
     "eventsRequired": "Choose at least one event.",
-    "descriptionTooLong": "Use at most 200 characters."
+    "descriptionTooLong": "Use at most 200 characters.",
+    "destination": "Destination",
+    "eventsHint": "Choose what to be told about. A group's box selects all of its events.",
+    "groupAll": "All {{group}} events",
+    "groupCount": "{{chosen}} of {{total}}",
+    "details": "Details",
+    "noDescription": "No description",
+    "kindsSection": "Operation kinds",
+    "kindsDefaultShort": "Lifecycle and commands",
+    "kindsAllShort": "All kinds",
+    "kindsCustomShort": "Custom (API)"
   },
   "create": {
+    "statusFailed": "Couldn't check whether webhooks are set up on this server.",
     "action": "Add endpoint",
     "title": "Add a webhook endpoint",
     "description": "Events that commit after the endpoint exists are delivered to it.",
     "submit": "Add endpoint",
     "submitting": "Adding…",
     "secretLabel": "Signing secret",
-    "secretHint": "Verify every delivery with this secret (Standard Webhooks). It is shown only now; store it with your receiver."
+    "secretHint": "Verify every delivery with this secret (Standard Webhooks). It is shown only now; store it with your receiver.",
+    "createdTitle": "Endpoint added",
+    "createdDescription": "Store the signing secret with your receiver now. Once you confirm you saved it, the endpoint opens so you can send a test event.",
+    "status_one": "{{count}} event selected",
+    "status_other": "{{count}} events selected"
   },
   "edit": {
     "action": "Edit",
@@ -166,5 +181,10 @@
     "notFound": "It no longer exists. The list has been refreshed.",
     "rateLimited": "Too many requests. Wait a moment and try again.",
     "generic": "That didn't work. Check your connection and try again."
+  },
+  "eventGroup": {
+    "sandbox": "Sandboxes",
+    "operation": "Operations",
+    "credential": "CLI logins"
   }
 }

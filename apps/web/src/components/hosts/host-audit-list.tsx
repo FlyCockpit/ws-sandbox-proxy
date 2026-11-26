@@ -40,7 +40,7 @@ export function HostAuditList({
   const parsed = auditEntries.safeParse(entries);
   return (
     <section className="flex min-w-0 flex-col gap-3">
-      <h2 className="font-semibold">{t("audit.title")}</h2>
+      <h3 className="font-semibold">{t("audit.title")}</h3>
       {!parsed.success ? (
         <InlineRetry message={t("audit.unavailable")} onRetry={onRetry} />
       ) : parsed.data.length === 0 ? (

@@ -55,7 +55,7 @@ These are deliberate, current limits, not hidden features:
   one of your templates. WS Sandbox Proxy does not pull OCI/Docker images, and a build
   has no layer cache and no multi-stage, `ADD`, `CMD` or `ENTRYPOINT`. The
   first base template is either the tested community image
-  ([Create from community image](../operations/templates.md#community-bases))
+  ([New template → From a community image](../operations/templates.md#community-bases))
   or an Incus `virtual-machine` image you prepare on a host yourself
   ([templates](../operations/templates.md)).
 - **No snapshots, restore or fork.** Those entry points answer

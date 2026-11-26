@@ -7,6 +7,7 @@ import en from "@wssp/locales/src/en-US/sandboxes.json";
 import commonEs from "@wssp/locales/src/es-MX/common.json";
 import es from "@wssp/locales/src/es-MX/sandboxes.json";
 import { createInstance } from "i18next";
+import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
@@ -14,6 +15,13 @@ const server = vi.hoisted(() => ({
   captures: [] as Record<string, unknown>[],
   captureError: null as unknown,
   views: 0,
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children, className, to }: { children: ReactNode; className?: string; to?: string }) => (
+    <a className={className} href="#link" data-to={to}>
+      {children}
+    </a>
+  ),
 }));
 vi.mock("@/hooks/use-two-factor-redirect", () => ({ useTwoFactorRedirect: () => () => false }));
 vi.mock("@/utils/orpc", () => ({
@@ -129,6 +137,21 @@ it.each([
     await vi.advanceTimersByTimeAsync(PROGRESS_REFETCH_MS);
   });
   expect(await screen.findByText(copy.capture.succeeded)).toBeTruthy();
+  // The next step after success.
+  expect(screen.getByText(copy.capture.openTemplates).getAttribute("data-to")).toBe(
+    "/$lang/dashboard/templates",
+  );
+});
+
+it("keeps tag, default disk and scrub paths in one collapsed Options section with a summary", async () => {
+  await mount("en-US");
+  const options = document.querySelector<HTMLDetailsElement>("[data-capture-options]")!;
+  expect(options.open).toBe(false);
+  expect(options.querySelector('[data-slot="advanced-section-summary"]')?.textContent).toBe(
+    "Tag latest · 12 GiB default disk · 0 extra paths",
+  );
+  // Template, the options section, and the two actions: a short dialog.
+  expect(screen.getByRole("combobox", { name: en.capture.template })).toBeTruthy();
 });
 
 it("rejects an invalid tag or a relative path without sending anything", async () => {
@@ -141,6 +164,9 @@ it("rejects an invalid tag or a relative path without sending anything", async (
   expect(await screen.findByText(en.capture.invalidTag)).toBeTruthy();
   expect(screen.getByText(en.capture.invalidPaths)).toBeTruthy();
   expect(server.captures).toHaveLength(0);
+  // The refused option's section opens and the first invalid field takes focus.
+  expect(document.querySelector<HTMLDetailsElement>("[data-capture-options]")?.open).toBe(true);
+  expect(document.activeElement).toBe(tag);
 });
 
 it("explains a busy refusal and a retry is a new intent", async () => {

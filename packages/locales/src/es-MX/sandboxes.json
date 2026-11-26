@@ -53,33 +53,31 @@
       "uploading_disk": "Subiendo el disco",
       "fetching_disk": "Descargando el disco",
       "importing_disk": "Importando el disco"
-    }
+    },
+    "options": "Opciones",
+    "optionsSummary": "Etiqueta {{tag}} · disco predeterminado de {{disk}} GiB · {{count}} rutas adicionales",
+    "openTemplates": "Abrir plantillas"
   },
   "create": {
     "action": "Crear sandbox",
     "title": "Crear un sandbox",
-    "description": "Elige una plantilla independientemente de un grupo o de un host específico.",
     "name": "Nombre (opcional)",
     "nameHint": "Letras minúsculas, dígitos y guiones, hasta 63 caracteres. Déjalo en blanco para un nombre generado como quiet-otter.",
     "host": "Host",
     "chooseHost": "Elige un host",
-    "hostOption": "{{label}} ({{slug}}) — {{state}}",
-    "hostOptionDraining": "{{label}} ({{slug}}) — {{state}} · drenando",
     "moreHosts": "Cargar más hosts",
     "noHosts": "Aún no tienes un host que pueda ejecutar un sandbox.",
     "hostsFailed": "No se pudieron cargar tus hosts.",
     "template": "Plantilla",
     "chooseTemplate": "Elige una plantilla",
-    "pickHostFirst": "Elige un host para ver sus plantillas.",
-    "noTemplates": "No hay plantillas activas. Registra una en la página Plantillas.",
+    "noTemplates": "Todavía no tienes ninguna plantilla que puedas usar. Las plantillas pertenecen a tu cuenta: un grupo compartido contigo no comparte las plantillas de su dueño.",
     "moreTemplates": "Cargar más plantillas",
     "templatesFailed": "No se pudieron cargar tus plantillas.",
     "labels": "Etiquetas",
-    "labelsHint": "Etiquetas de texto opcionales: una por línea, con formato clave=valor. Máximo 32 entradas, 64 unidades UTF-16 por clave, 1024 por valor y 8192 bytes UTF-8 de JSON en total. No pongas secretos aquí.",
     "egress": "Acceso a red saliente",
     "internetAccess": "Acceso a internet",
     "internetAccessOnHint": "El sandbox puede llegar a internet pública. Las redes privadas, los metadatos de la nube y las direcciones propias del host siguen bloqueados. Se fija al crearlo.",
-    "fallbackSummary": "Si queda en el host de otro usuario que solo permite destinos de una lista, permitir:",
+    "fallbackSummary": "Destinos permitidos en hosts que bloquean el internet abierto",
     "fallbackHint": "Solo se usa en un host así, donde el sandbox funciona en modo de lista permitida con estas entradas. Deja ambos vacíos para bloquear ahí todo el tráfico saliente.",
     "egressHint": "Solo los destinos listados abajo son alcanzables; no listar nada bloquea todo el tráfico saliente. Se fija en la creación.",
     "egressDomains": "Dominios permitidos",
@@ -89,10 +87,8 @@
     "submit": "Crear",
     "pending": "Creando…",
     "done": "Sandbox solicitado. Aparece como Listo cuando el host lo informe.",
-    "hostWaits": "Este host no está conectado. Un inicio nuevo requiere una conexión reciente y una imagen verificada; reconecta su daemon antes de crear.",
+    "hostWaits": "Este host no está conectado ahora ({{state}}). Un sandbox nuevo necesita una conexión reciente y una imagen verificada: reconecta su daemon y luego crea.",
     "drainingHosts": "Los hosts que se están drenando no admiten sandboxes nuevos y no se pueden elegir. Deja de drenar uno en la página Hosts.",
-    "envs": "Variables de entorno (JSON)",
-    "envsHint": "Valores privados para comandos y terminales. Mapa JSON de texto: máximo 64 entradas, 128 bytes UTF-8 por nombre, 4096 por valor y 16384 bytes de JSON ordenado en total. HOME, SHELL y TERM están reservados. Los valores se guardan de forma privada en el servidor y el host.",
     "placement": "Asignación",
     "direct": "Host específico",
     "pool": "Grupo",
@@ -101,28 +97,12 @@
     "selectorHint": "Usa su etiqueta latest o fija una revisión exacta. El servidor verifica la compatibilidad al asignar el host; cambiar la ubicación conserva tu selección.",
     "logicalOption": "{{label}} ({{slug}})",
     "revision": "Revisión",
-    "latest": "Etiqueta latest (se resuelve una vez al aceptar)",
+    "latest": "Versión más reciente (se elige al crear)",
     "revisionOption": "Revisión {{revision}} · {{architecture}} · {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB (mín. {{minDiskGiB}})",
     "revisionDiskHint": "Disco raíz: {{defaultDiskGiB}} GiB si se deja vacío; al menos {{minDiskGiB}} GiB (la raíz de la imagen). Un disco más grande amplía el sistema de archivos raíz en el primer arranque.",
     "revisionsFailed": "No se pudieron cargar las revisiones.",
     "moreRevisions": "Cargar más revisiones",
-    "hostOptionCapacity": "{{label}} ({{slug}}) · {{state}} · {{live}} activos · {{fit}}",
-    "size": "Tamaño de la VM (opcional)",
-    "cpuCount": "vCPU (opcional)",
-    "memoryMiB": "Memoria (MiB, opcional)",
-    "sizeHint": "Deja cualquier campo vacío para heredarlo de forma independiente de la revisión aceptada. CPU: 1–32; RAM: 512–65536 MiB en pasos de 256; raíz: del mínimo de la revisión a 2048 GiB (vacío: el predeterminado de la revisión). Detener y arrancar en frío conserva tamaño y almacenamiento.",
-    "latestSizeHint": "La revisión más reciente se resuelve al aceptar la solicitud. Elige una revisión exacta para ver sus valores; el sandbox devuelto muestra la asignación real.",
-    "diskGiB": "Disco raíz (GiB, opcional)",
-    "fit": {
-      "unknown": "La capacidad requiere tamaño y reportes actuales",
-      "size": "El tamaño supera el máximo por VM",
-      "storage": "Sin almacenamiento sano elegible",
-      "ram": "No hay suficiente RAM libre",
-      "ceiling": "Se alcanzó el máximo de asignaciones retenidas",
-      "vcpu": "vCPU insuficientes",
-      "disk": "Presupuesto de disco insuficiente",
-      "fits": "Los recursos parecen suficientes; el servidor verifica"
-    },
+    "latestSizeHint": "El tamaño de la versión más reciente solo se conoce al crear. Fija una versión en Versión de la plantilla para ver su tamaño aquí.",
     "capacityWaitHint": "Esperar conserva tu lugar en la fila; la duración empieza cuando el sandbox se coloca. Destrúyelo para dejar de esperar.",
     "wait": {
       "none": "Fallar de inmediato",
@@ -137,7 +117,118 @@
     "guestSudoOnHint": "El usuario invitado puede ejecutar comandos como root dentro de la VM con <code>sudo</code> sin contraseña. Los comandos, archivos y terminales aún se ejecutan como el usuario invitado. Se fija en la creación.",
     "guestSudoOffHint": "WS Sandbox Proxy no le da root al usuario invitado. Se fija en la creación.",
     "guestRootTainted": "Root aún puede ser alcanzable en esta plantilla: esta revisión fue compilada con pasos de root o capturada de un sandbox que podía ejecutarse como root.",
-    "capacityWait": "Si el grupo está lleno"
+    "capacityWait": "Si el grupo está lleno",
+    "pageDescription": "Elige una plantilla y dónde se ejecuta. Todo lo demás tiene un valor predeterminado seguro que puedes cambiar en Avanzado.",
+    "back": "Volver a sandboxes",
+    "sectionTemplate": "Plantilla",
+    "sectionTemplateHint": "La imagen con la que arranca la VM. Se usa su versión más reciente salvo que fijes una en Avanzado.",
+    "sectionPlacement": "Dónde se ejecuta",
+    "sectionPlacementHint": "Un grupo elige por ti su host menos cargado; un host lo ejecuta exactamente ahí.",
+    "sectionBasics": "Nombre y duración",
+    "sectionBasicsHint": "Cuando termina la duración, la VM se detiene y conserva su disco, salvo que elijas otra cosa.",
+    "sectionAdvanced": "Avanzado",
+    "sectionAdvancedHint": "Opcional. Cada línea muestra lo que se usará.",
+    "placementPool": "Grupo",
+    "placementHost": "Host",
+    "hostAvailable": "{{label}} · Disponible",
+    "hostOffline": "{{label}} · {{state}}",
+    "hostUnavailable": "{{label}} · No disponible: {{reason}}",
+    "unavailable": {
+      "draining": "en vaciado",
+      "storage": "sin almacenamiento",
+      "size": "demasiado pequeño para este tamaño",
+      "ram": "sin memoria libre suficiente",
+      "vcpu": "sin vCPU libres suficientes",
+      "disk": "sin disco libre suficiente",
+      "ceiling": "demasiados sandboxes"
+    },
+    "poolOption": "{{label}} · {{owner}}",
+    "noPools": "Todavía nadie comparte un grupo contigo. Elige Host o pide a quien administre un grupo que lo comparta.",
+    "poolTrustLine": "Un grupo compartido puede ejecutar tu sandbox en el host de otra persona, y quienes operan ese host pueden acceder a él.",
+    "learnMore": "Más información",
+    "offline": "No tienes conexión. Vuelve a conectarte e inténtalo de nuevo.",
+    "sizeTitle": "Tamaño",
+    "sizeIntro": "Empieza con el tamaño de la plantilla. Deja un valor sin tocar para usar el predeterminado de la plantilla.",
+    "vcpu": "vCPU",
+    "memory": "Memoria",
+    "disk": "Disco raíz",
+    "templateDefault": "Predeterminado de la plantilla",
+    "resetDefault": "Usar el predeterminado de la plantilla",
+    "capacity": {
+      "hostCpu_one": "Este host tiene {{count}} vCPU libre.",
+      "hostCpu_other": "Este host tiene {{count}} vCPU libres.",
+      "hostMemory": "Este host tiene {{amount}} GiB de memoria libre.",
+      "hostDisk": "Este host tiene {{amount}} GiB de disco libre.",
+      "poolCpu_one": "Lo máximo que un host de este grupo puede tomar ahora es {{count}} vCPU.",
+      "poolCpu_other": "Lo máximo que un host de este grupo puede tomar ahora son {{count}} vCPU.",
+      "poolMemory": "Lo máximo que un host de este grupo puede tomar ahora son {{amount}} GiB de memoria.",
+      "poolDisk": "Lo máximo que un host de este grupo puede tomar ahora son {{amount}} GiB de disco.",
+      "poolFailed": "No se pudo comprobar la capacidad libre de este grupo. El servidor la comprueba de todos modos al crear.",
+      "poolNone": "Ningún host de este grupo puede tomar un sandbox nuevo ahora.",
+      "poolWaits": "Más de lo que cualquier host de este grupo puede tomar ahora: la creación esperará a que haya espacio.",
+      "hostFree": "Libre ahora en este host: {{cpu}} vCPU · {{memory}} GiB de memoria · {{disk}} GiB de disco.",
+      "hostUnknown": "Conectado, pero este host no ha reportado su capacidad libre recientemente. El servidor la revisa cuando creas."
+    },
+    "envTitle": "Entorno",
+    "envHint": "Valores predeterminados privados para comandos y terminales: hasta 64 variables. HOME, SHELL y TERM están reservadas. Los valores permanecen privados en el servidor y el host.",
+    "envAdd": "Agregar variable",
+    "labelsRowsHint": "Etiquetas opcionales para encontrar y agrupar sandboxes: hasta 32. Nunca pongas secretos aquí.",
+    "labelsAdd": "Agregar etiqueta",
+    "networkTitle": "Red",
+    "accessTitle": "Acceso",
+    "loginsTitle": "Inicios de sesión de CLI",
+    "versionTitle": "Versión de la plantilla",
+    "chooseTemplateFirst": "Primero elige una plantilla.",
+    "lifetimeHint": "Se cuenta cuando el servidor acepta tu solicitud. Una hora de forma predeterminada; el host o el grupo pueden permitir menos.",
+    "summary": {
+      "templateDefault": "Predeterminado de la plantilla",
+      "size": "{{cpu}} vCPU · {{memory}} GiB · {{disk}} GiB de disco",
+      "none": "Ninguno",
+      "envs_one": "{{count}} variable",
+      "envs_other": "{{count}} variables",
+      "labels_one": "{{count}} etiqueta",
+      "labels_other": "{{count}} etiquetas",
+      "internet": "Acceso a internet",
+      "internetFallback_one": "Acceso a internet · {{count}} entrada alternativa",
+      "internetFallback_other": "Acceso a internet · {{count}} entradas alternativas",
+      "allowlist_one": "Lista permitida: {{count}} entrada",
+      "allowlist_other": "Lista permitida: {{count}} entradas",
+      "denyAll": "Sin acceso de salida",
+      "sudoOn": "Root con sudo",
+      "sudoOff": "Sin root",
+      "logins_one": "{{count}} inicio de sesión",
+      "logins_other": "{{count}} inicios de sesión",
+      "latest": "Más reciente",
+      "revision": "Revisión {{revision}}",
+      "ports_one": "{{count}} puerto de vista previa",
+      "ports_other": "{{count}} puertos de vista previa",
+      "cpu": "{{count}} vCPU",
+      "memory": "{{amount}} GiB",
+      "disk": "{{amount}} GiB de disco",
+      "restFromTemplate": "el resto de la plantilla"
+    },
+    "status": {
+      "pool": "Grupo {{label}}",
+      "host": "Host {{label}}",
+      "noPlacement": "Todavía no eliges dónde",
+      "templateSize": "tamaño de la plantilla",
+      "stops": "se detiene después de {{lifetime}}",
+      "destroys": "se destruye después de {{lifetime}}",
+      "unlimited": "sin límite de tiempo"
+    },
+    "noTemplatesLink": "Crear una plantilla",
+    "noVersions": "{{label}} · Aún sin versiones",
+    "templateOffHost": {
+      "elsewhere": "{{template}} no está en {{host}}. Elige {{hosts}} u otra plantilla.",
+      "nowhere": "{{template}} no está en {{host}}. Elige otro host u otra plantilla.",
+      "warnElsewhere": "{{template}} aún no está en {{host}}, así que crear ahí probablemente fallará. Elige {{hosts}} u otra plantilla.",
+      "warnNowhere": "{{template}} aún no está en {{host}}, así que crear ahí probablemente fallará. Elige otro host u otra plantilla."
+    },
+    "hostUnmeasured": "{{label}} · Conectado, sin reporte de capacidad libre",
+    "envCleared": "Por seguridad, los valores se borran después de una creación rechazada. Ingrésalos de nuevo.",
+    "previewPorts": "Puertos de vista previa",
+    "previewPortsHint": "Puertos del invitado que podrás compartir después como enlace de vista previa, por ejemplo 3000, 8080. Déjalo vacío si no necesitas enlaces; un reenvío de puerto siempre funciona.",
+    "showProblem": "Mostrar"
   },
   "credentials": {
     "heading": "Inicios de sesión de CLI",
@@ -171,7 +262,14 @@
     "label": "Comandos para conectarse",
     "shellCommand": "wssp sandbox shell {{target}}",
     "sshCommand": "ssh {{target}}.wssp",
-    "sshSetup": "Para ssh, scp, rsync y editores como VS Code, ejecuta <code>wssp ssh-config --install</code> una vez. No se necesitan llaves SSH."
+    "sshSetup": "Para ssh, scp, rsync y editores como VS Code, ejecuta esto una vez (no se necesitan llaves SSH):",
+    "copyShell": "Copiar comando de shell",
+    "copySsh": "Copiar comando de ssh",
+    "copySetup": "Copiar comando de configuración de ssh",
+    "getCli": "Obtener la CLI de wssp",
+    "getCliHint": "Instálala en tu computadora y luego inicia sesión una vez:",
+    "copyInstall": "Copiar comando de instalación",
+    "copyLogin": "Copiar comando de inicio de sesión"
   },
   "connections": {
     "heading": "Conexiones recientes",
@@ -224,9 +322,8 @@
     "waitingTitle": "¿Cancelar esta creación en cola?",
     "waitingDescription": "La creación sale de la cola del grupo y el sandbox termina como Eliminado. Aún no existe VM ni disco. Esto no se puede deshacer.",
     "waitingConfirm": "Cancelar creación",
-    "prompt": "Escribe el nombre del sandbox para confirmar",
-    "copy": "Copiar nombre del sandbox",
-    "confirm": "Destruir",
+    "prompt": "Escribe {{name}} para confirmar",
+    "confirm": "Destruir sandbox",
     "pending": "Destruyendo…",
     "done": "Destrucción solicitada.",
     "storedCopy": "Destruir también elimina la copia almacenada de su disco en el almacén de imágenes."
@@ -252,7 +349,8 @@
     "sandboxId": "ID del sandbox",
     "storageId": "ID del almacenamiento",
     "placementSharedPool": "Un grupo compartido",
-    "poolId": "ID del grupo"
+    "poolId": "ID del grupo",
+    "activityHint": "Cada solicitud de ciclo de vida, transferencia de archivos y comando de este sandbox, con su resultado."
   },
   "disk": {
     "title": "Disco",
@@ -353,7 +451,9 @@
     "memoryMiB": "Ingresa de 512 a 65536 MiB en incrementos de 256, o deja el campo vacío.",
     "diskGiB": "Ingresa un tamaño raíz entero de 1 a 2048 GiB, o déjalo vacío.",
     "credentials": "Elige un inicio de sesión en cada fila (cada uno una vez, máximo 8) o quita las filas vacías.",
-    "lifetime": "Elige una duración dentro del máximo que este host o grupo permite."
+    "lifetime": "Elige una duración dentro del máximo que este host o grupo permite.",
+    "envsCleared": "Ingresa de nuevo los valores borrados o quita esas filas.",
+    "previewPorts": "Ingresa hasta 8 números de puerto distintos del 1 al 65535, separados por comas o espacios."
   },
   "egress": {
     "title": "Acceso a red saliente",
@@ -423,12 +523,13 @@
     "labels": "Etiquetas",
     "noLabels": "Sin etiquetas",
     "created": "Creado",
-    "expires": "Vence",
+    "expires": "Fin del tiempo de vida",
     "noHost": "Sin host (el sandbox ya se retiró de él)",
     "noHostWaiting": "Ninguno aún (esperando en la cola del grupo)",
     "error": "Último error",
     "allocation": "Tamaño asignado de la VM",
-    "storage": "Almacenamiento retenido"
+    "storage": "Almacenamiento retenido",
+    "acceptedGrace": "Disco conservado tras perder el acceso al grupo"
   },
   "files": {
     "title": "Archivos",
@@ -529,16 +630,18 @@
     "hours_one": "{{count}} hora",
     "hours_other": "{{count}} horas",
     "field": "Tiempo de vida",
-    "hint": "Se cuenta cuando el servidor acepta la solicitud. El valor predeterminado es de cinco minutos; se aplican los límites de la instalación.",
+    "hint": "Se cuenta desde que el servidor acepta la solicitud; se aplican los límites de la instalación.",
     "keep": "Conservar su tiempo de vida ({{lifetime}}, luego {{action}})",
     "keepUnlimited": "Conservar su tiempo de vida (sin límite de tiempo)",
-    "keepHint": "Conserva el tiempo de vida y la acción de vencimiento con los que inició por última vez, salvo que elijas otro; una nueva elección pasa a ser su tiempo de vida para los siguientes inicios. Se cuenta cuando el servidor acepta la solicitud; se aplican los límites de la instalación.",
+    "keepHint": "Conserva el tiempo de vida y la acción al vencer con los que se inició por última vez (una renovación no se recuerda), salvo que elijas otro; una nueva elección se convierte en su tiempo de vida para los siguientes inicios. Se cuenta cuando el servidor acepta tu solicitud; aplican los límites de la implementación.",
     "onExpire": "Cuando termine el tiempo de vida",
     "stopOption": "Detener la VM (conservar su disco)",
     "destroyOption": "Destruir la VM y su disco",
     "unlimited": "Sin límite de tiempo",
     "days_one": "{{count}} día",
-    "days_other": "{{count}} días"
+    "days_other": "{{count}} días",
+    "stopped": "No está en ejecución: el tiempo de vida empieza de nuevo en el siguiente inicio.",
+    "notRunning": "No está en ejecución"
   },
   "listRegion": "Tus sandboxes",
   "observations": {
@@ -664,7 +767,9 @@
     "leaseExceedsPolicy": "Esa duración es más larga de lo que este grupo o host permite. Elige una más corta.",
     "capacityReserved": "La capacidad está reservada para una solicitud de espera más antigua. Elige esperar o intenta con otro grupo.",
     "templateUnavailable": "Esta revisión de plantilla no está en ningún host de este grupo. Veríficala en un host miembro o elige otra plantilla.",
-    "waitExceedsPolicy": "Esa espera es más larga de lo que este grupo permite. Elige una más corta."
+    "waitExceedsPolicy": "Esa espera es más larga de lo que este grupo permite. Elige una más corta.",
+    "templateNotOnHost": "Esta plantilla no está en ese host. Elige otro host u otra plantilla.",
+    "tunnelUnavailable": "Los enlaces de vista previa no se pueden usar aquí: están desactivados en esta implementación o ningún host que puedas usar los ejecuta. Quita los puertos de vista previa o elige otro host."
   },
   "receipt": {
     "title": "Última solicitud de ciclo de vida",
@@ -675,7 +780,7 @@
       "CREATE_SANDBOX": "Crear",
       "KILL_SANDBOX": "Destruir",
       "STOP_SANDBOX": "Detener",
-      "RECONNECT_SANDBOX": "Reconectar",
+      "RECONNECT_SANDBOX": "Iniciar",
       "RENEW_SANDBOX_LEASE": "Renovar tiempo de vida"
     },
     "state": {
@@ -698,22 +803,36 @@
   "reconnect": {
     "action": "Reconectar",
     "pending": "Reconectando…",
-    "done": "Reconexión solicitada."
+    "done": "Reconexión solicitada.",
+    "title": "¿Reconectar con este sandbox?",
+    "description": "Reconectar pide al host que vuelva a comprobar la VM en ejecución. Úsalo cuando la terminal o los archivos dejen de responder; nada se reinicia en la VM.",
+    "confirm": "Reconectar"
   },
   "rename": {
     "action": "Renombrar",
     "title": "Renombrar sandbox",
     "description": "Los nombres son únicos entre tus sandboxes. Renombrar no cambia nada dentro de la VM.",
     "label": "Nombre",
-    "done": "Sandbox renombrado."
+    "done": "Sandbox renombrado.",
+    "hint": "Letras minúsculas, dígitos y guiones, hasta 63 caracteres. Único entre tus sandboxes."
   },
   "renew": {
     "action": "Renovar tiempo de vida",
     "title": "Renovar tiempo de vida",
-    "description": "Define un nuevo tiempo de vida desde la aceptación. Puede acortar la concesión; la acción al vencer no cambia.",
+    "description": "Elige cuánto tiempo se ejecuta a partir de ahora. Lo que pasa al terminar no cambia.",
     "submit": "Renovar",
     "pending": "Renovando…",
-    "done": "Renovación solicitada. El host la confirma la próxima vez que se comunique con el servidor."
+    "now": "Ahora",
+    "next": "Nuevo",
+    "termStop": "se detiene a las {{time}}",
+    "termDestroy": "se destruye a las {{time}}",
+    "termUnlimited": "sin límite de tiempo",
+    "shortenTitle": "¿Acortar el tiempo de vida?",
+    "shortenDescription": "El nuevo tiempo de vida termina antes que el actual ({{from}} → {{to}}). El sandbox se detiene antes.",
+    "shortenConfirm": "Acortar tiempo de vida",
+    "doneStop": "Tiempo de vida renovado. Ahora se detiene a las {{time}}.",
+    "doneDestroy": "Tiempo de vida renovado. Ahora se destruye a las {{time}}.",
+    "doneUnlimited": "Tiempo de vida renovado. Ahora no tiene límite de tiempo."
   },
   "restoreLoginWait": {
     "inUse": "La restauración esperó, pero todas las instancias de inicio de sesión coincidentes siguieron en uso. Detén un sandbox que use una o agrega una instancia, luego inicia de nuevo.",
@@ -741,7 +860,6 @@
   "sensitiveAccessUnavailable": "El acceso a archivos, comandos y transferencias no está disponible mientras suplantas a una persona propietaria.",
   "sharing": {
     "loss": "Se perdió acceso al grupo. No hay E/S de la VM; el disco no se borrará antes de {{date}}. Restaura una ruta que quepa antes del borrado para conservar el disco. La limpieza sin conexión puede tardar más.",
-    "accepted": "Plazo de disco aceptado tras perder acceso: {{duration}}.",
     "restored": "Se eliminó el plazo de borrado por pérdida de acceso. Iniciar de nuevo todavía verifica permisos, límites y disco original; no hay reinicio automático."
   },
   "signals": {
@@ -799,5 +917,76 @@
   },
   "storageUnknown": "Sin vinculación de almacenamiento retenido.",
   "templateArchived": "{{label}} (archivada)",
-  "title": "Sandboxes"
+  "title": "Sandboxes",
+  "displayState": {
+    "STARTING": "Iniciando",
+    "RESTORING": "Restaurando",
+    "DESTROYING": "Destruyendo"
+  },
+  "displayHint": {
+    "STARTING": "El host está arrancando la VM desde su disco conservado. Aparece como Listo cuando el invitado informa que está listo.",
+    "RESTORING": "El host está descargando el disco almacenado y arrancando la VM. Aparece como Listo cuando el invitado informa que está listo.",
+    "DESTROYING": "El host está eliminando la VM y su disco. Nada es definitivo hasta que el host lo informe."
+  },
+  "progress": {
+    "label": "Progreso del inicio",
+    "placed": "Asignado a un host",
+    "creating": "Creando la VM",
+    "booting": "Arrancando",
+    "ready": "Listo",
+    "status": {
+      "done": "(hecho)",
+      "current": "(en curso)",
+      "todo": "(pendiente)"
+    },
+    "elapsed": "{{time}} hasta ahora. Esto suele tardar unos minutos.",
+    "usually": "Esto suele tardar unos minutos."
+  },
+  "summary": {
+    "label": "Tiempo de vida:",
+    "stopsAt": "Se detiene a las {{time}}",
+    "destroysAt": "Se destruye a las {{time}}",
+    "left": "en {{span}}",
+    "endingNow": "terminando ahora",
+    "renew": "Renovar",
+    "stopped": "No está en ejecución. Al iniciarlo recibe de nuevo {{lifetime}}, salvo que elijas otro.",
+    "stoppedUnlimited": "No está en ejecución. Al iniciarlo vuelve a no tener límite de tiempo, salvo que elijas otro."
+  },
+  "sections": {
+    "label": "En esta página",
+    "overview": "Resumen",
+    "terminal": "Terminal",
+    "previews": "Puertos y vistas previas",
+    "files": "Archivos",
+    "configuration": "Configuración",
+    "activity": "Actividad"
+  },
+  "openTerminal": "Abrir terminal",
+  "usage": {
+    "title": "Uso",
+    "allocated": "Asignado",
+    "allocatedHint": "Reservado para este sandbox en su host, se use o no.",
+    "running": "Tiempo en ejecución",
+    "runningFor": "{{span}} desde el último inicio",
+    "runningUnknown": "En ejecución (la hora de inicio no se muestra después de una renovación)",
+    "notRunning": "No está en ejecución",
+    "measured": "Uso medido",
+    "measuredNone": "El uso de CPU, memoria, disco y red todavía no se mide por sandbox.",
+    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB de memoria · {{diskGiB}} GiB de disco"
+  },
+  "ports": {
+    "title": "Puertos y vistas previas",
+    "description": "Accede desde tu computadora a una app web, API o base de datos que se ejecuta en este sandbox con la CLI de wssp:",
+    "forwardLabel": "Reenviar un puerto a tu computadora",
+    "forwardHint": "Cambia 8080 por el puerto en el que escucha tu app dentro del sandbox y luego abre http://localhost:8080.",
+    "copyForward": "Copiar comando de reenvío de puerto",
+    "declared": "Puertos de vista previa declarados al crear: {{ports}}",
+    "linkLabel": "Compartir una vista previa del puerto {{port}}",
+    "copyLink": "Copiar comando del enlace de vista previa del puerto {{port}}",
+    "cliOnly": "Por ahora, los enlaces de vista previa para compartir se crean con la CLI de wssp o con la API; el panel todavía no puede crearlos.",
+    "noTunnel": "Este sandbox se creó sin puertos de vista previa, así que no puede tener un enlace para compartir. El reenvío de puertos sí funciona.",
+    "guide": "Guía de túneles de vista previa",
+    "guideCli": "Guía de la CLI: shells y reenvío de puertos"
+  },
+  "docsPath": "(guía: {{path}} en el repositorio de código fuente de WS Sandbox Proxy)"
 }

@@ -3,6 +3,7 @@ import { Link, useLocation, useParams } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { Skeleton } from "@wssp/ui/components/skeleton";
 import { cn } from "@wssp/ui/lib/utils";
+import { User } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -34,11 +35,14 @@ export default function UserMenu() {
   useOrphanOwnerSync();
   const { data: configData, isPending: configPending } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation("nav");
-  const [mounted, setMounted] = useState(false);
+  // The user the real menu was opened for. Keyed by user id (not a plain
+  // boolean) so a different account in the same tab gets the closed shell
+  // again instead of the lazy menu, which mounts `defaultOpen`.
+  const [mountedForUser, setMountedForUser] = useState<string | null>(null);
   const pathname = useLocation().pathname.replace(/\/+$/, "");
 
   if (authSession.state.status === "pending" || authSession.state.status === "error") {
-    return <Skeleton className="h-11 w-24" />;
+    return <Skeleton className="h-11 w-11 md:w-24" />;
   }
 
   if (authSession.state.status === "anonymous") {
@@ -88,27 +92,31 @@ export default function UserMenu() {
     <Button
       variant="outline"
       size="touch"
-      className="min-w-11 max-w-32 sm:max-w-48"
+      // Same as UserMenuContent's trigger: a 44px icon below md:; from md: the
+      // name, at most 192px, shrinking (to 44px) before the header controls
+      // run past the trailing line. The full name is in the title.
+      className="w-11 px-0! md:w-auto md:min-w-11 md:max-w-48 md:shrink md:px-3.5!"
       title={session.user.name}
-      aria-label={session.user.name}
+      aria-label={t("userMenu.open", { name: session.user.name })}
       aria-haspopup="menu"
       inert={inert}
       onPointerEnter={prefetchMenu}
       onFocus={prefetchMenu}
       onClick={() => {
         prefetchMenu();
-        setMounted(true);
+        setMountedForUser(session.user.id);
       }}
     >
-      <span className="min-w-0 truncate">{session.user.name}</span>
+      <User className="size-4 md:hidden" aria-hidden="true" />
+      <span className="hidden truncate md:block">{session.user.name}</span>
     </Button>
   );
 
-  if (!mounted) return shell(false);
+  if (mountedForUser !== session.user.id) return shell(false);
 
   return (
     <Suspense fallback={shell(true)}>
-      <UserMenuContent />
+      <UserMenuContent key={session.user.id} />
     </Suspense>
   );
 }

@@ -1,12 +1,17 @@
 {
   "create": {
+    "statusFailed": "No se pudo comprobar si los webhooks están configurados en este servidor.",
     "action": "Agregar endpoint",
     "title": "Agregar un endpoint de webhook",
     "description": "Los eventos que se confirmen después de que exista el endpoint se entregarán a él.",
     "submit": "Agregar endpoint",
     "submitting": "Agregando…",
     "secretLabel": "Secreto de firma",
-    "secretHint": "Verifica cada entrega con este secreto (Standard Webhooks). Se muestra solo ahora; guárdalo con tu receptor."
+    "secretHint": "Verifica cada entrega con este secreto (Standard Webhooks). Se muestra solo ahora; guárdalo con tu receptor.",
+    "createdTitle": "Endpoint agregado",
+    "createdDescription": "Guarda ahora el secreto de firma junto a tu receptor. Cuando confirmes que lo guardaste, se abre el endpoint para que envíes un evento de prueba.",
+    "status_one": "{{count}} evento seleccionado",
+    "status_other": "{{count}} eventos seleccionados"
   },
   "delete": {
     "action": "Eliminar",
@@ -114,7 +119,17 @@
     "urlRequired": "Ingresa la URL del endpoint.",
     "urlTooLong": "Usa como máximo 2048 caracteres.",
     "eventsRequired": "Elige al menos un evento.",
-    "descriptionTooLong": "Usa como máximo 200 caracteres."
+    "descriptionTooLong": "Usa como máximo 200 caracteres.",
+    "destination": "Destino",
+    "eventsHint": "Elige de qué quieres enterarte. La casilla de un grupo selecciona todos sus eventos.",
+    "groupAll": "Todos los eventos de {{group}}",
+    "groupCount": "{{chosen}} de {{total}}",
+    "details": "Detalles",
+    "noDescription": "Sin descripción",
+    "kindsSection": "Tipos de operación",
+    "kindsDefaultShort": "Ciclo de vida y comandos",
+    "kindsAllShort": "Todos los tipos",
+    "kindsCustomShort": "Personalizado (API)"
   },
   "list": {
     "label": "Endpoints de webhook",
@@ -166,5 +181,10 @@
     "disable": "Deshabilitar",
     "enabled": "Endpoint habilitado.",
     "disabled": "Endpoint deshabilitado."
+  },
+  "eventGroup": {
+    "sandbox": "Sandboxes",
+    "operation": "Operaciones",
+    "credential": "Inicios de sesión de CLI"
   }
 }

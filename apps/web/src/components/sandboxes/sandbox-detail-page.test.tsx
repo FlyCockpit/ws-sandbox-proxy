@@ -100,6 +100,7 @@ vi.mock("@/utils/orpc", async () => {
   };
 });
 
+import { formatClock } from "@/lib/sandbox-status";
 import { SandboxDetailPage } from "./sandbox-detail-page";
 import { OPERATION_POLL_MS } from "./sandbox-files";
 
@@ -147,7 +148,35 @@ const calls = (procedure: string) =>
 const sandbox = () => server.current.sandboxes[0]!;
 const stateShown = () =>
   document.querySelector<HTMLElement>("[data-sandbox-state]")?.dataset.sandboxState;
-const actionButton = (name: string) => screen.queryByRole("button", { name });
+/** The destroy prompt names the sandbox ("Type quiet-otter to confirm"). */
+const DESTROY_PROMPT = new RegExp(`^${enSandboxes.destroy.prompt.replace("{{name}}", ".+")}$`);
+const moreActions = () => screen.queryByRole("button", { name: enSandboxes.actionsLabel });
+/**
+ * Whether the page offers the header action `name`: a visible button, or an
+ * item of the "Sandbox actions" menu (opened, read and closed again).
+ */
+async function offered(name: string): Promise<boolean> {
+  if (screen.queryByRole("button", { name })) return true;
+  const trigger = moreActions();
+  if (!trigger) return false;
+  const user = userEvent.setup();
+  await user.click(trigger);
+  const items = await screen.findAllByRole("menuitem");
+  const found = items.some((item) => item.textContent === name);
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+  return found;
+}
+/** Runs the header action `name`: its button, or its item in the "Sandbox actions" menu. */
+async function chooseAction(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const target = await waitFor(() => {
+    const found = screen.queryByRole("button", { name }) ?? moreActions();
+    if (!found) throw new Error(`no ${name} action`);
+    return found;
+  });
+  await user.click(target);
+  if (target === moreActions()) await user.click(await screen.findByRole("menuitem", { name }));
+}
 /** Refetch everything, then let TanStack Query's batched notifications render. */
 const refetch = () =>
   act(async () => {
@@ -746,10 +775,10 @@ describe("lifecycle", () => {
     );
     expect(screen.getByText(enSandboxes.stateHint.starting)).toBeTruthy();
     // Stop and destroy can interrupt boot; guest work still requires readiness.
-    expect(actionButton(enSandboxes.stop.action)).not.toBeNull();
-    expect(actionButton(enSandboxes.renew.action)).toBeNull();
-    expect(screen.queryByText(enSandboxes.files.title)).toBeNull();
-    expect(actionButton(enSandboxes.destroy.action)).not.toBeNull();
+    expect(await offered(enSandboxes.stop.action)).toBe(true);
+    expect(await offered(enSandboxes.renew.action)).toBe(false);
+    expect(screen.queryByRole("heading", { name: enSandboxes.files.title })).toBeNull();
+    expect(await offered(enSandboxes.destroy.action)).toBe(true);
 
     Object.assign(sandbox(), {
       state: "PROVISIONING",
@@ -757,7 +786,7 @@ describe("lifecycle", () => {
     });
     await refetch();
     expect(stateShown()).toBe("PROVISIONING");
-    expect(actionButton(enSandboxes.stop.action)).not.toBeNull();
+    expect(await offered(enSandboxes.stop.action)).toBe(true);
 
     Object.assign(sandbox(), {
       state: "READY",
@@ -765,8 +794,8 @@ describe("lifecycle", () => {
     });
     await refetch();
     expect(stateShown()).toBe("READY");
-    expect(actionButton(enSandboxes.stop.action)).not.toBeNull();
-    expect(screen.getByText(enSandboxes.files.title)).toBeTruthy();
+    expect(await offered(enSandboxes.stop.action)).toBe(true);
+    expect(screen.getByRole("heading", { name: enSandboxes.files.title })).toBeTruthy();
   });
 
   it.each(["REQUESTED", "SCHEDULED", "PROVISIONING"] as const)(
@@ -784,11 +813,11 @@ describe("lifecycle", () => {
       await user.click(within(confirm).getByRole("button", { name: enSandboxes.stop.confirm }));
       await waitFor(() => expect(calls("stopSandbox")).toHaveLength(1));
       await waitFor(() => expect(stateShown()).toBe("STOPPING"));
-      expect(actionButton(enSandboxes.start.action)).toBeNull();
+      expect(await offered(enSandboxes.start.action)).toBe(false);
       Object.assign(sandbox(), { state: "DELETED", sandboxHostId: null, host: null });
       await refetch();
       expect(stateShown()).toBe("DELETED");
-      expect(actionButton(enSandboxes.start.action)).toBeNull();
+      expect(await offered(enSandboxes.start.action)).toBe(false);
     },
   );
 
@@ -824,7 +853,7 @@ describe("lifecycle", () => {
     await refetch();
     expect(stateShown()).toBe("STOPPED");
     expect(screen.getByText(enSandboxes.stateHint.stopped)).toBeTruthy();
-    expect(actionButton(enSandboxes.start.action)).not.toBeNull();
+    expect(await offered(enSandboxes.start.action)).toBe(true);
   });
 
   it.each([enSandboxes, esSandboxes])(
@@ -862,8 +891,8 @@ describe("lifecycle", () => {
     expect(document.body.textContent).not.toContain(enSandboxes.fields.noHost);
     expect(screen.getByText(enSandboxes.lifetime.waiting)).toBeTruthy();
     expect(document.body.textContent).not.toContain(enSandboxes.lifetime.ack.pending);
-    expect(actionButton(enSandboxes.destroy.action)).toBeNull();
-    await user.click(screen.getByRole("button", { name: enSandboxes.destroy.waitingAction }));
+    expect(await offered(enSandboxes.destroy.action)).toBe(false);
+    await chooseAction(user, enSandboxes.destroy.waitingAction);
     const confirm = screen.getByRole("alertdialog");
     expect(within(confirm).getByText(enSandboxes.destroy.waitingTitle)).toBeTruthy();
     expect(within(confirm).getByText(enSandboxes.destroy.waitingDescription)).toBeTruthy();
@@ -871,7 +900,7 @@ describe("lifecycle", () => {
     const button = within(confirm).getByRole("button", {
       name: enSandboxes.destroy.waitingConfirm,
     });
-    await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+    await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter");
     await user.click(button);
     await waitFor(() => expect(calls("killSandbox")).toHaveLength(1));
   });
@@ -884,12 +913,12 @@ describe("lifecycle", () => {
       ];
       const user = userEvent.setup();
       mount();
-      await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+      await chooseAction(user, enSandboxes.destroy.action);
       const confirm = screen.getByRole("alertdialog");
       expect(within(confirm).getByText(enSandboxes.destroy.recoveryDescription)).toBeTruthy();
       const button = within(confirm).getByRole("button", { name: enSandboxes.destroy.confirm });
       expect((button as HTMLButtonElement).disabled).toBe(true);
-      await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+      await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter");
       await user.click(button);
       await waitFor(() => expect(calls("killSandbox")).toHaveLength(1));
       expect(calls("stopSandbox")).toHaveLength(0);
@@ -905,11 +934,11 @@ describe("lifecycle", () => {
       ];
       const user = userEvent.setup();
       mount();
-      await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+      await chooseAction(user, enSandboxes.destroy.action);
       const confirm = screen.getByRole("alertdialog");
       const button = within(confirm).getByRole("button", { name: enSandboxes.destroy.confirm });
       expect((button as HTMLButtonElement).disabled).toBe(true);
-      await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+      await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter");
       await user.click(button);
       await waitFor(() => expect(calls("killSandbox")).toHaveLength(1));
       expect(calls("stopSandbox")).toHaveLength(0);
@@ -925,7 +954,7 @@ describe("lifecycle", () => {
       ];
       mount();
       await waitFor(() => expect(stateShown()).toBe("STOPPING"));
-      expect(actionButton(enSandboxes.destroy.action)).toBeNull();
+      expect(await offered(enSandboxes.destroy.action)).toBe(false);
     },
   );
 
@@ -937,7 +966,7 @@ describe("lifecycle", () => {
       ];
       mount();
       await waitFor(() => expect(stateShown()).toBe("STOPPING"));
-      expect(actionButton(enSandboxes.destroy.action)).toBeNull();
+      expect(await offered(enSandboxes.destroy.action)).toBe(false);
     },
   );
 
@@ -946,10 +975,10 @@ describe("lifecycle", () => {
     const user = userEvent.setup();
     mount();
     const destroyOnce = async () => {
-      await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+      await chooseAction(user, enSandboxes.destroy.action);
       const dialog = screen.getByRole("alertdialog");
-      await user.clear(within(dialog).getByLabelText(enSandboxes.destroy.prompt));
-      await user.type(within(dialog).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+      await user.clear(within(dialog).getByLabelText(DESTROY_PROMPT));
+      await user.type(within(dialog).getByLabelText(DESTROY_PROMPT), "quiet-otter");
       await user.click(within(dialog).getByRole("button", { name: enSandboxes.destroy.confirm }));
     };
     await destroyOnce();
@@ -967,7 +996,7 @@ describe("lifecycle", () => {
     server.current.sandboxes = [sandboxRow(), sandboxRow({ id: "sbx-2", name: "brisk-heron" })];
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.rename.action }));
+    await chooseAction(user, enSandboxes.rename.action);
     const sheet = screen.getByRole("dialog");
     const field = within(sheet).getByLabelText(enSandboxes.rename.label);
     expect(field.getAttribute("autocomplete")).toBe("off");
@@ -991,7 +1020,7 @@ describe("lifecycle", () => {
   it("an invalid name is refused in the Sheet before any request", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.rename.action }));
+    await chooseAction(user, enSandboxes.rename.action);
     const sheet = screen.getByRole("dialog");
     const field = within(sheet).getByLabelText(enSandboxes.rename.label);
     await user.clear(field);
@@ -1004,28 +1033,28 @@ describe("lifecycle", () => {
   it("destroy confirms the name captured when the dialog opened (F8)", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+    await chooseAction(user, enSandboxes.destroy.action);
     // A rename lands (another tab) and the page refetches while the dialog is open.
     server.current.sandboxes[0]!.name = "renamed-elsewhere";
     await refetch();
     const confirm = screen.getByRole("alertdialog");
     const destroy = within(confirm).getByRole("button", { name: enSandboxes.destroy.confirm });
-    await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+    await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter");
     expect((destroy as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("destroy needs the typed sandbox name, is distinct from stop, and never shows DELETED early", async () => {
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+    await chooseAction(user, enSandboxes.destroy.action);
     const confirm = screen.getByRole("alertdialog");
     expect(within(confirm).getByText(enSandboxes.destroy.description)).toBeTruthy();
     const destroy = within(confirm).getByRole("button", { name: enSandboxes.destroy.confirm });
     expect((destroy as HTMLButtonElement).disabled).toBe(true);
-    await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter-2");
+    await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter-2");
     expect((destroy as HTMLButtonElement).disabled).toBe(true);
-    await user.clear(within(confirm).getByLabelText(enSandboxes.destroy.prompt));
-    await user.type(within(confirm).getByLabelText(enSandboxes.destroy.prompt), "quiet-otter");
+    await user.clear(within(confirm).getByLabelText(DESTROY_PROMPT));
+    await user.type(within(confirm).getByLabelText(DESTROY_PROMPT), "quiet-otter");
     await user.click(destroy);
     await waitFor(() => expect(calls("killSandbox")).toHaveLength(1));
     expect(calls("stopSandbox")).toEqual([]);
@@ -1041,7 +1070,7 @@ describe("lifecycle", () => {
     });
     await refetch();
     expect(stateShown()).toBe("DELETED");
-    expect(actionButton(enSandboxes.destroy.action)).toBeNull();
+    expect(await offered(enSandboxes.destroy.action)).toBe(false);
     expect(screen.queryByText(enSandboxes.lifetime.title)).toBeNull();
   });
 
@@ -1050,6 +1079,9 @@ describe("lifecycle", () => {
     mount();
     await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
     const renewDialog = screen.getByRole("dialog");
+    // The hint never names a default that differs from the preselected choice.
+    expect(renewDialog.textContent).not.toMatch(/Five minutes by default/);
+    expect(within(renewDialog).getByText(enSandboxes.lifetime.hint)).toBeTruthy();
     await selectOption(
       user,
       within(renewDialog).getByLabelText(enSandboxes.lifetime.field),
@@ -1103,7 +1135,7 @@ describe("lifecycle", () => {
       });
       await refetch();
       expect(stateShown()).toBe("STOPPED");
-      expect(actionButton(enSandboxes.stop.action)).toBeNull();
+      expect(await offered(enSandboxes.stop.action)).toBe(false);
       await user.click(screen.getByRole("button", { name: enSandboxes.start.action }));
       const startDialog = screen.getByRole("dialog");
       await user.click(
@@ -1222,6 +1254,38 @@ describe("lifecycle", () => {
     expect(sandbox().leaseRevision).toBe(2);
   });
 
+  it("an uncertain renewal reopens on its own choice and replays the same intent", async () => {
+    server.current.errors.setSandboxTimeout = [new Error("network")];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    const first = within(screen.getByRole("dialog"));
+    // Not the default: one hour is left, so Renew starts lower than this.
+    expect(first.getByLabelText(enSandboxes.lifetime.field).textContent).not.toContain("4 hours");
+    await selectOption(user, first.getByLabelText(enSandboxes.lifetime.field), /^4 hours$/);
+    await user.click(first.getByRole("button", { name: enSandboxes.renew.submit }));
+    expect((await screen.findByRole("alert")).textContent).toBe(enSandboxes.problem.generic);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Reopened: the uncertain choice, not a recomputed default.
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    const again = within(screen.getByRole("dialog"));
+    expect(again.getByLabelText(enSandboxes.lifetime.field).textContent).toContain("4 hours");
+    await user.click(again.getByRole("button", { name: enSandboxes.renew.submit }));
+    await waitFor(() => expect(calls("setSandboxTimeout")).toHaveLength(2));
+    const [lost, retried] = calls("setSandboxTimeout").map((call) => call.input);
+    expect(retried).toEqual(lost);
+    expect(lost).toMatchObject({ timeoutMs: 4 * 3_600_000 });
+    // Settled by the success: the next opening starts from the lease again.
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.renew.submit }),
+    );
+    await waitFor(() => expect(calls("setSandboxTimeout")).toHaveLength(3));
+    const third = calls("setSandboxTimeout")[2]!.input as { idempotencyKey: string };
+    expect(third.idempotencyKey).not.toBe((lost as { idempotencyKey: string }).idempotencyKey);
+  });
+
   it("a cold start that committed but lost its response is replayed after the generation moved", async () => {
     server.current.sandboxes = [sandboxRow({ state: "STOPPED" })];
     server.current.lostResponses.reconnectSandbox = 1;
@@ -1235,8 +1299,17 @@ describe("lifecycle", () => {
     };
     await startOnce();
     expect((await screen.findByRole("alert")).textContent).toBe(enSandboxes.problem.generic);
-    // The boot it queued has begun: the sandbox moved to a new generation.
+    // The start it queued is in flight: the page says Starting, never a second Start.
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-sandbox-display]")?.getAttribute("data-sandbox-display"),
+      ).toBe("STARTING"),
+    );
+    expect(await offered(enSandboxes.start.action)).toBe(false);
+    // The boot it queued has begun (a new generation), but the host's answer is
+    // unknown: Start is offered again, and the retry replays the first request.
     Object.assign(sandbox(), { state: "STOPPED", generation: 2 });
+    Object.assign(sandbox().lastLifecycleOperation as object, { state: "UNKNOWN_OUTCOME" });
     await refetch();
     await startOnce();
     await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(2));
@@ -1292,7 +1365,7 @@ describe("disk offload (C8)", () => {
     expect(badge?.textContent).toBe(enSandboxes.disk.location.store);
     expect(screen.getByText(enSandboxes.disk.locationHint.store)).toBeTruthy();
     // No stop for a hostless sandbox; Start reads Restore.
-    expect(actionButton(enSandboxes.stop.action)).toBeNull();
+    expect(await offered(enSandboxes.stop.action)).toBe(false);
     await user.click(screen.getByRole("button", { name: enSandboxes.start.restoreAction }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText(enSandboxes.start.restoreDescription)).toBeTruthy();
@@ -1313,7 +1386,7 @@ describe("disk offload (C8)", () => {
     server.current.errors.reconnectSandbox = [coded("restore_no_allowed_host")];
     const user = userEvent.setup();
     mount();
-    expect(actionButton(enSandboxes.restoreOverride.action)).toBeNull();
+    expect(await offered(enSandboxes.restoreOverride.action)).toBe(false);
     await user.click(await screen.findByRole("button", { name: enSandboxes.start.restoreAction }));
     await user.click(
       within(screen.getByRole("dialog")).getByRole("button", {
@@ -1384,7 +1457,7 @@ describe("disk offload (C8)", () => {
         .getAttribute("href"),
     ).toBe("/en-US/settings/logins");
     // A login refusal is not a host problem: no creator-key override.
-    expect(actionButton(enSandboxes.restoreOverride.action)).toBeNull();
+    expect(await offered(enSandboxes.restoreOverride.action)).toBe(false);
   });
 
   it("destroy warns that it deletes the stored copy only when one exists", async () => {
@@ -1396,14 +1469,14 @@ describe("disk offload (C8)", () => {
     ];
     const user = userEvent.setup();
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+    await chooseAction(user, enSandboxes.destroy.action);
     expect(
       within(screen.getByRole("alertdialog")).getByText(enSandboxes.destroy.storedCopy),
     ).toBeTruthy();
     cleanup();
     server.current.sandboxes = [sandboxRow({ state: "STOPPED" })];
     mount();
-    await user.click(await screen.findByRole("button", { name: enSandboxes.destroy.action }));
+    await chooseAction(user, enSandboxes.destroy.action);
     expect(document.querySelector("[data-destroy-stored-copy]")).toBeNull();
   });
 
@@ -1442,7 +1515,7 @@ describe("disk offload (C8)", () => {
     server.current.sandboxes = [sandboxRow({ state: "ERROR", lastErrorCode: "instance_missing" })];
     mount();
     await waitFor(() => expect(stateShown()).toBe("ERROR"));
-    expect(actionButton(enSandboxes.retryCleanup.action)).toBeNull();
+    expect(await offered(enSandboxes.retryCleanup.action)).toBe(false);
   });
 
   it("the restore pin is edited in a Sheet and saved through setOffloadPin", async () => {
@@ -1479,7 +1552,7 @@ describe("files", () => {
     });
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(
       screen.getByLabelText(enSandboxes.files.upload.file),
       new File(["hello"], "hello.txt"),
@@ -1514,7 +1587,7 @@ describe("files", () => {
     });
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(screen.getByLabelText(enSandboxes.files.upload.file), new File(["x"], "x"));
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!, "/tmp/x");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
@@ -1531,7 +1604,7 @@ describe("files", () => {
     const log = stubFetch(() => json(413, { error: { code: "PAYLOAD_TOO_LARGE" } }));
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(screen.getByLabelText(enSandboxes.files.upload.file), new File(["xy"], "y"));
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!, "/tmp/y");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
@@ -1547,12 +1620,32 @@ describe("files", () => {
     const log = stubFetch(() => json(500, {}));
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(screen.getByLabelText(enSandboxes.files.upload.file), new File(["x"], "x"));
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!, "relative/x");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
     expect(await screen.findByText(enSandboxes.files.badPath)).toBeTruthy();
     expect(log).toEqual([]);
+    // The error sits next to its field, which is marked invalid and focused.
+    const field = screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!;
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    expect(field.getAttribute("aria-describedby")).toContain(
+      screen.getByText(enSandboxes.files.badPath).id,
+    );
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("an upload without a file says so at the file field and focuses it", async () => {
+    stubFetch(() => json(500, {}));
+    const user = userEvent.setup();
+    mount();
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
+    await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
+    const error = await screen.findByText(enSandboxes.files.upload.noFile);
+    const file = screen.getByLabelText(enSandboxes.files.upload.file);
+    expect(file.getAttribute("aria-invalid")).toBe("true");
+    expect(file.getAttribute("aria-describedby")).toBe(error.id);
+    expect(document.activeElement).toBe(file);
   });
 
   it("a download is captured, checked, then offered from the cookie-session content route", async () => {
@@ -1561,7 +1654,7 @@ describe("files", () => {
     );
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[1]!, "/etc/hostname");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.download.submit }));
     await waitFor(() => expect(calls("readFile")).toHaveLength(1));
@@ -1605,7 +1698,7 @@ describe("files", () => {
     try {
       const user = userEvent.setup();
       mount();
-      await screen.findByText(enSandboxes.files.title);
+      await screen.findByRole("heading", { name: enSandboxes.files.title });
       await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[1]!, "/etc/hostname");
       await user.click(screen.getByRole("button", { name: enSandboxes.files.download.submit }));
       await waitFor(() => expect(calls("readFile")).toHaveLength(1));
@@ -1643,7 +1736,7 @@ describe("files", () => {
     );
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[1]!, "/etc/hostname");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.download.submit }));
     await waitFor(() => expect(calls("readFile")).toHaveLength(1));
@@ -1663,7 +1756,7 @@ describe("files", () => {
     stubFetch(() => new Response(null, { status: 410 }));
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[1]!, "/etc/hostname");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.download.submit }));
     await waitFor(() => expect(calls("readFile")).toHaveLength(1));
@@ -1691,7 +1784,7 @@ describe("files", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(screen.getByLabelText(enSandboxes.files.upload.file), new File(["x"], "x"));
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!, "/tmp/x");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
@@ -1719,7 +1812,7 @@ describe("files", () => {
     stubFetch(() => json(500, {}));
     const user = userEvent.setup();
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     server.current.errors.getOperation = [
       Object.assign(new Error("not found"), { code: "NOT_FOUND", status: 404 }),
     ];
@@ -1735,7 +1828,7 @@ describe("files", () => {
     server.current.sandboxes = [sandboxRow({ state: "STOPPED" })];
     mount();
     expect(await screen.findByText(enSandboxes.files.unavailable)).toBeTruthy();
-    expect(screen.queryByText(enSandboxes.files.title)).toBeNull();
+    expect(screen.queryByRole("heading", { name: enSandboxes.files.title })).toBeNull();
   });
 });
 
@@ -1794,6 +1887,9 @@ it("renewal lifetime choices respect a lowered server maximum", async () => {
   ]);
   await selectOption(user, field, /^(15 minutes|15 minutos)$/);
   await user.click(popup.getByRole("button", { name: enSandboxes.renew.submit }));
+  // 15 minutes ends before the current hour does: the dialog asks again first.
+  expect(calls("setSandboxTimeout")).toHaveLength(0);
+  await user.click(await popup.findByRole("button", { name: enSandboxes.renew.shortenConfirm }));
   await waitFor(() => expect(calls("setSandboxTimeout")).toHaveLength(1));
   expect(calls("setSandboxTimeout")[0]?.input).toMatchObject({ timeoutMs: 15 * 60_000 });
 });
@@ -1942,7 +2038,7 @@ describe("S0 sensitive session unavailable", () => {
     const fetch = vi.fn();
     vi.stubGlobal("fetch", fetch);
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     expect(screen.getAllByText(enSandboxes.sensitiveAccessUnavailable).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: enSandboxes.files.upload.submit })).toBeNull();
     expect(screen.queryByRole("button", { name: enSandboxes.files.download.submit })).toBeNull();
@@ -1965,7 +2061,7 @@ describe("S0 sensitive session unavailable", () => {
         ),
     );
     mount();
-    await screen.findByText(enSandboxes.files.title);
+    await screen.findByRole("heading", { name: enSandboxes.files.title });
     await user.upload(screen.getByLabelText(enSandboxes.files.upload.file), new File(["x"], "x"));
     await user.type(screen.getAllByLabelText(enSandboxes.files.guestPath)[0]!, "/tmp/x");
     await user.click(screen.getByRole("button", { name: enSandboxes.files.upload.submit }));
@@ -1984,7 +2080,7 @@ it("shows the actual allocation through stop/cold start and template refetches",
   mount();
   await waitFor(() =>
     expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-      "2 vCPU · 3072 MiB · 32 GiB",
+      "2 vCPU · 3 GiB memory · 32 GiB disk",
     ),
   );
   await waitFor(() => expect(calls("getTemplateRevision")).toHaveLength(1));
@@ -1992,13 +2088,13 @@ it("shows the actual allocation through stop/cold start and template refetches",
   sandbox().state = "STOPPED";
   await refetch();
   expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-    "2 vCPU · 3072 MiB · 32 GiB",
+    "2 vCPU · 3 GiB memory · 32 GiB disk",
   );
   sandbox().state = "READY";
   sandbox().generation = 2;
   await refetch();
   expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-    "2 vCPU · 3072 MiB · 32 GiB",
+    "2 vCPU · 3 GiB memory · 32 GiB disk",
   );
 });
 
@@ -2015,7 +2111,10 @@ it("shows accepted pool grace and pinned access-loss deletion notice without for
     }),
   ];
   mount();
-  await screen.findByText(/Accepted disk grace/);
+  await waitFor(() =>
+    expect(document.querySelector("[data-accepted-grace]")?.textContent).toBe("3 days"),
+  );
+  expect(screen.getByText(enSandboxes.fields.acceptedGrace)).toBeTruthy();
   expect(document.querySelector("[data-access-grace]")?.textContent).toContain("Pool access lost");
   expect(document.querySelector("[data-sandbox-storage]")?.textContent).not.toContain("private");
 });
@@ -2035,4 +2134,301 @@ it("announces restoration only after the durable loss deadline clears, without a
   await act(() => client.invalidateQueries({ queryKey: ["sandboxes"] }));
   await screen.findByText(enSandboxes.sharing.restored);
   expect(calls("connectSandbox")).toHaveLength(0);
+});
+
+describe("header summary and structure (design review #7)", () => {
+  it("a ready sandbox: one primary Open terminal, Stop visible, the rest in the menu, and an index", async () => {
+    mount();
+    const open = await screen.findByRole("link", { name: enSandboxes.openTerminal });
+    expect(open.getAttribute("href")).toBe("#sandbox-section-terminal");
+    expect(document.getElementById("sandbox-section-terminal")).not.toBeNull();
+    expect(screen.getByRole("button", { name: enSandboxes.stop.action })).toBeTruthy();
+    // Destroy, Rename and Reconnect are not header buttons.
+    for (const name of [
+      enSandboxes.destroy.action,
+      enSandboxes.rename.action,
+      enSandboxes.reconnect.action,
+    ])
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    const user = userEvent.setup();
+    await user.click(moreActions()!);
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      enSandboxes.renew.action,
+      enSandboxes.reconnect.action,
+      enSandboxes.rename.action,
+      enSandboxes.destroy.action,
+    ]);
+    // The destructive item sits in its own section after a separator.
+    expect(screen.getByRole("separator")).toBeTruthy();
+    await user.keyboard("{Escape}");
+    const index = screen.getByRole("navigation", { name: enSandboxes.sections.label });
+    expect(
+      within(index)
+        .getAllByRole("link")
+        .map((link) => link.getAttribute("href")),
+    ).toEqual([
+      "#sandbox-section-overview",
+      "#sandbox-section-terminal",
+      "#sandbox-section-previews",
+      "#sandbox-section-files",
+      "#sandbox-section-configuration",
+      "#sandbox-section-activity",
+    ]);
+    // "Operations for this sandbox" is a real (outlined) link button, not body text.
+    expect(screen.getByRole("link", { name: enSandboxes.detail.operations }).className).toContain(
+      "border",
+    );
+  });
+
+  it("the lifetime summary is an absolute time with what is left and Renew", async () => {
+    const at = Date.now() + 2 * 3_600_000 + 30 * 60_000;
+    server.current.sandboxes = [sandboxRow({ leaseExpiresAt: new Date(at) })];
+    mount();
+    const summary = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-lifetime-summary]");
+      if (!found) throw new Error("no summary");
+      return found;
+    });
+    // The page's own formatter: past midnight it adds the day, so a fixed
+    // hour:minute expectation would fail late in the evening.
+    expect(summary.textContent).toContain(`Stops at ${formatClock(at, "en-US", Date.now())}`);
+    expect(summary.textContent).toMatch(/\(in 2 hr 29 min|\(in 2 hr 30 min/);
+    expect(
+      within(summary).getByRole("button", { name: enSandboxes.renew.action }).textContent,
+    ).toBe(enSandboxes.summary.renew);
+  });
+
+  it("a stopped sandbox never says when it stops: it says what a start gives it", async () => {
+    server.current.sandboxes = [
+      sandboxRow({
+        state: "STOPPED",
+        leaseExpiresAt: new Date(Date.now() + 4 * 3_600_000),
+        leaseExpiresAtRequested: new Date(Date.now() + 4 * 3_600_000),
+        rememberedLeaseTimeoutMs: 2 * 3_600_000,
+      }),
+    ];
+    mount();
+    const summary = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-lifetime-summary]");
+      if (!found) throw new Error("no summary");
+      return found;
+    });
+    expect(summary.textContent).toContain(
+      enSandboxes.summary.stopped.replace("{{lifetime}}", "2 hours"),
+    );
+    expect(document.body.textContent).not.toMatch(/in 4 hours/);
+    expect(document.querySelector("[data-lease-deadline]")?.textContent).toBe(
+      enSandboxes.lifetime.stopped,
+    );
+    // Start is the primary action of a stopped sandbox.
+    expect(
+      screen.getByRole("button", { name: enSandboxes.start.action }).dataset.primaryAction,
+    ).toBe("start");
+  });
+
+  it("a start in flight reads Starting with its steps, and offers no second Start", async () => {
+    server.current.sandboxes = [
+      sandboxRow({
+        state: "STOPPED",
+        lastLifecycleOperation: receipt("RECONNECT_SANDBOX", "ACCEPTED"),
+      }),
+    ];
+    mount();
+    await waitFor(() =>
+      expect(
+        document.querySelector("[data-sandbox-display]")?.getAttribute("data-sandbox-display"),
+      ).toBe("STARTING"),
+    );
+    expect(stateShown()).toBe("STOPPED");
+    expect(screen.getByText(enSandboxes.displayHint.STARTING)).toBeTruthy();
+    expect(await offered(enSandboxes.start.action)).toBe(false);
+    expect(document.querySelector('[data-step="creating"]')?.getAttribute("data-step-status")).toBe(
+      "current",
+    );
+    // The receipt names the operation Start, not Reconnect.
+    expect(document.querySelector("[data-receipt-kind]")?.textContent).toContain(
+      `${enSandboxes.receipt.kind.RECONNECT_SANDBOX}: ${enSandboxes.receipt.state.ACCEPTED}`,
+    );
+    expect(enSandboxes.receipt.kind.RECONNECT_SANDBOX).toBe("Start");
+  });
+
+  it("a destroy in flight reads Destroying, never Stopping", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPING", lastLifecycleOperation: receipt("KILL_SANDBOX", "RUNNING") }),
+    ];
+    mount();
+    await waitFor(() =>
+      expect(document.querySelector("[data-sandbox-display]")?.textContent).toBe(
+        enSandboxes.displayState.DESTROYING,
+      ),
+    );
+    expect(screen.queryByText(enSandboxes.state.STOPPING)).toBeNull();
+    expect(screen.getByText(enSandboxes.displayHint.DESTROYING)).toBeTruthy();
+  });
+
+  it.each([
+    ["REQUESTED", "QUEUED", "placed"],
+    ["REQUESTED", "DISPATCHED", "creating"],
+    ["PROVISIONING", "RUNNING", "booting"],
+  ])("a %s create with a %s receipt is at step %s, with elapsed time", async (state, op, step) => {
+    server.current.sandboxes = [
+      sandboxRow({
+        state,
+        lastLifecycleOperation: {
+          ...receipt("CREATE_SANDBOX", op),
+          createdAt: new Date(Date.now() - 75_000),
+        },
+      }),
+    ];
+    mount();
+    const progress = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-provision-progress]");
+      if (!found) throw new Error("no progress");
+      return found;
+    });
+    expect(progress.querySelector('[aria-current="step"]')?.getAttribute("data-step")).toBe(step);
+    expect(progress.textContent).toMatch(/1 min 1\d sec so far/);
+  });
+});
+
+describe("renew (design review #2)", () => {
+  it("starts at the current lifetime or the next step up, and shows Now → New", async () => {
+    // One hour left; the sandbox runs with a two-hour lifetime.
+    server.current.sandboxes = [sandboxRow({ rememberedLeaseTimeoutMs: 2 * 3_600_000 })];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    const popup = within(screen.getByRole("dialog"));
+    expect(popup.getByLabelText(enSandboxes.lifetime.field).textContent).toContain("2 hours");
+    expect(popup.getByText(enSandboxes.renew.now)).toBeTruthy();
+    expect(document.querySelector("[data-renew-now]")?.textContent).toMatch(/^stops at /);
+    expect(document.querySelector("[data-renew-next]")?.textContent).toMatch(/^stops at /);
+    await user.click(popup.getByRole("button", { name: enSandboxes.renew.submit }));
+    await waitFor(() => expect(calls("setSandboxTimeout")).toHaveLength(1));
+    expect(calls("setSandboxTimeout")[0]?.input).toMatchObject({ timeoutMs: 2 * 3_600_000 });
+    // The toast says what changed.
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(toast.success.mock.calls.at(-1)?.[0]).toMatch(/^Lifetime renewed\. It now stops at /);
+  });
+
+  it("never defaults to a shorter lifetime than what is left", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ leaseExpiresAt: new Date(Date.now() + 3 * 3_600_000) }),
+    ];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    expect(
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field).textContent,
+    ).toContain("4 hours");
+  });
+
+  it("a choice that ends earlier asks again, and Back keeps the lifetime", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    const popup = within(screen.getByRole("dialog"));
+    await selectOption(user, popup.getByLabelText(enSandboxes.lifetime.field), /^5 minutes$/);
+    await user.click(popup.getByRole("button", { name: enSandboxes.renew.submit }));
+    expect(await popup.findByText(enSandboxes.renew.shortenTitle)).toBeTruthy();
+    await user.click(popup.getByRole("button", { name: enCommon.actions.back }));
+    expect(popup.getByLabelText(enSandboxes.lifetime.field)).toBeTruthy();
+    expect(calls("setSandboxTimeout")).toHaveLength(0);
+  });
+});
+
+it("Reconnect explains itself in a confirmation before it sends a warm reconnect", async () => {
+  const user = userEvent.setup();
+  mount();
+  await chooseAction(user, enSandboxes.reconnect.action);
+  const confirm = await screen.findByRole("alertdialog");
+  expect(within(confirm).getByText(enSandboxes.reconnect.description)).toBeTruthy();
+  expect(calls("reconnectSandbox")).toHaveLength(0);
+  await user.click(within(confirm).getByRole("button", { name: enSandboxes.reconnect.confirm }));
+  await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+  expect(calls("reconnectSandbox")[0]?.input).toMatchObject({ id: "sbx-1", mode: "warm" });
+});
+
+it("destroy shows the name to type as text: no placeholder and no copy button (design review #21)", async () => {
+  const user = userEvent.setup();
+  mount();
+  await chooseAction(user, enSandboxes.destroy.action);
+  const confirm = await screen.findByRole("alertdialog");
+  const input = within(confirm).getByLabelText("Type quiet-otter to confirm") as HTMLInputElement;
+  expect(input.placeholder).toBe("");
+  expect(input.value).toBe("");
+  expect(within(confirm).queryByRole("button", { name: /copy/i })).toBeNull();
+  // The confirm button is named apart from the menu item that opened the dialog.
+  expect(within(confirm).getByRole("button", { name: enSandboxes.destroy.confirm })).toBeTruthy();
+  expect(enSandboxes.destroy.confirm).not.toBe(enSandboxes.destroy.action);
+});
+
+describe("ports & previews, connect and usage (design review #4, #11, #22)", () => {
+  it("offers the CLI port forward and says sharing is CLI/API only", async () => {
+    mount();
+    const card = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-sandbox-ports]");
+      if (!found) throw new Error("no ports card");
+      return found;
+    });
+    expect(within(card).getByText("wssp sandbox forward quiet-otter 8080")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: enSandboxes.ports.copyForward })).toBeTruthy();
+    expect(within(card).getByText(enSandboxes.ports.cliOnly)).toBeTruthy();
+    expect(within(card).getByText(enSandboxes.ports.noTunnel)).toBeTruthy();
+    expect(card.querySelector('[data-docs-path="tunnels"]')?.textContent).toContain(
+      "docs/guide/tunnels.md",
+    );
+  });
+
+  it("a sandbox with preview ports gets one link command per declared port", async () => {
+    server.current.sandboxes = [sandboxRow({ tunnelEnabled: true, tunnelPorts: [3000, 5173] })];
+    mount();
+    const card = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-tunnel-ports]");
+      if (!found) throw new Error("no tunnel ports");
+      return found;
+    });
+    expect(card.textContent).toContain("3000, 5173");
+    expect(within(card).getByText("wssp sandbox ports link sbx-1 3000")).toBeTruthy();
+    expect(within(card).getByText("wssp sandbox ports link sbx-1 5173")).toBeTruthy();
+  });
+
+  it("every connect command is a copy field, with a pointer to get the CLI", async () => {
+    mount();
+    const panel = await screen.findByRole("region", { name: enSandboxes.connect.heading });
+    for (const name of [
+      enSandboxes.connect.copyShell,
+      enSandboxes.connect.copySsh,
+      enSandboxes.connect.copySetup,
+    ])
+      expect(within(panel).getByRole("button", { name })).toBeTruthy();
+    expect(
+      within(panel).getByText(enSandboxes.connect.getCli, { selector: "summary" }),
+    ).toBeTruthy();
+    expect(
+      within(panel).getByText(
+        "curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 https://app.example.test/install.sh | sh",
+      ),
+    ).toBeTruthy();
+    expect(within(panel).getByText("wssp login --server https://app.example.test")).toBeTruthy();
+  });
+
+  it("usage labels allocation apart from measured use and shows running time since the start", async () => {
+    server.current.sandboxes = [
+      sandboxRow({
+        lastLifecycleOperation: {
+          ...receipt("CREATE_SANDBOX", "SUCCEEDED"),
+          completedAt: new Date(Date.now() - 2 * 3_600_000 - 5 * 60_000),
+        },
+      }),
+    ];
+    mount();
+    const usage = await screen.findByRole("region", { name: enSandboxes.usage.title });
+    expect(within(usage).getByText(enSandboxes.usage.allocated)).toBeTruthy();
+    expect(within(usage).getByText(enSandboxes.usage.measuredNone)).toBeTruthy();
+    expect(usage.querySelector("[data-sandbox-running]")?.textContent).toBe(
+      "2 hr 5 min since the last start",
+    );
+  });
 });

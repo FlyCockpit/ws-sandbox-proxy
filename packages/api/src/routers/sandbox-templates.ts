@@ -38,6 +38,7 @@ import {
   revisionChoicesInput,
   setTemplateTagInput,
 } from "../sandbox/template-input";
+import { templateVersionSummaries } from "../sandbox/template-version-summaries";
 import { rethrowLaunchInputValidationError } from "../sandbox/vm-size-input";
 
 export const sandboxTemplatesRouter = {
@@ -121,7 +122,18 @@ export const sandboxTemplatesRouter = {
   listTemplates: protectedProcedure
     .input(listTemplatesInput)
     .handler(async ({ input, context }) => {
-      return listTemplates(sessionPrincipal(context.session.user.id), input);
+      const page = await listTemplates(sessionPrincipal(context.session.user.id), input);
+      const versions = await templateVersionSummaries(
+        context.session.user.id,
+        page.items.map((item) => item.id),
+      );
+      return {
+        ...page,
+        items: page.items.map((item) => ({
+          ...item,
+          versions: versions.get(item.id) ?? { count: 0, latest: null },
+        })),
+      };
     }),
   getTemplate: protectedProcedure.input(templateIdInput).handler(async ({ input, context }) => {
     return getTemplate(sessionPrincipal(context.session.user.id), input);

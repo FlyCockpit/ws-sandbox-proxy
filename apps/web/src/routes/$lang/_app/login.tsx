@@ -2,17 +2,17 @@ import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
-import { Input } from "@wssp/ui/components/input";
-import { Label } from "@wssp/ui/components/label";
 import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
 import { cn } from "@wssp/ui/lib/utils";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
+import { FormAlert } from "@/components/auth/form-alert";
+import { TwoFactorChallenge } from "@/components/auth/two-factor-challenge";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
 import { poolInviteToken, postAuthHref } from "@/lib/pool-invite";
@@ -36,27 +36,10 @@ export const Route = createFileRoute("/$lang/_app/login")({
   component: LoginPage,
 });
 
-/**
- * The whole 2FA challenge as one state object (rather than five separate
- * `useState` calls) so a step change — entering the challenge, sending an
- * email code, or backing out — is a single update and a single render, with
- * no way for the pieces to drift apart mid-transition.
- *
- * `otpSent` marks the email-OTP path: once the user requests a code by email
- * we verify against verifyOtp instead of verifyTotp.
- */
-const initialTwoFactorState = {
-  active: false,
-  code: "",
-  verifying: false,
-  otpSent: false,
-  sendingOtp: false,
-};
-
 function LoginPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
-  const [twoFactor, setTwoFactor] = useState(initialTwoFactorState);
+  const [challenge, setChallenge] = useState(false);
   const authSession = useAuthSession();
   const {
     data: configData,
@@ -66,63 +49,13 @@ function LoginPage() {
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);
 
-  const signupEnabled =
-    !!poolInviteToken() ||
-    (configData?.signupEnabled ?? true) ||
-    configData?.adminBootstrapSignupEnabled === true;
+  const signupOpen = !!poolInviteToken() || (configData?.signupEnabled ?? true);
+  // Closed sign-up that the configured administrator addresses may still use.
+  const adminBootstrapOnly = !signupOpen && configData?.adminBootstrapSignupEnabled === true;
   const emailEnabled = configData?.emailEnabled ?? false;
   const postAuthRedirect = safeRedirectTo(redirectTo, lang);
   const sessionPending =
     authSession.state.status === "pending" || authSession.state.status === "error";
-
-  const handle2FAVerify = async () => {
-    setTwoFactor((s) => ({ ...s, verifying: true }));
-    try {
-      // When the user requested an emailed code we verify against the OTP
-      // endpoint; otherwise the code is a TOTP from their authenticator app.
-      const result = twoFactor.otpSent
-        ? await authClient.twoFactor.verifyOtp({ code: twoFactor.code })
-        : await authClient.twoFactor.verifyTotp({ code: twoFactor.code });
-      if (result.error) {
-        console.error("[login.twoFactor.verify]", result.error);
-        toast.error(t("auth:errors.invalidTotp"));
-      } else {
-        toast.success(t("auth:signedInSuccess"));
-        window.location.assign(postAuthHref(postAuthRedirect, lang));
-      }
-    } finally {
-      setTwoFactor((s) => ({ ...s, verifying: false }));
-    }
-  };
-
-  const handleSendEmailOtp = async () => {
-    setTwoFactor((s) => ({ ...s, sendingOtp: true }));
-    try {
-      // Delivery-aware preflight: Better-Auth's send-otp endpoint reports
-      // success even when SMTP delivery fails, so verify the transport is
-      // actually reachable before telling the user a code is on the way.
-      const preflight = await orpc.auth.verifyEmailTransport.call().catch((err) => {
-        console.error("[login.twoFactor.verifyEmailTransport]", err);
-        return { ok: false };
-      });
-      if (!preflight.ok) {
-        toast.error(t("auth:twoFactor.couldNotSendCode"));
-        return;
-      }
-      const result = await authClient.twoFactor.sendOtp();
-      if (result.error) {
-        console.error("[login.twoFactor.sendOtp]", result.error);
-        toast.error(
-          isRateLimit(result.error) ? friendly(result.error) : t("auth:twoFactor.couldNotSendCode"),
-        );
-        return;
-      }
-      setTwoFactor((s) => ({ ...s, otpSent: true, code: "" }));
-      toast.success(t("auth:twoFactor.codeSent"));
-    } finally {
-      setTwoFactor((s) => ({ ...s, sendingOtp: false }));
-    }
-  };
 
   return (
     <AuthConfigGate
@@ -130,62 +63,15 @@ function LoginPage() {
       isError={configError}
       onRetry={() => refetchConfig()}
     >
-      {twoFactor.active ? (
-        <AuthCard
-          title={t("auth:twoFactor.title")}
-          description={
-            twoFactor.otpSent
-              ? t("auth:twoFactor.emailCodeDescription")
-              : t("auth:twoFactor.description")
-          }
-        >
-          <div className="space-y-2">
-            <Label htmlFor="totp-code">{t("auth:fields.verificationCode")}</Label>
-            <Input
-              id="totp-code"
-              placeholder="000000"
-              value={twoFactor.code}
-              onChange={(e) => setTwoFactor((s) => ({ ...s, code: e.target.value }))}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              className="text-center text-lg tracking-widest"
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && twoFactor.code.length === 6) {
-                  handle2FAVerify();
-                }
-              }}
-            />
-          </div>
-          <Button
-            className="min-h-[44px] w-full"
-            onClick={handle2FAVerify}
-            disabled={twoFactor.code.length !== 6 || twoFactor.verifying}
-          >
-            {twoFactor.verifying ? t("auth:twoFactor.verifying") : t("auth:twoFactor.verify")}
-          </Button>
-          {emailEnabled && (
-            <Button
-              variant="outline"
-              className="min-h-[44px] w-full"
-              onClick={handleSendEmailOtp}
-              disabled={twoFactor.sendingOtp}
-            >
-              {twoFactor.sendingOtp
-                ? t("auth:twoFactor.sendingCode")
-                : twoFactor.otpSent
-                  ? t("auth:twoFactor.resendEmailCode")
-                  : t("auth:twoFactor.emailMeCode")}
-            </Button>
-          )}
-          <Button
-            variant="ghost"
-            className="min-h-[44px] w-full"
-            onClick={() => setTwoFactor(initialTwoFactorState)}
-          >
-            {t("auth:twoFactor.back")}
-          </Button>
-        </AuthCard>
+      {challenge ? (
+        <TwoFactorChallenge
+          emailEnabled={emailEnabled}
+          onVerified={() => {
+            toast.success(t("auth:signedInSuccess"));
+            window.location.assign(postAuthHref(postAuthRedirect, lang));
+          }}
+          onBack={() => setChallenge(false)}
+        />
       ) : (
         <AuthCard
           title={t("auth:login.signinTitle")}
@@ -201,9 +87,9 @@ function LoginPage() {
             lang={lang}
             redirectTo={postAuthRedirect}
             showForgotPassword={emailEnabled}
-            onNeeds2FA={() => setTwoFactor({ ...initialTwoFactorState, active: true })}
+            onNeeds2FA={() => setChallenge(true)}
           />
-          {signupEnabled && (
+          {signupOpen ? (
             // `max-sm:-mt-2`: on phones the link's 44px box may use half of the
             // gap above it (its text sits 12px inside the box), which keeps it
             // above the BottomNav at 320×568.
@@ -216,6 +102,25 @@ function LoginPage() {
               >
                 {t("auth:login.signupHint")}
               </Link>
+            </div>
+          ) : (
+            // Sign-up is closed: say how people get in instead of a link that
+            // can only fail. Administrator addresses may still bootstrap.
+            <div data-signup-closed="" className="space-y-1 text-center max-sm:-mt-2">
+              <p className="text-sm text-muted-foreground">{t("auth:login.byInvitation")}</p>
+              {adminBootstrapOnly ? (
+                <Link
+                  to="/$lang/signup"
+                  params={{ lang }}
+                  search={{ redirectTo }}
+                  className={cn(
+                    buttonVariants({ variant: "link" }),
+                    "min-h-[44px] text-muted-foreground",
+                  )}
+                >
+                  {t("auth:login.adminSignupHint")}
+                </Link>
+              ) : null}
             </div>
           )}
         </AuthCard>
@@ -237,10 +142,15 @@ function SignInForm({
 }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["auth"]);
+  const formRef = useRef<HTMLFormElement>(null);
+  // A failure that belongs to no one field (rate limit, network): shown above
+  // the button, and it never blocks the next attempt.
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm({
     defaultValues: { email: "", password: "" },
     onSubmit: async ({ value }) => {
+      setFormError(null);
       const result = await authClient.signIn.email({
         email: value.email,
         password: value.password,
@@ -272,9 +182,17 @@ function SignInForm({
           });
           return;
         }
-        toast.error(
-          isRateLimit(result.error) ? friendly(result.error) : t("auth:errors.invalidCredentials"),
-        );
+        if (isRateLimit(result.error)) {
+          setFormError(friendly(result.error));
+          return;
+        }
+        // Wrong email or password (the server never says which): under the
+        // password field, focused, and cleared by the next edit of either.
+        form.setFieldMeta("password", (meta) => ({
+          ...meta,
+          errorMap: { ...meta.errorMap, onSubmit: t("auth:errors.invalidCredentials") },
+        }));
+        formRef.current?.querySelector<HTMLInputElement>('input[name="password"]')?.focus();
         return;
       }
       if ((result.data as Record<string, unknown>)?.twoFactorRedirect) {
@@ -295,8 +213,18 @@ function SignInForm({
     },
   });
 
+  const clearCredentialsError = () => {
+    setFormError(null);
+    form.setFieldMeta("password", (meta) => ({
+      ...meta,
+      errorMap: { ...meta.errorMap, onSubmit: undefined },
+    }));
+  };
+
   return (
     <form
+      ref={formRef}
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -311,6 +239,7 @@ function SignInForm({
             label={t("auth:fields.email")}
             type="email"
             autoComplete="email"
+            onChange={clearCredentialsError}
           />
         )}
       </form.Field>
@@ -331,6 +260,7 @@ function SignInForm({
               label={t("auth:fields.password")}
               type="password"
               autoComplete="current-password"
+              onChange={() => setFormError(null)}
             />
           )}
         </form.Field>
@@ -351,6 +281,8 @@ function SignInForm({
           </div>
         )}
       </div>
+
+      <FormAlert message={formError} />
 
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}

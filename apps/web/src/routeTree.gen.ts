@@ -50,17 +50,22 @@ import { Route as LangAppAuthDashboardOperationsIndexRouteImport } from './route
 import { Route as LangAppAuthDashboardOperationsOperationIdRouteImport } from './routes/$lang/_app/_auth/dashboard/operations/$operationId'
 import { Route as LangAppAuthDashboardSandboxesIndexRouteImport } from './routes/$lang/_app/_auth/dashboard/sandboxes/index'
 import { Route as LangAppAuthDashboardSandboxesSandboxIdRouteImport } from './routes/$lang/_app/_auth/dashboard/sandboxes/$sandboxId'
+import { Route as LangAppAuthDashboardSandboxesNewRouteImport } from './routes/$lang/_app/_auth/dashboard/sandboxes/new'
 import { Route as LangAppAuthDashboardTemplatesIndexRouteImport } from './routes/$lang/_app/_auth/dashboard/templates/index'
 import { Route as LangAppAuthSettingsHostsIndexRouteImport } from './routes/$lang/_app/_auth/settings/hosts/index'
 import { Route as LangAppAuthSettingsHostsHostIdRouteImport } from './routes/$lang/_app/_auth/settings/hosts/$hostId'
+import { Route as LangAppAuthSettingsHostsAddRouteImport } from './routes/$lang/_app/_auth/settings/hosts/add'
 import { Route as LangAppAuthSettingsLoginsIndexRouteImport } from './routes/$lang/_app/_auth/settings/logins/index'
 import { Route as LangAppAuthSettingsLoginsLoginIdRouteImport } from './routes/$lang/_app/_auth/settings/logins/$loginId'
 import { Route as LangAppAuthSettingsPoolsIndexRouteImport } from './routes/$lang/_app/_auth/settings/pools/index'
 import { Route as LangAppAuthSettingsPoolsInviteRouteImport } from './routes/$lang/_app/_auth/settings/pools/invite'
 import { Route as LangAppAuthSettingsWebhooksIndexRouteImport } from './routes/$lang/_app/_auth/settings/webhooks/index'
 import { Route as LangAppAuthSettingsWebhooksEndpointIdRouteImport } from './routes/$lang/_app/_auth/settings/webhooks/$endpointId'
+import { Route as LangAppAuthSettingsWebhooksNewRouteImport } from './routes/$lang/_app/_auth/settings/webhooks/new'
 import { Route as LangAppAuthDashboardTemplatesBuildsIndexRouteImport } from './routes/$lang/_app/_auth/dashboard/templates/builds/index'
 import { Route as LangAppAuthDashboardTemplatesBuildsBuildIdRouteImport } from './routes/$lang/_app/_auth/dashboard/templates/builds/$buildId'
+import { Route as LangAppAuthDashboardTemplatesNewBuildRouteImport } from './routes/$lang/_app/_auth/dashboard/templates/new/build'
+import { Route as LangAppAuthDashboardTemplatesNewRegisterRouteImport } from './routes/$lang/_app/_auth/dashboard/templates/new/register'
 import { Route as LangAppAuthSettingsLoginsSessionsSessionIdRouteImport } from './routes/$lang/_app/_auth/settings/logins/sessions/$sessionId'
 
 const IndexRoute = IndexRouteImport.update({
@@ -286,6 +291,12 @@ const LangAppAuthDashboardSandboxesSandboxIdRoute =
     path: '/$sandboxId',
     getParentRoute: () => LangAppAuthDashboardSandboxesRoute,
   } as any)
+const LangAppAuthDashboardSandboxesNewRoute =
+  LangAppAuthDashboardSandboxesNewRouteImport.update({
+    id: '/new',
+    path: '/new',
+    getParentRoute: () => LangAppAuthDashboardSandboxesRoute,
+  } as any)
 const LangAppAuthDashboardTemplatesIndexRoute =
   LangAppAuthDashboardTemplatesIndexRouteImport.update({
     id: '/',
@@ -302,6 +313,12 @@ const LangAppAuthSettingsHostsHostIdRoute =
   LangAppAuthSettingsHostsHostIdRouteImport.update({
     id: '/$hostId',
     path: '/$hostId',
+    getParentRoute: () => LangAppAuthSettingsHostsRoute,
+  } as any)
+const LangAppAuthSettingsHostsAddRoute =
+  LangAppAuthSettingsHostsAddRouteImport.update({
+    id: '/add',
+    path: '/add',
     getParentRoute: () => LangAppAuthSettingsHostsRoute,
   } as any)
 const LangAppAuthSettingsLoginsIndexRoute =
@@ -340,6 +357,12 @@ const LangAppAuthSettingsWebhooksEndpointIdRoute =
     path: '/$endpointId',
     getParentRoute: () => LangAppAuthSettingsWebhooksRoute,
   } as any)
+const LangAppAuthSettingsWebhooksNewRoute =
+  LangAppAuthSettingsWebhooksNewRouteImport.update({
+    id: '/new',
+    path: '/new',
+    getParentRoute: () => LangAppAuthSettingsWebhooksRoute,
+  } as any)
 const LangAppAuthDashboardTemplatesBuildsIndexRoute =
   LangAppAuthDashboardTemplatesBuildsIndexRouteImport.update({
     id: '/builds/',
@@ -350,6 +373,18 @@ const LangAppAuthDashboardTemplatesBuildsBuildIdRoute =
   LangAppAuthDashboardTemplatesBuildsBuildIdRouteImport.update({
     id: '/builds/$buildId',
     path: '/builds/$buildId',
+    getParentRoute: () => LangAppAuthDashboardTemplatesRoute,
+  } as any)
+const LangAppAuthDashboardTemplatesNewBuildRoute =
+  LangAppAuthDashboardTemplatesNewBuildRouteImport.update({
+    id: '/new/build',
+    path: '/new/build',
+    getParentRoute: () => LangAppAuthDashboardTemplatesRoute,
+  } as any)
+const LangAppAuthDashboardTemplatesNewRegisterRoute =
+  LangAppAuthDashboardTemplatesNewRegisterRouteImport.update({
+    id: '/new/register',
+    path: '/new/register',
     getParentRoute: () => LangAppAuthDashboardTemplatesRoute,
   } as any)
 const LangAppAuthSettingsLoginsSessionsSessionIdRoute =
@@ -396,10 +431,13 @@ export interface FileRoutesByFullPath {
   '/$lang/settings/': typeof LangAppAuthSettingsIndexRoute
   '/$lang/dashboard/operations/$operationId': typeof LangAppAuthDashboardOperationsOperationIdRoute
   '/$lang/dashboard/sandboxes/$sandboxId': typeof LangAppAuthDashboardSandboxesSandboxIdRoute
+  '/$lang/dashboard/sandboxes/new': typeof LangAppAuthDashboardSandboxesNewRoute
   '/$lang/settings/hosts/$hostId': typeof LangAppAuthSettingsHostsHostIdRoute
+  '/$lang/settings/hosts/add': typeof LangAppAuthSettingsHostsAddRoute
   '/$lang/settings/logins/$loginId': typeof LangAppAuthSettingsLoginsLoginIdRoute
   '/$lang/settings/pools/invite': typeof LangAppAuthSettingsPoolsInviteRoute
   '/$lang/settings/webhooks/$endpointId': typeof LangAppAuthSettingsWebhooksEndpointIdRoute
+  '/$lang/settings/webhooks/new': typeof LangAppAuthSettingsWebhooksNewRoute
   '/$lang/dashboard/operations/': typeof LangAppAuthDashboardOperationsIndexRoute
   '/$lang/dashboard/sandboxes/': typeof LangAppAuthDashboardSandboxesIndexRoute
   '/$lang/dashboard/templates/': typeof LangAppAuthDashboardTemplatesIndexRoute
@@ -408,6 +446,8 @@ export interface FileRoutesByFullPath {
   '/$lang/settings/pools/': typeof LangAppAuthSettingsPoolsIndexRoute
   '/$lang/settings/webhooks/': typeof LangAppAuthSettingsWebhooksIndexRoute
   '/$lang/dashboard/templates/builds/$buildId': typeof LangAppAuthDashboardTemplatesBuildsBuildIdRoute
+  '/$lang/dashboard/templates/new/build': typeof LangAppAuthDashboardTemplatesNewBuildRoute
+  '/$lang/dashboard/templates/new/register': typeof LangAppAuthDashboardTemplatesNewRegisterRoute
   '/$lang/settings/logins/sessions/$sessionId': typeof LangAppAuthSettingsLoginsSessionsSessionIdRoute
   '/$lang/dashboard/templates/builds/': typeof LangAppAuthDashboardTemplatesBuildsIndexRoute
 }
@@ -437,10 +477,13 @@ export interface FileRoutesByTo {
   '/$lang/settings': typeof LangAppAuthSettingsIndexRoute
   '/$lang/dashboard/operations/$operationId': typeof LangAppAuthDashboardOperationsOperationIdRoute
   '/$lang/dashboard/sandboxes/$sandboxId': typeof LangAppAuthDashboardSandboxesSandboxIdRoute
+  '/$lang/dashboard/sandboxes/new': typeof LangAppAuthDashboardSandboxesNewRoute
   '/$lang/settings/hosts/$hostId': typeof LangAppAuthSettingsHostsHostIdRoute
+  '/$lang/settings/hosts/add': typeof LangAppAuthSettingsHostsAddRoute
   '/$lang/settings/logins/$loginId': typeof LangAppAuthSettingsLoginsLoginIdRoute
   '/$lang/settings/pools/invite': typeof LangAppAuthSettingsPoolsInviteRoute
   '/$lang/settings/webhooks/$endpointId': typeof LangAppAuthSettingsWebhooksEndpointIdRoute
+  '/$lang/settings/webhooks/new': typeof LangAppAuthSettingsWebhooksNewRoute
   '/$lang/dashboard/operations': typeof LangAppAuthDashboardOperationsIndexRoute
   '/$lang/dashboard/sandboxes': typeof LangAppAuthDashboardSandboxesIndexRoute
   '/$lang/dashboard/templates': typeof LangAppAuthDashboardTemplatesIndexRoute
@@ -449,6 +492,8 @@ export interface FileRoutesByTo {
   '/$lang/settings/pools': typeof LangAppAuthSettingsPoolsIndexRoute
   '/$lang/settings/webhooks': typeof LangAppAuthSettingsWebhooksIndexRoute
   '/$lang/dashboard/templates/builds/$buildId': typeof LangAppAuthDashboardTemplatesBuildsBuildIdRoute
+  '/$lang/dashboard/templates/new/build': typeof LangAppAuthDashboardTemplatesNewBuildRoute
+  '/$lang/dashboard/templates/new/register': typeof LangAppAuthDashboardTemplatesNewRegisterRoute
   '/$lang/settings/logins/sessions/$sessionId': typeof LangAppAuthSettingsLoginsSessionsSessionIdRoute
   '/$lang/dashboard/templates/builds': typeof LangAppAuthDashboardTemplatesBuildsIndexRoute
 }
@@ -493,10 +538,13 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/settings/': typeof LangAppAuthSettingsIndexRoute
   '/$lang/_app/_auth/dashboard/operations/$operationId': typeof LangAppAuthDashboardOperationsOperationIdRoute
   '/$lang/_app/_auth/dashboard/sandboxes/$sandboxId': typeof LangAppAuthDashboardSandboxesSandboxIdRoute
+  '/$lang/_app/_auth/dashboard/sandboxes/new': typeof LangAppAuthDashboardSandboxesNewRoute
   '/$lang/_app/_auth/settings/hosts/$hostId': typeof LangAppAuthSettingsHostsHostIdRoute
+  '/$lang/_app/_auth/settings/hosts/add': typeof LangAppAuthSettingsHostsAddRoute
   '/$lang/_app/_auth/settings/logins/$loginId': typeof LangAppAuthSettingsLoginsLoginIdRoute
   '/$lang/_app/_auth/settings/pools/invite': typeof LangAppAuthSettingsPoolsInviteRoute
   '/$lang/_app/_auth/settings/webhooks/$endpointId': typeof LangAppAuthSettingsWebhooksEndpointIdRoute
+  '/$lang/_app/_auth/settings/webhooks/new': typeof LangAppAuthSettingsWebhooksNewRoute
   '/$lang/_app/_auth/dashboard/operations/': typeof LangAppAuthDashboardOperationsIndexRoute
   '/$lang/_app/_auth/dashboard/sandboxes/': typeof LangAppAuthDashboardSandboxesIndexRoute
   '/$lang/_app/_auth/dashboard/templates/': typeof LangAppAuthDashboardTemplatesIndexRoute
@@ -505,6 +553,8 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/settings/pools/': typeof LangAppAuthSettingsPoolsIndexRoute
   '/$lang/_app/_auth/settings/webhooks/': typeof LangAppAuthSettingsWebhooksIndexRoute
   '/$lang/_app/_auth/dashboard/templates/builds/$buildId': typeof LangAppAuthDashboardTemplatesBuildsBuildIdRoute
+  '/$lang/_app/_auth/dashboard/templates/new/build': typeof LangAppAuthDashboardTemplatesNewBuildRoute
+  '/$lang/_app/_auth/dashboard/templates/new/register': typeof LangAppAuthDashboardTemplatesNewRegisterRoute
   '/$lang/_app/_auth/settings/logins/sessions/$sessionId': typeof LangAppAuthSettingsLoginsSessionsSessionIdRoute
   '/$lang/_app/_auth/dashboard/templates/builds/': typeof LangAppAuthDashboardTemplatesBuildsIndexRoute
 }
@@ -547,10 +597,13 @@ export interface FileRouteTypes {
     | '/$lang/settings/'
     | '/$lang/dashboard/operations/$operationId'
     | '/$lang/dashboard/sandboxes/$sandboxId'
+    | '/$lang/dashboard/sandboxes/new'
     | '/$lang/settings/hosts/$hostId'
+    | '/$lang/settings/hosts/add'
     | '/$lang/settings/logins/$loginId'
     | '/$lang/settings/pools/invite'
     | '/$lang/settings/webhooks/$endpointId'
+    | '/$lang/settings/webhooks/new'
     | '/$lang/dashboard/operations/'
     | '/$lang/dashboard/sandboxes/'
     | '/$lang/dashboard/templates/'
@@ -559,6 +612,8 @@ export interface FileRouteTypes {
     | '/$lang/settings/pools/'
     | '/$lang/settings/webhooks/'
     | '/$lang/dashboard/templates/builds/$buildId'
+    | '/$lang/dashboard/templates/new/build'
+    | '/$lang/dashboard/templates/new/register'
     | '/$lang/settings/logins/sessions/$sessionId'
     | '/$lang/dashboard/templates/builds/'
   fileRoutesByTo: FileRoutesByTo
@@ -588,10 +643,13 @@ export interface FileRouteTypes {
     | '/$lang/settings'
     | '/$lang/dashboard/operations/$operationId'
     | '/$lang/dashboard/sandboxes/$sandboxId'
+    | '/$lang/dashboard/sandboxes/new'
     | '/$lang/settings/hosts/$hostId'
+    | '/$lang/settings/hosts/add'
     | '/$lang/settings/logins/$loginId'
     | '/$lang/settings/pools/invite'
     | '/$lang/settings/webhooks/$endpointId'
+    | '/$lang/settings/webhooks/new'
     | '/$lang/dashboard/operations'
     | '/$lang/dashboard/sandboxes'
     | '/$lang/dashboard/templates'
@@ -600,6 +658,8 @@ export interface FileRouteTypes {
     | '/$lang/settings/pools'
     | '/$lang/settings/webhooks'
     | '/$lang/dashboard/templates/builds/$buildId'
+    | '/$lang/dashboard/templates/new/build'
+    | '/$lang/dashboard/templates/new/register'
     | '/$lang/settings/logins/sessions/$sessionId'
     | '/$lang/dashboard/templates/builds'
   id:
@@ -643,10 +703,13 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/settings/'
     | '/$lang/_app/_auth/dashboard/operations/$operationId'
     | '/$lang/_app/_auth/dashboard/sandboxes/$sandboxId'
+    | '/$lang/_app/_auth/dashboard/sandboxes/new'
     | '/$lang/_app/_auth/settings/hosts/$hostId'
+    | '/$lang/_app/_auth/settings/hosts/add'
     | '/$lang/_app/_auth/settings/logins/$loginId'
     | '/$lang/_app/_auth/settings/pools/invite'
     | '/$lang/_app/_auth/settings/webhooks/$endpointId'
+    | '/$lang/_app/_auth/settings/webhooks/new'
     | '/$lang/_app/_auth/dashboard/operations/'
     | '/$lang/_app/_auth/dashboard/sandboxes/'
     | '/$lang/_app/_auth/dashboard/templates/'
@@ -655,6 +718,8 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/settings/pools/'
     | '/$lang/_app/_auth/settings/webhooks/'
     | '/$lang/_app/_auth/dashboard/templates/builds/$buildId'
+    | '/$lang/_app/_auth/dashboard/templates/new/build'
+    | '/$lang/_app/_auth/dashboard/templates/new/register'
     | '/$lang/_app/_auth/settings/logins/sessions/$sessionId'
     | '/$lang/_app/_auth/dashboard/templates/builds/'
   fileRoutesById: FileRoutesById
@@ -953,6 +1018,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppAuthDashboardSandboxesSandboxIdRouteImport
       parentRoute: typeof LangAppAuthDashboardSandboxesRoute
     }
+    '/$lang/_app/_auth/dashboard/sandboxes/new': {
+      id: '/$lang/_app/_auth/dashboard/sandboxes/new'
+      path: '/new'
+      fullPath: '/$lang/dashboard/sandboxes/new'
+      preLoaderRoute: typeof LangAppAuthDashboardSandboxesNewRouteImport
+      parentRoute: typeof LangAppAuthDashboardSandboxesRoute
+    }
     '/$lang/_app/_auth/dashboard/templates/': {
       id: '/$lang/_app/_auth/dashboard/templates/'
       path: '/'
@@ -972,6 +1044,13 @@ declare module '@tanstack/react-router' {
       path: '/$hostId'
       fullPath: '/$lang/settings/hosts/$hostId'
       preLoaderRoute: typeof LangAppAuthSettingsHostsHostIdRouteImport
+      parentRoute: typeof LangAppAuthSettingsHostsRoute
+    }
+    '/$lang/_app/_auth/settings/hosts/add': {
+      id: '/$lang/_app/_auth/settings/hosts/add'
+      path: '/add'
+      fullPath: '/$lang/settings/hosts/add'
+      preLoaderRoute: typeof LangAppAuthSettingsHostsAddRouteImport
       parentRoute: typeof LangAppAuthSettingsHostsRoute
     }
     '/$lang/_app/_auth/settings/logins/': {
@@ -1016,6 +1095,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LangAppAuthSettingsWebhooksEndpointIdRouteImport
       parentRoute: typeof LangAppAuthSettingsWebhooksRoute
     }
+    '/$lang/_app/_auth/settings/webhooks/new': {
+      id: '/$lang/_app/_auth/settings/webhooks/new'
+      path: '/new'
+      fullPath: '/$lang/settings/webhooks/new'
+      preLoaderRoute: typeof LangAppAuthSettingsWebhooksNewRouteImport
+      parentRoute: typeof LangAppAuthSettingsWebhooksRoute
+    }
     '/$lang/_app/_auth/dashboard/templates/builds/': {
       id: '/$lang/_app/_auth/dashboard/templates/builds/'
       path: '/builds'
@@ -1028,6 +1114,20 @@ declare module '@tanstack/react-router' {
       path: '/builds/$buildId'
       fullPath: '/$lang/dashboard/templates/builds/$buildId'
       preLoaderRoute: typeof LangAppAuthDashboardTemplatesBuildsBuildIdRouteImport
+      parentRoute: typeof LangAppAuthDashboardTemplatesRoute
+    }
+    '/$lang/_app/_auth/dashboard/templates/new/build': {
+      id: '/$lang/_app/_auth/dashboard/templates/new/build'
+      path: '/new/build'
+      fullPath: '/$lang/dashboard/templates/new/build'
+      preLoaderRoute: typeof LangAppAuthDashboardTemplatesNewBuildRouteImport
+      parentRoute: typeof LangAppAuthDashboardTemplatesRoute
+    }
+    '/$lang/_app/_auth/dashboard/templates/new/register': {
+      id: '/$lang/_app/_auth/dashboard/templates/new/register'
+      path: '/new/register'
+      fullPath: '/$lang/dashboard/templates/new/register'
+      preLoaderRoute: typeof LangAppAuthDashboardTemplatesNewRegisterRouteImport
       parentRoute: typeof LangAppAuthDashboardTemplatesRoute
     }
     '/$lang/_app/_auth/settings/logins/sessions/$sessionId': {
@@ -1060,6 +1160,7 @@ const LangAppAuthDashboardOperationsRouteWithChildren =
 
 interface LangAppAuthDashboardSandboxesRouteChildren {
   LangAppAuthDashboardSandboxesSandboxIdRoute: typeof LangAppAuthDashboardSandboxesSandboxIdRoute
+  LangAppAuthDashboardSandboxesNewRoute: typeof LangAppAuthDashboardSandboxesNewRoute
   LangAppAuthDashboardSandboxesIndexRoute: typeof LangAppAuthDashboardSandboxesIndexRoute
 }
 
@@ -1067,6 +1168,8 @@ const LangAppAuthDashboardSandboxesRouteChildren: LangAppAuthDashboardSandboxesR
   {
     LangAppAuthDashboardSandboxesSandboxIdRoute:
       LangAppAuthDashboardSandboxesSandboxIdRoute,
+    LangAppAuthDashboardSandboxesNewRoute:
+      LangAppAuthDashboardSandboxesNewRoute,
     LangAppAuthDashboardSandboxesIndexRoute:
       LangAppAuthDashboardSandboxesIndexRoute,
   }
@@ -1079,6 +1182,8 @@ const LangAppAuthDashboardSandboxesRouteWithChildren =
 interface LangAppAuthDashboardTemplatesRouteChildren {
   LangAppAuthDashboardTemplatesIndexRoute: typeof LangAppAuthDashboardTemplatesIndexRoute
   LangAppAuthDashboardTemplatesBuildsBuildIdRoute: typeof LangAppAuthDashboardTemplatesBuildsBuildIdRoute
+  LangAppAuthDashboardTemplatesNewBuildRoute: typeof LangAppAuthDashboardTemplatesNewBuildRoute
+  LangAppAuthDashboardTemplatesNewRegisterRoute: typeof LangAppAuthDashboardTemplatesNewRegisterRoute
   LangAppAuthDashboardTemplatesBuildsIndexRoute: typeof LangAppAuthDashboardTemplatesBuildsIndexRoute
 }
 
@@ -1088,6 +1193,10 @@ const LangAppAuthDashboardTemplatesRouteChildren: LangAppAuthDashboardTemplatesR
       LangAppAuthDashboardTemplatesIndexRoute,
     LangAppAuthDashboardTemplatesBuildsBuildIdRoute:
       LangAppAuthDashboardTemplatesBuildsBuildIdRoute,
+    LangAppAuthDashboardTemplatesNewBuildRoute:
+      LangAppAuthDashboardTemplatesNewBuildRoute,
+    LangAppAuthDashboardTemplatesNewRegisterRoute:
+      LangAppAuthDashboardTemplatesNewRegisterRoute,
     LangAppAuthDashboardTemplatesBuildsIndexRoute:
       LangAppAuthDashboardTemplatesBuildsIndexRoute,
   }
@@ -1121,12 +1230,14 @@ const LangAppAuthDashboardRouteWithChildren =
 
 interface LangAppAuthSettingsHostsRouteChildren {
   LangAppAuthSettingsHostsHostIdRoute: typeof LangAppAuthSettingsHostsHostIdRoute
+  LangAppAuthSettingsHostsAddRoute: typeof LangAppAuthSettingsHostsAddRoute
   LangAppAuthSettingsHostsIndexRoute: typeof LangAppAuthSettingsHostsIndexRoute
 }
 
 const LangAppAuthSettingsHostsRouteChildren: LangAppAuthSettingsHostsRouteChildren =
   {
     LangAppAuthSettingsHostsHostIdRoute: LangAppAuthSettingsHostsHostIdRoute,
+    LangAppAuthSettingsHostsAddRoute: LangAppAuthSettingsHostsAddRoute,
     LangAppAuthSettingsHostsIndexRoute: LangAppAuthSettingsHostsIndexRoute,
   }
 
@@ -1173,6 +1284,7 @@ const LangAppAuthSettingsPoolsRouteWithChildren =
 
 interface LangAppAuthSettingsWebhooksRouteChildren {
   LangAppAuthSettingsWebhooksEndpointIdRoute: typeof LangAppAuthSettingsWebhooksEndpointIdRoute
+  LangAppAuthSettingsWebhooksNewRoute: typeof LangAppAuthSettingsWebhooksNewRoute
   LangAppAuthSettingsWebhooksIndexRoute: typeof LangAppAuthSettingsWebhooksIndexRoute
 }
 
@@ -1180,6 +1292,7 @@ const LangAppAuthSettingsWebhooksRouteChildren: LangAppAuthSettingsWebhooksRoute
   {
     LangAppAuthSettingsWebhooksEndpointIdRoute:
       LangAppAuthSettingsWebhooksEndpointIdRoute,
+    LangAppAuthSettingsWebhooksNewRoute: LangAppAuthSettingsWebhooksNewRoute,
     LangAppAuthSettingsWebhooksIndexRoute:
       LangAppAuthSettingsWebhooksIndexRoute,
   }

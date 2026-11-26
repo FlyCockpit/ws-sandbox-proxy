@@ -11,7 +11,6 @@ vi.mock("@/utils/friendly-error", () => ({
   isRateLimit: () => false,
 }));
 
-import { toast } from "@wssp/ui/components/sileo";
 import { ForcedPasswordChange } from "./forced-password-change";
 
 const reload = vi.fn();
@@ -56,6 +55,23 @@ describe("forced password change takeover", () => {
     fireEvent.click(screen.getByRole("button", { name: "settings:security.changePassword" }));
     await waitFor(() => expect(changePassword).toHaveBeenCalledOnce());
     expect(reload).not.toHaveBeenCalled();
+    // The mismatch sits under Current password, which takes focus.
+    const current = screen.getByLabelText("settings:security.currentPasswordLabel");
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("settings:security.currentPasswordMismatch");
+    expect(current.getAttribute("aria-invalid")).toBe("true");
+    expect(current.getAttribute("aria-describedby")).toContain(alert.id);
+    expect(document.activeElement).toBe(current);
+    // Editing the field clears it and the button works again.
+    fill("settings:security.currentPasswordLabel", "temporary-password");
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "settings:security.changePassword",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
   });
 
   it("says why when the temporary password is chosen again", async () => {
@@ -65,9 +81,11 @@ describe("forced password change takeover", () => {
     fill("settings:security.newPasswordLabel", "temporary-password");
     fill("settings:security.confirmPasswordLabel", "temporary-password");
     fireEvent.click(screen.getByRole("button", { name: "settings:security.changePassword" }));
-    await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("settings:security.passwordReused"),
-    );
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("settings:security.passwordReused");
+    const next = screen.getByLabelText("settings:security.newPasswordLabel");
+    expect(next.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(next);
     expect(reload).not.toHaveBeenCalled();
   });
 });

@@ -2091,6 +2091,8 @@ describe("S3 A/B foreign-host lifecycle and owner oracle qualification (real Pos
           "guestSudo",
           "guestRoot",
           "guestSudoReason",
+          // The owner's display name and email (admin observability shows names first).
+          "owner",
         ].sort(),
       );
     }

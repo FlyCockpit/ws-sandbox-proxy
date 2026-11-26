@@ -7,7 +7,7 @@ it, stops it, and saves it through the same capture path as a manual capture
 ([templates](../operations/templates.md)). The result is stored, distributed,
 tagged and retained exactly like a captured revision.
 
-Start a build from the dashboard (**Templates → Build**, then
+Start a build from the dashboard (**Templates → New template → Build from a recipe**, or a template's **Build new version**, then
 `/dashboard/templates/builds` for progress, step output and cancel), from the
 SDK (`client.templates.build(Template()…)`, see the
 [SDK README](../../packages/sdk/README.md#template-builds)) or with

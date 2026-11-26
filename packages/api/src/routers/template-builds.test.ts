@@ -18,6 +18,7 @@ vi.mock("@wssp/queue", () => ({ redisConnection: {} }));
 const services = vi.hoisted(() => ({
   failureTail: vi.fn(async () => ({ tail: "boom\n" })),
   usage: vi.fn(async () => ({ enabled: true })),
+  get: vi.fn(async () => ({ id: "b1", templateId: "tpl_1", revisionId: null, state: "PLACING" })),
   list: vi.fn(async () => ({
     items: [
       { id: "b1", templateId: "tpl_1", revisionId: "rev_1" },
@@ -30,6 +31,7 @@ vi.mock("../template-builds/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../template-builds/views")>()),
   getTemplateBuildFailureTail: services.failureTail,
   getTemplateBuildUsage: services.usage,
+  getTemplateBuild: services.get,
   listTemplateBuilds: services.list,
 }));
 
@@ -143,5 +145,23 @@ describe("templateBuildsRouter template names", () => {
         take: 1,
       }),
     );
+  });
+});
+
+describe("templateBuildsRouter get target", () => {
+  it("adds the owner's chosen pool or host to one build, owner-scoped", async () => {
+    vi.mocked(prisma.sandboxTemplateBuild.findFirst).mockResolvedValueOnce({
+      poolId: "pool_1",
+      requestedHostId: null,
+    } as never);
+    vi.mocked(prisma.sandboxTemplate.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.sandboxTemplateRevision.findMany).mockResolvedValue([] as never);
+    const client = createRouterClient(templateBuildsRouter, { context: context() });
+    const build = await client.get({ id: "b1" });
+    expect(build.target).toEqual({ poolId: "pool_1", hostId: null });
+    expect(prisma.sandboxTemplateBuild.findFirst).toHaveBeenLastCalledWith({
+      where: { id: "b1", userId: "owner-1" },
+      select: { poolId: true, requestedHostId: true },
+    });
   });
 });

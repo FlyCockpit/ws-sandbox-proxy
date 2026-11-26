@@ -12,11 +12,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
+import { focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextField } from "@wssp/ui/components/text-field";
 import { Plus } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Trans, useTranslation } from "react-i18next";
 import {
   CredentialDates,
@@ -25,6 +27,7 @@ import {
   OneTimeSecretPanel,
   OrphanedCredentialsAlert,
   RevokeCredentialDialog,
+  SecretLeaveGuard,
   useRevoke,
 } from "@/components/credentials/credential-parts";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
@@ -45,6 +48,7 @@ import {
   type CredentialProblem,
   credentialProblem,
   type HostTokenDraft,
+  type HostTokenDraftProblem,
   hostTokenDraftProblems,
   hostTokenMintInput,
   selectableHosts,
@@ -138,6 +142,7 @@ export function HostCredentialsPage({ lang }: { lang: string }) {
             {t("hostCredentials:mint.action")}
           </Button>
         </div>
+        <SecretLeaveGuard active={oneTime.revealed != null} />
         {oneTime.revealed ? (
           <OneTimeSecretPanel
             secret={oneTime.revealed.secret}
@@ -294,7 +299,7 @@ function HostTokenRow({
     >
       <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{token.name}</p>
+          <p className="text-sm font-medium [overflow-wrap:anywhere]">{token.name}</p>
           <p className="truncate font-mono text-xs text-muted-foreground">
             {t("credentials:prefix", { prefix: token.lookupPrefix })}
           </p>
@@ -303,6 +308,7 @@ function HostTokenRow({
           type="button"
           variant="destructive"
           size="touch"
+          aria-label={t("credentials:revoke.actionNamed", { name: token.name })}
           disabled={revoke.mutation.isPending}
           onClick={() => revoke.setConfirming(true)}
         >
@@ -370,6 +376,9 @@ function DeviceCredentialRow({
           type="button"
           variant="destructive"
           size="touch"
+          aria-label={t("credentials:revoke.actionNamed", {
+            name: t("hostCredentials:devices.name", { slug: device.host.slug }),
+          })}
           disabled={revoke.mutation.isPending}
           onClick={() => revoke.setConfirming(true)}
         >
@@ -416,7 +425,9 @@ function MintHostTokenDialog({
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
   const hostId = useId();
+  const hostErrorId = useId();
   const expiryId = useId();
+  const formRef = useRef<HTMLFormElement>(null);
   const [problem, setProblem] = useState<CredentialProblem | null>(null);
   const [attempted, setAttempted] = useState(false);
   const hostsQuery = useInfiniteQuery({
@@ -433,7 +444,6 @@ function MintHostTokenDialog({
   const form = useForm({
     defaultValues: { name: "", hostId: "", expiry: "never" } as HostTokenDraft,
     onSubmit: async ({ value }) => {
-      setAttempted(true);
       if (hostTokenDraftProblems(value, hosts).length > 0) return;
       setProblem(null);
       try {
@@ -465,6 +475,13 @@ function MintHostTokenDialog({
 
   const values = useStore(form.store, (state) => state.values);
   const problems = attempted ? hostTokenDraftProblems(values, hosts) : [];
+  const NAME_PROBLEMS: readonly HostTokenDraftProblem[] = ["nameRequired", "nameTooLong"];
+  const nameErrors = problems
+    .filter((item) => NAME_PROBLEMS.includes(item))
+    .map((item) => t(`credentials:draft.${item}`));
+  const hostErrors = problems
+    .filter((item) => !NAME_PROBLEMS.includes(item))
+    .map((item) => t(`credentials:draft.${item}`));
   // Cancelling discards a mint still in flight (it is revoked, never shown).
   const close = () => {
     oneTime.discardPending();
@@ -482,22 +499,33 @@ function MintHostTokenDialog({
           <DialogDescription>{t("hostCredentials:mint.description")}</DialogDescription>
         </DialogHeader>
         <form
+          ref={formRef}
           noValidate
           className="flex min-w-0 flex-col gap-4"
           onSubmit={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            void form.handleSubmit();
+            flushSync(() => setAttempted(true));
+            // Errors sit under their fields; the first invalid one gets focus.
+            if (!focusFirstInvalid(formRef.current)) void form.handleSubmit();
           }}
         >
           <form.Field name="name">
             {(field) => (
               <TextField
-                field={field}
+                field={{
+                  name: field.name,
+                  state: { value: field.state.value, meta: { errors: nameErrors } },
+                  handleBlur: field.handleBlur,
+                  handleChange: field.handleChange,
+                }}
                 label={t("credentials:form.name")}
+                description={t("credentials:form.nameHint", {
+                  max: CREDENTIAL_NAME_MAX,
+                  count: field.state.value.trim().length,
+                })}
                 autoComplete="off"
                 inputMode="text"
-                maxLength={CREDENTIAL_NAME_MAX}
               />
             )}
           </form.Field>
@@ -530,6 +558,8 @@ function MintHostTokenDialog({
                     }
                     value={field.state.value}
                     disabled={hostsQuery.isPending}
+                    aria-invalid={hostErrors.length > 0 || undefined}
+                    aria-describedby={hostErrors.length > 0 ? hostErrorId : undefined}
                     onValueChange={(value) => field.handleChange(value)}
                   >
                     <SelectItem value="">{t("hostCredentials:mint.chooseHost")}</SelectItem>
@@ -539,6 +569,15 @@ function MintHostTokenDialog({
                       </SelectItem>
                     ))}
                   </FormSelect>
+                  {hostErrors.length > 0 ? (
+                    <div id={hostErrorId} role="alert">
+                      {hostErrors.map((message) => (
+                        <p key={message} className="text-sm text-destructive">
+                          {message}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                   <LoadMore
                     hasNextPage={hostsQuery.hasNextPage}
                     isFetchingNextPage={hostsQuery.isFetchingNextPage}
@@ -554,12 +593,13 @@ function MintHostTokenDialog({
               <ExpirySelect id={expiryId} value={field.state.value} onChange={field.handleChange} />
             )}
           </form.Field>
-          {problems.length > 0 ? (
-            <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
-              {problems.map((item) => (
-                <li key={item}>{t(`credentials:draft.${item}`)}</li>
-              ))}
-            </ul>
+          {/* No host to choose: the host problem has no field to sit under. */}
+          {hostErrors.length > 0 &&
+          (hostsQuery.isError ||
+            (hosts.length === 0 && !hostsQuery.isPending && !hostsQuery.hasNextPage)) ? (
+            <p role="alert" className="text-sm text-destructive">
+              {hostErrors.join(" ")}
+            </p>
           ) : null}
           {problem ? (
             <p role="alert" className="text-sm text-destructive">

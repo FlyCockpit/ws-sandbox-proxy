@@ -14,9 +14,8 @@ import {
   AlertDialogTitle,
 } from "@wssp/ui/components/alert-dialog";
 import { Badge } from "@wssp/ui/components/badge";
-import { Button } from "@wssp/ui/components/button";
+import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { CopyField } from "@wssp/ui/components/copy-field";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@wssp/ui/components/dialog";
 import {
   Sheet,
   SheetContent,
@@ -30,7 +29,7 @@ import { Switch } from "@wssp/ui/components/switch";
 import { TextField } from "@wssp/ui/components/text-field";
 import { cn } from "@wssp/ui/lib/utils";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import z from "zod";
 import { AdvancedDetails } from "@/components/advanced-details";
@@ -38,15 +37,24 @@ import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { CopyableId } from "@/components/copyable-id";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { EmptyState } from "@/components/empty-state";
-import { type HostItem, HostRow, Pill, STATE_TONE } from "@/components/hosts/host-row";
+import { EnrollHost } from "@/components/hosts/add-host-page";
+import {
+  formatGiB,
+  type HostItem,
+  HostRow,
+  Meter,
+  Pill,
+  STATE_TONE,
+} from "@/components/hosts/host-row";
 import { HostsTabs } from "@/components/hosts/hosts-tabs";
 import { LoadMore } from "@/components/load-more";
+import { PageActions } from "@/components/page-actions";
 import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
-import { docsRepoPath, docsUrl } from "@/lib/docs-links";
+import { useStatusClock } from "@/hooks/use-status-clock";
 import { formatBytes } from "@/lib/format-bytes";
 import { dateTimeTitle } from "@/lib/format-date-time";
 import {
@@ -54,6 +62,7 @@ import {
   GUARD_FIREWALL_COMMAND,
   GUARD_INSTALL_COMMAND,
   GUEST_SUDO_FOR_OTHERS_COMMAND,
+  HOST_STATUS_REFETCH_MS,
   type HostMutationProblem,
   hostCapacityState,
   hostCommands,
@@ -82,7 +91,7 @@ import { orpc } from "@/utils/orpc";
  */
 
 /** Refetch cadence; the stale transition itself is timer-driven (see useRerenderAt). */
-const HOSTS_REFETCH_MS = 15_000;
+const HOSTS_REFETCH_MS = HOST_STATUS_REFETCH_MS;
 
 const QUARANTINE_REASONS = [
   "released_instance_present",
@@ -115,11 +124,15 @@ export function HostsPage({ lang }: { lang: string }) {
         lastPage.nextCursor ?? undefined,
     }),
     refetchInterval: HOSTS_REFETCH_MS,
+    // Coming back from a host's page shows current counts, never the
+    // five-minute cached page (the detail polls every five seconds, so a
+    // cached list disagreed with it: "0 live" here, "1 live" there).
+    staleTime: 0,
+    refetchOnMount: "always",
   });
   const hosts = query.data?.pages.flatMap((page) => page.items);
-  const now = Date.now();
+  const now = useStatusClock(query.dataUpdatedAt);
   useRerenderAt(nextHostStateChangeAt(hosts ?? [], now));
-  const [adding, setAdding] = useState(false);
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -128,10 +141,15 @@ export function HostsPage({ lang }: { lang: string }) {
         title={t("hosts:title")}
         description={t("hosts:description")}
         actions={
-          <Button type="button" size="touch" onClick={() => setAdding(true)}>
+          <Link
+            to="/$lang/settings/hosts/add"
+            params={{ lang }}
+            data-host-add=""
+            className={cn(buttonVariants({ size: "touch" }), "self-start")}
+          >
             <Plus aria-hidden="true" className="size-4" />
             {t("hosts:enroll.action")}
-          </Button>
+          </Link>
         }
       />
       <HostsTabs lang={lang} />
@@ -158,7 +176,7 @@ export function HostsPage({ lang }: { lang: string }) {
               className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
             >
               <h2 id="hosts-enroll-title" className="text-sm font-medium">
-                {t("hosts:enroll.title")}
+                {t("hosts:enroll.pageTitle")}
               </h2>
               <EnrollHost lang={lang} />
             </section>
@@ -180,122 +198,7 @@ export function HostsPage({ lang }: { lang: string }) {
           </>
         )}
       </QueryBoundary>
-      <Dialog open={adding} onOpenChange={setAdding}>
-        <DialogContent closeLabel={t("common:actions.close")}>
-          <DialogHeader>
-            <DialogTitle>{t("hosts:enroll.title")}</DialogTitle>
-          </DialogHeader>
-          <EnrollHost lang={lang} />
-        </DialogContent>
-      </Dialog>
     </div>
-  );
-}
-
-/**
- * Enrolling a machine, in the order a new node owner does it: install, enroll
- * with a device code (approved on the link the CLI prints), install the
- * root-owned egress guard (without it the host connects but takes no
- * sandboxes), then start the daemon. Shown in the Add host dialog, and inline
- * while the list is empty.
- */
-function EnrollHost({ lang }: { lang: string }) {
-  const { t } = useTranslation("hosts");
-  const commands = hostCommands(env.VITE_SERVER_URL);
-  const step = "flex min-w-0 flex-col gap-2";
-  return (
-    <div data-host-enroll="" className="flex min-w-0 flex-col gap-3">
-      <p className="text-sm text-muted-foreground">{t("enroll.description")}</p>
-      {/* Numbers are part of each step's text, so text and command boxes stay
-          on the card's text line (docs/design/edge-lines.md). */}
-      <ol className="flex min-w-0 flex-col gap-4 text-sm">
-        <li data-enroll-step="install" className={step}>
-          <span>
-            <StepNumber n={1} />
-            {t("enroll.steps.install")}{" "}
-            <GuideLink page="hostsQuickStart" label={t("enroll.guideLink")} />
-          </span>
-          <CopyField value={commands.install} copyLabel={t("enroll.copyCommand")} />
-        </li>
-        <li data-enroll-step="enroll" className={step}>
-          <span>
-            <StepNumber n={2} />
-            {t("enroll.steps.enroll")}
-          </span>
-          <CopyField value={commands.deviceLogin} copyLabel={t("enroll.copyCommand")} />
-        </li>
-        <li data-enroll-step="guard" className={step}>
-          <span>
-            <StepNumber n={3} />
-            {t("enroll.steps.guard")}
-          </span>
-          <CopyField value={GUARD_INSTALL_COMMAND} copyLabel={t("enroll.copyCommand")} />
-        </li>
-        <li data-enroll-step="run" className={step}>
-          <span>
-            <StepNumber n={4} />
-            {t("enroll.steps.run")}{" "}
-            <GuideLink page="hostsService" label={t("enroll.serviceLink")} />
-          </span>
-          <CopyField value={commands.connect} copyLabel={t("enroll.copyCommand")} />
-        </li>
-      </ol>
-      <p className="text-sm text-muted-foreground">
-        <Trans
-          t={t}
-          i18nKey="connect.caHint"
-          shouldUnescape
-          components={{ code: <code className="whitespace-nowrap" /> }}
-        />
-      </p>
-      <p className="text-sm text-muted-foreground">
-        <Trans
-          t={t}
-          i18nKey="connect.vmCapacityHint"
-          components={{ code: <code className="whitespace-nowrap" /> }}
-        />
-      </p>
-      <p className="text-sm text-muted-foreground">
-        {t("enroll.tokenAlternative")}{" "}
-        <Link
-          to="/$lang/settings/host-credentials"
-          params={{ lang }}
-          className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-        >
-          {t("enroll.tokenLink")}
-        </Link>
-      </p>
-    </div>
-  );
-}
-
-/** The visible step number; the ordered list already conveys order to assistive tech. */
-function StepNumber({ n }: { n: number }) {
-  return (
-    <span aria-hidden="true" className="font-medium">
-      {n}.{" "}
-    </span>
-  );
-}
-
-/** A link into the host guide, or its repository path when no docs base is configured. */
-function GuideLink({ page, label }: { page: "hostsQuickStart" | "hostsService"; label: string }) {
-  const { t } = useTranslation("hosts");
-  const href = docsUrl(env.VITE_DOCS_URL, page);
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      data-docs-link=""
-      className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
-    >
-      {label}
-    </a>
-  ) : (
-    <span data-docs-path="" className="text-muted-foreground">
-      {t("enroll.docsPath", { path: docsRepoPath(page) })}
-    </span>
   );
 }
 
@@ -304,11 +207,14 @@ export function HostCard({
   now,
   lang,
   locale,
+  overviewExtra,
 }: {
   host: HostItem;
   now: number;
   lang: string;
   locale: string;
+  /** Rendered at the end of the Overview section (host detail: the lifetime ceiling). */
+  overviewExtra?: ReactNode;
 }) {
   const { t } = useTranslation(["hosts", "common"]);
   const invalidate = useInvalidateHosts();
@@ -327,6 +233,7 @@ export function HostCard({
   const beat = toMs(host.lastHeartbeatAt);
   const commands = hostCommands(env.VITE_SERVER_URL, host);
   const locked = state === "deleting";
+  const capacityState = hostCapacityState(host, now);
 
   const onProblem = (error: unknown) => {
     setProblem(hostMutationProblem(error));
@@ -382,275 +289,324 @@ export function HostCard({
     },
   });
   const forgettable = hostForgettable(state);
+  const forgetAction = {
+    id: "forget",
+    label: t("hosts:forget.action"),
+    disabled: forget.isPending,
+    onSelect: () => setForgetting(true),
+  };
+  const sectionTitle = "text-base font-semibold";
 
   return (
     <li
       data-host-id={host.id}
       data-state={state}
-      className="flex min-w-0 flex-col gap-3 rounded-xl border bg-card p-4 text-card-foreground"
+      className="flex min-w-0 flex-col gap-8 text-card-foreground"
     >
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{host.label}</p>
-          <p className="truncate font-mono text-xs text-muted-foreground">{host.slug}</p>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Pill tone={STATE_TONE[state]} data-host-status={state}>
-            {t(`hosts:status.${state}`)}
-          </Pill>
-          {host.quarantinedAt && state !== "quarantined" ? (
-            <Pill tone={STATE_TONE.quarantined} data-host-quarantined="">
-              {t("hosts:status.quarantined")}
-            </Pill>
-          ) : null}
-          {drainBadge ? (
-            <Pill
-              tone="border-amber-600/40 bg-amber-600/10 text-amber-700 dark:text-amber-400"
-              data-host-drain={drainBadge}
-            >
-              {t(`hosts:drain.${drainBadge}`)}
-            </Pill>
-          ) : null}
-          {egressBlocker ? (
-            <Pill
-              tone="border-destructive/40 bg-destructive/10 text-destructive"
-              data-host-egress=""
-            >
-              {t("hosts:egress.badge")}
-            </Pill>
-          ) : null}
-          {state === "ready" && !egressBlocker && guard !== "running" ? (
-            <Pill
-              tone="border-destructive/40 bg-destructive/10 text-destructive"
-              data-host-guard-badge=""
-            >
-              {t("hosts:egress.guard.badge")}
-            </Pill>
-          ) : null}
-        </div>
-      </div>
-      {state === "ready" ? null : (
-        <p className="text-sm text-muted-foreground">{t(`hosts:statusHint.${state}`)}</p>
-      )}
-      {host.quarantinedAt ? (
-        <p className="text-sm text-muted-foreground" data-host-quarantine-reason="">
-          {t(`hosts:quarantineReason.${quarantineReasonKey(host.quarantineReason)}`)}
-        </p>
-      ) : null}
-      <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{t("hosts:heartbeat.label")}</dt>
-          <dd title={dateTimeTitle(beat, locale)}>
-            {beat == null ? t("hosts:heartbeat.never") : formatAge(beat, locale, now)}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{t("hosts:capacity.label")}</dt>
-          <dd data-host-capacity="">
-            {t("hosts:capacity.value", { live: host.liveSandboxCount })}
-          </dd>
-        </div>
-        <div className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{t("hosts:daemon.label")}</dt>
-          <dd className="truncate">
-            {host.daemonRuntime
-              ? t(`hosts:daemon.runtime.${host.daemonRuntime}`)
-              : t("hosts:daemon.notReported")}
-            {host.daemonVersion
-              ? ` · ${t("hosts:daemon.version", { version: host.daemonVersion })}`
-              : ""}
-          </dd>
-        </div>
-      </dl>
       <section
-        data-host-memory=""
-        className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 p-3"
+        id="host-overview"
+        aria-labelledby={`host-overview-title-${host.id}`}
+        className="flex min-w-0 scroll-mt-4 flex-col gap-3 rounded-xl border bg-card p-4"
       >
-        <h3 className="text-sm font-medium">{t("hosts:vmCapacity.title")}</h3>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-col gap-2">
+            <h2 id={`host-overview-title-${host.id}`} className={sectionTitle}>
+              {t("hosts:sections.overview")}
+            </h2>
+            <div className="flex flex-wrap gap-1.5">
+              <Pill tone={STATE_TONE[state]} data-host-status={state}>
+                {t(`hosts:status.${state}`)}
+              </Pill>
+              {host.quarantinedAt && state !== "quarantined" ? (
+                <Pill tone={STATE_TONE.quarantined} data-host-quarantined="">
+                  {t("hosts:status.quarantined")}
+                </Pill>
+              ) : null}
+              {drainBadge ? (
+                <Pill
+                  tone="border-amber-600/40 bg-amber-600/10 text-amber-700 dark:text-amber-400"
+                  data-host-drain={drainBadge}
+                >
+                  {t(`hosts:drain.${drainBadge}`)}
+                </Pill>
+              ) : null}
+              {egressBlocker ? (
+                <Pill
+                  tone="border-destructive/40 bg-destructive/10 text-destructive"
+                  data-host-egress=""
+                >
+                  {t("hosts:egress.badge")}
+                </Pill>
+              ) : null}
+              {state === "ready" && !egressBlocker && guard !== "running" ? (
+                <Pill
+                  tone="border-destructive/40 bg-destructive/10 text-destructive"
+                  data-host-guard-badge=""
+                >
+                  {t("hosts:egress.guard.badge")}
+                </Pill>
+              ) : null}
+            </div>
+          </div>
+          {locked ? (
+            forgettable ? (
+              <PageActions overflow={[forgetAction]} />
+            ) : null
+          ) : (
+            <PageActions
+              secondary={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="touch"
+                  title={host.draining ? undefined : t("hosts:drain.hint")}
+                  disabled={drain.isPending}
+                  // Draining is undoable but blocks new work, so it is confirmed;
+                  // undrain stays one click.
+                  onClick={() =>
+                    host.draining
+                      ? drain.mutate({ id: host.id, draining: false })
+                      : setConfirmingDrain(true)
+                  }
+                >
+                  {t(host.draining ? "hosts:drain.undrain" : "hosts:drain.drain")}
+                </Button>
+              }
+              overflow={[
+                {
+                  id: "rename",
+                  label: t("hosts:edit.action"),
+                  onSelect: () => setEditing(true),
+                },
+                ...(forgettable ? [forgetAction] : []),
+                {
+                  id: "delete",
+                  label: t("hosts:delete.action"),
+                  destructive: true,
+                  disabled: deleteBlocker != null || remove.isPending,
+                  onSelect: () => setDeleting(true),
+                },
+              ]}
+            />
+          )}
+        </div>
+        {state === "ready" ? null : (
+          <p className="text-sm text-muted-foreground">{t(`hosts:statusHint.${state}`)}</p>
+        )}
+        {host.quarantinedAt ? (
+          <p className="text-sm text-muted-foreground" data-host-quarantine-reason="">
+            {t(`hosts:quarantineReason.${quarantineReasonKey(host.quarantineReason)}`)}
+          </p>
+        ) : null}
+        <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-3">
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:heartbeat.label")}</dt>
+            <dd title={dateTimeTitle(beat, locale)}>
+              {beat == null ? t("hosts:heartbeat.never") : formatAge(beat, locale, now)}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:capacity.label")}</dt>
+            <dd data-host-capacity="">
+              {t("hosts:capacity.value", { live: host.liveSandboxCount })}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-xs text-muted-foreground">{t("hosts:daemon.label")}</dt>
+            <dd className="truncate">
+              {host.daemonRuntime
+                ? t(`hosts:daemon.runtime.${host.daemonRuntime}`)
+                : t("hosts:daemon.notReported")}
+              {host.daemonVersion
+                ? ` · ${t("hosts:daemon.version", { version: host.daemonVersion })}`
+                : ""}
+            </dd>
+          </div>
+        </dl>
+        {host.daemonRuntime === "UNSUPPORTED" ? (
+          <p className="text-sm text-destructive">{t("hosts:daemon.unsupportedHint")}</p>
+        ) : null}
+        {egressBlocker ? (
+          <p className="text-sm text-destructive" data-host-egress-hint={egressBlocker}>
+            <Trans
+              t={t}
+              i18nKey={`hosts:egress.${egressBlocker}`}
+              components={{ code: <code className="whitespace-nowrap" /> }}
+            />
+          </p>
+        ) : null}
+        {drainBadge ? (
+          <p className="text-sm text-muted-foreground">
+            {drainBadge === "drained"
+              ? t("hosts:drain.drainedHint")
+              : t("hosts:drain.drainingHint", { count: host.liveSandboxCount })}
+          </p>
+        ) : null}
+        {host.draining && host.drainOffload ? (
+          <p data-host-drain-offload="" className="text-sm text-muted-foreground">
+            {t("hosts:drain.offloadingHint")}
+          </p>
+        ) : null}
+        {problem ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(`hosts:problem.${problem}`)}
+          </p>
+        ) : null}
+        {unsafeSandboxes.length > 0 ? (
+          <ul data-host-forget-unsafe="" className="flex min-w-0 flex-col gap-1 text-sm">
+            {unsafeSandboxes.map((id) => (
+              <li key={id} className="min-w-0 truncate font-mono text-xs">
+                {id}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {deleteBlocker === "live" && !locked ? (
+          <p data-host-delete-blocked="" className="text-xs text-muted-foreground">
+            {t("hosts:delete.blockedLive")}
+          </p>
+        ) : null}
+        {overviewExtra}
+      </section>
+      <section
+        id="host-capacity"
+        data-host-memory=""
+        aria-labelledby={`host-capacity-title-${host.id}`}
+        className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h2 id={`host-capacity-title-${host.id}`} className={sectionTitle}>
+            {t("hosts:sections.capacity")}
+          </h2>
           <Badge
-            data-capacity-state={hostCapacityState(host, now)}
+            data-capacity-state={capacityState}
             variant="outline"
             className={cn(
               "whitespace-normal",
-              hostCapacityState(host, now) === "stale" &&
-                "border-state-warning/50 bg-state-warning-bg",
+              capacityState === "stale" && "border-state-warning/50 bg-state-warning-bg",
             )}
           >
-            {t(`hosts:vmCapacity.${hostCapacityState(host, now)}`)}
+            {t(`hosts:vmCapacity.${capacityState}`)}
           </Badge>
           {(host.capacity.memoryOvercommittedMiB ?? 0) > 0 ||
           (host.capacity.vcpuOvercommitted ?? 0) > 0 ? (
             <Badge variant="destructive">{t("hosts:vmCapacity.overcommitted")}</Badge>
           ) : null}
         </div>
-        <dl className="grid min-w-0 gap-3 text-sm tabular-nums sm:grid-cols-3">
-          {(
-            [
-              "memoryBudgetMiB",
-              "memoryReservedMiB",
-              "memoryAvailableMiB",
-              "memoryOvercommittedMiB",
-              "vcpuBudget",
-              "vcpuReserved",
-              "vcpuAvailable",
-              "vcpuOvercommitted",
-              "maxCpuCount",
-              "maxMemoryMiB",
-            ] as const
-          ).map((field) => (
-            <div key={field} className="min-w-0">
-              <dt className="text-xs text-muted-foreground">{t(`hosts:vmCapacity.${field}`)}</dt>
-              <dd
-                data-capacity-field={field}
-                className={cn(
-                  field === "memoryOvercommittedMiB" &&
-                    (host.capacity.memoryOvercommittedMiB ?? 0) > 0 &&
-                    "font-medium text-destructive",
-                )}
-              >
-                {host.capacity[field] == null
-                  ? t("hosts:daemon.notReported")
-                  : t(
-                      field === "maxCpuCount" || field.startsWith("vcpu")
-                        ? "hosts:vmCapacity.cpuValue"
-                        : "hosts:vmCapacity.memoryValue",
-                      { value: host.capacity[field] },
-                    )}
-              </dd>
-            </div>
-          ))}
-        </dl>
-        <p className="text-xs text-muted-foreground">{t("hosts:vmCapacity.hint")}</p>
-        <p data-vcpu-budget-hint="" className="text-xs text-muted-foreground">
-          {t("hosts:vmCapacity.vcpuBudgetHint", {
-            multiplier: VM_SIZE_LIMITS.hostVcpuBudgetDefaultThreadsMultiplier,
-            max: VM_SIZE_LIMITS.hostVcpuBudgetMax,
-          })}
-        </p>
-      </section>
-      <p data-retained-roots="" className="text-sm">
-        {t("hosts:storage.roots", { count: host.retainedRootCount })}
-      </p>
-      <p className="text-xs text-muted-foreground">{t("hosts:storage.retainedHint")}</p>
-      <section aria-label={t("hosts:storage.title")} className="flex min-w-0 flex-col gap-3">
-        <h3 className="text-sm font-medium">{t("hosts:storage.title")}</h3>
-        {host.storagePools.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("hosts:storage.empty")}</p>
-        ) : null}
-        {host.storagePools.map((pool) => (
-          <StorageCard key={pool.id} pool={pool} now={now} locale={locale} />
-        ))}
-      </section>
-      {host.daemonRuntime === "UNSUPPORTED" ? (
-        <p className="text-sm text-destructive">{t("hosts:daemon.unsupportedHint")}</p>
-      ) : null}
-      {egressBlocker ? (
-        <p className="text-sm text-destructive" data-host-egress-hint={egressBlocker}>
-          <Trans
-            t={t}
-            i18nKey={`hosts:egress.${egressBlocker}`}
-            components={{ code: <code className="whitespace-nowrap" /> }}
+        <div className="grid min-w-0 gap-4 rounded-xl border bg-card p-4 sm:grid-cols-2">
+          <Meter
+            kind="memory"
+            label={t("hosts:row.ram")}
+            used={host.capacity.memoryReservedMiB}
+            total={host.capacity.memoryBudgetMiB}
+            valueText={(used, total, free) =>
+              t("hosts:row.memoryUse", {
+                used: formatGiB(used, locale),
+                total: formatGiB(total, locale),
+                free: formatGiB(free, locale),
+              })
+            }
           />
-        </p>
-      ) : null}
-      {locked ? null : <HostNetwork host={host} connected={state === "ready"} />}
-      {drainBadge ? (
-        <p className="text-sm text-muted-foreground">
-          {drainBadge === "drained"
-            ? t("hosts:drain.drainedHint")
-            : t("hosts:drain.drainingHint", { count: host.liveSandboxCount })}
-        </p>
-      ) : null}
-      {host.draining && host.drainOffload ? (
-        <p data-host-drain-offload="" className="text-sm text-muted-foreground">
-          {t("hosts:drain.offloadingHint")}
-        </p>
-      ) : null}
-      {problem ? (
-        <p role="alert" className="text-sm text-destructive">
-          {t(`hosts:problem.${problem}`)}
-        </p>
-      ) : null}
-      {unsafeSandboxes.length > 0 ? (
-        <ul data-host-forget-unsafe="" className="flex min-w-0 flex-col gap-1 text-sm">
-          {unsafeSandboxes.map((id) => (
-            <li key={id} className="min-w-0 truncate font-mono text-xs">
-              {id}
-            </li>
+          <Meter
+            kind="vcpu"
+            label={t("hosts:row.vcpu")}
+            used={host.capacity.vcpuReserved}
+            total={host.capacity.vcpuBudget}
+            valueText={(used, total, free) => t("hosts:row.vcpuUse", { used, total, free })}
+          />
+          {host.storagePools.map((pool) => (
+            <Meter
+              key={pool.id}
+              kind="disk"
+              label={t("hosts:storage.meter", { name: pool.name })}
+              used={pool.diskReservedGiB}
+              total={pool.capacityGiB}
+              valueText={(used, total, free) =>
+                t("hosts:storage.meterValue", { used, total, free })
+              }
+            />
           ))}
-        </ul>
-      ) : null}
-      {locked ? null : (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" size="touch" onClick={() => setEditing(true)}>
-            {t("hosts:edit.action")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="touch"
-            title={host.draining ? undefined : t("hosts:drain.hint")}
-            disabled={drain.isPending}
-            // Draining is undoable but blocks new work, so it is confirmed;
-            // undrain stays one click.
-            onClick={() =>
-              host.draining
-                ? drain.mutate({ id: host.id, draining: false })
-                : setConfirmingDrain(true)
-            }
-          >
-            {t(host.draining ? "hosts:drain.undrain" : "hosts:drain.drain")}
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            size="touch"
-            disabled={deleteBlocker != null || remove.isPending}
-            aria-describedby={
-              deleteBlocker === "live" ? `host-delete-blocked-${host.id}` : undefined
-            }
-            onClick={() => setDeleting(true)}
-          >
-            {t("hosts:delete.action")}
-          </Button>
-          {forgettable ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="touch"
-              disabled={forget.isPending}
-              onClick={() => setForgetting(true)}
-            >
-              {t("hosts:forget.action")}
-            </Button>
-          ) : null}
         </div>
-      )}
-      {locked && forgettable ? (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="touch"
-            disabled={forget.isPending}
-            onClick={() => setForgetting(true)}
-          >
-            {t("hosts:forget.action")}
-          </Button>
-        </div>
-      ) : null}
-      {deleteBlocker === "live" ? (
-        <p id={`host-delete-blocked-${host.id}`} className="text-xs text-muted-foreground">
-          {t("hosts:delete.blockedLive")}
+        <AdvancedDetails summary={t("hosts:vmCapacity.details")}>
+          <dl className="grid min-w-0 gap-3 text-sm tabular-nums sm:grid-cols-3">
+            {(
+              [
+                "memoryBudgetMiB",
+                "memoryReservedMiB",
+                "memoryAvailableMiB",
+                "memoryOvercommittedMiB",
+                "vcpuBudget",
+                "vcpuReserved",
+                "vcpuAvailable",
+                "vcpuOvercommitted",
+                "maxCpuCount",
+                "maxMemoryMiB",
+              ] as const
+            ).map((field) => {
+              const value = host.capacity[field];
+              return (
+                <div key={field} className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">
+                    {t(`hosts:vmCapacity.${field}`)}
+                  </dt>
+                  <dd
+                    data-capacity-field={field}
+                    className={cn(
+                      field === "memoryOvercommittedMiB" &&
+                        (host.capacity.memoryOvercommittedMiB ?? 0) > 0 &&
+                        "font-medium text-destructive",
+                    )}
+                  >
+                    {value == null
+                      ? t("hosts:daemon.notReported")
+                      : field === "maxCpuCount" || field.startsWith("vcpu")
+                        ? t("hosts:vmCapacity.cpuValue", { value })
+                        : t("hosts:vmCapacity.memoryValue", { value: formatGiB(value, locale) })}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+          <p className="text-xs text-muted-foreground">{t("hosts:vmCapacity.hint")}</p>
+          <p data-vcpu-budget-hint="" className="text-xs text-muted-foreground">
+            {t("hosts:vmCapacity.vcpuBudgetHint", {
+              multiplier: VM_SIZE_LIMITS.hostVcpuBudgetDefaultThreadsMultiplier,
+              max: VM_SIZE_LIMITS.hostVcpuBudgetMax,
+            })}
+          </p>
+        </AdvancedDetails>
+        <p data-retained-roots="" className="text-sm">
+          {t("hosts:storage.roots", { count: host.retainedRootCount })}
         </p>
-      ) : null}
+        <p className="text-xs text-muted-foreground">{t("hosts:storage.retainedHint")}</p>
+        <section aria-label={t("hosts:storage.title")} className="flex min-w-0 flex-col gap-3">
+          <h3 className="text-sm font-medium">{t("hosts:storage.title")}</h3>
+          {host.storagePools.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("hosts:storage.empty")}</p>
+          ) : null}
+          {host.storagePools.map((pool) => (
+            <StorageCard key={pool.id} pool={pool} now={now} locale={locale} />
+          ))}
+        </section>
+      </section>
       {locked ? null : (
-        <details className="min-w-0 text-sm">
+        <section
+          id="host-network"
+          aria-labelledby={`host-network-title-${host.id}`}
+          className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+        >
+          <h2 id={`host-network-title-${host.id}`} className={sectionTitle}>
+            {t("hosts:egress.title")}
+          </h2>
+          <HostNetwork host={host} connected={state === "ready"} />
+        </section>
+      )}
+      {locked ? null : (
+        <details data-host-connect="" className="min-w-0 rounded-xl border px-4 text-sm">
           <summary className="flex min-h-11 cursor-pointer items-center font-medium">
-            {t("hosts:connect.title")}
+            {t(state === "ready" ? "hosts:connect.reconnectTitle" : "hosts:connect.title")}
           </summary>
-          <div className="flex min-w-0 flex-col gap-2 pt-2">
+          <div className="flex min-w-0 flex-col gap-2 pb-4">
             <p className="text-muted-foreground">{t("hosts:connect.device")}</p>
             <CopyField value={commands.deviceLogin} copyLabel={t("hosts:connect.copyCommand")} />
             <CopyField value={commands.connect} copyLabel={t("hosts:connect.copyCommand")} />
@@ -669,6 +625,7 @@ export function HostCard({
                 components={{ code: <code className="whitespace-nowrap" /> }}
               />
             </p>
+            {/* A long-lived token only works for a host that exists, so it is offered here. */}
             <p className="text-muted-foreground">
               {t("hosts:connect.token")}{" "}
               <Link
@@ -769,7 +726,6 @@ function HostNetwork({ host, connected }: { host: HostItem; connected: boolean }
       aria-label={t("hosts:egress.title")}
       className="flex min-w-0 flex-col gap-2 rounded-lg border bg-muted/30 p-3"
     >
-      <h3 className="text-sm font-medium">{t("hosts:egress.title")}</h3>
       <dl className="grid min-w-0 gap-3 text-sm sm:grid-cols-2">
         <div className="min-w-0">
           <dt className="text-xs text-muted-foreground">{t("hosts:egress.guard.label")}</dt>

@@ -33,6 +33,12 @@ it("excludes hosts with fresh heartbeats but expired egress guard leases from ca
   expect(healthy.aggregate.free.memoryMiB).toBeGreaterThan(0);
   expect(healthy.hosts).toHaveLength(2);
   expect(healthy.hosts.every((host) => host.schedulable)).toBe(true);
+  // The largest single sandbox is bounded by what one host has free.
+  expect(healthy.largest?.cpuCount).toBeGreaterThan(0);
+  expect(healthy.largest?.memoryMiB).toBeGreaterThan(0);
+  expect(healthy.largest?.cpuCount).toBeLessThanOrEqual(
+    Math.max(...healthy.hosts.map((host) => host.vcpu.budget - host.vcpu.reserved)),
+  );
 
   const now = new Date();
   await db.inspect.sandboxHost.updateMany({
@@ -45,6 +51,7 @@ it("excludes hosts with fresh heartbeats but expired egress guard leases from ca
   });
   const expired = await poolCapacityView(f.owner, input);
   expect(expired.fits).toBe(0);
+  expect(expired.largest).toBeNull();
   expect(expired.aggregate).toEqual({
     free: { memoryMiB: 0, vcpu: 0, diskGiB: 0 },
     budget: { memoryMiB: 0, vcpu: 0, diskGiB: 0 },

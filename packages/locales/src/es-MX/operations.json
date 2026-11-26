@@ -191,7 +191,7 @@
     "RUN_COMMAND": "Ejecutar comando",
     "GET_FILE": "Descargar archivo",
     "PUT_FILE": "Subir archivo",
-    "RECONNECT_SANDBOX": "Reconectar sandbox",
+    "RECONNECT_SANDBOX": "Iniciar o reconectar sandbox",
     "STOP_SANDBOX": "Detener sandbox",
     "RENEW_SANDBOX_LEASE": "Renovar vigencia",
     "LIST_DIR": "Listar directorio",

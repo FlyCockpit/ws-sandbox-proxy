@@ -6,14 +6,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@wssp/ui/components/card";
-import { Input } from "@wssp/ui/components/input";
-import { Label } from "@wssp/ui/components/label";
 import { toast } from "@wssp/ui/components/sileo";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+import { InlineInputField } from "@/components/auth/inline-input-field";
 import { TwoFactorSetupDetails } from "@/components/two-factor-setup-details";
 import { authClient } from "@/lib/auth-client";
+import { twoFactorCodeError, twoFactorPasswordError } from "@/lib/two-factor-errors";
 import {
   type ForcedTwoFactorSettings,
   type TwoFactorPolicySessionUser,
@@ -58,10 +58,21 @@ function TwoFactorSetupRequired() {
   const [verifyCode, setVerifyCode] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  // Errors sit under the field they are about; focus moves there.
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [codeError, setCodeError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation("auth");
+
+  const failPassword = (error: unknown) => {
+    setPasswordError(twoFactorPasswordError(error, t, "auth:twoFactor.couldNotStartSetup"));
+    passwordRef.current?.focus();
+  };
 
   const handleEnable = async () => {
     setIsLoading(true);
+    setPasswordError(null);
     try {
       const result = await authClient.twoFactor.enable({
         password,
@@ -69,11 +80,11 @@ function TwoFactorSetupRequired() {
       });
       if (result.error) {
         console.error("[_auth.twoFactor.enable]", result.error);
-        toast.error(t("twoFactor.couldNotStartSetup"));
+        failPassword(result.error);
         return;
       }
       if (result.data?.method !== "totp") {
-        toast.error(t("twoFactor.couldNotStartSetup"));
+        failPassword(null);
         return;
       }
       setTotpURI(result.data.totpURI || "");
@@ -81,7 +92,7 @@ function TwoFactorSetupRequired() {
       setStep("verify");
     } catch (err) {
       console.error("[_auth.twoFactor.enable]", err);
-      toast.error(t("twoFactor.couldNotStartSetup"));
+      failPassword(err);
     } finally {
       setIsLoading(false);
     }
@@ -89,20 +100,23 @@ function TwoFactorSetupRequired() {
 
   const handleVerify = async () => {
     setIsLoading(true);
+    setCodeError(null);
     try {
       const result = await authClient.twoFactor.verifyTotp({
         code: verifyCode,
       });
       if (result.error) {
         console.error("[_auth.twoFactor.verifyTotp]", result.error);
-        toast.error(t("errors.invalidTotp"));
+        setCodeError(twoFactorCodeError(result.error, t));
+        codeRef.current?.focus();
         return;
       }
       toast.success(t("twoFactor.enabledSuccess"));
       window.location.reload();
     } catch (err) {
       console.error("[_auth.twoFactor.verifyTotp]", err);
-      toast.error(t("errors.invalidTotp"));
+      setCodeError(twoFactorCodeError(err, t));
+      codeRef.current?.focus();
     } finally {
       setIsLoading(false);
     }
@@ -128,19 +142,22 @@ function TwoFactorSetupRequired() {
           {step === "setup" && (
             <>
               <p className="text-sm text-muted-foreground">{t("twoFactor.passwordPrompt")}</p>
-              <div className="space-y-2">
-                <Label htmlFor="2fa-password">{t("fields.password")}</Label>
-                <Input
-                  id="2fa-password"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") handleEnable();
-                  }}
-                />
-              </div>
+              <InlineInputField
+                id="2fa-password"
+                label={t("fields.password")}
+                error={passwordError}
+                inputRef={passwordRef}
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setPasswordError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleEnable();
+                }}
+              />
               <Button className="min-h-[44px] w-full" onClick={handleEnable} disabled={isLoading}>
                 {isLoading ? t("twoFactor.settingUp") : t("twoFactor.continue")}
               </Button>
@@ -157,22 +174,25 @@ function TwoFactorSetupRequired() {
                 totpURI={totpURI}
               />
 
-              <div className="space-y-2">
-                <Label htmlFor="verify-code">{t("fields.verificationCode")}</Label>
-                <Input
-                  id="verify-code"
-                  placeholder="000000"
-                  value={verifyCode}
-                  onChange={(e) => setVerifyCode(e.target.value)}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  className="text-center text-lg tracking-widest"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && verifyCode.length === 6) handleVerify();
-                  }}
-                />
-              </div>
+              <InlineInputField
+                id="verify-code"
+                label={t("fields.verificationCode")}
+                error={codeError}
+                inputRef={codeRef}
+                placeholder="000000"
+                value={verifyCode}
+                onChange={(e) => {
+                  setVerifyCode(e.target.value);
+                  setCodeError(null);
+                }}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                className="text-center text-lg tracking-widest"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && verifyCode.length === 6) handleVerify();
+                }}
+              />
               <Button
                 className="min-h-[44px] w-full"
                 onClick={handleVerify}

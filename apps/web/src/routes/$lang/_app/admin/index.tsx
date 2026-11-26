@@ -45,7 +45,7 @@ function AdminOverview() {
   const { t } = useTranslation(["admin", "common"]);
 
   return (
-    <PageShell width="wide">
+    <PageShell inFrame width="wide">
       <PageHeader title={t("admin:overview.title")} description={t("admin:overview.description")} />
       <AdminPolicySummary lang={lang} />
       <DeploymentSetupCard lang={lang} />

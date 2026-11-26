@@ -256,17 +256,18 @@ their scopes, expiry and account policy.
    **Verification pending** or **Verified image** association on a selected owned host, but only
    current **Verified image** evidence qualifies a new launch.
 3. If using pools, create or select an owned pool and add/enable its hosts.
-   Open **SDK keys → Mint SDK key** and choose **Only selected hosts, exact
-   revisions and pools**. Select each allowed host, the exact revision IDs
+   Open **SDK keys → Create SDK key**, open **Limits → Resources** and choose
+   **Only selected hosts, exact revisions and pools**. Select each allowed host, the exact revision IDs
    (not logical IDs), and each pool to be used. Page through all three
    pickers. Pool, host and revision grants intersect: none implies another.
    Direct placement needs host + revision; pooled placement adds the pool.
-4. Select only the needed action scopes. For discovery use `pools:read`,
+4. Pick an **Access** preset (Read-only, Run sandboxes, Full access) or
+   **Custom** to select only the needed action scopes. For discovery use `pools:read`,
    `hosts:read` (also required for members) and `templates:read`. Creating
    requires `sandboxes:create`; inspect sandboxes with `sandboxes:read` and
    operations with `operations:read`. Command output additionally needs
    `commands:read` and `operations:read`; execution needs `commands:execute`.
-   Choose a name and expiry and mint. The page displays exact grants beside
+   Choose a name and expiry and create the key. The page displays exact grants beside
    each retained key so similarly named revisions cannot be confused.
 5. Copy the key from the one-time panel into your application's secret store.
    Verify discovery with that new credential, then test an explicit-host or

@@ -7,6 +7,7 @@ import enCommon from "@wssp/locales/src/en-US/common.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
 import enHostCredentials from "@wssp/locales/src/en-US/hostCredentials.json";
 import enHosts from "@wssp/locales/src/en-US/hosts.json";
+import enNav from "@wssp/locales/src/en-US/nav.json";
 import enOperations from "@wssp/locales/src/en-US/operations.json";
 import enSandboxes from "@wssp/locales/src/en-US/sandboxes.json";
 import enSdkKeys from "@wssp/locales/src/en-US/sdkKeys.json";
@@ -15,6 +16,7 @@ import esCommon from "@wssp/locales/src/es-MX/common.json";
 import esDashboard from "@wssp/locales/src/es-MX/dashboard.json";
 import esHostCredentials from "@wssp/locales/src/es-MX/hostCredentials.json";
 import esHosts from "@wssp/locales/src/es-MX/hosts.json";
+import esNav from "@wssp/locales/src/es-MX/nav.json";
 import esOperations from "@wssp/locales/src/es-MX/operations.json";
 import esSandboxes from "@wssp/locales/src/es-MX/sandboxes.json";
 import esSdkKeys from "@wssp/locales/src/es-MX/sdkKeys.json";
@@ -42,6 +44,12 @@ const uiState = vi.hoisted(() => ({
 }));
 vi.mock("@/stores/ui-preferences", () => ({
   useUiPreferences: <T,>(select: (state: typeof uiState) => T): T => select(uiState),
+}));
+// The admin mirror (session + forced-2FA settings) is its own unit; here it
+// only decides whether the footer shows Admin.
+const adminState = vi.hoisted(() => ({ showsAdmin: false }));
+vi.mock("@/hooks/use-admin-navigation", () => ({
+  useShowsAdminNavigation: () => adminState.showsAdmin,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -126,12 +134,13 @@ vi.mock("@/utils/orpc", () => {
   };
 });
 
-import { DashboardFrame } from "@/components/dashboard-frame";
+import { DashboardFrame, DashboardFramePending } from "@/components/dashboard-frame";
 import { primaryNavItems } from "@/lib/nav-items";
 
 const bundles = {
   "en-US": {
     common: enCommon,
+    nav: enNav,
     dashboard: enDashboard,
     hosts: enHosts,
     hostCredentials: enHostCredentials,
@@ -142,6 +151,7 @@ const bundles = {
   },
   "es-MX": {
     common: esCommon,
+    nav: esNav,
     dashboard: esDashboard,
     hosts: esHosts,
     hostCredentials: esHostCredentials,
@@ -182,6 +192,7 @@ beforeEach(() => {
   routeState.procedures = [];
   routeState.query = { data: undefined, isPending: true, isError: false };
   uiState.sidebarCollapsed = false;
+  adminState.showsAdmin = false;
   routeState.pathname = "/en-US/dashboard/sandboxes";
 });
 
@@ -204,14 +215,26 @@ function anchors(html: string): string[] {
   return [...html.matchAll(/<a\b[^>]*>/g)].map((match) => match[0]);
 }
 
+/** The sidebar group (`main` or `footer`) each link sits in, in order. */
+function groupsOf(html: string): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const match of html.matchAll(/<div data-nav-group="(\w+)"[^>]*>(.*?)<\/div>/g)) {
+    out[match[1] as string] = [...(match[2] as string).matchAll(/data-nav-id="(\w+)"/g)].map(
+      (m) => m[1] as string,
+    );
+  }
+  return out;
+}
+
 describe("dashboard frame", () => {
-  it.each(LANGS)("%s: the sidebar links the five primary sections, in order, once", (lang) => {
+  it.each(LANGS)("%s: the sidebar links every section, in order, once", (lang) => {
     const html = render(lang, <DashboardFrame lang={lang} />);
     const hrefs = anchors(html).map((tag) => /href="([^"]+)"/.exec(tag)?.[1]);
     expect(hrefs).toEqual([
       `/${lang}/dashboard/sandboxes`,
       `/${lang}/dashboard/templates`,
       `/${lang}/dashboard/operations`,
+      `/${lang}/settings/hosts`,
       `/${lang}/dashboard/terminals`,
       `/${lang}/settings`,
     ]);
@@ -223,12 +246,32 @@ describe("dashboard frame", () => {
     expect(missingKeys).toEqual([]);
   });
 
+  it("pins Settings, and Admin for admins, to the bottom of the sidebar", () => {
+    expect(groupsOf(render("en-US", <DashboardFrame lang="en-US" />))).toEqual({
+      main: ["sandboxes", "templates", "activity", "hosts", "terminals"],
+      footer: ["settings"],
+    });
+    adminState.showsAdmin = true;
+    const html = render("en-US", <DashboardFrame lang="en-US" />);
+    expect(groupsOf(html)).toEqual({
+      main: ["sandboxes", "templates", "activity", "hosts", "terminals"],
+      footer: ["settings", "admin"],
+    });
+    const footer = /<div data-nav-group="footer" class="([^"]*)"/.exec(html)?.[1]?.split(" ");
+    expect(footer).toEqual(expect.arrayContaining(["mt-auto", "border-t"]));
+    expect(html).toContain('href="/en-US/admin"');
+    expect(html).toContain(">Admin</span>");
+  });
+
   it.each([
     ["/en-US/dashboard/sandboxes/abc", "sandboxes"],
     ["/en-US/dashboard/operations", "activity"],
-    ["/en-US/settings/hosts/h1", "settings"],
+    ["/en-US/settings/hosts/h1", "hosts"],
+    ["/en-US/settings/host-credentials", "hosts"],
     ["/en-US/settings/logins/sessions/s1", "settings"],
+    ["/en-US/admin/users", "admin"],
   ])("marks exactly one section active on %s", (pathname, id) => {
+    adminState.showsAdmin = true;
     routeState.pathname = pathname;
     const html = render("en-US", <DashboardFrame lang="en-US" />);
     const active = anchors(html).filter((tag) => tag.includes('data-active="true"'));
@@ -242,8 +285,9 @@ describe("dashboard frame", () => {
     expect(html).not.toMatch(/tabindex="(-|[1-9])/i);
     for (const tag of anchors(html)) {
       expect(tag).toMatch(/href="\/en-US\/(dashboard|settings)/);
-      // `touch` (h-11) or `icon-touch` (size-11) button sizing: 44px.
-      expect(tag).toMatch(/\b(h-11|size-11)\b/);
+      // `touch` (h-11) button sizing: 44px; collapsed it is 44px square.
+      expect(tag).toMatch(/\bh-11\b/);
+      expect(tag).toContain("in-data-[sidebar=collapsed]:w-11");
     }
     const toggle = /<button\b[^>]*>/.exec(html)?.[0] ?? "";
     expect(toggle).toContain('type="button"');
@@ -273,10 +317,37 @@ describe("dashboard frame", () => {
     const html = render("en-US", <DashboardFrame lang="en-US" />);
     const aside = /<aside\b[^>]*>/.exec(html)?.[0] ?? "";
     expect(aside).toContain('data-collapsed="true"');
-    expect(aside).toMatch(/\bw-16\b/);
+    // The width follows <html data-sidebar="collapsed">, which the head
+    // bootstrap sets before first paint and the store keeps in sync.
+    expect(aside).toContain("in-data-[sidebar=collapsed]:w-16");
     expect(html).toContain('aria-label="Expand sidebar"');
     expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain('<span class="sr-only">Sandboxes</span>');
+    expect(html).toContain(
+      '<span class="min-w-0 truncate in-data-[sidebar=collapsed]:sr-only">Sandboxes</span>',
+    );
     expect(html).toContain('title="Sandboxes"');
+  });
+
+  it("renders its pending state, children and the same sidebar in the frame", () => {
+    routeState.pathname = "/en-US/settings/hosts";
+    const live = render(
+      "en-US",
+      <DashboardFrame lang="en-US">{<p data-body="" />}</DashboardFrame>,
+    );
+    expect(live).toContain('<p data-body=""></p>');
+    expect(live).not.toContain('data-testid="dashboard-outlet"');
+    const pending = render(
+      "en-US",
+      <DashboardFramePending lang="en-US">{<p data-body="" />}</DashboardFramePending>,
+    );
+    expect(pending).toContain('<p data-body=""></p>');
+    // Same links and active section; the toggle shows but waits for the store.
+    expect(groupsOf(pending)).toEqual(groupsOf(live));
+    expect(anchors(pending).filter((tag) => tag.includes('data-active="true"'))[0]).toContain(
+      'data-nav-id="hosts"',
+    );
+    const toggle = /<button\b[^>]*>/.exec(pending)?.[0] ?? "";
+    expect(toggle).toContain("disabled");
+    expect(toggle).not.toContain("aria-pressed");
   });
 });

@@ -41,19 +41,23 @@ either field or both).
 
 ## Dashboard VM size
 
-In **Sandboxes → Create sandbox**, choose an owned host or a group, then a
-logical template or an exact revision from the paged picker. Exact revision
-options show their default vCPU count and memory in MiB. **Latest tag (resolved
-once at acceptance)** resolves at server acceptance; a picker reading is
-advisory and can change before then.
+**Sandboxes → Create sandbox** opens a page (`/{lang}/dashboard/sandboxes/new`).
+Choose a template and where it runs (a pool or one of your hosts); the version
+defaults to **Latest version (chosen when you create)**, which resolves at
+server acceptance, so a picker reading is advisory. Pin an exact revision under
+Advanced to see its defaults.
 
-The two **VM size overrides** fields are independent. Leave either blank to
-omit it from the request and inherit that dimension from the revision the
-server accepts. Entering 2 vCPUs with blank memory overrides only CPU; blank
-CPU with 3072 MiB overrides only RAM. CPU accepts integers 1–32 and memory
-accepts 512–65536 MiB in steps of 256. Blank never means zero or a global
-fallback. A lost-response retry preserves the exact original body and key,
-including omitted fields, even after template discovery changes.
+The **Size** section (under Advanced) has one slider with a typed value per
+dimension: vCPU (stops 1, 2, 4 … 32; any integer typed), memory shown in GiB
+(stops 0.5 … 64 GiB; typed values round to 256 MiB) and root disk (from the
+revision's minimum up to 2048 GiB). Each dimension you leave alone is omitted
+from the request and inherited from the revision the server accepts; Reset
+returns a dimension to that. Values above what the chosen placement can take
+now (a host's free capacity, or for a pool the most any one eligible host can
+place, from the pool capacity read's `largest`) are greyed out with a one-line
+reason. The server still validates every request. A lost-response retry
+preserves the exact original body and key, including omitted fields, even
+after template discovery changes.
 
 The sandbox list and detail page show **Allocated VM size** from the accepted
 sandbox, including overrides. It stays fixed across stop, cold start, template

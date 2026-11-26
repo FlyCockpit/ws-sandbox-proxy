@@ -9,7 +9,8 @@
     "device": "Inicio de sesión de dispositivo (vuelve a inscribir este host por su slug) y luego inicia el daemon:",
     "token": "Con un token de host de Credenciales de host, guardado en WSSP_HOST_TOKEN:",
     "copyCommand": "Copiar comando",
-    "vmCapacityHint": "<code>wssp host run</code> detecta RAM, vCPU totales (hilos × 2) y el máximo de CPU por VM. Puedes ajustar cada valor con <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> y <code>--max-sandbox-cpu-count</code>. El almacenamiento se configura en el TOML local; vuelve a conectar después de cambiarlo. Cada uno funciona por separado; usa los tres si falla toda la detección."
+    "vmCapacityHint": "<code>wssp host run</code> detecta RAM, vCPU totales (hilos × 2) y el máximo de CPU por VM. Puedes ajustar cada valor con <code>--sandbox-memory-mib</code>, <code>--sandbox-vcpu-budget</code> y <code>--max-sandbox-cpu-count</code>. El almacenamiento se configura en el TOML local; vuelve a conectar después de cambiarlo. Cada uno funciona por separado; usa los tres si falla toda la detección.",
+    "reconnectTitle": "Reconectar o mover este host"
   },
   "daemon": {
     "label": "Daemon",
@@ -111,21 +112,45 @@
     "description": "Inscribe una máquina abajo. Aparece aquí al inscribirse y está lista cuando su daemon está conectado."
   },
   "enroll": {
-    "title": "Inscribir una máquina",
-    "description": "Ejecuta esto en la máquina Linux que alojará los sandboxes, en este orden.",
-    "tokenAlternative": "¿Prefieres un token de larga duración? Genera uno en la página Credenciales de host.",
+    "description": "Convierte una máquina Linux en un host para tus sandboxes. Ejecuta estos pasos en esa máquina, en orden; esta página te avisa cuando se conecte.",
     "tokenLink": "Credenciales de host",
     "copyCommand": "Copiar comando",
     "action": "Agregar host",
     "steps": {
       "install": "En una máquina Linux con KVM, Incus 6.14 o posterior y el módulo br_netfilter, instala wssp desde este servidor como el usuario que ejecutará el daemon (no root). El instalador verifica la suma de comprobación de la descarga y muestra los siguientes pasos.",
-      "enroll": "Inscríbela (reemplaza my-host por un nombre para ella). El comando imprime un enlace y un código: abre el enlace con la sesión iniciada aquí y aprueba.",
+      "enroll": "El comando imprime un enlace y un código. Abre el enlace con la sesión iniciada aquí y apruébalo.",
       "guard": "Instala la protección de salida una vez, como root. Sin ella el host se conecta pero no puede iniciar ningún sandbox.",
       "run": "Inicia el daemon. Para que siga funcionando tras cerrar sesión y reiniciar, ejecútalo como servicio de usuario de systemd."
     },
     "guideLink": "Requisitos e instalación",
     "serviceLink": "Ejecutar como servicio",
-    "docsPath": "(guía: {{path}} en el repositorio de código de WS Sandbox Proxy)"
+    "pageTitle": "Agregar un host",
+    "stepTitles": {
+      "install": "Instala wssp",
+      "enroll": "Inscribe la máquina",
+      "guard": "Instala la protección de red (una vez, como root)",
+      "run": "Inicia el daemon del host"
+    },
+    "nameLabel": "Nombre para este host",
+    "nameHint": "Letras minúsculas, dígitos y guiones. El comando de abajo se actualiza mientras escribes.",
+    "advanced": "CA privada y opciones de capacidad",
+    "guidePath": "{{label}}: en el repositorio de código de WS Sandbox Proxy, en",
+    "copyGuidePath": "Copiar ruta de la guía",
+    "status": {
+      "title": "Estado",
+      "waiting": "Esperando a tu host…",
+      "hint": "Esta página revisa cada pocos segundos. Se actualiza cuando la máquina del paso 2 quede inscrita.",
+      "enrolled": "{{label}} está inscrito. Esperando a que se conecte…",
+      "enrolledHint": "Termina los pasos 3 y 4 en la máquina.",
+      "connected": "{{label}} está conectado.",
+      "createSandbox": "Crear un sandbox en él",
+      "openHost": "Abrir host",
+      "expired": "Nada todavía después de 30 minutos. Revisa la salida de los comandos en la máquina y vuelve a comprobar.",
+      "checkAgain": "Comprobar de nuevo",
+      "failed": "No se pudo buscar tu host.",
+      "retry": "Reintentar"
+    },
+    "namePlaceholder": "my-host"
   },
   "forget": {
     "action": "Olvidar",
@@ -188,7 +213,7 @@
     "title": "Vigencia de sandboxes",
     "ceiling": "Tope de vigencia: {{value}} (se configura en el host con <code>wssp host config set-max-lease</code>)",
     "unlimited": "sin límite de tiempo",
-    "noLimit": "sin límite",
+    "noLimit": "ninguno",
     "drainEmpty": "Vacío ahora: ningún sandbox ocupa este host.",
     "drainBy": "Vacío a más tardar el {{date}}.",
     "drainNever_one": "Nunca se vacía por sí solo: {{count}} sandbox no tiene límite de tiempo.",
@@ -206,7 +231,7 @@
     "previewMore_other": "Al guardar se acortan más de {{count}} sandboxes en ejecución al nuevo máximo desde ahora.",
     "saveAnyway": "Guardar y acortar",
     "editMember": "Editar límite de vigencia",
-    "memberValue": "Vigencia máxima: {{value}}",
+    "memberValue": "Límite de duración adicional en este host: {{value}}",
     "ceilingHint": "Solo el propietario de la máquina puede subirlo o bajarlo, en el host mismo. Los grupos y membresías solo pueden bajarlo más.",
     "unlimitedShares": "Cualquiera que pueda usar este grupo",
     "memberDescription": "Limita cuánto tiempo pueden ejecutarse los sandboxes en este host a través de este grupo.",
@@ -218,9 +243,8 @@
     "open": "Capacidad",
     "description": "Lo que puedes colocar ahora. Los totales cubren los hosts donde puedes programar; solo tus propios hosts se listan uno por uno.",
     "template": "Plantilla",
-    "templateHint": "Selector opcional, por ejemplo base:latest o revision/<id>, para ver cuántos caben ahora.",
-    "check": "Consultar",
-    "schedulable": "Capacidad programable",
+    "templateHint": "Elige una plantilla para ver cuántos de sus sandboxes caben ahora.",
+    "schedulable": "Capacidad en los hosts que puedes usar",
     "ram": "RAM",
     "vcpu": "vCPU",
     "disk": "Disco",
@@ -273,21 +297,25 @@
     "failed": "No se pudo cargar la capacidad de este grupo.",
     "preferOwnOn": "Tus propios hosts en este grupo se intentan primero.",
     "operatorLimits": "Límites del operador: espera {{wait}} · por clave {{perKey}} · por cuenta {{perOwner}}. Este grupo solo puede bajarlos.",
-    "limitHint": "En blanco usa el límite del operador. 0 lo desactiva para este grupo."
+    "limitHint": "En blanco usa el límite del operador. 0 lo desactiva para este grupo.",
+    "anyTemplate": "Cualquier plantilla",
+    "templateOption": "{{label}} ({{slug}})",
+    "usedFree": "{{used}} {{unit}} en uso de {{total}} {{unit}} · {{free}} {{unit}} libres",
+    "largest": "Sandbox más grande que cabe ahora: {{cpu}} vCPU · {{memory}} GiB de RAM · {{disk}} GiB de disco",
+    "largestNone": "Ningún sandbox cabe ahora. Espera a que se detengan sandboxes en ejecución o agrega un host a este pool.",
+    "largestHint": "Cada límite es lo máximo que un host puede tomar ahora; vCPU, RAM y disco pueden venir de hosts distintos."
   },
   "pools": {
-    "description": "Agrupa tus hosts para asignar sandboxes al que tenga más espacios libres. Los hosts en drenaje no aceptan sandboxes nuevos.",
+    "description": "Un pool agrupa hosts para que cada sandbox nuevo empiece en el que tenga espacio, y te permite compartir esos hosts con otras personas.",
     "create": "Crear grupo",
-    "edit": "Editar grupo",
     "slug": "Identificador",
     "label": "Nombre",
     "failed": "No se pudo completar la solicitud del grupo. Actualiza e inténtalo de nuevo.",
     "empty": "Todavía no hay grupos.",
     "emptyDescription": "Un grupo reúne hosts para que los sandboxes vayan al menos cargado y te permite compartirlos con otras cuentas. Primero inscribe un host y después agrégalo a un grupo.",
-    "members": "Administrar miembros",
-    "membersTitle": "Miembros de {{label}}",
-    "memberHint": "Habilita hosts para asignaciones futuras. Los sandboxes existentes conservan su host original.",
-    "add": "Agregar host",
+    "membersTitle": "Hosts en {{label}}",
+    "memberHint": "Los sandboxes empiezan en los hosts habilitados. Desactivar un host aquí deja sus sandboxes en ejecución donde están.",
+    "add": "Agregar un host a este pool",
     "host": "Host",
     "chooseHost": "Elige un host",
     "enabled": "Habilitado",
@@ -301,7 +329,7 @@
     "confirm": "Escribe el identificador para confirmar.",
     "copy": "Copiar identificador",
     "invalidSlug": "Usa de 1 a 63 letras minúsculas, números y guiones.",
-    "invalidLabel": "Escribe un nombre de 1 a 120 caracteres sin caracteres de control.",
+    "invalidLabel": "Escribe una etiqueta de 1 a 120 caracteres sin caracteres de control.",
     "noMembers": "Aún no hay hosts miembros. Agrega un host registrado.",
     "problem": {
       "notFound": "Este grupo o host no existe o no te pertenece. Recarga la lista.",
@@ -318,7 +346,47 @@
     "imageCacheField": "Caché de imágenes por miembro (GiB)",
     "imageCacheHint": "Máximo de GiB de imágenes de otras cuentas almacenadas en caché en cada host contribuido. Déjalo vacío para sin límite de grupo.",
     "imageCacheInvalid": "Ingresa un número entero de 0 a 1048576, o déjalo vacío.",
-    "title": "Grupos y uso compartido"
+    "title": "Grupos y uso compartido",
+    "createDescription": "Ponle una etiqueta al pool. Agregas hosts y personas después de crearlo.",
+    "slugHint": "Lo usan la API y la CLI. Se completa a partir de la etiqueta.",
+    "edit": {
+      "action": "Editar pool",
+      "title": "Editar {{label}}",
+      "essential": "Pool",
+      "lifetime": "Duración",
+      "placement": "Ubicación",
+      "images": "Imágenes",
+      "queue": "Cola de capacidad",
+      "preferOwn": "Primero tus propios hosts",
+      "anyHost": "Host con menos carga",
+      "ownOnly": "Solo tus hosts",
+      "noPoolLimit": "Sin límite del pool",
+      "gib": "{{value}} GiB",
+      "operatorLimit": "límite del operador",
+      "effectiveLease": "Ahora mismo un sandbox en este pool puede durar como máximo {{value}} (incluidos los límites de los hosts)."
+    },
+    "actions": {
+      "hosts": "Hosts",
+      "people": "Personas",
+      "more": "Más acciones para {{label}}"
+    },
+    "summary": {
+      "hosts": "Hosts",
+      "hostsNone": "Aún no hay hosts",
+      "hostsValue_one": "{{count}} host · {{connected}} conectado",
+      "hostsValue_other": "{{count}} hosts · {{connected}} conectados",
+      "people": "Personas",
+      "peopleNone": "Solo tú",
+      "peopleValue_one": "Compartido con {{count}} persona",
+      "peopleValue_other": "Compartido con {{count}} personas",
+      "capacity": "Capacidad",
+      "capacityValue": "{{memory}} GiB de RAM · {{vcpu}} vCPU",
+      "lease": "Duración máxima",
+      "leaseUnlimited": "Sin límite de tiempo"
+    },
+    "addSubmit": "Agregar host",
+    "deleteTitle": "¿Eliminar {{label}}?",
+    "removeTitle": "¿Quitar {{host}} de {{pool}}?"
   },
   "problem": {
     "capacity": "El host no tiene capacidad de recursos suficiente. Se actualizó su reporte.",
@@ -346,8 +414,8 @@
     "heartbeat": "Visto por última vez {{age}}",
     "ram": "RAM",
     "vcpu": "Presupuesto de vCPU",
-    "memoryUse": "{{used}} de {{total}} MiB",
-    "vcpuUse": "{{used}} de {{total}} vCPU"
+    "memoryUse": "{{used}} GiB en uso de {{total}} GiB · {{free}} GiB libres",
+    "vcpuUse": "{{used}} en uso de {{total}} vCPU · {{free}} libres"
   },
   "sharing": {
     "owned": "Propios",
@@ -366,7 +434,6 @@
     "nullCaps": "Deja los límites vacíos para no limitar. RAM/vCPU cuentan recursos activos; el disco incluye máquinas detenidas.",
     "unlimited": "Sin límite",
     "caps": "Límites: RAM {{memory}} · vCPU {{vcpu}} · disco {{disk}}",
-    "usage": "Tu uso: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · disco retenido {{diskGiB}} GiB",
     "permissions": "Usar: {{use}} · Aportar: {{contribute}}",
     "yes": "Sí",
     "no": "No",
@@ -386,7 +453,7 @@
     "percentages": "Límites del grupo en tu host: RAM {{memory}}% · vCPU {{vcpu}}%",
     "ownerLocalCaps": "Tu propio host: los límites de RAM y vCPU no aplican en tu propio grupo.",
     "contributionNotice": "Aportar permite que máquinas de otras personas consuman el presupuesto de tu host y envíen tráfico desde tu red/IP. Retirar o perder acceso detiene máquinas solo si no cabe otra ruta autorizada. Los discos externos permanecen durante el plazo aceptado, hasta 30 días. El borrado del host espera pruebas de limpieza, posiblemente más si el almacenamiento está desconectado o averiado.",
-    "trust": "Quienes usan un grupo con hosts ajenos deben confiar en sus operadores. Un usuario incus-admin del host puede acceder a todas las VM del host. Las restricciones de API y desactivar terminales del panel no aíslan las VM de administradores locales. El dueño del grupo administra los operadores; la lista actual no garantiza los futuros.",
+    "trust": "Los hosts de un pool compartido pertenecen a otras personas. Cualquiera con acceso de administrador en la máquina de un host puede llegar a todos los sandboxes que hay en ella, sin importar la configuración del panel, así que ejecuta solo lo que confiarías a esas personas. El propietario del pool decide qué hosts forman parte del pool, y eso puede cambiar.",
     "forwarding": "Acepta explícitamente tras iniciar sesión. La aceptación por enlace puede dar acceso a una cuenta distinta al correo invitado; reenviarlo puede transferir ese acceso. Aceptar por correo requiere verificar el correo destinatario.",
     "forwardingInviter": "El enlace de invitación funciona como una llave: cualquiera que lo tenga y una cuenta aquí puede aceptarlo con la opción de portador, así que envíalo solo a la persona que invitas. La opción solo por correo requiere la dirección invitada, verificada.",
     "copyLink": "Enlace de invitación mostrado una vez",
@@ -432,7 +499,30 @@
     "nodeOwnerAccess": "La persona propietaria del nodo tiene acceso completo a los sandboxes que otras personas ejecutan en su nodo.",
     "invitedBy": "{{inviter}} te invitó al pool {{pool}}.",
     "notAddressedToYou": "Esta invitación se envió a otra dirección de correo, así que solo se puede aceptar como enlace al portador.",
-    "previewUnavailable": "No se puede mostrar esta invitación. Puede que haya vencido, se haya revocado o ya se haya aceptado; pide una nueva al propietario."
+    "previewUnavailable": "No se puede mostrar esta invitación. Puede que haya vencido, se haya revocado o ya se haya aceptado; pide una nueva al propietario.",
+    "noForeignGuests": "Ninguno por ahora.",
+    "peopleTitle": "Personas en {{label}}",
+    "noPeople": "Aún no se comparte con nadie.",
+    "essential": "Quién y qué",
+    "limits": "Límites",
+    "invitation": "Invitación",
+    "invite": "Compartir",
+    "signupAllowedShort": "Puede registrarse",
+    "signupClosedShort": "Solo cuentas existentes",
+    "revokeTitle": "¿Quitar a {{name}} de {{pool}}?",
+    "confirmEmail": "Escribe el correo para confirmar.",
+    "copyEmail": "Copiar correo",
+    "sharedBy": "Compartido contigo por {{name}}",
+    "poolId": "ID del pool",
+    "youCanBoth": "Puedes ejecutar sandboxes aquí y agregar tus propios hosts.",
+    "youCanUse": "Puedes ejecutar sandboxes aquí.",
+    "youCanContribute": "Puedes agregar tus propios hosts aquí (no ejecutar sandboxes).",
+    "yourLimits": "Tus límites aquí: RAM {{memory}} · vCPU {{vcpu}} · disco {{disk}}",
+    "yourUsage": "Estás usando: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · disco conservado {{diskGiB}} GiB",
+    "usageOf": "Uso de {{name}}: RAM {{memoryMiB}} MiB · vCPU {{vcpu}} · disco conservado {{diskGiB}} GiB",
+    "thisPerson": "Esta persona",
+    "gracePlain": "Si pierdes el acceso, los discos de tus sandboxes se conservan durante {{duration}} antes de eliminarse. Reducir este plazo después no lo acorta para los discos que ya tienes.",
+    "graceNone": "Si pierdes el acceso, los discos de tus sandboxes pueden eliminarse de inmediato."
   },
   "status": {
     "ready": "Conectado",
@@ -489,7 +579,9 @@
       "incomplete": "La inicialización o la evidencia del almacenamiento está incompleta. Se requiere revisión del operador."
     },
     "identityLabel": "ID del almacenamiento",
-    "retainedHint": "Los sandboxes detenidos e inciertos retienen sus compromisos de raíz. Solo la eliminación confirmada en el grupo original saludable los libera; el almacenamiento no disponible puede bloquear la eliminación del host indefinidamente."
+    "retainedHint": "Los sandboxes detenidos e inciertos retienen sus compromisos de raíz. Solo la eliminación confirmada en el grupo original saludable los libera; el almacenamiento no disponible puede bloquear la eliminación del host indefinidamente.",
+    "meter": "Disco ({{name}})",
+    "meterValue": "{{used}} GiB en uso de {{total}} GiB · {{free}} GiB libres"
   },
   "tabs": {
     "label": "Páginas de hosts",
@@ -509,13 +601,23 @@
     "maxCpuCount": "Límite de CPU por VM",
     "maxMemoryMiB": "Límite de memoria por VM",
     "cpuValue": "{{value}} vCPU",
-    "memoryValue": "{{value}} MiB",
+    "memoryValue": "{{value}} GiB",
     "hint": "Las reservas de RAM incluyen la RAM del invitado y un costo fijo del host. Las vCPU se suman independientemente del máximo por VM. Son compromisos, no uso medido. Reducir un presupuesto conserva las reservas existentes.",
     "overcommitted": "Los sandboxes en ejecución usan más de lo que este host permite",
     "vcpuBudget": "Presupuesto total de vCPU",
     "vcpuBudgetHint": "El presupuesto de vCPU son vCPU programables, no hilos de CPU. Salvo que el operador defina --sandbox-vcpu-budget (o sandbox_vcpu_budget en el TOML del daemon), el daemon lo fija en {{multiplier}} × los hilos de CPU del host (como máximo {{max}}), así que los sandboxes pueden sobrecomprometer las CPU hasta {{multiplier}}×.",
     "vcpuReserved": "vCPU reservadas",
     "vcpuAvailable": "vCPU disponibles",
-    "vcpuOvercommitted": "vCPU por encima del límite"
-  }
+    "vcpuOvercommitted": "vCPU por encima del límite",
+    "details": "Todas las cifras de capacidad"
+  },
+  "sections": {
+    "onThisPage": "En esta página",
+    "overview": "Resumen",
+    "capacity": "Capacidad",
+    "network": "Red",
+    "access": "Acceso",
+    "images": "Imágenes"
+  },
+  "terminalOff": "Las terminales de host están desactivadas en este host. Actívalas en el host con wssp host config set-host-terminal on."
 }

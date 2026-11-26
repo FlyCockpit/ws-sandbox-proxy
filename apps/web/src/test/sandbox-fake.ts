@@ -49,6 +49,12 @@ export type FakeSandboxServer = {
   capabilitiesUnavailable?: boolean;
   pickerPageSize?: number;
   maxTimeoutMs?: number;
+  /** `sandboxPools.capacity`'s `largest` (the most one pool host can take now; default roomy). */
+  poolLargest?: { cpuCount: number; memoryMiB: number; diskGiB: number } | null;
+  /** `listTemplates` `versions` by logical template id (unset: no `versions` field). */
+  templateVersions?: Record<string, { count: number; latest: number | null }>;
+  /** `getLimits` `previewTunnels` (a tunnel server is configured). */
+  previewTunnels?: boolean;
   operations: Row[];
   calls: { procedure: string; input: unknown }[];
   /** Errors thrown (once each, in order) by the next calls of a procedure. */
@@ -310,6 +316,8 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
           ? skipToken
           : async () => {
               record(procedure, input);
+              const gate = server.gates[procedure];
+              if (gate) await gate;
               failNext(procedure);
               return clone(handler(input as never));
             },
@@ -395,6 +403,35 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
       },
     },
     sandboxPools: {
+      capacity: {
+        queryOptions: query(
+          ["sandboxPools", "capacity"],
+          "poolCapacity",
+          (input: { id: string; template?: string }) => ({
+            poolId: input.id,
+            templateRevisionId: null,
+            size: null,
+            aggregate: {
+              free: { memoryMiB: 0, vcpu: 0, diskGiB: 0 },
+              budget: { memoryMiB: 0, vcpu: 0, diskGiB: 0 },
+            },
+            fits: null,
+            largest:
+              server.poolLargest === undefined
+                ? { cpuCount: 32, memoryMiB: 65536, diskGiB: 2048 }
+                : server.poolLargest,
+            lease: { maxTimeoutMs: server.maxTimeoutMs ?? 86_400_000, timeoutZero: false },
+            queue: {
+              waiting: 0,
+              mine: 0,
+              myOldestPosition: null,
+              limits: { maxWaitMs: null, perKey: null, perOwner: null },
+              preferOwnHosts: false,
+            },
+            hosts: [],
+          }),
+        ),
+      },
       listUsable: {
         key: () => ["sandboxPools", "list"],
         queryOptions: pagedQuery(["sandboxPools", "list"], "listPools", () => server.pools ?? []),
@@ -467,7 +504,14 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
                 .filter((row) => input.status !== "active" || row.archivedAt == null)
                 .map((row) => [
                   row.templateId,
-                  { ...row, id: row.templateId, archivedAt: row.archivedAt ?? null },
+                  {
+                    ...row,
+                    id: row.templateId,
+                    archivedAt: row.archivedAt ?? null,
+                    ...(server.templateVersions?.[row.templateId as string]
+                      ? { versions: server.templateVersions[row.templateId as string] }
+                      : {}),
+                  },
                 ]),
             ).values(),
           ],
@@ -602,6 +646,7 @@ export function fakeSandboxOrpc(server: FakeSandboxServer) {
         queryOptions: query(["sandboxes", "limits"], "getLimits", () => ({
           sandboxTimeoutMaxMs: server.maxTimeoutMs ?? 86_400_000,
           sandboxTimeoutZero: false,
+          previewTunnels: server.previewTunnels === true,
         })),
       },
       key: () => ["sandboxes"],
@@ -1038,6 +1083,8 @@ export function sandboxRow(overrides: Row = {}): Row {
     guestSudoRequested: true,
     guestSudoReason: null,
     guestRoot: true,
+    tunnelEnabled: false,
+    tunnelPorts: [],
     // Disk offload projection (disk-view.ts): on its host, never stored.
     disk: {
       location: "host",

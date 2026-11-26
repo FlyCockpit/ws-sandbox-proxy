@@ -317,3 +317,34 @@ it("warns that host access runs as the daemon user, with no mode control", async
   expect(screen.queryByRole("combobox")).toBeNull();
   expect(screen.queryByRole("switch")).toBeNull();
 });
+
+it("an Off setting offers Keep off, never Turn off, and its confirmation says what it does", async () => {
+  await mount(
+    <HostAgentAccess
+      host={{
+        ...host,
+        agentPolicy: { ...host.agentPolicy, hostCommands: false },
+        terminalPolicy: { ...policy, hostTerminal: false },
+      }}
+      lang="en-US"
+    />,
+  );
+  const user = userEvent.setup();
+  const commands = document.querySelector<HTMLElement>('[data-agent-setting="commands"]')!;
+  expect(within(commands).getByRole("status").textContent).toBe(en.host.off);
+  expect(within(commands).queryByRole("button", { name: /Turn off/ })).toBeNull();
+  const keep = within(commands).getByRole("button", {
+    name: en.host.keepOffNamed.replace("{{setting}}", en.host.commands),
+  });
+  // The button says it acts from the dashboard, and a one-line hint says what it adds.
+  expect(keep.textContent).toBe("Keep off from the dashboard");
+  const hint = document.getElementById(keep.getAttribute("aria-describedby") ?? "");
+  expect(hint?.textContent).toBe(en.host.keepOffHint);
+  await user.click(keep);
+  const dialog = await screen.findByRole("alertdialog");
+  expect(within(dialog).getByText(en.host.keepTitle)).toBeTruthy();
+  await user.click(within(dialog).getByRole("button", { name: en.host.keepOff }));
+  await waitFor(() => expect(fake.lowerCommands).toHaveBeenCalledWith({ id: "h1" }));
+  // How to turn it on at the node is shown only while it is off.
+  expect(within(commands).getByText("wssp host config set-agent-host-commands on")).toBeTruthy();
+});

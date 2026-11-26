@@ -39,7 +39,9 @@
     "locked": "Los intentos están bloqueados. Espera al menos quince minutos y reintenta con otro código cuando termine el bloqueo.",
     "refused": "Terminal rechazada. Revisa tu sesión, política local y código nuevo antes de reintentar manualmente.",
     "unavailable": "Conecta el host y habilita las terminales locales antes de adjuntar.",
-    "regionLabel": "Terminal del host"
+    "regionLabel": "Terminal del host",
+    "offHint": "Las terminales del host están apagadas en este host. Para encenderlas, ejecuta este comando en una sesión local en el propio host (el panel no puede encenderlas). Esta página se actualiza cuando el host informa el cambio.",
+    "copyOnCommand": "Copiar el comando que enciende las terminales del host"
   },
   "notice": {
     "client": "Te desconectaste. La sesión de terminal terminó.",

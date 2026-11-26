@@ -1,6 +1,8 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, type ErrorComponentProps, redirect } from "@tanstack/react-router";
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
+import { PageSkeleton } from "@/components/app-shell";
 import { DashboardFrame } from "@/components/dashboard-frame";
+import ErrorState from "@/components/error-state";
 import { ForcedPasswordChange } from "@/components/forced-password-change";
 import { ForcedTwoFactorGate } from "@/components/forced-two-factor-gate";
 import { authRedirectHref, capturePoolInviteFragment } from "@/lib/pool-invite";
@@ -31,8 +33,31 @@ export const Route = createFileRoute("/$lang/_app/_auth")({
       passwordChangeRequired: decision.passwordChangeRequired,
     };
   },
+  // While the session check runs (a hard refresh) and when it fails (offline),
+  // the page body is the skeleton or the error, inside the same frame: the
+  // sidebar and bottom nav never disappear.
+  pendingComponent: AuthPending,
+  errorComponent: AuthError,
   component: AuthLayout,
 });
+
+function AuthPending() {
+  const { lang } = Route.useParams();
+  return (
+    <DashboardFrame lang={lang}>
+      <PageSkeleton />
+    </DashboardFrame>
+  );
+}
+
+function AuthError(props: ErrorComponentProps) {
+  const { lang } = Route.useParams();
+  return (
+    <DashboardFrame lang={lang}>
+      <ErrorState {...props} />
+    </DashboardFrame>
+  );
+}
 
 function AuthLayout() {
   const { session, forcedTwoFactorSettings, passwordChangeRequired } = Route.useRouteContext();

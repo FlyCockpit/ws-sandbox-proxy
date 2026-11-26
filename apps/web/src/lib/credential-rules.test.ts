@@ -3,15 +3,19 @@ import esSdkKeys from "@wssp/locales/src/es-MX/sdkKeys.json";
 import { describe, expect, it } from "vitest";
 
 import {
+  accessChoiceFor,
   credentialProblem,
   credentialsUseRevealsValues,
+  draftProblemField,
   EXPIRY_PRESETS,
   expiresAtFor,
   hostTokenDraftProblems,
   hostTokenMintInput,
   isTwoFactorRequiredError,
   offeredScopeGroups,
+  presetScopes,
   SCOPE_GROUPS,
+  SCOPE_PRESETS,
   type SdkKeyDraft,
   SERVICE_SCOPES,
   scopeKey,
@@ -326,5 +330,106 @@ describe("sandboxes:connect scope", () => {
       expect(bundle.scopeGroup.connect).toEqual(expect.any(String));
       expect(bundle.scopeGroupHint.connect).toEqual(expect.any(String));
     }
+  });
+});
+
+describe("access presets (derived from the scope catalog)", () => {
+  // The documented content of each preset. A new scope in SERVICE_SCOPES
+  // lands in a preset by its name; this table makes that change visible.
+  const DOCUMENTED = {
+    readOnly: [
+      "pools:read",
+      "templates:read",
+      "sandboxes:read",
+      "commands:read",
+      "files:read",
+      "operations:read",
+      "credentials:read",
+    ],
+    runSandboxes: [
+      "pools:read",
+      "templates:read",
+      "sandboxes:read",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "commands:read",
+      "commands:execute",
+      "files:read",
+      "files:write",
+      "operations:read",
+      "operations:cancel",
+    ],
+    fullAccess: [
+      "pools:read",
+      "templates:read",
+      "templates:write",
+      "templates:build",
+      "sandboxes:read",
+      "sandboxes:create",
+      "sandboxes:manage",
+      "sandboxes:destroy",
+      "commands:read",
+      "commands:execute",
+      "files:read",
+      "files:write",
+      "operations:read",
+      "operations:cancel",
+      "webhooks:write",
+      "credentials:read",
+      "credentials:write",
+      "credentials:use",
+      "sandboxes:tunnel",
+    ],
+  } as const;
+
+  it("each preset is exactly its documented scope set, in canonical order", () => {
+    for (const preset of SCOPE_PRESETS) expect(presetScopes(preset)).toEqual(DOCUMENTED[preset]);
+  });
+
+  it("no preset holds host access or an API-key-only scope", () => {
+    for (const preset of SCOPE_PRESETS)
+      for (const scope of presetScopes(preset)) {
+        expect(scope.startsWith("hosts:")).toBe(false);
+        expect(scope).not.toBe("sandboxes:connect");
+      }
+  });
+
+  it("every preset is a valid all-owned draft (no scope grants nothing)", () => {
+    for (const preset of SCOPE_PRESETS) {
+      const scopes = presetScopes(preset);
+      expect(unusableScopes(scopes)).toEqual([]);
+      expect(
+        sdkKeyDraftProblems(draft({ scopes, poolMode: "ALL_USABLE" }), { hosts, templates }),
+      ).toEqual([]);
+    }
+  });
+
+  it("recognizes a preset from its scopes, in any order; anything else is custom", () => {
+    expect(accessChoiceFor([...presetScopes("readOnly")].reverse())).toBe("readOnly");
+    expect(accessChoiceFor(presetScopes("runSandboxes"))).toBe("runSandboxes");
+    expect(accessChoiceFor(presetScopes("fullAccess"))).toBe("fullAccess");
+    expect(accessChoiceFor(["sandboxes:read"])).toBe("custom");
+    expect(accessChoiceFor([])).toBe("custom");
+  });
+
+  it("maps each draft problem to the field it is shown under", () => {
+    expect(draftProblemField("nameRequired")).toBe("name");
+    expect(draftProblemField("nameTooLong")).toBe("name");
+    expect(draftProblemField("noScopes")).toBe("scopes");
+    expect(draftProblemField("unusableScopes")).toBe("scopes");
+    expect(draftProblemField("webhooksRequireAllOwned")).toBe("scopes");
+    expect(draftProblemField("noHosts")).toBe("resources");
+    expect(draftProblemField("credentialsUseNeedsLogins")).toBe("resources");
+    expect(draftProblemField("unknownPool")).toBe("pools");
+  });
+
+  it("every scope has a human title in both locales", () => {
+    for (const bundle of [enSdkKeys, esSdkKeys])
+      for (const scope of SERVICE_SCOPES) {
+        const [group, action] = scope.split(":") as [string, string];
+        const titles = bundle.scopeTitle as Record<string, Record<string, string>>;
+        expect(titles[group]?.[action]).toEqual(expect.any(String));
+      }
   });
 });

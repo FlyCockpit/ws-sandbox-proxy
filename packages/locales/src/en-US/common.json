@@ -22,7 +22,8 @@
     "saving": "Saving…",
     "tryAgain": "Try again",
     "loadMore": "Load more",
-    "loadingMore": "Loading…"
+    "loadingMore": "Loading…",
+    "more": "More actions"
   },
   "fileDrop": {
     "ignored": "That file can't be dropped here."
@@ -48,5 +49,38 @@
   },
   "advanced": {
     "summary": "Advanced"
+  },
+  "keyValue": {
+    "key": "Key",
+    "value": "Value",
+    "add": "Add",
+    "remove": "Remove {{key}}",
+    "rowsMode": "Rows",
+    "textMode": ".env text",
+    "textHint": "One KEY=value per line. Paste a .env file here; # starts a comment.",
+    "show": "Show value",
+    "hide": "Hide value",
+    "lineProblem": "Line {{line}}: expected KEY=value.",
+    "empty": "None yet.",
+    "unwritableKeys": "Some keys can't be written as KEY=value lines; edit them as rows.",
+    "problem": {
+      "emptyKey": "Add a key for this value.",
+      "invalidKey": "{{key}} isn't a valid key.",
+      "duplicateKey": "{{key}} is already set above.",
+      "reservedKey": "{{key}} is reserved.",
+      "valueCleared": "Enter the value of {{key}} again."
+    }
+  },
+  "range": {
+    "default": "Default",
+    "reset": "Reset to default",
+    "outOfRange": "Choose a value from {{min}} to {{max}}."
+  },
+  "form": {
+    "fixErrors": "Fix the highlighted fields."
+  },
+  "offline": {
+    "showingDataFrom": "You're offline — showing data from {{time}}.",
+    "noData": "You're offline. Pages will load again when the connection is back."
   }
 }

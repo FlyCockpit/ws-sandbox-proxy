@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { env } from "@wssp/env/web";
 import { Button } from "@wssp/ui/components/button";
 import {
   DropdownMenu,
@@ -11,11 +12,13 @@ import {
   DropdownMenuTrigger,
 } from "@wssp/ui/components/dropdown-menu";
 import { toast } from "@wssp/ui/components/sileo";
+import { BookOpen, User } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useShowsAdminNavigation } from "@/hooks/use-admin-navigation";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { markExplicitSignOut } from "@/hooks/use-reload-on-identity-change";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { docsUrl } from "@/lib/docs-links";
 import { getNavItems, toLangRoute } from "@/lib/nav-items";
 import { useOrphanCredentials } from "@/stores/orphan-credentials";
 import { friendly } from "@/utils/friendly-error";
@@ -48,36 +51,62 @@ export default function UserMenuContent() {
     isAuthenticated: true,
     showsAdmin,
   });
+  // The product guide, when the deployment publishes the docs (VITE_DOCS_URL).
+  const helpHref = docsUrl(env.VITE_DOCS_URL, "guide");
 
   return (
     <DropdownMenu defaultOpen>
+      {/* A 44px icon below md:. From md: it shows the name, at most 192px wide,
+          and shrinks (to 44px) before the header controls run past the
+          trailing line; the name truncates and the full name is in the title
+          (same as UserMenu's eager trigger). */}
       <DropdownMenuTrigger
         render={
           <Button
             variant="outline"
             size="touch"
-            className="min-w-11 max-w-32 sm:max-w-48"
+            className="w-11 px-0! md:w-auto md:min-w-11 md:max-w-48 md:shrink md:px-3.5!"
             title={session.user.name}
-            aria-label={session.user.name}
+            aria-label={t("userMenu.open", { name: session.user.name })}
           />
         }
       >
-        <span className="min-w-0 truncate">{session.user.name}</span>
+        <User className="size-4 md:hidden" aria-hidden="true" />
+        <span className="hidden truncate md:block">{session.user.name}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent className="bg-card">
+      {/* At least 224px so the email fits; `end` keeps the menu's trailing
+          edge on the trigger's, the header's trailing line. */}
+      <DropdownMenuContent align="end" className="min-w-56 bg-card">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>{t("userMenu.myAccount")}</DropdownMenuLabel>
+          <DropdownMenuLabel className="space-y-0.5">
+            <span className="block text-muted-foreground">{t("userMenu.myAccount")}</span>
+            <span className="block truncate text-foreground" title={session.user.name}>
+              {session.user.name}
+            </span>
+            <span className="block truncate font-normal" title={session.user.email}>
+              {session.user.email}
+            </span>
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>{session.user.email}</DropdownMenuItem>
           {userMenuItems.map((item) => (
             <DropdownMenuItem
               key={item.id}
               onClick={() => navigate({ to: toLangRoute(item.path), params: { lang } })}
             >
-              <item.icon className="size-4" />
+              <item.icon className="size-4" aria-hidden="true" />
               {t(item.labelKey)}
             </DropdownMenuItem>
           ))}
+          {helpHref ? (
+            <DropdownMenuItem
+              // A real link: opens the docs in a new tab with the browser's
+              // own link behaviour (middle-click, copy link address).
+              render={<a href={helpHref} target="_blank" rel="noopener noreferrer" />}
+            >
+              <BookOpen className="size-4" aria-hidden="true" />
+              {t("userMenu.helpDocs")}
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"

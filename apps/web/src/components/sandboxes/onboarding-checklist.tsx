@@ -22,15 +22,7 @@ import { orpc } from "@/utils/orpc";
 const HOSTS_CHECKED = 20;
 const HOSTS_REFETCH_MS = 15_000;
 
-export function OnboardingChecklist({
-  lang,
-  enabled,
-  onCreate,
-}: {
-  lang: string;
-  enabled: boolean;
-  onCreate: () => void;
-}) {
+export function OnboardingChecklist({ lang, enabled }: { lang: string; enabled: boolean }) {
   const { t } = useTranslation("sandboxes");
   const hosts = useQuery({
     ...orpc.sandboxHosts.listHosts.queryOptions({ input: { limit: HOSTS_CHECKED } }),
@@ -126,15 +118,19 @@ export function OnboardingChecklist({
           title={t("onboarding.sandbox.title")}
           description={t("onboarding.sandbox.description")}
           action={
-            <Button
-              type="button"
-              size="touch"
-              className="shrink-0"
-              disabled={!hasPlace || !hasTemplate}
-              onClick={onCreate}
-            >
-              {t("onboarding.sandbox.action")}
-            </Button>
+            hasPlace && hasTemplate ? (
+              <Link
+                to="/$lang/dashboard/sandboxes/new"
+                params={{ lang }}
+                className={buttonVariants({ size: "touch", className: "shrink-0" })}
+              >
+                {t("onboarding.sandbox.action")}
+              </Link>
+            ) : (
+              <Button type="button" size="touch" className="shrink-0" disabled>
+                {t("onboarding.sandbox.action")}
+              </Button>
+            )
           }
         />
       </ol>

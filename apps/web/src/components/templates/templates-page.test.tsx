@@ -1,4 +1,4 @@
-import { openSelect, selectChoices, selectOption } from "@/test/select-option";
+import { selectChoices, selectOption } from "@/test/select-option";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -8,7 +8,16 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, configure, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
@@ -51,6 +60,8 @@ const server = vi.hoisted(() => ({
   /** When set, listHosts waits for this promise before answering. */
   hostsGate: null as Promise<void> | null,
   imageMode: "off" as "off" | "s3",
+  /** The latest build each template's empty-state note reads. */
+  latestBuild: null as Record<string, unknown> | null,
   seq: 0,
 }));
 
@@ -62,8 +73,29 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
-  Link: ({ children, className }: { children: ReactNode; className?: string }) => (
-    <a className={className} href="#link">
+  Link: ({
+    children,
+    className,
+    to,
+    search,
+    onClick,
+    "data-new-template": option,
+  }: {
+    children: ReactNode;
+    className?: string;
+    to?: string;
+    search?: unknown;
+    onClick?: () => void;
+    "data-new-template"?: string;
+  }) => (
+    <a
+      className={className}
+      href="#link"
+      data-to={to}
+      data-search={search ? JSON.stringify(search) : undefined}
+      data-new-template={option}
+      onClick={onClick}
+    >
       {children}
     </a>
   ),
@@ -145,6 +177,13 @@ vi.mock("@/utils/orpc", () => {
   return {
     orpc: {
       communityTemplates: {
+        images: {
+          queryOptions: () => ({
+            queryKey: ["communityImages"],
+            queryFn: async () => ({ images: [], disabledReason: null }),
+          }),
+        },
+        create: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         setRefresh: { mutationOptions: () => ({ mutationFn: async () => ({ ok: true }) }) },
         refresh: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
         retry: { mutationOptions: () => ({ mutationFn: async () => ({}) }) },
@@ -154,7 +193,10 @@ vi.mock("@/utils/orpc", () => {
         list: {
           queryOptions: () => ({
             queryKey: ["latestTemplateBuild"],
-            queryFn: async () => ({ items: [], nextCursor: null }),
+            queryFn: async () => ({
+              items: server.latestBuild ? [server.latestBuild] : [],
+              nextCursor: null,
+            }),
           }),
           infiniteOptions: infinite(
             "listTemplateBuilds",
@@ -180,13 +222,27 @@ vi.mock("@/utils/orpc", () => {
       },
       sandboxPools: {
         listUsable: {
+          queryOptions: () => ({
+            queryKey: ["listUsablePools"],
+            queryFn: async () => ({ items: [], nextCursor: null }),
+          }),
           infiniteOptions: infinite(
             "listUsablePools",
             () => [{ id: "pool-a", slug: "shared", label: "Shared pool" }],
             () => null,
           ),
         },
+        getUsable: {
+          queryOptions: () => ({
+            queryKey: ["getUsablePool"],
+            queryFn: async () => ({ id: "pool-a", label: "Shared pool", memberCount: 1 }),
+          }),
+        },
         listUsableMembers: {
+          queryOptions: () => ({
+            queryKey: ["listUsableMembersFlat"],
+            queryFn: async () => ({ items: [], nextCursor: null }),
+          }),
           infiniteOptions: infinite(
             "listUsableMembers",
             () => [{ id: "member-a", poolId: "pool-a" }],
@@ -197,6 +253,10 @@ vi.mock("@/utils/orpc", () => {
       sandboxHosts: {
         listHosts: {
           key: () => ["listHosts"],
+          queryOptions: () => ({
+            queryKey: ["listHostsFlat"],
+            queryFn: async () => ({ items: server.hosts, nextCursor: null }),
+          }),
           infiniteOptions: infinite(
             "listHosts",
             () => server.hosts,
@@ -284,13 +344,15 @@ vi.mock("@/utils/orpc", () => {
           infiniteOptions: infinite(
             "listTemplates",
             (input) =>
-              server.templates.filter((row) =>
-                input.status === "active"
-                  ? row.archivedAt == null
-                  : input.status === "retired"
-                    ? row.archivedAt != null
-                    : true,
-              ),
+              server.templates
+                .filter((row) =>
+                  input.status === "active"
+                    ? row.archivedAt == null
+                    : input.status === "retired"
+                      ? row.archivedAt != null
+                      : true,
+                )
+                .map((row) => ({ versions: { count: 1, latest: 1 }, ...row })),
             () => server.listError,
           ),
         },
@@ -371,7 +433,7 @@ function templateRow(overrides: Record<string, unknown> = {}) {
 }
 
 let client: QueryClient;
-async function mount(lang = "en-US") {
+async function mount(lang = "en-US", initialChoosing = false) {
   await i18n.changeLanguage(lang);
   client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -379,7 +441,7 @@ async function mount(lang = "en-US") {
   return render(
     <QueryClientProvider client={client}>
       <I18nextProvider i18n={i18n}>
-        <TemplatesPage lang={lang} />
+        <TemplatesPage lang={lang} initialChoosing={initialChoosing} />
       </I18nextProvider>
     </QueryClientProvider>,
   );
@@ -397,6 +459,7 @@ const findCard = (id: string) =>
 
 beforeEach(() => {
   server.imageMode = "off";
+  server.latestBuild = null;
   server.revisions = null;
   server.availability = [];
   server.pageSize = 100;
@@ -425,24 +488,22 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function openRegister(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole("button", { name: enTemplates.register.action }));
-  await within(dialog()).findByRole("combobox", { name: enTemplates.form.host });
+/** Opens a card's versions and builds (collapsed by default). */
+async function expand(id: string) {
+  const row = await findCard(id);
+  fireEvent.click(within(row).getByRole("button", { name: enTemplates.card.showDetails }));
+  return row;
 }
 
-async function fillValid(user: ReturnType<typeof userEvent.setup>, hostId = "host-a") {
-  await selectOption(
-    user,
-    within(dialog()).getByLabelText(enTemplates.form.host),
-    hostId === "host-a" ? /^Alpha \(alpha\)/ : /^Beta \(beta\)/,
+/** Opens a card's More actions menu and picks one entry. */
+async function overflow(user: ReturnType<typeof userEvent.setup>, label: string, item: string) {
+  await user.click(
+    within(card("tpl-a")!).getByRole("button", {
+      name: enTemplates.card.more.replace("{{label}}", label),
+    }),
   );
-  await user.type(within(dialog()).getByLabelText(enTemplates.form.label), "Ubuntu dev");
-  await user.type(within(dialog()).getByLabelText(enTemplates.form.slug), "ubuntu-dev");
-  await user.type(within(dialog()).getByLabelText(enTemplates.form.imageRef), "local:ubuntu-dev");
+  await user.click(await screen.findByRole("menuitem", { name: item }));
 }
-
-const submit = (user: ReturnType<typeof userEvent.setup>) =>
-  user.click(within(dialog()).getByRole("button", { name: enTemplates.register.submit }));
 
 describe("templates list", () => {
   it("loading shows a skeleton, then the translated empty state for active templates", async () => {
@@ -499,7 +560,7 @@ describe("templates list", () => {
   it("shows logical identity and the separately pinned revision", async () => {
     server.templates = [templateRow({ guestVersion: "2026-09" })];
     await mount();
-    const row = await findCard("tpl-a");
+    const row = await expand("tpl-a");
     // `slug vN` leads; the revision cuid and fingerprint sit, short, under Advanced.
     await waitFor(() =>
       expect(row.querySelector("[data-revision-label]")?.textContent).toMatch(/^ubuntu v1/),
@@ -509,7 +570,9 @@ describe("templates list", () => {
     expect(within(advanced).getByText("sha256:abababababab…")).toBeTruthy();
     expect(row.textContent).not.toContain(FP);
     expect(row.getAttribute("data-usability")).toBe("active");
-    expect(within(row).getByRole("button", { name: enTemplates.appendRevision })).toBeTruthy();
+    expect(
+      within(row).getByText(enTemplates.builds.action).closest("a")?.getAttribute("data-search"),
+    ).toBe(JSON.stringify({ template: "tpl-a" }));
     expect(calls("listRevisions")[0]?.input).toMatchObject({ templateId: "tpl-a", limit: 50 });
   });
 
@@ -535,6 +598,7 @@ describe("templates list", () => {
     ];
     await mount();
     await screen.findByText("Ubuntu");
+    await expand("tpl-a");
     expect(screen.queryByText("Old")).toBeNull();
     // A live template's revision offers Publish; an archived one's never does.
     const publish = { name: enTemplates.images.publish.action };
@@ -542,232 +606,59 @@ describe("templates list", () => {
     await user.click(screen.getByRole("button", { name: enTemplates.filter.retired }));
     expect(await screen.findByText("Old")).toBeTruthy();
     expect(calls("listTemplates").at(-1)?.input).toMatchObject({ status: "retired" });
-    const old = card("tpl-old")!;
+    const old = await expand("tpl-old");
     expect(old.getAttribute("data-usability")).toBe("archived");
+    expect(old.querySelector("[data-template-status]")?.textContent).toBe(
+      enTemplates.status.archived,
+    );
     expect(old.querySelector("[data-template-host]")).toBeNull();
     // Still shows what it pinned; no archive control on an archived revision.
     await waitFor(() => expect(within(old).getByText("sha256:abababababab…")).toBeTruthy());
-    expect(within(old).queryByRole("button", { name: enTemplates.archive.action })).toBeNull();
-    expect(within(old).queryByRole("button", publish)).toBeNull();
-  });
-});
-
-describe("register a template", () => {
-  it("refuses an invalid draft in the browser without asking the host", async () => {
-    const user = userEvent.setup();
-    await mount();
-    await openRegister(user);
-    // The disconnected host is offered but marked; the one pending deletion is not offered.
     expect(
-      (await openSelect(user, within(dialog()).getByLabelText(enTemplates.form.host))).getByRole(
-        "option",
-        { name: /Beta \(beta\) · not connected/ },
-      ),
-    ).toBeTruthy();
-    expect(screen.queryByRole("option", { name: /Gone/ })).toBeNull();
-    await user.keyboard("{Escape}");
-    await user.type(within(dialog()).getByLabelText(enTemplates.form.slug), "Bad_Slug");
-    await user.type(
-      within(dialog()).getByLabelText(enTemplates.form.imageRef),
-      `sha256:${"a".repeat(64)}`,
-    );
-    const uid = within(dialog()).getByLabelText(enTemplates.form.guestUid);
-    await user.clear(uid);
-    await user.type(uid, "0");
-    await submit(user);
-    const alert = await within(dialog()).findByRole("alert");
-    expect(
-      [...alert.querySelectorAll("[data-draft-problem]")].map((node) =>
-        node.getAttribute("data-draft-problem"),
-      ),
-    ).toEqual(["noHost", "slug", "label", "guestUid", "imageRef"]);
-    // An offline host is refused before the request too.
-    await selectOption(
-      user,
-      within(dialog()).getByLabelText(enTemplates.form.host),
-      /^Beta \(beta\)/,
-    );
-    expect(within(dialog()).getByRole("alert").textContent).toContain(
-      enTemplates.draft.hostUnavailable,
-    );
-    expect(calls("createTemplate")).toHaveLength(0);
-  });
-
-  it("a form left open past the stale window still registers on a host that kept heartbeating", async () => {
-    // What the picker read when the dialog opened is now older than the
-    // stale window; the host has kept heartbeating on the server.
-    server.hosts[0]!.lastHeartbeatAt = new Date(Date.now() - 40_000);
-    const user = userEvent.setup();
-    await mount();
-    await openRegister(user);
-    await fillValid(user);
-    server.hosts[0]!.lastHeartbeatAt = new Date();
-    await submit(user);
-    await waitFor(() => expect(calls("createTemplate")).toHaveLength(1));
-    expect(calls("createTemplate")[0]?.input).toMatchObject({ hostId: "host-a" });
-    expect(within(dialog()).queryByText(enTemplates.draft.hostUnavailable)).toBeNull();
-  });
-
-  it("cancelling while the host is re-checked registers nothing afterwards", async () => {
-    server.hosts[0]!.lastHeartbeatAt = new Date(Date.now() - 40_000);
-    const user = userEvent.setup();
-    await mount();
-    await openRegister(user);
-    await fillValid(user);
-    let release!: () => void;
-    server.hostsGate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    server.hosts[0]!.lastHeartbeatAt = new Date();
-    const before = calls("listHosts").length;
-    await submit(user);
-    await waitFor(() => expect(calls("listHosts").length).toBeGreaterThan(before));
-    await user.click(within(dialog()).getByRole("button", { name: enCommon.actions.cancel }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    // The fresh reading now says the host is ready; the closed form must not act on it.
-    await act(async () => {
-      release();
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(calls("createTemplate")).toEqual([]);
-    expect(toast.success).not.toHaveBeenCalled();
-  });
-
-  it("the image check is visibly pending, then shows the resolved fingerprint and host", async () => {
-    let release!: () => void;
-    server.createGate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const user = userEvent.setup();
-    await mount();
-    await screen.findByText(enTemplates.empty.title);
-    await openRegister(user);
-    await fillValid(user);
-    await submit(user);
-    const pending = await within(dialog()).findByRole("status");
-    expect(pending.getAttribute("data-image-check")).toBe("pending");
-    expect(pending.textContent).toBe("Checking the image on Alpha…");
-    expect(
-      within(dialog()).getByRole("button", { name: enTemplates.register.pending }),
-    ).toHaveProperty("disabled", true);
-    // Nothing is listed while the host has not answered.
-    expect(card("tpl-new-1")).toBeNull();
-    release();
-    const result = await within(dialog()).findByRole("region", {
-      name: enTemplates.register.resultLabel,
-    });
-    expect(result.textContent).toContain("ubuntu-dev v1");
-    expect(result.textContent).not.toContain("tpl-new-1-revision");
-    expect(calls("createTemplate")[0]?.input).toEqual({
-      cpuCount: 1,
-      memoryMiB: 1024,
-      defaultDiskGiB: 32,
-      hostId: "host-a",
-      envs: {},
-      slug: "ubuntu-dev",
-      label: "Ubuntu dev",
-      imageRef: "local:ubuntu-dev",
-      architecture: "x86_64",
-      guestUid: 1000,
-      guestGid: 1000,
-      guestHome: "/home/user",
-      guestShell: "/bin/bash",
-    });
-    await user.click(within(result).getByRole("button", { name: enTemplates.register.close }));
-    await waitFor(() => expect(card("tpl-new-1")?.getAttribute("data-usability")).toBe("active"));
-  });
-
-  it("an image the host refuses registers nothing, explains why, and can be retried", async () => {
-    const user = userEvent.setup();
-    await mount();
-    await screen.findByText(enTemplates.empty.title);
-    await openRegister(user);
-    await fillValid(user);
-    server.createError = Object.assign(new Error("image alias `ubuntu-dev` not found"), {
-      code: "BAD_REQUEST",
-      data: { code: "sandbox.template_image_rejected" },
-    });
-    await submit(user);
-    const failed = await waitFor(() => {
-      const node = dialog().querySelector<HTMLElement>('[data-image-check="failed"]');
-      expect(node).not.toBeNull();
-      return node!;
-    });
-    expect(failed.textContent).toContain(enTemplates.problem.imageRejected);
-    expect(failed.textContent).not.toContain("image alias `ubuntu-dev` not found");
-    expect(
-      within(dialog()).queryByRole("region", { name: enTemplates.register.resultLabel }),
-    ).toBeNull();
-    // The list was refetched and has no template: a refused image never appears.
-    await waitFor(() => expect(calls("listTemplates").length).toBeGreaterThan(1));
-    expect(screen.getByText(enTemplates.empty.title)).toBeTruthy();
-    // The form keeps the draft; a retry registers.
-    await submit(user);
-    expect(
-      await within(dialog()).findByRole("region", { name: enTemplates.register.resultLabel }),
-    ).toBeTruthy();
-    expect(calls("createTemplate")).toHaveLength(2);
-  });
-
-  it("a host that cannot answer is explained and the host list reloaded", async () => {
-    const user = userEvent.setup();
-    await mount();
-    await openRegister(user);
-    await fillValid(user);
-    const before = calls("listHosts").length;
-    server.createError = Object.assign(new Error("Host could not verify the image."), {
-      code: "CONFLICT",
-      data: { code: "sandbox.host_unavailable" },
-    });
-    await submit(user);
-    expect((await within(dialog()).findByRole("alert")).textContent).toBe(
-      enTemplates.problem.hostUnavailable,
-    );
-    await waitFor(() => expect(calls("listHosts").length).toBeGreaterThan(before));
-  });
-
-  it("a forced-2FA refusal redirects to Security settings", async () => {
-    const user = userEvent.setup();
-    await mount();
-    await openRegister(user);
-    await fillValid(user);
-    server.createError = Object.assign(new Error("2FA"), {
-      code: "FORBIDDEN",
-      data: { code: "auth.two_factor_required" },
-    });
-    await submit(user);
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({
-        to: "/$lang/settings/security",
-        params: { lang: "en-US" },
+      within(old).queryByRole("button", {
+        name: enTemplates.card.more.replace("{{label}}", "Old"),
       }),
-    );
-    expect(dialog().querySelector('[data-image-check="failed"]')).toBeNull();
+    ).toBeNull();
+    expect(within(old).queryByRole("button", publish)).toBeNull();
   });
 });
 
 describe("archive a template", () => {
   it("can archive a logical template while pinned sandboxes retain their revision", async () => {
     server.templates = [templateRow({ sandboxCount: 2 })];
+    const user = userEvent.setup();
     await mount();
-    const row = await findCard("tpl-a");
-    expect(within(row).getByRole("button", { name: enTemplates.archive.action })).toHaveProperty(
-      "disabled",
-      false,
+    await findCard("tpl-a");
+    await user.click(
+      within(card("tpl-a")!).getByRole("button", {
+        name: enTemplates.card.more.replace("{{label}}", "Ubuntu"),
+      }),
     );
+    const item = await screen.findByRole("menuitem", { name: enTemplates.archive.action });
+    expect(item.getAttribute("aria-disabled")).not.toBe("true");
+    // Archive sits apart from the other entries, in the destructive section.
+    expect(item.getAttribute("data-variant")).toBe("destructive");
   });
 
   it("requires confirmation; cancel sends nothing; confirm archives and refetches", async () => {
     const user = userEvent.setup();
     server.templates = [templateRow()];
     await mount();
-    const row = await findCard("tpl-a");
-    await user.click(within(row).getByRole("button", { name: enTemplates.archive.action }));
+    await findCard("tpl-a");
+    await overflow(user, "Ubuntu", enTemplates.archive.action);
     const confirm = await screen.findByRole("alertdialog");
+    // Plain words, and the confirm looks as destructive as the action is.
+    expect(confirm.textContent).toContain(
+      enTemplates.archive.description.replace("{{label}}", "Ubuntu"),
+    );
+    expect(confirm.textContent).not.toContain("logical");
+    const archiveButton = within(confirm).getByRole("button", {
+      name: enTemplates.archive.confirm,
+    });
+    expect(archiveButton.className).toContain("destructive");
     await user.click(within(confirm).getByRole("button", { name: enCommon.actions.cancel }));
     expect(calls("retireTemplate")).toHaveLength(0);
-    await user.click(within(row).getByRole("button", { name: enTemplates.archive.action }));
+    await overflow(user, "Ubuntu", enTemplates.archive.action);
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: enTemplates.archive.confirm,
@@ -787,13 +678,13 @@ describe("archive a template", () => {
     const user = userEvent.setup();
     server.templates = [templateRow()];
     await mount();
-    const row = await findCard("tpl-a");
+    await findCard("tpl-a");
     const before = calls("listTemplates").length;
     server.retireError = Object.assign(new Error("in use"), {
       code: "CONFLICT",
       data: { code: "sandbox.template_in_use" },
     });
-    await user.click(within(row).getByRole("button", { name: enTemplates.archive.action }));
+    await overflow(user, "Ubuntu", enTemplates.archive.action);
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: enTemplates.archive.confirm,
@@ -811,6 +702,7 @@ it("manages an exact revision tag and verifies it on a selected host", async () 
   server.templates = [templateRow()];
   const user = userEvent.setup();
   await mount();
+  await expand("tpl-a");
   await user.click(await screen.findByRole("button", { name: enTemplates.manageRevision }));
   await user.clear(within(dialog()).getByLabelText(enTemplates.tagLabel));
   await user.type(within(dialog()).getByLabelText(enTemplates.tagLabel), "stable");
@@ -861,6 +753,7 @@ it("marks a revision captured with guest root, and one built by wssp's base reci
     },
   ];
   await mount();
+  await expand("tpl-a");
   await screen.findByText("ubuntu v1");
   const tainted = document.querySelector("[data-revision-guest-root]");
   expect(tainted?.textContent).toBe(enTemplates.builds.revisionBadge.guestRoot);
@@ -892,6 +785,7 @@ it("a community template is wssp-managed: badges, no writes, no launch actions o
   ];
   const user = userEvent.setup();
   await mount();
+  await expand("tpl-a");
   await screen.findByText("ubuntu v1");
   const row = card("tpl-a")!;
   expect(row.querySelector("[data-community-badge]")?.textContent).toBe(
@@ -904,8 +798,9 @@ it("a community template is wssp-managed: badges, no writes, no launch actions o
   expect(row.querySelector("[data-revision-verifying]")?.textContent).toBe(
     enTemplates.builds.revisionBadge.verifying,
   );
-  expect(within(row).queryByRole("button", { name: enTemplates.appendRevision })).toBeNull();
-  expect(within(row).queryByRole("button", { name: enTemplates.appendWithSize })).toBeNull();
+  // wssp-managed: no build or register of new versions, no "with these defaults".
+  expect(within(row).queryByText(enTemplates.builds.action)).toBeNull();
+  expect(within(row).queryByText(enTemplates.appendWithSize)).toBeNull();
   const manage = within(row).getAllByRole("button", { name: enTemplates.manageRevision });
   await user.click(manage[0]!);
   expect(within(dialog()).queryByLabelText(enTemplates.tagLabel)).toBeNull();
@@ -955,6 +850,7 @@ it("an upstream pin held on a host never reads as a verified image", async () =>
     evidence("evidence-2", "revision-2"),
   ];
   await mount();
+  await expand("tpl-a");
   await screen.findByText("ubuntu v1");
   const revision = (id: string) => document.querySelector<HTMLElement>(`[data-revision="${id}"]`)!;
   const upstream = await waitFor(() => {
@@ -1005,6 +901,7 @@ it("pages exact revisions and host verification evidence independently", async (
   ];
   const user = userEvent.setup();
   await mount();
+  await expand("tpl-a");
   await screen.findByText("ubuntu v1");
   expect(screen.queryByText("ubuntu v2")).toBeNull();
   const evidence = (await screen.findByText("Alpha")).closest<HTMLElement>("[data-availability]")!;
@@ -1033,7 +930,7 @@ it("availability shows a skeleton, safe retry, and a translated empty associatio
   });
   server.availabilityError = new Error("private-availability-detail");
   await mount();
-  const row = await findCard("tpl-a");
+  const row = await expand("tpl-a");
   await waitFor(() => expect(row.querySelector('[data-slot="skeleton"]')).toBeTruthy());
   await act(async () => release());
   const user = userEvent.setup();
@@ -1049,6 +946,7 @@ it("revision edits use a Sheet with paged hosts, safe selection and typed retire
   server.templates = [templateRow()];
   const user = userEvent.setup();
   await mount();
+  await expand("tpl-a");
   await user.click(await screen.findByRole("button", { name: enTemplates.manageRevision }));
   const sheet = within(dialog());
   expect(dialog().getAttribute("data-slot")).toBe("sheet-content");
@@ -1079,136 +977,160 @@ it("revision edits use a Sheet with paged hosts, safe selection and typed retire
   await waitFor(() => expect(calls("retireRevision")[0]?.input).toEqual({ id: "tpl-a-revision" }));
 });
 
-it.each(["en-US", "es-MX"])(
-  "%s bounds private revision envs and clears form/mutation state after a definite refusal",
-  async (lang) => {
-    await i18n.changeLanguage(lang);
-    const copy = lang === "en-US" ? enTemplates : esTemplates;
-    const user = userEvent.setup();
-    await mount(lang);
-    await user.click(screen.getByRole("button", { name: copy.register.action }));
-    const form = within(dialog());
-    await form.findByRole("combobox", { name: copy.form.host });
-    await selectOption(user, form.getByLabelText(copy.form.host), /^Alpha \(alpha\)/);
-    await user.type(form.getByLabelText(copy.form.label), "Image");
-    await user.type(form.getByLabelText(copy.form.slug), "image");
-    await user.type(form.getByLabelText(copy.form.imageRef), "local:image");
-    const env = form.getByLabelText(copy.form.envs) as HTMLTextAreaElement;
-    await user.click(env);
-    await user.paste(JSON.stringify({ APP: "x".repeat(4097) }));
-    await user.click(form.getByRole("button", { name: copy.register.submit }));
-    expect(await form.findByText(copy.draft.envs)).toBeTruthy();
-    expect(calls("createTemplate")).toHaveLength(0);
-    await user.clear(env);
-    const sentinel = "synthetic-template-private-env";
-    await user.paste(JSON.stringify({ APP: sentinel }));
-    server.createError = Object.assign(new Error(sentinel), {
-      code: "BAD_REQUEST",
-      data: { code: "sandbox.template_image_rejected" },
-    });
-    const storage = vi.spyOn(Storage.prototype, "setItem");
-    await user.click(form.getByRole("button", { name: copy.register.submit }));
-    await form.findByText(copy.problem.imageRejected);
-    expect(env.value).toBe("");
-    await waitFor(() =>
-      expect(
-        JSON.stringify(
-          client
-            .getMutationCache()
-            .getAll()
-            .map((mutation) => mutation.state),
-        ),
-      ).not.toContain(sentinel),
-    );
-    expect(form.getByRole("alert").textContent).not.toContain(sentinel);
-    expect(JSON.stringify(storage.mock.calls)).not.toContain(sentinel);
-    expect(JSON.stringify(toast.success.mock.calls)).not.toContain(sentinel);
-  },
-);
-
-it("appends explicitly prefilled size as a new revision without changing the source", async () => {
+it("links a version's defaults to a new version on the register page", async () => {
   server.templates = [
     templateRow({ cpuCount: 2, memoryMiB: 2048, defaultDiskGiB: 48, minDiskGiB: 12 }),
   ];
-  const user = userEvent.setup();
   await mount();
+  await expand("tpl-a");
   expect(await screen.findByText("Defaults: 2 vCPU · 2048 MiB · 48 GiB disk")).toBeTruthy();
-  expect(
-    screen.getByText("Minimum disk: 12 GiB (the image's root; smaller sandboxes are refused)"),
-  ).toBeTruthy();
-  await user.click(screen.getByRole("button", { name: enTemplates.appendWithSize }));
-  const form = within(dialog());
-  const cpu = form.getByLabelText(enTemplates.form.cpuCount);
-  const memory = form.getByLabelText(enTemplates.form.memoryMiB);
-  const disk = form.getByLabelText(enTemplates.form.defaultDiskGiB);
-  const minDisk = form.getByLabelText(enTemplates.form.minDiskGiB);
-  expect((disk as HTMLInputElement).value).toBe("48");
-  expect((minDisk as HTMLInputElement).value).toBe("12");
-  await user.clear(disk);
-  await user.type(disk, "64");
-  expect((cpu as HTMLInputElement).value).toBe("2");
-  expect((memory as HTMLInputElement).value).toBe("2048");
-  expect(cpu.getAttribute("inputmode")).toBe("numeric");
-  expect(memory.getAttribute("inputmode")).toBe("numeric");
-  expect(cpu.getAttribute("min")).toBe("1");
-  expect(cpu.getAttribute("max")).toBe("32");
-  expect(memory.getAttribute("step")).toBe("256");
-  await selectOption(user, form.getByLabelText(enTemplates.form.host), /^Alpha \(alpha\)/);
-  await user.type(form.getByLabelText(enTemplates.form.imageRef), "local:ubuntu-dev");
-  await user.clear(memory);
-  await user.type(memory, "3072");
-  await submit(user);
-  await waitFor(() => expect(calls("appendRevision")).toHaveLength(1));
-  expect(calls("appendRevision")[0]?.input).toMatchObject({
-    templateId: "tpl-a",
-    cpuCount: 2,
-    memoryMiB: 3072,
-    defaultDiskGiB: 64,
-    minDiskGiB: 12,
-  });
-  expect(server.templates[0]).toMatchObject({
-    cpuCount: 2,
-    memoryMiB: 2048,
-    defaultDiskGiB: 48,
-    minDiskGiB: 12,
-  });
-  expect(calls("createTemplate")).toHaveLength(0);
+  const link = screen.getByText(enTemplates.appendWithSize).closest("a")!;
+  expect(link.getAttribute("data-to")).toBe("/$lang/dashboard/templates/new/register");
+  expect(link.getAttribute("data-search")).toBe(
+    JSON.stringify({ template: "tpl-a", from: "tpl-a-revision" }),
+  );
 });
 
-it("pool registration labels, helps and validates an exact fingerprint instead of an alias", async () => {
-  const user = userEvent.setup();
-  await mount();
-  await openRegister(user);
-  await fillValid(user);
-  await user.click(within(dialog()).getByRole("checkbox", { name: enHosts.sharing.imageTarget }));
-  expect(within(dialog()).queryByLabelText(enTemplates.form.imageRef)).toBeNull();
-  const image = within(dialog()).getByLabelText(enTemplates.form.poolImageRef);
-  expect(within(dialog()).getByText(enTemplates.form.poolImageRefHint)).toBeTruthy();
-  await submit(user);
-  expect(await within(dialog()).findByText(enTemplates.draft.noPoolMember)).toBeTruthy();
-  expect(within(dialog()).queryByText(enTemplates.draft.noHost)).toBeNull();
-  expect(within(dialog()).queryByText(enTemplates.draft.imageRef)).toBeNull();
-  await selectOption(
-    user,
-    within(dialog()).getByLabelText(enHosts.sharing.choosePool),
-    /Shared pool/,
-  );
-  await selectOption(
-    user,
-    within(dialog()).getByLabelText(enHosts.sharing.chooseMember),
-    // Numbered, never the member's ID or its host.
-    enHosts.sharing.memberOption.replace("{{n}}", "1"),
-  );
-  await submit(user);
-  expect(await within(dialog()).findAllByText(enTemplates.draft.poolImageRef)).not.toHaveLength(0);
-  expect(within(dialog()).queryByText(enTemplates.draft.imageRef)).toBeNull();
-  await user.clear(image);
-  await user.type(image, FP);
-  await submit(user);
-  await waitFor(() => expect(calls("createTemplate")).toHaveLength(1));
-  expect(calls("createTemplate")[0]!.input).toMatchObject({
-    poolId: "pool-a",
-    memberId: "member-a",
-    imageRef: FP,
+describe("templates header and cards", () => {
+  it("has one primary New template action and All builds as the secondary", async () => {
+    await mount();
+    await screen.findByText(enTemplates.empty.title);
+    const header = document.querySelector<HTMLElement>("[data-page-actions]")!;
+    expect(within(header).getAllByRole("button")).toHaveLength(1);
+    expect(within(header).getByRole("button", { name: enTemplates.chooser.action })).toBeTruthy();
+    expect(within(header).getByText(enTemplates.builds.viewAll).getAttribute("data-to")).toBe(
+      "/$lang/dashboard/templates/builds",
+    );
+    expect(screen.getByText(enTemplates.subtitle)).toBeTruthy();
+    // The old jargon sits behind the About disclosure, collapsed.
+    const about = document.querySelector<HTMLDetailsElement>("[data-templates-about]")!;
+    expect(about.open).toBe(false);
+    expect(within(about).getByText(enTemplates.description)).toBeTruthy();
+  });
+
+  it("?new=true (the Create sandbox link) opens the New template chooser", async () => {
+    await mount("en-US", true);
+    const chooser = await screen.findByRole("dialog");
+    expect(chooser.querySelectorAll("[data-new-template]")).toHaveLength(3);
+  });
+
+  it("New template offers the three ways, community first and recommended", async () => {
+    const user = userEvent.setup();
+    await mount();
+    await screen.findByText(enTemplates.empty.title);
+    // The empty list offers the same action next to its explanation.
+    expect(document.querySelector("[data-empty-new-template]")).toBeTruthy();
+    const header = document.querySelector<HTMLElement>("[data-page-actions]")!;
+    await user.click(within(header).getByRole("button", { name: enTemplates.chooser.action }));
+    const chooser = await screen.findByRole("dialog");
+    const options = [...chooser.querySelectorAll<HTMLElement>("[data-new-template]")];
+    expect(options.map((node) => node.getAttribute("data-new-template"))).toEqual([
+      "community",
+      "build",
+      "register",
+    ]);
+    expect(options[0]?.textContent).toContain(enTemplates.chooser.recommended);
+    expect(options[1]?.getAttribute("data-to")).toBe("/$lang/dashboard/templates/new/build");
+    expect(options[2]?.getAttribute("data-to")).toBe("/$lang/dashboard/templates/new/register");
+    expect(options[2]?.textContent).toContain(enTemplates.chooser.registerDetail);
+    await user.click(options[0]!);
+    expect(
+      await screen.findByRole("heading", { name: enTemplates.community.dialog.title }),
+    ).toBeTruthy();
+    expect(document.querySelector("[data-new-template]")).toBeNull();
+  });
+
+  it("badges a template Ready only when it has a usable version", async () => {
+    server.templates = [
+      templateRow({ versions: { count: 2, latest: 3 } }),
+      templateRow({
+        id: "tpl-empty",
+        slug: "empty",
+        label: "Empty",
+        versions: { count: 0, latest: null },
+      }),
+    ];
+    await mount();
+    const ready = await findCard("tpl-a");
+    expect(ready.querySelector("[data-template-status]")?.textContent).toBe(
+      enTemplates.status.ready,
+    );
+    expect(ready.querySelector("[data-template-summary]")?.textContent).toContain(
+      "2 versions · latest v3",
+    );
+    const empty = await findCard("tpl-empty");
+    expect(empty.querySelector("[data-template-status]")?.textContent).toBe(
+      enTemplates.status.noVersions,
+    );
+    expect(empty.querySelector("[data-template-summary]")?.textContent).toContain(
+      enTemplates.card.noVersions,
+    );
+    // Compact: versions and builds load only when opened.
+    expect(calls("listRevisions")).toHaveLength(0);
+    // With no build yet, it says how to make it usable and offers the build.
+    await waitFor(() =>
+      expect(empty.querySelector("[data-empty-template='none']")?.textContent).toContain(
+        enTemplates.card.noVersionsHint,
+      ),
+    );
+    expect(ready.querySelector("[data-empty-template]")).toBeNull();
+  });
+
+  it("a template whose build failed links that build, says why and offers Build again", async () => {
+    server.templates = [
+      templateRow({
+        id: "tpl-empty",
+        slug: "empty",
+        label: "Empty",
+        versions: { count: 0, latest: null },
+      }),
+    ];
+    server.latestBuild = {
+      id: "build-1",
+      templateId: "tpl-empty",
+      state: "FAILED",
+      errorCode: "build_placement_failed",
+    };
+    await mount();
+    const card = await findCard("tpl-empty");
+    await waitFor(() => expect(card.querySelector("[data-empty-template='FAILED']")).toBeTruthy());
+    const note = card.querySelector<HTMLElement>("[data-empty-template]")!;
+    expect(note.textContent).toContain(enTemplates.card.noVersionsLastBuild);
+    expect(note.textContent).toContain(enTemplates.builds.error.build_placement_failed);
+    expect(within(note).getByRole("link", { name: enTemplates.card.viewBuild })).toBeTruthy();
+    expect(within(note).getByRole("link", { name: enTemplates.card.buildAgain })).toBeTruthy();
+    // Nothing is removed: the template stays listed.
+    expect(card.querySelector("[data-template-status]")?.textContent).toBe(
+      enTemplates.status.noVersions,
+    );
+  });
+
+  it("keeps Prune now and Archive in the card's More actions menu", async () => {
+    server.imageMode = "s3";
+    server.templates = [templateRow()];
+    const user = userEvent.setup();
+    await mount();
+    const row = await findCard("tpl-a");
+    expect(within(row).queryByRole("button", { name: enTemplates.images.prune.action })).toBeNull();
+    expect(within(row).queryByRole("button", { name: enTemplates.archive.action })).toBeNull();
+    await waitFor(() =>
+      expect(
+        within(row).getByRole("button", {
+          name: enTemplates.card.more.replace("{{label}}", "Ubuntu"),
+        }),
+      ).toBeTruthy(),
+    );
+    await user.click(
+      within(row).getByRole("button", {
+        name: enTemplates.card.more.replace("{{label}}", "Ubuntu"),
+      }),
+    );
+    const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent);
+    expect(items).toEqual([
+      enTemplates.card.registerVersion,
+      enTemplates.images.settings.action,
+      enTemplates.images.prune.action,
+      enTemplates.archive.action,
+    ]);
   });
 });

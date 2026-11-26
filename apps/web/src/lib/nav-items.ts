@@ -23,14 +23,22 @@ export type NavDirection = "forward" | "back" | "none";
  * (`/$lang`) redirects to Sandboxes, so a "Home" item would duplicate it.
  */
 type NavAudience = "public" | "anonymous" | "authenticated" | "admin";
-type NavPlacement = "desktop" | "mobile" | "userMenu";
-/** Primary sections: the sidebar (desktop) and bottom tabs (phone). */
+/**
+ * - `desktop` / `mobile`: the signed-out top bar and bottom bar.
+ * - `sidebar`: the signed-in sidebar (md and up) and, for items that are not
+ *   tabs, the phone bottom bar's More sheet.
+ * - `tabs`: the signed-in phone bottom bar (at most four, plus More).
+ * - `userMenu`: the account menu.
+ */
+type NavPlacement = "desktop" | "mobile" | "sidebar" | "tabs" | "userMenu";
+/** Sections of the signed-in sidebar (and phone tabs / More sheet). */
 type PrimaryNavPath =
   | "/dashboard/sandboxes"
   | "/dashboard/templates"
   | "/dashboard/operations"
   | "/dashboard/terminals"
-  | "/settings";
+  | "/settings"
+  | "/admin";
 /** Pages reached from the Settings hub. */
 type SettingsNavPath =
   | "/settings/hosts"
@@ -43,7 +51,7 @@ type SettingsNavPath =
   | "/settings/profile"
   | "/settings/security"
   | "/settings/images";
-export type AppNavPath = "/" | PrimaryNavPath | SettingsNavPath | "/admin";
+export type AppNavPath = "/" | PrimaryNavPath | SettingsNavPath;
 export type LangNavRoute = "/$lang" | `/$lang${Exclude<AppNavPath, "/">}`;
 
 export type RouteNavItem = {
@@ -57,10 +65,22 @@ export type RouteNavItem = {
   exact: boolean;
 };
 
+export type AppNavId =
+  | "home"
+  | "sandboxes"
+  | "templates"
+  | "activity"
+  | "terminals"
+  | "hosts"
+  | "settings"
+  | "admin";
+
 export type AppNavItem = RouteNavItem & {
-  id: "home" | "settings" | "admin";
+  id: AppNavId;
   audience: NavAudience;
   placements: readonly NavPlacement[];
+  /** Sidebar group: the daily sections, or the footer pinned to the bottom. */
+  group: "main" | "footer";
 };
 
 type VisibleNavInput = {
@@ -74,39 +94,49 @@ type VisibleNavInput = {
   showsAdmin?: boolean;
 };
 
+/** One signed-in section. Labels live in the `nav` namespace (`items.<id>`). */
+function section(
+  id: AppNavId,
+  path: AppNavPath,
+  icon: LucideIcon,
+  placements: readonly NavPlacement[],
+  group: "main" | "footer" = "main",
+  audience: NavAudience = "authenticated",
+): AppNavItem {
+  return { id, path, labelKey: `nav:items.${id}`, icon, exact: false, audience, placements, group };
+}
+
 /**
- * Top-bar and user-menu items. Signed-in users get no top-bar links: their
- * one navigation surface is {@link primaryNavItems} (sidebar or bottom tabs),
- * and Settings and Admin live in the user menu.
+ * Every shell nav item, in sidebar order. Signed in, the sidebar (md and up)
+ * or the bottom tabs plus their More sheet (phones) are the one nav surface;
+ * Settings and Admin also sit in the account menu. Every signed-in route is
+ * under a session gate (`_auth`, or `admin`'s own) and each page's data comes
+ * from an owner-scoped procedure, so this list is presentation only.
+ *
+ * Adding a section is one line here (plus its path in the type above):
+ * `main` items sit at the top, `footer` items are pinned to the bottom.
  */
-const appNavItems: AppNavItem[] = [
+const appNavItems: readonly AppNavItem[] = [
   {
     id: "home",
     path: "/",
-    labelKey: "items.home",
+    labelKey: "nav:items.home",
     icon: Home,
     exact: true,
     audience: "anonymous",
     placements: ["desktop", "mobile"],
+    group: "main",
   },
-  {
-    id: "settings",
-    path: "/settings",
-    labelKey: "items.settings",
-    icon: Settings,
-    exact: false,
-    audience: "authenticated",
-    placements: ["userMenu"],
-  },
-  {
-    id: "admin",
-    path: "/admin",
-    labelKey: "items.admin",
-    icon: Shield,
-    exact: false,
-    audience: "admin",
-    placements: ["userMenu"],
-  },
+  section("sandboxes", "/dashboard/sandboxes", Boxes, ["sidebar", "tabs"]),
+  section("templates", "/dashboard/templates", Layers, ["sidebar", "tabs"]),
+  section("activity", "/dashboard/operations", ListChecks, ["sidebar", "tabs"]),
+  // Operators enrol and watch hosts often enough to want it one click away;
+  // the Settings hub keeps its card too. Phones reach it through More.
+  section("hosts", "/settings/hosts", Server, ["sidebar"]),
+  // Your live terminals across hosts and sandboxes; phones reach it through More.
+  section("terminals", "/dashboard/terminals", SquareTerminal, ["sidebar"]),
+  section("settings", "/settings", Settings, ["sidebar", "tabs", "userMenu"], "footer"),
+  section("admin", "/admin", Shield, ["sidebar", "userMenu"], "footer", "admin"),
 ];
 
 function canSeeNavItem(
@@ -131,64 +161,31 @@ export function toLangRoute(path: AppNavPath): LangNavRoute {
   return `/$lang${path}` as LangNavRoute;
 }
 
-export type PrimaryNavId = "sandboxes" | "templates" | "activity" | "terminals" | "settings";
-export type PrimaryNavItem = RouteNavItem & { id: PrimaryNavId; path: PrimaryNavPath };
+/** Signed-in sections the sidebar shows to everyone (Admin excluded). */
+export const primaryNavItems: readonly AppNavItem[] = getNavItems({
+  placement: "sidebar",
+  isAuthenticated: true,
+  showsAdmin: false,
+});
 
 /**
- * The signed-in app's one navigation surface: the sidebar at `md` and up, the
- * bottom tab bar below. Daily-use order, Sandboxes first (it is the landing
- * page). Every route is under the `_auth` layout: signed-in only, forced-2FA
- * takeover, and each page's data comes from an owner-scoped procedure.
+ * The signed-in section a pathname belongs to (locale prefix optional), or
+ * `null` outside the signed-in app. The longest matching path wins, so
+ * `/settings/hosts/...` and its Host credentials tab light Hosts while every
+ * other `/settings/...` page keeps Settings active.
  */
-export const primaryNavItems: readonly PrimaryNavItem[] = [
-  {
-    id: "sandboxes",
-    path: "/dashboard/sandboxes",
-    labelKey: "dashboard:nav.sandboxes",
-    icon: Boxes,
-    exact: false,
-  },
-  {
-    id: "templates",
-    path: "/dashboard/templates",
-    labelKey: "dashboard:nav.templates",
-    icon: Layers,
-    exact: false,
-  },
-  {
-    id: "activity",
-    path: "/dashboard/operations",
-    labelKey: "dashboard:nav.activity",
-    icon: ListChecks,
-    exact: false,
-  },
-  {
-    id: "terminals",
-    path: "/dashboard/terminals",
-    labelKey: "dashboard:nav.terminals",
-    icon: SquareTerminal,
-    exact: false,
-  },
-  {
-    id: "settings",
-    path: "/settings",
-    labelKey: "dashboard:nav.settings",
-    icon: Settings,
-    exact: false,
-  },
-];
-
-/**
- * The primary section a pathname belongs to (locale prefix optional), or
- * `null` outside the signed-in app. Every `/settings/...` page, including the
- * set-up-once pages moved off the sidebar, keeps Settings active.
- */
-export function primarySectionFor(pathname: string): PrimaryNavId | null {
+export function primarySectionFor(pathname: string): AppNavId | null {
   const path = stripLangPrefix(pathname);
-  for (const item of primaryNavItems) {
-    if (path === item.path || path.startsWith(`${item.path}/`)) return item.id;
+  let best: AppNavItem | null = null;
+  for (const item of appNavItems) {
+    if (!item.placements.includes("sidebar")) continue;
+    const owns =
+      path === item.path ||
+      path.startsWith(`${item.path}/`) ||
+      (item.id === "hosts" && path.startsWith("/settings/host-credentials"));
+    if (owns && (!best || item.path.length > best.path.length)) best = item;
   }
-  return null;
+  return best?.id ?? null;
 }
 
 type SettingsHubItem = RouteNavItem & {
@@ -339,7 +336,6 @@ export const hostsTabItems: readonly RouteNavItem[] = [
 
 const NAV_LISTS: readonly (readonly RouteNavItem[])[] = [
   appNavItems,
-  primaryNavItems,
   accountTabItems,
   hostsTabItems,
 ];

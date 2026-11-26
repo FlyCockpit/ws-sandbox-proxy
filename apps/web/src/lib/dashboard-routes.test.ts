@@ -34,7 +34,7 @@ function routeFiles(dir: string): string[] {
     .sort();
 }
 
-/** Real pages under `/dashboard`: the four primary sections there. */
+/** Real pages left under `/dashboard`: the three primary sections. */
 const DASHBOARD_PAGES = [
   "operations",
   "operations/$operationId",
@@ -42,10 +42,13 @@ const DASHBOARD_PAGES = [
   "sandboxes",
   "sandboxes/$sandboxId",
   "sandboxes/index",
+  "sandboxes/new",
   "templates",
   "templates/builds/$buildId",
   "templates/builds/index",
   "templates/index",
+  "templates/new/build",
+  "templates/new/register",
   "terminals",
 ];
 
@@ -54,6 +57,7 @@ const SETTINGS_PAGES = [
   "host-credentials",
   "hosts",
   "hosts/$hostId",
+  "hosts/add",
   "hosts/index",
   "images",
   "index",
@@ -70,6 +74,7 @@ const SETTINGS_PAGES = [
   "webhooks",
   "webhooks/$endpointId",
   "webhooks/index",
+  "webhooks/new",
 ];
 
 describe("signed-in routes in the generated route tree", () => {

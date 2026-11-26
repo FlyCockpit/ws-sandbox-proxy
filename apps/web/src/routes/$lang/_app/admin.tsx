@@ -1,10 +1,11 @@
-import { createFileRoute, Link, notFound, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Link, notFound } from "@tanstack/react-router";
 import { SelectorRow } from "@wssp/ui/components/selector-row";
 import { cn } from "@wssp/ui/lib/utils";
 import { Activity, LayoutDashboard, Settings, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { TwoFactorNudge } from "@/components/admin/two-factor-nudge";
+import { DashboardFrame } from "@/components/dashboard-frame";
 import { HIDDEN_ROUTE_NOT_FOUND_ID } from "@/lib/hidden-admin";
 import { decideAdminRouteAccess } from "@/lib/route-session-access";
 import { getRouteAdminAccess } from "@/server/admin-route-access";
@@ -28,12 +29,19 @@ export const Route = createFileRoute("/$lang/_app/admin")({
 });
 
 function AdminLayout() {
+  const { lang } = Route.useParams();
+  // The same frame as the signed-in app, so Admin keeps the sidebar (and the
+  // phone bottom nav) instead of switching to a separate shell.
   return (
-    <div className="min-h-0 min-w-0 max-w-full">
-      <AdminNav />
-      <TwoFactorNudge />
-      <Outlet />
-    </div>
+    <DashboardFrame
+      lang={lang}
+      banner={
+        <>
+          <AdminNav />
+          <TwoFactorNudge />
+        </>
+      }
+    />
   );
 }
 

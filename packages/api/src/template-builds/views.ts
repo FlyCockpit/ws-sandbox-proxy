@@ -181,6 +181,23 @@ export async function withTemplateNames<
   });
 }
 
+/**
+ * Browser plane only: the placement target the owner chose for one of their
+ * builds (the pool or the requested host id they sent), so the build page can
+ * explain a build that is still waiting for a host. Never the placed host,
+ * which may be another owner's pool member.
+ */
+export async function buildTargetOf(
+  ownerId: string,
+  buildId: string,
+): Promise<{ poolId: string | null; hostId: string | null }> {
+  const row = await prisma.sandboxTemplateBuild.findFirst({
+    where: { id: buildId, userId: ownerId },
+    select: { poolId: true, requestedHostId: true } satisfies Prisma.SandboxTemplateBuildSelect,
+  });
+  return { poolId: row?.poolId ?? null, hostId: row?.requestedHostId ?? null };
+}
+
 export function templateBuildNotFound() {
   return new ORPCError("NOT_FOUND", { message: "Template build not found." });
 }

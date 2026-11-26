@@ -46,10 +46,26 @@ const server = vi.hoisted(() => ({
 }));
 
 const navigate = vi.hoisted(() => vi.fn());
+/** The leave guard's last blocker options, and whether it reports a held navigation. */
+const blocker = vi.hoisted(() => ({
+  opts: null as null | {
+    shouldBlockFn: () => boolean;
+    enableBeforeUnload: () => boolean;
+  },
+  blocked: false,
+  proceed: vi.fn(),
+  reset: vi.fn(),
+}));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
+  useBlocker: (opts: { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean }) => {
+    blocker.opts = opts;
+    return blocker.blocked
+      ? { status: "blocked", proceed: blocker.proceed, reset: blocker.reset }
+      : { status: "idle" };
+  },
   Link: ({ children, className }: { children: ReactNode; className?: string }) => (
     <a className={className}>{children}</a>
   ),
@@ -129,14 +145,31 @@ vi.mock("@/utils/orpc", () => {
             initialPageParam: unknown;
             getNextPageParam: (page: { nextCursor: string | null }) => unknown;
           }) => ({
-            queryKey: ["sdkKeys", "list", "infinite"],
+            queryKey: ["sdkKeys", "list", "infinite", options.input(undefined)],
             initialPageParam: options.initialPageParam,
             getNextPageParam: options.getNextPageParam,
             queryFn: async ({ pageParam }: { pageParam: string | undefined }) => {
-              record("list", options.input(pageParam));
+              const input = options.input(pageParam) as { includeRevoked?: boolean };
+              record("list", input);
               if (server.listError) throw server.listError;
               return {
-                items: structuredClone(server.keys.filter((key) => key.revokedAt == null)),
+                items: structuredClone(
+                  server.keys.filter((key) => input.includeRevoked || key.revokedAt == null),
+                ),
+                nextCursor: null,
+              };
+            },
+          }),
+          queryOptions: ({ input }: { input: { limit: number; includeRevoked?: boolean } }) => ({
+            queryKey: ["sdkKeys", "list", "probe", input],
+            queryFn: async () => {
+              record("listProbe", input);
+              return {
+                items: structuredClone(
+                  server.keys
+                    .filter((key) => input.includeRevoked || key.revokedAt == null)
+                    .slice(0, input.limit),
+                ),
                 nextCursor: null,
               };
             },
@@ -259,7 +292,23 @@ function mount(agent = false) {
 const calls = (procedure: string) => server.calls.filter((call) => call.procedure === procedure);
 const dialog = () => screen.getByRole("dialog");
 const row = (id: string) => document.querySelector<HTMLElement>(`li[data-credential-id="${id}"]`)!;
-const scopeBox = (scope: string) => within(dialog()).getByRole("checkbox", { name: scope });
+/** A scope checkbox: its accessible name is the human title, then the raw id. */
+const scopeName = (scope: string) => new RegExp(`${scope}$`);
+const scopeBox = (scope: string) =>
+  within(dialog()).getByRole("checkbox", { name: scopeName(scope) });
+
+/** Expands every collapsed Advanced section of the open create sheet. */
+function expandSections() {
+  for (const section of dialog().querySelectorAll("details")) section.open = true;
+}
+
+/** Picks Custom access and clears the preset's scopes, so a test picks its own. */
+async function chooseCustom(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(within(dialog()).getByRole("radio", { name: /^Custom/ }));
+  for (const box of within(dialog()).queryAllByRole("checkbox", { name: /:[a-z]+$/ }))
+    if (box.getAttribute("aria-checked") === "true") await user.click(box);
+  expandSections();
+}
 
 beforeEach(() => {
   server.allowNoExpiry = true;
@@ -290,6 +339,10 @@ beforeEach(() => {
   server.seq = 0;
   navigate.mockReset();
   toast.success.mockReset();
+  blocker.opts = null;
+  blocker.blocked = false;
+  blocker.proceed.mockReset();
+  blocker.reset.mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -315,9 +368,10 @@ async function elapseRevokeRetries() {
   });
 }
 
-async function openMint(user: ReturnType<typeof userEvent.setup>, name = "ci") {
+async function openMint(user: ReturnType<typeof userEvent.setup>, name = "ci", custom = true) {
   await user.click(await screen.findByRole("button", { name: enSdkKeys.mint.action }));
   await user.type(within(dialog()).getByLabelText(enCredentials.form.name), name);
+  if (custom) await chooseCustom(user);
 }
 
 const submit = (user: ReturnType<typeof userEvent.setup>) =>
@@ -362,11 +416,15 @@ describe("sdk key list", () => {
     await screen.findByRole("list", { name: enSdkKeys.title });
     const key = row("key-z");
     expect(within(key).getByText("wssp_sdk_abcdefghijkl…")).toBeTruthy();
+    expect(
+      [...key.querySelectorAll("[data-scope]")].map((node) => node.getAttribute("data-scope")),
+    ).toEqual(["sandboxes:read", "sandboxes:create", "sandboxes:manage", "sandboxes:destroy"]);
+    // Human titles first; the raw id stays on hover.
     expect([...key.querySelectorAll("[data-scope]")].map((node) => node.textContent)).toEqual([
-      "sandboxes:read",
-      "sandboxes:create",
-      "sandboxes:manage",
-      "sandboxes:destroy",
+      enSdkKeys.scopeTitle.sandboxes.read,
+      enSdkKeys.scopeTitle.sandboxes.create,
+      enSdkKeys.scopeTitle.sandboxes.manage,
+      enSdkKeys.scopeTitle.sandboxes.destroy,
     ]);
     // M7-S11: the allowlist names each host and template, not just counts.
     expect(key.querySelector("[data-allowlist=hosts]")?.textContent).toBe("Hosts: Desk (desk-01)");
@@ -780,8 +838,13 @@ describe("revoking an SDK key", () => {
     const user = userEvent.setup();
     mount();
     await screen.findByRole("list", { name: enSdkKeys.title });
-    await user.click(within(row("key-z")).getByRole("button", { name: "Revoke" }));
+    await user.click(within(row("key-z")).getByRole("button", { name: "Revoke ci key" }));
     const confirm = await screen.findByRole("alertdialog");
+    // The name to type is shown above the field, never as a placeholder.
+    expect(
+      within(confirm).getByLabelText(enSdkKeys.revoke.typePrompt).getAttribute("placeholder"),
+    ).toBeNull();
+    expect(confirm.querySelector("[data-confirm-token]")?.textContent).toContain("ci key");
     expect(within(confirm).getByText("Revoke ci key?")).toBeTruthy();
     expect(calls("revoke")).toHaveLength(0);
     const action = within(confirm).getByRole("button", { name: enCredentials.revoke.confirm });
@@ -794,8 +857,19 @@ describe("revoking an SDK key", () => {
     await waitFor(() =>
       expect(calls("revoke")).toEqual([{ procedure: "revoke", input: { id: "key-z" } }]),
     );
-    expect(await screen.findByText(enSdkKeys.empty.title)).toBeTruthy();
+    // The key is gone from the active list, and the empty state says why.
+    expect(await screen.findByText(enSdkKeys.emptyActive.title)).toBeTruthy();
+    expect(screen.queryByText(enSdkKeys.empty.title)).toBeNull();
     expect(toast.success).toHaveBeenCalledWith(enSdkKeys.revoke.done);
+    await user.click(screen.getByRole("button", { name: enCredentials.filter.all }));
+    const revoked = await waitFor(() => {
+      const found = row("key-z");
+      if (!found) throw new Error("no revoked row");
+      return found;
+    });
+    expect(revoked.getAttribute("data-revoked")).toBe("true");
+    expect(within(revoked).getByText(enSdkKeys.list.revoked)).toBeTruthy();
+    expect(within(revoked).queryByRole("button", { name: /Revoke/ })).toBeNull();
   });
 
   it("a list refused by forced 2FA redirects to Security settings", async () => {
@@ -955,6 +1029,7 @@ it("uses the deployment expiry policy for agent tokens and submits own-only by d
   mount(true);
   await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
   await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await chooseCustom(user);
   expect(
     within(dialog())
       .getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly })
@@ -985,6 +1060,7 @@ it("shows the active agent-token cap refusal", async () => {
   mount(true);
   await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
   await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await chooseCustom(user);
   await user.click(scopeBox("hosts:read"));
   await user.click(within(dialog()).getByRole("button", { name: enAgents.mint.submit }));
   expect(await screen.findByText(enCredentials.problem.agentLimit)).toBeTruthy();
@@ -998,8 +1074,8 @@ it("offers only requested scopes in the shared scope picker", async () => {
     </I18nextProvider>,
   );
   expect(screen.getAllByRole("checkbox")).toHaveLength(2);
-  expect(screen.queryByRole("checkbox", { name: "sandboxes:destroy" })).toBeNull();
-  await userEvent.setup().click(screen.getByRole("checkbox", { name: "hosts:execute" }));
+  expect(screen.queryByRole("checkbox", { name: scopeName("sandboxes:destroy") })).toBeNull();
+  await userEvent.setup().click(screen.getByRole("checkbox", { name: scopeName("hosts:execute") }));
   expect(change).toHaveBeenCalledWith(["hosts:execute"]);
 });
 
@@ -1022,26 +1098,26 @@ it("consent defaults host scopes off and own-only on, submits a subset, and can 
     </QueryClientProvider>,
   );
   const user = userEvent.setup();
-  expect(screen.getByRole("checkbox", { name: "hosts:execute" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
-  expect(screen.getByRole("checkbox", { name: "hosts:read" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
+  expect(
+    screen.getByRole("checkbox", { name: scopeName("hosts:execute") }).getAttribute("aria-checked"),
+  ).toBe("false");
+  expect(
+    screen.getByRole("checkbox", { name: scopeName("hosts:read") }).getAttribute("aria-checked"),
+  ).toBe("false");
   expect(
     screen
       .getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly })
       .getAttribute("aria-checked"),
   ).toBe("true");
-  await user.click(screen.getByRole("checkbox", { name: "hosts:read" }));
-  await user.click(screen.getByRole("checkbox", { name: "sandboxes:read" }));
+  await user.click(screen.getByRole("checkbox", { name: scopeName("hosts:read") }));
+  await user.click(screen.getByRole("checkbox", { name: scopeName("sandboxes:read") }));
   await user.click(screen.getByRole("button", { name: enAgents.consent.allow }));
   await waitFor(() =>
     expect(onConsent).toHaveBeenCalledWith(
       expect.objectContaining({ scopes: ["hosts:read"], ownSandboxesOnly: true }),
     ),
   );
-  await user.click(screen.getByRole("checkbox", { name: "hosts:read" }));
+  await user.click(screen.getByRole("checkbox", { name: scopeName("hosts:read") }));
   await user.click(screen.getByRole("button", { name: enAgents.consent.deny }));
   expect(deny).toHaveBeenCalledOnce();
 });
@@ -1051,6 +1127,7 @@ it("only offers no expiry when allowed, warns, and lists Never expires after min
   mount(true);
   await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
   await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await chooseCustom(user);
   await user.click(scopeBox("hosts:read"));
   await selectOption(
     user,
@@ -1071,6 +1148,7 @@ it("filters presets, hides no expiry when disabled, and submits a bounded custom
   mount(true);
   await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
   await user.type(await within(dialog()).findByLabelText(enCredentials.form.name), "helper");
+  await chooseCustom(user);
   await user.click(scopeBox("hosts:read"));
   await user.click(within(dialog()).getByLabelText(enCredentials.form.expiry));
   // Wait for the asynchronously rendered popup, so the absent options are checked on an open list.
@@ -1136,7 +1214,7 @@ it("marks an existing no-expiry agent token as blocked by policy, without hiding
   const blocked = row("agent-never");
   expect(blocked.getAttribute("data-blocked-by-policy")).toBe("true");
   expect(within(blocked).getByText(enAgents.expiry.blockedByPolicy)).toBeTruthy();
-  expect(within(blocked).getByRole("button", { name: enCredentials.revoke.action })).toBeTruthy();
+  expect(within(blocked).getByRole("button", { name: "Revoke never" })).toBeTruthy();
   const dated = row("agent-dated");
   expect(dated.getAttribute("data-blocked-by-policy")).toBeNull();
   expect(within(dated).queryByText(enAgents.expiry.blockedByPolicy)).toBeNull();
@@ -1157,7 +1235,9 @@ describe("sandboxes:connect scope", () => {
     );
     // Selecting every sandbox scope in its group still leaves connect off.
     const sandboxes = dialog().querySelector<HTMLElement>('[data-scope-group="sandboxes"]')!;
-    expect(within(sandboxes).queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+    expect(
+      within(sandboxes).queryByRole("checkbox", { name: scopeName("sandboxes:connect") }),
+    ).toBeNull();
     await user.click(scopeBox("sandboxes:read"));
     await submit(user);
     await screen.findByText(enCredentials.reveal.onceWarning);
@@ -1183,7 +1263,13 @@ describe("sandboxes:connect scope", () => {
     mount(true);
     await user.click(screen.getByRole("button", { name: enAgents.mint.action }));
     await within(dialog()).findByLabelText(enCredentials.form.name);
-    expect(within(dialog()).queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+    await chooseCustom(user);
+    expect(within(dialog()).getAllByRole("checkbox", { name: /:[a-z]+$/ }).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(dialog()).queryByRole("checkbox", { name: scopeName("sandboxes:connect") }),
+    ).toBeNull();
     expect(dialog().querySelector('[data-scope-group="connect"]')).toBeNull();
     cleanup();
     render(
@@ -1196,7 +1282,7 @@ describe("sandboxes:connect scope", () => {
       </I18nextProvider>,
     );
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
-    expect(screen.queryByRole("checkbox", { name: "sandboxes:connect" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: scopeName("sandboxes:connect") })).toBeNull();
   });
 
   it("a key that can connect shows its last connect; agent tokens and keys without the scope do not", async () => {
@@ -1248,5 +1334,168 @@ describe("sandboxes:connect scope", () => {
       enCredentials.dates.noRecentConnect,
     );
     expect(row("key-plain").querySelector("[data-last-connect]")).toBeNull();
+  });
+});
+
+describe("create form (design-review2 #1, #21)", () => {
+  it("an empty submit shows inline errors and focuses Name; once corrected, Create sends the request and the key is shown", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSdkKeys.mint.action }));
+    await chooseCustom(user);
+    await submit(user);
+    const name = within(dialog()).getByLabelText(enCredentials.form.name);
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(name);
+    // Each error sits under its own field, not in a list at the bottom.
+    expect(
+      document.getElementById(name.getAttribute("aria-describedby")!.split(" ").at(-1)!)
+        ?.textContent,
+    ).toContain(enCredentials.draft.nameRequired);
+    const firstScope = within(dialog()).getAllByRole("checkbox", { name: /:[a-z]+$/ })[0]!;
+    expect(firstScope.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      document.getElementById(firstScope.getAttribute("aria-describedby")!.split(" ").at(-1)!)
+        ?.textContent,
+    ).toBe(enCredentials.draft.noScopes);
+    expect(calls("create")).toHaveLength(0);
+    // Correct both, press Create again: the request goes out.
+    await user.type(name, "ci");
+    await user.click(scopeBox("sandboxes:read"));
+    expect(name.getAttribute("aria-invalid")).toBeNull();
+    await submit(user);
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect(calls("create")).toHaveLength(1);
+    expect(calls("create")[0]?.input).toMatchObject({ name: "ci", scopes: ["sandboxes:read"] });
+  });
+
+  it("starts from the Run sandboxes preset; Read-only sends exactly its scopes", async () => {
+    const { presetScopes } = await import("@/lib/credential-rules");
+    const user = userEvent.setup();
+    mount();
+    await openMint(user, "reader", false);
+    const run = within(dialog()).getByRole("radio", { name: /^Run sandboxes/ });
+    expect(run.getAttribute("aria-checked")).toBe("true");
+    // Presets hide the per-scope list; Custom shows it.
+    expect(dialog().querySelector("[data-scope-picker]")).toBeNull();
+    await user.click(within(dialog()).getByRole("radio", { name: /^Read-only/ }));
+    expect(dialog().querySelector("[data-sheet-status]")?.textContent).toBe(
+      `${enSdkKeys.form.preset.readOnly.title} · 7 permissions`,
+    );
+    await submit(user);
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect(calls("create")[0]?.input).toMatchObject({
+      name: "reader",
+      scopes: presetScopes("readOnly"),
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+    });
+  });
+
+  it("a problem inside a collapsed section opens it and focuses the field", async () => {
+    const user = userEvent.setup();
+    mount();
+    await openMint(user, "ci", false);
+    expandSections();
+    await user.click(within(dialog()).getByRole("radio", { name: /Only selected hosts/ }));
+    const resources = dialog().querySelector<HTMLDetailsElement>('[data-section="resources"]')!;
+    resources.open = false;
+    await submit(user);
+    expect(resources.open).toBe(true);
+    const focused = document.activeElement as HTMLElement;
+    expect(focused.getAttribute("aria-invalid")).toBe("true");
+    expect(resources.contains(focused)).toBe(true);
+    expect(within(resources).getByRole("alert").textContent).toContain(
+      enCredentials.draft.noTemplates,
+    );
+    expect(calls("create")).toHaveLength(0);
+  });
+
+  it("says the name limit instead of cutting the name off", async () => {
+    const user = userEvent.setup();
+    mount();
+    await openMint(user, "x".repeat(121), false);
+    const name = within(dialog()).getByLabelText(enCredentials.form.name) as HTMLInputElement;
+    expect(name.value).toHaveLength(121);
+    expect(within(dialog()).getByText("Up to 120 characters (121/120).")).toBeTruthy();
+    await submit(user);
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(within(dialog()).getByText(enCredentials.draft.nameTooLong)).toBeTruthy();
+    expect(calls("create")).toHaveLength(0);
+  });
+
+  it("asks before leaving while a new key is shown, and not after it is saved", async () => {
+    const user = userEvent.setup();
+    mount();
+    await openMint(user, "ci", false);
+    expect(blocker.opts?.shouldBlockFn()).toBe(false);
+    await submit(user);
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect(blocker.opts?.shouldBlockFn()).toBe(true);
+    expect(blocker.opts?.enableBeforeUnload()).toBe(true);
+    await user.click(screen.getByRole("button", { name: enCredentials.reveal.done }));
+    expect(blocker.opts?.shouldBlockFn()).toBe(false);
+    expect(blocker.opts?.enableBeforeUnload()).toBe(false);
+  });
+
+  it("a held navigation shows the leave confirmation; Stay keeps the page", async () => {
+    const { SecretLeaveGuard } = await import("./credential-parts");
+    blocker.blocked = true;
+    render(
+      <I18nextProvider i18n={i18n}>
+        <SecretLeaveGuard active />
+      </I18nextProvider>,
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText(enCredentials.leave.title)).toBeTruthy();
+    await userEvent
+      .setup()
+      .click(within(confirm).getByRole("button", { name: enCredentials.leave.stay }));
+    expect(blocker.reset).toHaveBeenCalled();
+    expect(blocker.proceed).not.toHaveBeenCalled();
+  });
+});
+
+describe("use this key (design-review2 #5)", () => {
+  it("the page shows the API base URL, SDK and CLI snippets and guide paths, never a key", async () => {
+    mount();
+    const block = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-use-sdk-key]");
+      if (!found) throw new Error("no block");
+      return found;
+    });
+    const origin = window.location.origin;
+    expect(within(block).getByText(`${origin}/v1`)).toBeTruthy();
+    expect(block.textContent).toContain(
+      `curl -fsS -H "Authorization: Bearer $WSSP_SDK_KEY" ${origin}/v1/key`,
+    );
+    expect(block.textContent).toContain(`createWsspClient({ baseUrl: "${origin}"`);
+    expect(block.textContent).toContain("/install.sh | sh");
+    expect(block.textContent).toContain(`wssp login --server ${origin}`);
+    // No docs base in tests: the guide is named by its repository path.
+    expect(block.querySelector('[data-docs-path="sdkKeys"]')?.textContent).toContain(
+      "docs/guide/auth-planes.md#sdk-plane",
+    );
+    expect(block.textContent).not.toContain("wssp_sdk_");
+  });
+
+  it("follows a newly shown key, and the agent-token page does not show it", async () => {
+    const user = userEvent.setup();
+    const view = mount();
+    await openMint(user, "ci", false);
+    await submit(user);
+    const panel = await waitFor(() => {
+      const found = document.querySelector<HTMLElement>("[data-one-time-secret]");
+      if (!found) throw new Error("no panel");
+      return found;
+    });
+    const block = document.querySelector("[data-use-sdk-key]")!;
+    expect(panel.compareDocumentPosition(block) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelectorAll("[data-use-sdk-key]")).toHaveLength(1);
+    expect(block.textContent).not.toContain(server.secrets[0]!);
+    view.unmount();
+    mount(true);
+    await waitFor(() => expect(row("key-1")).toBeTruthy());
+    expect(document.querySelector("[data-use-sdk-key]")).toBeNull();
   });
 });

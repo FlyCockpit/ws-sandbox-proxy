@@ -84,7 +84,7 @@ export function AdminSettingsPage({ lang, adminHas2FA }: { lang: string; adminHa
   });
 
   return (
-    <PageShell width="narrow">
+    <PageShell inFrame width="narrow">
       <PageHeader title={t("admin:settings.title")} description={t("admin:settings.description")} />
 
       {settings.isPending ? (

@@ -438,6 +438,14 @@ describe("sandboxesRouter", () => {
       });
     }
   });
+  it("says whether creates may declare preview ports (a tunnel server is configured)", async () => {
+    db.tunnelServerConfig.findUnique.mockResolvedValueOnce(null);
+    expect(await client().getLimits()).toMatchObject({ previewTunnels: false });
+    db.tunnelServerConfig.findUnique.mockResolvedValueOnce({ disabledAt: null } as never);
+    expect(await client().getLimits()).toMatchObject({ previewTunnels: true });
+    db.tunnelServerConfig.findUnique.mockResolvedValueOnce({ disabledAt: new Date() } as never);
+    expect(await client().getLimits()).toMatchObject({ previewTunnels: false });
+  });
   it("a disconnected host never produces a successful live probe even for stored READY", async () => {
     db.sandbox.findFirst.mockResolvedValue(sandboxRow({ state: "READY" }));
     db.sandboxHost.findFirst.mockResolvedValue({ status: "DISCONNECTED" });

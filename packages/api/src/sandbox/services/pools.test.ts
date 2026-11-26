@@ -41,3 +41,50 @@ it("unit (mocked Prisma; real-DB counts: lease-enforcement.pg.test.ts) — the l
     previewLeaseLowering({ kind: "session", ownerId: "other" }, input),
   ).rejects.toMatchObject({ code: "NOT_FOUND" });
 });
+
+it("unit (mocked Prisma) — pool card summaries: owner-scoped aggregates per pool, in a constant number of queries", async () => {
+  const { poolCardSummaries } = await import("./pools");
+  const deep = prisma as unknown as {
+    sandboxPoolMember: { groupBy: ReturnType<typeof vi.fn> };
+    share: { groupBy: ReturnType<typeof vi.fn> };
+  };
+  deep.sandboxPoolMember.groupBy.mockResolvedValue([
+    { poolId: "a", enabled: true, _count: { _all: 2 } },
+    { poolId: "a", enabled: false, _count: { _all: 1 } },
+  ]);
+  deep.share.groupBy.mockResolvedValue([{ poolId: "a", _count: { _all: 3 } }]);
+  db.$queryRaw.mockReset();
+  db.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) =>
+    strings.join("?").includes("bool_or")
+      ? [{ poolId: "a", max: 86_400_000, zero: false }]
+      : [{ poolId: "a", memory: 98_304n, vcpu: 96n, connected: 1 }],
+  );
+  const owner = { kind: "session" as const, ownerId: "owner" };
+  const summaries = await poolCardSummaries(owner, [
+    { id: "a", maxLeaseMs: null },
+    { id: "b", maxLeaseMs: 3_600_000 },
+  ]);
+  expect(summaries.get("a")).toEqual({
+    hosts: { total: 3, enabled: 2, connected: 1 },
+    people: 3,
+    capacity: { memoryMiB: 98_304, vcpu: 96 },
+    lease: { maxTimeoutMs: 86_400_000, timeoutZero: false },
+  });
+  // A pool with no usable host still answers, bounded by its own limit.
+  expect(summaries.get("b")).toMatchObject({
+    hosts: { total: 0, enabled: 0, connected: 0 },
+    people: 0,
+    capacity: { memoryMiB: 0, vcpu: 0 },
+    lease: { maxTimeoutMs: 3_600_000 },
+  });
+  expect(deep.sandboxPoolMember.groupBy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      where: { poolId: { in: ["a", "b"] }, userId: "owner", removedAt: null },
+    }),
+  );
+  expect(deep.share.groupBy).toHaveBeenCalledWith(
+    expect.objectContaining({ where: { poolId: { in: ["a", "b"] }, ownerUserId: "owner" } }),
+  );
+  expect(db.$queryRaw).toHaveBeenCalledTimes(2);
+  expect(await poolCardSummaries(owner, [])).toEqual(new Map());
+});

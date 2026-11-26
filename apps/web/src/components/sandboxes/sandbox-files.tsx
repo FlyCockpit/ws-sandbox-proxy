@@ -123,6 +123,8 @@ function UploadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) {
   const [file, setFile] = useState<File | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [phase, setPhase] = useState<UploadPhase>({ kind: "idle" });
+  const fileRef = useRef<HTMLInputElement>(null);
+  const pathRef = useRef<HTMLInputElement>(null);
   const operation = useQuery({
     ...orpc.sandboxes.getOperation.queryOptions({
       input: phase.kind === "accepted" ? { operationId: phase.operationId } : skipToken,
@@ -136,8 +138,16 @@ function UploadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) {
   const uploading = phase.kind === "uploading";
   const max = formatBytes(TRANSFER_MAX_BYTES, i18n.language);
 
+  const fileProblem = !file
+    ? t("sandboxes:files.upload.noFile")
+    : tooLarge
+      ? t("sandboxes:files.upload.tooLarge", { max })
+      : null;
   const start = async () => {
     setAttempted(true);
+    // Errors sit next to their field; focus goes to the first one.
+    if (fileProblem) fileRef.current?.focus();
+    else if (!pathOk) pathRef.current?.focus();
     if (uploading || !pathOk || !file || tooLarge) return;
     const signal = nextController();
     controller.current = signal;
@@ -177,19 +187,30 @@ function UploadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) {
       <div className="flex min-w-0 flex-col gap-2">
         <Label htmlFor={fileId}>{t("sandboxes:files.upload.file")}</Label>
         <input
+          ref={fileRef}
           id={fileId}
           type="file"
           disabled={uploading}
+          aria-invalid={attempted && fileProblem !== null}
+          aria-describedby={attempted && fileProblem ? `${fileId}-error` : undefined}
           onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           className="min-h-11 w-full min-w-0 text-sm file:mr-3 file:min-h-11 file:rounded-md file:border file:bg-background file:px-3"
         />
+        {attempted && fileProblem ? (
+          <p id={`${fileId}-error`} role="alert" className="text-sm text-destructive">
+            {fileProblem}
+          </p>
+        ) : null}
       </div>
       <div className="flex min-w-0 flex-col gap-2">
         <Label htmlFor={pathId}>{t("sandboxes:files.guestPath")}</Label>
         <Input
+          ref={pathRef}
           id={pathId}
           value={path}
           disabled={uploading}
+          aria-invalid={attempted && !pathOk}
+          aria-describedby={`${pathId}-hint${attempted && !pathOk ? ` ${pathId}-error` : ""}`}
           autoComplete="off"
           inputMode="url"
           maxLength={4096}
@@ -197,15 +218,15 @@ function UploadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) {
           className="min-h-11 font-mono"
           onChange={(event) => setPath(event.target.value)}
         />
-        <p className="text-xs text-muted-foreground">{t("sandboxes:files.guestPathHint")}</p>
+        <p id={`${pathId}-hint`} className="text-xs text-muted-foreground">
+          {t("sandboxes:files.guestPathHint")}
+        </p>
+        {attempted && !pathOk ? (
+          <p id={`${pathId}-error`} role="alert" className="text-sm text-destructive">
+            {t("sandboxes:files.badPath")}
+          </p>
+        ) : null}
       </div>
-      {attempted && (!pathOk || !file || tooLarge) ? (
-        <ul role="alert" className="list-disc pl-5 text-sm text-destructive">
-          {!file ? <li>{t("sandboxes:files.upload.noFile")}</li> : null}
-          {tooLarge ? <li>{t("sandboxes:files.upload.tooLarge", { max })}</li> : null}
-          {!pathOk ? <li>{t("sandboxes:files.badPath")}</li> : null}
-        </ul>
-      ) : null}
       {phase.kind === "uploading" ? (
         <div className="flex min-w-0 flex-col gap-2">
           <progress
@@ -316,6 +337,7 @@ function DownloadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) 
       onSubmit={(event) => {
         event.preventDefault();
         setAttempted(true);
+        if (!pathOk) document.getElementById(pathId)?.focus();
         if (!pathOk || capture.isPending) return;
         capture.mutate(
           intents.current.for("download", path, (idempotencyKey) => ({
@@ -334,6 +356,8 @@ function DownloadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) 
         <Input
           id={pathId}
           value={path}
+          aria-invalid={attempted && !pathOk}
+          aria-describedby={attempted && !pathOk ? `${pathId}-error` : undefined}
           autoComplete="off"
           inputMode="url"
           maxLength={4096}
@@ -341,12 +365,12 @@ function DownloadForm({ sandboxId, lang }: { sandboxId: string; lang: string }) 
           className="min-h-11 font-mono"
           onChange={(event) => setPath(event.target.value)}
         />
+        {attempted && !pathOk ? (
+          <p id={`${pathId}-error`} role="alert" className="text-sm text-destructive">
+            {t("sandboxes:files.badPath")}
+          </p>
+        ) : null}
       </div>
-      {attempted && !pathOk ? (
-        <p role="alert" className="text-sm text-destructive">
-          {t("sandboxes:files.badPath")}
-        </p>
-      ) : null}
       {operationId && operation.isError ? (
         <ReceiptProblem error={operation.error} onRetry={() => void operation.refetch()} />
       ) : null}

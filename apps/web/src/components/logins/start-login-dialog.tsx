@@ -4,13 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import { Button } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@wssp/ui/components/dialog";
+import { AdvancedSection } from "@wssp/ui/components/form-page";
 import { Label } from "@wssp/ui/components/label";
 import { SelectItem } from "@wssp/ui/components/select";
 import { TextareaField, TextField } from "@wssp/ui/components/text-field";
@@ -28,6 +22,7 @@ import {
   invalidateLogins,
   type LoginItem,
 } from "@/components/logins/logins-shared";
+import { WideSheet } from "@/components/wide-sheet";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { translateText } from "@/i18n/translate-text";
 import { credentialErrorCode } from "@/lib/credential-errors";
@@ -244,6 +239,11 @@ export function StartLoginDialog({
     },
   });
   const placement = useStore(form.store, (state) => state.values.placement);
+  const egressCount = useStore(
+    form.store,
+    (state) => parseEgressDomains(state.values.egressDomains).length,
+  );
+  const timeoutText = useStore(form.store, (state) => state.values.timeoutMinutes);
   const pending = start.isPending;
   const title =
     target.kind === "newAccount"
@@ -257,183 +257,195 @@ export function StartLoginDialog({
           });
 
   return (
-    <Dialog open onOpenChange={(open) => (open || pending ? undefined : onClose())}>
-      <DialogContent
-        closeLabel={t("common:actions.close")}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{t("logins:session.start.description")}</DialogDescription>
-        </DialogHeader>
-        <form
-          noValidate
-          className="flex min-w-0 flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void form.handleSubmit();
-          }}
-        >
-          {target.kind !== "relogin" ? (
-            <>
-              <p className="text-sm text-muted-foreground">
-                {t("logins:session.start.unverifiedAccount")}
-              </p>
-              <form.Field name="name">
-                {(field) => (
-                  <TextField
-                    field={field}
-                    label={
-                      target.kind === "newAccount"
-                        ? t("logins:session.start.accountName")
-                        : t("logins:session.start.instanceName")
-                    }
-                    description={t("logins:form.optionalNameHint")}
-                    inputMode="text"
-                    autoComplete="off"
-                    inputClassName="min-h-11"
-                    maxLength={80}
-                  />
-                )}
-              </form.Field>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">{t("logins:session.start.reloginHint")}</p>
-          )}
-          <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
-            <Label htmlFor={placementId}>{t("sandboxes:create.placement")}</Label>
-            <form.Field name="placement">
+    // Seven controls: a wide sheet (form-surface rule), with the network and
+    // lifetime settings collapsed under Advanced behind a summary line.
+    <WideSheet
+      data-start-login=""
+      title={title}
+      description={t("logins:session.start.description")}
+      closeLabel={t("common:actions.close")}
+      busy={pending}
+      onClose={onClose}
+      onSubmit={() => void form.handleSubmit()}
+      actions={
+        <>
+          <Button type="submit" size="touch" disabled={pending || (needsConsent && !consent)}>
+            {pending ? t("logins:session.start.submitting") : t("logins:session.start.submit")}
+          </Button>
+          <Button type="button" variant="outline" size="touch" disabled={pending} onClick={onClose}>
+            {t("common:actions.cancel")}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex min-w-0 flex-col gap-4">
+        {target.kind !== "relogin" ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              {t("logins:session.start.unverifiedAccount")}
+            </p>
+            <form.Field name="name">
               {(field) => (
-                <FormSelect
-                  id={placementId}
+                <TextField
+                  field={field}
+                  label={
+                    target.kind === "newAccount"
+                      ? t("logins:session.start.accountName")
+                      : t("logins:session.start.instanceName")
+                  }
+                  description={t("logins:form.optionalNameHint")}
+                  inputMode="text"
                   autoComplete="off"
-                  value={field.state.value}
-                  onValueChange={(value) => {
-                    field.handleChange(value as "host" | "pool");
-                    setNeedsConsent(false);
-                    setConsent(false);
-                  }}
-                >
-                  <SelectItem value="host">{t("sandboxes:create.direct")}</SelectItem>
-                  <SelectItem value="pool">{t("sandboxes:create.pool")}</SelectItem>
-                </FormSelect>
+                  inputClassName="min-h-11"
+                  maxLength={80}
+                />
               )}
             </form.Field>
-            {placement === "host" ? (
-              <form.Field name="hostId">
-                {(field) => (
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <Label htmlFor={hostSelectId}>{t("sandboxes:create.host")}</Label>
-                    <FormSelect
-                      id={hostSelectId}
-                      autoComplete="off"
-                      optionsSettled={
-                        hostsQuery.isSuccess && !hostsQuery.isFetching && !hostsQuery.hasNextPage
-                      }
-                      value={field.state.value}
-                      onValueChange={field.handleChange}
-                      aria-invalid={field.state.meta.errors.length > 0 || undefined}
-                    >
-                      <SelectItem value="">{t("sandboxes:create.chooseHost")}</SelectItem>
-                      {hosts.map((host) => (
-                        <SelectItem key={host.id} value={host.id}>
-                          {translateText(t, "logins:session.start.option", {
-                            label: host.label,
-                            slug: host.slug,
-                          })}
-                        </SelectItem>
-                      ))}
-                    </FormSelect>
-                    <p className="text-xs text-muted-foreground">
-                      {t("logins:session.start.ownHostHint")}
-                    </p>
-                    <FieldErrors errors={field.state.meta.errors} />
-                    <LoadMore
-                      hasNextPage={hostsQuery.hasNextPage}
-                      isFetchingNextPage={hostsQuery.isFetchingNextPage}
-                      onLoadMore={() => void hostsQuery.fetchNextPage()}
-                      label={t("sandboxes:create.moreHosts")}
-                    />
-                  </div>
-                )}
-              </form.Field>
-            ) : (
-              <form.Field name="poolId">
-                {(field) => (
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <Label htmlFor={poolSelectId}>{t("sandboxes:create.pool")}</Label>
-                    <FormSelect
-                      id={poolSelectId}
-                      autoComplete="off"
-                      optionsSettled={
-                        poolsQuery.isSuccess && !poolsQuery.isFetching && !poolsQuery.hasNextPage
-                      }
-                      value={field.state.value}
-                      onValueChange={(value) => {
-                        field.handleChange(value);
-                        setNeedsConsent(false);
-                        setConsent(false);
-                      }}
-                      aria-invalid={field.state.meta.errors.length > 0 || undefined}
-                    >
-                      <SelectItem value="">{t("sandboxes:create.choosePool")}</SelectItem>
-                      {pools.map((pool) => (
-                        <SelectItem key={pool.id} value={pool.id}>
-                          {translateText(t, "logins:session.start.option", {
-                            label: pool.label,
-                            slug: pool.slug,
-                          })}
-                        </SelectItem>
-                      ))}
-                    </FormSelect>
-                    <FieldErrors errors={field.state.meta.errors} />
-                    <LoadMore
-                      hasNextPage={poolsQuery.hasNextPage}
-                      isFetchingNextPage={poolsQuery.isFetchingNextPage}
-                      onLoadMore={() => void poolsQuery.fetchNextPage()}
-                    />
-                  </div>
-                )}
-              </form.Field>
-            )}
-          </fieldset>
-          <form.Field name="templateId">
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">{t("logins:session.start.reloginHint")}</p>
+        )}
+        <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
+          <Label htmlFor={placementId}>{t("sandboxes:create.placement")}</Label>
+          <form.Field name="placement">
             {(field) => (
-              <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
-                <Label htmlFor={templateSelectId}>{t("sandboxes:create.template")}</Label>
-                <FormSelect
-                  id={templateSelectId}
-                  autoComplete="off"
-                  optionsSettled={
-                    templatesQuery.isSuccess &&
-                    !templatesQuery.isFetching &&
-                    !templatesQuery.hasNextPage
-                  }
-                  value={field.state.value}
-                  onValueChange={field.handleChange}
-                  aria-invalid={field.state.meta.errors.length > 0 || undefined}
-                >
-                  <SelectItem value="">{t("sandboxes:create.chooseTemplate")}</SelectItem>
-                  {templates.map((template) => (
-                    <SelectItem key={template.id} value={template.id}>
-                      {translateText(t, "logins:session.start.option", {
-                        label: template.label,
-                        slug: template.slug,
-                      })}
-                    </SelectItem>
-                  ))}
-                </FormSelect>
-                <FieldErrors errors={field.state.meta.errors} />
-                <LoadMore
-                  hasNextPage={templatesQuery.hasNextPage}
-                  isFetchingNextPage={templatesQuery.isFetchingNextPage}
-                  onLoadMore={() => void templatesQuery.fetchNextPage()}
-                  label={t("sandboxes:create.moreTemplates")}
-                />
-              </fieldset>
+              <FormSelect
+                id={placementId}
+                autoComplete="off"
+                value={field.state.value}
+                onValueChange={(value) => {
+                  field.handleChange(value as "host" | "pool");
+                  setNeedsConsent(false);
+                  setConsent(false);
+                }}
+              >
+                <SelectItem value="host">{t("sandboxes:create.direct")}</SelectItem>
+                <SelectItem value="pool">{t("sandboxes:create.pool")}</SelectItem>
+              </FormSelect>
             )}
           </form.Field>
+          {placement === "host" ? (
+            <form.Field name="hostId">
+              {(field) => (
+                <div className="flex min-w-0 flex-col gap-2">
+                  <Label htmlFor={hostSelectId}>{t("sandboxes:create.host")}</Label>
+                  <FormSelect
+                    id={hostSelectId}
+                    autoComplete="off"
+                    optionsSettled={
+                      hostsQuery.isSuccess && !hostsQuery.isFetching && !hostsQuery.hasNextPage
+                    }
+                    value={field.state.value}
+                    onValueChange={field.handleChange}
+                    aria-invalid={field.state.meta.errors.length > 0 || undefined}
+                  >
+                    <SelectItem value="">{t("sandboxes:create.chooseHost")}</SelectItem>
+                    {hosts.map((host) => (
+                      <SelectItem key={host.id} value={host.id}>
+                        {translateText(t, "logins:session.start.option", {
+                          label: host.label,
+                          slug: host.slug,
+                        })}
+                      </SelectItem>
+                    ))}
+                  </FormSelect>
+                  <p className="text-xs text-muted-foreground">
+                    {t("logins:session.start.ownHostHint")}
+                  </p>
+                  <FieldErrors errors={field.state.meta.errors} />
+                  <LoadMore
+                    hasNextPage={hostsQuery.hasNextPage}
+                    isFetchingNextPage={hostsQuery.isFetchingNextPage}
+                    onLoadMore={() => void hostsQuery.fetchNextPage()}
+                    label={t("sandboxes:create.moreHosts")}
+                  />
+                </div>
+              )}
+            </form.Field>
+          ) : (
+            <form.Field name="poolId">
+              {(field) => (
+                <div className="flex min-w-0 flex-col gap-2">
+                  <Label htmlFor={poolSelectId}>{t("sandboxes:create.pool")}</Label>
+                  <FormSelect
+                    id={poolSelectId}
+                    autoComplete="off"
+                    optionsSettled={
+                      poolsQuery.isSuccess && !poolsQuery.isFetching && !poolsQuery.hasNextPage
+                    }
+                    value={field.state.value}
+                    onValueChange={(value) => {
+                      field.handleChange(value);
+                      setNeedsConsent(false);
+                      setConsent(false);
+                    }}
+                    aria-invalid={field.state.meta.errors.length > 0 || undefined}
+                  >
+                    <SelectItem value="">{t("sandboxes:create.choosePool")}</SelectItem>
+                    {pools.map((pool) => (
+                      <SelectItem key={pool.id} value={pool.id}>
+                        {translateText(t, "logins:session.start.option", {
+                          label: pool.label,
+                          slug: pool.slug,
+                        })}
+                      </SelectItem>
+                    ))}
+                  </FormSelect>
+                  <FieldErrors errors={field.state.meta.errors} />
+                  <LoadMore
+                    hasNextPage={poolsQuery.hasNextPage}
+                    isFetchingNextPage={poolsQuery.isFetchingNextPage}
+                    onLoadMore={() => void poolsQuery.fetchNextPage()}
+                  />
+                </div>
+              )}
+            </form.Field>
+          )}
+        </fieldset>
+        <form.Field name="templateId">
+          {(field) => (
+            <fieldset className="flex min-w-0 flex-col gap-2" disabled={pending}>
+              <Label htmlFor={templateSelectId}>{t("sandboxes:create.template")}</Label>
+              <FormSelect
+                id={templateSelectId}
+                autoComplete="off"
+                optionsSettled={
+                  templatesQuery.isSuccess &&
+                  !templatesQuery.isFetching &&
+                  !templatesQuery.hasNextPage
+                }
+                value={field.state.value}
+                onValueChange={field.handleChange}
+                aria-invalid={field.state.meta.errors.length > 0 || undefined}
+              >
+                <SelectItem value="">{t("sandboxes:create.chooseTemplate")}</SelectItem>
+                {templates.map((template) => (
+                  <SelectItem key={template.id} value={template.id}>
+                    {translateText(t, "logins:session.start.option", {
+                      label: template.label,
+                      slug: template.slug,
+                    })}
+                  </SelectItem>
+                ))}
+              </FormSelect>
+              <FieldErrors errors={field.state.meta.errors} />
+              <LoadMore
+                hasNextPage={templatesQuery.hasNextPage}
+                isFetchingNextPage={templatesQuery.isFetchingNextPage}
+                onLoadMore={() => void templatesQuery.fetchNextPage()}
+                label={t("sandboxes:create.moreTemplates")}
+              />
+            </fieldset>
+          )}
+        </form.Field>
+        <AdvancedSection
+          title={t("logins:session.start.networkSection")}
+          summary={
+            egressCount === 0
+              ? t("logins:session.start.networkNone")
+              : t("logins:session.start.networkSummary", { count: egressCount })
+          }
+        >
           <form.Field name="egressDomains">
             {(field) => (
               <TextareaField
@@ -447,6 +459,11 @@ export function StartLoginDialog({
               />
             )}
           </form.Field>
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("logins:session.start.lifetimeSection")}
+          summary={t("logins:session.start.lifetimeSummary", { minutes: timeoutText.trim() })}
+        >
           <form.Field name="timeoutMinutes">
             {(field) => (
               <TextField
@@ -462,49 +479,35 @@ export function StartLoginDialog({
               />
             )}
           </form.Field>
-          {needsConsent ? (
-            <div
-              role="alert"
-              data-login-consent=""
-              className="flex min-w-0 flex-col gap-2 rounded-lg border border-amber-500/50 p-3 text-sm"
-            >
-              <p className="font-medium">{t("logins:session.consent.title")}</p>
-              <p>{t("logins:session.consent.warning")}</p>
-              <div className="flex min-h-11 items-center gap-3">
-                <Checkbox
-                  id={consentId}
-                  checked={consent}
-                  onCheckedChange={(checked) => setConsent(checked === true)}
-                />
-                <Label htmlFor={consentId}>{t("logins:session.consent.checkbox")}</Label>
-              </div>
+        </AdvancedSection>
+        {needsConsent ? (
+          <div
+            role="alert"
+            data-login-consent=""
+            className="flex min-w-0 flex-col gap-2 rounded-lg border border-amber-500/50 p-3 text-sm"
+          >
+            <p className="font-medium">{t("logins:session.consent.title")}</p>
+            <p>{t("logins:session.consent.warning")}</p>
+            <div className="flex min-h-11 items-center gap-3">
+              <Checkbox
+                id={consentId}
+                checked={consent}
+                onCheckedChange={(checked) => setConsent(checked === true)}
+              />
+              <Label htmlFor={consentId}>{t("logins:session.consent.checkbox")}</Label>
             </div>
-          ) : null}
-          {problem ? (
-            <div role="alert" className="flex flex-col gap-1 text-sm text-destructive">
-              <p>{problem}</p>
-              {needsUpload ? (
-                <p className="text-muted-foreground">{t("logins:session.start.uploadHint")}</p>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="touch"
-              disabled={pending}
-              onClick={onClose}
-            >
-              {t("common:actions.cancel")}
-            </Button>
-            <Button type="submit" size="touch" disabled={pending || (needsConsent && !consent)}>
-              {pending ? t("logins:session.start.submitting") : t("logins:session.start.submit")}
-            </Button>
           </div>
-        </form>
-      </DialogContent>
-    </Dialog>
+        ) : null}
+        {problem ? (
+          <div role="alert" className="flex flex-col gap-1 text-sm text-destructive">
+            <p>{problem}</p>
+            {needsUpload ? (
+              <p className="text-muted-foreground">{t("logins:session.start.uploadHint")}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </WideSheet>
   );
 }
 

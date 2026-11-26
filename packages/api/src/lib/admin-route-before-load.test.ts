@@ -41,6 +41,10 @@ vi.mock("react-i18next", () => ({
 vi.mock("@/components/admin/two-factor-nudge", () => ({
   TwoFactorNudge: () => null,
 }));
+// The admin layout renders inside the dashboard frame; only beforeLoad is under test.
+vi.mock("@/components/dashboard-frame", () => ({
+  DashboardFrame: () => null,
+}));
 
 const { default: prisma } = await import("@wssp/db");
 const { wireSensitiveSessionGateUser } = await import("@wssp/api/test/mock-prisma");

@@ -59,6 +59,7 @@ vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_SERVER_URL: "https://api.example.test" } }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
+  useBlocker: () => ({ status: "idle" }),
   Link: ({
     children,
     className,
@@ -442,10 +443,37 @@ describe("minting a host token", () => {
     mount();
     await user.click(await screen.findByRole("button", { name: enHostCredentials.mint.action }));
     await user.click(within(dialog()).getByRole("button", { name: enHostCredentials.mint.submit }));
-    const alert = await within(dialog()).findByRole("alert");
-    expect(alert.textContent).toContain(enCredentials.draft.nameRequired);
-    expect(alert.textContent).toContain(enCredentials.draft.noHost);
+    // Each error sits under its field (aria-invalid + described by it); Name gets focus.
+    const name = within(dialog()).getByLabelText(enCredentials.form.name);
+    await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
+    expect(document.activeElement).toBe(name);
+    const host = within(dialog()).getByLabelText(enHostCredentials.mint.host);
+    expect(host.getAttribute("aria-invalid")).toBe("true");
+    const describedText = (element: HTMLElement) =>
+      (element.getAttribute("aria-describedby") ?? "")
+        .split(" ")
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .join(" ");
+    expect(describedText(name)).toContain(enCredentials.draft.nameRequired);
+    expect(describedText(host)).toContain(enCredentials.draft.noHost);
     expect(calls("createHostToken")).toHaveLength(0);
+  });
+
+  it("after a failed submit, a corrected form creates the token (no stuck submit)", async () => {
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enHostCredentials.mint.action }));
+    await user.click(within(dialog()).getByRole("button", { name: enHostCredentials.mint.submit }));
+    await within(dialog()).findAllByRole("alert");
+    await user.type(within(dialog()).getByLabelText(enCredentials.form.name), "rack");
+    await selectOption(
+      user,
+      within(dialog()).getByLabelText(enHostCredentials.mint.host),
+      "Desk (desk-01)",
+    );
+    await user.click(within(dialog()).getByRole("button", { name: enHostCredentials.mint.submit }));
+    await screen.findByText(enCredentials.reveal.onceWarning);
+    expect(calls("createHostToken")).toHaveLength(1);
   });
 
   it("offers only hosts that can take a token (not pending deletion)", async () => {
@@ -859,7 +887,7 @@ describe("revoking", () => {
     const user = userEvent.setup();
     mount();
     await screen.findByRole("list", { name: enHostCredentials.tokens.title });
-    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke" }));
+    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke rack token" }));
     const confirm = await screen.findByRole("alertdialog");
     expect(within(confirm).getByText("Revoke rack token?")).toBeTruthy();
     await user.click(within(confirm).getByRole("button", { name: enCommon.actions.cancel }));
@@ -891,7 +919,7 @@ describe("revoking", () => {
       invalidated.push(filters?.queryKey);
       return original(filters, options);
     });
-    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke" }));
+    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke rack token" }));
     const confirm = await screen.findByRole("alertdialog");
     const listsBefore = calls("listDeviceCredentials").length;
     await user.click(within(confirm).getByRole("button", { name: enCredentials.revoke.confirm }));
@@ -931,7 +959,9 @@ describe("revoking", () => {
     const user = userEvent.setup();
     mount();
     await screen.findByRole("list", { name: enHostCredentials.devices.title });
-    await user.click(within(row("device-a")).getByRole("button", { name: "Revoke" }));
+    await user.click(
+      within(row("device-a")).getByRole("button", { name: "Revoke Device login for desk-01" }),
+    );
     const confirm = await screen.findByRole("alertdialog");
     expect(within(confirm).getByText("Revoke the device credential for desk-01?")).toBeTruthy();
     await user.click(within(confirm).getByRole("button", { name: enCredentials.revoke.confirm }));
@@ -950,7 +980,7 @@ describe("revoking", () => {
     mount();
     await screen.findByRole("list", { name: enHostCredentials.tokens.title });
     const before = calls("listHostTokens").length;
-    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke" }));
+    await user.click(within(row("token-a")).getByRole("button", { name: "Revoke rack token" }));
     await user.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", {
         name: enCredentials.revoke.confirm,

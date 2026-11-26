@@ -24,9 +24,17 @@ type ConfirmDeleteDialogProps = {
   confirmToken: string;
   /** Label rendered above the typed input, e.g. "Type the user's email to confirm". */
   typePrompt: string;
-  /** aria-label for the copy-to-clipboard button (i18n owns this string). */
-  copyAriaLabel: string;
-  /** Defaults to confirmToken. */
+  /**
+   * aria-label for a copy-to-clipboard field showing the token (i18n owns
+   * this string). Omit it to show no copy field: then `typePrompt` must name
+   * the token itself ("Type quiet-otter to confirm"), since copying a name
+   * the user is asked to type defeats the confirmation.
+   */
+  copyAriaLabel?: string;
+  /**
+   * No placeholder by default: the token as placeholder makes the empty
+   * field look already filled in (design review #21).
+   */
   placeholder?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   /** Defaults to t("common:actions.delete"). */
@@ -82,17 +90,27 @@ export function ConfirmDeleteDialog({
       */}
       <AlertDialogContent className="[&_input]:min-h-11 max-w-[calc(100%-2rem)]! sm:max-w-md! data-[size=default]:max-w-[calc(100%-2rem)]! data-[size=default]:sm:max-w-md! data-[size=sm]:max-w-[calc(100%-2rem)]!">
         <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogTitle className="[overflow-wrap:anywhere]">{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <div className="min-w-0 space-y-2">
           <Label htmlFor={inputId}>{typePrompt}</Label>
-          <CopyField value={confirmToken} copyLabel={copyAriaLabel} />
+          {/* Long names wrap instead of scrolling out of sight. */}
+          {copyAriaLabel ? (
+            <CopyField
+              value={confirmToken}
+              copyLabel={copyAriaLabel}
+              data-confirm-token=""
+              className="items-start [&_[data-slot=copy-field-value]]:whitespace-pre-wrap [&_[data-slot=copy-field-value]]:[overflow-wrap:anywhere]"
+            />
+          ) : null}
           <Input
             id={inputId}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            placeholder={placeholder ?? confirmToken}
+            placeholder={placeholder}
+            spellCheck={false}
+            autoCapitalize="none"
             autoComplete="off"
             inputMode={inputMode}
           />

@@ -1,4 +1,4 @@
-import { useForm } from "@tanstack/react-form";
+import { useForm, useStore } from "@tanstack/react-form";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { AppRouterClient } from "@wssp/api/routers/index";
@@ -22,19 +22,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@wssp/ui/components/dialog";
+import { AdvancedSection, focusFirstInvalid } from "@wssp/ui/components/form-page";
 import { SelectItem } from "@wssp/ui/components/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@wssp/ui/components/sheet";
 import { toast } from "@wssp/ui/components/sileo";
-import { TextField } from "@wssp/ui/components/text-field";
+import { FieldError, TextField } from "@wssp/ui/components/text-field";
 import { ArrowLeft } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
@@ -49,7 +42,10 @@ import {
   EventCheckboxes,
   invalidateWebhooks,
   KindsChoice,
+  kindsSummaryKey,
+  webhookDraftSchema,
 } from "@/components/webhooks/webhooks-page";
+import { WideSheet } from "@/components/wide-sheet";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { dateTimeTitle, formatDateTime } from "@/lib/format-date-time";
 import {
@@ -57,7 +53,6 @@ import {
   WEBHOOK_DEFAULT_OPERATION_KINDS,
   type WebhookDraft,
   type WebhookProblem,
-  webhookDraftProblems,
   webhookHost,
   webhookProblem,
 } from "@/lib/webhook-rules";
@@ -340,7 +335,8 @@ function EditWebhookSheet({
   const queryClient = useQueryClient();
   const redirect = useTwoFactorRedirect(lang);
   const [problem, setProblem] = useState<WebhookProblem | null>(null);
-  const [attempted, setAttempted] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const eventsErrorId = useId();
   const update = useMutation({
     ...orpc.webhooks.update.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -361,9 +357,9 @@ function EditWebhookSheet({
       events: endpoint.events,
       kinds: initialKinds,
     } as WebhookDraft,
+    validators: { onSubmit: webhookDraftSchema(t) },
+    onSubmitInvalid: () => requestAnimationFrame(() => focusFirstInvalid(root.current)),
     onSubmit: async ({ value }) => {
-      setAttempted(true);
-      if (webhookDraftProblems(value).length > 0) return;
       setProblem(null);
       try {
         await update.mutateAsync({
@@ -389,39 +385,60 @@ function EditWebhookSheet({
       onClose();
     },
   });
+  const values = useStore(form.store, (state) => state.values);
+  const submitting = useStore(form.store, (state) => state.isSubmitting);
 
+  // Same Essential/Advanced split as the create page.
   return (
-    <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
-      <SheetContent
-        closeLabel={t("common:actions.close")}
-        className="overflow-x-hidden overflow-y-auto"
-      >
-        <SheetHeader>
-          <SheetTitle>{t("webhooks:edit.title")}</SheetTitle>
-          <SheetDescription>{t("webhooks:edit.description")}</SheetDescription>
-        </SheetHeader>
-        <form
-          noValidate
-          className="flex min-w-0 flex-col gap-4 px-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void form.handleSubmit();
-          }}
-        >
-          <form.Field name="url">
-            {(field) => (
-              <TextField
-                field={field}
-                type="url"
-                label={t("webhooks:form.url")}
-                description={t("webhooks:form.urlHint")}
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={2048}
+    <WideSheet
+      title={t("webhooks:edit.title")}
+      description={t("webhooks:edit.description")}
+      closeLabel={t("common:actions.close")}
+      busy={submitting}
+      onClose={onClose}
+      onSubmit={() => void form.handleSubmit()}
+      actions={
+        <>
+          <Button type="submit" size="touch" disabled={submitting}>
+            {submitting ? t("common:actions.saving") : t("common:actions.saveChanges")}
+          </Button>
+          <Button type="button" variant="outline" size="touch" onClick={onClose}>
+            {t("common:actions.cancel")}
+          </Button>
+        </>
+      }
+    >
+      <div ref={root} data-webhook-form="edit" className="flex min-w-0 flex-col gap-6">
+        <form.Field name="url">
+          {(field) => (
+            <TextField
+              field={field}
+              type="url"
+              label={t("webhooks:form.url")}
+              description={t("webhooks:form.urlHint")}
+              autoComplete="off"
+              inputClassName="min-h-11"
+              maxLength={2048}
+            />
+          )}
+        </form.Field>
+        <form.Field name="events">
+          {(field) => (
+            <div className="flex min-w-0 flex-col gap-2">
+              <EventCheckboxes
+                value={field.state.value}
+                onChange={field.handleChange}
+                invalid={field.state.meta.errors.length > 0}
+                errorId={eventsErrorId}
               />
-            )}
-          </form.Field>
+              <FieldError id={eventsErrorId} errors={field.state.meta.errors} />
+            </div>
+          )}
+        </form.Field>
+        <AdvancedSection
+          title={t("webhooks:form.details")}
+          summary={values.description.trim() || t("webhooks:form.noDescription")}
+        >
           <form.Field name="description">
             {(field) => (
               <TextField
@@ -434,9 +451,11 @@ function EditWebhookSheet({
               />
             )}
           </form.Field>
-          <form.Field name="events">
-            {(field) => <EventCheckboxes value={field.state.value} onChange={field.handleChange} />}
-          </form.Field>
+        </AdvancedSection>
+        <AdvancedSection
+          title={t("webhooks:form.kindsSection")}
+          summary={t(kindsSummaryKey(values.kinds))}
+        >
           <form.Field name="kinds">
             {(field) => (
               <KindsChoice
@@ -446,41 +465,14 @@ function EditWebhookSheet({
               />
             )}
           </form.Field>
-          <form.Subscribe selector={(state) => state.values}>
-            {(values) =>
-              attempted && webhookDraftProblems(values).length > 0 ? (
-                <div role="alert" className="text-sm text-destructive">
-                  {webhookDraftProblems(values).map((issue) => (
-                    <p key={issue}>
-                      {issue === "destinationInvalid"
-                        ? t("webhooks:problem.destinationInvalid")
-                        : t(`webhooks:form.${issue}`)}
-                    </p>
-                  ))}
-                </div>
-              ) : null
-            }
-          </form.Subscribe>
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`webhooks:problem.${problem}`)}
-            </p>
-          ) : null}
-          <SheetFooter className="px-0">
-            <form.Subscribe selector={(formState) => formState.isSubmitting}>
-              {(submitting) => (
-                <Button type="submit" size="touch" disabled={submitting}>
-                  {submitting ? t("common:actions.saving") : t("common:actions.saveChanges")}
-                </Button>
-              )}
-            </form.Subscribe>
-            <Button type="button" variant="outline" size="touch" onClick={onClose}>
-              {t("common:actions.cancel")}
-            </Button>
-          </SheetFooter>
-        </form>
-      </SheetContent>
-    </Sheet>
+        </AdvancedSection>
+        {problem ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t(`webhooks:problem.${problem}`)}
+          </p>
+        ) : null}
+      </div>
+    </WideSheet>
   );
 }
 

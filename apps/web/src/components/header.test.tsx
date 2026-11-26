@@ -103,6 +103,16 @@ describe("app header row", () => {
   it("lets the app name give way first at every width", () => {
     expectAppNameGivesWayFirst(renderToStaticMarkup(<Header />));
   });
+
+  it("as the server-rendered placeholder keeps the row, with the account control as a skeleton", () => {
+    const html = renderToStaticMarkup(<Header placeholder />);
+    expectAppNameGivesWayFirst(html);
+    // Same controls; the account slot is the skeleton UserMenu shows while the
+    // session resolves (a 44px square below md:), never Sign In / Sign Up.
+    expect(html.match(/data-control=""/g)).toHaveLength(2);
+    expect(html).toMatch(/data-slot="skeleton" class="[^"]*\bh-11 w-11 md:w-24\b/);
+    expect(html).not.toContain("/$lang/login");
+  });
 });
 
 describe("public header row", () => {

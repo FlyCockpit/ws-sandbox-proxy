@@ -4,9 +4,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_TEMPLATE_DRAFT,
+  envRowsToDraft,
   nextTemplateStateChangeAt,
+  parseNewTemplateSearch,
   parseTemplateDraft,
+  parseTemplatesSearch,
   registrationHostState,
+  slugFromName,
   type TemplateDraft,
   type TemplateHost,
   templateDraftInput,
@@ -201,4 +205,36 @@ it("maps exact image absence to the missing-image explanation", () => {
   expect(
     templateProblem({ code: "CONFLICT", data: { code: "sandbox.template_image_missing" } }),
   ).toBe("imageMissing");
+});
+
+describe("new template pages", () => {
+  it("keeps only plain ids in the search, and from only with a template", () => {
+    expect(parseNewTemplateSearch({})).toEqual({});
+    expect(parseNewTemplateSearch({ template: "tpl_1", from: "rev-2" })).toEqual({
+      template: "tpl_1",
+      from: "rev-2",
+    });
+    expect(parseNewTemplateSearch({ from: "rev-2" })).toEqual({});
+    expect(parseNewTemplateSearch({ template: "../x", from: 3 })).toEqual({});
+  });
+
+  it("?new=true on Templates opens the chooser; anything else is dropped", () => {
+    expect(parseTemplatesSearch({ new: true })).toEqual({ new: true });
+    expect(parseTemplatesSearch({ new: "true" })).toEqual({ new: true });
+    expect(parseTemplatesSearch({ new: 1 })).toEqual({});
+    expect(parseTemplatesSearch({})).toEqual({});
+  });
+
+  it("derives a server-valid slug from a display name", () => {
+    expect(slugFromName("Ubuntu Dev 26.04")).toBe("ubuntu-dev-26-04");
+    expect(slugFromName("  Año nuevo!! ")).toBe("ano-nuevo");
+    expect(slugFromName("x".repeat(80))).toHaveLength(63);
+    expect(slugFromName("---")).toBe("");
+  });
+
+  it("turns environment rows into the draft's JSON map, and none into blank", () => {
+    expect(envRowsToDraft({})).toBe("");
+    const draft = { ...DEFAULT_TEMPLATE_DRAFT, envs: envRowsToDraft({ APP: "1" }) };
+    expect(templateDraftInput(draft).envs).toEqual({ APP: "1" });
+  });
 });

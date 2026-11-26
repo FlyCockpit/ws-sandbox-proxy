@@ -15,6 +15,7 @@ import {
   deploymentLeaseMaxMs,
   leasePathJoinSql,
   pathLimitSql,
+  poolLeaseViews,
   pullInDeadlineSql,
 } from "../lease-policy";
 import type {
@@ -31,6 +32,7 @@ import type {
 } from "../pool-input";
 import { lockPoolGraph, MAX_ACTIVE_POOL_MEMBERSHIPS } from "../pool-locks";
 import { poolSelect, visiblePool } from "../pool-visibility";
+import { viewerOf } from "../principal-kinds";
 import { lockCurrentHostEpoch, RelayFenceRejected, requireRelayFence } from "../relay-fence";
 import { notifySharingAccessChanged } from "../sharing-access";
 import { lockSharingPrincipals, withSharingAuthorityChange } from "../sharing-authority";
@@ -53,6 +55,84 @@ export const listPools = serviceProcedure(
     return cursorPage(rows, input.limit, "createdAt");
   },
 );
+
+export type PoolCardSummary = {
+  /** Active member hosts, and how many of them take new sandboxes. */
+  hosts: { total: number; enabled: number; connected: number };
+  /** People the pool is shared with. */
+  people: number;
+  /** Summed host budgets of enabled members (member caps applied to contributed hosts). */
+  capacity: { memoryMiB: number; vcpu: number };
+  /** The longest lifetime any path through this pool allows (the create path's own answer). */
+  lease: { maxTimeoutMs: number; timeoutZero: boolean };
+};
+
+/**
+ * The owner's pool cards: counts and aggregates for one page of their own
+ * pools, in a constant number of queries. Aggregates only (no per-host or
+ * per-person detail), the same numbers the pool's Hosts, People and Capacity
+ * views already show the owner. Session plane only (the dashboard list).
+ */
+export async function poolCardSummaries(
+  owner: Principal,
+  pools: readonly { id: string; maxLeaseMs: number | null }[],
+): Promise<Map<string, PoolCardSummary>> {
+  const result = new Map<string, PoolCardSummary>();
+  if (pools.length === 0) return result;
+  const ids = pools.map((pool) => pool.id);
+  const [members, shares, budgets, leases] = await Promise.all([
+    prisma.sandboxPoolMember.groupBy({
+      by: ["poolId", "enabled"],
+      where: { poolId: { in: ids }, userId: owner.ownerId, removedAt: null },
+      _count: { _all: true },
+    }),
+    prisma.share.groupBy({
+      by: ["poolId"],
+      where: { poolId: { in: ids }, ownerUserId: owner.ownerId },
+      _count: { _all: true },
+    }),
+    prisma.$queryRaw<
+      {
+        poolId: string;
+        memory: bigint | number | null;
+        vcpu: bigint | number | null;
+        connected: number;
+      }[]
+    >`
+      SELECT m."poolId",
+        sum(CASE WHEN m."hostOwnerId" = m."userId" OR m."memoryCapPercent" IS NULL
+          THEN h."daemonMemoryBudgetMiB"
+          ELSE h."daemonMemoryBudgetMiB"::bigint * m."memoryCapPercent" / 100 END)::bigint AS memory,
+        sum(CASE WHEN m."hostOwnerId" = m."userId" OR m."vcpuCapPercent" IS NULL
+          THEN h."daemonVcpuBudget"
+          ELSE h."daemonVcpuBudget"::bigint * m."vcpuCapPercent" / 100 END)::bigint AS vcpu,
+        (count(*) FILTER (WHERE h.status = 'CONNECTED'))::int AS connected
+      FROM sandbox_pool_member m
+      JOIN sandbox_host h ON h.id = m."sandboxHostId" AND h."userId" = m."hostOwnerId"
+        AND h."deletionRequestedAt" IS NULL
+      WHERE m."poolId" = ANY(${ids}::text[]) AND m."userId" = ${owner.ownerId}
+        AND m."removedAt" IS NULL AND m.enabled
+      GROUP BY m."poolId"
+      LIMIT ${ids.length}`,
+    poolLeaseViews(prisma, viewerOf(owner), pools),
+  ]);
+  for (const id of ids) {
+    const count = (enabled: boolean) =>
+      members.find((row) => row.poolId === id && row.enabled === enabled)?._count._all ?? 0;
+    const budget = budgets.find((row) => row.poolId === id);
+    result.set(id, {
+      hosts: {
+        total: count(true) + count(false),
+        enabled: count(true),
+        connected: budget?.connected ?? 0,
+      },
+      people: shares.find((row) => row.poolId === id)?._count._all ?? 0,
+      capacity: { memoryMiB: Number(budget?.memory ?? 0), vcpu: Number(budget?.vcpu ?? 0) },
+      lease: leases.get(id) ?? { maxTimeoutMs: 0, timeoutZero: false },
+    });
+  }
+  return result;
+}
 
 export const getPool = serviceProcedure(
   { action: "pools.get", target: (input: z.infer<typeof poolIdInput>) => ({ poolId: input.id }) },

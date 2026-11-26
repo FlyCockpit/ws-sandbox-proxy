@@ -52,4 +52,17 @@ describe("user menu", () => {
     expect(store().ownerId).toBeNull();
     expect(store().epoch).not.toBe(beforeSignOut);
   });
+
+  it("shows a 44px icon below md and the name from md, the box of the lazy menu's trigger", () => {
+    const view = render(<UserMenu />);
+    const trigger = view.container.querySelector("button");
+    expect(trigger?.getAttribute("aria-haspopup")).toBe("menu");
+    expect(trigger?.getAttribute("title")).toBe("Owner");
+    expect(trigger?.className.split(" ")).toEqual(
+      expect.arrayContaining(["w-11", "px-0!", "md:w-auto", "md:max-w-48", "md:shrink"]),
+    );
+    expect(trigger?.querySelector("svg")?.getAttribute("class")).toContain("md:hidden");
+    expect(trigger?.querySelector("span")?.className).toBe("hidden truncate md:block");
+    expect(trigger?.textContent).toBe("Owner");
+  });
 });

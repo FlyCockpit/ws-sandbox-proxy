@@ -409,3 +409,12 @@
   --sileo-btn-bg: color-mix(in oklch, var(--popover-foreground) 8%, transparent);
   --sileo-btn-bg-hover: color-mix(in oklch, var(--popover-foreground) 14%, transparent);
 }
+
+/* Phones with the signed-in bottom nav: bottom toasts sit above the bar (and
+   the home indicator) instead of covering its tabs. The bar unmounts while
+   the software keyboard is open, and toasts drop back to the edge. */
+@media (width < 48rem) {
+  body:has([data-bottom-nav]) [data-sileo-viewport][data-position^="bottom"] {
+    bottom: calc(3.5rem + var(--safe-area-bottom, 0px));
+  }
+}

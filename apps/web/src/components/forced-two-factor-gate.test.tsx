@@ -1,13 +1,19 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { TWO_FACTOR_ENROLLMENT_GRACE_MS } from "@wssp/auth/two-factor-policy";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const auth = vi.hoisted(() => ({ enable: vi.fn(), verifyTotp: vi.fn() }));
 vi.mock("@/lib/auth-client", () => ({
-  authClient: { twoFactor: { enable: vi.fn(), verifyTotp: vi.fn() } },
+  authClient: { twoFactor: { enable: auth.enable, verifyTotp: auth.verifyTotp } },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("@/utils/friendly-error", () => ({
+  friendly: () => "friendly",
+  isRateLimit: (error: { status?: number } | null) => error?.status === 429,
+}));
+vi.mock("@/components/two-factor-setup-details", () => ({ TwoFactorSetupDetails: () => null }));
 
 import type {
   ForcedTwoFactorSettings,
@@ -30,6 +36,8 @@ let queryClient: QueryClient;
 const fetchSpy = vi.fn();
 
 beforeEach(() => {
+  auth.enable.mockReset();
+  auth.verifyTotp.mockReset();
   queryClient = new QueryClient();
   fetchSpy.mockReset();
   vi.stubGlobal("fetch", fetchSpy);
@@ -94,5 +102,58 @@ describe("forced-2FA gate (_auth layout)", () => {
   it("lets the page through when the policy is off for the user's role", () => {
     renderGate(user({}), { force2faPublicUsers: "false" });
     expect(screen.getByText("protected page")).toBeTruthy();
+  });
+});
+
+describe("enrollment takeover errors sit under their field", () => {
+  async function toPasswordStep() {
+    renderGate(user({}), { force2faPublicUsers: "true" });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.setUp" }));
+    return screen.getByLabelText("fields.password") as HTMLInputElement;
+  }
+
+  it("says the password was wrong, on the field, and focuses it", async () => {
+    auth.enable.mockResolvedValue({ error: { code: "INVALID_PASSWORD", status: 400 } });
+    const password = await toPasswordStep();
+    fireEvent.change(password, { target: { value: "not-it" } });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.continue" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("auth:errors.wrongPassword");
+    expect(password.getAttribute("aria-invalid")).toBe("true");
+    expect(password.getAttribute("aria-describedby")).toBe(alert.id);
+    expect(document.activeElement).toBe(password);
+
+    // Editing clears it.
+    fireEvent.change(password, { target: { value: "not-it-2" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(password.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("keeps the setup fallback for other failures", async () => {
+    auth.enable.mockResolvedValue({ error: { code: "SOMETHING", status: 500 } });
+    const password = await toPasswordStep();
+    fireEvent.change(password, { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.continue" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "auth:twoFactor.couldNotStartSetup",
+    );
+  });
+
+  it("puts a refused authenticator code under the code field", async () => {
+    auth.enable.mockResolvedValue({
+      data: { method: "totp", totpURI: "otpauth://totp/x?secret=ABC", backupCodes: [] },
+    });
+    auth.verifyTotp.mockResolvedValue({ error: { code: "INVALID_CODE", status: 401 } });
+    const password = await toPasswordStep();
+    fireEvent.change(password, { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.continue" }));
+    const code = (await screen.findByLabelText("fields.verificationCode")) as HTMLInputElement;
+    fireEvent.change(code, { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.verifyAndEnable" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("auth:errors.invalidTotp");
+    expect(code.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(code);
   });
 });

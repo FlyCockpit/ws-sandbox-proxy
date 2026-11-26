@@ -5,12 +5,13 @@ import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
 import { cn } from "@wssp/ui/lib/utils";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
 
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
+import { FormAlert } from "@/components/auth/form-alert";
 import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
@@ -66,6 +67,9 @@ function SignupPage() {
   // button that can only ever error.
   const canResend = configData?.emailEnabled === true;
   const notice = signupNotice(configData, poolInviteToken() !== undefined);
+  // Sign-up is closed to the public: only the administrator addresses and
+  // invited people get in, so the page says so before the form.
+  const byInvitation = notice === "limited";
   const sessionPending =
     authSession.state.status === "pending" || authSession.state.status === "error";
 
@@ -105,16 +109,26 @@ function SignupPage() {
     body = (
       <AuthCard
         title={t("auth:login.createAccount")}
-        description={t("auth:login.createDescription")}
+        description={
+          byInvitation
+            ? t("auth:login.createDescriptionLimited")
+            : t("auth:login.createDescription")
+        }
       >
         {notice === "invite" ? (
           <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p>
-        ) : notice === "limited" ? (
-          <p data-signup-limited="" className="text-sm text-muted-foreground">
-            {t("auth:login.signupLimited")}
-          </p>
+        ) : byInvitation ? (
+          <div
+            role="note"
+            data-signup-limited=""
+            className="space-y-1 border border-border bg-muted/50 px-3 py-2 text-sm"
+          >
+            <p className="font-medium">{t("auth:login.byInvitation")}</p>
+            <p className="text-muted-foreground">{t("auth:login.signupLimited")}</p>
+          </div>
         ) : null}
         <SignUpForm
+          byInvitation={byInvitation}
           onSignedUp={(email, fromInvite) => {
             setInvited(fromInvite);
             setPendingEmail(email);
@@ -145,12 +159,22 @@ function SignupPage() {
   );
 }
 
-function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: boolean) => void }) {
+function SignUpForm({
+  byInvitation,
+  onSignedUp,
+}: {
+  /** Sign-up is limited to administrator addresses and invited people. */
+  byInvitation: boolean;
+  onSignedUp: (email: string, fromInvite: boolean) => void;
+}) {
   const { t } = useTranslation(["auth"]);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const form = useForm({
     defaultValues: { name: "", email: "", password: "" },
     onSubmit: async ({ value }) => {
+      setFormError(null);
       const result = await authClient.signUp.email(
         {
           email: value.email,
@@ -160,11 +184,29 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: bo
         { body: poolInviteToken() ? { poolInviteToken: poolInviteToken() } : undefined },
       );
       if (result.error) {
-        toast.error(
-          result.error?.status === 409
+        // Better-Auth's database hook rejects an address sign-up is closed to
+        // with a plain Error, which the sign-up route converts to a generic
+        // 422 FAILED_TO_CREATE_USER — the same answer for every address. With
+        // sign-up limited (public config, nothing new disclosed) that answer
+        // means "not invited", so say how to get in instead of "try again".
+        const notInvited =
+          byInvitation &&
+          (result.error.code === "FAILED_TO_CREATE_USER" || result.error.status === 422);
+        const emailMessage =
+          result.error.status === 409
             ? t("auth:errors.accountAlreadyRegistered")
-            : friendly(result.error, t("auth:errors.couldNotCreateAccount")),
-        );
+            : notInvited
+              ? t("auth:errors.signupByInvitation")
+              : null;
+        if (emailMessage) {
+          form.setFieldMeta("email", (meta) => ({
+            ...meta,
+            errorMap: { ...meta.errorMap, onSubmit: emailMessage },
+          }));
+          formRef.current?.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+        } else {
+          setFormError(friendly(result.error, t("auth:errors.couldNotCreateAccount")));
+        }
         // Better-Auth's database hook rejects signup-disabled attempts with a
         // plain Error, which the sign-up route converts to this generic 422 —
         // the same response for every address, member or not, so reading it
@@ -199,6 +241,8 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: bo
 
   return (
     <form
+      ref={formRef}
+      noValidate
       onSubmit={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -224,6 +268,7 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: bo
             label={t("auth:fields.email")}
             type="email"
             autoComplete="email"
+            onChange={() => setFormError(null)}
           />
         )}
       </form.Field>
@@ -238,6 +283,8 @@ function SignUpForm({ onSignedUp }: { onSignedUp: (email: string, fromInvite: bo
           />
         )}
       </form.Field>
+
+      <FormAlert message={formError} />
 
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}

@@ -18,15 +18,44 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 const server = vi.hoisted(() => ({
   configured: true,
+  statusError: null as unknown,
   endpoints: [] as Record<string, unknown>[],
   creates: [] as unknown[],
   createError: null as unknown,
+  /** When set, create waits for it (a request still in flight). */
+  createGate: null as Promise<void> | null,
+}));
+/** The leave guard's last blocker options, and the navigate spy. */
+const router = vi.hoisted(() => ({
+  blocker: null as null | { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean },
+  navigate: vi.fn(),
 }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
-  Link: ({ children, ...props }: { children: ReactNode; "aria-label"?: string }) => (
-    <a href="#endpoint" aria-label={props["aria-label"]}>
+  useNavigate: () => router.navigate,
+  useBlocker: (opts: { shouldBlockFn: () => boolean; enableBeforeUnload: () => boolean }) => {
+    router.blocker = opts;
+    return { status: "idle" };
+  },
+  Link: ({
+    children,
+    disabled,
+    ...props
+  }: {
+    children: ReactNode;
+    disabled?: boolean;
+    "aria-label"?: string;
+    "data-webhooks-back"?: string;
+    "data-webhook-cancel"?: string;
+  }) => (
+    // Like the router's Link: a disabled link has no href and says so.
+    <a
+      href={disabled ? undefined : "#endpoint"}
+      aria-disabled={disabled ? true : undefined}
+      aria-label={props["aria-label"]}
+      data-webhooks-back={props["data-webhooks-back"]}
+      data-webhook-cancel={props["data-webhook-cancel"]}
+    >
       {children}
     </a>
   ),
@@ -42,7 +71,10 @@ vi.mock("@/utils/orpc", () => ({
       status: {
         queryOptions: () => ({
           queryKey: ["webhooks", "status"],
-          queryFn: async () => ({ configured: server.configured }),
+          queryFn: async () => {
+            if (server.statusError) throw server.statusError;
+            return { configured: server.configured };
+          },
         }),
       },
       list: {
@@ -59,6 +91,7 @@ vi.mock("@/utils/orpc", () => ({
       create: {
         call: async (input: unknown) => {
           server.creates.push(input);
+          if (server.createGate) await server.createGate;
           if (server.createError) throw server.createError;
           return { endpoint: { id: "whe_2" }, secret: `whsec_${"A".repeat(43)}=` };
         },
@@ -68,8 +101,9 @@ vi.mock("@/utils/orpc", () => ({
 }));
 
 const { WebhooksPage } = await import("./webhooks-page");
+const { CreateWebhookPage } = await import("./create-webhook-page");
 
-function renderPage() {
+function renderPage(page: "list" | "create" = "list") {
   const i18n = createInstance();
   void i18n.init({
     lng: "en-US",
@@ -87,7 +121,7 @@ function renderPage() {
   return render(
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={client}>
-        <WebhooksPage lang="en-US" />
+        {page === "list" ? <WebhooksPage lang="en-US" /> : <CreateWebhookPage lang="en-US" />}
       </QueryClientProvider>
     </I18nextProvider>,
   );
@@ -95,9 +129,13 @@ function renderPage() {
 
 beforeEach(() => {
   server.configured = true;
+  server.statusError = null;
   server.endpoints = [];
   server.creates = [];
   server.createError = null;
+  server.createGate = null;
+  router.blocker = null;
+  router.navigate.mockReset();
 });
 afterEach(() => cleanup());
 
@@ -106,7 +144,31 @@ describe("WebhooksPage", () => {
     server.configured = false;
     renderPage();
     expect(await screen.findByText(enWebhooks.notConfigured.title)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: enWebhooks.create.action })).toBeNull();
+    expect(screen.queryByRole("link", { name: enWebhooks.create.action })).toBeNull();
+  });
+
+  it("a failed status read on the create page offers a retry, not 'not configured'", async () => {
+    const user = userEvent.setup();
+    server.statusError = new Error("network down");
+    renderPage("create");
+    expect(await screen.findByText(enWebhooks.create.statusFailed)).toBeTruthy();
+    expect(screen.queryByText(enWebhooks.notConfigured.title)).toBeNull();
+    server.statusError = null;
+    await user.click(screen.getByRole("button", { name: enCommon.actions.tryAgain }));
+    expect(await screen.findByRole("button", { name: enWebhooks.create.submit })).toBeTruthy();
+  });
+
+  it("the create page says 'not configured' only when the server says so", async () => {
+    server.configured = false;
+    renderPage("create");
+    expect(await screen.findByText(enWebhooks.notConfigured.title)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: enWebhooks.create.submit })).toBeNull();
+  });
+
+  it("Add endpoint is a page of its own, not a dialog", async () => {
+    renderPage();
+    expect(await screen.findByRole("link", { name: enWebhooks.create.action })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("lists endpoints with their events and health", async () => {
@@ -131,10 +193,13 @@ describe("WebhooksPage", () => {
 
   it("refuses an incomplete draft in the browser, then reveals the secret once", async () => {
     const user = userEvent.setup();
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: enWebhooks.create.action }));
-    await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
+    renderPage("create");
+    await user.click(await screen.findByRole("button", { name: enWebhooks.create.submit }));
+    // The error sits next to the URL field, which gets focus.
     expect(await screen.findByText(enWebhooks.form.urlRequired)).toBeTruthy();
+    const url = screen.getByLabelText(enWebhooks.form.url);
+    expect(url.getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(url));
     expect(server.creates).toEqual([]);
     await user.type(screen.getByLabelText(enWebhooks.form.url), "https://hooks.example.com/x");
     await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
@@ -144,16 +209,97 @@ describe("WebhooksPage", () => {
       events: ["sandbox.ready", "sandbox.create_failed", "sandbox.destroyed"],
     });
     expect(await screen.findByText(enWebhooks.create.secretLabel)).toBeTruthy();
+    expect(screen.getByText(enWebhooks.create.createdTitle)).toBeTruthy();
     // Masked by default: the secret is not in the document until revealed.
     expect(document.body.textContent).not.toContain("whsec_");
+  });
+
+  it("holds Cancel, Back and navigation while the create is pending and while the secret shows", async () => {
+    let release = () => {};
+    server.createGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const user = userEvent.setup();
+    renderPage("create");
+    await user.type(
+      await screen.findByLabelText(enWebhooks.form.url),
+      "https://hooks.example.com/x",
+    );
+    const cancel = () => document.querySelector("[data-webhook-cancel]")!;
+    const back = () => document.querySelector("[data-webhooks-back]")!;
+    expect(cancel().getAttribute("aria-disabled")).toBeNull();
+    expect(router.blocker?.shouldBlockFn()).toBe(false);
+    await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
+    await waitFor(() => expect(server.creates).toHaveLength(1));
+    // In flight: the secret is on its way, so nothing may leave the page.
+    await waitFor(() => expect(cancel().getAttribute("aria-disabled")).toBe("true"));
+    expect(cancel().hasAttribute("href")).toBe(false);
+    expect(back().getAttribute("aria-disabled")).toBe("true");
+    expect(router.blocker?.shouldBlockFn()).toBe(true);
+    expect(router.blocker?.enableBeforeUnload()).toBe(true);
+    release();
+    expect(await screen.findByText(enWebhooks.create.secretLabel)).toBeTruthy();
+    // Shown once: leaving still asks first.
+    expect(router.blocker?.shouldBlockFn()).toBe(true);
+    // Done confirms it is saved and opens the endpoint past the guard.
+    await user.click(screen.getByRole("button", { name: enCredentials.reveal.done }));
+    expect(router.navigate).toHaveBeenCalledWith({
+      to: "/$lang/settings/webhooks/$endpointId",
+      params: { lang: "en-US", endpointId: "whe_2" },
+      ignoreBlocker: true,
+    });
+  });
+
+  it("groups events by resource with a tri-state select-all per group", async () => {
+    const user = userEvent.setup();
+    renderPage("create");
+    const sandboxes = (await screen.findByRole("group", {
+      name: enWebhooks.eventGroup.sandbox,
+    })) as HTMLElement;
+    const all = screen.getByRole("checkbox", {
+      name: enWebhooks.form.groupAll.replace("{{group}}", enWebhooks.eventGroup.sandbox),
+    });
+    // Description and operation kinds wait under Advanced.
+    expect(
+      [...document.querySelectorAll("details")].map(
+        (node) => node.querySelector("summary")?.textContent,
+      ),
+    ).toEqual([`${enWebhooks.form.details}${enWebhooks.form.noDescription}`]);
+    // The default (ready, create failed, destroyed) is some of the group: mixed.
+    expect(all.getAttribute("aria-checked")).toBe("mixed");
+    // Human label first, the raw event id as secondary text.
+    expect(sandboxes.textContent).toContain(enWebhooks.event["sandbox.ready"]);
+    expect(sandboxes.textContent).toContain("sandbox.ready");
+    await user.click(all);
+    expect(all.getAttribute("aria-checked")).toBe("true");
+    await user.click(all);
+    expect(all.getAttribute("aria-checked")).toBe("false");
+    // Choosing nothing is refused next to the events.
+    await user.type(screen.getByLabelText(enWebhooks.form.url), "https://hooks.example.com/x");
+    await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
+    expect(await screen.findByText(enWebhooks.form.eventsRequired)).toBeTruthy();
+    expect(server.creates).toEqual([]);
+    const logins = screen.getByRole("checkbox", {
+      name: enWebhooks.form.groupAll.replace("{{group}}", enWebhooks.eventGroup.credential),
+    });
+    await user.click(logins);
+    await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
+    await waitFor(() => expect(server.creates).toHaveLength(1));
+    expect(server.creates[0]).toMatchObject({
+      events: [
+        "credential.capture_failed",
+        "credential.capture_lost",
+        "credential.recovery_required",
+        "credential.needs_login",
+      ],
+    });
   });
 
   it("maps a blocked destination to its explanation", async () => {
     server.createError = { code: "BAD_REQUEST", data: { code: "webhook.destination_blocked" } };
     const user = userEvent.setup();
-    renderPage();
-    await user.click(await screen.findByRole("button", { name: enWebhooks.create.action }));
-    await user.type(screen.getByLabelText(enWebhooks.form.url), "https://10.0.0.1/x");
+    renderPage("create");
+    await user.type(await screen.findByLabelText(enWebhooks.form.url), "https://10.0.0.1/x");
     await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
     expect(await screen.findByText(enWebhooks.problem.destinationBlocked)).toBeTruthy();
   });

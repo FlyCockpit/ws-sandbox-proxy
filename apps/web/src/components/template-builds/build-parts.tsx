@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import type { AppRouterClient } from "@wssp/api/routers/index";
 import { Badge } from "@wssp/ui/components/badge";
@@ -11,6 +11,7 @@ import { SkeletonList } from "@/components/skeleton-list";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { dateTimeTitle } from "@/lib/format-date-time";
 import {
+  type BaseProblem,
   BUILD_LIST_REFETCH_MS,
   type BuildPhase,
   type BuildProblem,
@@ -21,6 +22,7 @@ import {
   buildTone,
   carriesCaptureDetail,
   disabledReasonKey,
+  failureDetailKey,
   isBuildActive,
   recipeCodeKey,
   type SourceProblem,
@@ -101,6 +103,8 @@ export function BuildErrorDetailText({
 }) {
   const { t } = useTranslation(["templates"]);
   if (!build.errorDetail) return null;
+  // A known cause is said in words by BuildFailureNextStep instead.
+  if (failureDetailKey(build.errorDetail) !== null) return null;
   if (!carriesCaptureDetail(build.errorCode))
     return (
       <span className="break-all font-mono">
@@ -108,6 +112,45 @@ export function BuildErrorDetailText({
       </span>
     );
   return <StoreDetailText detail={build.errorDetail} />;
+}
+
+/**
+ * What a known failure cause means and what to do next, in words (with a
+ * link where the fix lives). Nothing for causes without a sentence; their
+ * code stays secondary text (BuildErrorDetailText).
+ */
+export function BuildFailureNextStep({
+  build,
+  lang,
+}: {
+  build: Pick<TemplateBuild, "errorDetail">;
+  lang: string;
+}) {
+  const { t } = useTranslation(["templates"]);
+  const key = failureDetailKey(build.errorDetail);
+  if (key === null) return null;
+  return (
+    <div data-build-next-step={key} className="flex min-w-0 flex-col gap-1 text-sm">
+      <p>{t(`templates:builds.nextStep.${key}`)}</p>
+      {key === "noBuilder" ? (
+        <Link
+          to="/$lang/settings/images"
+          params={{ lang }}
+          className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+        >
+          {t("templates:builds.nextStep.openImageSettings")}
+        </Link>
+      ) : key === "hostCapacity" || key === "hostUnavailable" ? (
+        <Link
+          to="/$lang/settings/hosts"
+          params={{ lang }}
+          className="inline-flex min-h-11 items-center font-medium underline underline-offset-4"
+        >
+          {t("templates:preflight.openHosts")}
+        </Link>
+      ) : null}
+    </div>
+  );
 }
 
 /** A capture's storage cause (a build's or a "Save as template"
@@ -134,7 +177,15 @@ export function StoreDetailText({ detail }: { detail: string }) {
 export function useRecipeProblemText() {
   const { t } = useTranslation(["templates"]);
   return (problem: Extract<SourceProblem | BuildProblem, { kind: "recipe" }>) => {
-    const message = t(`templates:builds.recipe.code.${recipeCodeKey(problem.code)}`);
+    // An undeclared build arg is named, with the line that fixes it.
+    const message =
+      problem.code === "recipe_arg_undeclared" && problem.names && problem.names.length > 0
+        ? t("templates:builds.recipe.argUndeclared", {
+            count: problem.names.length,
+            names: problem.names.join(", "),
+            fix: problem.names.map((name) => `ARG ${name}`).join(", "),
+          })
+        : t(`templates:builds.recipe.code.${recipeCodeKey(problem.code)}`);
     if (problem.line !== undefined && problem.column !== undefined)
       return t("templates:builds.recipe.position", {
         line: problem.line,
@@ -146,6 +197,24 @@ export function useRecipeProblemText() {
     if (problem.stepIndex !== undefined)
       return t("templates:builds.recipe.step", { step: problem.stepIndex + 1, message });
     return message;
+  };
+}
+
+/**
+ * A FROM that names no template you can build from, with what to write
+ * instead ("FROM ubuntu-base") when you have a ready template.
+ */
+export function useBaseProblemText() {
+  const { t } = useTranslation(["templates"]);
+  return (problem: BaseProblem) => {
+    const main = t(`templates:builds.base.${problem.kind}`, { from: problem.from });
+    const next =
+      problem.examples.length > 0
+        ? t("templates:builds.base.example", {
+            examples: problem.examples.map((slug) => `FROM ${slug}`).join(", "),
+          })
+        : t("templates:builds.base.none");
+    return `${main} ${next}`;
   };
 }
 
@@ -198,7 +267,7 @@ export function BuildRow({
   now,
   showTemplate,
 }: {
-  build: TemplateBuild;
+  build: Omit<TemplateBuild, "target">;
   lang: string;
   locale: string;
   now: number;
@@ -235,6 +304,74 @@ export function BuildRow({
         </span>
       </Link>
     </li>
+  );
+}
+
+/**
+ * A template with no version yet says why, from its latest build: running
+ * (with a link to watch it) or failed (with its reason, a link to the build
+ * and Build again). Nothing is removed: the template stays, ready to build.
+ * `buildAgain` is false for community templates (only their own Try again
+ * writes them; it is on the build page).
+ */
+export function EmptyTemplateNote({
+  templateId,
+  lang,
+  buildAgain,
+}: {
+  templateId: string;
+  lang: string;
+  buildAgain: boolean;
+}) {
+  const { t } = useTranslation(["templates"]);
+  const latest = useQuery({
+    ...orpc.templateBuilds.list.queryOptions({ input: { templateId, limit: 1 } }),
+    refetchInterval: (current) =>
+      current.state.data?.items.some((build) => isBuildActive(build.state))
+        ? BUILD_LIST_REFETCH_MS
+        : false,
+    meta: { skipGlobalErrorToast: true },
+  });
+  const build = latest.data?.items[0];
+  const active = build ? isBuildActive(build.state) : false;
+  const linkClass = "inline-flex min-h-11 items-center font-medium underline underline-offset-4";
+  return (
+    <div
+      data-empty-template={build ? (active ? "building" : build.state) : "none"}
+      className="flex min-w-0 flex-col gap-1 rounded-md border border-dashed p-3 text-sm"
+    >
+      <p>
+        {active
+          ? t("templates:card.noVersionsBuilding")
+          : build?.state === "FAILED"
+            ? t("templates:card.noVersionsLastBuild")
+            : build?.state === "CANCELLED"
+              ? t("templates:card.noVersionsCancelled")
+              : t("templates:card.noVersionsHint")}{" "}
+        {build?.state === "FAILED" ? <BuildErrorText build={build} /> : null}
+      </p>
+      <div className="flex min-w-0 flex-wrap gap-x-4">
+        {build ? (
+          <Link
+            to="/$lang/dashboard/templates/builds/$buildId"
+            params={{ lang, buildId: build.id }}
+            className={linkClass}
+          >
+            {t(active ? "templates:card.watchBuild" : "templates:card.viewBuild")}
+          </Link>
+        ) : null}
+        {buildAgain && !active ? (
+          <Link
+            to="/$lang/dashboard/templates/new/build"
+            params={{ lang }}
+            search={{ template: templateId }}
+            className={linkClass}
+          >
+            {t(build ? "templates:card.buildAgain" : "templates:builds.action")}
+          </Link>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

@@ -20,6 +20,7 @@ import {
   newIntentKey,
   offersRestoreOverride,
   parseLabels,
+  parsePreviewPorts,
   renewalInput,
   restoreLoginWait,
   type SandboxDraft,
@@ -34,6 +35,8 @@ import {
 } from "./sandbox-rules";
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
+/** A draft's labels text (the page sends its label rows as this JSON). */
+const labelsJson = (labels: Record<string, string>) => JSON.stringify(labels);
 const ALL_STATES: SandboxState[] = [
   "REQUESTED",
   "SCHEDULED",
@@ -146,18 +149,20 @@ describe("requested versus host-acknowledged lifetime", () => {
 });
 
 describe("labels", () => {
-  it("parses key=value lines and refuses malformed or repeated keys", () => {
+  it("parses a JSON object of strings exactly and refuses anything else", () => {
     expect(parseLabels("")).toEqual({});
-    expect(parseLabels(" team = infra \n\nenv=dev=1 ")).toEqual({ team: "infra", env: "dev=1" });
-    expect(parseLabels("novalue")).toBeNull();
-    expect(parseLabels("=x")).toBeNull();
-    expect(parseLabels("a=1\na=2")).toBeNull();
+    expect(
+      parseLabels(labelsJson({ team: " infra ", env: "dev=1", note: "a\nTEAM=prod" })),
+    ).toEqual({ team: " infra ", env: "dev=1", note: "a\nTEAM=prod" });
+    for (const bad of ["novalue", "team=infra", "[]", "null", '{"a":1}', '{"":"x"}'])
+      expect(parseLabels(bad)).toBeNull();
   });
 
   it("a __proto__ key is kept as a key, so the server schema refuses it", () => {
-    const parsed = parseLabels("__proto__=x");
+    const text = labelsJson({ ["__proto__"]: "x" });
+    const parsed = parseLabels(text);
     expect(parsed && Object.hasOwn(parsed, "__proto__")).toBe(true);
-    expect(sandboxDraftProblems(draft({ labels: "__proto__=x" }), templates)).toContain("labels");
+    expect(sandboxDraftProblems(draft({ labels: text }), templates)).toContain("labels");
   });
 
   it("shows stored string labels sorted without coercion", () => {
@@ -193,9 +198,11 @@ describe("create draft", () => {
   });
 
   it("accepts a pinned host and one of its templates, and builds the exact server input", () => {
-    expect(sandboxDraftProblems(draft({ labels: "team=infra" }), templates)).toEqual([]);
+    expect(
+      sandboxDraftProblems(draft({ labels: labelsJson({ team: "infra" }) }), templates),
+    ).toEqual([]);
     const input = sandboxDraftInput(
-      draft({ labels: "team=infra", lifetimeMinutes: "120", onExpire: "destroy" }),
+      draft({ labels: labelsJson({ team: "infra" }), lifetimeMinutes: "120", onExpire: "destroy" }),
       "web.create.k1",
     );
     expect(input).toEqual({
@@ -258,7 +265,7 @@ describe("create draft", () => {
     [{ lifetimeMinutes: "0" }, "lifetime"],
     [{ lifetimeMinutes: String(LEASE_MAX_MS / 60_000 + 1) }, "lifetime"],
     [{ labels: "nope" }, "labelsSyntax"],
-    [{ labels: `k=${"v".repeat(1025)}` }, "labels"],
+    [{ labels: labelsJson({ k: "v".repeat(1025) }) }, "labels"],
   ] as const)("refuses %j as %s", (overrides, problem) => {
     expect(sandboxDraftProblems(draft(overrides), templates)).toContain(problem);
   });
@@ -423,10 +430,19 @@ describe("refusal mapping", () => {
 
 it("form metadata stays string-only, rejects malformed drafts and preserves textual scalar lookalikes", () => {
   expect(
-    sandboxDraftInput(draft({ labels: "count=0\nenabled=false\nempty=null" }), "k").metadata,
+    sandboxDraftInput(
+      draft({ labels: labelsJson({ count: "0", enabled: "false", empty: "null" }) }),
+      "k",
+    ).metadata,
   ).toEqual({ count: "0", enabled: "false", empty: "null" });
-  expect(() => sandboxDraftInput(draft({ labels: "duplicate=a\nduplicate=b" }), "k")).toThrow();
-  for (const labels of ["key=" + "x".repeat(1025), "k\0=v", "constructor=x", "a=" + "\ud800"]) {
+  expect(() => sandboxDraftInput(draft({ labels: "duplicate=a" }), "k")).toThrow();
+  const refused: Record<string, string>[] = [
+    { key: "x".repeat(1025) },
+    { "k\0": "v" },
+    { constructor: "x" },
+    { a: "\ud800" },
+  ];
+  for (const labels of refused.map(labelsJson)) {
     expect(sandboxDraftProblems(draft({ labels }), templates)).toContain("labels");
     expect(() => sandboxDraftInput(draft({ labels }), "k")).toThrow();
   }
@@ -494,6 +510,54 @@ it("maps exact image absence to the missing-image explanation", () => {
   expect(
     sandboxProblem({ code: "CONFLICT", data: { code: "sandbox.template_image_missing" } }),
   ).toBe("imageMissing");
+});
+
+it("a revision not verified on the host is 'not on this host', not 'not valid'", () => {
+  const error = {
+    code: "BAD_REQUEST",
+    status: 400,
+    data: { code: "sandbox.template_image_rejected" },
+  };
+  expect(sandboxProblem(error)).toBe("templateNotOnHost");
+  // Not an input mistake: a definite refusal, so private values are cleared.
+  expect(isCreateInputMistake(error)).toBe(false);
+  expect(enSandboxes.problem.templateNotOnHost).toBeTruthy();
+  expect(esSandboxes.problem.templateNotOnHost).toBeTruthy();
+});
+
+it("a refused preview tunnel has its own explanation", () => {
+  for (const reason of ["tunnel_off", "tunnel_no_host", "tunnel_not_shared"])
+    expect(
+      sandboxProblem({
+        code: "BAD_REQUEST",
+        data: { code: "UNSUPPORTED_CAPABILITY", capability: "tunnel", reason },
+      }),
+    ).toBe("tunnelUnavailable");
+  expect(esSandboxes.problem.tunnelUnavailable).toBeTruthy();
+});
+
+it("preview ports: blank sends nothing, valid ports become network.tunnelPorts, bad ones are a draft problem", () => {
+  const draft: SandboxDraft = {
+    ...DEFAULT_SANDBOX_DRAFT,
+    hostId: "h",
+    templateId: "t",
+    templateMode: "revision",
+  };
+  const templates = [{ id: "t" }];
+  expect(parsePreviewPorts("")).toBeUndefined();
+  expect(parsePreviewPorts(" 3000,8080  443 ")).toEqual([3000, 8080, 443]);
+  for (const bad of ["0", "65536", "80,80", "http", "1 2 3 4 5 6 7 8 9", "3.5"])
+    expect(parsePreviewPorts(bad)).toBeNull();
+  expect(sandboxDraftInput(draft, "web.create.k1")).not.toHaveProperty("network");
+  expect(
+    sandboxDraftInput({ ...draft, previewPorts: "8080, 3000" }, "web.create.k1").network,
+  ).toEqual({ tunnelPorts: [8080, 3000] });
+  expect(sandboxDraftProblems({ ...draft, previewPorts: "80,80" }, templates)).toContain(
+    "previewPorts",
+  );
+  expect(sandboxDraftProblems({ ...draft, previewPorts: "80" }, templates)).not.toContain(
+    "previewPorts",
+  );
 });
 
 it.each([300_000, 900_000, 17 * 60_000, 3_600_000, LEASE_MAX_MS])(

@@ -29,6 +29,11 @@ export const STATE_TONE: Record<HostConnectionState, string> = {
   deleting: "border-destructive/40 bg-destructive/10 text-destructive",
 };
 
+/** A MiB amount as a GiB number with at most one decimal (94208 → "92"); the caller adds the unit. */
+export function formatGiB(mib: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(mib / 1024);
+}
+
 export function Pill({
   tone,
   children,
@@ -111,7 +116,13 @@ export function HostRow({
               label={t("row.ram")}
               used={host.capacity.memoryReservedMiB}
               total={host.capacity.memoryBudgetMiB}
-              valueText={(used, total) => t("row.memoryUse", { used, total })}
+              valueText={(used, total, free) =>
+                t("row.memoryUse", {
+                  used: formatGiB(used, locale),
+                  total: formatGiB(total, locale),
+                  free: formatGiB(free, locale),
+                })
+              }
             />
             <Meter
               kind="vcpu"
@@ -122,7 +133,7 @@ export function HostRow({
               })}
               used={host.capacity.vcpuReserved}
               total={host.capacity.vcpuBudget}
-              valueText={(used, total) => t("row.vcpuUse", { used, total })}
+              valueText={(used, total, free) => t("row.vcpuUse", { used, total, free })}
             />
           </div>
         </div>
@@ -132,7 +143,7 @@ export function HostRow({
   );
 }
 
-function Meter({
+export function Meter({
   kind,
   label,
   used,
@@ -146,7 +157,8 @@ function Meter({
   hint?: string;
   used: number | null;
   total: number | null;
-  valueText: (used: number, total: number) => string;
+  /** Names used and free explicitly: a bare "3.9 of 4" reads as either. */
+  valueText: (used: number, total: number, free: number) => string;
 }) {
   const { t } = useTranslation("hosts");
   if (used == null || total == null || total <= 0)
@@ -156,7 +168,7 @@ function Meter({
       </p>
     );
   const percent = Math.min(100, Math.round((used / total) * 100));
-  const text = valueText(used, total);
+  const text = valueText(used, total, Math.max(0, total - used));
   return (
     <div data-host-meter={kind} title={hint} className="flex min-w-0 flex-col gap-1">
       <div className="flex min-w-0 justify-between gap-2 text-xs">

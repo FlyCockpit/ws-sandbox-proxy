@@ -174,12 +174,12 @@
     },
     "summaryLoadFailed": "No se pudieron cargar los totales.",
     "filters": {
-      "owner": "ID del propietario",
-      "ownerPlaceholder": "ID exacto del usuario",
+      "owner": "Propietario",
+      "ownerPlaceholder": "Buscar usuarios por nombre o correo",
       "host": "ID del host",
-      "hostPlaceholder": "ID exacto del host",
+      "hostPlaceholder": "Pega un ID de host",
       "sandbox": "ID del sandbox",
-      "sandboxPlaceholder": "ID exacto del sandbox",
+      "sandboxPlaceholder": "Pega un ID de sandbox",
       "hostStatus": "Conexión",
       "sandboxState": "Estado",
       "operationState": "Estado",
@@ -187,7 +187,12 @@
       "allStates": "Todos los estados",
       "invalidId": "Los ID solo usan letras, dígitos, - y _.",
       "fixToSearch": "Corrige el filtro resaltado para ver resultados.",
-      "clear": "Quitar filtros"
+      "clear": "Quitar filtros",
+      "ownerSearch": "Nombre o correo",
+      "ownerEmpty": "No hay usuarios que coincidan.",
+      "ownerClear": "Quitar filtro de propietario",
+      "ownerId": "Usuario {{id}}",
+      "idHint": "O usa Sandboxes / Operaciones en una fila."
     },
     "tables": {
       "hosts": "Hosts",
@@ -218,7 +223,6 @@
     },
     "quarantined": "En cuarentena",
     "draining": "Drenando",
-    "capacity": "{{live}} activos · {{roots}} discos de sandboxes detenidos",
     "generation": "Generación {{generation}}",
     "filterByOwner": "Mostrar solo el propietario {{id}}",
     "filterByHost": "Mostrar solo el host {{id}}",
@@ -279,7 +283,6 @@
       "disabledForFailures": "Deshabilitado por fallas",
       "pending24h": "Entregas pendientes (24 h)",
       "failed24h": "Entregas fallidas (24 h)",
-      "oldestPendingSeconds": "Más antiguo pendiente (segundos)",
       "listLabel": "Endpoints de webhook (solo host)",
       "empty": "Sin endpoints de webhook.",
       "loadFailed": "No se pudieron cargar los endpoints de webhook.",
@@ -288,8 +291,29 @@
         "enabled": "Habilitado",
         "disabled": "Deshabilitado por el propietario",
         "sustained_failures": "Deshabilitado por fallas"
-      }
-    }
+      },
+      "oldestPending": "Entrega pendiente más antigua",
+      "oldestPendingNone": "Ninguna"
+    },
+    "capacityLive_one": "{{count}} sandbox activo",
+    "capacityLive_other": "{{count}} sandboxes activos",
+    "capacityStopped_one": "{{count}} disco de sandbox detenido",
+    "capacityStopped_other": "{{count}} discos de sandboxes detenidos",
+    "ids": {
+      "owner": "ID del propietario",
+      "host": "ID del host",
+      "sandbox": "ID del sandbox",
+      "template": "ID de la plantilla",
+      "revision": "ID de la revisión",
+      "operation": "ID de la operación",
+      "endpoint": "ID del endpoint"
+    },
+    "rowActions": {
+      "sandboxes": "Sandboxes",
+      "operations": "Operaciones",
+      "filter": "Filtrar"
+    },
+    "revisionOf": "Revisión"
   },
   "overview": {
     "title": "Resumen de administración",

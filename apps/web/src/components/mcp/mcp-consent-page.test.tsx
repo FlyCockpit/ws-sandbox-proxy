@@ -75,20 +75,20 @@ async function mount() {
 }
 it("submits only the selected requested scopes, with host scopes off and own-only on by default", async () => {
   await mount();
-  expect(screen.getByRole("checkbox", { name: "hosts:read" }).getAttribute("aria-checked")).toBe(
+  expect(screen.getByRole("checkbox", { name: /hosts:read$/ }).getAttribute("aria-checked")).toBe(
     "false",
   );
-  expect(screen.getByRole("checkbox", { name: "hosts:execute" }).getAttribute("aria-checked")).toBe(
-    "false",
-  );
+  expect(
+    screen.getByRole("checkbox", { name: /hosts:execute$/ }).getAttribute("aria-checked"),
+  ).toBe("false");
   expect(
     screen
       .getByRole("checkbox", { name: enSdkKeys.form.ownSandboxesOnly })
       .getAttribute("aria-checked"),
   ).toBe("true");
-  expect(screen.queryByRole("checkbox", { name: "sandboxes:destroy" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: /sandboxes:destroy$/ })).toBeNull();
   const user = userEvent.setup();
-  await user.click(screen.getByRole("checkbox", { name: "hosts:read" }));
+  await user.click(screen.getByRole("checkbox", { name: /hosts:read$/ }));
   await user.click(screen.getByRole("checkbox", { name: enAgents.consent.offline }));
   await user.click(screen.getByRole("button", { name: enAgents.consent.allow }));
   await waitFor(() =>

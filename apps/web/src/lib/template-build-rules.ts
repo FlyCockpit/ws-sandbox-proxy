@@ -87,6 +87,40 @@ export function carriesCaptureDetail(code: string | null): boolean {
   return code !== null && CAPTURE_DETAIL_CODES.has(code);
 }
 
+/**
+ * Failure details with a sentence and a next step of their own, so a raw
+ * code ("template.build_no_builder") is never the primary text. Values are
+ * the server's typed causes (`errorDetail`), code-shaped, never message text.
+ */
+const FAILURE_DETAIL_KEYS: Readonly<Record<string, string>> = {
+  "template.build_no_builder": "noBuilder",
+  "sandbox.host_capacity": "hostCapacity",
+  placement_timeout: "placementTimeout",
+  "sandbox.host_unavailable": "hostUnavailable",
+};
+export type FailureDetailKey =
+  | "noBuilder"
+  | "hostCapacity"
+  | "placementTimeout"
+  | "hostUnavailable";
+
+/** The sentence key of a known failure detail, or null (shown raw, as secondary text). */
+export function failureDetailKey(detail: string | null): FailureDetailKey | null {
+  if (detail === null) return null;
+  return (FAILURE_DETAIL_KEYS[detail] as FailureDetailKey | undefined) ?? null;
+}
+
+/**
+ * A step's shown state: in a finished build a step still "pending" never
+ * ran (the build failed or was cancelled before it), so it says so.
+ */
+export function shownStepState(
+  buildState: BuildState,
+  stepState: "pending" | "running" | "succeeded" | "failed",
+): "pending" | "running" | "succeeded" | "failed" | "notRun" {
+  return stepState === "pending" && !isBuildActive(buildState) ? "notRun" : stepState;
+}
+
 /** Storage failure details with a sentence of their own (`build_store_failed`). */
 const STORE_DETAIL_KEYS = [
   "upload_stalled",
@@ -164,27 +198,31 @@ const ARG_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /** Names that look like secrets: build args and ENV are stored in plain text (§6.2). */
 const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|API_?KEY)/i;
 
-export type ParsedArgs = { args: Record<string, string>; invalidLine: number | null };
+export type ParsedArgs = { args: Record<string, string>; invalidId: string | null };
 
-/** `NAME=value` per line; blank lines are skipped. The first bad line is reported (1-based). */
-export function parseBuildArgs(text: string): ParsedArgs {
-  const args: Record<string, string> = {};
-  const lines = text.split(/\r?\n/);
-  for (const [index, raw] of lines.entries()) {
-    if (raw.trim() === "") continue;
-    const eq = raw.indexOf("=");
-    const name = eq < 0 ? raw.trim() : raw.slice(0, eq).trim();
-    const value = eq < 0 ? "" : raw.slice(eq + 1);
+/**
+ * Build-arg rows as the API's map, values exactly as typed (a newline stays a
+ * newline: the API and recipe accept any string up to 4096 characters). Blank
+ * rows are skipped; the first row with a bad name, an over-long value or past
+ * the 64-arg limit is reported by id, and then nothing is returned.
+ */
+export function buildArgsFromRows(
+  rows: readonly { id: string; key: string; value: string }[],
+): ParsedArgs {
+  // Null prototype: a `__proto__` name stays an own key.
+  const args = Object.create(null) as Record<string, string>;
+  for (const row of rows) {
+    const name = row.key.trim();
+    if (name === "" && row.value === "") continue;
     if (
-      eq < 0 ||
       !ARG_NAME.test(name) ||
-      value.length > 4096 ||
-      (!(name in args) && Object.keys(args).length >= BUILD_ARGS_MAX)
+      row.value.length > 4096 ||
+      (!Object.hasOwn(args, name) && Object.keys(args).length >= BUILD_ARGS_MAX)
     )
-      return { args: {}, invalidLine: index + 1 };
-    args[name] = value;
+      return { args: {}, invalidId: row.id };
+    args[name] = row.value;
   }
-  return { args, invalidLine: null };
+  return { args, invalidId: null };
 }
 
 /** Build-arg and ENV names that look like secrets (warned, never refused). */
@@ -219,11 +257,21 @@ export function egressDomains(text: string): string[] {
     .filter((domain) => domain.length > 0);
 }
 
+/** A recipe refusal; `names` lists the build args no ARG declares (recipe_arg_undeclared). */
+type RecipeProblem = {
+  kind: "recipe";
+  code: string;
+  line?: number;
+  column?: number;
+  stepIndex?: number;
+  names?: string[];
+};
+
 export type SourceProblem =
   | { kind: "empty" }
   | { kind: "json" }
   | { kind: "egressConflict" }
-  | { kind: "recipe"; code: string; line?: number; column?: number; stepIndex?: number };
+  | RecipeProblem;
 
 export type ComposedSource =
   | { ok: true; body: { recipe: Record<string, unknown> } | { dockerfile: string } }
@@ -270,7 +318,41 @@ export function composeBuildSource(
   return { ok: true, body: { dockerfile: `${base}${lines.join("\n")}\n` } };
 }
 
-export type SourceCheck = { problem: SourceProblem | null; hasCopy: boolean };
+/** The FROM base as written: a template slug (with its tag) or a revision id. */
+export type BuildBase = { template: string; tag?: string } | { revisionId: string };
+
+export type SourceCheck = {
+  problem: SourceProblem | null;
+  hasCopy: boolean;
+  /** The parsed FROM, when the source parsed. */
+  from?: BuildBase;
+};
+
+function compileSource(
+  body: { recipe: Record<string, unknown> } | { dockerfile: string },
+  buildArgs: Record<string, string>,
+) {
+  return "dockerfile" in body
+    ? compileDockerfile(body.dockerfile, { buildArgs })
+    : parseRecipe(body.recipe, { buildArgs });
+}
+
+/** The build args the source's ARG steps do not declare (for the refusal's text). */
+function undeclaredArgs(
+  body: { recipe: Record<string, unknown> } | { dockerfile: string },
+  buildArgs: Record<string, string>,
+): string[] {
+  try {
+    const declared = new Set(
+      compileSource(body, {}).recipe.steps.flatMap((step) =>
+        step.type === "arg" ? [step.name] : [],
+      ),
+    );
+    return Object.keys(buildArgs).filter((name) => !declared.has(name));
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Parse the composed source with the server's own recipe package, so a
@@ -282,13 +364,11 @@ export function checkBuildSource(
   buildArgs: Record<string, string>,
 ): SourceCheck {
   try {
-    const parsed =
-      "dockerfile" in body
-        ? compileDockerfile(body.dockerfile, { buildArgs })
-        : parseRecipe(body.recipe, { buildArgs });
-    return { problem: null, hasCopy: parsed.plan.hasCopy };
+    const parsed = compileSource(body, buildArgs);
+    return { problem: null, hasCopy: parsed.plan.hasCopy, from: parsed.recipe.from };
   } catch (error) {
-    if (error instanceof RecipeError)
+    if (error instanceof RecipeError) {
+      const names = error.code === "recipe_arg_undeclared" ? undeclaredArgs(body, buildArgs) : [];
       return {
         problem: {
           kind: "recipe",
@@ -296,11 +376,68 @@ export function checkBuildSource(
           ...(error.line === undefined ? {} : { line: error.line }),
           ...(error.column === undefined ? {} : { column: error.column }),
           ...(error.stepIndex === undefined ? {} : { stepIndex: error.stepIndex }),
+          ...(names.length > 0 ? { names } : {}),
         },
         hasCopy: false,
       };
+    }
     return { problem: { kind: "recipe", code: "recipe_invalid" }, hasCopy: false };
   }
+}
+
+/** FROM as the person wrote it (`slug`, `slug:tag` or `revision/<id>`). */
+export function baseSelector(from: BuildBase): string {
+  if ("revisionId" in from) return `revision/${from.revisionId}`;
+  return from.tag === undefined ? from.template : `${from.template}:${from.tag}`;
+}
+
+/** What the build form knows about the caller's templates (active, first page). */
+export type KnownTemplate = { id: string; slug: string; versions: { count: number } };
+
+/**
+ * A FROM that cannot resolve: not one of your templates, one with no ready
+ * version (both known before submit), or refused by the server (`fromNotFound`).
+ */
+export type BaseProblem = {
+  kind: "fromUnknown" | "fromNoVersion" | "fromNotFound";
+  from: string;
+  /** A few slugs that would work (templates with a ready version). */
+  examples: string[];
+};
+
+/** How many of the caller's template slugs a FROM error suggests. */
+const BASE_EXAMPLES = 2;
+
+/** Ready templates to suggest after "FROM must name one of your templates". */
+export function baseExamples(templates: readonly KnownTemplate[]): string[] {
+  return templates
+    .filter((template) => template.versions.count > 0)
+    .slice(0, BASE_EXAMPLES)
+    .map((template) => template.slug);
+}
+
+/**
+ * FROM checked against the caller's templates before submit. The server
+ * resolves FROM to one of the owner's own templates (by slug or id) with a
+ * ready version; `ubuntu:24.04` is a registry image, not a template, and was
+ * refused only after submit as "not found". Null when it is fine or the list
+ * is incomplete (`templates` null: not loaded, or more pages than read); the
+ * server stays the authority (a tag that does not exist is its to refuse).
+ */
+export function checkBuildBase(
+  from: BuildBase | undefined,
+  templates: readonly KnownTemplate[] | null,
+): BaseProblem | null {
+  if (from === undefined || templates === null || "revisionId" in from) return null;
+  const match = templates.find(
+    (template) => template.slug === from.template || template.id === from.template,
+  );
+  if (match && match.versions.count > 0) return null;
+  return {
+    kind: match ? "fromNoVersion" : "fromUnknown",
+    from: baseSelector(from),
+    examples: baseExamples(templates),
+  };
 }
 
 /** The label key of a recipe refusal code (server-only codes included). */
@@ -323,7 +460,9 @@ export function recipeCodeKey(code: string): string {
 // Typed refusals of the build routes
 
 export type BuildProblem =
-  | { kind: "recipe"; code: string; line?: number; column?: number; stepIndex?: number }
+  | RecipeProblem
+  /** FROM did not resolve to a template version you can build from (create only). */
+  | { kind: "baseNotFound" }
   | { kind: "disabled"; reason: string }
   | { kind: "noBuilder" }
   | { kind: "concurrency"; max: number | null }
@@ -356,8 +495,17 @@ function dataOf(error: unknown): Record<string, unknown> {
 
 const num = (value: unknown) => (typeof value === "number" ? value : undefined);
 
-export function buildProblem(error: unknown): BuildProblem {
+/**
+ * A build route's refusal as a typed problem. `createBuild` marks the build
+ * create call, where a template miss is the FROM base (see below).
+ */
+export function buildProblem(error: unknown, route?: "createBuild"): BuildProblem {
   const data = dataOf(error);
+  // Build create resolves FROM before anything else it looks up by template,
+  // so a template miss there is the base (the target template was already
+  // loaded by the page, or is created from its slug).
+  if (route === "createBuild" && data.code === "sandbox.template_not_found")
+    return { kind: "baseNotFound" };
   switch (data.code) {
     case "template.build_recipe_invalid": {
       const line = num(data.line);

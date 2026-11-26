@@ -1,26 +1,13 @@
-import { useForm, useStore } from "@tanstack/react-form";
-import {
-  type QueryClient,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { type QueryClient, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "@wssp/ui/components/badge";
-import { Button } from "@wssp/ui/components/button";
+import { buttonVariants } from "@wssp/ui/components/button";
 import { Checkbox } from "@wssp/ui/components/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@wssp/ui/components/dialog";
-import { TextField } from "@wssp/ui/components/text-field";
+import { cn } from "@wssp/ui/lib/utils";
 import { Plus } from "lucide-react";
-import { useState } from "react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
-import { OneTimeSecretPanel } from "@/components/credentials/credential-parts";
+import { z } from "zod";
 import { DASHBOARD_PAGE_LIMIT } from "@/components/dashboard/resource-list";
 import { EmptyState } from "@/components/empty-state";
 import { LoadMore } from "@/components/load-more";
@@ -28,14 +15,13 @@ import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SettingsBackLink } from "@/components/settings/settings-back-link";
 import { SkeletonList } from "@/components/skeleton-list";
-import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
+import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import {
   WEBHOOK_EVENT_TYPES,
   type WebhookDraft,
-  type WebhookProblem,
+  type WebhookDraftProblem,
   webhookDraftProblems,
   webhookHost,
-  webhookProblem,
 } from "@/lib/webhook-rules";
 import { orpc } from "@/utils/orpc";
 
@@ -49,7 +35,7 @@ export function invalidateWebhooks(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: orpc.webhooks.key() });
 }
 
-const DEFAULT_WEBHOOK_DRAFT: WebhookDraft = {
+export const DEFAULT_WEBHOOK_DRAFT: WebhookDraft = {
   url: "",
   description: "",
   events: ["sandbox.ready", "sandbox.create_failed", "sandbox.destroyed"],
@@ -74,8 +60,6 @@ export function WebhooksPage({ lang }: { lang: string }) {
     meta: { skipGlobalErrorToast: true },
   });
   useTwoFactorRedirectOnError(lang, [status.error, endpoints.error]);
-  const [creating, setCreating] = useState(false);
-  const [revealed, setRevealed] = useState<string | null>(null);
   const rows = endpoints.data?.pages.flatMap((page) => page.items);
 
   return (
@@ -86,27 +70,18 @@ export function WebhooksPage({ lang }: { lang: string }) {
         description={t("webhooks:description")}
         actions={
           configured ? (
-            <Button
-              type="button"
-              size="touch"
-              disabled={revealed !== null}
-              onClick={() => setCreating(true)}
+            <Link
+              to="/$lang/settings/webhooks/new"
+              params={{ lang }}
+              data-webhook-add=""
+              className={cn(buttonVariants({ size: "touch" }), "self-start")}
             >
               <Plus aria-hidden="true" />
               {t("webhooks:create.action")}
-            </Button>
+            </Link>
           ) : null
         }
       />
-      {revealed ? (
-        <OneTimeSecretPanel
-          secret={revealed}
-          label={t("webhooks:create.secretLabel")}
-          onDone={() => setRevealed(null)}
-        >
-          <p className="text-sm text-muted-foreground">{t("webhooks:create.secretHint")}</p>
-        </OneTimeSecretPanel>
-      ) : null}
       {status.isPending ? (
         <SkeletonList layout="resource" count={2} className="rounded-xl border" />
       ) : !configured ? (
@@ -191,48 +166,162 @@ export function WebhooksPage({ lang }: { lang: string }) {
           )}
         </QueryBoundary>
       )}
-      {creating ? (
-        <CreateWebhookDialog
-          lang={lang}
-          onClose={() => setCreating(false)}
-          onCreated={(secret) => {
-            setRevealed(secret);
-            setCreating(false);
-          }}
-        />
-      ) : null}
     </div>
   );
 }
 
+type WebhookEvent = (typeof WEBHOOK_EVENT_TYPES)[number];
+
+/** Events by resource ("sandbox.ready" → "sandbox"), in the catalog's order. */
+function webhookEventGroups(): [string, WebhookEvent[]][] {
+  const groups = new Map<string, WebhookEvent[]>();
+  for (const event of WEBHOOK_EVENT_TYPES) {
+    const group = event.slice(0, event.indexOf("."));
+    groups.set(group, [...(groups.get(group) ?? []), event]);
+  }
+  return [...groups];
+}
+
+/**
+ * Event choice grouped by resource, each group with a tri-state "all" box
+ * (checked, mixed, clear). Every event shows its human label with the raw
+ * event id underneath for developers.
+ */
 export function EventCheckboxes({
   value,
   onChange,
+  errorId,
+  invalid = false,
 }: {
-  value: readonly (typeof WEBHOOK_EVENT_TYPES)[number][];
-  onChange: (next: (typeof WEBHOOK_EVENT_TYPES)[number][]) => void;
+  value: readonly WebhookEvent[];
+  onChange: (next: WebhookEvent[]) => void;
+  /** The inline error's id while "choose at least one" is showing. */
+  errorId?: string;
+  invalid?: boolean;
 }) {
   const { t } = useTranslation(["webhooks"]);
+  const idBase = useId();
+  const ordered = (chosen: ReadonlySet<WebhookEvent>) =>
+    WEBHOOK_EVENT_TYPES.filter((item) => chosen.has(item));
   return (
-    <fieldset className="flex min-w-0 flex-col gap-1">
+    <fieldset
+      data-webhook-events=""
+      aria-describedby={invalid ? errorId : undefined}
+      className="flex min-w-0 flex-col gap-3"
+    >
       <legend className="mb-1 text-sm font-medium">{t("webhooks:form.events")}</legend>
-      {WEBHOOK_EVENT_TYPES.map((event) => (
-        <label key={event} className="flex min-h-11 items-center gap-3 text-sm">
-          <Checkbox
-            checked={value.includes(event)}
-            onCheckedChange={(checked) =>
-              onChange(
-                checked
-                  ? WEBHOOK_EVENT_TYPES.filter((item) => item === event || value.includes(item))
-                  : value.filter((item) => item !== event),
-              )
-            }
-          />
-          {t(`webhooks:event.${event}`)}
-        </label>
-      ))}
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+        {webhookEventGroups().map(([group, events], index) => {
+          const chosen = events.filter((event) => value.includes(event));
+          const all = chosen.length === events.length;
+          const some = chosen.length > 0 && !all;
+          const titleId = `${idBase}-${group}`;
+          return (
+            <div
+              key={group}
+              role="group"
+              aria-labelledby={titleId}
+              data-event-group={group}
+              className="flex min-w-0 flex-col gap-1 rounded-lg border p-3"
+            >
+              {events.length > 1 ? (
+                <label className="flex min-h-11 items-center gap-3 text-sm">
+                  <Checkbox
+                    data-event-group-all={group}
+                    checked={all}
+                    indeterminate={some}
+                    aria-invalid={invalid && index === 0 ? true : undefined}
+                    aria-describedby={invalid && index === 0 ? errorId : undefined}
+                    aria-label={t("webhooks:form.groupAll", {
+                      group: t(`webhooks:eventGroup.${group}`),
+                    })}
+                    onCheckedChange={(checked) => {
+                      const next = new Set(value);
+                      for (const event of events) {
+                        if (checked) next.add(event);
+                        else next.delete(event);
+                      }
+                      onChange(ordered(next));
+                    }}
+                  />
+                  <span id={titleId} className="font-medium">
+                    {t(`webhooks:eventGroup.${group}`)}
+                  </span>
+                  <span className="ms-auto text-xs text-muted-foreground tabular-nums">
+                    {t("webhooks:form.groupCount", { chosen: chosen.length, total: events.length })}
+                  </span>
+                </label>
+              ) : (
+                <span id={titleId} className="flex min-h-11 items-center text-sm font-medium">
+                  {t(`webhooks:eventGroup.${group}`)}
+                </span>
+              )}
+              <ul className={cn("flex min-w-0 flex-col", events.length > 1 && "ps-7")}>
+                {events.map((event) => (
+                  <li key={event}>
+                    <label className="flex min-h-11 min-w-0 items-center gap-3 py-1 text-sm">
+                      <Checkbox
+                        checked={value.includes(event)}
+                        aria-invalid={
+                          invalid && index === 0 && events.length === 1 ? true : undefined
+                        }
+                        onCheckedChange={(checked) => {
+                          const next = new Set(value);
+                          if (checked) next.add(event);
+                          else next.delete(event);
+                          onChange(ordered(next));
+                        }}
+                      />
+                      <span className="min-w-0">
+                        <span className="block">{t(`webhooks:event.${event}`)}</span>
+                        <span className="block font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                          {event}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </fieldset>
   );
+}
+
+/** The short name of an operation-kinds choice, for a collapsed section's summary. */
+export function kindsSummaryKey(kinds: WebhookDraft["kinds"]) {
+  return kinds === "all"
+    ? "webhooks:form.kindsAllShort"
+    : kinds === "custom"
+      ? "webhooks:form.kindsCustomShort"
+      : "webhooks:form.kindsDefaultShort";
+}
+
+/**
+ * The draft rules as a form schema, so each problem shows next to its own
+ * field (URL, events, description) instead of in a list at the bottom.
+ */
+export function webhookDraftSchema(t: (key: string) => string) {
+  const field: Record<WebhookDraftProblem, "url" | "events" | "description"> = {
+    urlRequired: "url",
+    urlTooLong: "url",
+    destinationInvalid: "url",
+    eventsRequired: "events",
+    descriptionTooLong: "description",
+  };
+  return z.custom<WebhookDraft>().superRefine((draft, ctx) => {
+    for (const problem of webhookDraftProblems(draft))
+      ctx.addIssue({
+        code: "custom",
+        path: [field[problem]],
+        message:
+          problem === "destinationInvalid"
+            ? t("webhooks:problem.destinationInvalid")
+            : t(`webhooks:form.${problem}`),
+      });
+  });
 }
 
 export function KindsChoice({
@@ -270,141 +359,5 @@ export function KindsChoice({
         </label>
       ))}
     </fieldset>
-  );
-}
-
-function CreateWebhookDialog({
-  lang,
-  onClose,
-  onCreated,
-}: {
-  lang: string;
-  onClose: () => void;
-  onCreated: (secret: string) => void;
-}) {
-  const { t } = useTranslation(["webhooks", "common"]);
-  const queryClient = useQueryClient();
-  const redirect = useTwoFactorRedirect(lang);
-  const [problem, setProblem] = useState<WebhookProblem | null>(null);
-  const [pending, setPending] = useState(false);
-  const [attempted, setAttempted] = useState(false);
-  const form = useForm({
-    defaultValues: DEFAULT_WEBHOOK_DRAFT,
-    onSubmit: async ({ value }) => {
-      setAttempted(true);
-      if (webhookDraftProblems(value).length > 0) return;
-      setProblem(null);
-      setPending(true);
-      try {
-        const result = await orpc.webhooks.create.call({
-          url: value.url.trim(),
-          ...(value.description.trim() ? { description: value.description.trim() } : {}),
-          events: [...value.events],
-          ...(value.kinds === "all" ? { operationKinds: "all" as const } : {}),
-        });
-        onCreated(result.secret);
-      } catch (error) {
-        if (!redirect(error)) setProblem(webhookProblem(error));
-      } finally {
-        setPending(false);
-        invalidateWebhooks(queryClient);
-      }
-    },
-  });
-  const values = useStore(form.store, (state) => state.values);
-  const problems = attempted ? webhookDraftProblems(values) : [];
-
-  return (
-    // The dialog cannot be dismissed mid-create, so a created secret is never lost.
-    <Dialog open onOpenChange={(open) => (open || pending ? undefined : onClose())}>
-      <DialogContent
-        showCloseButton={false}
-        className="max-h-[calc(100dvh-var(--safe-area-top)-var(--safe-area-bottom)-2rem)] overflow-x-hidden overflow-y-auto sm:max-w-lg"
-      >
-        <DialogHeader>
-          <DialogTitle>{t("webhooks:create.title")}</DialogTitle>
-          <DialogDescription>{t("webhooks:create.description")}</DialogDescription>
-        </DialogHeader>
-        <form
-          noValidate
-          className="flex min-w-0 flex-col gap-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            void form.handleSubmit();
-          }}
-        >
-          <form.Field name="url">
-            {(field) => (
-              <TextField
-                field={field}
-                type="url"
-                label={t("webhooks:form.url")}
-                description={t("webhooks:form.urlHint")}
-                autoComplete="off"
-                inputClassName="min-h-11"
-                maxLength={2048}
-              />
-            )}
-          </form.Field>
-          <form.Field name="description">
-            {(field) => (
-              <TextField
-                field={field}
-                label={t("webhooks:form.description")}
-                autoComplete="off"
-                inputMode="text"
-                inputClassName="min-h-11"
-                maxLength={200}
-              />
-            )}
-          </form.Field>
-          <form.Field name="events">
-            {(field) => <EventCheckboxes value={field.state.value} onChange={field.handleChange} />}
-          </form.Field>
-          {values.events.includes("operation.completed") ? (
-            <form.Field name="kinds">
-              {(field) => (
-                <KindsChoice
-                  value={field.state.value}
-                  onChange={field.handleChange}
-                  allowCustom={false}
-                />
-              )}
-            </form.Field>
-          ) : null}
-          {problems.length > 0 ? (
-            <div role="alert" className="text-sm text-destructive">
-              {problems.map((issue) => (
-                <p key={issue}>
-                  {issue === "destinationInvalid"
-                    ? t("webhooks:problem.destinationInvalid")
-                    : t(`webhooks:form.${issue}`)}
-                </p>
-              ))}
-            </div>
-          ) : null}
-          {problem ? (
-            <p role="alert" className="text-sm text-destructive">
-              {t(`webhooks:problem.${problem}`)}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="touch"
-              disabled={pending}
-              onClick={onClose}
-            >
-              {t("common:actions.cancel")}
-            </Button>
-            <Button type="submit" size="touch" disabled={pending}>
-              {pending ? t("webhooks:create.submitting") : t("webhooks:create.submit")}
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }

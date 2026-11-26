@@ -22,6 +22,7 @@ import {
   listPoolMembers,
   listPoolQueue,
   listPools,
+  poolCardSummaries,
   previewLeaseLowering,
   removePoolMember,
   updatePool,
@@ -161,9 +162,16 @@ export const sandboxPoolsRouter = {
     .handler(({ input, context }) =>
       listPoolInvites(sessionPrincipal(context.session.user.id), input),
     ),
-  list: protectedProcedure
-    .input(listPoolsInput)
-    .handler(({ input, context }) => listPools(sessionPrincipal(context.session.user.id), input)),
+  /** The owner's pools, each with its card summary (hosts, people, capacity, longest lifetime). */
+  list: protectedProcedure.input(listPoolsInput).handler(async ({ input, context }) => {
+    const owner = sessionPrincipal(context.session.user.id);
+    const page = await listPools(owner, input);
+    const summaries = await poolCardSummaries(owner, page.items);
+    return {
+      ...page,
+      items: page.items.map((pool) => ({ ...pool, summary: summaries.get(pool.id) ?? null })),
+    };
+  }),
   get: protectedProcedure
     .input(poolIdInput)
     .handler(({ input, context }) => getPool(sessionPrincipal(context.session.user.id), input)),

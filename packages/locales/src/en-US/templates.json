@@ -4,7 +4,7 @@
   "listRegion": "Registered templates",
   "empty": {
     "title": "No templates yet",
-    "description": "The quickest first template is Create from community image: a tested Ubuntu image, prepared for you on one of your hosts or pools. Or register a VM image already in a host's Incus store.",
+    "description": "The quickest first template: New template, then From a community image. It's a tested Ubuntu image, prepared for you on one of your hosts or pools.",
     "retiredTitle": "No archived templates",
     "retiredDescription": "Templates you archive stay listed here, and on the sandboxes that used them."
   },
@@ -23,7 +23,8 @@
     "tools": "sh, setsid, stat, find, mkdir, mv, rm, kill, sync and python3 are installed.",
     "readiness": "Registration checks only the image on the host; the guest agent, user and tools are checked when each sandbox starts, and a sandbox that fails them is not reported ready.",
     "docsLink": "How to qualify an image",
-    "docsPath": "How to qualify an image: {{path}} in the WS Sandbox Proxy source repository."
+    "docsPath": "How to qualify an image: {{path}} in the WS Sandbox Proxy source repository.",
+    "about": "About templates and image requirements"
   },
   "usability": {
     "usable": "Available",
@@ -61,14 +62,13 @@
   "archive": {
     "action": "Archive",
     "title": "Archive {{label}}?",
-    "description": "Prevent new creates through this logical template. Its revisions, host associations and existing sandboxes are retained. This cannot be undone.",
-    "confirm": "Archive",
+    "description": "New sandboxes can't start from {{label}} after this. Sandboxes already using it keep running, and its versions stay listed under Archived. Archiving can't be undone: to use the image again, create a new template from it.",
+    "confirm": "Archive template",
     "pending": "Archiving…",
     "done": "{{label}} archived",
     "blockedInUse": "Delete the sandboxes that use this template first (stopped ones count)."
   },
   "register": {
-    "action": "Register template",
     "title": "Register a template",
     "description": "The host looks the image up in its local Incus store and reports its fingerprint and architecture. Nothing is downloaded or built.",
     "submit": "Check and register",
@@ -110,8 +110,6 @@
     "guestShell": "Shell",
     "guestVersion": "Guest version (optional)",
     "guestVersionHint": "A free-form note, for example the image build date.",
-    "envs": "Default environment (JSON)",
-    "envsHint": "Private JSON string map: up to 64 entries, names 128 UTF-8 bytes, values 4096 bytes, sorted JSON 16384 bytes total. Sandbox and command values override these defaults. HOME, SHELL and TERM are reserved. Changing defaults requires a new revision.",
     "cpuCount": "Default vCPUs",
     "memoryMiB": "Default memory (MiB)",
     "sizeHint": "Revision defaults: 1–32 vCPUs, 512–65536 MiB in steps of 256, and a 1–2048 GiB default root disk (32 if unchanged). The minimum root disk is the image's own root: sandboxes may not be smaller, and a larger root grows on first boot. Leave it blank to use the default as the minimum. Each append saves a new immutable revision; fields do not inherit another revision.",
@@ -157,9 +155,7 @@
     "envs": "Enter a valid bounded environment map.",
     "imageMissing": "The image is missing from this host. Restore it in the host's local image store, then try again."
   },
-  "logicalActive": "Active template",
-  "appendRevision": "Add revision",
-  "revisions": "Template versions",
+  "revisions": "Versions",
   "revisionsFailed": "Could not load revisions.",
   "revisionNumber": "Revision {{revision}}",
   "moreRevisions": "Load more revisions",
@@ -188,7 +184,7 @@
   "copyRevision": "Copy revision ID",
   "revisionSize": "Defaults: {{cpuCount}} vCPU · {{memoryMiB}} MiB · {{defaultDiskGiB}} GiB disk",
   "revisionMinDisk": "Minimum disk: {{minDiskGiB}} GiB (the image's root; smaller sandboxes are refused)",
-  "appendWithSize": "Append with these defaults",
+  "appendWithSize": "New version with these defaults",
   "images": {
     "source": {
       "manual": "Manual",
@@ -256,7 +252,7 @@
     }
   },
   "builds": {
-    "action": "Build",
+    "action": "Build new version",
     "newAction": "Build a template",
     "title": "Template builds",
     "description": "A build runs a recipe or Dockerfile in a build VM and captures the result as a new revision of the template.",
@@ -368,7 +364,8 @@
       "pending": "Pending",
       "running": "Running",
       "succeeded": "Succeeded",
-      "failed": "Failed"
+      "failed": "Failed",
+      "notRun": "Not run"
     },
     "disabled": {
       "off": "Template builds are turned off on this server.",
@@ -421,7 +418,9 @@
         "timeout_invalid": "The time limit is invalid.",
         "wait_needs_pool": "Waiting for capacity needs a pool target.",
         "other": "The recipe was refused."
-      }
+      },
+      "argUndeclared_one": "Build arg {{names}} is not declared. Add the line {{fix}} to the Dockerfile, or remove the arg.",
+      "argUndeclared_other": "Build args {{names}} are not declared. Add the lines {{fix}} to the Dockerfile, or remove the args."
     },
     "problem": {
       "empty": "Enter a Dockerfile or recipe.",
@@ -445,7 +444,8 @@
       "invalid": "Some fields are invalid.",
       "generic": "Something went wrong. Try again.",
       "communityKeyScope": "Community templates need access to every template and revision.",
-      "communityManaged": "This community template is managed by WS Sandbox Proxy. It changes only through Refresh now and Try again."
+      "communityManaged": "This community template is managed by WS Sandbox Proxy. It changes only through Refresh now and Try again.",
+      "baseNotFound": "FROM didn't match a ready version of one of your templates."
     },
     "revisionBadge": {
       "build": "Build",
@@ -491,7 +491,7 @@
       "noPools": "You can't use any pools.",
       "targetRequired": "Choose where the build runs.",
       "args": "Build args",
-      "argsHint": "One NAME=value per line. Each name must be declared with ARG.",
+      "argsHint": "Each name must be declared with an ARG line in the Dockerfile.",
       "argsInvalid": "Line {{line}}: use NAME=value (letters, digits and _; at most 64 args).",
       "secretWarning": "These names look like secrets: {{names}}. Build args and ENV are stored and shown in plain text. Never put secrets in a build.",
       "egress": "Network egress",
@@ -583,7 +583,22 @@
       "copyTail": "Copy the failed step's output",
       "buildId": "Build ID",
       "contextDigest": "Context digest",
-      "resultRevisionId": "Revision ID"
+      "resultRevisionId": "Revision ID",
+      "notRun": "This step didn't run: the build ended before it."
+    },
+    "base": {
+      "fromUnknown": "FROM {{from}} isn't one of your templates. FROM must name one of your templates, not a registry image.",
+      "fromNoVersion": "FROM {{from}} names a template with no ready version yet. Build or prepare a version of it first, or name another template.",
+      "fromNotFound": "FROM {{from}} didn't match a ready version of one of your templates. FROM must name one of your templates (slug, or slug:tag).",
+      "example": "For example: {{examples}}.",
+      "none": "You have no ready template yet: create one from a community image first."
+    },
+    "nextStep": {
+      "noBuilder": "No host could run the build. Builds run on a connected host you own with builds on. To use other people's hosts in a shared pool, turn on \"Run my builds on other people's builder hosts\" in Settings › Images & builds (their host must also accept builds from others), or ask the pool's owner.",
+      "hostCapacity": "The builder host didn't have enough free memory, vCPU or disk. Wait for sandboxes there to stop, build on another host or pool, or ask for less in Build resources. Then build again.",
+      "placementTimeout": "No builder host took the build before its time limit. Check that the host is connected, or build on another host or pool. Then build again.",
+      "hostUnavailable": "The builder host wasn't available (offline, draining or switched off for this pool). Check it on the Hosts page, or build on another host or pool. Then build again.",
+      "openImageSettings": "Open Settings › Images & builds"
     }
   },
   "revisionId": "Revision ID",
@@ -591,7 +606,6 @@
   "manageRevisionTitle": "Manage {{revision}}",
   "manageRevisionDescription": "Tags, host images and retirement for this revision.",
   "community": {
-    "action": "Create from community image",
     "badge": "Community",
     "badgeHint": "A base image managed by WS Sandbox Proxy from a tested community image.",
     "unavailable": {
@@ -615,7 +629,7 @@
       "pending": "Creating…",
       "started": "Preparation started.",
       "existing": "You already have this community template.",
-      "peerWarning": "This server stores images on peer hosts. A community base is only as available as the hosts that hold it; S3 storage is recommended."
+      "peerWarning": "This server keeps images on hosts, not in shared storage, so this template works only while a host that holds its image is connected. Keep the host or pool you build on connected."
     },
     "header": {
       "refresh": "Refresh automatically",
@@ -646,5 +660,123 @@
         "other": "Nothing was started."
       }
     }
+  },
+  "subtitle": "Images your sandboxes start from.",
+  "chooser": {
+    "action": "New template",
+    "title": "New template",
+    "description": "Choose where the image comes from.",
+    "community": "From a community image",
+    "communityDetail": "A tested Ubuntu image, prepared and checked for you on one of your hosts or pools.",
+    "recommended": "Recommended",
+    "build": "Build from a recipe",
+    "buildDetail": "Start from a template you can use and add steps with a Dockerfile or recipe.",
+    "register": "Register an existing image",
+    "registerDetail": "Advanced: use a VM image that is already in a host's local Incus store."
+  },
+  "status": {
+    "ready": "Ready",
+    "noVersions": "No versions yet",
+    "archived": "Archived"
+  },
+  "card": {
+    "registerVersion": "Register a version",
+    "more": "More actions for {{label}}",
+    "versions_one": "{{count}} version · latest v{{latest}}",
+    "versions_other": "{{count}} versions · latest v{{latest}}",
+    "noVersions": "No versions yet",
+    "noVersionsHint": "No versions yet. Build one or register an image to make this template usable.",
+    "created": "created {{when}}",
+    "archived": "archived {{when}}",
+    "showDetails": "Show versions and builds",
+    "hideDetails": "Hide versions and builds",
+    "noVersionsBuilding": "Its first version is building now.",
+    "noVersionsLastBuild": "Its last build failed, so it has no version yet.",
+    "viewBuild": "View the build",
+    "watchBuild": "Watch the build",
+    "buildAgain": "Build again",
+    "noVersionsCancelled": "Its last build was cancelled, so it has no version yet."
+  },
+  "registerPage": {
+    "back": "Templates",
+    "titleNew": "Register an existing image",
+    "titleVersion": "Add a version to {{label}}",
+    "description": "Use a VM image that is already in a host's local Incus store. The host checks it when you register; nothing is downloaded or built.",
+    "templateFailed": "This template couldn't be loaded. It may have been archived.",
+    "where": "Where the image is",
+    "whereHint": "The host (or pool member) that holds the image checks it and reports its fingerprint and architecture.",
+    "whereHost": "One of my hosts",
+    "wherePool": "A pool member",
+    "name": "Template name",
+    "nameHint": "Shown in lists and pickers. The short name the CLI and API use is made from it; change it under Name and image details.",
+    "versionOf": "Adds a new version to {{label}} ({{slug}}). Sandboxes already using an older version keep it.",
+    "advanced": "More options",
+    "advancedHint": "Safe defaults are filled in. Open a section to change it.",
+    "sections": {
+      "size": "Default size",
+      "env": "Environment",
+      "guest": "Guest user",
+      "details": "Name and image details"
+    },
+    "summary": {
+      "size": "{{cpu}} vCPU · {{memory}} MiB · {{disk}} GiB disk",
+      "envNone": "No variables",
+      "env_one": "{{count}} variable",
+      "env_other": "{{count}} variables",
+      "guest": "uid {{uid}} · gid {{gid}} · {{home}} · {{shell}}",
+      "details": "{{architecture}} · {{slug}}"
+    },
+    "envLabel": "Default environment variables",
+    "envHint": "Private defaults for commands and terminals in sandboxes started from this version; sandbox and command values override them. Values stay private on the server and host. HOME, SHELL and TERM are reserved.",
+    "addVariable": "Add variable",
+    "status": "The host checks the image when you register. Nothing is downloaded or built.",
+    "statusHost": "{{host}} checks the image when you register. Nothing is downloaded or built.",
+    "openTemplates": "Open templates",
+    "startSandbox": "Start a sandbox"
+  },
+  "buildPage": {
+    "addArg": "Add build arg",
+    "recipe": "What to build",
+    "targetKind": "Build on a host or a pool",
+    "targetHint": "A build VM runs there. A pool picks one of its hosts with room.",
+    "advancedHint": "Most builds keep these as they are.",
+    "sections": {
+      "tag": "Version tag",
+      "args": "Build arguments",
+      "network": "Network",
+      "resources": "Build resources",
+      "context": "Build context (.tar)"
+    },
+    "summary": {
+      "argsNone": "None",
+      "args_one": "{{count}} argument",
+      "args_other": "{{count}} arguments",
+      "egress": "{{mode}} · {{count}} allowed",
+      "resources": "Base image size · up to {{minutes}} min",
+      "resourcesCustom": "Custom size · up to {{minutes}} min",
+      "contextNone": "Not needed",
+      "contextNeeded": "Needed: the recipe has COPY"
+    },
+    "plan": "Builds on {{target}} · reserves up to {{minutes}} build minutes ({{used}} of {{limit}} used this month)",
+    "planNoTarget": "Reserves up to {{minutes}} build minutes. Choose where to build."
+  },
+  "preflight": {
+    "emptyPool": "{{label}} has no hosts, so nothing can run this build. Add a host to the pool, or choose another pool.",
+    "poolDisabled": "Every host in {{label}} is switched off for the pool, so nothing can run this build. Switch one on, or choose another pool.",
+    "poolOffline": "No host in {{label}} is connected right now. The build waits until one reconnects.",
+    "hostOffline": "{{label}} isn't connected right now. The build waits until it reconnects.",
+    "hostDraining": "{{label}} is draining and takes no new work. Undrain it, or choose another host.",
+    "openPools": "Open Pools",
+    "openHosts": "Open Hosts"
+  },
+  "placing": {
+    "emptyPool": "Nothing can run this build: {{label}} has no hosts. Add a host to the pool, or cancel this build and start it on another host or pool.",
+    "poolDisabled": "Nothing can run this build: every host in {{label}} is switched off for the pool. Switch one on, or cancel this build and build elsewhere.",
+    "poolOffline": "Still waiting: no host in {{label}} is connected. The build starts when one reconnects.",
+    "hostOffline": "Still waiting: {{label}} isn't connected. The build starts when it reconnects, or cancel it and build elsewhere.",
+    "hostDraining": "Still waiting: {{label}} is draining and takes no new work. Undrain it, or cancel this build and build elsewhere.",
+    "waitPool": "Still waiting for a host in {{label}} with room for the build VM. It starts when one has room, or fails if none frees up in time.",
+    "waitHost": "Still waiting for {{label}} to have room for the build VM. It starts when there is room, or fails if none frees up in time.",
+    "unknown": "Still waiting for a builder host. Check that the host or pool you chose is connected and has free capacity."
   }
 }

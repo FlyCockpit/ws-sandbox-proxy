@@ -53,6 +53,8 @@ export function HostAgentAccess({
   const [target, setTarget] = useState<{
     setting: "commands" | "terminal";
     action: "lower" | "lift";
+    /** Lowering a setting that is already off: a sticky block, not a turn-off. */
+    keep: boolean;
   } | null>(null);
   const lower = useMutation({
     mutationFn: (value: NonNullable<typeof target>) =>
@@ -94,64 +96,92 @@ export function HostAgentAccess({
     target?.action === "lift" && !rows.find((row) => row.id === target.setting)?.canLift;
   return (
     <section className="flex min-w-0 flex-col gap-4 rounded-xl border p-4">
-      <h2 className="font-semibold">{t("host.title")}</h2>
+      <h3 className="font-semibold">{t("host.title")}</h3>
       <p
         role="note"
         className="rounded-lg border border-amber-500/50 p-3 text-sm text-amber-800 dark:text-amber-300"
       >
         {t("consent.hostWarning")}
       </p>
-      {rows.map((row) => (
-        <div key={row.id} className="flex min-w-0 flex-col gap-2">
-          <h3>{t(`host.${row.id}`)}</h3>
-          <p role="status">
-            {t(row.on === undefined ? "host.unknown" : row.on ? "host.on" : "host.off")}
-          </p>
-          {row.vetoed ? (
-            <>
-              <p role="status">{t("host.vetoed")}</p>
-              {row.on ? (
-                <p role="alert">{t("host.tamperWarning", { command: row.offCommand })}</p>
-              ) : null}
-              {!row.canLift ? (
-                <p id={`${host.id}-${row.id}-lift-help`}>
-                  {t("host.liftUnavailable", { command: row.offCommand })}
+      {rows.map((row) => {
+        // The action names what it does from the current state: turning off
+        // something that is on, or keeping off (a sticky dashboard block)
+        // something that is already off.
+        const verb = row.on ? "turnOff" : "keepOff";
+        return (
+          <div key={row.id} data-agent-setting={row.id} className="flex min-w-0 flex-col gap-2">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+              <p className="min-w-0 text-sm">
+                <span className="font-medium">{t(`host.${row.id}`)}</span>
+                {": "}
+                <span role="status" data-agent-state={row.on ? "on" : "off"}>
+                  {t(row.on === undefined ? "host.unknown" : row.on ? "host.on" : "host.off")}
+                </span>
+              </p>
+              {row.vetoed ? (
+                <Button
+                  size="touch"
+                  variant="outline"
+                  aria-label={t("host.allowAgainNamed", { setting: t(`host.${row.id}`) })}
+                  disabled={!row.canLift}
+                  aria-describedby={!row.canLift ? `${host.id}-${row.id}-lift-help` : undefined}
+                  onClick={() => {
+                    lower.reset();
+                    setTarget({ setting: row.id, action: "lift", keep: false });
+                  }}
+                >
+                  {t("host.allowAgain")}
+                </Button>
+              ) : (
+                <Button
+                  size="touch"
+                  variant="outline"
+                  aria-label={t(`host.${verb}Named`, { setting: t(`host.${row.id}`) })}
+                  aria-describedby={
+                    verb === "keepOff" ? `${host.id}-${row.id}-keep-help` : undefined
+                  }
+                  onClick={() => {
+                    lower.reset();
+                    setTarget({ setting: row.id, action: "lower", keep: !row.on });
+                  }}
+                >
+                  {t(`host.${verb}`)}
+                </Button>
+              )}
+            </div>
+            {!row.vetoed && verb === "keepOff" ? (
+              // Already off: say what the button adds (a dashboard block).
+              <p id={`${host.id}-${row.id}-keep-help`} className="text-xs text-muted-foreground">
+                {t("host.keepOffHint")}
+              </p>
+            ) : null}
+            {row.vetoed ? (
+              <>
+                <p role="status" className="text-sm">
+                  {t("host.vetoed")}
                 </p>
-              ) : null}
-              <Button
-                size="touch"
-                variant="outline"
-                className="sm:self-start"
-                aria-label={t("host.allowAgainNamed", { setting: t(`host.${row.id}`) })}
-                disabled={!row.canLift}
-                aria-describedby={!row.canLift ? `${host.id}-${row.id}-lift-help` : undefined}
-                onClick={() => {
-                  lower.reset();
-                  setTarget({ setting: row.id, action: "lift" });
-                }}
-              >
-                {t("host.allowAgain")}
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="touch"
-              variant="outline"
-              className="sm:self-start"
-              aria-label={t("host.turnOffNamed", { setting: t(`host.${row.id}`) })}
-              onClick={() => {
-                lower.reset();
-                setTarget({ setting: row.id, action: "lower" });
-              }}
-            >
-              {t("host.turnOff")}
-            </Button>
-          )}
-          <p className="text-sm text-muted-foreground">{t("host.enableAtNode")}</p>
-          <code className="font-mono text-sm [overflow-wrap:anywhere]">{row.command}</code>
-        </div>
-      ))}
-      <p>
+                {row.on ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {t("host.tamperWarning", { command: row.offCommand })}
+                  </p>
+                ) : null}
+                {!row.canLift ? (
+                  <p id={`${host.id}-${row.id}-lift-help`} className="text-sm">
+                    {t("host.liftUnavailable", { command: row.offCommand })}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            {row.on ? null : (
+              <>
+                <p className="text-sm text-muted-foreground">{t("host.enableAtNode")}</p>
+                <code className="font-mono text-sm [overflow-wrap:anywhere]">{row.command}</code>
+              </>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-sm">
         {t("host.files", {
           state: t(
             host.agentPolicy == null
@@ -178,10 +208,22 @@ export function HostAgentAccess({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {t(target?.action === "lift" ? "host.liftTitle" : "host.confirmTitle")}
+              {t(
+                target?.action === "lift"
+                  ? "host.liftTitle"
+                  : target?.keep
+                    ? "host.keepTitle"
+                    : "host.confirmTitle",
+              )}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t(target?.action === "lift" ? "host.liftDescription" : "host.confirmDescription")}
+              {t(
+                target?.action === "lift"
+                  ? "host.liftDescription"
+                  : target?.keep
+                    ? "host.keepDescription"
+                    : "host.confirmDescription",
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {lower.isError ? <p role="alert">{t("host.failed")}</p> : null}
@@ -197,7 +239,13 @@ export function HostAgentAccess({
                 if (target && !liftUnavailable) lower.mutate(target);
               }}
             >
-              {t(target?.action === "lift" ? "host.allowAgain" : "host.turnOff")}
+              {t(
+                target?.action === "lift"
+                  ? "host.allowAgain"
+                  : target?.keep
+                    ? "host.keepOff"
+                    : "host.turnOff",
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -273,8 +321,8 @@ export function QueuedHostCommands({
     );
   return (
     <section className="flex min-w-0 flex-col gap-3">
-      <h2 className="font-semibold">{t("queue.title")}</h2>
-      <p>{t("queue.hint")}</p>
+      <h3 className="font-semibold">{t("queue.title")}</h3>
+      <p className="text-sm text-muted-foreground">{t("queue.hint")}</p>
       <QueryBoundary
         query={{ ...queued, data: queued.data?.pages.flatMap((page) => page.items) }}
         skeleton={<SkeletonList count={2} />}
@@ -323,7 +371,9 @@ export function QueuedHostCommands({
                 </li>
               ))}
             </ul>
-            {items.length === 0 ? <p>{t("queue.empty")}</p> : null}
+            {items.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("queue.empty")}</p>
+            ) : null}
             <LoadMore
               hasNextPage={queued.hasNextPage}
               isFetchingNextPage={queued.isFetchingNextPage}
