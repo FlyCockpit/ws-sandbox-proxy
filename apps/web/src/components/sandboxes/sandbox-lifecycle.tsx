@@ -81,6 +81,7 @@ const DEFINITE: ReadonlySet<SandboxProblem> = new Set([
   "labels",
   "invalid",
   "forbidden",
+  "leaseExceedsPolicy",
 ]);
 
 function invalidateSandboxes(queryClient: QueryClient) {
@@ -139,6 +140,9 @@ export function useSandboxLifecycle(sandbox: SandboxView, lang: string) {
   // uncertain), reopening Renew starts from this choice, so a retry replays
   // that request instead of a recomputed default with a new key.
   const renewSent = useRef<{ sandboxId: string; minutes: string } | null>(null);
+  // The last Start/Restore lifetime sent, for the same replay (and for the
+  // restore override that follows a refused restore).
+  const startSent = useRef<{ sandboxId: string; minutes: string } | null>(null);
   const renew = useMutation({
     ...orpc.sandboxes.setSandboxTimeout.mutationOptions(),
     ...handlers(() =>
@@ -189,6 +193,7 @@ export function useSandboxLifecycle(sandbox: SandboxView, lang: string) {
     mutations: { stop, reconnect, start, destroy, renew, retryCleanup },
     renewedFor,
     renewSent,
+    startSent,
   };
 }
 
@@ -210,7 +215,7 @@ export function SandboxLifecycleDialogs({
   waiting: boolean;
 }) {
   const { t } = useTranslation(["sandboxes", "common"]);
-  const { open, setOpen, problem, intents, signature, mutations } = lifecycle;
+  const { open, setOpen, intents, signature, mutations } = lifecycle;
   const { stop, reconnect, start, destroy } = mutations;
   const limits = useQuery({
     ...orpc.sandboxes.getLimits.queryOptions(),
@@ -223,15 +228,7 @@ export function SandboxLifecycleDialogs({
     maxTimeoutMs: sandbox.leaseLimit.finiteMaxMs,
     allowUnlimited: sandbox.leaseLimit.unlimited,
   };
-  // Start/Restore keeps the sandbox's remembered lease unless the user picks
-  // one. The pick belongs to the sandbox it was made on: this component
-  // survives navigation to another cached sandbox, which starts at "keep".
-  const [startChoice, setStartChoice] = useState({ sandboxId: sandbox.id, minutes: KEEP_LIFETIME });
-  const startMinutes = startChoice.sandboxId === sandbox.id ? startChoice.minutes : KEEP_LIFETIME;
-  const setStartMinutes = (minutes: string) => setStartChoice({ sandboxId: sandbox.id, minutes });
   const onExpire = sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop";
-  const offloaded = sandbox.state === "OFFLOADED";
-  const startLease = startLeaseInput(startMinutes, lifetimeLimit);
   const limitsRetry = limits.isError ? (
     <InlineRetry
       message={t("sandboxes:lifetime.limitsFailed")}
@@ -316,59 +313,17 @@ export function SandboxLifecycleDialogs({
         </AlertDialogContent>
       </AlertDialog>
 
-      <Dialog
-        open={open === "startCold"}
-        onOpenChange={(next) => setOpen(next ? "startCold" : null)}
-      >
-        <DialogContent closeLabel={t("common:actions.close")} className={DIALOG_CLASS}>
-          <DialogHeader>
-            <DialogTitle>
-              {t(offloaded ? "sandboxes:start.restoreTitle" : "sandboxes:start.title")}
-            </DialogTitle>
-            <DialogDescription>
-              {t(offloaded ? "sandboxes:start.restoreDescription" : "sandboxes:start.description")}
-            </DialogDescription>
-          </DialogHeader>
-          {limitsRetry}
-          <LifetimeFields
-            maxTimeoutMs={lifetimeLimit.maxTimeoutMs}
-            allowUnlimited={lifetimeLimit.allowUnlimited}
-            minutes={startMinutes}
-            onMinutes={setStartMinutes}
-            onExpire={onExpire}
-            keepTimeoutMs={sandbox.rememberedLeaseTimeoutMs}
-            disabled={start.isPending}
-          />
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button type="button" variant="outline" size="touch" onClick={() => setOpen(null)}>
-              {t("common:actions.cancel")}
-            </Button>
-            <Button
-              type="button"
-              size="touch"
-              disabled={start.isPending || (startLease === null && problem !== "generic")}
-              onClick={() =>
-                start.mutate(
-                  intents.current.for(
-                    "start",
-                    signature({ minutes: startMinutes, onExpire }),
-                    (idempotencyKey) => ({
-                      id: sandbox.id,
-                      mode: "cold" as const,
-                      ...(startLease ?? {}),
-                      idempotencyKey,
-                    }),
-                  ),
-                )
-              }
-            >
-              {start.isPending
-                ? t(offloaded ? "sandboxes:start.restorePending" : "sandboxes:start.pending")
-                : t(offloaded ? "sandboxes:start.restoreConfirm" : "sandboxes:start.confirm")}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {open === "startCold" ? (
+        <StartDialog
+          // Its pick belongs to this sandbox: an open dialog never carries it
+          // to another cached sandbox the page navigates to.
+          key={sandbox.id}
+          sandbox={sandbox}
+          lifecycle={lifecycle}
+          lifetimeLimit={lifetimeLimit}
+          limitsRetry={limitsRetry}
+        />
+      ) : null}
 
       <AlertDialog
         open={open === "restoreOverride"}
@@ -389,21 +344,24 @@ export function SandboxLifecycleDialogs({
               data-restore-override-confirm=""
               className="min-h-[44px] w-full sm:w-auto"
               disabled={start.isPending}
-              onClick={() =>
+              onClick={() => {
+                // The override repeats the refused restore with its lifetime.
+                const sent = lifecycle.startSent.current;
+                const minutes = sent?.sandboxId === sandbox.id ? sent.minutes : KEEP_LIFETIME;
                 start.mutate(
                   intents.current.for(
                     "restoreOverride",
-                    signature({ minutes: startMinutes, onExpire, override: true }),
+                    signature({ minutes, onExpire, override: true }),
                     (idempotencyKey) => ({
                       id: sandbox.id,
                       mode: "cold" as const,
-                      ...(startLease ?? {}),
+                      ...(startLeaseInput(minutes, lifetimeLimit) ?? {}),
                       overrideCreatorAllowlist: true,
                       idempotencyKey,
                     }),
                   ),
-                )
-              }
+                );
+              }}
             >
               {start.isPending
                 ? t("sandboxes:restoreOverride.pending")
@@ -462,6 +420,94 @@ export function SandboxLifecycleDialogs({
         }
       />
     </>
+  );
+}
+
+/**
+ * Start/Restore keeps the sandbox's remembered lease unless the user picks
+ * one. Mounted only while open, so every opening starts at "keep" (a pick
+ * never outlives its dialog, e.g. across a later renewal), except after a
+ * start whose outcome is uncertain: then it starts from that start's choice,
+ * and submitting replays it with the same key.
+ */
+function StartDialog({
+  sandbox,
+  lifecycle,
+  lifetimeLimit,
+  limitsRetry,
+}: {
+  sandbox: SandboxView;
+  lifecycle: SandboxLifecycle;
+  lifetimeLimit: LifetimeLimit;
+  limitsRetry: ReactNode;
+}) {
+  const { t } = useTranslation(["sandboxes", "common"]);
+  const { setOpen, problem, intents, signature, mutations, startSent } = lifecycle;
+  const { start } = mutations;
+  const onExpire = sandbox.leaseExpireAction === "DESTROY" ? "destroy" : "stop";
+  const offloaded = sandbox.state === "OFFLOADED";
+  const [startMinutes, setStartMinutes] = useState(() => {
+    const sent = startSent.current;
+    if (
+      sent?.sandboxId === sandbox.id &&
+      intents.current.holds("start", signature({ minutes: sent.minutes, onExpire }))
+    )
+      return sent.minutes;
+    return KEEP_LIFETIME;
+  });
+  const startLease = startLeaseInput(startMinutes, lifetimeLimit);
+  return (
+    <Dialog open onOpenChange={(next) => (next ? undefined : setOpen(null))}>
+      <DialogContent closeLabel={t("common:actions.close")} className={DIALOG_CLASS}>
+        <DialogHeader>
+          <DialogTitle>
+            {t(offloaded ? "sandboxes:start.restoreTitle" : "sandboxes:start.title")}
+          </DialogTitle>
+          <DialogDescription>
+            {t(offloaded ? "sandboxes:start.restoreDescription" : "sandboxes:start.description")}
+          </DialogDescription>
+        </DialogHeader>
+        {limitsRetry}
+        <LifetimeFields
+          maxTimeoutMs={lifetimeLimit.maxTimeoutMs}
+          allowUnlimited={lifetimeLimit.allowUnlimited}
+          minutes={startMinutes}
+          onMinutes={setStartMinutes}
+          onExpire={onExpire}
+          keepTimeoutMs={sandbox.rememberedLeaseTimeoutMs}
+          disabled={start.isPending}
+        />
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button type="button" variant="outline" size="touch" onClick={() => setOpen(null)}>
+            {t("common:actions.cancel")}
+          </Button>
+          <Button
+            type="button"
+            size="touch"
+            disabled={start.isPending || (startLease === null && problem !== "generic")}
+            onClick={() => {
+              startSent.current = { sandboxId: sandbox.id, minutes: startMinutes };
+              start.mutate(
+                intents.current.for(
+                  "start",
+                  signature({ minutes: startMinutes, onExpire }),
+                  (idempotencyKey) => ({
+                    id: sandbox.id,
+                    mode: "cold" as const,
+                    ...(startLease ?? {}),
+                    idempotencyKey,
+                  }),
+                ),
+              );
+            }}
+          >
+            {start.isPending
+              ? t(offloaded ? "sandboxes:start.restorePending" : "sandboxes:start.pending")
+              : t(offloaded ? "sandboxes:start.restoreConfirm" : "sandboxes:start.confirm")}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

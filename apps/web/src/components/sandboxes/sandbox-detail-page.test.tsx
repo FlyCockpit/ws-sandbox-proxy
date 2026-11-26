@@ -2022,6 +2022,132 @@ describe("Start and Restore keep the remembered lease by default", () => {
     expect(calls("reconnectSandbox")[0]!.input).not.toHaveProperty("timeoutMs");
   });
 
+  it("a lifetime pick never outlives its Start dialog, so a later renewal is kept", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+    ];
+    const user = userEvent.setup();
+    mount();
+    const field = () =>
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    const confirm = () =>
+      user.click(
+        within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+      );
+    // Pick 30 minutes, then cancel: the next opening keeps the lifetime.
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    await selectOption(user, field(), /^30 minutes$/);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enCommon.actions.cancel }),
+    );
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    expect(field().textContent).toContain("Keep its lifetime (2 hours, then stop)");
+    // Pick 15 minutes and start: it runs 15 minutes and remembers that.
+    await selectOption(user, field(), /^15 minutes$/);
+    await confirm();
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]!.input).toMatchObject({ timeoutMs: 15 * 60_000 });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // Renewed back to 2 hours, then stopped (the remembered value repeats).
+    Object.assign(sandbox(), { state: "STOPPED", rememberedLeaseTimeoutMs: twoHours });
+    Object.assign(sandbox().lastLifecycleOperation as object, { state: "SUCCEEDED" });
+    await refetch();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    expect(field().textContent).toContain("Keep its lifetime (2 hours, then stop)");
+    await confirm();
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(2));
+    expect(calls("reconnectSandbox")[1]!.input).not.toHaveProperty("timeoutMs");
+  });
+
+  it("a Start dialog left open never carries its pick to another cached sandbox", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+      sandboxRow({ id: "sbx-2", state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+    ];
+    const user = userEvent.setup();
+    const view = mount("sbx-1");
+    const page = (id: string) => (
+      <QueryClientProvider client={client}>
+        <I18nextProvider i18n={i18n}>
+          <SandboxDetailPage lang="en-US" sandboxId={id} />
+        </I18nextProvider>
+      </QueryClientProvider>
+    );
+    const field = () =>
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    const shows = (name: string) =>
+      waitFor(() =>
+        // The open dialog hides the page from the accessibility tree.
+        expect(screen.getByRole("heading", { level: 1, hidden: true }).textContent).toBe(name),
+      );
+    await shows("quiet-otter");
+    view.rerender(page("sbx-2"));
+    await shows("sbx-2");
+    view.rerender(page("sbx-1"));
+    await shows("quiet-otter");
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    await selectOption(user, field(), /^15 minutes$/);
+    // Back to cached B with the dialog still open.
+    view.rerender(page("sbx-2"));
+    await shows("sbx-2");
+    expect(field().textContent).toContain("Keep its lifetime (2 hours, then stop)");
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+    );
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(1));
+    expect(calls("reconnectSandbox")[0]!.input).toMatchObject({ id: "sbx-2" });
+    expect(calls("reconnectSandbox")[0]!.input).not.toHaveProperty("timeoutMs");
+  });
+
+  it("a lifetime the policy refused is not reopened as if its outcome were uncertain", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+    ];
+    server.current.errors.reconnectSandbox = [coded("lease_exceeds_policy")];
+    const user = userEvent.setup();
+    mount();
+    const field = () =>
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    await selectOption(user, field(), /^4 hours$/);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+    );
+    await screen.findByRole("alert");
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    expect(field().textContent).toContain("Keep its lifetime (2 hours, then stop)");
+  });
+
+  it("an uncertain start reopens on its own pick and replays the same intent", async () => {
+    server.current.sandboxes = [
+      sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: twoHours }),
+    ];
+    server.current.errors.reconnectSandbox = [new Error("network")];
+    const user = userEvent.setup();
+    mount();
+    const field = () =>
+      within(screen.getByRole("dialog")).getByLabelText(enSandboxes.lifetime.field);
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    await selectOption(user, field(), /^30 minutes$/);
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe(enSandboxes.problem.generic);
+    // Even if the refetch shows the lifetime that start may have set.
+    Object.assign(sandbox(), { rememberedLeaseTimeoutMs: 30 * 60_000 });
+    await refetch();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.start.action }));
+    expect(field().textContent).toContain("30 minutes");
+    expect(field().textContent).not.toContain("Keep its lifetime");
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: enSandboxes.start.confirm }),
+    );
+    await waitFor(() => expect(calls("reconnectSandbox")).toHaveLength(2));
+    const [lost, retried] = calls("reconnectSandbox").map((call) => call.input);
+    expect(retried).toEqual(lost);
+    expect(lost).toMatchObject({ timeoutMs: 30 * 60_000 });
+  });
+
   it("a remembered unlimited lease reads as no time limit", async () => {
     server.current.sandboxes = [sandboxRow({ state: "STOPPED", rememberedLeaseTimeoutMs: 0 })];
     const user = userEvent.setup();
