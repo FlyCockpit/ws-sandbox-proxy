@@ -52,6 +52,12 @@
  * the PTY was asked to close. v1 attachments behave exactly as before.
  */
 
+import { randomBytes } from "node:crypto";
+
+import {
+  type LiveTerminalEntry,
+  registerLiveTerminalDirectory,
+} from "@wssp/api/sandbox/live-terminals";
 import {
   type SandboxTerminalLifecycleChange,
   subscribeSandboxTerminalLifecycle,
@@ -180,6 +186,14 @@ export class BrowserTerminal implements TerminalAttachment {
   private terminalId: string | null;
   /** WP8: row writes, in order (an open is never overtaken by its close). */
   private rowWrites: Promise<void> = Promise.resolve();
+  /** The Terminals page's listing id (never a ticket or relay fence id). */
+  readonly listingId = `bt_${randomBytes(16).toString("hex")}`;
+  /** When the browser attached (the Terminals page's "Started"). */
+  readonly openedAt: number;
+  /** Last keystroke in or output out (not liveness pongs). */
+  private lastIoAt: number;
+  /** The Terminals page's End in flight (concurrent ends share it). */
+  private ending: Promise<void> | undefined;
 
   constructor(
     readonly binding: TerminalBinding,
@@ -191,6 +205,64 @@ export class BrowserTerminal implements TerminalAttachment {
   ) {
     this.terminalId =
       !isHostTerminalBinding(binding) && binding.resume ? binding.resume.terminalId : null;
+    this.openedAt = service.now();
+    this.lastIoAt = this.openedAt;
+  }
+
+  /** The Terminals page's metadata (never content, tickets or fence ids). */
+  entry(): LiveTerminalEntry {
+    const binding = this.binding;
+    return {
+      id: this.listingId,
+      userId: binding.userId,
+      target: isHostTerminalBinding(binding)
+        ? { kind: "host", hostId: binding.hostId }
+        : { kind: "sandbox", sandboxId: binding.sandboxId },
+      sessionId: binding.sessionId,
+      status: this.state === "open" ? "attached" : "connecting",
+      openedAt: new Date(this.openedAt),
+      lastActivityAt: new Date(this.lastIoAt),
+    };
+  }
+
+  /**
+   * The owner ended this terminal from the Terminals page: the PTY is closed
+   * (intent `client`, as if this browser had asked) and this socket is told
+   * why (`ended_elsewhere`), so the other tab does not say "you disconnected".
+   *
+   * Before the manager accepted the open there is no PTY of this socket to
+   * close. A WP8 resume still verifying names a PTY the node holds detached:
+   * its row is retired FIRST, so no later ticket can resume it, and the node
+   * drops it when its reattach grace ends, as for any abandoned resume. A
+   * failed retirement rejects and leaves this socket as it was (retry).
+   * Concurrent ends share one attempt; a failed one is cleared for a retry.
+   */
+  endElsewhere(): Promise<void> {
+    this.ending ??= this.endFromTerminalsPage().catch((error: unknown) => {
+      this.ending = undefined;
+      throw error;
+    });
+    return this.ending;
+  }
+
+  private async endFromTerminalsPage(): Promise<void> {
+    if (this.state === "closed") return;
+    const pendingResume = this.handle ? null : this.terminalId;
+    if (pendingResume !== null) {
+      const retire = this.rowWrites.then(() => this.service.sessions.closed(pendingResume));
+      // Later row writes stay ordered after this one, whatever its outcome.
+      this.rowWrites = retire.catch(() => undefined);
+      await retire;
+      if (this.terminalId === pendingResume) this.terminalId = null;
+    }
+    // Re-read after the await: the resume may have been accepted (or the
+    // socket closed) meanwhile; the getter keeps TS from narrowing across it.
+    if (this.closed) return;
+    if (this.handle) {
+      this.handle.close("client", undefined, "ended_elsewhere");
+      return;
+    }
+    this.close({ code: BROWSER_TERMINAL_CLOSE_CODE, intent: "client", reason: "ended_elsewhere" });
   }
 
   /** WP8: a v2 sandbox attachment (the manager's reattach gate reads this). */
@@ -224,6 +296,7 @@ export class BrowserTerminal implements TerminalAttachment {
 
   sendOutput(bytes: Uint8Array): void {
     if (this.state !== "open") return;
+    this.lastIoAt = this.service.now();
     try {
       this.socket?.send(bytes);
     } catch {
@@ -330,6 +403,7 @@ export class BrowserTerminal implements TerminalAttachment {
     }
     const result = this.handle.input(new Uint8Array(data));
     if (!result.ok) this.sendError(result.code);
+    else this.lastIoAt = this.service.now();
   }
 
   /**
@@ -751,6 +825,28 @@ export class BrowserTerminalService {
     return terminal;
   }
 
+  /** The Terminals page: `userId`'s own live terminals (binding owner only). */
+  listFor(userId: string): LiveTerminalEntry[] {
+    const entries: LiveTerminalEntry[] = [];
+    for (const terminal of this.attached)
+      if (!terminal.closed && terminal.binding.userId === userId) entries.push(terminal.entry());
+    return entries;
+  }
+
+  /**
+   * End one of `userId`'s live terminals by listing id; false: none such.
+   * Rejects (and ends nothing) when a pending resume's row cannot be retired.
+   */
+  async endFor(userId: string, listingId: string): Promise<boolean> {
+    for (const terminal of this.attached) {
+      if (terminal.listingId !== listingId) continue;
+      if (terminal.closed || terminal.binding.userId !== userId) return false;
+      await terminal.endElsewhere();
+      return true;
+    }
+    return false;
+  }
+
   forget(terminal: BrowserTerminal) {
     this.attached.delete(terminal);
     // The last terminal gone: drop the re-read subscriptions too.
@@ -812,3 +908,8 @@ export class BrowserTerminalService {
 export const browserTerminalService = new BrowserTerminalService(
   () => sandboxRelaySessionManager.terminals,
 );
+
+registerLiveTerminalDirectory({
+  list: (userId) => browserTerminalService.listFor(userId),
+  end: (userId, id) => browserTerminalService.endFor(userId, id),
+});

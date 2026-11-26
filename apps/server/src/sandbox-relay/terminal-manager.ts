@@ -89,7 +89,8 @@ export type TerminalCloseNotice = {
   code: typeof TERMINAL_LIMITS.closeCode;
   /** Absent: the shell exited on its own (`exitCode`). */
   intent?: TerminalCloseIntent;
-  reason?: "pool_access_removed" | "host_terminals_disabled";
+  /** `ended_elsewhere`: the owner ended it from the Terminals page (intent `client`). */
+  reason?: "pool_access_removed" | "host_terminals_disabled" | "ended_elsewhere";
   exitCode?: number;
   error?: { code: SandboxErrorCode; message: string };
   /**
@@ -189,7 +190,11 @@ export type TerminalSessionHandle = {
   input(bytes: Uint8Array): { ok: true } | { ok: false; code: SandboxErrorCode };
   resize(rows: number, cols: number): { ok: true } | { ok: false; code: SandboxErrorCode };
   /** Idempotent; `error` rides the attachment's CloseIntent (e.g. idle `timeout`). */
-  close(intent?: TerminalCloseIntent, error?: { code: SandboxErrorCode; message: string }): void;
+  close(
+    intent?: TerminalCloseIntent,
+    error?: { code: SandboxErrorCode; message: string },
+    reason?: TerminalCloseNotice["reason"],
+  ): void;
 };
 
 /**
@@ -837,7 +842,7 @@ export class SandboxTerminalManager {
         else this.sendResize(session, rows, cols);
         return { ok: true };
       },
-      close: (intent = "client", error) => {
+      close: (intent = "client", error, reason) => {
         if (this.sessions.get(session.fence.sessionId) !== session) return;
         // WP8: graceful server shutdown, and a host connection the binding
         // re-read found ended or moved on, never close a resumable PTY; the
@@ -850,7 +855,7 @@ export class SandboxTerminalManager {
           this.release(session, { code: TERMINAL_LIMITS.closeCode, intent, reconnect });
           return;
         }
-        this.closeSession(session, intent, error);
+        this.closeSession(session, intent, error, reason);
       },
     };
   }

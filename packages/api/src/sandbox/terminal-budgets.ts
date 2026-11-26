@@ -26,6 +26,13 @@ export const consumeTerminalMintBudget = terminalBudget({
   points: 20,
   durationSeconds: 60,
 });
+/** Ending a terminal from the Terminals page (each end may write a durable row). */
+export const consumeTerminalEndBudget = terminalBudget({
+  ...common,
+  keyPrefix: "terminal-end",
+  points: 30,
+  durationSeconds: 60,
+});
 const day = terminalBudget({
   ...common,
   keyPrefix: "host-terminal-proof-day",

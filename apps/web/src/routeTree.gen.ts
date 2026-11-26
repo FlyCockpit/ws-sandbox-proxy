@@ -34,6 +34,7 @@ import { Route as LangAppAuthDashboardIndexRouteImport } from './routes/$lang/_a
 import { Route as LangAppAuthDashboardOperationsRouteImport } from './routes/$lang/_app/_auth/dashboard/operations'
 import { Route as LangAppAuthDashboardSandboxesRouteImport } from './routes/$lang/_app/_auth/dashboard/sandboxes'
 import { Route as LangAppAuthDashboardTemplatesRouteImport } from './routes/$lang/_app/_auth/dashboard/templates'
+import { Route as LangAppAuthDashboardTerminalsRouteImport } from './routes/$lang/_app/_auth/dashboard/terminals'
 import { Route as LangAppAuthSettingsIndexRouteImport } from './routes/$lang/_app/_auth/settings/index'
 import { Route as LangAppAuthSettingsAgentTokensRouteImport } from './routes/$lang/_app/_auth/settings/agent-tokens'
 import { Route as LangAppAuthSettingsHostCredentialsRouteImport } from './routes/$lang/_app/_auth/settings/host-credentials'
@@ -187,6 +188,12 @@ const LangAppAuthDashboardTemplatesRoute =
   LangAppAuthDashboardTemplatesRouteImport.update({
     id: '/templates',
     path: '/templates',
+    getParentRoute: () => LangAppAuthDashboardRoute,
+  } as any)
+const LangAppAuthDashboardTerminalsRoute =
+  LangAppAuthDashboardTerminalsRouteImport.update({
+    id: '/terminals',
+    path: '/terminals',
     getParentRoute: () => LangAppAuthDashboardRoute,
   } as any)
 const LangAppAuthSettingsIndexRoute =
@@ -374,6 +381,7 @@ export interface FileRoutesByFullPath {
   '/$lang/dashboard/operations': typeof LangAppAuthDashboardOperationsRouteWithChildren
   '/$lang/dashboard/sandboxes': typeof LangAppAuthDashboardSandboxesRouteWithChildren
   '/$lang/dashboard/templates': typeof LangAppAuthDashboardTemplatesRouteWithChildren
+  '/$lang/dashboard/terminals': typeof LangAppAuthDashboardTerminalsRoute
   '/$lang/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/settings/hosts': typeof LangAppAuthSettingsHostsRouteWithChildren
@@ -418,6 +426,7 @@ export interface FileRoutesByTo {
   '/$lang/admin/settings': typeof LangAppAdminSettingsRoute
   '/$lang/admin/users': typeof LangAppAdminUsersRoute
   '/$lang/admin': typeof LangAppAdminIndexRoute
+  '/$lang/dashboard/terminals': typeof LangAppAuthDashboardTerminalsRoute
   '/$lang/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/settings/images': typeof LangAppAuthSettingsImagesRoute
@@ -469,6 +478,7 @@ export interface FileRoutesById {
   '/$lang/_app/_auth/dashboard/operations': typeof LangAppAuthDashboardOperationsRouteWithChildren
   '/$lang/_app/_auth/dashboard/sandboxes': typeof LangAppAuthDashboardSandboxesRouteWithChildren
   '/$lang/_app/_auth/dashboard/templates': typeof LangAppAuthDashboardTemplatesRouteWithChildren
+  '/$lang/_app/_auth/dashboard/terminals': typeof LangAppAuthDashboardTerminalsRoute
   '/$lang/_app/_auth/settings/agent-tokens': typeof LangAppAuthSettingsAgentTokensRoute
   '/$lang/_app/_auth/settings/host-credentials': typeof LangAppAuthSettingsHostCredentialsRoute
   '/$lang/_app/_auth/settings/hosts': typeof LangAppAuthSettingsHostsRouteWithChildren
@@ -522,6 +532,7 @@ export interface FileRouteTypes {
     | '/$lang/dashboard/operations'
     | '/$lang/dashboard/sandboxes'
     | '/$lang/dashboard/templates'
+    | '/$lang/dashboard/terminals'
     | '/$lang/settings/agent-tokens'
     | '/$lang/settings/host-credentials'
     | '/$lang/settings/hosts'
@@ -566,6 +577,7 @@ export interface FileRouteTypes {
     | '/$lang/admin/settings'
     | '/$lang/admin/users'
     | '/$lang/admin'
+    | '/$lang/dashboard/terminals'
     | '/$lang/settings/agent-tokens'
     | '/$lang/settings/host-credentials'
     | '/$lang/settings/images'
@@ -616,6 +628,7 @@ export interface FileRouteTypes {
     | '/$lang/_app/_auth/dashboard/operations'
     | '/$lang/_app/_auth/dashboard/sandboxes'
     | '/$lang/_app/_auth/dashboard/templates'
+    | '/$lang/_app/_auth/dashboard/terminals'
     | '/$lang/_app/_auth/settings/agent-tokens'
     | '/$lang/_app/_auth/settings/host-credentials'
     | '/$lang/_app/_auth/settings/hosts'
@@ -826,6 +839,13 @@ declare module '@tanstack/react-router' {
       path: '/templates'
       fullPath: '/$lang/dashboard/templates'
       preLoaderRoute: typeof LangAppAuthDashboardTemplatesRouteImport
+      parentRoute: typeof LangAppAuthDashboardRoute
+    }
+    '/$lang/_app/_auth/dashboard/terminals': {
+      id: '/$lang/_app/_auth/dashboard/terminals'
+      path: '/terminals'
+      fullPath: '/$lang/dashboard/terminals'
+      preLoaderRoute: typeof LangAppAuthDashboardTerminalsRouteImport
       parentRoute: typeof LangAppAuthDashboardRoute
     }
     '/$lang/_app/_auth/settings/': {
@@ -1081,6 +1101,7 @@ interface LangAppAuthDashboardRouteChildren {
   LangAppAuthDashboardOperationsRoute: typeof LangAppAuthDashboardOperationsRouteWithChildren
   LangAppAuthDashboardSandboxesRoute: typeof LangAppAuthDashboardSandboxesRouteWithChildren
   LangAppAuthDashboardTemplatesRoute: typeof LangAppAuthDashboardTemplatesRouteWithChildren
+  LangAppAuthDashboardTerminalsRoute: typeof LangAppAuthDashboardTerminalsRoute
   LangAppAuthDashboardIndexRoute: typeof LangAppAuthDashboardIndexRoute
 }
 
@@ -1091,6 +1112,7 @@ const LangAppAuthDashboardRouteChildren: LangAppAuthDashboardRouteChildren = {
     LangAppAuthDashboardSandboxesRouteWithChildren,
   LangAppAuthDashboardTemplatesRoute:
     LangAppAuthDashboardTemplatesRouteWithChildren,
+  LangAppAuthDashboardTerminalsRoute: LangAppAuthDashboardTerminalsRoute,
   LangAppAuthDashboardIndexRoute: LangAppAuthDashboardIndexRoute,
 }
 

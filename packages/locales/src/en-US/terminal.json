@@ -23,6 +23,7 @@
   },
   "notice": {
     "client": "You disconnected. The terminal session has ended.",
+    "endedElsewhere": "This terminal was ended from the Terminals page. Attach again to start a new one.",
     "detached": "The terminal connection dropped, and the session ended.",
     "replaced": "The terminal was attached somewhere else (another tab or device), so this one was disconnected.",
     "backpressure": "The terminal could not keep up with the data, so it was disconnected. Attach again to start a new session.",
@@ -239,5 +240,79 @@
     "hint": "The terminal's text as of now. Select some, then Copy.",
     "copy": "Copy",
     "done": "Done"
+  },
+  "page": {
+    "title": "Terminals",
+    "description": "Your open terminals on your sandboxes and hosts. A terminal stays open only while its sandbox or host page stays open in a browser tab; leaving that page or closing the tab ends it.",
+    "new": "New terminal",
+    "filter": {
+      "label": "Show terminals on",
+      "all": "All",
+      "sandbox": "Sandboxes",
+      "host": "Hosts"
+    },
+    "openTitle": "Open now",
+    "empty": {
+      "title": "No terminals are open",
+      "description": {
+        "all": "Open one on a running sandbox or a connected host below. It opens on that sandbox's or host's page, and shows up here while that page stays open in its tab.",
+        "sandbox": "Open one on a running sandbox below. It opens on the sandbox's page, and shows up here while that page stays open in its tab.",
+        "host": "Open one on a connected host below. It opens on the host's page, and shows up here while that page stays open in its tab."
+      }
+    },
+    "emptyFiltered": "No terminals of this kind are open",
+    "truncated": "Showing the 100 newest terminals.",
+    "unknownTarget": "(no longer available)",
+    "kind": {
+      "sandbox": "Sandbox",
+      "host": "Host"
+    },
+    "hostStatus": {
+      "CONNECTED": "Connected",
+      "DISCONNECTED": "Offline",
+      "STALE": "Connection stale",
+      "REVOKED": "Credential revoked"
+    },
+    "status": {
+      "attached": "Attached",
+      "connecting": "Connecting"
+    },
+    "openedFrom": "Opened from",
+    "thisBrowser": "This browser (another tab)",
+    "deviceBoth": "{{browser}} on {{os}}",
+    "deviceUnknown": "Another browser",
+    "started": "Started",
+    "lastActivity": "Last activity",
+    "openHere": "Open here",
+    "openHereLabel": "Open the terminal on {{name}} here",
+    "end": {
+      "action": "End",
+      "label": "End the terminal on {{name}}",
+      "title": "End the terminal on {{name}}?",
+      "description": "The shell opened from {{device}} closes, and anything still running in it stops. That tab shows that the terminal was ended. If that tab was reconnecting, the host may take a few minutes to close the shell.",
+      "descriptionHere": "The shell open in your other tab closes, and anything still running in it stops. That tab shows that the terminal was ended. If that tab was reconnecting, the host may take a few minutes to close the shell.",
+      "confirm": "End terminal",
+      "done": "Terminal ended",
+      "alreadyGone": "That terminal had already closed",
+      "failed": "Couldn't end the terminal. Try again."
+    },
+    "newTitle": "Open a new terminal",
+    "newHint": "Pick where it runs. Its page opens at the terminal; select Attach terminal there. Only one terminal at a time runs per sandbox or host: opening another ends the one already open and starts a fresh shell.",
+    "openOn": "Open terminal",
+    "openOnLabel": "Open a terminal on {{name}}",
+    "alreadyOpen": "A terminal is open here",
+    "noSandboxes": "No sandbox is running.",
+    "goSandboxes": "Start or create one on Sandboxes",
+    "allSandboxes": "All sandboxes",
+    "noHosts": "You have no hosts.",
+    "goHosts": "Add a host",
+    "allHosts": "All hosts",
+    "hostOffline": "Not connected; start it with {{command}}",
+    "hostHint": "A host terminal is a shell on the machine itself. It works only after you turn it on at the host (the host's page shows how).",
+    "hostTerminalOff": "Host terminal is off at this host",
+    "howToTurnOn": "How to turn it on",
+    "replaceOn": "Open a new one",
+    "replaceOnLabel": "Open a new terminal on {{name}} (ends the one open there)",
+    "hostTerminalUnknown": "Can't tell yet whether host terminals are on; this refreshes on its own"
   }
 }

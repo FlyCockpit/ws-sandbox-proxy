@@ -205,13 +205,14 @@ function anchors(html: string): string[] {
 }
 
 describe("dashboard frame", () => {
-  it.each(LANGS)("%s: the sidebar links the four primary sections, in order, once", (lang) => {
+  it.each(LANGS)("%s: the sidebar links the five primary sections, in order, once", (lang) => {
     const html = render(lang, <DashboardFrame lang={lang} />);
     const hrefs = anchors(html).map((tag) => /href="([^"]+)"/.exec(tag)?.[1]);
     expect(hrefs).toEqual([
       `/${lang}/dashboard/sandboxes`,
       `/${lang}/dashboard/templates`,
       `/${lang}/dashboard/operations`,
+      `/${lang}/dashboard/terminals`,
       `/${lang}/settings`,
     ]);
     for (const item of primaryNavItems) {

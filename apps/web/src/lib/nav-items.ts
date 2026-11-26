@@ -12,6 +12,7 @@ import {
   Server,
   Settings,
   Shield,
+  SquareTerminal,
   User,
   Webhook,
 } from "lucide-react";
@@ -28,6 +29,7 @@ type PrimaryNavPath =
   | "/dashboard/sandboxes"
   | "/dashboard/templates"
   | "/dashboard/operations"
+  | "/dashboard/terminals"
   | "/settings";
 /** Pages reached from the Settings hub. */
 type SettingsNavPath =
@@ -129,7 +131,7 @@ export function toLangRoute(path: AppNavPath): LangNavRoute {
   return `/$lang${path}` as LangNavRoute;
 }
 
-export type PrimaryNavId = "sandboxes" | "templates" | "activity" | "settings";
+export type PrimaryNavId = "sandboxes" | "templates" | "activity" | "terminals" | "settings";
 export type PrimaryNavItem = RouteNavItem & { id: PrimaryNavId; path: PrimaryNavPath };
 
 /**
@@ -158,6 +160,13 @@ export const primaryNavItems: readonly PrimaryNavItem[] = [
     path: "/dashboard/operations",
     labelKey: "dashboard:nav.activity",
     icon: ListChecks,
+    exact: false,
+  },
+  {
+    id: "terminals",
+    path: "/dashboard/terminals",
+    labelKey: "dashboard:nav.terminals",
+    icon: SquareTerminal,
     exact: false,
   },
   {

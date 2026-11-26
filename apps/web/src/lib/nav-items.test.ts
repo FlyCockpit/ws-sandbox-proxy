@@ -93,16 +93,17 @@ describe("nav-items", () => {
     expect(stripLangPrefix("/en-US/settings/privacy")).toBe("/settings/privacy");
   });
 
-  it("puts Sandboxes first, then Templates, Activity and Settings", () => {
+  it("puts Sandboxes first, then Templates, Activity, Terminals and Settings", () => {
     expect(primaryNavItems.map((item) => [item.id, item.path])).toEqual([
       ["sandboxes", "/dashboard/sandboxes"],
       ["templates", "/dashboard/templates"],
       ["activity", "/dashboard/operations"],
+      ["terminals", "/dashboard/terminals"],
       ["settings", "/settings"],
     ]);
     // Every section stays active on its children.
     expect(primaryNavItems.every((item) => !item.exact)).toBe(true);
-    expect(new Set(primaryNavItems.map((item) => item.labelKey)).size).toBe(4);
+    expect(new Set(primaryNavItems.map((item) => item.labelKey)).size).toBe(5);
   });
 
   it.each([
@@ -110,6 +111,7 @@ describe("nav-items", () => {
     ["/es-MX/dashboard/sandboxes/abc", "sandboxes"],
     ["/en-US/dashboard/templates/builds/b1", "templates"],
     ["/en-US/dashboard/operations/op1", "activity"],
+    ["/es-MX/dashboard/terminals", "terminals"],
     ["/en-US/settings", "settings"],
     ["/en-US/settings/hosts/h1", "settings"],
     ["/en-US/settings/logins/sessions/s1", "settings"],

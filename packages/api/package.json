@@ -226,6 +226,9 @@
     "./sandbox/terminal-lifecycle": {
       "default": "./src/sandbox/terminal-lifecycle.ts"
     },
+    "./sandbox/live-terminals": {
+      "default": "./src/sandbox/live-terminals.ts"
+    },
     "./sandbox/outbox": {
       "default": "./src/sandbox/outbox.ts"
     },

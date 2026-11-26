@@ -282,3 +282,15 @@ it.each([
   );
   expect(classifyClose(frame?.type === "close" ? frame : null, 4401)).toEqual({ kind });
 });
+
+it("a terminal ended from the Terminals page says so, not 'you disconnected'", () => {
+  const frame = parseServerFrame(
+    JSON.stringify({ type: "close", code: 4401, intent: "client", reason: "ended_elsewhere" }),
+  );
+  expect(classifyClose(frame?.type === "close" ? frame : null, 4401)).toEqual({
+    kind: "endedElsewhere",
+  });
+  // A plain client close keeps its own notice.
+  const own = parseServerFrame(JSON.stringify({ type: "close", code: 4401, intent: "client" }));
+  expect(classifyClose(own?.type === "close" ? own : null, 4401)).toEqual({ kind: "client" });
+});

@@ -25,6 +25,7 @@ import { sdkKeysRouter } from "./sdk-keys";
 import { settingsRouter } from "./settings";
 import { setupRouter } from "./setup";
 import { templateBuildsRouter } from "./template-builds";
+import { terminalsRouter } from "./terminals";
 import { userLoginsRouter } from "./user-logins";
 import { usersRouter } from "./users";
 import { webhooksRouter } from "./webhooks";
@@ -72,6 +73,7 @@ export const appRouter = {
   sandboxes: sandboxesRouter,
   sandboxTerminals: sandboxTerminalsRouter,
   hostTerminals: hostTerminalsRouter,
+  terminals: terminalsRouter,
   sdkKeys: sdkKeysRouter,
   agentTokens: agentTokensRouter,
   mcpGrants: mcpGrantsRouter,

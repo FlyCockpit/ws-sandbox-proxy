@@ -97,7 +97,9 @@ const serverFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("close"),
     code: z.number(),
     intent: z.string().optional(),
-    reason: z.enum(["pool_access_removed", "host_terminals_disabled"]).optional(),
+    reason: z
+      .enum(["pool_access_removed", "host_terminals_disabled", "ended_elsewhere"])
+      .optional(),
     exitCode: z.number().optional(),
     error: z.object({ code: z.string() }).passthrough().optional(),
     requestId: z.string().optional(),
@@ -159,6 +161,7 @@ export function parseServerFrame(text: string): ServerFrame | null {
 type TerminalNoticeKind =
   // CloseIntent `intent` values (C52).
   | "client"
+  | "endedElsewhere"
   | "detached"
   | "replaced"
   | "backpressure"
@@ -255,6 +258,9 @@ export function classifyClose(frame: CloseFrame | null, code: number): TerminalN
       return { kind: "poolAccessRemoved" };
     if (frame.intent === "revoked" && frame.reason === "host_terminals_disabled")
       return { kind: "hostTerminalsDisabled" };
+    // The owner ended it from the Terminals page (another tab or device).
+    if (frame.intent === "client" && frame.reason === "ended_elsewhere")
+      return { kind: "endedElsewhere" };
     // `expired` is also the intent of an open the host never answered; only the
     // error code tells it from a lease that ran out (the sandbox still runs).
     if (frame.intent === "expired" && frame.error?.code === "timeout")

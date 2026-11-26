@@ -30,6 +30,14 @@ command/file tools follow [ADR-006](../design/adr-006-agent-host-access.md).
   **Attach again**. Host terminals never reattach. Long-running work still
   belongs in a command (`commands.start`) or a terminal multiplexer inside the
   guest.
+- **Terminals page.** **Terminals** in the sidebar (phone: bottom tabs) lists
+  your open browser terminals on your sandboxes and hosts: which browser
+  opened each, when, its last keystroke or output, and whether it is attached.
+  **Open here** goes to its sandbox or host page; attaching there replaces the
+  other tab (a fresh shell). **End** closes it after a confirmation, and the
+  other tab says it was ended from the Terminals page. It shows only your own
+  terminals, for admins too. A terminal ends when its sandbox or host page
+  is left or its tab closes, so the page lists live ones only.
 - **How it ends.** Every end after the socket opened arrives as an explicit
   close notice (WebSocket close code 4401) with a reason the page shows:
   you detached, replaced, the sandbox stopped or was destroyed, its lease

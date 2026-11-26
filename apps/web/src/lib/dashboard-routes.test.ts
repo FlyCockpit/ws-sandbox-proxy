@@ -34,7 +34,7 @@ function routeFiles(dir: string): string[] {
     .sort();
 }
 
-/** Real pages left under `/dashboard`: the three primary sections. */
+/** Real pages under `/dashboard`: the four primary sections there. */
 const DASHBOARD_PAGES = [
   "operations",
   "operations/$operationId",
@@ -46,6 +46,7 @@ const DASHBOARD_PAGES = [
   "templates/builds/$buildId",
   "templates/builds/index",
   "templates/index",
+  "terminals",
 ];
 
 const SETTINGS_PAGES = [

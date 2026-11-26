@@ -26,7 +26,8 @@ vi.mock("../lib/procedure-budget", () => ({
     };
   },
 }));
-const { consumeHostProofBudget, consumeTerminalMintBudget } = await import("./terminal-budgets");
+const { consumeHostProofBudget, consumeTerminalEndBudget, consumeTerminalMintBudget } =
+  await import("./terminal-budgets");
 it("charges day then minute per durable user across every host/session/IP/batched procedure", async () => {
   for (let i = 0; i < 5; i++) await consumeHostProofBudget("actor");
   await expect(consumeHostProofBudget("actor")).rejects.toMatchObject({
@@ -62,4 +63,23 @@ it("generic mints share 20/minute across host/guest and dependency uncertainty r
   await expect(consumeHostProofBudget("fresh")).rejects.toMatchObject({
     code: "SERVICE_UNAVAILABLE",
   });
+});
+
+it("Terminals page ends share 30/minute per user and refuse when the limiter is down", async () => {
+  state.unavailable = false;
+  for (let i = 0; i < 30; i++) await consumeTerminalEndBudget("uid:ender");
+  await expect(consumeTerminalEndBudget("uid:ender")).rejects.toMatchObject({
+    code: "TOO_MANY_REQUESTS",
+  });
+  await consumeTerminalEndBudget("uid:someone-else");
+  expect(state.configs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ keyPrefix: "terminal-end", points: 30, durationSeconds: 60 }),
+    ]),
+  );
+  state.unavailable = true;
+  await expect(consumeTerminalEndBudget("uid:fresh")).rejects.toMatchObject({
+    code: "SERVICE_UNAVAILABLE",
+  });
+  state.unavailable = false;
 });

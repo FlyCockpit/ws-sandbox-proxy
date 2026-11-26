@@ -92,13 +92,14 @@ const links = () => [...document.querySelectorAll("a")];
 
 describe("bottom tabs", () => {
   it.each(["en-US", "es-MX"] as const)(
-    "%s: signed in, the four primary sections with 44px targets",
+    "%s: signed in, the five primary sections with 44px targets",
     (lang) => {
       mount(lang);
       expect(links().map((a) => a.getAttribute("href"))).toEqual([
         `/${lang}/dashboard/sandboxes`,
         `/${lang}/dashboard/templates`,
         `/${lang}/dashboard/operations`,
+        `/${lang}/dashboard/terminals`,
         `/${lang}/settings`,
       ]);
       const dashboard = lang === "en-US" ? enDashboard : esDashboard;
@@ -106,6 +107,7 @@ describe("bottom tabs", () => {
         dashboard.nav.sandboxes,
         dashboard.nav.templates,
         dashboard.nav.activity,
+        dashboard.nav.terminals,
         dashboard.nav.settings,
       ]);
       for (const a of links()) expect(a.className).toContain("min-h-[44px]");
@@ -118,6 +120,7 @@ describe("bottom tabs", () => {
     ["/en-US/settings", "settings"],
     ["/en-US/dashboard/operations/op", "activity"],
     ["/en-US/dashboard/templates/builds", "templates"],
+    ["/en-US/dashboard/terminals", "terminals"],
   ])("on %s only the %s tab is active", (pathname, id) => {
     state.pathname = pathname;
     mount();
@@ -125,11 +128,11 @@ describe("bottom tabs", () => {
     expect(active.map((a) => a.dataset.navId)).toEqual([id]);
   });
 
-  it("shows four placeholders while the session resolves", () => {
+  it("shows five placeholders while the session resolves", () => {
     state.status = "pending";
     const view = mount();
     expect(links()).toHaveLength(0);
-    expect(view.container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(4);
+    expect(view.container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(5);
   });
 
   it("signed out, keeps the anonymous Home tab", () => {

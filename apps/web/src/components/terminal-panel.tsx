@@ -227,6 +227,9 @@ export function TerminalPanel({
 
   return (
     <section
+      // The Terminals page links here (`#terminal`); a panel inside a dialog
+      // (queued host commands) is never a page's hash target.
+      id={maximizable ? "terminal" : undefined}
       aria-labelledby={headingId}
       data-terminal-status={status}
       data-terminal-layout={header ? "phone" : "wide"}

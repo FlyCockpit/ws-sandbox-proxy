@@ -1255,3 +1255,212 @@ describe("WP8 v2 reattach on the browser socket", () => {
     },
   );
 });
+
+describe("Terminals page directory (owner-scoped list and end)", () => {
+  it("lists only the owner's live terminals, with server ids and real activity", async () => {
+    vi.setSystemTime(new Date("2026-11-26T00:00:00Z"));
+    const { terminal, browser } = await attached();
+    // A second owner's terminal that is genuinely live in the service (its
+    // re-read still in flight), so only the owner filter can hide it.
+    check.mockImplementation(async (b) =>
+      b.userId === "owner-2" ? new Promise<never>(() => undefined) : verdict,
+    );
+    const other = service.attach({ ...binding, userId: "owner-2", sandboxId: "sbx-2" });
+    other.opened(new FakeBrowser());
+    await flush();
+    expect(service.count()).toBe(2);
+    expect(service.listFor("owner-2").map((e) => e.id)).toEqual([other.listingId]);
+
+    const [entry] = service.listFor("owner-1");
+    expect(service.listFor("owner-1")).toHaveLength(1);
+    expect(entry).toEqual({
+      id: terminal.listingId,
+      userId: "owner-1",
+      target: { kind: "sandbox", sandboxId: "sbx-1" },
+      sessionId: "auth-session-1",
+      status: "attached",
+      openedAt: new Date("2026-11-26T00:00:00Z"),
+      lastActivityAt: new Date("2026-11-26T00:00:00Z"),
+    });
+    expect(entry!.id).toMatch(/^bt_[0-9a-f]{32}$/);
+    // Another owner's terminal never shows up, and none leaks a fence id.
+    expect(service.listFor("owner-1").map((e) => e.id)).not.toContain(other.listingId);
+    expect(JSON.stringify(service.listFor("owner-1"))).not.toMatch(/"t[0-9a-f]{32}"/);
+
+    // Pongs are liveness, not activity; a keystroke is.
+    await vi.advanceTimersByTimeAsync(30_000);
+    terminal.activity();
+    expect(service.listFor("owner-1")[0]!.lastActivityAt).toEqual(new Date("2026-11-26T00:00:00Z"));
+    terminal.message(new TextEncoder().encode("ls\n").buffer);
+    expect(service.listFor("owner-1")[0]!.lastActivityAt).toEqual(new Date("2026-11-26T00:00:30Z"));
+    expect(browser.closes).toEqual([]);
+  });
+
+  it("a terminal still verifying lists as connecting", async () => {
+    check.mockImplementation(() => new Promise(() => undefined));
+    const browser = new FakeBrowser();
+    service.attach(binding).opened(browser);
+    await flush();
+    expect(service.listFor("owner-1").map((e) => e.status)).toEqual(["connecting"]);
+  });
+
+  it("ends only the owner's own terminal: the PTY closes and the tab hears why", async () => {
+    const { terminal, browser, fence } = await attached();
+    expect(await service.endFor("owner-2", terminal.listingId)).toBe(false);
+    expect(await service.endFor("owner-1", "bt_00000000000000000000000000000000")).toBe(false);
+    expect(browser.closes).toEqual([]);
+    expect(host.frames("terminal.close")).toEqual([]);
+
+    expect(await service.endFor("owner-1", terminal.listingId)).toBe(true);
+    expect(browser.frames("close")).toEqual([
+      { type: "close", code: 4401, intent: "client", reason: "ended_elsewhere" },
+    ]);
+    expect(host.frames("terminal.close")).toEqual([
+      expect.objectContaining({ intent: "client", fence }),
+    ]);
+    expect(service.listFor("owner-1")).toEqual([]);
+    expect(await service.endFor("owner-1", terminal.listingId)).toBe(false);
+  });
+
+  it("ending a terminal before its PTY opened closes the socket and opens nothing", async () => {
+    check.mockImplementation(() => new Promise(() => undefined));
+    const browser = new FakeBrowser();
+    const terminal = service.attach(binding);
+    terminal.opened(browser);
+    await flush();
+    expect(await service.endFor("owner-1", terminal.listingId)).toBe(true);
+    expect(browser.frames("close")).toEqual([
+      { type: "close", code: 4401, intent: "client", reason: "ended_elsewhere" },
+    ]);
+    expect(host.frames("terminal.open")).toEqual([]);
+    expect(service.count()).toBe(0);
+  });
+
+  it("a failed row retirement ends nothing and rejects, so the person can retry", async () => {
+    const TERMINAL_ID = `t${"e".repeat(32)}`;
+    let fail = true;
+    const closed: string[] = [];
+    service.dispose();
+    service = new BrowserTerminalService(
+      () => manager,
+      check,
+      15_000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        opened: async () => undefined,
+        closed: async (terminalId) => {
+          if (fail) throw new Error("db down");
+          closed.push(terminalId);
+        },
+      },
+    );
+    check.mockImplementation(() => new Promise(() => undefined));
+    const browser = new FakeBrowser();
+    const terminal = service.attach(
+      { ...binding, resume: { terminalId: TERMINAL_ID, nextOutputSeq: 0 } },
+      "req-1",
+      2,
+    );
+    terminal.opened(browser);
+    await flush();
+    await expect(service.endFor("owner-1", terminal.listingId)).rejects.toThrow("db down");
+    expect(browser.closes).toEqual([]);
+    expect(service.listFor("owner-1").map((e) => e.id)).toEqual([terminal.listingId]);
+    fail = false;
+    expect(await service.endFor("owner-1", terminal.listingId)).toBe(true);
+    expect(closed).toEqual([TERMINAL_ID]);
+    expect(browser.frames("close")).toHaveLength(1);
+  });
+
+  it("concurrent ends of a pending resume share one retirement and both succeed", async () => {
+    const TERMINAL_ID = `t${"f".repeat(32)}`;
+    let release!: () => void;
+    const writes: string[] = [];
+    service.dispose();
+    service = new BrowserTerminalService(
+      () => manager,
+      check,
+      15_000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        opened: async () => undefined,
+        closed: (terminalId) => {
+          writes.push(terminalId);
+          // The first write is held; any second write would fail.
+          if (writes.length > 1) return Promise.reject(new Error("redundant write"));
+          return new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        },
+      },
+    );
+    check.mockImplementation(() => new Promise(() => undefined));
+    const browser = new FakeBrowser();
+    const terminal = service.attach(
+      { ...binding, resume: { terminalId: TERMINAL_ID, nextOutputSeq: 0 } },
+      "req-1",
+      2,
+    );
+    terminal.opened(browser);
+    await flush();
+    const first = service.endFor("owner-1", terminal.listingId);
+    const second = service.endFor("owner-1", terminal.listingId);
+    await flush();
+    release();
+    await expect(first).resolves.toBe(true);
+    await expect(second).resolves.toBe(true);
+    expect(writes).toEqual([TERMINAL_ID]);
+    expect(browser.frames("close")).toHaveLength(1);
+  });
+
+  it("ending a WP8 resume still verifying retires its row, so it can never be resumed", async () => {
+    const TERMINAL_ID = `t${"d".repeat(32)}`;
+    const closed: string[] = [];
+    service.dispose();
+    service = new BrowserTerminalService(
+      () => manager,
+      check,
+      15_000,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        opened: async () => undefined,
+        closed: async (terminalId) => {
+          closed.push(terminalId);
+        },
+      },
+    );
+    check.mockImplementation(() => new Promise(() => undefined));
+    const browser = new FakeBrowser();
+    const terminal = service.attach(
+      { ...binding, resume: { terminalId: TERMINAL_ID, nextOutputSeq: 4 } },
+      "req-1",
+      2,
+    );
+    terminal.opened(browser);
+    await flush();
+    expect(await service.endFor("owner-1", terminal.listingId)).toBe(true);
+    await flush();
+    expect(closed).toEqual([TERMINAL_ID]);
+    expect(browser.frames("close")).toEqual([
+      {
+        type: "close",
+        code: 4401,
+        intent: "client",
+        reason: "ended_elsewhere",
+        requestId: "req-1",
+      },
+    ]);
+    expect(browser.frames("reconnecting")).toEqual([]);
+    expect(host.frames("terminal.resume")).toEqual([]);
+    expect(service.count()).toBe(0);
+  });
+});

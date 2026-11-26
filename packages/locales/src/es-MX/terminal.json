@@ -43,6 +43,7 @@
   },
   "notice": {
     "client": "Te desconectaste. La sesión de terminal terminó.",
+    "endedElsewhere": "Esta terminal se terminó desde la página Terminales. Conéctate de nuevo para abrir una nueva.",
     "detached": "Se perdió la conexión de la terminal y la sesión terminó.",
     "replaced": "La terminal se conectó en otro lugar (otra pestaña o dispositivo), así que esta se desconectó.",
     "backpressure": "La terminal no pudo seguir el ritmo de los datos, así que se desconectó. Vuelve a conectarla para iniciar una sesión nueva.",
@@ -239,5 +240,79 @@
     "hint": "El texto de la terminal en este momento. Selecciona una parte y pulsa Copiar.",
     "copy": "Copiar",
     "done": "Listo"
+  },
+  "page": {
+    "title": "Terminales",
+    "description": "Tus terminales abiertas en tus sandboxes y hosts. Una terminal sigue abierta solo mientras la página de su sandbox o host siga abierta en una pestaña; salir de esa página o cerrar la pestaña la termina.",
+    "new": "Nueva terminal",
+    "filter": {
+      "label": "Mostrar terminales en",
+      "all": "Todas",
+      "sandbox": "Sandboxes",
+      "host": "Hosts"
+    },
+    "openTitle": "Abiertas ahora",
+    "empty": {
+      "title": "No hay terminales abiertas",
+      "description": {
+        "all": "Abre una en un sandbox en ejecución o en un host conectado abajo. Se abre en la página de ese sandbox o host y aparece aquí mientras esa página siga abierta en su pestaña.",
+        "sandbox": "Abre una en un sandbox en ejecución abajo. Se abre en la página del sandbox y aparece aquí mientras esa página siga abierta en su pestaña.",
+        "host": "Abre una en un host conectado abajo. Se abre en la página del host y aparece aquí mientras esa página siga abierta en su pestaña."
+      }
+    },
+    "emptyFiltered": "No hay terminales abiertas de este tipo",
+    "truncated": "Se muestran las 100 terminales más recientes.",
+    "unknownTarget": "(ya no está disponible)",
+    "kind": {
+      "sandbox": "Sandbox",
+      "host": "Host"
+    },
+    "hostStatus": {
+      "CONNECTED": "Conectado",
+      "DISCONNECTED": "Sin conexión",
+      "STALE": "Conexión inactiva",
+      "REVOKED": "Credencial revocada"
+    },
+    "status": {
+      "attached": "Conectada",
+      "connecting": "Conectando"
+    },
+    "openedFrom": "Abierta desde",
+    "thisBrowser": "Este navegador (otra pestaña)",
+    "deviceBoth": "{{browser}} en {{os}}",
+    "deviceUnknown": "Otro navegador",
+    "started": "Inicio",
+    "lastActivity": "Última actividad",
+    "openHere": "Abrir aquí",
+    "openHereLabel": "Abrir aquí la terminal de {{name}}",
+    "end": {
+      "action": "Terminar",
+      "label": "Terminar la terminal de {{name}}",
+      "title": "¿Terminar la terminal de {{name}}?",
+      "description": "Se cierra el shell abierto desde {{device}} y se detiene lo que siga ejecutándose en él. Esa pestaña mostrará que la terminal se cerró. Si esa pestaña se estaba reconectando, el host puede tardar unos minutos en cerrar el shell.",
+      "descriptionHere": "Se cierra el shell abierto en tu otra pestaña y se detiene lo que siga ejecutándose en él. Esa pestaña mostrará que la terminal se cerró. Si esa pestaña se estaba reconectando, el host puede tardar unos minutos en cerrar el shell.",
+      "confirm": "Terminar terminal",
+      "done": "Terminal terminada",
+      "alreadyGone": "Esa terminal ya se había cerrado",
+      "failed": "No se pudo cerrar la terminal. Inténtalo de nuevo."
+    },
+    "newTitle": "Abrir una nueva terminal",
+    "newHint": "Elige dónde se ejecuta. Su página se abre en la terminal; ahí selecciona Conectar la terminal. Solo funciona una terminal a la vez por sandbox o host: abrir otra cierra la que ya está abierta e inicia un shell nuevo.",
+    "openOn": "Abrir terminal",
+    "openOnLabel": "Abrir una terminal en {{name}}",
+    "alreadyOpen": "Hay una terminal abierta aquí",
+    "noSandboxes": "No hay ningún sandbox en ejecución.",
+    "goSandboxes": "Inicia o crea uno en Sandboxes",
+    "allSandboxes": "Todos los sandboxes",
+    "noHosts": "No tienes hosts.",
+    "goHosts": "Agregar un host",
+    "allHosts": "Todos los hosts",
+    "hostOffline": "Sin conexión; inícialo con {{command}}",
+    "hostHint": "Una terminal de host es un shell en la propia máquina. Solo funciona después de activarla en el host (la página del host explica cómo).",
+    "hostTerminalOff": "La terminal de host está desactivada en este host",
+    "howToTurnOn": "Cómo activarla",
+    "replaceOn": "Abrir una nueva",
+    "replaceOnLabel": "Abrir una nueva terminal en {{name}} (cierra la que está abierta ahí)",
+    "hostTerminalUnknown": "Aún no se sabe si las terminales de host están activadas; se actualiza solo"
   }
 }
