@@ -7,7 +7,7 @@ import { hostImageFeatures } from "./image-store/config";
  * only: a pool member learns "all", "some" or "none" over the hosts it may
  * use, never which host or whose host says what.
  */
-export type HostPolicyLevel = "all" | "some" | "none";
+type HostPolicyLevel = "all" | "some" | "none";
 
 export type PoolHostPolicy = {
   /**

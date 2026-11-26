@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import en from "@wssp/locales/src/en-US/hosts.json";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
@@ -10,13 +11,29 @@ vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, to }: { children: ReactNode; to: string }) => <a href={to}>{children}</a>,
 }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_DOCS_URL: undefined } }));
-vi.mock("@/utils/orpc", () => ({ orpc: {} }));
+const policyRead = vi.hoisted(() => ({ fail: false, calls: 0 }));
+vi.mock("@/utils/orpc", () => ({
+  orpc: {
+    sandboxPools: {
+      hostPolicy: {
+        queryOptions: ({ input }: { input: { id: string } }) => ({
+          queryKey: ["sandboxPools", "hostPolicy", input.id],
+          queryFn: async () => {
+            policyRead.calls += 1;
+            if (policyRead.fail) throw new Error("network");
+            return { ...base, images: "none", builds: "none" };
+          },
+        }),
+      },
+    },
+  },
+}));
 
-import { type PoolHostPolicy, PoolHostPolicyView } from "./pool-host-policy";
+import { type PoolHostPolicy, PoolHostPolicyNotice, PoolHostPolicyView } from "./pool-host-policy";
 
 afterEach(cleanup);
 
-const base: PoolHostPolicy = {
+const base: PoolHostPolicy = vi.hoisted(() => ({
   viewer: "member",
   hosts: 2,
   ownHosts: 0,
@@ -25,7 +42,7 @@ const base: PoolHostPolicy = {
   openEgress: "all",
   guestSudo: "all",
   allowForeignBuilds: true,
-};
+})) as PoolHostPolicy;
 
 async function show(policy: Partial<PoolHostPolicy>) {
   const i18n = createInstance();
@@ -98,4 +115,41 @@ it("the owner sees every refused setting with its host command", async () => {
   expect(container.textContent).toContain("wssp host config set-allow-guest-sudo-for-others on");
   // Neither image nor build settings changed, so no restart is asked for.
   expect(screen.queryByText(en.hostPolicy.restartStep)).toBeNull();
+});
+
+it("a failed background refetch keeps the policy already shown, with a retry (Codex r2)", async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { hosts: en } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <PoolHostPolicyNotice poolId="pool-1" lang="en-US" ownerName="Ana" />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText(en.hostPolicy.member.images.none)).toBeTruthy();
+  policyRead.fail = true;
+  await act(async () => {
+    await client.refetchQueries({ queryKey: ["sandboxPools", "hostPolicy"] });
+  });
+  expect(policyRead.calls).toBe(2);
+  expect(await screen.findByText(en.hostPolicy.failed, { exact: false })).toBeTruthy();
+  expect(screen.getByText(en.hostPolicy.member.images.none)).toBeTruthy();
+});
+
+it("no pool chosen renders nothing and reads nothing", async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { hosts: en } } });
+  const client = new QueryClient();
+  const before = policyRead.calls;
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <PoolHostPolicyNotice poolId="" lang="en-US" />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  expect(container.textContent).toBe("");
+  expect(policyRead.calls).toBe(before);
 });

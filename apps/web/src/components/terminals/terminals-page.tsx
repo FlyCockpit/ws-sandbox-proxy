@@ -23,10 +23,16 @@ import { PageHeader } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
+import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useStatusClock } from "@/hooks/use-status-clock";
 import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { dateTimeTitle } from "@/lib/format-date-time";
-import { formatAge, HOST_STATUS_REFETCH_MS, hostConnectionState } from "@/lib/host-status";
+import {
+  formatAge,
+  HOST_STATUS_REFETCH_MS,
+  hostConnectionState,
+  nextHostStateChangeAt,
+} from "@/lib/host-status";
 import {
   NEW_TERMINAL_TARGETS_LIMIT,
   TERMINAL_KIND_FILTERS,
@@ -362,6 +368,8 @@ function NewTerminal({
   });
   // Until that refetch lands, the cached rows are judged as of their fetch.
   const now = useStatusClock(hosts.dataUpdatedAt, hosts.isFetching);
+  // A heartbeat turns stale on screen on time, even while a refetch hangs.
+  useRerenderAt(nextHostStateChangeAt(hosts.data?.hosts ?? [], now));
   const openOn = new Set(live.map((terminal) => `${terminal.target.kind}:${terminal.target.id}`));
 
   return (

@@ -4,7 +4,7 @@ import type { AppRouterClient } from "@wssp/api/routers/index";
 import { env } from "@wssp/env/web";
 import { CodeSnippet } from "@wssp/ui/components/code-snippet";
 import { useTranslation } from "react-i18next";
-import { InlineRetry } from "@/components/inline-retry";
+import { QueryBoundary } from "@/components/query-boundary";
 import { docsUrl } from "@/lib/docs-links";
 import { orpc } from "@/utils/orpc";
 
@@ -20,7 +20,7 @@ type Capability = "images" | "builds" | "openEgress" | "guestSudo";
 const CAPABILITIES: readonly Capability[] = ["images", "builds", "openEgress", "guestSudo"];
 
 /** The host-side commands, run by the host's owner at the host (never by the server). */
-export const ACCEPT_FOREIGN_BUILDS_COMMAND = "wssp host config set-accept-foreign-builds on";
+const ACCEPT_FOREIGN_BUILDS_COMMAND = "wssp host config set-accept-foreign-builds on";
 const STEP_COMMANDS: Record<Exclude<Capability, "images">, string> = {
   builds: ACCEPT_FOREIGN_BUILDS_COMMAND,
   openEgress: "wssp host config set-open-egress-for-others on",
@@ -59,22 +59,28 @@ export function PoolHostPolicyNotice({
 }) {
   const { t } = useTranslation("hosts");
   const query = usePoolHostPolicy(poolId);
-  if (query.isPending)
-    return (
-      <p role="status" className="text-sm text-muted-foreground" data-pool-host-policy="loading">
-        {t("hosts:hostPolicy.loading")}
-      </p>
-    );
-  if (query.isError)
-    return (
-      <InlineRetry message={t("hosts:hostPolicy.failed")} onRetry={() => void query.refetch()} />
-    );
+  // No pool chosen: the query is disabled, so there is nothing to describe.
+  if (poolId === "") return null;
+  // A failed background refetch keeps the policy already shown (with a retry
+  // above it); only access loss or a first load that never landed replaces it.
   return (
-    <PoolHostPolicyView
-      policy={query.data}
-      lang={lang}
-      ownerName={ownerName || t("hosts:hostPolicy.theOwner")}
-    />
+    <QueryBoundary
+      query={query}
+      skeleton={
+        <p role="status" className="text-sm text-muted-foreground" data-pool-host-policy="loading">
+          {t("hosts:hostPolicy.loading")}
+        </p>
+      }
+      errorMessage={t("hosts:hostPolicy.failed")}
+    >
+      {(policy) => (
+        <PoolHostPolicyView
+          policy={policy}
+          lang={lang}
+          ownerName={ownerName || t("hosts:hostPolicy.theOwner")}
+        />
+      )}
+    </QueryBoundary>
   );
 }
 

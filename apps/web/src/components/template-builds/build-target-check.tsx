@@ -46,7 +46,7 @@ export function blocksBuild(check: BuildTargetCheck): boolean {
 }
 
 /** Where a verdict's next step is taken. */
-export function checkLink(kind: string): "hosts" | "pools" | "images" {
+function checkLink(kind: string): "hosts" | "pools" | "images" {
   if (kind === "poolForeignBuildsOff") return "images";
   return kind.startsWith("host") || kind === "waitHost" ? "hosts" : "pools";
 }
@@ -78,7 +78,7 @@ type MemberRead = { enabled?: boolean; Host?: { status: string } | null };
  * the pool's host policy say. A shared pool where you have no host builds only
  * on hosts whose owners build for other accounts, and only with your opt-in.
  */
-export function poolCheck(
+function poolCheck(
   pool: { label: string; memberCount: number },
   members: readonly MemberRead[] | undefined,
   policy?: Pick<PoolHostPolicy, "viewer" | "hosts" | "ownHosts" | "builds" | "allowForeignBuilds">,

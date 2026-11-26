@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
@@ -41,6 +41,8 @@ const server = vi.hoisted(() => ({
   sandboxesError: null as unknown,
   /** While set, hostTargets answers only once it resolves. */
   hostsGate: null as Promise<void> | null,
+  /** While set, terminals.list answers only once it resolves. */
+  listGate: null as Promise<void> | null,
 }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast }));
@@ -86,6 +88,7 @@ vi.mock("@/utils/orpc", () => {
             queryKey: ["terminals", "list"],
             queryFn: async () => {
               record("terminals.list", undefined);
+              if (server.listGate) await server.listGate;
               return { terminals: structuredClone(server.terminals), truncated: false };
             },
           }),
@@ -231,6 +234,7 @@ beforeEach(async () => {
   server.endError = null;
   server.sandboxesError = null;
   server.hostsGate = null;
+  server.listGate = null;
   toast.success.mockReset();
   toast.error.mockReset();
 });
@@ -453,6 +457,31 @@ describe("Terminals page", () => {
     answer();
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(within(halo()!).getByText(/^Connected/)).toBeTruthy();
+  });
+
+  it("a host whose heartbeat stops turns stale on time while its refetch hangs (Codex r2)", async () => {
+    vi.useFakeTimers({ now: Date.now() });
+    server.hosts = [host({ lastHeartbeatAt: new Date() })];
+    mount("host");
+    await vi.waitFor(() => expect(within(halo()!).getByText(/^Connected/)).toBeTruthy());
+    // Every later answer hangs (the terminals list too, so no other poll
+    // re-renders the page): the 15 s poll starts a refetch that never lands.
+    server.hostsGate = new Promise<void>(() => {});
+    server.listGate = new Promise<void>(() => {});
+    // One second per step, so each timer's render lands at its own time.
+    const tick = async (seconds: number) => {
+      for (let i = 0; i < seconds; i += 1)
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+    };
+    await tick(28);
+    // The refetch grace ended at ~25 s; the heartbeat is still inside 30 s.
+    expect(within(halo()!).getByText(/^Connected/)).toBeTruthy();
+    // Nothing re-renders the page but its own timers: past the 30 s window
+    // the row says so.
+    await tick(4);
+    expect(within(halo()!).getByText(/Connection stale/)).toBeTruthy();
   });
 
   it("a host whose refetch fails is judged against the wall clock again", async () => {
