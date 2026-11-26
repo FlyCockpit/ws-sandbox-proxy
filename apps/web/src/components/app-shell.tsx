@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import { BottomNavFirstFrame, BottomNavSkeleton } from "@/components/bottom-nav";
 import Header from "@/components/header";
+import { OfflineBanner } from "@/components/offline-banner";
 import { ContentSkeleton } from "@/components/route-content-skeleton";
 import { SkipToContent } from "@/components/skip-to-content";
 import { useMountEffect } from "@/hooks/use-mount-effect";
@@ -84,7 +85,14 @@ export function AppShellPending() {
   const layout = resolvePendingLayout(matches, routeId);
   return (
     <AppShellFrame
-      header={<Header placeholder />}
+      header={
+        // The offline notice too, so an offline hard refresh does not move
+        // the page down when the layout replaces this frame.
+        <>
+          <Header placeholder />
+          <OfflineBanner />
+        </>
+      }
       bottomNav={
         // Pages in the dashboard frame are signed-in pages: their tabs are
         // static, so they are drawn for real (the sidebar's are too).

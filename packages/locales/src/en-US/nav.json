@@ -25,6 +25,8 @@
     "myAccount": "My Account",
     "signIn": "Sign In",
     "signUp": "Sign Up",
+    "setUp": "Set Up",
+    "setUpLabel": "Set up this server",
     "signOut": "Sign Out",
     "open": "{{name}}, account menu",
     "helpDocs": "Help & docs",

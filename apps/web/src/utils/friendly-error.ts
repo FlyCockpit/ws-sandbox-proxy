@@ -7,14 +7,20 @@
  * Pass an optional `fallback` for context-specific copy ("Couldn't update
  * that user. Try again."). It is used only when we have no specific code
  * mapping; known codes (CONFLICT, FORBIDDEN, …) still return their mapped
- * copy.
+ * copy, and so does a network failure (offline / server unreachable), which
+ * says what to do instead of "Something didn't work".
  */
 import i18n from "../i18n";
 import { credentialErrorKey } from "../lib/credential-errors";
+import { networkFailureKind } from "../lib/network-failure";
 
 export function friendly(error: unknown, fallback?: string): string {
   const e = asErrorShape(error);
   const generic = fallback ?? i18n.t("errors:generic");
+
+  const network = networkFailureKind(error);
+  if (network === "offline") return i18n.t("errors:offline");
+  if (network === "unreachable") return i18n.t("errors:unreachable");
 
   if (!e) return generic;
 

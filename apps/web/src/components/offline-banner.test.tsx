@@ -11,6 +11,8 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+import { BACK_ONLINE_MS } from "@/lib/connectivity-notice";
+
 import { newestDataAt, OfflineBanner } from "./offline-banner";
 
 let online = true;
@@ -21,7 +23,15 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
+
+function goOnline() {
+  online = true;
+  act(() => {
+    window.dispatchEvent(new Event("online"));
+  });
+}
 
 function goOffline() {
   online = false;
@@ -37,7 +47,7 @@ describe("offline banner", () => {
     expect(newestDataAt([5, 20, 10])).toBe(20);
   });
 
-  it("is absent online and says how old the shown data is once offline", () => {
+  it("is empty online and says how old the shown data is once offline", () => {
     const client = new QueryClient();
     const at = new Date(2026, 10, 25, 12, 1).getTime();
     client.setQueryData(["sandboxes"], [], { updatedAt: at });
@@ -46,20 +56,45 @@ describe("offline banner", () => {
         <OfflineBanner />
       </QueryClientProvider>,
     );
-    expect(screen.queryByRole("status")).toBeNull();
+    // The live region stays mounted, empty, so the change is announced.
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("");
+    expect(region.getAttribute("aria-live")).toBe("polite");
 
     goOffline();
-    const banner = screen.getByRole("status");
     const time = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(
       at,
     );
-    expect(banner.textContent).toBe(`offline.showingDataFrom ${time}`);
+    expect(screen.getByRole("status").textContent).toBe(`offline.showingDataFrom ${time}`);
+  });
 
-    online = true;
+  it("says Back online on reconnect, then empties", () => {
+    vi.useFakeTimers();
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <OfflineBanner />
+      </QueryClientProvider>,
+    );
+    goOffline();
+    goOnline();
+    const region = screen.getByRole("status");
+    expect(region.textContent).toBe("offline.backOnline");
+    expect(region.dataset.offlineBanner).toBe("back-online");
+
     act(() => {
-      window.dispatchEvent(new Event("online"));
+      vi.advanceTimersByTime(BACK_ONLINE_MS);
     });
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("does not say Back online for an online event without an outage", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <OfflineBanner />
+      </QueryClientProvider>,
+    );
+    goOnline();
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 
   it("says plainly that nothing is cached yet", () => {

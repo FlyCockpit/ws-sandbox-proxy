@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { PageShell } from "@/components/page-shell";
 import { APP_HOME } from "@/lib/app-home";
+import { poolInviteToken } from "@/lib/pool-invite";
 import { ensureSessionHint } from "@/lib/session-hint";
 import { signupMode } from "@/lib/signup-mode";
 import { orpc } from "@/utils/orpc";
@@ -46,7 +47,8 @@ function HomePage() {
 /**
  * The way in, following the server's sign-up mode (lib/signup-mode.ts):
  *
- * - `open`: Create account (primary) + Sign in.
+ * - `open`, or `invite` (this tab holds a pool invitation, which opens sign-up
+ *   for the invited address): Create account (primary) + Sign in.
  * - `bootstrap`: no administrator exists yet (`appConfig` turns the flag off
  *   once one does), so the visitor is almost certainly the operator: "Set up
  *   this server" is the primary button and Sign in the secondary one.
@@ -62,7 +64,8 @@ function HomePage() {
 function LandingActions({ lang }: { lang: string }) {
   const { t } = useTranslation("common");
   const { data: config } = useQuery(orpc.appConfig.queryOptions());
-  const mode = config ? signupMode(config) : null;
+  const mode = config ? signupMode(config, poolInviteToken() !== undefined) : null;
+  const canCreate = mode === "open" || mode === "invite";
 
   const signIn = (primary: boolean) => (
     <Link
@@ -90,9 +93,9 @@ function LandingActions({ lang }: { lang: string }) {
   return (
     <div className="mt-8 space-y-3">
       <div className="flex flex-wrap items-center justify-center gap-3">
-        {mode === "open" && signUp(t("home.createAccount"), "create-account")}
+        {canCreate && signUp(t("home.createAccount"), "create-account")}
         {mode === "bootstrap" && signUp(t("home.setUp"), "set-up")}
-        {signIn(mode !== "open" && mode !== "bootstrap")}
+        {signIn(!canCreate && mode !== "bootstrap")}
       </div>
       {mode === "closed" && <p className="text-sm text-muted-foreground">{t("home.inviteOnly")}</p>}
     </div>

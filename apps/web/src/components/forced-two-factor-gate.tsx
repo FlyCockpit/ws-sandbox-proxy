@@ -63,7 +63,20 @@ function TwoFactorSetupRequired() {
   const [codeError, setCodeError] = useState<string | null>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
-  const { t } = useTranslation("auth");
+  const { t } = useTranslation(["auth", "common"]);
+
+  /** Cancel on the password and code steps: back to the start, nothing kept. */
+  const backToIntro = () => {
+    setStep("intro");
+    setPassword("");
+    setPasswordError(null);
+    setVerifyCode("");
+    setCodeError(null);
+    // The secret shown on the code step was never confirmed; starting again
+    // asks for a new one, so it must not linger on screen.
+    setTotpURI("");
+    setBackupCodes([]);
+  };
 
   const failPassword = (error: unknown) => {
     setPasswordError(twoFactorPasswordError(error, t, "auth:twoFactor.couldNotStartSetup"));
@@ -71,6 +84,9 @@ function TwoFactorSetupRequired() {
   };
 
   const handleEnable = async () => {
+    // Enter and the button both call this; a second call mid-flight would
+    // start a second enrollment and replace the secret being shown.
+    if (isLoading) return;
     setIsLoading(true);
     setPasswordError(null);
     try {
@@ -99,6 +115,7 @@ function TwoFactorSetupRequired() {
   };
 
   const handleVerify = async () => {
+    if (isLoading) return;
     setIsLoading(true);
     setCodeError(null);
     try {
@@ -121,6 +138,17 @@ function TwoFactorSetupRequired() {
       setIsLoading(false);
     }
   };
+
+  const cancelButton = (
+    <Button
+      variant="ghost"
+      className="min-h-[44px] w-full"
+      disabled={isLoading}
+      onClick={backToIntro}
+    >
+      {t("common:actions.cancel")}
+    </Button>
+  );
 
   return (
     <div className="flex min-h-[80vh] items-center justify-center px-4">
@@ -164,6 +192,7 @@ function TwoFactorSetupRequired() {
               <Button className="min-h-[44px] w-full" onClick={handleEnable} disabled={isLoading}>
                 {isLoading ? t("twoFactor.settingUp") : t("twoFactor.continue")}
               </Button>
+              {cancelButton}
             </>
           )}
 
@@ -203,6 +232,7 @@ function TwoFactorSetupRequired() {
               >
                 {isLoading ? t("twoFactor.verifying") : t("twoFactor.verifyAndEnable")}
               </Button>
+              {cancelButton}
             </>
           )}
         </CardContent>

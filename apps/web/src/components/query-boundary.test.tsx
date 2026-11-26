@@ -1,8 +1,12 @@
 import enCommon from "@wssp/locales/src/en-US/common.json";
+import enErrors from "@wssp/locales/src/en-US/errors.json";
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+
+const network = vi.hoisted(() => ({ online: true }));
+vi.mock("@/hooks/use-network-status", () => ({ useNetworkStatus: () => network.online }));
 
 import { QueryBoundary } from "@/components/query-boundary";
 
@@ -19,12 +23,16 @@ describe("QueryBoundary", () => {
     await i18n.init({
       lng: "en-US",
       fallbackLng: "en-US",
-      ns: ["common"],
+      ns: ["common", "errors"],
       defaultNS: "common",
-      resources: { "en-US": { common: enCommon } },
+      resources: { "en-US": { common: enCommon, errors: enErrors } },
       interpolation: { escapeValue: false },
       react: { useSuspense: false },
     });
+  });
+
+  afterEach(() => {
+    network.online = true;
   });
 
   function render(query: {
@@ -32,6 +40,7 @@ describe("QueryBoundary", () => {
     isPending: boolean;
     isError: boolean;
     error?: unknown;
+    fetchStatus?: "fetching" | "paused" | "idle";
   }): string {
     return renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
@@ -106,5 +115,51 @@ describe("QueryBoundary", () => {
   it("renders the empty state on an empty success", () => {
     const html = render({ data: [], isPending: false, isError: false });
     expect(html).toContain("EMPTY");
+  });
+
+  describe("offline", () => {
+    // As rendered markup: the apostrophe is escaped.
+    const offlineCopy = enErrors.offlineContent.replace("'", "&#x27;");
+
+    it("says a first load paused for the network will load on reconnect, not a skeleton forever", () => {
+      network.online = false;
+      const html = render({
+        data: undefined,
+        isPending: true,
+        isError: false,
+        fetchStatus: "paused",
+      });
+      expect(html).toContain(offlineCopy);
+      expect(html).not.toContain("SKELETON");
+    });
+
+    it("keeps the skeleton while a first load is actually fetching", () => {
+      const html = render({
+        data: undefined,
+        isPending: true,
+        isError: false,
+        fetchStatus: "fetching",
+      });
+      expect(html).toContain("SKELETON");
+    });
+
+    it("uses the offline copy for a first load that failed offline", () => {
+      network.online = false;
+      const html = render({ data: undefined, isPending: false, isError: true });
+      expect(html).toContain(offlineCopy);
+      expect(html).not.toContain("Failed to load posts.");
+    });
+
+    it("keeps retained content when a refetch fails offline, with the offline copy above it", () => {
+      network.online = false;
+      const html = render({
+        data: ["alpha"],
+        isPending: false,
+        isError: true,
+        error: new TypeError("Failed to fetch"),
+      });
+      expect(html).toContain("alpha");
+      expect(html.indexOf(offlineCopy)).toBeLessThan(html.indexOf("alpha"));
+    });
   });
 });

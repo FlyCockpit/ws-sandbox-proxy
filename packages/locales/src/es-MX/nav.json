@@ -26,6 +26,8 @@
     "signIn": "Iniciar sesión",
     "signOut": "Cerrar sesión",
     "signUp": "Registrarse",
+    "setUp": "Configurar",
+    "setUpLabel": "Configurar este servidor",
     "open": "{{name}}, menú de la cuenta",
     "helpDocs": "Ayuda y documentación",
     "openApp": "Abrir la app",

@@ -43,7 +43,9 @@ vi.mock("@/components/route-content-skeleton", () => ({
   ContentSkeleton: () => <p data-route-skeleton="">skeleton</p>,
 }));
 vi.mock("@/components/header", () => ({ default: () => <div data-shell-header="" /> }));
-vi.mock("@/components/offline-banner", () => ({ OfflineBanner: () => null }));
+vi.mock("@/components/offline-banner", () => ({
+  OfflineBanner: () => <div data-offline-banner="" />,
+}));
 vi.mock("@/components/language-switcher", () => ({ LanguageSwitcher: () => null }));
 vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => null }));
 vi.mock("@/hooks/use-document-lang", () => ({ useDocumentLang: () => {} }));
@@ -85,7 +87,10 @@ describe("public shell", () => {
     const match = html.match(COLUMN);
     expect(match, html).not.toBeNull();
     expect(match?.[1]).toBe("<p>page</p>");
-    expect(html).toMatch(/<header\b[\s\S]*<hr\/><\/header><main\b/);
+    // The offline notice sits under the header, in the header's grid row.
+    expect(html).toMatch(
+      /<div class="min-w-0"><header\b[\s\S]*<hr\/><\/header><div data-offline-banner=""><\/div><\/div><main\b/,
+    );
     expect(html).not.toContain("<footer");
   });
 
@@ -122,6 +127,15 @@ describe("full-bleed rules inside the scroller", () => {
     expect(tag).toContain('data-scroll-restoration-id="app-main"');
     expect(tag).toContain("overflow-y-auto");
     expect(tag).not.toContain("scrollbar-gutter");
+  });
+
+  it.each([
+    ["public", PublicRoute],
+    ["app", AppRoute],
+  ])("the %s shell renders the offline notice once, above its scroller", async (_name, route) => {
+    const html = await render(route);
+    expect(html.match(/data-offline-banner/g)).toHaveLength(1);
+    expect(html.indexOf("data-offline-banner")).toBeLessThan(html.indexOf("<main"));
   });
 
   it("the app shell has no footer (BottomNav on phones)", async () => {

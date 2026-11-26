@@ -16,6 +16,8 @@ const fx = vi.hoisted(() => ({
   },
   signIn: vi.fn(),
   signUp: vi.fn(),
+  // A pool invitation held in this tab's memory (lib/pool-invite.ts).
+  inviteToken: undefined as string | undefined,
   twoFactor: {
     sendOtp: vi.fn(),
     verifyOtp: vi.fn(),
@@ -75,7 +77,7 @@ vi.mock("@/utils/orpc", () => ({
   },
 }));
 vi.mock("@/lib/pool-invite", () => ({
-  poolInviteToken: () => undefined,
+  poolInviteToken: () => fx.inviteToken,
   postAuthHref: (href: string) => href,
   clearPoolInviteToken: vi.fn(),
 }));
@@ -101,6 +103,7 @@ beforeEach(() => {
   fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
   fx.signIn.mockReset();
   fx.signUp.mockReset();
+  fx.inviteToken = undefined;
   for (const fn of Object.values(fx.twoFactor)) fn.mockReset();
   fx.session = { status: "anonymous" };
 });
@@ -171,6 +174,37 @@ describe("sign in", () => {
     expect(screen.getByText("auth:login.byInvitation")).toBeTruthy();
     expect(screen.queryByText("auth:login.adminSignupHint")).toBeNull();
   });
+
+  it("offers Sign Up on a closed server to a visitor holding a pool invitation", () => {
+    fx.config = { signupEnabled: false, adminBootstrapSignupEnabled: false, emailEnabled: false };
+    fx.inviteToken = "wssp_inv_x";
+    render(<LoginPage />);
+    expect(screen.getByText("auth:login.signupHint").closest("a")?.dataset.to).toBe(
+      "/$lang/signup",
+    );
+    expect(screen.queryByText("auth:login.byInvitation")).toBeNull();
+    expect(screen.getByText("auth:poolInviteReopen")).toBeTruthy();
+  });
+
+  it("sends a short password to the server: sign-in never applies the new-password minimum", async () => {
+    fx.signIn.mockResolvedValue({ error: { code: "INVALID_EMAIL_OR_PASSWORD", status: 401 } });
+    render(<LoginPage />);
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "short");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+    await waitFor(() =>
+      expect(fx.signIn).toHaveBeenCalledWith({ email: "person@example.test", password: "short" }),
+    );
+  });
+
+  it("asks for a password, and never shows the new-password rule", async () => {
+    render(<LoginPage />);
+    expect(screen.queryByText("auth:fields.passwordRule")).toBeNull();
+    fill("auth:fields.email", "person@example.test");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("validation:required");
+    expect(fx.signIn).not.toHaveBeenCalled();
+  });
 });
 
 describe("sign-in 2FA challenge", () => {
@@ -231,6 +265,14 @@ describe("sign-in 2FA challenge", () => {
     expect(screen.getByLabelText("auth:fields.password")).toBeTruthy();
   });
 
+  it("Cancel goes back to the sign-in form", async () => {
+    await reachChallenge();
+    fireEvent.click(screen.getByRole("button", { name: "common:actions.cancel" }));
+    expect(mode()).toBeUndefined();
+    expect(screen.getByLabelText("auth:fields.password")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "auth:twoFactor.verify" })).toBeNull();
+  });
+
   it("waits for the first session answer before showing the form", () => {
     fx.session = { status: "pending" };
     render(<LoginPage />);
@@ -241,6 +283,43 @@ describe("sign-in 2FA challenge", () => {
 });
 
 describe("sign up", () => {
+  it("shows the invite-only card instead of a form when sign-up is closed", () => {
+    fx.config = { signupEnabled: false, adminBootstrapSignupEnabled: false, emailEnabled: false };
+    render(<SignupPage />);
+    expect(screen.getByText("auth:login.closedTitle")).toBeTruthy();
+    expect(screen.getByText("auth:login.closedDescription")).toBeTruthy();
+    expect(screen.getByText("auth:login.signIn").closest("a")?.dataset.to).toBe("/$lang/login");
+    expect(screen.queryByLabelText("auth:fields.password")).toBeNull();
+    expect(screen.queryByText("auth:login.createAccount")).toBeNull();
+  });
+
+  it("opens the form on a closed server for a visitor holding a pool invitation", () => {
+    fx.config = { signupEnabled: false, adminBootstrapSignupEnabled: false, emailEnabled: false };
+    fx.inviteToken = "wssp_inv_x";
+    render(<SignupPage />);
+    expect(screen.queryByText("auth:login.closedTitle")).toBeNull();
+    expect(screen.getByText("auth:poolInviteReopen")).toBeTruthy();
+    expect(screen.getByLabelText("auth:fields.password")).toBeTruthy();
+  });
+
+  it("states the password rule up front, tied to the field", () => {
+    render(<SignupPage />);
+    const rule = screen.getByText("auth:fields.passwordRule");
+    const password = screen.getByLabelText("auth:fields.password");
+    expect(password.getAttribute("aria-describedby")).toContain(rule.id);
+  });
+
+  it("refuses a password under the policy minimum before asking the server", async () => {
+    render(<SignupPage />);
+    fill("auth:fields.name", "Person");
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "a".repeat(11));
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signUp" }));
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("auth:fields.password").getAttribute("aria-invalid")).toBe("true");
+    expect(fx.signUp).not.toHaveBeenCalled();
+  });
+
   it("leads with the invitation callout when sign-up is limited", () => {
     fx.config = { signupEnabled: false, adminBootstrapSignupEnabled: true, emailEnabled: false };
     render(<SignupPage />);

@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { WifiOff } from "lucide-react";
+import { Wifi, WifiOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
-import { useNetworkStatus } from "@/hooks/use-network-status";
+import { useConnectivityNotice } from "@/hooks/use-connectivity-notice";
 
 /** The newest moment any cached query got its data, or null with no data cached. */
 export function newestDataAt(updatedAt: readonly number[]): number | null {
@@ -11,17 +11,32 @@ export function newestDataAt(updatedAt: readonly number[]): number | null {
 }
 
 /**
- * The app-level offline notice under the header. The browser's own
+ * The offline notice under the header, in both shells. The browser's own
  * connectivity hint decides it (presentation only): the cached pages keep
  * showing, and this says how old they are instead of letting each page blame
- * its hosts or the server.
+ * its hosts or the server. On reconnect it says "Back online." for a few
+ * seconds (lib/connectivity-notice.ts), then empties.
+ *
+ * The live region is always mounted (empty, so no height, while online), so
+ * assistive tech announces the offline notice once when it appears and
+ * "Back online." once on reconnect. See docs/design/shell-rules.md § Offline.
  */
 export function OfflineBanner() {
-  const online = useNetworkStatus();
+  const notice = useConnectivityNotice();
+  return (
+    <div role="status" aria-live="polite" aria-atomic="true" data-offline-banner={notice ?? ""}>
+      {notice === "offline" && <OfflineNotice />}
+      {notice === "back-online" && <BackOnlineNotice />}
+    </div>
+  );
+}
+
+const NOTICE_CLASS =
+  "flex min-w-0 items-center justify-center gap-2 border-b px-4 py-2 text-center text-sm motion-safe:animate-in motion-safe:fade-in-0";
+
+function OfflineNotice() {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation("common");
-  if (online) return null;
-
   const since = newestDataAt(
     queryClient
       .getQueryCache()
@@ -37,15 +52,22 @@ export function OfflineBanner() {
             minute: "2-digit",
           }).format(since),
         });
-
   return (
-    <div
-      role="status"
-      data-offline-banner
-      className="flex min-w-0 items-center justify-center gap-2 border-b border-amber-600/40 bg-amber-600/10 px-4 py-2 text-center text-sm text-amber-800 dark:text-amber-300"
+    <p
+      className={`${NOTICE_CLASS} border-amber-600/40 bg-amber-600/10 text-amber-800 dark:text-amber-300`}
     >
       <WifiOff aria-hidden="true" className="size-4 shrink-0" />
       <span className="min-w-0">{message}</span>
-    </div>
+    </p>
+  );
+}
+
+function BackOnlineNotice() {
+  const { t } = useTranslation("common");
+  return (
+    <p className={`${NOTICE_CLASS} bg-muted text-foreground`}>
+      <Wifi aria-hidden="true" className="size-4 shrink-0 text-state-success" />
+      <span className="min-w-0">{t("offline.backOnline")}</span>
+    </p>
   );
 }

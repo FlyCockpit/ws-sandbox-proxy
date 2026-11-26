@@ -60,11 +60,11 @@ const initialState: ChallengeState = {
 export function TwoFactorChallenge({
   emailEnabled,
   onVerified,
-  onBack,
+  onCancel,
 }: {
   emailEnabled: boolean;
   onVerified: () => void;
-  onBack: () => void;
+  onCancel: () => void;
 }) {
   const { t } = useTranslation(["auth", "common"]);
   const [state, setState] = useState<ChallengeState>(initialState);
@@ -248,8 +248,15 @@ export function TwoFactorChallenge({
           {t("auth:twoFactor.useBackupCode")}
         </Button>
       ) : null}
-      <Button variant="ghost" className="min-h-[44px] w-full" onClick={onBack}>
-        {t("auth:twoFactor.back")}
+      {/* Cancel: back to the sign-in form with nothing carried over (the
+          page unmounts this step, so no code, mode or error survives). */}
+      <Button
+        variant="ghost"
+        className="min-h-[44px] w-full"
+        disabled={state.verifying}
+        onClick={onCancel}
+      >
+        {t("common:actions.cancel")}
       </Button>
     </AuthCard>
   );

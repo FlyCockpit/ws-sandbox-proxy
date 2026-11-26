@@ -258,6 +258,24 @@ describe("landing actions per sign-up mode", () => {
     expect(html).toContain(enCommon.home.inviteOnly);
     expect(html).not.toContain(enCommon.home.setUp);
   });
+
+  it("closed, but this tab holds a pool invitation: Create account (primary), no invite line", async () => {
+    const { capturePoolInviteFragment, clearPoolInviteToken } = await import("@/lib/pool-invite");
+    capturePoolInviteFragment({
+      location: { pathname: "/en-US/settings/pools/invite", hash: `#wssp_inv_${"a".repeat(43)}` },
+      history: { state: null, replaceState: () => {} },
+    } as unknown as Pick<Window, "location" | "history">);
+    try {
+      const { links, html } = actions({ signupEnabled: false, adminBootstrapSignupEnabled: false });
+      expect(links.map((l) => [l.action, l.filled])).toEqual([
+        ["create-account", true],
+        ["sign-in", false],
+      ]);
+      expect(html).not.toContain(enCommon.home.inviteOnly);
+    } finally {
+      clearPoolInviteToken();
+    }
+  });
 });
 
 describe("public header, rendered on the server", () => {

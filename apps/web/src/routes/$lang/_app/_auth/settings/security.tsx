@@ -126,6 +126,25 @@ function Enable2FASection() {
   const codeRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation(["settings", "auth", "common"]);
 
+  /** Cancel at any step: back to the Enable button, nothing kept. */
+  const cancel = () => {
+    setStep("idle");
+    setPassword("");
+    setPasswordError(null);
+    setVerifyCode("");
+    setCodeError(null);
+    // The secret shown on the setup step was never confirmed; enabling again
+    // asks for a new one, so it must not linger on screen.
+    setTotpURI("");
+    setBackupCodes([]);
+  };
+
+  const cancelButton = (
+    <Button className="min-h-[44px]" variant="ghost" disabled={isLoading} onClick={cancel}>
+      {t("common:actions.cancel")}
+    </Button>
+  );
+
   const failPassword = (error: unknown) => {
     setPasswordError(twoFactorPasswordError(error, t, "settings:security.couldNotStartSetup"));
     passwordRef.current?.focus();
@@ -137,6 +156,9 @@ function Enable2FASection() {
   };
 
   const handleEnable = async () => {
+    // Enter and the button both call this; a second call mid-flight would
+    // start a second enrollment and replace the secret being shown.
+    if (isLoading) return;
     setIsLoading(true);
     setPasswordError(null);
     try {
@@ -165,6 +187,7 @@ function Enable2FASection() {
   };
 
   const handleVerify = async () => {
+    if (isLoading) return;
     setIsLoading(true);
     setCodeError(null);
     try {
@@ -220,9 +243,7 @@ function Enable2FASection() {
           <Button className="min-h-[44px]" onClick={handleEnable} disabled={isLoading}>
             {isLoading ? t("auth:twoFactor.settingUp") : t("auth:twoFactor.continue")}
           </Button>
-          <Button className="min-h-[44px]" variant="ghost" onClick={() => setStep("idle")}>
-            {t("common:actions.cancel")}
-          </Button>
+          {cancelButton}
         </div>
       </div>
     );
@@ -239,9 +260,12 @@ function Enable2FASection() {
           totpURI={totpURI}
         />
 
-        <Button className="min-h-[44px]" onClick={() => setStep("verify")}>
-          {t("settings:security.savedBackupCodes")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button className="min-h-[44px]" onClick={() => setStep("verify")}>
+            {t("settings:security.savedBackupCodes")}
+          </Button>
+          {cancelButton}
+        </div>
       </div>
     );
   }
@@ -268,13 +292,16 @@ function Enable2FASection() {
           if (e.key === "Enter" && verifyCode.length === 6) handleVerify();
         }}
       />
-      <Button
-        className="min-h-[44px]"
-        onClick={handleVerify}
-        disabled={verifyCode.length !== 6 || isLoading}
-      >
-        {isLoading ? t("auth:twoFactor.verifying") : t("settings:security.verifyAndEnable")}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          className="min-h-[44px]"
+          onClick={handleVerify}
+          disabled={verifyCode.length !== 6 || isLoading}
+        >
+          {isLoading ? t("auth:twoFactor.verifying") : t("settings:security.verifyAndEnable")}
+        </Button>
+        {cancelButton}
+      </div>
     </div>
   );
 }
@@ -349,7 +376,16 @@ function Disable2FASection() {
         >
           {isLoading ? t("settings:security.disabling") : t("settings:security.disable")}
         </Button>
-        <Button className="min-h-[44px]" variant="ghost" onClick={() => setShowConfirm(false)}>
+        <Button
+          className="min-h-[44px]"
+          variant="ghost"
+          disabled={isLoading}
+          onClick={() => {
+            setShowConfirm(false);
+            setPassword("");
+            setPasswordError(null);
+          }}
+        >
           {t("common:actions.cancel")}
         </Button>
       </div>

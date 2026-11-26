@@ -6,6 +6,12 @@
   "forbidden": "You don't have access to this.",
   "generic": "Something didn't work. Try again.",
   "notFound": "That wasn't found.",
+  "offline": "You're offline. Check your connection and try again.",
+  "offlineContent": "You're offline. This will load when you reconnect.",
+  "offlinePage": {
+    "title": "You're offline",
+    "description": "This page will load when you reconnect."
+  },
   "pageDescription": "{{appName}} is a web application",
   "pageNotFound": {
     "title": "Page not found",
@@ -18,6 +24,11 @@
   "rootError": "This page didn't load. Try again, or reload.",
   "serverError": "Something didn't work on our end. Try again in a moment.",
   "sessionEnded": "Your session has ended. Sign in again.",
+  "unreachable": "Couldn't reach the server. Check your connection and try again.",
+  "unreachablePage": {
+    "title": "Couldn't reach the server",
+    "description": "Check your connection and try again."
+  },
   "credential": {
     "not_found": "That login no longer exists.",
     "account_not_found": "That login account no longer exists.",

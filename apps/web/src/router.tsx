@@ -16,6 +16,8 @@ import {
   watchDocumentRestore,
 } from "./lib/document-identity";
 import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
+import { networkFailureKind } from "./lib/network-failure";
+import { installOfflineMutationPolicy } from "./lib/offline-mutations";
 import { capturePoolInviteFragment } from "./lib/pool-invite";
 import { routeTree } from "./routeTree.gen";
 import { useOrphanCredentials } from "./stores/orphan-credentials";
@@ -85,6 +87,9 @@ export function getRouter() {
         // cache below — so a flaky connection doesn't spam toasts on top of
         // the InlineRetry the page already shows.
         if (query.meta?.skipGlobalErrorToast) return;
+        // Offline, the shell's OfflineBanner and the page's own offline state
+        // already explain it; one toast per failed query would pile up.
+        if (networkFailureKind(error) === "offline") return;
         toast.error(friendly(error), {
           action: {
             label: i18n.t("common:actions.tryAgain"),
@@ -114,6 +119,14 @@ export function getRouter() {
         toast.error(friendly(error, fallback));
       },
     }),
+  });
+  // Offline mutations fail fast with "You're offline…" (via friendly()) instead
+  // of pausing silently; `meta: { offline: "queue" }` opts a replay-safe write
+  // into waiting for the network, with a notice. See docs/design/shell-rules.md
+  // § Offline.
+  installOfflineMutationPolicy(queryClient, {
+    queued: () => toast.info(i18n.t("common:offline.queued")),
+    sent: () => toast.success(i18n.t("common:offline.queuedSent")),
   });
 
   // A signed-in copy of this document restored from the back/forward cache
@@ -183,6 +196,12 @@ declare module "@tanstack/react-query" {
        * called `toast.error(friendly(err, t("ns:key")))`.
        */
       errorFallbackKey?: string;
+      /**
+       * `"queue"`: while offline, wait and send on reconnect (with a notice)
+       * instead of failing fast. Only for writes that are safe to replay. See
+       * docs/design/shell-rules.md § Offline.
+       */
+      offline?: "queue";
     };
   }
 }

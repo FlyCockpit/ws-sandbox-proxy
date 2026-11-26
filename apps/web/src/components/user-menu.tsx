@@ -10,6 +10,8 @@ import { useTranslation } from "react-i18next";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { useOrphanOwnerSync } from "@/hooks/use-orphan-owner-sync";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { poolInviteToken } from "@/lib/pool-invite";
+import { signupMode, signupOffered } from "@/lib/signup-mode";
 import { orpc } from "@/utils/orpc";
 
 // Lazy so the shared Base UI overlay chunk (Menu/Dialog/focus-guards) leaves the
@@ -73,12 +75,17 @@ export default function UserMenu() {
 
   if (state.status === "anonymous") {
     // Default to NOT showing Sign Up until the flag is known, so it never
-    // flashes when sign-up is disabled. The admin bootstrap counts: it is on
-    // only until an administrator exists (appConfig), and then the operator
-    // needs this way in.
-    const showSignUp =
-      !configPending &&
-      (configData?.signupEnabled === true || configData?.adminBootstrapSignupEnabled === true);
+    // flashes when sign-up is disabled. The mode is the one the landing page
+    // and /signup read (lib/signup-mode.ts): a held pool invitation counts,
+    // and so does the admin bootstrap, which is on only until an
+    // administrator exists (appConfig) and then names the operator's way in,
+    // "Set Up", as the landing page does.
+    const mode =
+      !configPending && configData
+        ? signupMode(configData, poolInviteToken() !== undefined)
+        : undefined;
+    const showSignUp = mode !== undefined && signupOffered(mode);
+    const signUpLabel = mode === "bootstrap" ? t("userMenu.setUpLabel") : t("userMenu.signUp");
     return (
       <div className="flex items-center gap-2">
         {/* Below `sm:` both are 44px icon buttons, named by `aria-label`, so
@@ -89,11 +96,14 @@ export default function UserMenu() {
             to="/$lang/signup"
             params={{ lang }}
             search={{ redirectTo: undefined }}
-            aria-label={t("userMenu.signUp")}
+            aria-label={signUpLabel}
+            data-signup-mode={mode}
             className={cn(buttonVariants({ size: "touch" }), "w-11 px-0 sm:w-auto sm:px-3.5")}
           >
             <UserPlus className="size-4 sm:hidden" aria-hidden="true" />
-            <span className="hidden sm:inline">{t("userMenu.signUp")}</span>
+            <span className="hidden sm:inline">
+              {mode === "bootstrap" ? t("userMenu.setUp") : t("userMenu.signUp")}
+            </span>
           </Link>
         )}
         <Link

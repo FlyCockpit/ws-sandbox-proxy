@@ -1,6 +1,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { useMountEffect } from "@/hooks/use-mount-effect";
 import { localeFromPathname } from "@/i18n/config";
+import { isBrowserOffline } from "@/lib/network-failure";
 import { authRedirectHref, postAuthHref } from "@/lib/pool-invite";
 import {
   listenForRouteImportFailure,
@@ -55,6 +56,11 @@ export function useStaleBuildRecovery() {
     let failedImports: { error: unknown; pending: StaleBuildRecoveryEnv["router"] }[] = [];
     const recoverOwnedImport = (navigationErrors: readonly unknown[]) => {
       if (recovering || router.latestLocation.publicHref !== activatedNavigationHref) return;
+      // Offline, the chunk is missing because the network is, not because a
+      // deploy replaced it: a document load would only reach the browser's
+      // offline page. ErrorState shows the offline state and retries on
+      // reconnect; the cooldown slot stays free for a real stale build.
+      if (isBrowserOffline()) return;
       for (const failure of failedImports) {
         if (
           recoverFromStaleChunk({
@@ -117,6 +123,9 @@ export function useStaleBuildRecovery() {
       }
     };
     const onPreloadError = (event: Event) => {
+      // Offline, TanStack's own render-time reload would land on the
+      // browser's offline page too; nothing about the build is proven.
+      if (isBrowserOffline() && "payload" in event) suppressRouterReload(event.payload);
       if (recovering) {
         event.preventDefault();
         return;

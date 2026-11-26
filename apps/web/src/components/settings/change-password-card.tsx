@@ -16,6 +16,7 @@ import z from "zod";
 
 import { FormAlert } from "@/components/auth/form-alert";
 import { authClient } from "@/lib/auth-client";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
 
 /**
@@ -32,7 +33,7 @@ export function ChangePasswordCard({
   description?: string;
   onChanged?: () => void;
 } = {}) {
-  const { t } = useTranslation(["settings", "validation"]);
+  const { t } = useTranslation(["settings", "auth", "validation"]);
   const formRef = useRef<HTMLFormElement>(null);
   // A failure that belongs to no one field, shown next to the button.
   const [formError, setFormError] = useState<string | null>(null);
@@ -49,10 +50,17 @@ export function ChangePasswordCard({
           // Field-specific copy: the generic map would say "Must be at least
           // 1 characters." for an empty field.
           currentPassword: z.string().min(1, t("settings:security.currentPasswordRequired")),
+          // The same length rule Better-Auth enforces (lib/password-policy.ts).
           newPassword: z
             .string()
-            .min(12, t("settings:security.newPasswordTooShort", { min: 12 }))
-            .max(128, t("settings:security.newPasswordTooLong", { max: 128 })),
+            .min(
+              PASSWORD_MIN_LENGTH,
+              t("settings:security.newPasswordTooShort", { min: PASSWORD_MIN_LENGTH }),
+            )
+            .max(
+              PASSWORD_MAX_LENGTH,
+              t("settings:security.newPasswordTooLong", { max: PASSWORD_MAX_LENGTH }),
+            ),
           confirmPassword: z.string().min(1, t("settings:security.confirmPasswordRequired")),
         })
         .refine((values) => values.newPassword === values.confirmPassword, {
@@ -145,6 +153,7 @@ export function ChangePasswordCard({
               <TextField
                 field={field}
                 label={t("settings:security.newPasswordLabel")}
+                description={t("auth:fields.passwordRule", { min: PASSWORD_MIN_LENGTH })}
                 type="password"
                 autoComplete="new-password"
                 onChange={() => setFormError(null)}

@@ -49,7 +49,8 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-24: adds the neutral sign-up after-hook and a user.create.after
   // mark (signup-response.ts); no mailbox proof input or write.
   // Password pepper supplies hash and verify callbacks; mailbox proof is unchanged.
-  "packages/auth/src/index.ts": "c0951c0c2c6197a8310260e5b96e9506af70a316f1f9ff84de10acfd576780aa",
+  // Reviewed 11-27 (e2e5-fups T1): password length limits read from ./password-policy.ts (12 / 128, unchanged); no mailbox proof input or write.
+  "packages/auth/src/index.ts": "7df0bca28ad8b730df366d2a8c271143ff38e277c8031a34205e9a37b3c50d42",
   // Invites: no proof write. The mailed accept link is Better Auth's own
   // verify-email link (admin-invite-verification.ts mints its signed token, as
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.

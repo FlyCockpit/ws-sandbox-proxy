@@ -9,6 +9,7 @@ import { AppNameLink } from "@/components/app-name-link";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { ModeToggle } from "@/components/mode-toggle";
 import { NotFoundPage } from "@/components/not-found-page";
+import { OfflineBanner } from "@/components/offline-banner";
 import { SkipToContent } from "@/components/skip-to-content";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { APP_HOME } from "@/lib/app-home";
@@ -36,7 +37,12 @@ export function PublicShell({ children }: { children: ReactNode }) {
       }}
     >
       <SkipToContent />
-      <PublicHeader />
+      {/* One grid row: the offline notice sits under the header, in the flow
+          (it never covers the page), like the app shell's. */}
+      <div className="min-w-0">
+        <PublicHeader />
+        <OfflineBanner />
+      </div>
       {/* No `scrollbar-gutter: stable`: a reserved gutter stops every
           full-bleed rule inside the scroller short of the viewport edge with
           classic scrollbars. */}

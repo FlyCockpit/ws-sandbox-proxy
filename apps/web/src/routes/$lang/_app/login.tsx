@@ -15,9 +15,11 @@ import { FormAlert } from "@/components/auth/form-alert";
 import { TwoFactorChallenge } from "@/components/auth/two-factor-challenge";
 import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
+import { currentPasswordSchema } from "@/lib/password-policy";
 import { poolInviteToken, postAuthHref } from "@/lib/pool-invite";
 import { resolveRouteSession } from "@/lib/route-session";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
+import { signupMode } from "@/lib/signup-mode";
 import { friendly, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { safeRedirectTo } from "@/utils/safe-redirect";
@@ -50,9 +52,11 @@ function LoginPage() {
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);
 
-  const signupOpen = !!poolInviteToken() || (configData?.signupEnabled ?? true);
+  // The same mode the landing page, the header and /signup read
+  // (lib/signup-mode.ts). The gate below holds the form until config loads.
+  const mode = signupMode(configData ?? {}, poolInviteToken() !== undefined);
   // Closed sign-up that the configured administrator addresses may still use.
-  const adminBootstrapOnly = !signupOpen && configData?.adminBootstrapSignupEnabled === true;
+  const adminBootstrapOnly = mode === "bootstrap";
   const emailEnabled = configData?.emailEnabled ?? false;
   const postAuthRedirect = safeRedirectTo(redirectTo, lang);
 
@@ -69,7 +73,7 @@ function LoginPage() {
           toast.success(t("auth:signedInSuccess"));
           window.location.assign(postAuthHref(postAuthRedirect, lang));
         }}
-        onBack={() => setChallenge(false)}
+        onCancel={() => setChallenge(false)}
       />
     );
   }
@@ -93,7 +97,7 @@ function LoginPage() {
           showForgotPassword={emailEnabled}
           onNeeds2FA={() => setChallenge(true)}
         />
-        {signupOpen ? (
+        {mode === "open" || mode === "invite" ? (
           // `max-sm:-mt-2`: on phones the link's 44px box may use half of the
           // gap above it (its text sits 12px inside the box), which keeps it
           // above the BottomNav at 320×568.
@@ -144,7 +148,7 @@ function SignInForm({
   onNeeds2FA: () => void;
 }) {
   const navigate = useNavigate();
-  const { t } = useTranslation(["auth"]);
+  const { t } = useTranslation(["auth", "validation"]);
   const formRef = useRef<HTMLFormElement>(null);
   // A failure that belongs to no one field (rate limit, network): shown above
   // the button, and it never blocks the next attempt.
@@ -211,7 +215,9 @@ function SignInForm({
       // the global map and leak hardcoded English copy into es-MX UIs.
       onSubmit: z.object({
         email: z.email(),
-        password: z.string().min(8),
+        // Present, not policy-length: an older, shorter password must still
+        // be able to sign in (lib/password-policy.ts).
+        password: currentPasswordSchema(t("validation:required")),
       }),
     },
   });

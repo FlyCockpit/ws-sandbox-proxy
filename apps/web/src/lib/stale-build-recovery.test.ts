@@ -215,6 +215,22 @@ describe("stale recovery activation ownership", () => {
   });
 });
 
+describe("offline", () => {
+  it("never loads a document for an owned import that failed offline, nor lets the router", () => {
+    const h = recoveryHook();
+    vi.stubGlobal("navigator", { onLine: false });
+    h.win.dispatchEvent(new Event("pointerdown"));
+    h.navigation();
+    h.failure();
+    h.commit();
+    expect(h.assign).not.toHaveBeenCalled();
+    expect(h.win.sessionStorage.getItem(STALE_BUILD_RELOAD_KEY)).toBeNull();
+    expect(h.win.sessionStorage.getItem(`tanstack_router_reload:${importFailure.message}`)).toBe(
+      "1",
+    );
+  });
+});
+
 describe("import ownership", () => {
   it("refuses a different import error even during an activated pending navigation", () => {
     const e = env({ navigationErrors: [new Error("unrelated route error")] });

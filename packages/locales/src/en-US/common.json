@@ -66,7 +66,10 @@
   },
   "offline": {
     "showingDataFrom": "You're offline — showing data from {{time}}.",
-    "noData": "You're offline. Pages will load again when the connection is back."
+    "noData": "You're offline. Pages will load again when the connection is back.",
+    "backOnline": "Back online.",
+    "queued": "You're offline. This change will be sent when you reconnect. Keep this tab open.",
+    "queuedSent": "Back online. Your offline change was sent."
   },
   "forms": {
     "range": {

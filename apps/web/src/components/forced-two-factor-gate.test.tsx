@@ -161,3 +161,38 @@ describe("enrollment takeover errors sit under their field", () => {
     expect(document.activeElement).toBe(code);
   });
 });
+
+describe("enrollment takeover Cancel", () => {
+  const cancel = () => screen.getByRole("button", { name: "common:actions.cancel" });
+
+  it("returns from the password step to the start with nothing kept", () => {
+    renderGate(user({}), { force2faPublicUsers: "true" });
+    expect(screen.queryByRole("button", { name: "common:actions.cancel" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.setUp" }));
+    fireEvent.change(screen.getByLabelText("fields.password"), { target: { value: "typed" } });
+    fireEvent.click(cancel());
+
+    expect(screen.getByText("twoFactor.introText")).toBeTruthy();
+    expect(screen.queryByLabelText("fields.password")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.setUp" }));
+    expect((screen.getByLabelText("fields.password") as HTMLInputElement).value).toBe("");
+  });
+
+  it("returns from the code step to the start, and setup asks for the password again", async () => {
+    auth.enable.mockResolvedValue({
+      data: { method: "totp", totpURI: "otpauth://totp/x?secret=ABC", backupCodes: [] },
+    });
+    renderGate(user({}), { force2faPublicUsers: "true" });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.setUp" }));
+    fireEvent.change(screen.getByLabelText("fields.password"), { target: { value: "pw" } });
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.continue" }));
+    const code = await screen.findByLabelText("fields.verificationCode");
+    fireEvent.change(code, { target: { value: "12" } });
+    fireEvent.click(cancel());
+
+    expect(screen.queryByLabelText("fields.verificationCode")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "twoFactor.setUp" }));
+    expect((screen.getByLabelText("fields.password") as HTMLInputElement).value).toBe("");
+    expect(auth.verifyTotp).not.toHaveBeenCalled();
+  });
+});

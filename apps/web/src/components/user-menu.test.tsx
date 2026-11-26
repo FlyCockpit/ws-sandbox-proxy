@@ -10,7 +10,9 @@ const auth = vi.hoisted(() => ({
 }));
 const config = vi.hoisted(() => ({
   data: undefined as { signupEnabled: boolean; adminBootstrapSignupEnabled: boolean } | undefined,
+  inviteToken: undefined as string | undefined,
 }));
+vi.mock("@/lib/pool-invite", () => ({ poolInviteToken: () => config.inviteToken }));
 
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
@@ -61,6 +63,7 @@ beforeEach(() => {
   auth.ownerId = "owner-1";
   auth.status = undefined;
   config.data = undefined;
+  config.inviteToken = undefined;
   useOrphanCredentials.setState({ entries: [], ownerId: undefined, epoch: 0 });
 });
 
@@ -149,6 +152,24 @@ describe("user menu", () => {
         expect(links(view.container)).toEqual(["/$lang/signup", "/$lang/login"]);
         view.unmount();
       }
+    });
+
+    it("names the bootstrap way in Set Up, as the landing page does", () => {
+      config.data = { signupEnabled: false, adminBootstrapSignupEnabled: true };
+      const link = render(<UserMenu />).container.querySelector<HTMLElement>(
+        'a[data-to="/$lang/signup"]',
+      );
+      expect(link?.getAttribute("aria-label")).toBe("userMenu.setUpLabel");
+      expect(link?.querySelector("span")?.textContent).toBe("userMenu.setUp");
+    });
+
+    it("offers Sign Up on a closed server to a visitor holding a pool invitation", () => {
+      config.data = { signupEnabled: false, adminBootstrapSignupEnabled: false };
+      config.inviteToken = "wssp_inv_x";
+      const link = render(<UserMenu />).container.querySelector<HTMLElement>(
+        'a[data-to="/$lang/signup"]',
+      );
+      expect(link?.getAttribute("aria-label")).toBe("userMenu.signUp");
     });
 
     it("is two 44px named icon buttons below sm, the text from sm, on every page", () => {

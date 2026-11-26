@@ -10,6 +10,9 @@
     "./signup-policy": {
       "default": "./src/signup-policy.ts"
     },
+    "./password-policy": {
+      "default": "./src/password-policy.ts"
+    },
     "./ban": {
       "default": "./src/ban.ts"
     },

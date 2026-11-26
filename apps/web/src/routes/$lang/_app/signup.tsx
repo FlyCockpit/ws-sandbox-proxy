@@ -15,11 +15,11 @@ import { FormAlert } from "@/components/auth/form-alert";
 import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { authClient } from "@/lib/auth-client";
+import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
-import { ensureRouteQuery } from "@/lib/route-query";
 import { resolveRouteSession } from "@/lib/route-session";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
-import { signupNotice } from "@/lib/signup-notice";
+import { signupMode } from "@/lib/signup-mode";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { safeRedirectTo } from "@/utils/safe-redirect";
@@ -29,17 +29,13 @@ export const Route = createFileRoute("/$lang/_app/signup")({
   validateSearch: (search: Record<string, unknown>) => ({
     redirectTo: typeof search.redirectTo === "string" ? search.redirectTo : undefined,
   }),
-  beforeLoad: async ({ context, params, search }) => {
+  // A closed (invite-only) server renders its own card below instead of a
+  // silent bounce to sign-in, so the visitor learns why there is no form.
+  beforeLoad: async ({ params, search }) => {
     const decision = decideAnonymousOnlyRouteAccess(await resolveRouteSession());
     if (decision.kind === "error") throw new Error("Route session unavailable");
     if (decision.kind === "redirect-authenticated") {
       throw redirect({ href: safeRedirectTo(search.redirectTo, params.lang) });
-    }
-    const cfg = await ensureRouteQuery(context.queryClient, orpc.appConfig.queryKey(), () =>
-      orpc.appConfig.call(),
-    );
-    if (!cfg.signupEnabled && !cfg.adminBootstrapSignupEnabled && !poolInviteToken()) {
-      throw redirect({ to: "/$lang/login", params: { lang: params.lang }, search });
     }
   },
   component: SignupPage,
@@ -70,10 +66,12 @@ function SignupPage() {
   // Without it the card below must not claim a link was sent, or offer a
   // button that can only ever error.
   const canResend = configData?.emailEnabled === true;
-  const notice = signupNotice(configData, poolInviteToken() !== undefined);
+  // lib/signup-mode.ts: the same answer the landing page, header and sign-in
+  // give. A held pool invitation opens the form whatever the server setting.
+  const mode = signupMode(configData ?? {}, poolInviteToken() !== undefined);
   // Sign-up is closed to the public: only the administrator addresses and
   // invited people get in, so the page says so before the form.
-  const byInvitation = notice === "limited";
+  const byInvitation = mode === "bootstrap";
   const sessionPending =
     authSession.state.status === "pending" || authSession.state.status === "error";
 
@@ -109,6 +107,21 @@ function SignupPage() {
         )}
       </AuthCard>
     );
+  } else if (mode === "closed") {
+    // Invite-only: say so, and point at the one thing this visitor can do here.
+    body = (
+      <AuthCard title={t("auth:login.closedTitle")} description={t("auth:login.closedDescription")}>
+        <Link
+          to="/$lang/login"
+          params={{ lang }}
+          search={{ redirectTo }}
+          data-signup-closed=""
+          className={cn(buttonVariants(), "min-h-[44px] w-full")}
+        >
+          {t("auth:login.signIn")}
+        </Link>
+      </AuthCard>
+    );
   } else {
     body = (
       <AuthCard
@@ -119,7 +132,7 @@ function SignupPage() {
             : t("auth:login.createDescription")
         }
       >
-        {notice === "invite" ? (
+        {mode === "invite" ? (
           <p data-pool-invite-notice="">{t("auth:poolInviteReopen")}</p>
         ) : byInvitation ? (
           <div
@@ -238,7 +251,7 @@ function SignUpForm({
       onSubmit: z.object({
         name: z.string().min(2),
         email: z.email(),
-        password: z.string().min(12),
+        password: newPasswordSchema(),
       }),
     },
   });
@@ -282,6 +295,7 @@ function SignUpForm({
           <TextField
             field={field}
             label={t("auth:fields.password")}
+            description={t("auth:fields.passwordRule", { min: PASSWORD_MIN_LENGTH })}
             type="password"
             autoComplete="new-password"
           />

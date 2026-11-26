@@ -23,6 +23,7 @@ import {
 import { resolveMcpPlugins } from "./mcp-plugins";
 import { createPasswordChangeGuard } from "./password-change-guard.js";
 import { createPasswordPepper } from "./password-pepper.js";
+import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
 import {
   notifySessionOwners,
   notifySessionRevocations,
@@ -171,12 +172,9 @@ export const auth = betterAuth({
     password: { hash: passwordPepper.hash, verify: passwordPepper.verify },
     enabled: true,
     requireEmailVerification: true,
-    // Better-Auth's default floor is 8. There is no breached-password check,
-    // so length is the only guessing cost. The signup and reset-password
-    // forms mirror this; the login form deliberately does not, since an
-    // account created under an older policy must still be able to
-    // authenticate.
-    minPasswordLength: 12,
+    // ./password-policy.ts: the new-password forms read the same numbers.
+    minPasswordLength: PASSWORD_MIN_LENGTH,
+    maxPasswordLength: PASSWORD_MAX_LENGTH,
     // A reset proves the mailbox: whoever else is signed in (a stolen
     // password, an administrator's temporary one) is signed out.
     revokeSessionsOnPasswordReset: true,

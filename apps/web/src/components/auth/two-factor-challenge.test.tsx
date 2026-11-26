@@ -33,20 +33,20 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 import { codeIsComplete, normalizeBackupCode, TwoFactorChallenge } from "./two-factor-challenge";
 
 const onVerified = vi.fn();
-const onBack = vi.fn();
+const onCancel = vi.fn();
 
 beforeEach(() => {
   for (const fn of [auth.verifyTotp, auth.verifyOtp, auth.verifyBackupCode, auth.sendOtp])
     fn.mockReset();
   auth.transport.mockReset().mockResolvedValue({ ok: true });
   onVerified.mockReset();
-  onBack.mockReset();
+  onCancel.mockReset();
 });
 afterEach(() => cleanup());
 
 function mount(emailEnabled = true) {
   return render(
-    <TwoFactorChallenge emailEnabled={emailEnabled} onVerified={onVerified} onBack={onBack} />,
+    <TwoFactorChallenge emailEnabled={emailEnabled} onVerified={onVerified} onCancel={onCancel} />,
   );
 }
 const button = (name: string) => screen.getByRole("button", { name });
@@ -165,12 +165,28 @@ describe("authenticator and email codes", () => {
     expect(auth.verifyTotp).toHaveBeenCalledWith({ code: "111111" });
   });
 
-  it("offers no email option without a mail transport, and Back returns to sign-in", () => {
+  it("offers no email option without a mail transport, and Cancel returns to sign-in", () => {
     mount(false);
     expect(screen.queryByRole("button", { name: "auth:twoFactor.emailMeCode" })).toBeNull();
     expect(button("auth:twoFactor.useBackupCode")).toBeTruthy();
-    fireEvent.click(button("auth:twoFactor.back"));
-    expect(onBack).toHaveBeenCalledOnce();
+    fireEvent.click(button("common:actions.cancel"));
+    expect(onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("holds Cancel while a code is being checked", async () => {
+    let settle: (value: unknown) => void = () => {};
+    auth.verifyTotp.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    mount();
+    fireEvent.change(field(), { target: { value: "123456" } });
+    fireEvent.click(button("auth:twoFactor.verify"));
+    await waitFor(() =>
+      expect((button("common:actions.cancel") as HTMLButtonElement).disabled).toBe(true),
+    );
+    settle({ data: null, error: { status: 401 } });
+    await waitFor(() =>
+      expect((button("common:actions.cancel") as HTMLButtonElement).disabled).toBe(false),
+    );
+    expect(onCancel).not.toHaveBeenCalled();
   });
 
   it("keeps every action a 44px target", () => {
