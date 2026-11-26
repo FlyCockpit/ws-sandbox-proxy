@@ -2073,7 +2073,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     echo "self-test FAILED: agent-rules scanner rejected a required fixture" >&2
     exit 1
   fi
-  echo "ok: agent-rules scanner catches route value exports, hardcoded JSX copy, and sitemap drift"
+  echo "ok: agent-rules scanner catches route value exports, hardcoded JSX copy, sitemap drift, and shell/theme drift"
 
   echo "policy-checks self-test passed."
   exit 0
@@ -2342,6 +2342,10 @@ report "Stale reference to a Render blueprint (render.yaml / render:config). The
 #      heuristic with a reviewed allowlist that only shrinks
 #      (scripts/lib/agent-rules-allowlist.json).
 #   3. docs/sitemap.md must list every PUBLIC_PATHS entry from apps/server/src/seo.ts.
+#   4. docs/design/shell-rules.md § Shell rules: G8 (no scrollbar gutter on a
+#      <main> page scroller, no site <footer> in a route file) and G9 (no
+#      literal colour or prefers-color-scheme query outside the token file),
+#      from scripts/check-web-conventions.ts.
 AGENT_RULES_ALLOWLIST="scripts/lib/agent-rules-allowlist.json"
 require_file "$AGENT_RULES_ALLOWLIST"
 require_file "docs/sitemap.md"
@@ -2350,7 +2354,7 @@ agent_rules_status=0
 agent_rules_output="$(node scripts/check-agent-rules.ts)" || agent_rules_status=1
 if ((agent_rules_status != 0)); then
   printf '%s\n' "$agent_rules_output"
-  echo "POLICY VIOLATION: agent-rules gate failed (route exports / t() coverage / sitemap sync)."
+  echo "POLICY VIOLATION: agent-rules gate failed (route exports / t() coverage / sitemap sync / shell and theme rules)."
   fail=1
 fi
 

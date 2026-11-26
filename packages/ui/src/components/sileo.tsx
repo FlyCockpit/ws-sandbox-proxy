@@ -1,4 +1,3 @@
-import { useTheme } from "next-themes";
 import { Toaster as SileoToaster, sileo } from "sileo";
 import "sileo/styles.css";
 
@@ -25,17 +24,13 @@ interface ToasterProps {
     | "bottom-right";
 }
 
+// No `theme`: sileo's themes invert the page (a light pill on a dark app).
+// The toast takes the app's popover tokens from globals.css instead, so it
+// follows `.dark` like every other surface, with no JS theme state.
 const Toaster = ({ position = "bottom-center", titles, ...props }: ToasterProps) => {
-  const { resolvedTheme } = useTheme();
   if (titles) kindTitles = titles;
 
-  return (
-    <SileoToaster
-      theme={(resolvedTheme as "light" | "dark") ?? "system"}
-      position={position}
-      {...props}
-    />
-  );
+  return <SileoToaster position={position} {...props} />;
 };
 
 type ToastOptions = {

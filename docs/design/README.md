@@ -28,6 +28,7 @@ User-facing explanations of these decisions are in the [guide](../guide/README.m
 - [Webhooks contract](./webhooks-contract.md) (emission triggers, ledger state machine, signing bytes, versioning)
 - [Credential vault crypto](./credential-vault.md) (CLI-login value encryption, sealed captures, envelope v1, feature gate, vectors)
 - [Dashboard edge lines](./edge-lines.md) (the alignment lines every page, panel and overlay sits on)
+- [Web shell rules](./shell-rules.md) (footer placement, full-bleed dividers, themed surfaces and toasts, the 404 in the public shell; `pnpm check:layout`)
 - Prisma models: `packages/db/prisma/schema/sandbox.prisma`
 - API domain: `packages/api/src/sandbox/`
 - Public procedures: `packages/api/src/routers/sandboxes.ts`

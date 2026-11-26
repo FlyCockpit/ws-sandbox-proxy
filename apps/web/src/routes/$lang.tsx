@@ -1,6 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { NotFoundPage } from "@/components/not-found-page";
+import { PublicNotFoundPage } from "@/components/public-shell";
 import { loadLocaleInto } from "@/i18n";
 import { isSupportedLocale, type Locale } from "@/i18n/config";
 import { decideLocaleRedirect } from "@/i18n/redirect-to-default";
@@ -54,11 +54,16 @@ export const Route = createFileRoute("/$lang")({
     }
 
     // Hidden admin pages answer exactly like an unknown URL: HTTP 404 and
-    // this route's NotFoundPage. Only the server render needs this check —
+    // this route's PublicNotFoundPage. Only the server render needs this check —
     // the `_app` subtree is client-rendered, so the admin route's own guard
     // (which throws the same notFound on the client) never runs in SSR.
     if (import.meta.env.SSR) await hideAdminRoute(matches, getRouteAdminAccess);
   },
-  // Unknown URLs under a locale and hidden admin pages both land here.
-  notFoundComponent: NotFoundPage,
+  // Unknown URLs under a locale and hidden admin pages both land here. An
+  // unknown URL matches no layout under `$lang`, so the router renders this in
+  // `$lang`'s outlet with no shell around it; PublicNotFoundPage brings the
+  // public shell (header, scroller). A not-found thrown by a route below also
+  // lands here unless that route sets its own notFoundComponent
+  // (docs/design/shell-rules.md rule 4).
+  notFoundComponent: PublicNotFoundPage,
 });

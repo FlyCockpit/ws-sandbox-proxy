@@ -295,8 +295,12 @@ Safe alternatives:
   substitute overflow:hidden or enable body scrolling to fix a page.
 - Each app/public layout owns one h-svh grid and one relative main page scroller
   with min-h-0/min-w-0, explicit overflow-y-auto/overflow-x-clip, overscroll
-  containment and a stable scrollbar gutter. Layouts own safe areas and mobile
+  containment and no scrollbar gutter. Layouts own safe areas and mobile
   BottomNav clearance; viewport metadata keeps viewport-fit=cover and pinch zoom.
+- Shell rules (docs/design/shell-rules.md, G8/G9 in `pnpm policy:checks`):
+  full-bleed rules reach the viewport edge, the 404 renders in the public
+  shell, toasts and every surface use globals.css tokens (no literal colours,
+  no prefers-color-scheme), and no route renders a site `<footer>`.
 - Both mutually exclusive mains use MAIN_SCROLLER_ID/MAIN_SCROLLER_SELECTOR from
   apps/web/src/lib/main-scroller.ts. Router scrollRestoration and
   scrollToTopSelectors target that main. New page links reset; in-place URL state

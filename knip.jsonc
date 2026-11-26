@@ -61,7 +61,6 @@
       "ignoreDependencies": [
         // Imported only via PostCSS/Tailwind CSS pipeline, not statically.
         "tailwindcss",
-        "postcss",
         // Toast primitive re-exported from @wssp/ui.
         "sileo"
       ]

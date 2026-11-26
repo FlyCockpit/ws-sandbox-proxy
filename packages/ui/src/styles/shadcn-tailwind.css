@@ -3,7 +3,9 @@
  * (previously imported as "shadcn/tailwind.css").
  * Source: https://github.com/shadcn-ui/ui (packages/shadcn)
  *
- * Copied unchanged apart from this header and Biome whitespace formatting.
+ * Copied unchanged apart from this header, Biome whitespace formatting and the
+ * `theme-exempt` comments that rule G9 of scripts/check-web-conventions.ts needs
+ * (masks and currentColor-relative colours are not fixed colours; keep them on refresh).
  * The workspace has no shadcn CLI dependency. Theme tooling invokes an ephemeral
  * exact version through pnpm dlx; the app uses this local stylesheet only.
  * To refresh it, copy dist/tailwind.css from the version pinned in
@@ -204,6 +206,7 @@
     --scroll-fade-b-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-block: linear-gradient(
     to bottom,
     transparent 0,
@@ -244,6 +247,7 @@
     --scroll-fade-b-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-block: linear-gradient(
     to bottom,
     transparent 0,
@@ -284,6 +288,7 @@
     --scroll-fade-e-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-inline: linear-gradient(
     to right,
     transparent 0,
@@ -292,6 +297,7 @@
     transparent 100%
   );
   &:where([dir="rtl"], [dir="rtl"] *) {
+    /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
     --scroll-fade-inline: linear-gradient(
       to left,
       transparent 0,
@@ -329,6 +335,7 @@
     --scroll-fade-t-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to bottom,
     transparent 0,
@@ -359,6 +366,7 @@
     --scroll-fade-b-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to bottom,
     #000 0,
@@ -389,6 +397,7 @@
     --scroll-fade-s-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to right,
     transparent 0,
@@ -419,6 +428,7 @@
     --scroll-fade-e-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to right,
     #000 0,
@@ -449,6 +459,7 @@
     --scroll-fade-s-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to right,
     transparent 0,
@@ -456,6 +467,7 @@
     #000 100%
   );
   &:where([dir="rtl"], [dir="rtl"] *) {
+    /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
     --scroll-fade-mask: linear-gradient(
       to left,
       transparent 0,
@@ -487,6 +499,7 @@
     --scroll-fade-e-size,
     var(--scroll-fade-size, min(12%, calc(var(--spacing) * 10)))
   );
+  /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
   --scroll-fade-mask: linear-gradient(
     to right,
     #000 0,
@@ -494,6 +507,7 @@
     transparent 100%
   );
   &:where([dir="rtl"], [dir="rtl"] *) {
+    /* theme-exempt: alpha mask, #000 only means opaque and is never painted */
     --scroll-fade-mask: linear-gradient(
       to left,
       #000 0,
@@ -578,6 +592,7 @@
 @utility shimmer {
   --_spread: var(--shimmer-spread, calc(3ch + 40px));
   --_base: currentColor;
+  /* theme-exempt: relative colour from currentColor, so it follows the theme's text colour */
   --_highlight: var(--shimmer-color, oklch(from currentColor l c h / calc(alpha * 0.2)));
 
   background-image: var(
@@ -600,6 +615,7 @@
   animation: tw-shimmer var(--shimmer-duration, 2s) linear infinite;
 
   @variant dark {
+    /* theme-exempt: relative colour from currentColor, so it follows the theme's text colour */
     --_highlight: var(
       --shimmer-color,
       oklch(from currentColor max(0.8, calc(l + 0.4)) c h / calc(alpha + 0.4))

@@ -42,11 +42,14 @@ function AppShellLayout() {
         <div>
           <Header />
         </div>
+        {/* No `scrollbar-gutter: stable`: the 2FA banner and the admin
+            section nav inside the scroller are full-bleed. This shell has no
+            footer: phones get the BottomNav. See docs/design/shell-rules.md */}
         <main
           id="main-content"
           tabIndex={-1}
           data-scroll-restoration-id={MAIN_SCROLLER_ID}
-          className="relative [container-type:size] min-h-0 min-w-0 overflow-y-auto overflow-x-clip overscroll-contain [scrollbar-gutter:stable]"
+          className="relative [container-type:size] min-h-0 min-w-0 overflow-y-auto overflow-x-clip overscroll-contain"
         >
           <Outlet />
         </main>
