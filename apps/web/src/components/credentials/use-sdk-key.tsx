@@ -5,9 +5,6 @@ import { useTranslation } from "react-i18next";
 import { docsRepoPath, docsUrl } from "@/lib/docs-links";
 import { hostCommands } from "@/lib/host-status";
 
-// Wrap long snippets on phones instead of scrolling them under the copy button.
-const WRAPPED_SNIPPET = "min-h-13 whitespace-pre-wrap [overflow-wrap:anywhere]";
-
 /** The `/v1` base URL of this server, derived the same way as the MCP URL. */
 function sdkApiBaseUrl(serverUrl: string): string {
   return new URL("/v1", serverUrl).href;
@@ -83,35 +80,15 @@ export function UseSdkKey() {
       <p className="text-sm font-medium">{t("useKey.apiUrl")}</p>
       <CopyField value={snippets.apiUrl} copyLabel={t("useKey.copyApiUrl")} />
       <p className="text-sm">{t("useKey.curl")}</p>
-      <CodeSnippet
-        code={snippets.curl}
-        copyLabel={t("useKey.copyCurl")}
-        preClassName={WRAPPED_SNIPPET}
-      />
+      <CodeSnippet code={snippets.curl} copyLabel={t("useKey.copyCurl")} wrap />
       <p className="text-sm">{t("useKey.sdk")}</p>
-      <CodeSnippet
-        code={snippets.sdk}
-        copyLabel={t("useKey.copySdk")}
-        preClassName={WRAPPED_SNIPPET}
-      />
+      <CodeSnippet code={snippets.sdk} copyLabel={t("useKey.copySdk")} wrap />
       <GuideLink page="sdkKeys" label={t("useKey.sdkDocs")} />
       <p className="text-sm">{t("useKey.cli")}</p>
-      <CodeSnippet
-        code={snippets.cliInstall}
-        copyLabel={t("useKey.copyCliInstall")}
-        preClassName={WRAPPED_SNIPPET}
-      />
-      <CodeSnippet
-        code={snippets.cliUse}
-        copyLabel={t("useKey.copyCliUse")}
-        preClassName={WRAPPED_SNIPPET}
-      />
+      <CodeSnippet code={snippets.cliInstall} copyLabel={t("useKey.copyCliInstall")} wrap />
+      <CodeSnippet code={snippets.cliUse} copyLabel={t("useKey.copyCliUse")} wrap />
       <p className="text-sm text-muted-foreground">{t("useKey.cliLogin")}</p>
-      <CodeSnippet
-        code={snippets.cliLogin}
-        copyLabel={t("useKey.copyCliLogin")}
-        preClassName={WRAPPED_SNIPPET}
-      />
+      <CodeSnippet code={snippets.cliLogin} copyLabel={t("useKey.copyCliLogin")} wrap />
       <GuideLink page="cli" label={t("useKey.cliDocs")} />
     </section>
   );

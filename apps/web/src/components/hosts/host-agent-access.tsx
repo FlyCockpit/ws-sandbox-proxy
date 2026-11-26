@@ -254,8 +254,6 @@ export function HostAgentAccess({
   );
 }
 
-// Commands must be readable in full: wrap instead of scrolling under the copy button.
-const WRAPPED_SNIPPET = "min-h-13 whitespace-pre-wrap [overflow-wrap:anywhere]";
 export function canPretypeQueuedCommand(command: string, terminalAvailable: boolean): boolean {
   return terminalAvailable && command.length <= PASTE_MAX_BYTES && /^[\x20-\x7e]+$/.test(command);
 }
@@ -332,11 +330,7 @@ export function QueuedHostCommands({
             <ul className="flex min-w-0 flex-col gap-3">
               {items.map((row) => (
                 <li key={row.id} className="flex min-w-0 flex-col gap-2 rounded-xl border p-4">
-                  <CodeSnippet
-                    code={row.command}
-                    copyLabel={t("queue.copyCommand")}
-                    preClassName={WRAPPED_SNIPPET}
-                  />
+                  <CodeSnippet code={row.command} copyLabel={t("queue.copyCommand")} wrap />
                   <p className="break-words">{row.reason}</p>
                   <p className="break-words">
                     {t("queue.credential", {
@@ -404,7 +398,7 @@ export function QueuedHostCommands({
               <CodeSnippet
                 code={handoff.typedCommand}
                 copyLabel={t("queue.copy")}
-                preClassName={WRAPPED_SNIPPET}
+                wrap
                 onCopied={() => {
                   setCopied(true);
                   setCopyFailed(false);

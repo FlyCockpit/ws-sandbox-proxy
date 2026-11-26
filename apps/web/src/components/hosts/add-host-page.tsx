@@ -16,9 +16,6 @@ import { type DocPage, docsRepoPath, docsUrl } from "@/lib/docs-links";
 import { GUARD_INSTALL_COMMAND, hostCommands } from "@/lib/host-status";
 import { HostsBackLink } from "./hosts-back-link";
 
-/** Commands wrap inside the snippet instead of sliding under its copy button. */
-const WRAPPED_COMMAND = "min-h-13 whitespace-pre-wrap [overflow-wrap:anywhere]";
-
 /** A host slug as the CLI accepts it: lowercase letters, digits and dashes. */
 export function hostSlugFromName(name: string): string {
   const slug = name
@@ -156,12 +153,7 @@ function Step({
 function Command({ value }: { value: string }) {
   const { t } = useTranslation("hosts");
   return (
-    <CodeSnippet
-      data-enroll-command=""
-      code={value}
-      copyLabel={t("enroll.copyCommand")}
-      preClassName={WRAPPED_COMMAND}
-    />
+    <CodeSnippet data-enroll-command="" code={value} copyLabel={t("enroll.copyCommand")} wrap />
   );
 }
 

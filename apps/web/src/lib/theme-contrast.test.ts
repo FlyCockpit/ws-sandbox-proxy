@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import { describe, expect, it } from "vitest";
@@ -193,6 +193,127 @@ it("keeps destructive action labels readable on normal and hover tints across su
   }
 });
 
+// Field outlines (input, textarea, select, checkbox, the Off switch track) are
+// non-text UI (WCAG 1.4.11): what shows where to type. --border is decorative
+// (dividers, cards) and is not held to this.
+for (const scope of [":root", ".dark"]) {
+  it(`${scope} field outlines (--input) reach 3:1 on every surface a field sits on`, () => {
+    for (const surface of ["background", "card", "popover", "muted"]) {
+      expect(
+        contrast(token(scope, "input"), token(scope, surface)),
+        `${scope} input on ${surface}`,
+      ).toBeGreaterThanOrEqual(3);
+    }
+    // The dark field fill (`dark:bg-input/30`) keeps placeholder text readable.
+    if (scope === ".dark") {
+      for (const surface of ["background", "card", "popover"]) {
+        const fill = over(token(scope, "input"), 0.3, token(scope, surface));
+        expect(
+          contrast(token(scope, "muted-foreground"), fill),
+          `${scope} placeholder on input fill over ${surface}`,
+        ).toBeGreaterThanOrEqual(AA);
+      }
+    }
+  });
+}
+
+it("keeps placeholder text readable on every hovered --input fill", () => {
+  // Select and combobox triggers hover to a stronger `bg-input/NN` while they
+  // still show a muted placeholder; at /50 the dark fill fell to ~3.78:1 on a
+  // card. Every `hover:bg-input/NN` in the ui package and the app is checked
+  // in the themes it applies to (`dark:` only in .dark).
+  const roots = [
+    resolve(import.meta.dirname, "../../../../packages/ui/src"),
+    resolve(import.meta.dirname, ".."),
+  ];
+  const fills: string[] = [];
+  for (const root of roots) {
+    for (const file of readdirSync(root, { recursive: true, encoding: "utf8" })) {
+      if (!/\.tsx?$/.test(file) || /\.test\.tsx?$/.test(file)) continue;
+      const source = readFileSync(resolve(root, file), "utf8");
+      for (const match of source.matchAll(/(?<![\w-])((?:[\w-]+:)*hover:)bg-input\/(\d+)/g)) {
+        const variants = match[1] ?? "";
+        const alpha = Number(match[2]) / 100;
+        fills.push(`${file}: ${match[0]}`);
+        const scopes = variants.split(":").includes("dark") ? [".dark"] : [":root", ".dark"];
+        for (const scope of scopes) {
+          for (const surface of ["background", "card", "popover"]) {
+            const fill = over(token(scope, "input"), alpha, token(scope, surface));
+            expect(
+              contrast(token(scope, "muted-foreground"), fill),
+              `${scope} placeholder on ${match[0]} over ${surface} (${file})`,
+            ).toBeGreaterThanOrEqual(AA);
+          }
+        }
+      }
+    }
+  }
+  // The scan found the select, button and language-switcher hovers.
+  expect(fills.length).toBeGreaterThanOrEqual(3);
+});
+
+it("measures the old dark hover fill as failing, so the hover check discriminates", () => {
+  const fill = over(token(".dark", "input"), 0.5, token(".dark", "card"));
+  expect(contrast(token(".dark", "muted-foreground"), fill)).toBeLessThan(AA);
+});
+
+it("fills light-mode fields with no --input tint, which would bury the placeholder", () => {
+  // bg-input/30 over white is 3.9:1 for muted-foreground placeholder text with
+  // the 3:1 --input; light search fields use bg-muted instead. Disabled fills
+  // (disabled:bg-input/50) sit under opacity-50 and are exempt.
+  const dir = resolve(import.meta.dirname, "../../../../packages/ui/src/components");
+  for (const file of readdirSync(dir).filter((name) => name.endsWith(".tsx"))) {
+    const source = readFileSync(resolve(dir, file), "utf8");
+    expect(source, file).not.toMatch(/(?<![\w:-])bg-input\/\d+/);
+  }
+});
+
+it.each(["command.tsx", "async-combobox.tsx", "multi-async-combobox.tsx"])(
+  "%s: the search placeholder is muted-foreground on an opaque muted fill (tested at 4.5:1 above)",
+  (file) => {
+    // Tailwind's default placeholder is the text colour at 50%, and a
+    // translucent bg-input fill moves with the --input outline token: the
+    // dark pair fell to 4.23:1 when --input reached 3:1.
+    const source = readFileSync(
+      resolve(import.meta.dirname, "../../../../packages/ui/src/components", file),
+      "utf8",
+    );
+    expect(source).toContain("placeholder:text-muted-foreground");
+    // Unprefixed and dark: InputGroup's own `dark:bg-input/30` would
+    // otherwise win in the dark theme.
+    expect(source).toMatch(/InputGroup className="[^"]*(?<![\w:-])bg-muted[^"]*dark:bg-muted/);
+    expect(source).not.toMatch(/InputGroup className="[^"]*bg-input\/\d+/);
+  },
+);
+
+it("measures the old --input values as failing, so the field check discriminates", () => {
+  // Light oklch(0.925 0.005 214.3) was 1.25:1 on white; dark was 15% white.
+  expect(contrast(oklchToSrgb(0.925, 0.005, 214.3), token(":root", "background"))).toBeLessThan(3);
+  const darkBackground = token(".dark", "background");
+  expect(contrast(over([1, 1, 1], 0.15, darkBackground), darkBackground)).toBeLessThan(3);
+});
+
+it("fills an Off switch track with the opaque --input, which the 3:1 checks cover", () => {
+  // A translucent track (dark:data-unchecked:bg-input/80) composites below
+  // the measured colour.
+  const source = readFileSync(
+    resolve(import.meta.dirname, "../../../../packages/ui/src/components/switch.tsx"),
+    "utf8",
+  );
+  expect(source).toContain("data-unchecked:bg-input ");
+  expect(source).not.toMatch(/data-unchecked:bg-input\/\d+/);
+});
+
+it("draws dropdown menus on an opaque popover surface", () => {
+  // A translucent menu (bg-popover/70 + backdrop blur) let a banner tint it.
+  const menu = readFileSync(
+    resolve(import.meta.dirname, "../../../../packages/ui/src/components/dropdown-menu.tsx"),
+    "utf8",
+  );
+  expect(menu).toContain(" bg-popover ");
+  expect(menu).not.toMatch(/bg-popover\/\d+|backdrop-blur/);
+});
+
 // Unchecked radio/checkbox/switch outlines identify the control on these surfaces.
 for (const scope of [":root", ".dark"]) {
   it(`${scope} keeps unchecked control borders at 3:1`, () => {
@@ -285,6 +406,31 @@ describe("state inks and toasts (docs/design/shell-rules.md rule 3)", () => {
         expect(aliasOf(declarations(selector).get("color")), selector).toBe("popover-foreground");
       }
       expect(contrast(token(scope, "popover-foreground"), surface)).toBeGreaterThanOrEqual(AA);
+      // A long title must not outgrow sileo's 350px pill (the badge icon ended
+      // up half outside it): the header row is capped and the title ellipsised.
+      expect(
+        declarations(":root [data-sileo-viewport] [data-sileo-header-inner]").get("max-width"),
+      ).toBe("calc(var(--sileo-width) - 1rem - 10px)");
+      expect(
+        declarations(
+          ":root [data-sileo-viewport] [data-sileo-header-inner] [data-sileo-title]",
+        ).get("text-overflow"),
+      ).toBe("ellipsis");
+      // The action button writes --popover-foreground on an 8% (14% on hover)
+      // tint of itself over the pill.
+      const button = declarations(":root [data-sileo-viewport] [data-sileo-button][data-state]");
+      expect(aliasOf(button.get("--sileo-btn-color"))).toBe("popover-foreground");
+      for (const key of ["--sileo-btn-bg", "--sileo-btn-bg-hover"]) {
+        const mix = /^color-mix\(in oklch, var\(--popover-foreground\) (\d+)%, transparent\)$/.exec(
+          button.get(key) ?? "",
+        );
+        expect(mix, key).not.toBeNull();
+        const tint = over(token(scope, "popover-foreground"), Number(mix?.[1]) / 100, surface);
+        expect(
+          contrast(token(scope, "popover-foreground"), tint),
+          `${scope} toast button text on ${key}`,
+        ).toBeGreaterThanOrEqual(AA);
+      }
     });
   }
 

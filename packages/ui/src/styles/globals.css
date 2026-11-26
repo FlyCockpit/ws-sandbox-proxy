@@ -42,7 +42,10 @@
   --state-loading-foreground: var(--foreground);
   --state-loading-bg: color-mix(in oklch, var(--muted-foreground) 12%, transparent);
   --border: oklch(0.925 0.005 214.3);
-  --input: oklch(0.925 0.005 214.3);
+  /* Field outlines (input, textarea, select, checkbox, switch track) are
+     non-text UI: >= 3:1 on background, card, popover and muted (WCAG 1.4.11,
+     apps/web/src/lib/theme-contrast.test.ts). --border stays decorative and light. */
+  --input: oklch(0.62 0.012 214.3);
   --ring: oklch(0.5 0.134 242.749);
   --grey-50: oklch(0.985 0.002 216);
   --grey-100: oklch(0.96 0.004 216);
@@ -133,7 +136,7 @@
   --state-loading-foreground: var(--foreground);
   --state-loading-bg: color-mix(in oklch, var(--muted-foreground) 15%, transparent);
   --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
+  --input: oklch(0.56 0.012 220);
   --ring: oklch(0.685 0.169 237.323);
   --grey-50: oklch(0.25 0.004 216);
   --grey-100: oklch(0.3 0.006 216);
@@ -343,6 +346,42 @@
     display: none;
   }
 
+  /* Edge fade for a horizontal scroller (SelectorRow, CopyField, CodeSnippet).
+     `useScrollEdges` sets data-overflow-start / data-overflow-end while more
+     content lies past that edge; the content fades out there and the surface
+     behind shows through, so it matches any theme. A mask, so no layout shift
+     and no animation (nothing for reduced motion to stop). Not the vendored
+     shadcn `scroll-fade-x` (shadcn-tailwind.css): without scroll-driven
+     animations (Firefox) that one fades both edges even when nothing
+     overflows. */
+  .edge-fade-x:is([data-overflow-start], [data-overflow-end]) {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 var(--edge-fade-start, 0px),
+      #000 calc(100% - var(--edge-fade-end, 0px)),
+      transparent
+    );
+  }
+
+  .edge-fade-x:dir(rtl):is([data-overflow-start], [data-overflow-end]) {
+    mask-image: linear-gradient(
+      to left,
+      transparent,
+      #000 var(--edge-fade-start, 0px),
+      #000 calc(100% - var(--edge-fade-end, 0px)),
+      transparent
+    );
+  }
+
+  .edge-fade-x[data-overflow-start] {
+    --edge-fade-start: 1.5rem;
+  }
+
+  .edge-fade-x[data-overflow-end] {
+    --edge-fade-end: 1.5rem;
+  }
+
   .skeleton-shimmer {
     position: relative;
     overflow: hidden;
@@ -403,6 +442,20 @@
 }
 :root [data-sileo-viewport] [data-sileo-description] {
   color: var(--popover-foreground);
+}
+/* sileo sizes the pill from the header's measured width but draws it inside a
+   fixed 350px SVG whose filter region clips anything wider: a long title
+   pushed the badge icon half outside a square-cut pill. Cap the header row to
+   the pill's maximum (350px - the header's 1rem padding - sileo's 10px pill
+   padding) and end the title with an ellipsis; the facade (sileo.tsx) puts a
+   long message in the description, so the full text is still shown. */
+:root [data-sileo-viewport] [data-sileo-header-inner] {
+  max-width: calc(var(--sileo-width) - 1rem - 10px);
+}
+:root [data-sileo-viewport] [data-sileo-header-inner] [data-sileo-title] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 :root [data-sileo-viewport] [data-sileo-button][data-state] {
   --sileo-btn-color: var(--popover-foreground);

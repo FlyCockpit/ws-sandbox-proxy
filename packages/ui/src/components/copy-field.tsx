@@ -1,8 +1,9 @@
 import { Button } from "@wssp/ui/components/button";
 import { useCopyToClipboard } from "@wssp/ui/hooks/use-copy-to-clipboard";
+import { edgeAttributes, useScrollEdges } from "@wssp/ui/hooks/use-scroll-edges";
 import { cn } from "@wssp/ui/lib/utils";
 import { Check, Copy } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 
 type CopyFieldProps = React.ComponentProps<"div"> & {
   /** The text placed on the clipboard (and rendered, single-line). */
@@ -23,9 +24,14 @@ type CopyFieldProps = React.ComponentProps<"div"> & {
 
 /**
  * Single-line copyable value (shell command, API key, URL) with a copy
- * button. The layout contract is baked in: the value region scrolls itself
- * horizontally (`min-w-0 overflow-x-auto`), never the page, so it is safe
- * inside `DialogContent` by default.
+ * button in its own 44px column beside (never over) it. The layout contract
+ * is baked in: the value region scrolls itself horizontally
+ * (`min-w-0 overflow-x-auto`), never the page, so it is safe inside
+ * `DialogContent` by default; a long value fades out at the edge that has
+ * more to scroll (`edge-fade-x`). The border sits on the outer box, not on
+ * the masked scroller, so the fade dims text and never the outline. Code text
+ * is `font-mono text-xs leading-5`, the same as `CodeSnippet`
+ * (docs/design/shell-rules.md).
  */
 function CopyField({
   value,
@@ -37,6 +43,9 @@ function CopyField({
   ...props
 }: CopyFieldProps) {
   const { copied, copy } = useCopyToClipboard();
+  const valueRef = React.useRef<HTMLElement>(null);
+  const shown = displayValue ?? value;
+  const edges = useScrollEdges(valueRef, shown);
 
   return (
     <div
@@ -48,11 +57,13 @@ function CopyField({
       {...props}
     >
       <code
+        ref={valueRef}
         data-slot="copy-field-value"
-        className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain no-scrollbar px-2.5 py-1.5 font-mono text-xs whitespace-nowrap"
+        {...edgeAttributes(edges)}
+        className="min-w-0 flex-1 overflow-x-auto overscroll-x-contain no-scrollbar edge-fade-x px-2.5 py-1.5 font-mono text-xs leading-5 whitespace-nowrap"
         title={displayValue !== undefined && displayValue !== value ? value : undefined}
       >
-        {displayValue ?? value}
+        {shown}
       </code>
       <Button
         type="button"

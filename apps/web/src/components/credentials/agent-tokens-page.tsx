@@ -13,8 +13,6 @@ import { useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
 import { orpc } from "@/utils/orpc";
 import { SdkKeysPage } from "./sdk-keys-page";
 
-// Wrap long snippets on phones instead of scrolling them under the copy button.
-const WRAPPED_SNIPPET = "min-h-13 whitespace-pre-wrap [overflow-wrap:anywhere]";
 export function AgentTokensPage({ lang }: { lang: string }) {
   const { t } = useTranslation("agents");
   const url = new URL("/mcp", env.VITE_SERVER_URL).href;
@@ -29,12 +27,12 @@ export function AgentTokensPage({ lang }: { lang: string }) {
         <CodeSnippet
           code={`claude mcp add --transport http wssp ${url}`}
           copyLabel={t("connect.copyCommand")}
-          preClassName={WRAPPED_SNIPPET}
+          wrap
         />
         <CodeSnippet
           code={`[mcp_servers.wssp]\nurl = "${url}"\nbearer_token_env_var = "WSSP_AGENT_TOKEN"`}
           copyLabel={t("connect.copyConfig")}
-          preClassName={WRAPPED_SNIPPET}
+          wrap
         />
         <p>{t("connect.token")}</p>
       </section>
