@@ -46,10 +46,11 @@
  *   violations. A PUBLIC_PATHS array this cannot parse fails closed.
  *
  * GATE 4 — SHELL AND THEME RULES (docs/design/shell-rules.md § Shell rules).
- *   Rules G8 and G9 in scripts/check-web-conventions.ts (no scrollbar gutter on
- *   a `<main>` page scroller, no site `<footer>` in a route file, no literal
- *   colour or prefers-color-scheme query outside the token file). Its fixtures,
- *   scripts/check-web-conventions.test.ts, run in the self-test.
+ *   Rules G8, G9 and G10 in scripts/check-web-conventions.ts (no scrollbar gutter
+ *   on a `<main>` page scroller, no site `<footer>` in a route file, no literal
+ *   colour or prefers-color-scheme query outside the token file, no px or
+ *   sub-12px text size). Its fixtures, scripts/check-web-conventions.test.ts,
+ *   run in the self-test. G10 is docs/design/shell-rules.md § Viewport scale.
  */
 
 import { spawnSync } from "node:child_process";
@@ -529,7 +530,7 @@ function main(): void {
     );
   }
 
-  // Gate 4: shell and theme rules (G8, G9).
+  // Gate 4: shell, theme and text-size rules (G8, G9, G10).
   failures.push(...checkWebConventions(ROOT));
 
   if (failures.length > 0) {
@@ -539,7 +540,7 @@ function main(): void {
     process.exit(1);
   }
   console.log(
-    "agent rules passed: route exports clean, JSX literal gate clean, sitemap.md in sync with PUBLIC_PATHS, shell and theme rules (G8/G9) clean.",
+    "agent rules passed: route exports clean, JSX literal gate clean, sitemap.md in sync with PUBLIC_PATHS, shell, theme and text-size rules (G8/G9/G10) clean.",
   );
 }
 
@@ -770,14 +771,16 @@ function runSelfTest(): void {
     checkSitemapSync("export const PUBLIC_PATHS = [];", "").length === 1,
   );
 
-  console.log("-- gate 4: shell and theme rules (scripts/check-web-conventions.test.ts) --");
+  console.log(
+    "-- gate 4: shell, theme and text-size rules (scripts/check-web-conventions.test.ts) --",
+  );
   const webConventions = spawnSync(
     process.execPath,
     ["--test", "scripts/check-web-conventions.test.ts"],
     { cwd: ROOT, encoding: "utf8" },
   );
   check(
-    "the G8/G9 fixtures pass",
+    "the G8/G9/G10 fixtures pass",
     webConventions.status === 0,
     `${webConventions.stdout ?? ""}${webConventions.stderr ?? ""}`.trim().slice(-4000),
   );

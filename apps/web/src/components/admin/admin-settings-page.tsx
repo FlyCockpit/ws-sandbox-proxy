@@ -142,7 +142,7 @@ export function AdminSettingsPage({ lang, adminHas2FA }: { lang: string; adminHa
           <OffloadGraceCard seconds={settings.data.offloadConsumedGraceSeconds} onSaved={refresh} />
           <TunnelServerCard />
           <LimitsCard limits={settings.data.limits} />
-          <p className="text-sm text-muted-foreground">
+          <p className="max-w-prose text-sm text-muted-foreground">
             {t("admin:settings.recoveryNote")}{" "}
             <Link
               to="/$lang/settings/security"

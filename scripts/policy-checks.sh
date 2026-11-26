@@ -2343,9 +2343,10 @@ report "Stale reference to a Render blueprint (render.yaml / render:config). The
 #      (scripts/lib/agent-rules-allowlist.json).
 #   3. docs/sitemap.md must list every PUBLIC_PATHS entry from apps/server/src/seo.ts.
 #   4. docs/design/shell-rules.md § Shell rules: G8 (no scrollbar gutter on a
-#      <main> page scroller, no site <footer> in a route file) and G9 (no
-#      literal colour or prefers-color-scheme query outside the token file),
-#      from scripts/check-web-conventions.ts.
+#      <main> page scroller, no site <footer> in a route file), G9 (no
+#      literal colour or prefers-color-scheme query outside the token file)
+#      and G10 (no px or sub-12px text size), from
+#      scripts/check-web-conventions.ts.
 AGENT_RULES_ALLOWLIST="scripts/lib/agent-rules-allowlist.json"
 require_file "$AGENT_RULES_ALLOWLIST"
 require_file "docs/sitemap.md"

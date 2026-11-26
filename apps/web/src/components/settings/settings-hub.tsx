@@ -23,7 +23,7 @@ export function SettingsHub({ lang }: { lang: string }) {
           <h2 id={`settings-hub-${group.id}`} className="text-sm font-medium text-muted-foreground">
             {t(group.labelKey)}
           </h2>
-          <ul className="grid min-w-0 gap-2 sm:grid-cols-2">
+          <ul className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {group.items.map((item) => (
               <li key={item.id} className="min-w-0">
                 <Link

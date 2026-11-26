@@ -30,8 +30,9 @@ const reviewed: Record<string, string> = {
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
     "93b8e611eac6f763eacc2f601f9f2fd6d52c586fda2e4f05628d316c32b7d5e3",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
+  // Reviewed 11-26 (viewport-pass): row/badge class names only; the emailVerified read is unchanged, read only.
   "apps/web/src/components/admin/admin-users-page.tsx":
-    "5895f67f92935a9de6af500c0b24d90c860f7061bb1ed5aa00bf03b352cf0318",
+    "91745acc4b5d6cea92e2f5cbf86ce24bb1e85ba3281fbada3d26e2e407d4d4cf",
   "apps/worker/src/operational-alerts.ts":
     "c60c93d8c519bfb0a69f84a088a27b57799a4f7e368070a872d7673cc9497d59",
   // Reviewed 11-24: comment only (sign-up answers are address-independent).

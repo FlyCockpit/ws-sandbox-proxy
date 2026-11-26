@@ -23,7 +23,7 @@ import {
 // frame's content width, so the skeleton's columns line up with the page.
 const WIDTH_CLASS: Record<PendingWidth, string> = {
   narrow: "max-w-4xl",
-  default: "max-w-6xl",
+  default: "max-w-7xl",
   wide: "max-w-7xl",
 };
 
@@ -199,7 +199,7 @@ function ShapeSkeleton({ shape }: { shape: PendingShape }) {
         </>
       );
     case "hub":
-      // The Settings hub: each group's heading over a two-column grid of
+      // The Settings hub: each group's heading over the hub's grid of
       // cards (counts from the static hub), so nothing jumps when it loads.
       return (
         <>
@@ -207,7 +207,7 @@ function ShapeSkeleton({ shape }: { shape: PendingShape }) {
           {settingsHubGroups.map((group) => (
             <div key={group.id} className="flex min-w-0 flex-col gap-2">
               <Skeleton className="h-4 w-28" />
-              <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 {group.items.map((item) => (
                   <Skeleton key={item.id} className="h-[5.5rem] rounded-xl" />
                 ))}

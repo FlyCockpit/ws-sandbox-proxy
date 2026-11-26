@@ -128,7 +128,7 @@ export function TerminalKeyRow({
                 >
                   <span>{key}</span>
                   {hint ? (
-                    <span className="truncate text-[0.625rem] leading-none text-muted-foreground">
+                    <span className="max-w-full truncate text-xs leading-none text-muted-foreground">
                       {t(`terminal:keys.hint.${hint}`)}
                     </span>
                   ) : null}
@@ -288,7 +288,7 @@ function HoldModifierKey({
       }}
     >
       <span>{t(`terminal:keys.name.${name}`)}</span>
-      <span className="max-w-full truncate text-[0.625rem] font-normal text-muted-foreground">
+      <span className="max-w-full truncate text-xs leading-none font-normal text-muted-foreground">
         {t(`terminal:keys.latch.${latch === "off" ? "hold" : latch}`)}
       </span>
     </button>

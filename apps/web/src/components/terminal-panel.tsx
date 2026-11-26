@@ -234,6 +234,9 @@ export function TerminalPanel({
       data-terminal-status={status}
       data-terminal-layout={header ? "phone" : "wide"}
       data-terminal-maximized={fullscreen ? "" : undefined}
+      // The terminal, its key row and swipe pad own their vertical gestures:
+      // a swipe down in them never starts the dashboard's pull-to-refresh.
+      data-pull-to-refresh="off"
       // Maximized with the keyboard open: exactly the visible area (the browser
       // may shrink and pan only the visual viewport).
       style={

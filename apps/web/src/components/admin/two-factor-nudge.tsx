@@ -5,6 +5,7 @@ import { buttonVariants } from "@wssp/ui/components/button";
 import { cn } from "@wssp/ui/lib/utils";
 import { ShieldAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { PAGE_COLUMN_CLASS } from "@/components/page-shell";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { dateTimeTitle } from "@/lib/format-date-time";
@@ -73,11 +74,14 @@ export function TwoFactorNudge({ variant = "admin" }: { variant?: "admin" | "she
     <div
       role="alert"
       data-two-factor-nudge={variant}
-      className="border-b border-yellow-300 bg-yellow-100 px-4 py-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100"
+      className="border-b border-yellow-300 bg-yellow-100 py-3 text-sm text-yellow-900 dark:border-yellow-700 dark:bg-yellow-950 dark:text-yellow-100"
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+      {/* The band spans the content area; its content sits in the page column,
+          so the message and its action stay together on a wide screen. See
+          docs/design/shell-rules.md § Viewport scale */}
+      <div className={cn(PAGE_COLUMN_CLASS, "flex flex-col gap-3 sm:flex-row sm:items-start")}>
         <ShieldAlert className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
-        <div className="flex-1 space-y-1">
+        <div className="flex-1 space-y-1 [&_p]:max-w-prose">
           <p className="font-medium">{title}</p>
           <p
             className="text-yellow-900/90 dark:text-yellow-100/90"

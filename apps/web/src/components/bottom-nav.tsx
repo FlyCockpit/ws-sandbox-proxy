@@ -15,7 +15,15 @@ import { getNavItems, primarySectionFor, toLangRoute } from "@/lib/nav-items";
 const BottomNavMore = lazy(() => import("./bottom-nav-more"));
 
 const TAB_CLASS =
-  "flex min-h-[44px] min-w-[64px] flex-col items-center justify-center gap-0.5 px-3 py-1.5 transition-colors";
+  "flex min-h-[44px] min-w-[44px] shrink flex-col items-center justify-center gap-0.5 px-1 py-1.5 transition-colors";
+/**
+ * Labels are at least 12px. Tabs size to their label and shrink together down
+ * to the 44px touch floor (px, so a large browser font size doesn't raise it
+ * past the screen: 5 × 44px fits 320px); a label that still doesn't fit
+ * truncates instead of pushing the bar past the screen edge (the link's
+ * accessible name stays whole). See docs/design/shell-rules.md § Viewport scale
+ */
+const TAB_LABEL_CLASS = "max-w-full truncate text-xs font-medium leading-tight";
 
 /** Signed-in tabs: every `tabs` item; the rest of the sidebar sits behind More. */
 const SIGNED_IN_TABS = getNavItems({ placement: "tabs", isAuthenticated: true });
@@ -71,12 +79,12 @@ export function BottomNavFirstFrame({ lang, pathname }: { lang: string; pathname
           className={cn(TAB_CLASS, item.id === active ? "text-primary" : "text-muted-foreground")}
         >
           <item.icon aria-hidden="true" className="size-5" />
-          <span className="text-[10px] font-medium leading-tight">{t(item.labelKey)}</span>
+          <span className={TAB_LABEL_CLASS}>{t(item.labelKey)}</span>
         </Link>
       ))}
       <span data-tab-id="more" className={cn(TAB_CLASS, "text-muted-foreground")}>
         <Ellipsis aria-hidden="true" className="size-5" />
-        <span className="text-[10px] font-medium leading-tight">{t("items.more")}</span>
+        <span className={TAB_LABEL_CLASS}>{t("items.more")}</span>
       </span>
     </BottomNavShell>
   );
@@ -133,7 +141,7 @@ function SignedInBottomNav() {
           className={cn(TAB_CLASS, item.id === active ? "text-primary" : "text-muted-foreground")}
         >
           <item.icon aria-hidden="true" className="size-5" />
-          <span className="text-[10px] font-medium leading-tight">{t(item.labelKey)}</span>
+          <span className={TAB_LABEL_CLASS}>{t(item.labelKey)}</span>
         </Link>
       ))}
       {rest.length > 0 ? (
@@ -151,7 +159,7 @@ function SignedInBottomNav() {
           }}
         >
           <Ellipsis aria-hidden="true" className="size-5" />
-          <span className="text-[10px] font-medium leading-tight">{t("items.more")}</span>
+          <span className={TAB_LABEL_CLASS}>{t("items.more")}</span>
         </button>
       ) : null}
       {moreMounted ? (
@@ -186,7 +194,7 @@ function AnonymousBottomNav() {
           inactiveProps={{ className: "text-muted-foreground" }}
         >
           <item.icon aria-hidden="true" className="size-5" />
-          <span className="text-[10px] font-medium leading-tight">{t(item.labelKey)}</span>
+          <span className={TAB_LABEL_CLASS}>{t(item.labelKey)}</span>
         </Link>
       ))}
     </BottomNavShell>

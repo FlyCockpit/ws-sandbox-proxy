@@ -6,6 +6,7 @@ import { PanelLeft } from "lucide-react";
 import { type ReactNode, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 
+import { PAGE_COLUMN_CLASS } from "@/components/page-shell";
 import PullToRefresh from "@/components/pull-to-refresh";
 import { useShowsAdminNavigation } from "@/hooks/use-admin-navigation";
 import {
@@ -97,7 +98,9 @@ function FrameLayout({ sidebar, children }: { sidebar: ReactNode; children: Reac
 
 function FrameContent({ children }: { children: ReactNode }) {
   return (
-    <div className="container mx-auto flex min-h-0 min-w-0 max-w-6xl flex-1 flex-col px-4 py-4 md:py-6">
+    // The widest page tier, so every signed-in page, the admin section nav and
+    // the banners share one column that grows with the viewport scale.
+    <div className={cn(PAGE_COLUMN_CLASS, "flex min-h-0 min-w-0 flex-1 flex-col py-4 md:py-6")}>
       <div className="flex min-h-0 min-w-0 max-w-full flex-1 flex-col">{children}</div>
     </div>
   );

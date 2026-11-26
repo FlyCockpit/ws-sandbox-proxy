@@ -7,6 +7,15 @@ const WIDTH_CLASS = {
   wide: "max-w-7xl",
 } as const;
 
+const PAGE_FRAME = "container mx-auto px-4";
+
+/** The widest page column: the signed-in dashboard frame's content column and
+ * the content of a full-bleed band (a banner, the admin section nav), whose
+ * background spans the window while its content lines up with the page below.
+ * rem, so it grows with the root viewport scale. See
+ * docs/design/shell-rules.md § Viewport scale */
+export const PAGE_COLUMN_CLASS = `${PAGE_FRAME} ${WIDTH_CLASS.wide}`;
+
 type PageShellProps = {
   width?: keyof typeof WIDTH_CLASS;
   /** Inside `DashboardFrame`, which already owns the container and padding. */
@@ -24,7 +33,7 @@ export function PageShell({
   return (
     <div
       className={cn(
-        inFrame ? "min-w-0 space-y-6" : "container mx-auto min-w-0 space-y-6 px-4 py-6 md:py-8",
+        inFrame ? "min-w-0 space-y-6" : [PAGE_FRAME, "min-w-0 space-y-6 py-6 md:py-8"],
         !inFrame && WIDTH_CLASS[width],
         className,
       )}
@@ -53,7 +62,9 @@ export function PageHeader({ back, title, description, actions, className }: Pag
         <h1 className="font-heading text-2xl font-semibold tracking-tight text-balance [overflow-wrap:anywhere]">
           {title}
         </h1>
-        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+        {description ? (
+          <p className="max-w-prose text-sm text-muted-foreground">{description}</p>
+        ) : null}
       </header>
       {actions}
     </div>

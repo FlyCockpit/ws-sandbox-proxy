@@ -18,7 +18,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 // The frame's content column, as `FrameContent` draws it: it owns the
 // container and the padding.
-const FRAME_CONTENT = "container mx-auto max-w-6xl px-4 py-4 md:py-6";
+const FRAME_CONTENT = "container mx-auto max-w-7xl px-4 py-4 md:py-6";
 vi.mock("@/components/dashboard-frame", () => ({
   DashboardFramePending: ({ children }: { children: ReactNode }) => (
     <div data-frame-content="" className={FRAME_CONTENT}>
@@ -73,7 +73,7 @@ function paddingInside(host: HTMLElement): string[] {
   return elements
     .filter((element) => element && !element.hasAttribute("data-frame-content"))
     .flatMap((element) => element?.className.toString().split(/\s+/) ?? [])
-    .filter((name) => /^(container|px-4|py-4|md:py-6|max-w-6xl)$/.test(name));
+    .filter((name) => /^(container|px-4|py-4|md:py-6|max-w-7xl)$/.test(name));
 }
 
 beforeEach(() => {
@@ -165,6 +165,6 @@ describe("RouteContentSkeleton width and the mounted frame", () => {
     routeState.matches = [APP];
     const unknown = render(<RouteContentSkeleton />).innerHTML;
     expect(admin).toBe(unknown);
-    expect(admin).toContain("container mx-auto space-y-6 px-4 py-4 md:py-6 max-w-6xl");
+    expect(admin).toContain("container mx-auto space-y-6 px-4 py-4 md:py-6 max-w-7xl");
   });
 });

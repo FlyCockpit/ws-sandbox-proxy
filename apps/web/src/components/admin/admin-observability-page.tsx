@@ -147,6 +147,13 @@ export function AdminObservabilityPage({
   );
 }
 
+/**
+ * Counter tiles flow into as many columns as fit at 10rem or more each (two on
+ * a phone, up to the section's tile count on a wide screen), so a label wraps
+ * between words instead of being squeezed into a sixth of a narrow column.
+ */
+const COUNTER_GRID_CLASS = "grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-3";
+
 function Counters() {
   const { t, i18n } = useTranslation("admin");
   const counters = useQuery({
@@ -178,25 +185,16 @@ function Counters() {
   ] as const;
   return (
     <>
-      <section
-        aria-label={t("observability.summary.ariaLabel")}
-        className="grid grid-cols-2 gap-3 md:grid-cols-4"
-      >
+      <section aria-label={t("observability.summary.ariaLabel")} className={COUNTER_GRID_CLASS}>
         <CounterTiles tiles={tiles} />
       </section>
-      <section
-        aria-label={t("observability.leases.ariaLabel")}
-        className="grid grid-cols-2 gap-3 md:grid-cols-5"
-      >
+      <section aria-label={t("observability.leases.ariaLabel")} className={COUNTER_GRID_CLASS}>
         <CounterTiles
           tiles={leaseTiles.map((tile) => ({ ...tile, icon: Timer }))}
           prefix="leases"
         />
       </section>
-      <section
-        aria-label={t("observability.webhooks.ariaLabel")}
-        className="grid grid-cols-2 gap-3 md:grid-cols-6"
-      >
+      <section aria-label={t("observability.webhooks.ariaLabel")} className={COUNTER_GRID_CLASS}>
         <CounterTiles
           tiles={[
             { key: "endpoints", value: counters.data?.webhooks.endpoints },
