@@ -2,6 +2,7 @@
   "body": "Hola {{name}}, un administrador ha creado una cuenta para ti. Acepta la invitación con el botón de abajo: así confirmas esta dirección de correo. Después inicia sesión con la contraseña temporal que aparece a continuación; elegirás tu propia contraseña antes de cualquier otra cosa.",
   "cta": "Aceptar invitación",
   "emailLabel": "Correo electrónico",
+  "expiryNote": "Este enlace de invitación funciona durante {{days}} días. Si ya venció, inicia sesión de todos modos con la contraseña temporal: recibirás un nuevo correo con un enlace que confirma tu dirección.",
   "heading": "Has sido invitado",
   "ignoreFooter": "Si no esperabas esta invitación, puedes ignorar este correo de forma segura.",
   "subject": "Has sido invitado",

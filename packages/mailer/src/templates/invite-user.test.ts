@@ -8,6 +8,7 @@ describe("renderInviteUser", () => {
     email: "jane@example.com",
     tempPassword: "hunter2hunter2",
     acceptUrl: "https://example.com/login",
+    expiresInDays: 7,
   };
 
   it("returns the en-US bundle for locale='en-US'", () => {
@@ -23,6 +24,10 @@ describe("renderInviteUser", () => {
     expect(html).toContain("Email"); // label
     expect(html).toContain("Temporary password"); // label
     expect(html).toContain("Accept invitation"); // CTA
+    // What the link does, how long it works, and the next step once it expired.
+    expect(html).toContain("it confirms this email address");
+    expect(html).toContain("works for 7 days");
+    expect(html).toContain("sign in with the temporary password anyway");
   });
 
   it("returns the Spanish bundle for locale='es-MX'", () => {
@@ -38,6 +43,8 @@ describe("renderInviteUser", () => {
     // The en-US CTA literal should not survive (would indicate fallback to
     // en-US per-key, i.e. unpopulated bundle).
     expect(html).not.toContain("Accept invitation");
+    expect(html).toContain("durante 7 días");
+    expect(html).toContain("con la contraseña temporal");
   });
 
   it("falls back to en-US for an unsupported locale", () => {

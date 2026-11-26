@@ -48,7 +48,9 @@ beforeEach(() => {
   reload.mockReset();
   root.style.visibility = "";
   vi.stubGlobal("window", { location: { reload } });
-  vi.stubGlobal("document", { documentElement: root });
+  // No server-rendered app shell in this document: guards do not wait
+  // (lib/app-shell-hydration.test.ts covers the wait).
+  vi.stubGlobal("document", { documentElement: root, querySelector: () => null });
 });
 afterEach(() => vi.unstubAllGlobals());
 

@@ -137,7 +137,7 @@ describe("GettingStarted", () => {
     const other =
       html.match(/<a data-to="\/\$lang\/settings\/pools" class="([^"]*)"/)?.[1]?.split(" ") ?? [];
     expect(go).toEqual(expect.arrayContaining(["bg-primary", "h-11"]));
-    expect(other).toEqual(expect.arrayContaining(["border-border", "h-11"]));
+    expect(other).toEqual(expect.arrayContaining(["border-input", "h-11"]));
   });
 
   it("offers Hide with a name that starts with its visible text", () => {

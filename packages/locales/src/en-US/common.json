@@ -27,7 +27,8 @@
     "tryAgain": "Try again",
     "loadMore": "Load more",
     "loadingMore": "Loading…",
-    "more": "More actions"
+    "more": "More actions",
+    "undo": "Undo"
   },
   "fileDrop": {
     "ignored": "That file can't be dropped here."

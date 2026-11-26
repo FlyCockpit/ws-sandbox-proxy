@@ -1,7 +1,8 @@
 /** Fixtures for the pure judge in scripts/check-layout.ts: node --test scripts/check-layout.test.ts */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { judgeLayout, type Probe } from "./check-layout.ts";
+import { parseEvalOutput } from "./browser-check-lib.ts";
+import { judgeLayout, LOADING_MARKER, type Probe, SETTLED, settle } from "./check-layout.ts";
 
 const good: Probe = {
   vw: 1280,
@@ -130,5 +131,96 @@ describe("judgeLayout", () => {
       judgeLayout("toast light", { ...good, toast }, { toast: "light" }).join(""),
       /stored light theme lost to the OS/,
     );
+  });
+});
+
+describe("parseEvalOutput", () => {
+  it("parses a JSON-encoded page result once more and keeps other values", () => {
+    assert.deepEqual(parseEvalOutput(JSON.stringify(JSON.stringify({ a: 1 }))), { a: 1 });
+    assert.equal(parseEvalOutput(JSON.stringify(JSON.stringify("settled"))), "settled");
+    assert.equal(parseEvalOutput("true"), true);
+  });
+
+  it("rejects a bare string result, so page scripts must JSON-encode strings", () => {
+    assert.throws(() => parseEvalOutput(JSON.stringify("settled")), SyntaxError);
+  });
+});
+
+describe("SETTLED", () => {
+  /**
+   * Runs the page script against a fake visible <main> whose height follows
+   * `heights`, then stays at the last. `skeleton[i]` says whether read i still
+   * finds a loading marker (the last value holds after the list ends). The
+   * result goes through `settle` and the same adapter as a real run
+   * (agent-browser prints the value as JSON; `parseEvalOutput` reads it).
+   */
+  const run = async (heights: number[] | null, skeleton: boolean[] = [false]) => {
+    let reads = 0;
+    const selectors: string[] = [];
+    const main = {
+      checkVisibility: () => true,
+      get scrollHeight() {
+        reads++;
+        return heights ? (heights[Math.min(reads - 1, heights.length - 1)] ?? 0) : 0;
+      },
+      querySelector: (selector: string) => {
+        selectors.push(selector);
+        return skeleton[Math.min(reads - 1, skeleton.length - 1)] ? {} : null;
+      },
+    };
+    // A suspended route can leave a hidden <main> before the visible one.
+    const hidden = { checkVisibility: () => false, scrollHeight: 0, querySelector: () => ({}) };
+    // The page script reads the globals `document` and `setTimeout`; parameters
+    // stand in for them, and the timer fires at once, so the 8s limit costs no real time.
+    const page = new Function("document", "setTimeout", `return ${SETTLED};`) as (
+      doc: unknown,
+      timer: (done: () => void) => void,
+    ) => Promise<unknown>;
+    const failure = await settle("admin users 1280×800", async () =>
+      parseEvalOutput(
+        JSON.stringify(
+          await page({ querySelectorAll: () => (heights ? [hidden, main] : []) }, (done) => done()),
+        ),
+      ),
+    );
+    return { failure, reads, selectors };
+  };
+
+  it("waits until the content stops growing (rows arrive after the sub-nav)", async () => {
+    const { failure, reads } = await run([681, 681, 986, 1200]);
+    assert.equal(failure, null);
+    // Three changes, then five unchanged reads in a row.
+    assert.equal(reads, 9);
+  });
+
+  it("does not settle on a skeleton that holds one height before the data arrives", async () => {
+    // A skeleton at 681px for 10 reads (stable for well over five), then the rows.
+    const heights = [...Array(10).fill(681), 1200];
+    const skeleton = [...Array(10).fill(true), false];
+    const { failure, reads, selectors } = await run(heights, skeleton);
+    assert.equal(failure, null);
+    // Ten skeleton reads count for nothing; then the loaded height, then five unchanged reads.
+    assert.equal(reads, 16);
+    assert.equal(selectors[0], LOADING_MARKER);
+  });
+
+  it("looks for wssp's skeleton and busy markers", () => {
+    assert.match(LOADING_MARKER, /\[data-slot="skeleton"\]/);
+    assert.match(LOADING_MARKER, /\[aria-busy="true"\]/);
+  });
+
+  it("reports a page still loading after 8s, distinct from one that keeps changing", async () => {
+    const loading = await run([681], [true]);
+    assert.match(loading.failure ?? "", /admin users 1280×800: still showing a loading skeleton/);
+    assert.equal(loading.reads, 80);
+    const growing = Array.from({ length: 100 }, (_, i) => 500 + i * 10);
+    const changing = await run(growing);
+    assert.match(changing.failure ?? "", /kept changing for 8s/);
+    assert.equal(changing.reads, 80);
+  });
+
+  it("does not wait on a page without the app's scroller", async () => {
+    const { failure, reads } = await run(null);
+    assert.deepEqual({ failure, reads }, { failure: null, reads: 0 });
   });
 });

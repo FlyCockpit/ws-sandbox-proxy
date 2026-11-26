@@ -41,7 +41,7 @@ function BottomNavShell({ children }: { children: ReactNode }) {
         paddingRight: "var(--safe-area-right)",
       }}
     >
-      <div className="flex h-14 items-center justify-around">{children}</div>
+      <div className="flex h-(--bottom-nav-bar) items-center justify-around">{children}</div>
     </nav>
   );
 }

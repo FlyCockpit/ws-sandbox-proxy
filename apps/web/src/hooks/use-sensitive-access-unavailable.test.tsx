@@ -17,6 +17,7 @@ vi.mock("./use-auth-session", () => ({
       isRefetching: false,
       isOnline: true,
       refetch: vi.fn(),
+      confirmedAnonymous: false,
     }),
 }));
 it("uses the authenticated impersonatedBy snapshot, independently of gate errors", () => {

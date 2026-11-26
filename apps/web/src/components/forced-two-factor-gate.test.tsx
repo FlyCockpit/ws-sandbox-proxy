@@ -85,6 +85,10 @@ describe("forced-2FA gate (_auth layout)", () => {
     expect(screen.getByText("twoFactor.requiredTitle")).toBeTruthy();
     expect(screen.queryByText("protected page")).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
+    // The takeover replaces the page, so its title is the page's one h1.
+    const headings = document.querySelectorAll("h1");
+    expect([...headings].map((h) => h.textContent)).toEqual(["twoFactor.requiredTitle"]);
+    expect(document.querySelector('[role="heading"]')).toBeNull();
   });
 
   it("blocks an unenrolled admin past grace when no setting row exists (default on)", () => {

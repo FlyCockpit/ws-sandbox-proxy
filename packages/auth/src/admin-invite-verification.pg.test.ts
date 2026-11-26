@@ -41,6 +41,10 @@ vi.mock("@wssp/mailer", () => ({
 const db = await pgTestDatabase();
 const { auth } = await import("./index");
 const { adminInviteAcceptUrl } = await import("./admin-invite-verification");
+const { sendEmail } = await import("@wssp/mailer");
+/** Mails Better Auth sent to one address (verification resends, resets). */
+const mailsTo = (email: string) =>
+  vi.mocked(sendEmail).mock.calls.filter(([message]) => message.to === email).length;
 afterAll(() => db.close());
 
 const SECRET = "admin-invite-pg-test-secret-at-least-32-chars";
@@ -110,6 +114,9 @@ describe("admin invitation acceptance against the real Better Auth", () => {
     const early = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
     expect(early.status).toBe(403);
     expect(await flags(invitee.userId)).toEqual({ emailVerified: false, mustChangePassword: true });
+    // That refusal re-sends one verification link (sendOnSignIn): the way in
+    // when the invite link was lost or expired.
+    expect(mailsTo(invitee.email)).toBe(1);
 
     const accept = new URL(
       await adminInviteAcceptUrl({
@@ -129,6 +136,8 @@ describe("admin invitation acceptance against the real Better Auth", () => {
 
     const signIn = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
     expect(signIn.status, await signIn.clone().text()).toBe(200);
+    // Accepting and the sign-in after it mail nothing more.
+    expect(mailsTo(invitee.email)).toBe(1);
     const cookie = cookiesFrom(signIn);
     const wrong = await post(
       "/change-password",

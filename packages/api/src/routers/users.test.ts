@@ -175,12 +175,12 @@ describe("usersRouter", () => {
       const client = createRouterClient(usersRouter, {
         context: buildContext({ user: { role: "user" } }),
       });
-      await expect(client.invite({ email: "x@example.com", name: "X" })).rejects.toSatisfy(
-        (e: ORPCError) => {
-          expect(e.code).toBe("NOT_FOUND");
-          return true;
-        },
-      );
+      await expect(
+        client.invite({ email: "x@example.com", name: "X", locale: "en-US" }),
+      ).rejects.toSatisfy((e: ORPCError) => {
+        expect(e.code).toBe("NOT_FOUND");
+        return true;
+      });
       expect(db.user.create).not.toHaveBeenCalled();
       expect(inviteBudget).not.toHaveBeenCalled();
     });
@@ -332,7 +332,7 @@ describe("usersRouter", () => {
       db.user.findUnique.mockImplementation(async (args: { where: { email?: string } }) =>
         args.where.email ? null : { ...defaultSensitiveSessionGateUser },
       );
-      db.user.create.mockResolvedValue({ id: "new-user-id", locale: "es-MX" });
+      db.user.create.mockResolvedValue({ id: "new-user-id" });
     }
 
     it("creates the user and credential in the admin transaction, then emails after commit", async () => {
@@ -343,6 +343,7 @@ describe("usersRouter", () => {
         email: "NEW@example.com",
         name: "New User",
         role: "user",
+        locale: "es-MX",
       });
 
       expect(res.userId).toBe("new-user-id");
@@ -357,9 +358,11 @@ describe("usersRouter", () => {
           email: "new@example.com",
           name: "New User",
           role: "user",
+          // The admin's pick is the invitee's locale from the first insert.
+          locale: "es-MX",
           mustChangePassword: true,
         },
-        select: { id: true, locale: true },
+        select: { id: true },
       });
       expect(db.account.create).toHaveBeenCalledWith({
         data: {
@@ -372,6 +375,11 @@ describe("usersRouter", () => {
       });
       expect(sendEmailMock).toHaveBeenCalledWith(
         expect.objectContaining({ to: "new@example.com" }),
+      );
+      // One mail, in the invitee's language.
+      expect(sendEmailMock).toHaveBeenCalledOnce();
+      expect(renderInviteUserMock).toHaveBeenCalledWith(
+        expect.objectContaining({ locale: "es-MX", expiresInDays: 7 }),
       );
       // The budget and the hash run before the governance transaction opens;
       // mail runs only after it resolves.
@@ -387,17 +395,15 @@ describe("usersRouter", () => {
     it.each([
       ["es-MX", undefined, "/es-MX/verify-email?ok=1"],
       ["en-US", "https://app.example.test", "https://app.example.test/en-US/verify-email?ok=1"],
-      ["fr-FR", undefined, "/en-US/verify-email?ok=1"],
-    ])(
+    ] as const)(
       "the accept link verifies the invited address and lands on the web verify-email page (%s, %s)",
       async (locale, corsOrigin, callbackURL) => {
         const client = createRouterClient(usersRouter, { context: buildContext() });
         wireInvite();
-        db.user.create.mockResolvedValue({ id: "new-user-id", locale });
         envMock.CORS_ORIGIN = corsOrigin;
         sendEmailMock.mockResolvedValue(undefined);
         try {
-          await client.invite({ email: "new@example.com", name: "New User" });
+          await client.invite({ email: "new@example.com", name: "New User", locale });
           const [args] = renderInviteUserMock.mock.calls.at(-1) as [{ acceptUrl: string }];
           const url = new URL(args.acceptUrl);
           expect(`${url.origin}${url.pathname}`).toBe(
@@ -414,6 +420,23 @@ describe("usersRouter", () => {
       },
     );
 
+    it("refuses an invite without a supported email language before any budget or write", async () => {
+      const client = createRouterClient(usersRouter, { context: buildContext() });
+      wireInvite();
+      for (const locale of ["fr-FR", undefined]) {
+        await expect(
+          client.invite({
+            email: "new@example.com",
+            name: "New",
+            locale: locale as unknown as "en-US",
+          }),
+        ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+      }
+      expect(inviteBudget).not.toHaveBeenCalled();
+      expect(db.user.create).not.toHaveBeenCalled();
+      expect(sendEmailMock).not.toHaveBeenCalled();
+    });
+
     it("returns emailSent=false when SMTP throws but the user was still created", async () => {
       const client = createRouterClient(usersRouter, { context: buildContext() });
       wireInvite();
@@ -421,6 +444,7 @@ describe("usersRouter", () => {
       const res = await client.invite({
         email: "new@example.com",
         name: "New User",
+        locale: "en-US",
       });
 
       expect(res.emailSent).toBe(false);
@@ -430,12 +454,16 @@ describe("usersRouter", () => {
     it("translates an existing or racing email into a CONFLICT without mailing", async () => {
       const client = createRouterClient(usersRouter, { context: buildContext() });
       db.user.findUnique.mockResolvedValue({ ...defaultSensitiveSessionGateUser, id: "taken" });
-      await expect(client.invite({ email: "dup@example.com", name: "Dup" })).rejects.toMatchObject({
+      await expect(
+        client.invite({ email: "dup@example.com", name: "Dup", locale: "en-US" }),
+      ).rejects.toMatchObject({
         code: "CONFLICT",
       });
       wireInvite();
       db.user.create.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
-      await expect(client.invite({ email: "dup@example.com", name: "Dup" })).rejects.toMatchObject({
+      await expect(
+        client.invite({ email: "dup@example.com", name: "Dup", locale: "en-US" }),
+      ).rejects.toMatchObject({
         code: "CONFLICT",
       });
       expect(db.account.create).not.toHaveBeenCalled();
@@ -446,7 +474,9 @@ describe("usersRouter", () => {
       const client = createRouterClient(usersRouter, { context: buildContext() });
       wireInvite();
       inviteBudget.mockRejectedValueOnce(new ORPCError("TOO_MANY_REQUESTS"));
-      await expect(client.invite({ email: "new@example.com", name: "New" })).rejects.toMatchObject({
+      await expect(
+        client.invite({ email: "new@example.com", name: "New", locale: "en-US" }),
+      ).rejects.toMatchObject({
         code: "TOO_MANY_REQUESTS",
       });
       expect(hashPassword).not.toHaveBeenCalled();
@@ -466,7 +496,9 @@ describe("usersRouter", () => {
         return output;
       });
       try {
-        await expect(client.invite({ email: "new@example.com", name: "New" })).rejects.toThrow();
+        await expect(
+          client.invite({ email: "new@example.com", name: "New", locale: "en-US" }),
+        ).rejects.toThrow();
         expect(db.account.create).toHaveBeenCalled();
         expect(sendEmailMock).not.toHaveBeenCalled();
       } finally {
@@ -483,7 +515,9 @@ describe("usersRouter", () => {
       (db as unknown as { session: { findUnique: MockInstance } }).session.findUnique
         .mockResolvedValueOnce({ id: "test-session-id" })
         .mockResolvedValueOnce(null);
-      await expect(client.invite({ email: "new@example.com", name: "New" })).rejects.toMatchObject({
+      await expect(
+        client.invite({ email: "new@example.com", name: "New", locale: "en-US" }),
+      ).rejects.toMatchObject({
         code: "NOT_FOUND",
       });
       expect(db.user.create).not.toHaveBeenCalled();
@@ -665,7 +699,14 @@ describe("usersRouter", () => {
 
       db.user.findUnique.mockResolvedValue({ ...defaultSensitiveSessionGateUser, id: "taken" });
       expect(
-        await codeOf(client.invite({ email: "taken@example.com", name: "Taken", role: "user" })),
+        await codeOf(
+          client.invite({
+            email: "taken@example.com",
+            name: "Taken",
+            role: "user",
+            locale: "en-US",
+          }),
+        ),
       ).toEqual({ code: ADMIN_ERROR_CODES.emailTaken });
     });
 

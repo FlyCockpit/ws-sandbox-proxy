@@ -6,7 +6,9 @@ import { BottomNavFirstFrame, BottomNavSkeleton } from "@/components/bottom-nav"
 import Header from "@/components/header";
 import { ContentSkeleton } from "@/components/route-content-skeleton";
 import { SkipToContent } from "@/components/skip-to-content";
+import { useMountEffect } from "@/hooks/use-mount-effect";
 import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
+import { markAppShellHydrated } from "@/lib/app-shell-hydration";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { resolvePendingLayout } from "@/lib/pending-layout";
 
@@ -26,6 +28,9 @@ export function AppShellFrame({
   mobileKeyboardOpen?: boolean;
   children: ReactNode;
 }) {
+  // The first effect of a hydrated (or client-rendered) frame: from here on a
+  // route guard may change the URL (lib/app-shell-hydration.ts).
+  useMountEffect(markAppShellHydrated);
   return (
     <>
       <SkipToContent />
@@ -39,6 +44,9 @@ export function AppShellFrame({
           paddingLeft: "var(--safe-area-left)",
           paddingRight: "var(--safe-area-right)",
         }}
+        // APP_SHELL_ATTRIBUTE: what a guard looks for to know a server-rendered
+        // shell may still be hydrating.
+        data-app-shell=""
       >
         <div>{header}</div>
         {/* No `scrollbar-gutter: stable`: the 2FA banner and the admin

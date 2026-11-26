@@ -170,7 +170,7 @@ it("denies an invitation whose admin was demoted after the entry gate, without m
   sendEmail.mockClear();
   const gate = db.pauseAt("invite", { before: /pg_advisory_xact_lock/ });
   const pending = db.run("invite", () =>
-    b.client.invite({ email, name: "Invitee", role: "admin" }),
+    b.client.invite({ email, name: "Invitee", role: "admin", locale: "en-US" }),
   );
   const outcome = expect(pending).rejects.toMatchObject({ code: "NOT_FOUND" });
   await gate.waitReached();
@@ -189,7 +189,7 @@ it("serializes a demotion behind an in-flight invitation and mails only after co
   sendEmail.mockClear();
   const gate = db.pauseAt("invite", { before: "user.create" });
   const pending = db.run("invite", () =>
-    b.client.invite({ email, name: "Invitee", role: "admin" }),
+    b.client.invite({ email, name: "Invitee", role: "admin", locale: "en-US" }),
   );
   await gate.waitReached();
   // Holding only governance, the demotion waits until the invitation's final
@@ -225,7 +225,7 @@ it("refuses the response when a demotion lands between the invitation commit and
   sendEmail.mockClear();
   const write = db.pauseAt("invite", { before: "user.create" });
   const pending = db.run("invite", () =>
-    b.client.invite({ email, name: "Invitee", role: "admin" }),
+    b.client.invite({ email, name: "Invitee", role: "admin", locale: "en-US" }),
   );
   const outcome = expect(pending).rejects.toMatchObject({ code: "NOT_FOUND" });
   await write.waitReached();
@@ -257,7 +257,7 @@ it("leaves unrelated authority tickets valid across committed and rolled-back in
   const ticket = authorityTicket({ ownerId: owner.id });
   const email = `${randomUUID()}@example.test`;
   await expect(
-    admin.client.invite({ email, name: "Invitee", role: "user" }),
+    admin.client.invite({ email, name: "Invitee", role: "user", locale: "en-US" }),
   ).resolves.toMatchObject({ emailSent: true });
   expect(ticket()).toBe(true);
   // The invitee must replace the admin-known password; only the mailed accept
@@ -270,7 +270,12 @@ it("leaves unrelated authority tickets valid across committed and rolled-back in
   ).toEqual({ mustChangePassword: true, emailVerified: false });
   const rollback = db.pauseAt("invite", { after: "account.create" });
   const failed = db.run("invite", () =>
-    admin.client.invite({ email: `${randomUUID()}@example.test`, name: "Other", role: "user" }),
+    admin.client.invite({
+      email: `${randomUUID()}@example.test`,
+      name: "Other",
+      role: "user",
+      locale: "en-US",
+    }),
   );
   await rollback.waitReached();
   // Sampled while the invitation is in flight, then checked after it rolls back.

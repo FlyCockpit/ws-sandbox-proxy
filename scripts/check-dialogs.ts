@@ -4,7 +4,7 @@
  * when one does not fit: a dialog is for confirmations and short forms, and it
  * must show all of itself without inner scrolling at 1280×800 and 390×844.
  * Rule: patterns/design-system.md § Form surfaces
- * Usage: patterns/agent-ui-testing.md § Dialog fit check
+ * Usage: docs/design/shell-rules.md § Dialog fit and shell loading checks
  *
  *   pnpm check:dialogs                    starts its own mock dev server
  *   pnpm check:dialogs --url http://127.0.0.1:3001   uses a running app
@@ -22,7 +22,7 @@
  * and leaves this list.
  */
 
-import { type CheckRun, withBrowser } from "./browser-check-lib.ts";
+import { byRole, type CheckRun, sessionName, withBrowser } from "./browser-check-lib.ts";
 import {
   DIALOGS,
   type DialogCase,
@@ -32,7 +32,7 @@ import {
 } from "./browser-checks.config.ts";
 
 // One session per run, so runs in other checkouts on this machine are untouched.
-const SESSION = `check-dialogs-${process.pid}`;
+const SESSION = sessionName("check-dialogs");
 export const DIALOG_VIEWPORTS = [
   [1280, 800],
   [390, 844],
@@ -132,7 +132,8 @@ async function openDialog(run: CheckRun, dialog: DialogCase): Promise<void> {
 
 async function measure(run: CheckRun): Promise<string[]> {
   const only = run.args.includes("--only") ? run.args[run.args.indexOf("--only") + 1] : undefined;
-  const cases = DIALOGS.filter((dialog) => !only || dialog.name === only);
+  // Grouped by role, so a real stack signs in once per role and viewport, not per dialog.
+  const cases = byRole(DIALOGS.filter((dialog) => !only || dialog.name === only));
   if (cases.length === 0) return [`no dialog named ${only} in browser-checks.config.ts`];
   const failures: string[] = [];
   for (const [w, h] of DIALOG_VIEWPORTS) {
@@ -144,7 +145,9 @@ async function measure(run: CheckRun): Promise<string[]> {
         failures.push(...judgeDialog(label, await run.browser.evalJson<DialogProbe>(PROBE)));
         console.log(`check:dialogs: ${label} measured`);
       } catch (error) {
-        failures.push(`${label}: could not open: ${(error as Error).message.split("\n")[0]}`);
+        failures.push(
+          `${label}: could not open: ${(error as Error).message.split("\n")[0]}${dialog.needs ? ` (it needs ${dialog.needs})` : ""}`,
+        );
       }
     }
   }

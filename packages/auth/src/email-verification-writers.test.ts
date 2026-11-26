@@ -32,8 +32,9 @@ const reviewed: Record<string, string> = {
     "93b8e611eac6f763eacc2f601f9f2fd6d52c586fda2e4f05628d316c32b7d5e3",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   // Reviewed 11-26 (viewport-pass): row/badge class names only; the emailVerified read is unchanged, read only.
+  // Reviewed 11-26 (tpl-e2e5-fups lane C): invite "Email language" select and the archive Undo toast; the emailVerified read is unchanged, read only.
   "apps/web/src/components/admin/admin-users-page.tsx":
-    "91745acc4b5d6cea92e2f5cbf86ce24bb1e85ba3281fbada3d26e2e407d4d4cf",
+    "d9a36d1893c8c451334d394443e031015be210e1a080dec18a06e2342692b3a7",
   "apps/worker/src/operational-alerts.ts":
     "c60c93d8c519bfb0a69f84a088a27b57799a4f7e368070a872d7673cc9497d59",
   // Reviewed 11-24: comment only (sign-up answers are address-independent).
@@ -50,8 +51,9 @@ const reviewed: Record<string, string> = {
   // verify-email link (admin-invite-verification.ts mints its signed token, as
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.
   // The new row is created with mustChangePassword, not emailVerified.
+  // Reviewed 11-26 (tpl-e2e5-fups lane C): the invite input takes the invitee's locale, written in the same insert, plus the mail's expiry days; still no proof write.
   "packages/api/src/routers/users.ts":
-    "6a6c6a8e4fbd9cf302b0e49309778986acf2f12c31be7dbceb99d723d28cc7fa",
+    "5f3e3915075e65489ea8a56d2eec0ec523f5a5267b9646db7b4e04f6352c901b",
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
   // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.

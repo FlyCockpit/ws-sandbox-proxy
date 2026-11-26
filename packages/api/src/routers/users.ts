@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { ORPCError, os } from "@orpc/server";
 import { auth } from "@wssp/auth";
-import { adminInviteAcceptUrl } from "@wssp/auth/admin-invite-verification";
+import {
+  ADMIN_INVITE_VERIFICATION_TTL_SECONDS,
+  adminInviteAcceptUrl,
+} from "@wssp/auth/admin-invite-verification";
+import { SUPPORTED_LOCALES } from "@wssp/config/locales";
 import prisma, { type Prisma } from "@wssp/db";
 import {
   AccountDeletionConflictError,
@@ -65,6 +69,10 @@ const inviteInput = z.object({
   email: adminString.max(254).email().toLowerCase(),
   name: adminString.trim().min(1).max(100),
   role: assignableRoleSchema.default("user"),
+  // The invitee's language, picked by the admin (the form defaults it to the
+  // admin's own). Saved as `User.locale` in the same insert, so the invite
+  // mail, the accept landing page and every later mail use it.
+  locale: z.enum(SUPPORTED_LOCALES),
 });
 
 // Runs after the admin entry gate and before the write transaction, so the
@@ -208,7 +216,7 @@ export const usersRouter = {
       // which commits on its own connection) so the actor's reauthorization
       // and the new account commit atomically. Mirrors Better Auth's admin
       // createUser: an unverified user plus a `credential` account.
-      let created: { id: string; locale: string };
+      let created: { id: string };
       try {
         created = await tx.user.create({
           // The temporary password is known to the admin: the invitee must
@@ -217,9 +225,10 @@ export const usersRouter = {
             email: input.email,
             name: input.name,
             role: input.role,
+            locale: input.locale,
             mustChangePassword: true,
           },
-          select: { id: true, locale: true },
+          select: { id: true },
         });
       } catch (error) {
         if (isPrismaUniqueViolation(error)) throw conflict();
@@ -248,16 +257,21 @@ export const usersRouter = {
             // Accepting (opening the mailed link) verifies the invited
             // address through Better Auth's own verify-email endpoint, then
             // lands on the web verify-email page under the invitee's locale
-            // (the web origin, CORS_ORIGIN on split deployments).
+            // (the web origin, CORS_ORIGIN on split deployments). This is the
+            // invitee's only mail: the insert above is not a Better Auth
+            // sign-up, so no "verify your email" mail goes out. Only a sign-in
+            // before accepting (or after the link expired) gets Better Auth's
+            // resend (`sendOnSignIn`), which is the way back in.
             acceptUrl: await adminInviteAcceptUrl({
               secret: env.BETTER_AUTH_SECRET,
               authBaseUrl: env.BETTER_AUTH_URL,
               appOrigin: env.CORS_ORIGIN,
               userId: created.id,
               email: input.email,
-              locale: created.locale,
+              locale: input.locale,
             }),
-            locale: created.locale,
+            expiresInDays: ADMIN_INVITE_VERIFICATION_TTL_SECONDS / (24 * 60 * 60),
+            locale: input.locale,
           });
           await sendEmail({ to: input.email, subject, html });
           // The middleware returns this same object after its effects run.

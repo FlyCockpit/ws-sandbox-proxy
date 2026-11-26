@@ -38,6 +38,16 @@ sandbox, operation and transfer belongs to exactly one user account.
   changing it signs out the account's other sessions whatever the client asks.
   A reset by email also replaces it; every reset signs all of the account's
   sessions out.
+  The invitation is the invitee's only mail: no separate "verify your email"
+  mail is sent. A sign-in before accepting (or after the link expired) is
+  refused and Better Auth mails one fresh verification link, which the
+  invitation mail names as the next step. The administrator picks the
+  invitee's **Email language** on the invite form (default: their own UI
+  language); it is saved as the account's locale in the same insert, so the
+  invitation and every later mail use it.
+- Archiving a user (after confirmation) shows a "User archived" toast with
+  **Undo** for about 8 seconds. Undo is the row's **Restore user**: it lifts
+  the ban, and the sessions the archive ended stay ended.
 - The browser terminal is part of this plane: a short-lived one-use ticket
   minted by a cookie-authenticated, CSRF-protected call. See
   [Sandbox terminal](./terminal.md).

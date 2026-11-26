@@ -19,7 +19,8 @@
     "tryAgain": "Intentar de nuevo",
     "loadMore": "Cargar más",
     "loadingMore": "Cargando…",
-    "more": "Más acciones"
+    "more": "Más acciones",
+    "undo": "Deshacer"
   },
   "advanced": {
     "summary": "Avanzado"

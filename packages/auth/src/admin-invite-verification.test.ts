@@ -1,5 +1,7 @@
+import { betterAuth } from "better-auth";
+import { memoryAdapter } from "better-auth/adapters/memory";
 import { verifyEmail } from "better-auth/api";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   ADMIN_INVITE_VERIFICATION_TTL_SECONDS,
@@ -47,5 +49,90 @@ describe("adminInviteAcceptUrl", () => {
       }),
     );
     expect(url.searchParams.get("callbackURL")).toBe("/en-US/verify-email?ok=1");
+  });
+});
+
+/**
+ * One mail per invitation. users.invite inserts the account itself (not a
+ * Better Auth sign-up), so nothing mails a "verify your email" link; opening
+ * the invite's accept link verifies, and the sign-in after it sends nothing.
+ * Better Auth here carries the same email-verification options as index.ts
+ * (`requireEmailVerification`, `sendOnSignUp`, `sendOnSignIn`); the pg test
+ * (admin-invite-verification.pg.test.ts) repeats the count on the real config.
+ */
+describe("an accepted admin invitation sends no verification mail", () => {
+  const BASE_URL = "http://localhost:3000";
+  const TEMPORARY = "temporary-password-from-the-admin";
+
+  async function setup() {
+    const db: Record<string, Record<string, unknown>[]> = {
+      user: [],
+      session: [],
+      account: [],
+      verification: [],
+    };
+    const sendVerificationEmail = vi.fn(async () => {});
+    const auth = betterAuth({
+      baseURL: BASE_URL,
+      secret,
+      database: memoryAdapter(db),
+      rateLimit: { enabled: false },
+      emailAndPassword: { enabled: true, requireEmailVerification: true },
+      emailVerification: { sendVerificationEmail, sendOnSignUp: true, sendOnSignIn: true },
+    });
+    const context = await auth.$context;
+    // What users.invite writes (rows inserted directly, not a Better Auth
+    // sign-up): an unverified user and a credential account.
+    async function invite(email: string) {
+      const now = new Date();
+      const user = { id: `user-${email}`, email, name: "Invitee", emailVerified: false };
+      db.user?.push({ ...user, image: null, createdAt: now, updatedAt: now });
+      db.account?.push({
+        id: `account-${email}`,
+        userId: user.id,
+        accountId: user.id,
+        providerId: "credential",
+        password: await context.password.hash(TEMPORARY),
+        createdAt: now,
+        updatedAt: now,
+      });
+      return user;
+    }
+    const signIn = (email: string) =>
+      auth.handler(
+        new Request(`${BASE_URL}/api/auth/sign-in/email`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: BASE_URL },
+          body: JSON.stringify({ email, password: TEMPORARY }),
+        }),
+      );
+    const verified = (id: string) => db.user?.find((row) => row.id === id)?.emailVerified;
+    return { auth, invite, signIn, verified, sendVerificationEmail };
+  }
+
+  it("accepting verifies, and the sign-in after it mails nothing", async () => {
+    const { auth, invite, signIn, verified, sendVerificationEmail } = await setup();
+    const user = await invite("accepted@example.test");
+    const accept = await adminInviteAcceptUrl({
+      secret,
+      authBaseUrl: BASE_URL,
+      userId: user.id,
+      email: user.email,
+      locale: "es-MX",
+    });
+    const opened = await auth.handler(new Request(accept, { method: "GET" }));
+    expect(opened.status).toBe(302);
+    expect(opened.headers.get("location")).toBe("/es-MX/verify-email?ok=1");
+    expect(verified(user.id)).toBe(true);
+    expect((await signIn(user.email)).status).toBe(200);
+    expect(sendVerificationEmail).not.toHaveBeenCalled();
+  });
+
+  it("a sign-in before accepting is refused and gets exactly one fresh link (the way back in)", async () => {
+    const { invite, signIn, verified, sendVerificationEmail } = await setup();
+    const user = await invite("early@example.test");
+    expect((await signIn(user.email)).status).toBe(403);
+    expect(verified(user.id)).toBe(false);
+    expect(sendVerificationEmail).toHaveBeenCalledOnce();
   });
 });

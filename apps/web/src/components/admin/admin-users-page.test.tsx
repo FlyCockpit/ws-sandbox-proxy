@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enAdmin from "@wssp/locales/src/en-US/admin.json";
 import enCommon from "@wssp/locales/src/en-US/common.json";
+import esAdmin from "@wssp/locales/src/es-MX/admin.json";
+import esCommon from "@wssp/locales/src/es-MX/common.json";
 import { createInstance, type i18n as I18n } from "i18next";
 import { I18nextProvider } from "react-i18next";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -97,6 +99,8 @@ vi.mock("@/utils/orpc", () => {
   };
 });
 
+import { ARCHIVE_UNDO_TOAST_MS } from "@/hooks/archive-undo";
+
 import { AdminUsersPage } from "./admin-users-page";
 
 let i18n: I18n;
@@ -107,7 +111,10 @@ beforeAll(async () => {
     fallbackLng: false,
     ns: ["admin", "common", "errors"],
     defaultNS: "admin",
-    resources: { "en-US": { admin: enAdmin, common: enCommon } },
+    resources: {
+      "en-US": { admin: enAdmin, common: enCommon },
+      "es-MX": { admin: esAdmin, common: esCommon },
+    },
     interpolation: { escapeValue: false },
     react: { useSuspense: false },
   });
@@ -205,8 +212,36 @@ describe("admin users mutations", () => {
       within(dialog).getByRole("button", { name: enAdmin.users.confirm.archiveAction }),
     );
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(toast.success).toHaveBeenCalledWith(enAdmin.users.userArchived);
+    expect(toast.success).toHaveBeenCalledWith(enAdmin.users.userArchived, {
+      duration: ARCHIVE_UNDO_TOAST_MS,
+      action: { label: enCommon.actions.undo, onClick: expect.any(Function) },
+    });
     expect(calls("archive")).toEqual([{ procedure: "archive", input: { userId: "u-1" } }]);
+    expect(calls("unarchive")).toHaveLength(0);
+  });
+
+  it("the archive toast's Undo restores that user and refreshes the list", async () => {
+    mount();
+    await screen.findByText("One");
+    const u = await openAction("u-1", "One", enAdmin.users.archiveUser);
+    const dialog = await screen.findByRole("alertdialog");
+    await u.click(
+      within(dialog).getByRole("button", { name: enAdmin.users.confirm.archiveAction }),
+    );
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(1));
+    expect(server.users.find((entry) => entry.id === "u-1")?.banned).toBe(true);
+    const [, options] = toast.success.mock.calls[0] as unknown as [
+      string,
+      { action: { onClick: () => void } },
+    ];
+    const listsBefore = calls("list").length;
+    act(() => options.action.onClick());
+    await waitFor(() =>
+      expect(calls("unarchive")).toEqual([{ procedure: "unarchive", input: { userId: "u-1" } }]),
+    );
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith(enAdmin.users.userRestored));
+    expect(server.users.find((entry) => entry.id === "u-1")?.banned).toBe(false);
+    await waitFor(() => expect(calls("list").length).toBeGreaterThan(listsBefore));
   });
 
   it("cancelling a confirmation sends nothing", async () => {
@@ -321,7 +356,39 @@ describe("admin users mutations", () => {
     await waitFor(() => expect(email.getAttribute("aria-invalid")).not.toBe("true"));
     await u.click(within(dialog).getByRole("button", { name: enAdmin.users.sendInvite }));
     await waitFor(() => expect(calls("invite")).toHaveLength(1));
-    expect(calls("invite")[0]?.input).toMatchObject({ name: "New", email: "new@example.com" });
+    // The email language defaults to the admin's own UI language.
+    expect(calls("invite")[0]?.input).toMatchObject({
+      name: "New",
+      email: "new@example.com",
+      locale: "en-US",
+    });
+  });
+
+  it("the invite's email language defaults to the admin's UI language and can be changed", async () => {
+    await i18n.changeLanguage("es-MX");
+    try {
+      const u = userEvent.setup();
+      mount();
+      await screen.findByText("One");
+      await u.click(screen.getByRole("button", { name: esAdmin.users.invite }));
+      const dialog = await screen.findByRole("dialog");
+      const language = within(dialog).getByLabelText(esAdmin.users.localeLabel);
+      expect(language.textContent).toContain("Español (México)");
+      expect(language.getAttribute("aria-describedby")).toBeTruthy();
+      expect(document.getElementById(language.getAttribute("aria-describedby")!)?.textContent).toBe(
+        esAdmin.users.localeDescription,
+      );
+      await u.click(language);
+      await u.click(await screen.findByRole("option", { name: "English (US)" }));
+      await waitFor(() => expect(language.textContent).toContain("English (US)"));
+      await u.type(within(dialog).getByLabelText(esAdmin.users.nameLabel), "New");
+      await u.type(within(dialog).getByLabelText(esAdmin.users.emailLabel), "new@example.com");
+      await u.click(within(dialog).getByRole("button", { name: esAdmin.users.sendInvite }));
+      await waitFor(() => expect(calls("invite")).toHaveLength(1));
+      expect(calls("invite")[0]?.input).toMatchObject({ locale: "en-US" });
+    } finally {
+      await i18n.changeLanguage("en-US");
+    }
   });
 
   it("labels the invite role select and formats join dates in the UI locale (M7-S15, M7-S16)", async () => {

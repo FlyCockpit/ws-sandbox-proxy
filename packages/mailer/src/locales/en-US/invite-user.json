@@ -5,5 +5,6 @@
   "emailLabel": "Email",
   "tempPasswordLabel": "Temporary password",
   "cta": "Accept invitation",
+  "expiryNote": "This invitation link works for {{days}} days. If it has expired, sign in with the temporary password anyway: you will get a new email with a link that confirms your address.",
   "ignoreFooter": "If you weren't expecting this invitation, you can safely ignore this email."
 }

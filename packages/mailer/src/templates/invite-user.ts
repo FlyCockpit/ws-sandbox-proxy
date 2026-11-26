@@ -18,6 +18,7 @@ interface InviteUserBundle {
   emailLabel: string;
   tempPasswordLabel: string;
   cta: string;
+  expiryNote: string; // contains {{days}} placeholder
   ignoreFooter: string;
 }
 
@@ -53,6 +54,8 @@ export interface RenderInviteUserArgs {
    * the invited address, then leads on to sign-in.
    */
   acceptUrl: string;
+  /** How long the accept link works, in whole days (the mail states it). */
+  expiresInDays: number;
   /** BCP-47 locale tag. Falls back to en-US if unsupported. */
   locale: string;
 }
@@ -73,6 +76,7 @@ export function renderInviteUser(args: RenderInviteUserArgs): RenderInviteUserRe
   const emailLabel = fallbackString(bundle.emailLabel, en.emailLabel);
   const tempPasswordLabel = fallbackString(bundle.tempPasswordLabel, en.tempPasswordLabel);
   const cta = fallbackString(bundle.cta, en.cta);
+  const expiryNoteTemplate = fallbackString(bundle.expiryNote, en.expiryNote);
   const ignoreFooter = fallbackString(bundle.ignoreFooter, en.ignoreFooter);
 
   const safeName = escapeHtml(args.name);
@@ -80,6 +84,9 @@ export function renderInviteUser(args: RenderInviteUserArgs): RenderInviteUserRe
   const safePassword = escapeHtml(args.tempPassword);
   const href = safeHref(args.acceptUrl);
   const greeting = interpolate(bodyTemplate, { name: safeName });
+  const expiryNote = interpolate(expiryNoteTemplate, {
+    days: String(Math.max(1, Math.floor(args.expiresInDays))),
+  });
 
   const html = `<!DOCTYPE html>
 <html lang="${locale}">
@@ -101,6 +108,9 @@ export function renderInviteUser(args: RenderInviteUserArgs): RenderInviteUserRe
             <a href="${href}" style="display:inline-block;padding:12px 32px;background:#18181b;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:6px">
               ${cta}
             </a>
+          </p>
+          <p style="margin:0 0 16px;font-size:13px;color:#71717a;line-height:1.5">
+            ${expiryNote}
           </p>
           <p style="margin:0;font-size:13px;color:#a1a1aa;line-height:1.5">
             ${ignoreFooter}

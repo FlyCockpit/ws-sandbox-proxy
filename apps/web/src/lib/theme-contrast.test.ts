@@ -304,14 +304,192 @@ it("fills an Off switch track with the opaque --input, which the 3:1 checks cove
   expect(source).not.toMatch(/data-unchecked:bg-input\/\d+/);
 });
 
-it("draws dropdown menus on an opaque popover surface", () => {
-  // A translucent menu (bg-popover/70 + backdrop blur) let a banner tint it.
-  const menu = readFileSync(
-    resolve(import.meta.dirname, "../../../../packages/ui/src/components/dropdown-menu.tsx"),
-    "utf8",
-  );
-  expect(menu).toContain(" bg-popover ");
-  expect(menu).not.toMatch(/bg-popover\/\d+|backdrop-blur/);
+const uiComponents = resolve(import.meta.dirname, "../../../../packages/ui/src/components");
+/** Every non-test component source in packages/ui, by file name. */
+const componentSources = readdirSync(uiComponents)
+  .filter((file) => file.endsWith(".tsx") && !file.endsWith(".test.tsx"))
+  .map((file) => [file, readFileSync(resolve(uiComponents, file), "utf8")] as const);
+/** The ui components plus every app source that styles its own control (language switcher). */
+const webRoot = resolve(import.meta.dirname, "..");
+const controlSources = [
+  ...componentSources,
+  ...readdirSync(webRoot, { recursive: true, encoding: "utf8" })
+    .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+    .map((file) => [file, readFileSync(resolve(webRoot, file), "utf8")] as const),
+];
+
+it("draws every menu and popup on an opaque popover surface", () => {
+  // A translucent menu (bg-popover/70 + backdrop blur) let a banner tint it,
+  // and select kept it after dropdown-menu was fixed. Every class string that
+  // paints a popover surface (text-popover-foreground) is checked, in every
+  // ui component, so a new menu, combobox or picker is covered too.
+  const surfaces: string[] = [];
+  for (const [file, text] of componentSources) {
+    for (const match of text.matchAll(/"([^"\n]*text-popover-foreground[^"\n]*)"/g)) {
+      const literal = match[1] ?? "";
+      surfaces.push(file);
+      expect(literal, file).toMatch(/(?:^|\s)bg-popover(?:\s|$)/);
+      expect(literal, file).not.toMatch(/bg-popover\/\d+|backdrop-/);
+    }
+    expect(text, file).not.toMatch(/bg-popover\/\d+/);
+  }
+  for (const file of ["dropdown-menu.tsx", "select.tsx", "popover.tsx", "command.tsx"]) {
+    expect(surfaces, file).toContain(file);
+  }
+});
+
+for (const scope of [":root", ".dark"]) {
+  it(`${scope} focus is clearly stronger than the resting outline`, () => {
+    // WCAG 2.4.13 style: the focused border (border-ring) must differ from the
+    // resting --input outline, not only the 2px ring around it (--ring was
+    // --primary itself: 1.61:1 light and 1.71:1 dark against --input).
+    for (const name of ["ring", "sidebar-ring"]) {
+      expect(
+        contrast(token(scope, name), token(scope, "input")),
+        `${scope} ${name} vs input`,
+      ).toBeGreaterThanOrEqual(2);
+    }
+    // The focused border also sits next to the field's own fill (dark bg-input/30).
+    if (scope === ".dark") {
+      for (const surface of ["background", "card", "popover", "muted"]) {
+        const fill = over(token(scope, "input"), 0.3, token(scope, surface));
+        expect(
+          contrast(token(scope, "ring"), fill),
+          `${scope} ring on input fill over ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it(`${scope} invalid borders and destructive focus reach 3:1 on the surface and the field fill`, () => {
+    // The invalid border is opaque --destructive in both themes (no dark /50),
+    // and the destructive button's focus ring is opaque --destructive too.
+    for (const surface of ["background", "card", "popover", "muted"]) {
+      const bg = token(scope, surface);
+      const fills = scope === ".dark" ? [bg, over(token(scope, "input"), 0.3, bg)] : [bg];
+      for (const fill of fills) {
+        expect(
+          contrast(token(scope, "destructive"), fill),
+          `${scope} destructive border over ${surface}`,
+        ).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+}
+
+it("controls draw opaque invalid borders and focus indicators, and outline buttons use the field outline", () => {
+  const invalid: string[] = [];
+  for (const [file, text] of controlSources) {
+    for (const match of text.matchAll(/[^\s"`]*aria-invalid[^\s"`]*:border-destructive[^\s"`]*/g)) {
+      invalid.push(file);
+      expect(match[0], file).not.toMatch(/\/\d+$/);
+    }
+    // A translucent focus ring or border (ring-destructive/20) is what the
+    // 3:1 checks above cannot see.
+    expect(text, file).not.toMatch(/[^\s"`]*focus[^\s"`]*:(?:ring|border)-[\w-]+\/\d+/);
+  }
+  for (const file of [
+    "button.tsx",
+    "checkbox.tsx",
+    "input.tsx",
+    "select.tsx",
+    "switch.tsx",
+    "textarea.tsx",
+  ]) {
+    expect(invalid, file).toContain(file);
+  }
+  // The outline button's border is its only edge (theme toggle, row actions):
+  // --input (3:1) in both themes, never the decorative --border (1.25:1).
+  const outline = /outline:\s*"([^"]*)"/.exec(buttonSource)?.[1] ?? "";
+  expect(outline).toMatch(/(?:^|\s)border-input(?:\s|$)/);
+  expect(outline).not.toMatch(/border-border|dark:border-/);
+  const destructive = /destructive:\s*"([^"]*)"/.exec(buttonSource)?.[1] ?? "";
+  expect(destructive).toMatch(/(?:^|\s)focus-visible:ring-destructive(?:\s|$)/);
+  expect(destructive).toMatch(/(?:^|\s)focus-visible:border-destructive(?:\s|$)/);
+});
+
+/**
+ * Problems with how a control draws keyboard focus while it is invalid. In
+ * Tailwind v4 `aria-*`/`has-*` utilities sort after `focus-visible:*`, so a
+ * resting `aria-invalid:ring-destructive/20` (and its `dark:` /40) would
+ * replace the opaque focus ring of an invalid field, and `aria-invalid:ring-1`
+ * its width. Each translucent invalid ring therefore needs an opaque combined
+ * invalid + focus ring (in the same theme) at the control's focus ring width.
+ */
+function invalidFocusProblems(text: string): string[] {
+  const tokens = new Set(text.split(/[\s"`]+/));
+  const problems: string[] = [];
+  const has = (token: string) => {
+    if (!tokens.has(token)) problems.push(`missing ${token}`);
+  };
+  const focusWidth = (focus: string) =>
+    [...tokens]
+      .find((t) => t.startsWith(focus) && /:ring-(?:\d+|\[\d+px\])$/.test(t))
+      ?.slice(focus.length);
+  for (const token of tokens) {
+    const match =
+      /^((?:dark:)?)(aria-invalid:|has-\[\[data-slot\]\[aria-invalid=true\]\]:)ring-destructive\/\d+$/.exec(
+        token,
+      );
+    if (!match) continue;
+    const [, dark, invalid] = match;
+    const combined =
+      invalid === "aria-invalid:"
+        ? "aria-invalid:focus-visible:"
+        : "has-[[data-slot][aria-invalid=true]:focus-visible]:";
+    has(`${dark}${combined}ring-destructive`);
+    if (dark) continue;
+    const width =
+      invalid === "aria-invalid:"
+        ? focusWidth("focus-visible:")
+        : focusWidth("has-[[data-slot=input-group-control]:focus-visible]:");
+    if (width) has(`${combined}${width}`);
+    else problems.push("no focus ring width to match");
+  }
+  return problems;
+}
+
+it("an invalid control keeps an opaque focus ring at full width while focused", () => {
+  const checked: string[] = [];
+  for (const [file, text] of controlSources) {
+    if (!/ring-destructive\/\d+/.test(text)) continue;
+    checked.push(file);
+    expect(invalidFocusProblems(text), file).toEqual([]);
+  }
+  for (const file of [
+    "button.tsx",
+    "checkbox.tsx",
+    "input.tsx",
+    "input-group.tsx",
+    "select.tsx",
+    "switch.tsx",
+    "textarea.tsx",
+    "toggle.tsx",
+    "components/language-switcher.tsx",
+  ]) {
+    expect(checked, file).toContain(file);
+  }
+  // Discriminator: the pre-fix input classes (translucent invalid ring, no
+  // combined focus ring) are reported, in both themes and for the width.
+  const before =
+    "border-input focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40";
+  expect(invalidFocusProblems(before)).toEqual([
+    "missing aria-invalid:focus-visible:ring-destructive",
+    "missing aria-invalid:focus-visible:ring-2",
+    "missing dark:aria-invalid:focus-visible:ring-destructive",
+  ]);
+});
+
+it("measures the old focus and invalid colours as failing, so the checks discriminate", () => {
+  // --ring was --primary: light oklch(0.5 0.134 242.749), dark oklch(0.685 0.169 237.323).
+  expect(contrast(oklchToSrgb(0.5, 0.134, 242.749), token(":root", "input"))).toBeLessThan(2);
+  expect(contrast(oklchToSrgb(0.685, 0.169, 237.323), token(".dark", "input"))).toBeLessThan(2);
+  // The old dark invalid border (destructive/50) on the field fill over a card.
+  const fill = over(token(".dark", "input"), 0.3, token(".dark", "card"));
+  expect(contrast(over(token(".dark", "destructive"), 0.5, fill), fill)).toBeLessThan(3);
+  // The old destructive button focus ring (ring-destructive/20) on the page.
+  const page = token(":root", "background");
+  expect(contrast(over(token(":root", "destructive"), 0.2, page), page)).toBeLessThan(3);
 });
 
 // Unchecked radio/checkbox/switch outlines identify the control on these surfaces.
@@ -440,5 +618,63 @@ describe("state inks and toasts (docs/design/shell-rules.md rule 3)", () => {
       "utf8",
     );
     expect(toaster).not.toMatch(/\btheme=|useTheme/);
+  });
+});
+
+describe("toast placement and touch targets", () => {
+  const root = postcss.parse(css);
+  // Every declaration of `prop` in rules matching `selector`, with the
+  // @media params it sits under ("" at the top level or in @layer).
+  function find(selector: string, prop: string) {
+    const found: { value: string; media: string }[] = [];
+    root.walkRules((rule) => {
+      if (rule.selector !== selector) return;
+      let media = "";
+      for (let parent = rule.parent; parent && parent.type !== "root"; parent = parent.parent) {
+        if (parent.type === "atrule" && (parent as postcss.AtRule).name === "media") {
+          media = (parent as postcss.AtRule).params;
+        }
+      }
+      rule.walkDecls(prop, (declaration) => {
+        found.push({ value: declaration.value, media });
+      });
+    });
+    return found;
+  }
+
+  it("bottom toasts sit above the phone bottom nav, and above the safe area without one", () => {
+    expect(find(':root [data-sileo-viewport][data-position^="bottom"]', "bottom")).toEqual([
+      { value: "max(var(--bottom-nav-height), var(--safe-area-bottom))", media: "" },
+    ]);
+    // 0 unless a bottom nav is on screen, which is only below md (48rem).
+    expect(find(":root", "--bottom-nav-height")).toEqual([{ value: "0px", media: "" }]);
+    expect(find(":root:has([data-bottom-nav])", "--bottom-nav-height")).toEqual([
+      { value: "calc(var(--bottom-nav-bar) + var(--safe-area-bottom))", media: "(width < 48rem)" },
+    ]);
+    // No second, hard-coded placement rule competes with it.
+    expect(css).not.toMatch(/\[data-sileo-viewport\]\[data-position\^="bottom"\]\s*\{[^}]*3\.5rem/);
+    // The nav draws its bar at --bottom-nav-bar, hides from md, and pads the
+    // safe area itself, so the offset is exactly the room it takes. Every bar
+    // (skeleton, first frame, signed in, signed out) is drawn by the one shell.
+    expect(find(":root", "--bottom-nav-bar")).toEqual([{ value: "3.5rem", media: "" }]);
+    const nav = readFileSync(resolve(import.meta.dirname, "../components/bottom-nav.tsx"), "utf8");
+    const bars = [...nav.matchAll(/<nav\b[\s\S]*?<div className="([^"]*)"/g)].map((m) => m[1]);
+    expect(bars.length).toBe(1);
+    for (const bar of bars) expect(bar).toContain("h-(--bottom-nav-bar)");
+    expect(nav).not.toMatch(/\bh-14\b/);
+    expect(nav.match(/<nav\b/g)?.length).toBe(1);
+    expect(nav.match(/data-bottom-nav\b/g)?.length).toBe(1);
+    expect(nav.match(/md:hidden/g)?.length).toBe(1);
+    expect(nav.match(/paddingBottom: "var\(--safe-area-bottom\)"/g)?.length).toBe(1);
+  });
+
+  it("a toast's action button is at least 44px tall on a touch screen", () => {
+    // sileo draws it 1.75rem (28px) tall with a fixed `height`.
+    expect(find(":root [data-sileo-viewport] [data-sileo-button]", "min-height")).toEqual([
+      { value: "44px", media: "(pointer: coarse)" },
+    ]);
+    expect(find(":root [data-sileo-viewport] [data-sileo-button]", "height")).toEqual([
+      { value: "auto", media: "(pointer: coarse)" },
+    ]);
   });
 });

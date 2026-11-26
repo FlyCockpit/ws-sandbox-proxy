@@ -57,6 +57,9 @@ import { PageHeader, PageShell } from "@/components/page-shell";
 import { QueryBoundary } from "@/components/query-boundary";
 import { SegmentedControl } from "@/components/segmented-control";
 import { SkeletonList } from "@/components/skeleton-list";
+import { announceArchivedWithUndo } from "@/hooks/archive-undo";
+import { isSupportedLocale, type Locale, SUPPORTED_LOCALES } from "@/i18n/config";
+import { LOCALE_LABELS } from "@/i18n/labels";
 import { type AdminProblem, adminProblem, adminProblemKey } from "@/lib/admin-errors";
 import { orpc } from "@/utils/orpc";
 
@@ -88,6 +91,7 @@ function buildInviteSchema() {
     email: z.email(),
     name: z.string().trim().min(1).max(100),
     role: z.enum(["user", "admin"]),
+    locale: z.enum(SUPPORTED_LOCALES),
   });
 }
 
@@ -153,10 +157,6 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
     ...orpc.users.setRole.mutationOptions(),
     ...changeHandlers("admin:users.roleUpdated"),
   });
-  const archive = useMutation({
-    ...orpc.users.archive.mutationOptions(),
-    ...changeHandlers("admin:users.userArchived"),
-  });
   const unarchive = useMutation({
     ...orpc.users.unarchive.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
@@ -166,6 +166,21 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
     },
     onError: (error: Error) => {
       toast.error(t(`admin:${adminProblemKey(adminProblem(error))}`));
+      refreshUsers();
+    },
+  });
+  // The archive's success toast offers Undo, which is the row's Restore
+  // (users.unarchive): it lifts the ban; ended sessions stay ended.
+  const archive = useMutation({
+    ...orpc.users.archive.mutationOptions(),
+    ...changeHandlers("admin:users.userArchived"),
+    onSuccess: (_data, variables) => {
+      announceArchivedWithUndo({
+        message: t("admin:users.userArchived"),
+        undoLabel: t("common:actions.undo"),
+        onUndo: () => unarchive.mutate({ userId: variables.userId }),
+      });
+      closeChange();
       refreshUsers();
     },
   });
@@ -566,7 +581,10 @@ function InviteUserDialog({
   onOpenChange: (next: boolean) => void;
   onInvited: (reveal: { email: string; tempPassword: string; emailSent: boolean }) => void;
 }) {
-  const { t } = useTranslation(["admin", "common"]);
+  const { t, i18n } = useTranslation(["admin", "common"]);
+  // The invitee's email language defaults to the admin's own; the admin
+  // changes it when the invitee reads another one.
+  const adminLocale: Locale = isSupportedLocale(i18n.language) ? i18n.language : "en-US";
   const [problem, setProblem] = useState<AdminProblem | null>(null);
   const invite = useMutation({
     ...orpc.users.invite.mutationOptions(),
@@ -576,7 +594,12 @@ function InviteUserDialog({
   });
 
   const form = useForm({
-    defaultValues: { email: "", name: "", role: "user" as "user" | "admin" },
+    defaultValues: {
+      email: "",
+      name: "",
+      role: "user" as "user" | "admin",
+      locale: adminLocale,
+    },
     validators: { onChange: buildInviteSchema() },
     onSubmit: async ({ value }) => {
       try {
@@ -666,6 +689,43 @@ function InviteUserDialog({
                     <SelectItem value="admin">{t("admin:users.roleAdmin")}</SelectItem>
                   </SelectContent>
                 </Select>
+                <FieldError errors={field.state.meta.errors} />
+              </div>
+            )}
+          </form.Field>
+
+          <form.Field name="locale">
+            {(field) => (
+              <div className="space-y-1.5">
+                <Label htmlFor={field.name}>{t("admin:users.localeLabel")}</Label>
+                <Select
+                  value={field.state.value}
+                  items={SUPPORTED_LOCALES.map((locale) => ({
+                    value: locale,
+                    label: LOCALE_LABELS[locale],
+                  }))}
+                  onValueChange={(v) => {
+                    if (isSupportedLocale(v)) field.handleChange(v);
+                  }}
+                >
+                  <SelectTrigger
+                    id={field.name}
+                    aria-describedby={`${field.name}-description`}
+                    className="w-full min-h-[44px]"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SUPPORTED_LOCALES.map((locale) => (
+                      <SelectItem key={locale} value={locale} lang={locale}>
+                        {LOCALE_LABELS[locale]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p id={`${field.name}-description`} className="text-xs text-muted-foreground">
+                  {t("admin:users.localeDescription")}
+                </p>
                 <FieldError errors={field.state.meta.errors} />
               </div>
             )}

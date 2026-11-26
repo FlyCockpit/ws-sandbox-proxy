@@ -1,8 +1,9 @@
 /**
- * wssp's own settings for `pnpm check:dialogs` and `pnpm check:shell-loading`:
+ * wssp's own settings for `pnpm check:layout`, `pnpm check:dialogs` and
+ * `pnpm check:shell-loading`:
  * how to sign in, every dialog to open, and the signed-in pages to
- * hard-reload. The check scripts and `browser-check-lib.ts` stay identical to
- * the template's; only this file changes per app.
+ * hard-reload. `check-dialogs.ts`, `check-shell-loading.ts` and
+ * `browser-check-lib.ts` follow the template's; this file is wssp's.
  * Usage: docs/design/shell-rules.md § Dialog fit and shell loading checks
  *
  * wssp has no mock mode: the checks run against a running stack (seeded with
@@ -10,7 +11,8 @@
  * included. Nothing machine-specific or secret is committed here:
  *
  *   WSSP_CHECK_URL          the web origin (else pass `--url`)
- *   WSSP_CHECK_CREDS_FILE   a KEY=value file read at run time, with
+ *   WSSP_CHECK_CREDS_FILE   (else pass `--accounts <file>`) a KEY=value
+ *                           file read at run time, with
  *                           ADMIN_EMAIL, ADMIN_PASSWORD, ADMIN_TOTP_SECRET
  *                           (and USER_* for the `user` role); the TOTP secret
  *                           may be absent for an account without 2FA
@@ -19,7 +21,7 @@ import { createHmac } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { CheckRun } from "./browser-check-lib.ts";
+import { type CheckRun, formSignIn } from "./browser-check-lib.ts";
 
 /** No mock dev server: the checks need `--url` (or `WSSP_CHECK_URL`). */
 export const MOCK_SERVER = false;
@@ -65,10 +67,38 @@ export function totpCode(secret: string, window: number): string {
   return String(value).padStart(6, "0");
 }
 
-function credentialsFor(role: Exclude<Role, "anonymous">) {
-  const file = process.env.WSSP_CHECK_CREDS_FILE;
-  if (!file) throw new Error("set WSSP_CHECK_CREDS_FILE to the seeded accounts' KEY=value file");
-  const values = parseCredentials(readFileSync(file, "utf8"));
+/**
+ * The seeded accounts' KEY=value file: `--accounts <file>`, else
+ * `WSSP_CHECK_CREDS_FILE`; undefined when neither is given.
+ */
+export function credentialsFile(args: string[]): string | undefined {
+  const index = args.indexOf("--accounts");
+  if (index >= 0) {
+    const file = args[index + 1];
+    if (!file || file.startsWith("--"))
+      throw new Error("--accounts needs the seeded accounts' KEY=value file");
+    return file;
+  }
+  return process.env.WSSP_CHECK_CREDS_FILE || undefined;
+}
+
+/**
+ * One role's account from the credentials file, with clear errors for each
+ * missing piece. An error names the file and the keys, never a value.
+ */
+export function seededAccount(args: string[], role: Exclude<Role, "anonymous">) {
+  const file = credentialsFile(args);
+  if (!file)
+    throw new Error(
+      "no credentials: pass --accounts <file> (or set WSSP_CHECK_CREDS_FILE), a KEY=value file with ADMIN_EMAIL, ADMIN_PASSWORD and ADMIN_TOTP_SECRET (USER_* for the user role)",
+    );
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    throw new Error(`no credentials file at ${file}; write the seeded accounts there`);
+  }
+  const values = parseCredentials(text);
   const prefix = role === "admin" ? "ADMIN" : "USER";
   const email = values[`${prefix}_EMAIL`];
   const password = values[`${prefix}_PASSWORD`];
@@ -103,57 +133,33 @@ async function freshTotp(credsFile: string, role: string, secret: string): Promi
   }
 }
 
-async function waitFor(run: CheckRun, condition: string, what: string): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt++) {
-    if ((await run.browser.run(["eval", condition])).endsWith("true")) return;
-    await new Promise((done) => setTimeout(done, 1000));
-  }
-  throw new Error(`sign-in: timed out waiting for ${what}`);
-}
-
 /** The role this browser session is signed in as (sign-in is rate limited and 2FA'd). */
 let signedInAs: Role | null = null;
 
 /**
  * Leaves the browser signed in as `role`, through the real login form and
- * the second-factor step. Secrets reach agent-browser on stdin, never argv.
- * Signs in once per role and run.
+ * the second-factor step (`formSignIn`, which survives the full page load a
+ * sign-in ends in). Secrets reach agent-browser on stdin, never argv. Signs
+ * in once per role and run; another role is signed out first.
  */
-export async function signIn(run: CheckRun, role: Role, _options: SignInOptions = {}) {
+export async function signIn(
+  run: Pick<CheckRun, "base" | "browser" | "args">,
+  role: Role,
+  _options: SignInOptions = {},
+) {
   if (signedInAs === role) return;
-  const { base, browser } = run;
-  await browser.run(["cookies", "clear"]);
+  // Read before touching the browser, so a missing file stops the run cleanly.
+  const account = role === "anonymous" ? null : seededAccount(run.args, role);
+  await run.browser.run(["cookies", "clear"]);
   signedInAs = null;
-  if (role === "anonymous") {
-    signedInAs = role;
-    return;
+  if (account) {
+    const { file, totpSecret } = account;
+    await formSignIn(run, {
+      email: account.email,
+      password: account.password,
+      totp: totpSecret ? () => freshTotp(file, role, totpSecret) : undefined,
+    });
   }
-  const account = credentialsFor(role);
-  await browser.run(["open", `${base}/en-US/login`]);
-  await waitFor(run, '!!document.querySelector("main input[type=email]")', "the login form");
-  await browser.run(
-    ["batch", "--bail"],
-    JSON.stringify([
-      ["fill", 'main input[type="email"]', account.email],
-      ["fill", 'main input[type="password"]', account.password],
-      ["click", 'main form button[type="submit"]'],
-    ]),
-  );
-  await waitFor(
-    run,
-    '!!document.querySelector("#totp-code") || /\\/dashboard/.test(location.pathname)',
-    "the second-factor step",
-  );
-  if ((await browser.run(["eval", '!!document.querySelector("#totp-code")'])).endsWith("true")) {
-    if (!account.totpSecret) throw new Error(`sign-in: ${role} needs a TOTP secret`);
-    const code = await freshTotp(account.file, role, account.totpSecret);
-    await browser.run(["batch", "--bail"], JSON.stringify([["fill", "#totp-code", code]]));
-    await browser.run([
-      "eval",
-      '(() => { const b = document.querySelector("#totp-code").form?.querySelector("button[type=submit]"); b?.click(); return !!b; })()',
-    ]);
-  }
-  await waitFor(run, "/\\/dashboard/.test(location.pathname)", "the signed-in dashboard");
   signedInAs = role;
 }
 
@@ -174,6 +180,8 @@ export interface DialogCase {
   ready: string;
   /** Steps that open the dialog. */
   steps: DialogStep[];
+  /** What the account must hold for the dialog to open, said when it does not. */
+  needs?: string;
 }
 
 /** The seeded running sandbox's row link (its id differs per stack). */
@@ -183,6 +191,7 @@ const OPEN_RUNNING_SANDBOX = {
 /** The sandbox detail page's "Sandbox actions" menu. */
 const SANDBOX_MENU = { click: '[data-page-actions] button[aria-label="Sandbox actions"]' };
 const RUNNING_SANDBOX_READY = 'li[data-sandbox-state="READY"] a[aria-label^="Open sandbox "]';
+const NEEDS_RUNNING_SANDBOX = "a running (READY) sandbox in the admin's account";
 
 /**
  * Every dialog wssp ships that the seeded admin can open, confirmations
@@ -215,6 +224,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/dashboard/templates",
     role: "admin",
     ready: 'ul li [data-page-actions] button[aria-haspopup="menu"]',
+    needs: "a template in the admin's account",
     steps: [
       { click: 'ul li [data-page-actions] button[aria-haspopup="menu"]' },
       { click: '[data-overflow-action="archive"]' },
@@ -225,6 +235,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/dashboard/sandboxes",
     role: "admin",
     ready: RUNNING_SANDBOX_READY,
+    needs: NEEDS_RUNNING_SANDBOX,
     steps: [OPEN_RUNNING_SANDBOX, SANDBOX_MENU, { click: '[data-overflow-action="renew"]' }],
   },
   {
@@ -232,6 +243,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/dashboard/sandboxes",
     role: "admin",
     ready: RUNNING_SANDBOX_READY,
+    needs: NEEDS_RUNNING_SANDBOX,
     steps: [OPEN_RUNNING_SANDBOX, SANDBOX_MENU, { click: '[data-overflow-action="capture"]' }],
   },
   {
@@ -239,6 +251,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/dashboard/sandboxes",
     role: "admin",
     ready: RUNNING_SANDBOX_READY,
+    needs: NEEDS_RUNNING_SANDBOX,
     steps: [OPEN_RUNNING_SANDBOX, SANDBOX_MENU, { click: '[data-overflow-action="destroy"]' }],
   },
   {
@@ -253,6 +266,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/settings/pools",
     role: "admin",
     ready: 'button[aria-label^="More actions for "]',
+    needs: "a pool the admin owns",
     steps: [
       { click: 'button[aria-label^="More actions for "]' },
       { click: '[data-overflow-action="delete"]' },
@@ -263,6 +277,7 @@ export const DIALOGS: DialogCase[] = [
     path: "/en-US/settings/sdk-keys",
     role: "admin",
     ready: 'button[aria-label^="Revoke "]',
+    needs: "an API key in the admin's account",
     steps: [{ click: 'button[aria-label^="Revoke "]' }],
   },
   {
@@ -284,6 +299,8 @@ export interface ShellPage {
    * exists in the skeleton).
    */
   ready: string;
+  /** What the account must hold for `ready` to appear, said when it does not. */
+  needs?: string;
 }
 
 /** Signed-in pages `check:shell-loading` hard-reloads (two or more different shapes). */
@@ -293,6 +310,7 @@ export const SHELL_PAGES: ShellPage[] = [
     path: "/en-US/dashboard/sandboxes",
     role: "admin",
     ready: 'a[aria-label^="Open sandbox "]',
+    needs: "a sandbox in the admin's account",
   },
   {
     name: "settings hub (card grid)",
