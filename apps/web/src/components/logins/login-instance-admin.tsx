@@ -102,6 +102,7 @@ export function InstanceRecovery({
           data: leaseRows,
           isPending: leases.isPending,
           isError: leases.isError,
+          fetchStatus: leases.fetchStatus,
           error: leases.error,
           refetch: leases.refetch,
         }}
@@ -188,6 +189,7 @@ export function InstanceRecovery({
           data: rejectedRows,
           isPending: rejected.isPending,
           isError: rejected.isError,
+          fetchStatus: rejected.fetchStatus,
           error: rejected.error,
           refetch: rejected.refetch,
         }}

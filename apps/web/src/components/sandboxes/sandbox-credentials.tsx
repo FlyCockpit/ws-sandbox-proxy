@@ -172,6 +172,7 @@ function SandboxCredentialsPanel({
           data: rows,
           isPending: attached.isPending,
           isError: attached.isError,
+          fetchStatus: attached.fetchStatus,
           error: attached.error,
           refetch: attached.refetch,
         }}

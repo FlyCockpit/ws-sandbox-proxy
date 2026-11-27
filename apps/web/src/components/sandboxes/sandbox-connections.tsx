@@ -152,6 +152,7 @@ export function SandboxConnections({ lang, sandboxId }: { lang: string; sandboxI
           data: rows,
           isPending: query.isPending,
           isError: query.isError,
+          fetchStatus: query.fetchStatus,
           error: query.error,
           refetch: query.refetch,
         }}

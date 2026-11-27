@@ -12,7 +12,7 @@ type QueryLike<T> = {
   isError: boolean;
   error: unknown;
   /** TanStack's `fetchStatus`; `"paused"` means it is waiting for the network. */
-  fetchStatus?: "fetching" | "paused" | "idle";
+  fetchStatus: "fetching" | "paused" | "idle";
   refetch: () => unknown;
 };
 

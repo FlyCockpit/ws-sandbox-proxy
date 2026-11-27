@@ -188,6 +188,7 @@ export function SdkKeysPage({ lang, agent = false }: { lang: string; agent?: boo
           data: rows,
           isPending: keys.isPending,
           isError: keys.isError,
+          fetchStatus: keys.fetchStatus,
           error: keys.error,
           refetch: keys.refetch,
         }}

@@ -7,7 +7,7 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 
 // @vitest-environment jsdom
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   cleanup,
@@ -21,10 +21,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
+import enErrors from "@wssp/locales/src/en-US/errors.json";
 import enHosts from "@wssp/locales/src/en-US/hosts.json";
 import enTemplates from "@wssp/locales/src/en-US/templates.json";
 import esCommon from "@wssp/locales/src/es-MX/common.json";
 import esDashboard from "@wssp/locales/src/es-MX/dashboard.json";
+import esErrors from "@wssp/locales/src/es-MX/errors.json";
 import esHosts from "@wssp/locales/src/es-MX/hosts.json";
 import esTemplates from "@wssp/locales/src/es-MX/templates.json";
 import { createInstance, type i18n as I18n } from "i18next";
@@ -397,8 +399,20 @@ beforeAll(async () => {
     ns: ["common", "dashboard", "templates", "hosts"],
     defaultNS: "common",
     resources: {
-      "en-US": { common: enCommon, dashboard: enDashboard, templates: enTemplates, hosts: enHosts },
-      "es-MX": { common: esCommon, dashboard: esDashboard, templates: esTemplates, hosts: esHosts },
+      "en-US": {
+        common: enCommon,
+        dashboard: enDashboard,
+        templates: enTemplates,
+        hosts: enHosts,
+        errors: enErrors,
+      },
+      "es-MX": {
+        common: esCommon,
+        dashboard: esDashboard,
+        templates: esTemplates,
+        hosts: esHosts,
+        errors: esErrors,
+      },
     },
     interpolation: { escapeValue: false },
     react: { useSuspense: false },
@@ -595,6 +609,36 @@ describe("templates list", () => {
     await mount();
     expect((await findCard("tpl-a")).getAttribute("data-usability")).toBe("active");
     expect(screen.queryByText(enTemplates.usability.usable)).toBeNull();
+  });
+
+  it("an uncached filter opened offline explains it, not an endless skeleton (T Codex r1)", async () => {
+    const user = userEvent.setup();
+    server.templates = [
+      templateRow(),
+      templateRow({
+        id: "tpl-old",
+        label: "Old",
+        archivedAt: new Date(),
+        sandboxHostId: null,
+        host: null,
+      }),
+    ];
+    await mount();
+    await screen.findByText("Ubuntu");
+    const onLine = vi.spyOn(window.navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      act(() => onlineManager.setOnline(false));
+      await user.click(screen.getByRole("button", { name: enTemplates.filter.retired }));
+      // The query is paused waiting for the network: say so, with a retry.
+      expect(await screen.findByText(enErrors.offlineContent)).toBeTruthy();
+      expect(screen.queryByText("Old")).toBeNull();
+      onLine.mockReturnValue(true);
+      act(() => onlineManager.setOnline(true));
+      expect(await screen.findByText("Old")).toBeTruthy();
+    } finally {
+      onLine.mockRestore();
+      act(() => onlineManager.setOnline(true));
+    }
   });
 
   it("the Archived filter asks the server for retired templates and shows them archived", async () => {

@@ -103,6 +103,7 @@ export function LoginDetailPage({ lang, loginId }: { lang: string; loginId: stri
             data: login.data,
             isPending: login.isPending,
             isError: login.isError,
+            fetchStatus: login.fetchStatus,
             error: login.error,
             refetch: login.refetch,
           }}

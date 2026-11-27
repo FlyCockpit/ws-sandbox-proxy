@@ -175,6 +175,7 @@ export function HostCredentialsPage({ lang }: { lang: string }) {
             data: tokenRows,
             isPending: tokens.isPending,
             isError: tokens.isError,
+            fetchStatus: tokens.fetchStatus,
             error: tokens.error,
             refetch: tokens.refetch,
           }}
@@ -228,6 +229,7 @@ export function HostCredentialsPage({ lang }: { lang: string }) {
             data: deviceRows,
             isPending: devices.isPending,
             isError: devices.isError,
+            fetchStatus: devices.fetchStatus,
             error: devices.error,
             refetch: devices.refetch,
           }}

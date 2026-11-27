@@ -173,6 +173,7 @@ export function TemplatesPage({
           data: templates,
           isPending: query.isPending,
           isError: query.isError,
+          fetchStatus: query.fetchStatus,
           error: query.error,
           refetch: query.refetch,
         }}

@@ -96,6 +96,7 @@ export function WebhooksPage({ lang }: { lang: string }) {
             data: rows,
             isPending: endpoints.isPending,
             isError: endpoints.isError,
+            fetchStatus: endpoints.fetchStatus,
             error: endpoints.error,
             refetch: endpoints.refetch,
           }}

@@ -167,6 +167,7 @@ export function OperationsPage({
           data: rows,
           isPending: query.isPending,
           isError: query.isError,
+          fetchStatus: query.fetchStatus,
           error: query.error,
           refetch: query.refetch,
         }}

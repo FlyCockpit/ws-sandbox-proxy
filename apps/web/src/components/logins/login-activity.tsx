@@ -118,6 +118,7 @@ export function LoginActivity({ lang, login }: { lang: string; login: LoginItem 
           data: rows,
           isPending: events.isPending,
           isError: events.isError,
+          fetchStatus: events.fetchStatus,
           error: events.error,
           refetch: events.refetch,
         }}

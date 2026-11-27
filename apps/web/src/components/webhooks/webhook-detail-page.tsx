@@ -106,6 +106,7 @@ export function WebhookDetailPage({ lang, endpointId }: { lang: string; endpoint
             data: endpoint.data,
             isPending: endpoint.isPending,
             isError: endpoint.isError,
+            fetchStatus: endpoint.fetchStatus,
             error: endpoint.error,
             refetch: endpoint.refetch,
           }}
@@ -637,6 +638,7 @@ function DeliveryLog({
           data: rows,
           isPending: deliveries.isPending,
           isError: deliveries.isError,
+          fetchStatus: deliveries.fetchStatus,
           error: deliveries.error,
           refetch: deliveries.refetch,
         }}
@@ -766,6 +768,7 @@ function DeliveryDialog({
             data: detail.data,
             isPending: detail.isPending,
             isError: detail.isError,
+            fetchStatus: detail.fetchStatus,
             error: detail.error,
             refetch: detail.refetch,
           }}

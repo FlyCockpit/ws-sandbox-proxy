@@ -118,6 +118,7 @@ export function TerminalsPage({
             data: shown,
             isPending: query.isPending,
             isError: query.isError,
+            fetchStatus: query.fetchStatus,
             error: query.error,
             refetch: query.refetch,
           }}
@@ -506,6 +507,7 @@ function TargetGroup({
     isPending: boolean;
     isError: boolean;
     error: unknown;
+    fetchStatus: "fetching" | "paused" | "idle";
     refetch: () => unknown;
   };
   rows: TargetRow[];

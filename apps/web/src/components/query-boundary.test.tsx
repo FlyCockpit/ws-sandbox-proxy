@@ -45,7 +45,7 @@ describe("QueryBoundary", () => {
     return renderToStaticMarkup(
       <I18nextProvider i18n={i18n}>
         <QueryBoundary
-          query={{ error: null, ...query, refetch: () => undefined }}
+          query={{ error: null, fetchStatus: "idle", ...query, refetch: () => undefined }}
           skeleton={<div>SKELETON</div>}
           errorMessage="Failed to load posts."
           isEmpty={(data) => data.length === 0}

@@ -159,6 +159,7 @@ export function HostsPage({ lang }: { lang: string }) {
           data: hosts,
           isPending: query.isPending,
           isError: query.isError,
+          fetchStatus: query.fetchStatus,
           error: query.error,
           refetch: query.refetch,
         }}

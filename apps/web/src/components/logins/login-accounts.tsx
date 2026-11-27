@@ -146,6 +146,7 @@ export function AccountsSection({
           data: rows,
           isPending: accounts.isPending,
           isError: accounts.isError,
+          fetchStatus: accounts.fetchStatus,
           error: accounts.error,
           refetch: accounts.refetch,
         }}
@@ -557,6 +558,7 @@ function InstancesList({
           data: rows,
           isPending: instances.isPending,
           isError: instances.isError,
+          fetchStatus: instances.fetchStatus,
           error: instances.error,
           refetch: instances.refetch,
         }}

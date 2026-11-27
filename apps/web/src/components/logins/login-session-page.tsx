@@ -109,6 +109,7 @@ export function LoginSessionPage({ lang, sessionId }: { lang: string; sessionId:
             data: session.data,
             isPending: session.isPending,
             isError: session.isError,
+            fetchStatus: session.fetchStatus,
             error: session.error,
             refetch: session.refetch,
           }}

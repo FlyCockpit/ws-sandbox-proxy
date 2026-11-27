@@ -128,6 +128,7 @@ export function LoginsPage({ lang }: { lang: string }) {
                 data: rows,
                 isPending: logins.isPending,
                 isError: logins.isError,
+                fetchStatus: logins.fetchStatus,
                 error: logins.error,
                 refetch: logins.refetch,
               }}
@@ -223,6 +224,7 @@ function DefinitionsSection({ lang, writable }: { lang: string; writable: boolea
           data: rows,
           isPending: definitions.isPending,
           isError: definitions.isError,
+          fetchStatus: definitions.fetchStatus,
           error: definitions.error,
           refetch: definitions.refetch,
         }}
@@ -447,6 +449,7 @@ function ViewDefinitionDialog({
             data: detail.data,
             isPending: detail.isPending,
             isError: detail.isError,
+            fetchStatus: detail.fetchStatus,
             error: detail.error,
             refetch: detail.refetch,
           }}
