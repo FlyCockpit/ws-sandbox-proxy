@@ -33,6 +33,7 @@
     "openApp": "Abrir la app",
     "signOutFailed": "No se pudo cerrar la sesión. Revisa tu conexión e inténtalo de nuevo.",
     "signOutOffline": "No tienes conexión. Tu sesión sigue activa; cierra sesión cuando vuelvas a conectarte.",
-    "accountUnavailable": "Cuenta no disponible — Reintentar"
+    "accountUnavailable": "Cuenta no disponible — Reintentar",
+    "retryQueued": "Reintento en espera — espera un momento"
   }
 }

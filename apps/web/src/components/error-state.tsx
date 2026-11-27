@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useNetworkStatus } from "@/hooks/use-network-status";
 import { useRetryOnReconnect } from "@/hooks/use-retry-on-reconnect";
 import { useRouteImportFailure } from "@/hooks/use-route-import-failure";
+import { markRouteIdentityUnconfirmed } from "@/lib/document-identity";
 import { isFetchFailure } from "@/lib/network-failure";
 
 import { friendly } from "../utils/friendly-error";
@@ -32,8 +33,10 @@ export default function ErrorState({ error }: ErrorComponentProps) {
 
   const retry = async () => {
     setRetrying(true);
+    const confirmRecovery = markRouteIdentityUnconfirmed();
     try {
       await router.invalidate({ forcePending: true });
+      await confirmRecovery();
     } catch {
       // A route that fails again lands in its match's error state; the reset
       // below renders that new error.

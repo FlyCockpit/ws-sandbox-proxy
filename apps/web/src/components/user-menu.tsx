@@ -44,6 +44,7 @@ export default function UserMenu() {
   // boolean) so a different account in the same tab gets the closed shell
   // again instead of the lazy menu, which mounts `defaultOpen`.
   const [mountedForUser, setMountedForUser] = useState<string | null>(null);
+  const [retryQueued, setRetryQueued] = useState(false);
   const state = authSession.state;
   if (state.status === "pending") {
     return <Skeleton className="h-11 w-11 md:w-24" />;
@@ -54,13 +55,28 @@ export default function UserMenu() {
         <Button
           variant="outline"
           size="touch"
-          aria-label={t("userMenu.accountUnavailable")}
+          aria-label={t(retryQueued ? "userMenu.retryQueued" : "userMenu.accountUnavailable")}
+          aria-busy={retryQueued || authSession.meta.isRefetching}
           className="w-11 px-0 sm:w-auto sm:px-3.5"
-          disabled={authSession.meta.isRefetching}
-          onClick={() => void runSessionCheck(authSession.actions.retry).catch(() => {})}
+          disabled={retryQueued || authSession.meta.isRefetching}
+          onClick={() => {
+            setRetryQueued(true);
+            void runSessionCheck(authSession.actions.retry)
+              .catch(() => {})
+              .finally(() => setRetryQueued(false));
+          }}
         >
-          <RefreshCw className="size-4" aria-hidden="true" />
-          <span className="hidden sm:inline">{t("userMenu.accountUnavailable")}</span>
+          <RefreshCw
+            className={cn(
+              "size-4",
+              (retryQueued || authSession.meta.isRefetching) &&
+                "animate-spin motion-reduce:animate-none",
+            )}
+            aria-hidden="true"
+          />
+          <span className="hidden sm:inline">
+            {t(retryQueued ? "userMenu.retryQueued" : "userMenu.accountUnavailable")}
+          </span>
         </Button>
         <Button
           variant="outline"

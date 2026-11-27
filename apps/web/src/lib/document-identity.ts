@@ -372,6 +372,25 @@ function markIdentityUnverified(): void {
   setIdentityUnverified(true);
 }
 
+/** Mask account chrome during route recovery and verify unguarded recovery. */
+export function markRouteIdentityUnconfirmed(): () => Promise<void> {
+  let since: number | undefined;
+  if (typeof window !== "undefined" && documentIdentity.heldPrivateState) {
+    markIdentityUnverified();
+    since = verificationGeneration;
+  }
+  return async () => {
+    if (
+      since === undefined ||
+      since !== verificationGeneration ||
+      !identityUnverified ||
+      documentIdentity.replaced
+    )
+      return;
+    await (await import("./auth-client")).checkDocumentSession();
+  };
+}
+
 /** Taken before a check starts; pass it to `confirmDocumentIdentityFresh`. */
 export function identityVerificationGeneration(): number {
   return verificationGeneration;

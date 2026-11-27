@@ -96,6 +96,8 @@ function startIdentityChecks(refetch: () => unknown): { stop: () => void; reconc
     });
   };
   const retry = () => {
+    // A settled anonymous session needs no wake probe unless invalidated.
+    if (readSessionIdentity() === null && !isDocumentIdentityUnverified()) return;
     if (document.visibilityState !== "hidden" && navigator.onLine !== false)
       void check().catch(() => {});
   };
