@@ -16,7 +16,7 @@
   "connect": {
     "title": "Connect an agent",
     "description": "MCP endpoint URL",
-    "protocol": "Supports MCP 2026-07-28 and stateless 2025-06-18 (tested with Claude Code 2.1.332 and Codex 0.172.0).",
+    "protocol": "Supports MCP 2026-07-28 and stateless 2025-06-18. Live client verification is pending.",
     "oauth": "Use OAuth to sign in and approve each connected app, or configure a token:",
     "token": "Set WSSP_AGENT_TOKEN to your agent token in your local environment. For OAuth with Codex, run: codex mcp login wssp.",
     "copyUrl": "Copy MCP URL",

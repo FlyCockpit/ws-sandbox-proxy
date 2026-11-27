@@ -166,7 +166,7 @@ structured error. Infrastructure failures refuse admission with 503.
 
 ## Claude Code
 
-Tested with Claude Code 2.1.332 (MCP `2026-07-28`). The installed CLI's `claude mcp add --help` confirms HTTP transport and headers:
+Local transport smoke tested with Claude Code 2.1.332 (MCP `2026-07-28`) using fixture data and mocked authentication. Live deployment and OAuth verification are pending. The installed CLI's `claude mcp add --help` confirms HTTP transport and headers:
 
 ```sh
 claude mcp add --transport http wssp https://HOST/mcp
@@ -180,7 +180,7 @@ claude mcp add --transport http wssp https://HOST/mcp --header "Authorization: B
 
 ## Codex
 
-Tested with Codex 0.172.0 (stateless MCP `2025-06-18`). Add this to `~/.codex/config.toml`:
+Local transport smoke tested with Codex 0.172.0 (stateless MCP `2025-06-18`) using fixture data and mocked authentication. Live deployment and OAuth verification are pending. Add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.wssp]

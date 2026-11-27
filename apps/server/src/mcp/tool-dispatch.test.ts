@@ -52,7 +52,22 @@ vi.mock("@wssp/api/sandbox/services/host-files", () => ({
   writeHostFile: vi.fn(),
   editHostFile: vi.fn(),
 }));
+vi.mock("@wssp/api/lib/sdk-key-access", () => ({
+  AgentTokenPolicyBlockedError: class AgentTokenPolicyBlockedError extends Error {},
+  authenticateAgentTokenSecret: vi.fn(),
+  principalForMcpGrant: vi.fn(),
+}));
+vi.mock("@wssp/env/server", () => ({
+  env: { BETTER_AUTH_URL: "https://public.example", CAPACITY_RETRY_AFTER_SECONDS: 5 },
+}));
+vi.mock("../mcp-rate-limit.js", () => ({
+  consumeMcpCredentialQuota: vi.fn(),
+  consumeMcpCreateQuota: vi.fn(),
+  consumeMcpHostCommandQuota: vi.fn(),
+}));
 
+import { createMcpAuthenticator } from "./auth";
+import { createMcpTransport } from "./handler";
 import { dispatchMcpTool } from "./tool-dispatch";
 
 const p: ServicePrincipal = {
@@ -118,6 +133,102 @@ it("filters host_list to owned hosts and retains native pagination", async () =>
     nextCursor: "cursor",
   });
   expect(mocks.listHosts).toHaveBeenCalledWith(p, { limit: 20 });
+});
+
+it("runs the legacy auth matrix through real tool dispatch and filters shared hosts", async () => {
+  const hostPage = {
+    items: [
+      { id: "own", agentAccess: { owned: true, hostCommands: true, hostFiles: false } },
+      { id: "shared-private", agentAccess: { owned: false } },
+    ],
+    nextCursor: null,
+  };
+  mocks.listHosts.mockResolvedValue(hostPage);
+  const transport = createMcpTransport({ keepAliveMs: 0 });
+  const lookup = vi.fn(async (token: string): Promise<ServicePrincipal | null> => {
+    if (token === "wssp_agent_valid") return p;
+    if (token === "wssp_agent_no_grant") return { ...p, scopes: new Set() };
+    return null;
+  });
+  const quota = vi.fn(async () => {});
+  const authenticate = createMcpAuthenticator({
+    authInstance: {} as Parameters<typeof createMcpAuthenticator>[0]["authInstance"],
+    transport,
+    authenticateAgent: lookup,
+    quota,
+  });
+  const requests = [
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "legacy-security-test", version: "1" },
+      },
+    },
+    { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+    {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: { name: "host_list", arguments: { limit: 20 } },
+    },
+  ];
+  const send = async (body: unknown, token?: string) => {
+    const response = await authenticate(
+      new Request("https://public.example/mcp", {
+        method: "POST",
+        headers: {
+          host: "public.example",
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(body),
+      }),
+    );
+    return { response, text: await response.text() };
+  };
+  try {
+    for (const token of [undefined, "wssp_agent_revoked"]) {
+      mocks.listHosts.mockClear();
+      quota.mockClear();
+      for (const body of requests) {
+        const { response, text } = await send(body, token);
+        expect(response.status).toBe(401);
+        expect(text).not.toMatch(/shared-private|"own"/);
+      }
+      expect(mocks.listHosts).not.toHaveBeenCalled();
+      expect(quota).not.toHaveBeenCalled();
+    }
+
+    const noGrantInit = await send(requests[0], "wssp_agent_no_grant");
+    expect(noGrantInit.response.status).toBe(200);
+    expect(noGrantInit.text).toContain('"protocolVersion":"2025-06-18"');
+    const noGrantList = await send(requests[1], "wssp_agent_no_grant");
+    expect(noGrantList.response.status).toBe(200);
+    expect(noGrantList.text).not.toContain('"name":"host_list"');
+    const noGrantCall = await send(requests[2], "wssp_agent_no_grant");
+    expect(noGrantCall.text).toContain("Tool host_list not found");
+    expect(mocks.listHosts).not.toHaveBeenCalled();
+
+    const init = await send(requests[0], "wssp_agent_valid");
+    expect(init.response.status).toBe(200);
+    expect(init.text).toContain('"protocolVersion":"2025-06-18"');
+    const list = await send(requests[1], "wssp_agent_valid");
+    expect(list.text).toContain('"name":"host_list"');
+    const call = await send(requests[2], "wssp_agent_valid");
+    expect(call.response.status).toBe(200);
+    expect(call.response.headers.get("mcp-session-id")).toBeNull();
+    expect(call.text).toContain('"id":"own"');
+    expect(call.text).not.toContain("shared-private");
+    expect(mocks.listHosts).toHaveBeenCalledExactlyOnceWith(p, { limit: 20 });
+    expect(quota).toHaveBeenLastCalledWith(p.keyId);
+  } finally {
+    await transport.close();
+  }
 });
 it("starts command_run once and returns its final output and exit result", async () => {
   mocks.runCommand.mockResolvedValue({ operationId: "command", state: "QUEUED" });
