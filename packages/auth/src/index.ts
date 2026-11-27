@@ -22,6 +22,7 @@ import {
 } from "./host-device-login-scope.js";
 import { resolveMcpPlugins } from "./mcp-plugins";
 import { createPasswordChangeGuard } from "./password-change-guard.js";
+import { createPasswordPepper } from "./password-pepper.js";
 import {
   notifySessionOwners,
   notifySessionRevocations,
@@ -62,6 +63,11 @@ const isCrossOrigin = !!env.CORS_ORIGIN;
 // signal-y. Anything we don't recognize keeps its original level.
 const USER_INPUT_ERROR_PATTERN =
   /invalid (password|email|credentials|token|otp|two[- ]?factor)|user not found|email not verified|password is incorrect|account not found|failed to verify|already exists|too many (requests|attempts)/i;
+
+export const passwordPepper = createPasswordPepper({
+  secret: env.BETTER_AUTH_SECRET,
+  previousSecret: env.BETTER_AUTH_SECRET_PREVIOUS,
+});
 
 export const auth = betterAuth({
   database: prismaAdapter(
@@ -162,6 +168,7 @@ export const auth = betterAuth({
     },
   },
   emailAndPassword: {
+    password: { hash: passwordPepper.hash, verify: passwordPepper.verify },
     enabled: true,
     requireEmailVerification: true,
     // Better-Auth's default floor is 8. There is no breached-password check,

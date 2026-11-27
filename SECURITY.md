@@ -37,3 +37,5 @@ because they require GitHub Advanced Security on private repos:
 
 - CodeQL
 - GitHub Dependency Review Action
+
+Password hashes are sealed under a key derived from `BETTER_AUTH_SECRET`. See the [password pepper rotation and recovery runbook](docs/operations/production-hardening.md#password-pepper).

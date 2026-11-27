@@ -4,6 +4,8 @@ import "@wssp/env/load-dotenv";
 import { serve } from "@hono/node-server";
 import { templateBuildsConfig } from "@wssp/api/template-builds/config";
 import { loadWebhookConfig } from "@wssp/api/webhooks/config";
+import { passwordPepper } from "@wssp/auth";
+import { PasswordPepperKeyError, syncPasswordPepper } from "@wssp/auth/password-pepper-store";
 import prisma from "@wssp/db";
 import { hasActiveAdministrator } from "@wssp/db/admin-governance";
 import { ADMIN_EMAILS, env } from "@wssp/env/server";
@@ -37,6 +39,19 @@ const sandboxRelayWebsocket = {
     },
   }),
 };
+
+try {
+  await syncPasswordPepper(prisma, passwordPepper);
+} catch (error) {
+  // The lifecycle's fatal handlers log only a sanitized error class. This
+  // refusal carries key fingerprints and the recovery steps (never a secret),
+  // so print it whole before exiting.
+  if (error instanceof PasswordPepperKeyError) {
+    console.error(`[server] ${error.message}`);
+    process.exit(1);
+  }
+  throw error;
+}
 
 await lifecycle.start(
   () =>

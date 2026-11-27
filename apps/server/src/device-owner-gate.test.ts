@@ -32,6 +32,12 @@ vi.mock("@wssp/api/lib/push-subscription", () => ({
 }));
 vi.mock("@wssp/auth", () => ({
   auth: { api: { getSession: mocks.getSession }, handler: mocks.handler },
+  passwordPepper: {},
+}));
+// The server entry seals stored password hashes before it listens.
+vi.mock("@wssp/auth/password-pepper-store", () => ({
+  PasswordPepperKeyError: class PasswordPepperKeyError extends Error {},
+  syncPasswordPepper: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@wssp/api/lib/sensitive-session-two-factor-gate", () => ({
   loadSensitiveSessionGateUser: mocks.loadUser,

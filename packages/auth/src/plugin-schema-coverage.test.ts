@@ -37,7 +37,13 @@ vi.mock("@wssp/mailer", () => ({
 vi.mock("better-auth/adapters/prisma", async () => ({ prismaAdapter: () => memoryAdapter(db) }));
 const { memoryAdapter } = await import("better-auth/adapters/memory");
 const { getSchema } = await import("better-auth/db");
-const { auth } = await import("./index");
+const { auth, passwordPepper } = await import("./index");
+
+it("uses the password pepper in the configured auth context", async () => {
+  const password = (await auth.$context).password;
+  expect(password.hash).toBe(passwordPepper.hash);
+  expect(password.verify).toBe(passwordPepper.verify);
+});
 
 type PrismaField = { type: string; optional: boolean; list: boolean; hasDefault: boolean };
 

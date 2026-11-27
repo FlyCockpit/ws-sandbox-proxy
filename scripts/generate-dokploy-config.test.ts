@@ -547,3 +547,23 @@ test("operation content downloads have their own uncompressed router above the c
   ])
     assert.doesNotMatch(no, path);
 });
+
+test("password pepper previous key is optional and server-only", () => {
+  for (const topology of ["app", "app-worker"] as const) {
+    const config = generateDokployConfig({ ...defaults, topology });
+    assert.equal(
+      config.applications[0]!.environment.BETTER_AUTH_SECRET_PREVIOUS,
+      `\${{environment.BETTER_AUTH_SECRET_PREVIOUS}}`,
+    );
+    assert.ok(Object.hasOwn(config.environmentVariablesOptional, "BETTER_AUTH_SECRET_PREVIOUS"));
+    if (topology === "app-worker")
+      assert.equal(config.applications[1]!.environment.BETTER_AUTH_SECRET_PREVIOUS, undefined);
+    const compose = generateDokployCompose({ ...defaults, topology });
+    assert.match(
+      block(compose, "server"),
+      /BETTER_AUTH_SECRET_PREVIOUS: "\$\{BETTER_AUTH_SECRET_PREVIOUS:-\}"/,
+    );
+    if (topology === "app-worker")
+      assert.doesNotMatch(block(compose, "worker"), /BETTER_AUTH_SECRET_PREVIOUS/);
+  }
+});

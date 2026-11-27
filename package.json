@@ -120,7 +120,8 @@
     "db:test-migrations": "node scripts/db/test-migrations.mjs",
     "db:test-unit": "node --test scripts/db/*.test.mjs scripts/db/lib/*.test.mjs scripts/lib/bounded-child.test.mjs",
     "backup:test-unit": "node --test scripts/backup/*.test.mjs",
-    "backup:test": "node scripts/backup/test-backup-restore.mjs"
+    "backup:test": "node scripts/backup/test-backup-restore.mjs",
+    "auth:pepper:reset-unusable": "node --import tsx scripts/auth-pepper-reset-unusable.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "catalog:",

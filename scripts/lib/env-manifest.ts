@@ -599,11 +599,22 @@ export const ENV_VARS: EnvVar[] = [
       "placeholder values in production. Rotating this invalidates every",
       "existing session and all product credentials (host tokens, device",
       "credentials, SDK keys) — generate once per environment and keep it stable.",
+      "Password rotation requires BETTER_AUTH_SECRET_PREVIOUS; see docs/operations/production-hardening.md.",
       "",
       "For LOCAL dev this is filled in for you by `pnpm setup:app`; to mint one",
       "by hand use `pnpm generate:secret` and paste it below. For a PRODUCTION",
       "environment prefer `pnpm generate:secrets`, which generates this along",
       "with the rest of the block and validates the result.",
+    ],
+  },
+  {
+    key: "BETTER_AUTH_SECRET_PREVIOUS",
+    group: "auth",
+    source: "manual",
+    hidden: true,
+    secret: true,
+    comment: [
+      "Previous auth secret, used only during password pepper rotation. See docs/operations/production-hardening.md.",
     ],
   },
   {

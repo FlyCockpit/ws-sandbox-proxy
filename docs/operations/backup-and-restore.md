@@ -262,3 +262,5 @@ keys live in the database, wrapped under `DATA_ENCRYPTION_KEY`.
   once every backup older than the shred has expired, and rotating
   `DATA_ENCRYPTION_KEY` does not change that
   ([production hardening](./production-hardening.md#data-encryption-key)).
+
+Back up `BETTER_AUTH_SECRET` separately from the database and retain keys needed by older backups. Restoring with a different key requires the [password pepper rotation and recovery runbook](./production-hardening.md#password-pepper).

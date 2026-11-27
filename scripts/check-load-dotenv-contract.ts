@@ -98,6 +98,7 @@ const ENTRYPOINTS: Entrypoint[] = [
   { file: "apps/server/src/index.ts", mode: "sideEffect" },
   { file: "apps/worker/src/index.ts", mode: "sideEffect" },
   { file: "scripts/doctor.ts", mode: "sideEffect" },
+  { file: "scripts/auth-pepper-reset-unusable.ts", mode: "sideEffect" },
   { file: "scripts/translate-locale-bundles.ts", mode: "sideEffect" },
   { file: "packages/db/prisma/seed.cli.ts", mode: "sideEffect" },
   { file: "packages/api/src/crypto/data-key.cli.ts", mode: "sideEffect" },

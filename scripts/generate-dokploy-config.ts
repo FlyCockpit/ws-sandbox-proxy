@@ -83,6 +83,8 @@ const PASSTHROUGH_NOTE =
 function optionalForwarded(options: Options): Record<string, string> {
   return {
     ...OPTIONAL_FORWARDED,
+    BETTER_AUTH_SECRET_PREVIOUS:
+      "Set only during password pepper rotation; see docs/operations/production-hardening.md.",
     ...Object.fromEntries((options.env ?? []).map((key) => [key, PASSTHROUGH_NOTE])),
   };
 }
@@ -203,6 +205,7 @@ export function generateDokployConfig(options: Options) {
     ...runtime,
     ...refs([
       "BETTER_AUTH_SECRET",
+      "BETTER_AUTH_SECRET_PREVIOUS",
       "SANDBOX_REQUEST_HMAC_SECRET",
       ...WEBHOOK_KEYS,
       "BETTER_AUTH_URL",
@@ -474,6 +477,7 @@ function composeEnvironments(options: Options): Record<string, Record<string, st
       ...common,
       ...refsForCompose([
         "BETTER_AUTH_SECRET",
+        "BETTER_AUTH_SECRET_PREVIOUS",
         "SANDBOX_REQUEST_HMAC_SECRET",
         ...WEBHOOK_KEYS,
         "ADMIN_EMAILS",

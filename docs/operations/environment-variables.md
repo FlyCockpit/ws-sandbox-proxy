@@ -37,6 +37,7 @@ adding a new script that imports `@wssp/env/*` or a package that does):
 | `apps/worker/src/bootstrap.ts`            | wrapper            | The **built** BullMQ worker entry, same reason                                                                                                           |
 | `apps/server/src/index.ts`                | side effect        | Hono process under `tsx` (`pnpm dev`), where plain ESM order applies                                                                                     |
 | `apps/worker/src/index.ts`                | side effect        | BullMQ worker under `tsx`, same reason                                                                                                                   |
+| `scripts/auth-pepper-reset-unusable.ts`   | side effect        | Owner-run password recovery                                                                                                                              |
 | `scripts/doctor.ts`                       | side effect        | `pnpm doctor:app`                                                                                                                                        |
 | `scripts/translate-locale-bundles.ts`     | side effect        | `pnpm i18n:translate`                                                                                                                                    |
 | `packages/db/prisma/seed.cli.ts`          | side effect        | `prisma db seed` / direct `tsx` of the seed CLI                                                                                                          |
@@ -407,3 +408,5 @@ here it is read at startup: restart to apply a change (instances may disagree
 briefly during a rolling deploy). Dated agent tokens, OAuth
 grants and SDK keys are unaffected. Tokens without an expiry, blocked or not,
 still count toward the ten-active-token cap until revoked.
+
+`BETTER_AUTH_SECRET_PREVIOUS` is optional and used only during [password pepper rotation](./production-hardening.md#password-pepper). Keep the current and previous secrets separate from database backups.

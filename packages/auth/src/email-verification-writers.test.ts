@@ -48,7 +48,8 @@ const reviewed: Record<string, string> = {
   // revokeSessionsOnPasswordReset; no mailbox proof input or write.
   // Reviewed 11-24: adds the neutral sign-up after-hook and a user.create.after
   // mark (signup-response.ts); no mailbox proof input or write.
-  "packages/auth/src/index.ts": "ab7c0b4273f8f739994adee9bcfac3b2b8546d390ba03fcfbc976417f040d226",
+  // Password pepper supplies hash and verify callbacks; mailbox proof is unchanged.
+  "packages/auth/src/index.ts": "c0951c0c2c6197a8310260e5b96e9506af70a316f1f9ff84de10acfd576780aa",
   // Invites: no proof write. The mailed accept link is Better Auth's own
   // verify-email link (admin-invite-verification.ts mints its signed token, as
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.

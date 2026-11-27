@@ -686,3 +686,5 @@ only with verified provider recovery. See the full
 [restore runbook](./backup-and-restore.md#restore). Never print the env file or
 pass credentials in command text. A restore drill uses a separate empty
 `restore_drill` database and the image command `restore-drill <source>`.
+
+During [password pepper rotation](./production-hardening.md#password-pepper), set the optional `BETTER_AUTH_SECRET_PREVIOUS` to the old secret on every server.

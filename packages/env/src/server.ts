@@ -69,6 +69,21 @@ if (weakReason) {
   console.warn(msg);
 }
 
+if (env.BETTER_AUTH_SECRET_PREVIOUS) {
+  if (env.BETTER_AUTH_SECRET_PREVIOUS === env.BETTER_AUTH_SECRET) {
+    throw new Error(
+      "[env] BETTER_AUTH_SECRET_PREVIOUS must differ from BETTER_AUTH_SECRET; unset it or set the old secret",
+    );
+  }
+  const previousWeakReason = isWeakSecret(env.BETTER_AUTH_SECRET_PREVIOUS);
+  if (previousWeakReason) {
+    // docs/operations/production-hardening.md § Password pepper.
+    const msg = `[env] BETTER_AUTH_SECRET_PREVIOUS is weak: ${previousWeakReason}. Use the old secret only while rotating; see Password pepper in the production hardening guide.`;
+    if (env.NODE_ENV === "production") throw new Error(msg);
+    console.warn(msg);
+  }
+}
+
 // Admin lockout guard. The only in-app path to a NEW admin account is the
 // email/password bootstrap signup for addresses in ADMIN_EMAILS, and
 // SIGNUP_ENABLED=false blocks every user creation. Signup-disabled + empty
