@@ -21,7 +21,8 @@
     "entryResults": [
       {
         "sandboxId": "sbx-a",
-        "outcome": "converged"
+        "outcome": "converged",
+        "rootRetired": true
       },
       {
         "sandboxId": "sbx-b",
@@ -73,6 +74,47 @@
           "outcome": "converged"
         }
       ]
+    },
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "not_converged",
+          "rootRetired": true
+        }
+      ]
+    },
+    {
+      "type": "inventory.ack",
+      "page": 0,
+      "entryResults": [
+        {
+          "sandboxId": "sbx-a",
+          "outcome": "converged",
+          "rootRetired": "true"
+        }
+      ]
     }
-  ]
+  ],
+  "expiryAck": {
+    "type": "sandbox.expiry_status.ack",
+    "batch": 1,
+    "entryResults": [
+      {
+        "sandboxId": "sbx-a",
+        "outcome": "converged",
+        "rootRetired": true
+      },
+      {
+        "sandboxId": "sbx-b",
+        "outcome": "stale_storage"
+      },
+      {
+        "sandboxId": "sbx-c",
+        "outcome": "not_converged"
+      }
+    ]
+  }
 }

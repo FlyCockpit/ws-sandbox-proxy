@@ -33,7 +33,7 @@
 //! The server judges non-expired evidence from an older observation
 //! `not_converged` (the result it received is newer truth); a correct daemon
 //! therefore never downgrades a sandbox whose reconnect it just reported.
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use sandbox_protocol::{
     CensusEntryOutcome, CensusEntryResult, DaemonControlMessage, InventoryEntry,
 };
@@ -374,6 +374,22 @@ impl Evidence {
     /// The server judged `batch`: each digest change it carried is now
     /// reported, and each curable refusal is offered again later. The ACK
     /// must answer the oldest outstanding batch exactly.
+    pub(super) fn acknowledged_entries(
+        &self,
+        batch: u64,
+        results: &[CensusEntryResult],
+    ) -> Result<Vec<InventoryEntry>> {
+        let front = self
+            .outstanding
+            .front()
+            .context("expiry status acknowledgement without a batch")?;
+        anyhow::ensure!(
+            front.batch == batch && sandbox_protocol::census_results_match(&front.entries, results),
+            "expiry status acknowledgement does not judge its batch"
+        );
+        Ok(front.entries.clone())
+    }
+
     pub(super) fn acknowledge(
         &mut self,
         batch: u64,
@@ -494,6 +510,7 @@ mod tests {
         CensusEntryResult {
             sandbox_id: id.into(),
             outcome,
+            root_retired: false,
         }
     }
 

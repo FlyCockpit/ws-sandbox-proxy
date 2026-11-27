@@ -731,6 +731,16 @@ impl SandboxRuntime for IncusKvmRuntime {
     ) -> Result<crate::RootAbsenceProof, RuntimeError> {
         self.client.prove_root_absent(root, name)
     }
+    fn prove_network_cleanup_complete(&self, sandbox_id: &str) -> Result<bool, RuntimeError> {
+        crate::validate_managed_instance_name(&crate::default_incus_instance_name(sandbox_id))?;
+        let mut client = self.client.clone();
+        client.inspection_permit = client.cancelled.clone();
+        if client.network_cleanup_outstanding(sandbox_id)? {
+            return Ok(false);
+        }
+        client.verify_sandbox_network_absent(sandbox_id)?;
+        Ok(true)
+    }
     fn create_sandbox_on_storage(
         &self,
         request: &CreateSandboxRequest,

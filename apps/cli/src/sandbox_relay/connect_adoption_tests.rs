@@ -4930,3 +4930,339 @@ fn an_initial_rate_limited_upgrade_retries_after_the_server_delay() {
     let error = daemon.join().unwrap().unwrap_err();
     assert!(error.downcast_ref::<TerminalHelloRefusal>().is_some());
 }
+
+#[cfg(target_os = "linux")]
+fn stdin_frame(op: &str, sequence: u64, bytes: &[u8], eof: bool) -> Message {
+    Message::Binary(
+        encode_binary_frame(
+            &StreamBinaryMetadata {
+                r#type: if eof {
+                    StreamKind::End
+                } else {
+                    StreamKind::Chunk
+                },
+                stream_id: format!("stdin-{op}"),
+                operation_id: op.into(),
+                generation: 1,
+                attempt: 1,
+                offset: None,
+                gap_start: None,
+                sequence,
+                flags: Some(StreamChunkFlags {
+                    stdin: Some(true),
+                    stdout: None,
+                    stderr: None,
+                    file_upload: None,
+                    file_download: None,
+                }),
+                final_chunk: Some(eof),
+            },
+            bytes,
+        )
+        .expect("encode stdin")
+        .into(),
+    )
+}
+
+#[cfg(target_os = "linux")]
+type StdinWrites = Arc<std::sync::Mutex<Vec<(String, Vec<u8>, bool)>>>;
+
+/// F11-a: a full host control queue refuses only the overflowing command and
+/// never resets the relay session. Bursts above the old 16-slot limit (stdin
+/// chunks and cancel frames) are retained without blocking the reader; pings
+/// and other commands finish on the exact same WebSocket connection.
+#[cfg(target_os = "linux")]
+#[test]
+fn full_control_queue_refuses_one_command_and_keeps_session_and_other_commands_alive() {
+    use std::sync::Mutex;
+    let dir = tempfile::tempdir().expect("dir");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release = Mutex::new(release_rx);
+    let writes: StdinWrites = Arc::new(Mutex::new(Vec::new()));
+    let cancels: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let fake = sandbox_runtime::FakeRuntime::with_command_delay(Duration::from_millis(2500))
+        .with_stdin_hook({
+            let writes = writes.clone();
+            move |req| {
+                if req.operation_id == "cmd-blocker" && req.bytes == b"pause" {
+                    entered_tx.send(()).unwrap();
+                    let _ = release
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(15));
+                }
+                writes
+                    .lock()
+                    .unwrap()
+                    .push((req.operation_id.clone(), req.bytes.clone(), req.eof));
+                Ok(())
+            }
+        })
+        .with_cancel_hook({
+            let cancels = cancels.clone();
+            move |id| {
+                cancels.lock().unwrap().push(id.to_string());
+                Ok(())
+            }
+        });
+    seed(&listener, dir.path(), &fake);
+    let options = options(&listener, dir.path(), Duration::from_secs(5));
+    let shutdown = options.shutdown.clone();
+    let daemon = spawn_daemon(options, fake, None);
+
+    let mut wire = accept(&listener);
+    register(&mut wire, 1);
+    crate::sandbox_relay::test_support::ack_registration(&mut wire);
+
+    for id in ["cmd-blocker", "cmd-healthy", "cmd-flood"] {
+        send(&mut wire, command(id));
+        until(&mut wire, |m| accepted(m, id));
+    }
+
+    // Pause the single control worker on cmd-blocker's first stdin write.
+    wire.send(stdin_frame("cmd-blocker", 0, b"pause", true))
+        .unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    // Retain 20 stdin chunks (> old 16-slot limit) for cmd-healthy.
+    for seq in 0..20u64 {
+        wire.send(stdin_frame(
+            "cmd-healthy",
+            seq,
+            format!("ok-{seq}").as_bytes(),
+            seq == 19,
+        ))
+        .unwrap();
+    }
+
+    // Overflow cmd-flood past the 64-chunk per-operation retained bound.
+    for seq in 0..65u64 {
+        wire.send(stdin_frame(
+            "cmd-flood",
+            seq,
+            format!("fl-{seq}").as_bytes(),
+            false,
+        ))
+        .unwrap();
+    }
+
+    // Also burst > 16 operation.cancel frames while the control worker is busy.
+    for _ in 0..20 {
+        send(
+            &mut wire,
+            json!({"type":"operation.cancel","operationId":"cmd-flood","generation":1,"attempt":1,"reason":"cancelled"}),
+        );
+    }
+
+    // Reader stays responsive and the session stays up: Ping gets Pong and
+    // cmd-flood is refused with HostCapacity while the control worker is still paused.
+    wire.send(Message::Ping(b"alive".to_vec().into())).unwrap();
+    let mut got_pong = false;
+    let mut flood_refused = false;
+    while !got_pong || !flood_refused {
+        let frame = wire.read().expect("session stayed alive");
+        match frame {
+            Message::Pong(bytes) => {
+                assert_eq!(bytes.as_ref(), b"alive");
+                got_pong = true;
+            }
+            Message::Binary(_) => {}
+            Message::Text(text) => match parse_daemon_control(&text).unwrap() {
+                DaemonControlMessage::Heartbeat { id, .. } => pong(&mut wire, &id),
+                DaemonControlMessage::OperationResult {
+                    operation_id,
+                    state,
+                    error,
+                    ..
+                } if operation_id == "cmd-flood" => {
+                    assert_eq!(state, OperationState::UnknownOutcome);
+                    assert_eq!(
+                        error.expect("capacity error").code,
+                        SandboxErrorCode::HostCapacity
+                    );
+                    flood_refused = true;
+                }
+                _ => {}
+            },
+            other => panic!("unexpected frame while paused: {other:?}"),
+        }
+    }
+
+    // Release the control worker: cmd-healthy drains all 20 chunks and finishes
+    // on the exact same connection without any reconnect.
+    release_tx.send(()).unwrap();
+    let mut healthy_done = false;
+    let mut blocker_done = false;
+    while !healthy_done || !blocker_done {
+        let frame = wire.read().expect("completion on same session");
+        let Message::Text(text) = frame else { continue };
+        match parse_daemon_control(&text).unwrap() {
+            DaemonControlMessage::Heartbeat { id, .. } => pong(&mut wire, &id),
+            DaemonControlMessage::OperationResult {
+                operation_id,
+                state,
+                ..
+            } => {
+                if operation_id == "cmd-healthy" {
+                    assert_eq!(state, OperationState::Succeeded);
+                    healthy_done = true;
+                } else if operation_id == "cmd-blocker" {
+                    assert_eq!(state, OperationState::Succeeded);
+                    blocker_done = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // No reconnect happened on the listener.
+    listener.set_nonblocking(true).unwrap();
+    assert!(matches!(listener.accept(), Err(e) if e.kind() == ErrorKind::WouldBlock));
+
+    let recorded = writes.lock().unwrap().clone();
+    let healthy: Vec<_> = recorded
+        .iter()
+        .filter(|(op, _, _)| op == "cmd-healthy")
+        .cloned()
+        .collect();
+    assert_eq!(healthy.len(), 20);
+    for (seq, (_, bytes, eof)) in healthy.iter().enumerate() {
+        assert_eq!(bytes, &format!("ok-{seq}").into_bytes());
+        assert_eq!(*eof, seq == 19);
+    }
+    assert!(
+        recorded.iter().all(|(op, _, _)| op != "cmd-flood"),
+        "overflowed command's queued stdin was evicted: {recorded:?}"
+    );
+    assert!(
+        cancels.lock().unwrap().iter().any(|id| id == "cmd-flood"),
+        "refused command was cancelled on the runtime"
+    );
+    finish(daemon, shutdown);
+    drop(wire);
+}
+
+/// F11-a: stdin chunks retained in the host control queue have NOT advanced
+/// `stdin_next_sequence`. After a transport reset, `operation.adopt` reports
+/// the unapplied sequence so the server resends both retained and lost chunks,
+/// and neither interleaving (resend before drain, or drain before resend) ever
+/// delivers a duplicate chunk.
+#[cfg(target_os = "linux")]
+#[test]
+fn retained_stdin_resends_after_reconnect_without_duplicate_delivery() {
+    use std::sync::Mutex;
+    for drain_before_resend in [false, true] {
+        let dir = tempfile::tempdir().expect("dir");
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listen");
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release = Mutex::new(release_rx);
+        let writes: StdinWrites = Arc::new(Mutex::new(Vec::new()));
+        let fake = sandbox_runtime::FakeRuntime::with_command_delay(Duration::from_millis(2500))
+            .with_stdin_hook({
+                let writes = writes.clone();
+                move |req| {
+                    if req.operation_id == "cmd" && req.bytes == b"a" {
+                        entered_tx.send(()).unwrap();
+                        release
+                            .lock()
+                            .unwrap()
+                            .recv_timeout(Duration::from_secs(15))
+                            .unwrap();
+                    }
+                    writes.lock().unwrap().push((
+                        req.operation_id.clone(),
+                        req.bytes.clone(),
+                        req.eof,
+                    ));
+                    Ok(())
+                }
+            });
+        seed(&listener, dir.path(), &fake);
+        let options = options(&listener, dir.path(), Duration::from_secs(5));
+        let shutdown = options.shutdown.clone();
+        let daemon = spawn_daemon(options, fake, None);
+
+        let mut wire = accept(&listener);
+        register(&mut wire, 1);
+        crate::sandbox_relay::test_support::ack_registration(&mut wire);
+        send(&mut wire, command("cmd"));
+        until(&mut wire, |m| accepted(m, "cmd"));
+
+        // seq 0 enters write_stdin but does not commit its watermark until handoff returns.
+        wire.send(stdin_frame("cmd", 0, b"a", false)).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // seq 1 and seq 2 are retained in ControlLane; seq 3 is never delivered on epoch 1.
+        wire.send(stdin_frame("cmd", 1, b"b", false)).unwrap();
+        wire.send(stdin_frame("cmd", 2, b"c", false)).unwrap();
+        // Ping guarantees the daemon's reader has ingested seq 1 and seq 2 before reset.
+        wire.send(Message::Ping(b"queued".to_vec().into())).unwrap();
+        loop {
+            if let Message::Pong(b) = wire.read().unwrap()
+                && b.as_ref() == b"queued"
+            {
+                break;
+            }
+        }
+        reset(wire);
+
+        let mut wire = accept(&listener);
+        register(&mut wire, 2);
+        let seen = reconcile(&mut wire, |_| true);
+        assert_eq!(
+            seen.adopted,
+            vec![("cmd".into(), sandbox_protocol::AdoptPhase::Effect, Some(0))],
+            "retained unapplied chunks must not advance stdin_next_sequence (drain_before_resend={drain_before_resend})"
+        );
+
+        if drain_before_resend {
+            // Release worker FIRST so retained seq 1 and seq 2 are applied BEFORE
+            // the server's resends arrive on epoch 2.
+            release_tx.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while writes.lock().unwrap().len() < 3 {
+                assert!(Instant::now() < deadline, "retained chunks did not drain");
+                thread::sleep(Duration::from_millis(20));
+            }
+            wire.send(stdin_frame("cmd", 0, b"a", false)).unwrap();
+            wire.send(stdin_frame("cmd", 1, b"b", false)).unwrap();
+            wire.send(stdin_frame("cmd", 2, b"c", false)).unwrap();
+            wire.send(stdin_frame("cmd", 3, b"d", true)).unwrap();
+        } else {
+            // Server resends seq 1 and seq 2 WHILE they are still queued in ControlLane,
+            // plus the lost seq 3 + EOF; then worker unblocks.
+            wire.send(stdin_frame("cmd", 0, b"a", false)).unwrap();
+            wire.send(stdin_frame("cmd", 1, b"b", false)).unwrap();
+            wire.send(stdin_frame("cmd", 2, b"c", false)).unwrap();
+            wire.send(stdin_frame("cmd", 3, b"d", true)).unwrap();
+            wire.send(Message::Ping(b"resent".to_vec().into())).unwrap();
+            loop {
+                if let Message::Pong(b) = wire.read().unwrap()
+                    && b.as_ref() == b"resent"
+                {
+                    break;
+                }
+            }
+            release_tx.send(()).unwrap();
+        }
+
+        let done = until(&mut wire, |m| result_of(m, "cmd").is_some());
+        assert_eq!(result_of(&done, "cmd"), Some(OperationState::Succeeded));
+
+        let expected: Vec<(String, Vec<u8>, bool)> = vec![
+            ("cmd".into(), b"a".to_vec(), false),
+            ("cmd".into(), b"b".to_vec(), false),
+            ("cmd".into(), b"c".to_vec(), false),
+            ("cmd".into(), b"d".to_vec(), true),
+        ];
+        assert_eq!(
+            *writes.lock().unwrap(),
+            expected,
+            "drain_before_resend={drain_before_resend}"
+        );
+        finish(daemon, shutdown);
+        drop(wire);
+    }
+}

@@ -276,8 +276,22 @@ fn env_frame_stdin_exactness() {
     let request = req.clone();
     let handle = thread::spawn(move || worker.run(&worker.bind(&request).unwrap(), &request));
     wait_file(&ready);
-    write(&supervisor, &req, vec![42], true);
-    assert_eq!(supervisor.test_pending_stdin(&req), Some((vec![42], true)));
+    // The active command has no streaming pipe. Refuse input instead of
+    // silently retaining it for a different future execution of this ID.
+    assert_eq!(
+        supervisor
+            .write_stdin(&WriteStdinRequest {
+                operation_id: req.operation_id.clone(),
+                generation: req.generation,
+                attempt: req.attempt,
+                bytes: vec![42],
+                eof: true,
+            })
+            .unwrap_err()
+            .code,
+        SandboxErrorCode::NotFound,
+    );
+    assert_eq!(supervisor.test_pending_stdin(&req), None);
     fs::write(&resume, b"").unwrap();
     assert!(output(&handle.join().unwrap().unwrap()).is_empty());
     req.argv = vec!["/bin/cat".into()];

@@ -1117,6 +1117,7 @@ fn expiry_failure_is_published_without_blocking_and_clears_on_recovery() {
         &reported,
         Default::default(),
         &Default::default(),
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(offer.entries.len(), 1);
@@ -1136,6 +1137,7 @@ fn expiry_failure_is_published_without_blocking_and_clears_on_recovery() {
         &expiry.completions(),
         &reported,
         Default::default(),
+        &Default::default(),
         &Default::default(),
     )
     .unwrap();
@@ -1157,6 +1159,7 @@ fn expiry_failure_is_published_without_blocking_and_clears_on_recovery() {
         &expiry.completions(),
         &reported,
         Default::default(),
+        &Default::default(),
         &Default::default(),
     )
     .unwrap();

@@ -81,6 +81,21 @@ impl LiveSandboxAdmission {
     pub fn vcpu_budget(&self) -> u32 {
         self.vcpu_budget
     }
+    /// Refresh root-only holds too: they need not have a live reservation.
+    /// Pool capacity and implicit lineage remain unchanged.
+    pub fn refresh_retained(&mut self, journal: &HostJournal) {
+        let retained = journal.retained_roots();
+        let removed: Vec<_> = self
+            .retained
+            .keys()
+            .filter(|id| !retained.contains_key(*id))
+            .filter_map(|id| journal.root_deleted_generation(id).map(|g| (id.clone(), g)))
+            .collect();
+        for (id, generation) in removed {
+            self.release_expired(&id, generation);
+        }
+        self.retained = retained.into_iter().collect();
+    }
     pub fn release_root_confirmed(&mut self, id: &str, generation: u64) {
         if self
             .retained

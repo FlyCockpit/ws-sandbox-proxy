@@ -337,6 +337,10 @@ fn valid_ext(ext: &JournalExt) -> bool {
 #[derive(Debug)]
 struct JournalState {
     storage: storage::StorageLedger,
+    /// Session-local observation fence, bounded by retained roots. Every
+    /// lifecycle dispatch invalidates proofs, including same-generation retries.
+    root_observation_epochs: HashMap<String, u64>,
+    root_observation_serial: u64,
     configs: HashMap<String, configs::RetainedConfig>,
     lease_workers: HashMap<String, usize>,
     leases: HashMap<String, LeaseRecord>,
@@ -820,6 +824,8 @@ impl HostJournal {
         let storage = storage::StorageLedger::load(&storage_path, binding)?;
         let state = JournalState {
             storage,
+            root_observation_epochs: HashMap::new(),
+            root_observation_serial: 0,
             configs,
             lease_workers: HashMap::new(),
             receipts,
@@ -999,6 +1005,21 @@ impl HostJournal {
             bail!("unsupported journal version {}", receipt.version);
         }
         let mut state = self.state.lock().unwrap_or_else(|err| err.into_inner());
+        let observation_epoch = if storage::root_lifecycle(&receipt.kind) {
+            state.root_observation_serial = state
+                .root_observation_serial
+                .checked_add(1)
+                .context("root observation epoch exhausted")?;
+            let epoch = state.root_observation_serial;
+            if state.storage.roots.contains_key(&receipt.sandbox_id) {
+                state
+                    .root_observation_epochs
+                    .insert(receipt.sandbox_id.clone(), epoch);
+            }
+            Some(epoch)
+        } else {
+            None
+        };
         if state
             .sandbox_owner(&receipt.sandbox_id)
             .is_some_and(|owner| owner != receipt.sandbox_owner_id)
@@ -1136,6 +1157,13 @@ impl HostJournal {
             );
         }
         self.retain_intent_locked(&mut state, &stored)?;
+        if let Some(epoch) = observation_epoch
+            && state.storage.roots.contains_key(&stored.sandbox_id)
+        {
+            state
+                .root_observation_epochs
+                .insert(stored.sandbox_id.clone(), epoch);
+        }
         self.maybe_crash(CrashPoint::AfterRetainedRoot)?;
         persist_receipt(&self.io, &self.receipts_dir, &stored)?;
         state

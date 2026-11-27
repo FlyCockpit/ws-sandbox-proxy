@@ -35,6 +35,7 @@ use sandbox_runtime::{
     SignalProcessRequest, StatPathRequest, StopSandboxRequest, WriteFileRequest,
 };
 use serde_json::json;
+use std::collections::HashSet;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -613,6 +614,453 @@ impl JobReceiver {
     }
 }
 type Control = Box<dyn FnOnce() + Send>;
+/// Bounded capacity for deduplicated cancel work on the host control lane.
+const CONTROL_CANCEL_CAP: usize = 1024;
+/// Per-operation retained stdin bounds (matching `authority.rs` and server
+/// `ADOPT_STDIN_MAX_CHUNKS` / `ADOPT_STDIN_MAX_BYTES`).
+#[cfg(target_os = "linux")]
+pub(super) const STDIN_QUEUE_PER_OP_CHUNKS: usize = 64;
+#[cfg(target_os = "linux")]
+pub(super) const STDIN_QUEUE_PER_OP_BYTES: usize = 1024 * 1024;
+/// Host-wide retained stdin bounds across all commands.
+#[cfg(target_os = "linux")]
+pub(super) const STDIN_QUEUE_MAX_CHUNKS: usize = 256;
+#[cfg(target_os = "linux")]
+pub(super) const STDIN_QUEUE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+#[cfg(target_os = "linux")]
+pub(super) struct StdinControlWork {
+    pub(super) metadata: sandbox_protocol::StreamBinaryMetadata,
+    pub(super) body: Vec<u8>,
+    pub(super) exec: Option<sandbox_runtime::ExecSupervisor>,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum StdinEnqueue {
+    Queued,
+    Ignored,
+    Full,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Copy)]
+pub(super) struct StdinQueueLimits {
+    pub(super) per_op_chunks: usize,
+    pub(super) per_op_bytes: usize,
+    pub(super) host_chunks: usize,
+    pub(super) host_bytes: usize,
+}
+
+#[cfg(target_os = "linux")]
+impl Default for StdinQueueLimits {
+    fn default() -> Self {
+        Self {
+            per_op_chunks: STDIN_QUEUE_PER_OP_CHUNKS,
+            per_op_bytes: STDIN_QUEUE_PER_OP_BYTES,
+            host_chunks: STDIN_QUEUE_MAX_CHUNKS,
+            host_bytes: STDIN_QUEUE_MAX_BYTES,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CancelKey {
+    #[cfg(target_os = "linux")]
+    Exec(String),
+    Runtime(String),
+}
+
+enum CancelWork {
+    #[cfg(target_os = "linux")]
+    Exec(Box<sandbox_runtime::ExecSupervisor>, String),
+    Runtime(String),
+}
+
+impl CancelWork {
+    fn key(&self) -> CancelKey {
+        match self {
+            #[cfg(target_os = "linux")]
+            Self::Exec(_, id) => CancelKey::Exec(id.clone()),
+            Self::Runtime(id) => CancelKey::Runtime(id.clone()),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    fn operation_id(&self) -> &str {
+        match self {
+            Self::Exec(_, id) | Self::Runtime(id) => id,
+        }
+    }
+}
+
+enum ControlItem {
+    Cancel(CancelWork),
+    #[cfg(target_os = "linux")]
+    Stdin(Box<StdinControlWork>),
+    #[cfg(test)]
+    Generic(Control),
+}
+
+#[cfg(target_os = "linux")]
+type StdinKey = (String, u64, u64, u64);
+
+#[cfg(all(test, target_os = "linux"))]
+type StdinPopHook = Arc<dyn Fn(&sandbox_protocol::StreamBinaryMetadata) + Send + Sync>;
+
+#[derive(Default)]
+struct ControlLaneState {
+    closed: bool,
+    cancels: VecDeque<CancelWork>,
+    cancel_keys: HashSet<CancelKey>,
+    #[cfg(target_os = "linux")]
+    stdin: VecDeque<StdinControlWork>,
+    #[cfg(target_os = "linux")]
+    stdin_seen: HashSet<StdinKey>,
+    /// Deduplication identity of the single stdin chunk currently popped by
+    /// the control worker and not yet applied to `authority`.
+    #[cfg(target_os = "linux")]
+    stdin_in_flight: Option<StdinKey>,
+    /// Monotonic counter incremented when the control worker finishes applying
+    /// a popped stdin item (after `authority` has been updated).
+    #[cfg(target_os = "linux")]
+    stdin_completions: u64,
+    #[cfg(target_os = "linux")]
+    stdin_per_op: HashMap<OutputKey, (usize, usize)>,
+    #[cfg(target_os = "linux")]
+    stdin_bytes: usize,
+    #[cfg(target_os = "linux")]
+    stdin_limits: StdinQueueLimits,
+    #[cfg(all(test, target_os = "linux"))]
+    stdin_pop_hook: Option<StdinPopHook>,
+    #[cfg(all(test, target_os = "linux"))]
+    stdin_enqueue_hook: Option<StdinPopHook>,
+    #[cfg(test)]
+    generic: VecDeque<Control>,
+}
+
+impl ControlLaneState {
+    #[cfg(target_os = "linux")]
+    fn stdin_fits(&self, op_key: &OutputKey, body_len: usize) -> bool {
+        let (op_chunks, op_bytes) = self.stdin_per_op.get(op_key).copied().unwrap_or((0, 0));
+        op_chunks < self.stdin_limits.per_op_chunks
+            && op_bytes.saturating_add(body_len) <= self.stdin_limits.per_op_bytes
+            && self.stdin.len() < self.stdin_limits.host_chunks
+            && self.stdin_bytes.saturating_add(body_len) <= self.stdin_limits.host_bytes
+    }
+
+    #[cfg(target_os = "linux")]
+    fn evict_stdin_where(&mut self, mut drop_item: impl FnMut(&StdinControlWork) -> bool) {
+        let mut kept = VecDeque::with_capacity(self.stdin.len());
+        while let Some(item) = self.stdin.pop_front() {
+            if drop_item(&item) {
+                let op_key = (
+                    item.metadata.operation_id.clone(),
+                    item.metadata.generation,
+                    item.metadata.attempt,
+                );
+                let stdin_key = (
+                    item.metadata.operation_id,
+                    item.metadata.generation,
+                    item.metadata.attempt,
+                    item.metadata.sequence,
+                );
+                self.stdin_seen.remove(&stdin_key);
+                self.stdin_bytes = self.stdin_bytes.saturating_sub(item.body.len());
+                if let Some((chunks, bytes)) = self.stdin_per_op.get_mut(&op_key) {
+                    *chunks = chunks.saturating_sub(1);
+                    *bytes = bytes.saturating_sub(item.body.len());
+                    if *chunks == 0 {
+                        self.stdin_per_op.remove(&op_key);
+                    }
+                }
+            } else {
+                kept.push_back(item);
+            }
+        }
+        self.stdin = kept;
+    }
+}
+
+/// Process-scoped host control lane served by a single dedicated worker:
+/// high-priority deduplicated cancels, bounded retained stdin with sequence
+/// deduplication, and bounded generic closures (tests). Never blocks the relay
+/// reader thread and never spawns overflow threads.
+struct ControlLane {
+    state: Mutex<ControlLaneState>,
+    ready: Condvar,
+}
+
+impl ControlLane {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(ControlLaneState::default()),
+            ready: Condvar::new(),
+        })
+    }
+
+    fn enqueue_cancel(&self, work: CancelWork) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(target_os = "linux")]
+        {
+            let id = work.operation_id().to_string();
+            state.evict_stdin_where(|item| item.metadata.operation_id == id);
+        }
+        if state.closed {
+            return;
+        }
+        let key = work.key();
+        if state.cancel_keys.contains(&key) {
+            return;
+        }
+        if state.cancel_keys.len() >= CONTROL_CANCEL_CAP {
+            tracing::warn!(
+                cap = CONTROL_CANCEL_CAP,
+                "host cancel control queue reached capacity; dropping excess cancel"
+            );
+            return;
+        }
+        state.cancel_keys.insert(key);
+        state.cancels.push_back(work);
+        self.ready.notify_one();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn enqueue_stdin(&self, authority: &HostAuthority, work: StdinControlWork) -> StdinEnqueue {
+        let op_key = (
+            work.metadata.operation_id.clone(),
+            work.metadata.generation,
+            work.metadata.attempt,
+        );
+        let stdin_key = (
+            work.metadata.operation_id.clone(),
+            work.metadata.generation,
+            work.metadata.attempt,
+            work.metadata.sequence,
+        );
+        let body_len = work.body.len();
+        loop {
+            // Validate outside the lane lock, but fence that validation with
+            // worker progress even when capacity fits. Otherwise a resend
+            // validated before its original commits could consume a new slot.
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            let completed_before = state.stdin_completions;
+            #[cfg(test)]
+            let enqueue_hook = state.stdin_enqueue_hook.clone();
+            drop(state);
+            if !authority.is_stdin_deliverable(
+                &work.metadata.operation_id,
+                work.metadata.generation,
+                work.metadata.attempt,
+                work.metadata.sequence,
+            ) {
+                return StdinEnqueue::Ignored;
+            }
+            #[cfg(test)]
+            if let Some(hook) = enqueue_hook {
+                hook(&work.metadata);
+            }
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.stdin_completions != completed_before {
+                continue;
+            }
+            if state.closed
+                || state.stdin_seen.contains(&stdin_key)
+                || state.stdin_in_flight.as_ref() == Some(&stdin_key)
+            {
+                return StdinEnqueue::Ignored;
+            }
+            if !state.stdin_fits(&op_key, body_len) {
+                // Reclaim individual obsolete sequences as well as inactive
+                // operations before refusing unique work at the capacity bound.
+                let candidates: Vec<StdinKey> = state.stdin_seen.iter().cloned().collect();
+                drop(state);
+                if !authority.is_stdin_deliverable(
+                    &work.metadata.operation_id,
+                    work.metadata.generation,
+                    work.metadata.attempt,
+                    work.metadata.sequence,
+                ) {
+                    return StdinEnqueue::Ignored;
+                }
+                let dead: HashSet<StdinKey> = candidates
+                    .into_iter()
+                    .filter(|(id, generation, attempt, sequence)| {
+                        !authority.is_stdin_deliverable(id, *generation, *attempt, *sequence)
+                    })
+                    .collect();
+                state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.stdin_completions != completed_before {
+                    continue;
+                }
+                if state.closed
+                    || state.stdin_seen.contains(&stdin_key)
+                    || state.stdin_in_flight.as_ref() == Some(&stdin_key)
+                {
+                    return StdinEnqueue::Ignored;
+                }
+                if !dead.is_empty() {
+                    state.evict_stdin_where(|item| {
+                        dead.contains(&(
+                            item.metadata.operation_id.clone(),
+                            item.metadata.generation,
+                            item.metadata.attempt,
+                            item.metadata.sequence,
+                        ))
+                    });
+                }
+                if !state.stdin_fits(&op_key, body_len) {
+                    state.evict_stdin_where(|item| {
+                        item.metadata.operation_id == op_key.0
+                            && item.metadata.generation == op_key.1
+                            && item.metadata.attempt == op_key.2
+                    });
+                    return StdinEnqueue::Full;
+                }
+            }
+            state.stdin_seen.insert(stdin_key);
+            state.stdin_bytes += body_len;
+            let entry = state.stdin_per_op.entry(op_key).or_insert((0, 0));
+            entry.0 += 1;
+            entry.1 += body_len;
+            state.stdin.push_back(work);
+            self.ready.notify_one();
+            return StdinEnqueue::Queued;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn finish_stdin_in_flight(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.stdin_in_flight = None;
+        state.stdin_completions = state.stdin_completions.wrapping_add(1);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn drop_stdin_for(&self, operation_id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.evict_stdin_where(|item| item.metadata.operation_id == operation_id);
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    fn set_stdin_limits(&self, limits: StdinQueueLimits) {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stdin_limits = limits;
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    fn set_stdin_pop_hook(&self, hook: Option<StdinPopHook>) {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stdin_pop_hook = hook;
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    fn stdin_pop_hook(&self) -> Option<StdinPopHook> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .stdin_pop_hook
+            .clone()
+    }
+
+    #[cfg(test)]
+    fn enqueue_generic(&self, work: Control) -> anyhow::Result<()> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed || state.generic.len() >= QUEUE_CAP {
+            anyhow::bail!("host control queue full or closed");
+        }
+        state.generic.push_back(work);
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn next(&self) -> Option<ControlItem> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(cancel) = state.cancels.pop_front() {
+                state.cancel_keys.remove(&cancel.key());
+                return Some(ControlItem::Cancel(cancel));
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(work) = state.stdin.pop_front() {
+                let op_key = (
+                    work.metadata.operation_id.clone(),
+                    work.metadata.generation,
+                    work.metadata.attempt,
+                );
+                let stdin_key = (
+                    work.metadata.operation_id.clone(),
+                    work.metadata.generation,
+                    work.metadata.attempt,
+                    work.metadata.sequence,
+                );
+                state.stdin_seen.remove(&stdin_key);
+                state.stdin_in_flight = Some(stdin_key);
+                state.stdin_bytes = state.stdin_bytes.saturating_sub(work.body.len());
+                if let Some((chunks, bytes)) = state.stdin_per_op.get_mut(&op_key) {
+                    *chunks = chunks.saturating_sub(1);
+                    *bytes = bytes.saturating_sub(work.body.len());
+                    if *chunks == 0 {
+                        state.stdin_per_op.remove(&op_key);
+                    }
+                }
+                return Some(ControlItem::Stdin(Box::new(work)));
+            }
+            #[cfg(test)]
+            if let Some(work) = state.generic.pop_front() {
+                return Some(ControlItem::Generic(work));
+            }
+            if state.closed {
+                return None;
+            }
+            state = self.ready.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.closed = true;
+        #[cfg(target_os = "linux")]
+        {
+            state.stdin.clear();
+            state.stdin_seen.clear();
+            state.stdin_in_flight = None;
+            state.stdin_per_op.clear();
+            state.stdin_bytes = 0;
+        }
+        self.ready.notify_all();
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct InFlightStdinGuard<'a>(&'a ControlLane);
+
+#[cfg(target_os = "linux")]
+impl Drop for InFlightStdinGuard<'_> {
+    fn drop(&mut self) {
+        self.0.finish_stdin_in_flight();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn push_finished_into(
+    finished_tx: &mpsc::SyncSender<FinishedOp>,
+    pending: &Mutex<Vec<(FinishedOp, Instant)>>,
+    finished: FinishedOp,
+) {
+    if let Err(mpsc::TrySendError::Full(finished) | mpsc::TrySendError::Disconnected(finished)) =
+        finished_tx.try_send(finished)
+    {
+        pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((finished, Instant::now()));
+    }
+}
+
 struct PendingStart {
     sandbox_id: String,
     process_id: String,
@@ -644,7 +1092,7 @@ pub struct RelaySupervisor {
     commands: Arc<CommandQueue>,
     output_capacity: usize,
     lifecycle: Arc<CommandQueue>,
-    control: Option<mpsc::SyncSender<Control>>,
+    control: Arc<ControlLane>,
     observations: Option<mpsc::SyncSender<Control>>,
     storage_observations: Option<mpsc::SyncSender<Control>>,
     finished_rx: mpsc::Receiver<FinishedOp>,
@@ -1283,13 +1731,56 @@ impl RelaySupervisor {
                 work();
             }
         }));
-        let (control_tx, control_rx) = mpsc::sync_channel::<Control>(QUEUE_CAP);
+        let pending = Arc::new(Mutex::new(Vec::new()));
+        let control = ControlLane::new();
         // Keep the directory lock alive until even detached control work has stopped.
+        let control_lane = control.clone();
         let control_journal = journal.clone();
+        let control_runtime = runtime.clone();
+        #[cfg(target_os = "linux")]
+        let control_authority = authority.clone();
+        #[cfg(target_os = "linux")]
+        let control_finished_tx = finished_tx.clone();
+        #[cfg(target_os = "linux")]
+        let control_pending = pending.clone();
         workers.push(thread::spawn(move || {
             let _journal = control_journal;
-            while let Ok(work) = control_rx.recv() {
-                work();
+            while let Some(item) = control_lane.next() {
+                match item {
+                    ControlItem::Cancel(CancelWork::Runtime(id)) => {
+                        let _ = control_runtime.cancel_operation(&id);
+                    }
+                    #[cfg(target_os = "linux")]
+                    ControlItem::Cancel(CancelWork::Exec(supervisor, id)) => {
+                        let _ = supervisor.cancel(&id);
+                    }
+                    #[cfg(target_os = "linux")]
+                    ControlItem::Stdin(work) => {
+                        let _in_flight = InFlightStdinGuard(&control_lane);
+                        #[cfg(test)]
+                        if let Some(hook) = control_lane.stdin_pop_hook() {
+                            hook(&work.metadata);
+                        }
+                        let outcome = super::connect::apply_stdin(
+                            &_journal,
+                            work.exec.as_ref(),
+                            control_runtime.as_ref(),
+                            &control_authority,
+                            &work.metadata,
+                            work.body,
+                        );
+                        if let Err(result) = outcome {
+                            control_lane.drop_stdin_for(&work.metadata.operation_id);
+                            push_finished_into(
+                                &control_finished_tx,
+                                &control_pending,
+                                persist_finished(&_journal, *result),
+                            );
+                        }
+                    }
+                    #[cfg(test)]
+                    ControlItem::Generic(work) => work(),
+                }
             }
         }));
         Self {
@@ -1303,7 +1794,7 @@ impl RelaySupervisor {
             output_chunk_bytes: std::sync::atomic::AtomicUsize::new(
                 sandbox_protocol::SANDBOX_OUTPUT_CHUNK_MIN_BYTES,
             ),
-            pending: Arc::new(Mutex::new(Vec::new())),
+            pending,
             lifecycle,
             ordinary,
             signals,
@@ -1311,7 +1802,7 @@ impl RelaySupervisor {
             commands,
             // Running + queued commands, including windows awaiting output ACKs.
             output_capacity: limits.host + QUEUE_CAP,
-            control: Some(control_tx),
+            control,
             observations: Some(observation_tx),
             storage_observations: Some(storage_tx),
             finished_rx,
@@ -1445,10 +1936,18 @@ impl RelaySupervisor {
         ready
     }
 
-    /// The process-scoped completion channel, for results produced outside
-    /// the worker pools (stdin failures): they drain with every other result.
+    /// The process-scoped completion channel, for tests that inject results
+    /// outside the worker pools.
+    #[cfg(test)]
     pub(super) fn finished_sender(&self) -> mpsc::SyncSender<FinishedOp> {
         self.finished_tx.clone()
+    }
+
+    /// Non-blocking completion enqueue: never stalls the reader or control
+    /// worker on a full `finished_tx` channel.
+    #[cfg(target_os = "linux")]
+    pub(super) fn push_finished(&self, finished: FinishedOp) {
+        push_finished_into(&self.finished_tx, &self.pending, finished);
     }
 
     /// Sandboxes with queued or active lifecycle work.
@@ -1800,12 +2299,39 @@ impl RelaySupervisor {
         }
         Ok(())
     }
-    pub fn control(&self, work: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    pub(super) fn cancel_exec(
+        &self,
+        supervisor: sandbox_runtime::ExecSupervisor,
+        operation_id: String,
+    ) {
         self.control
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("control closed"))?
-            .try_send(Box::new(work))
-            .map_err(|_| anyhow::anyhow!("host control queue full or closed"))
+            .enqueue_cancel(CancelWork::Exec(Box::new(supervisor), operation_id));
+    }
+
+    pub(super) fn cancel_runtime(&self, operation_id: String) {
+        self.control
+            .enqueue_cancel(CancelWork::Runtime(operation_id));
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn enqueue_stdin(&self, work: StdinControlWork) -> StdinEnqueue {
+        self.control.enqueue_stdin(&self.authority, work)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn drop_stdin_for(&self, operation_id: &str) {
+        self.control.drop_stdin_for(operation_id);
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(super) fn set_stdin_queue_limits(&self, limits: StdinQueueLimits) {
+        self.control.set_stdin_limits(limits);
+    }
+
+    #[cfg(test)]
+    pub fn control(&self, work: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
+        self.control.enqueue_generic(Box::new(work))
     }
     pub fn observe_storage(&self, work: impl FnOnce() + Send + 'static) -> anyhow::Result<()> {
         self.storage_observations
@@ -1998,8 +2524,16 @@ impl RelaySupervisor {
         while i < pending.len() {
             let (done, since) = &pending[i];
             let key = (done.operation_id.clone(), done.generation, done.attempt);
-            if outputs.contains_key(&key) && done.interim {
-                ready.push(pending.remove(i).0);
+            if done.interim {
+                if done.state != OperationState::UnknownOutcome {
+                    // The sole completion owner already persisted a terminal
+                    // receipt before this interim observation reached the
+                    // journal; drop the stale interim item and let the owner's
+                    // final completion drain and close the output window.
+                    pending.remove(i);
+                } else {
+                    ready.push(pending.remove(i).0);
+                }
                 continue;
             }
             let settled = outputs.get(&key).is_none_or(|window| {
@@ -2045,7 +2579,7 @@ impl RelaySupervisor {
         self.kills.close();
         self.commands.close();
         self.lifecycle.close();
-        self.control.take();
+        self.control.close();
         self.observations.take();
         self.storage_observations.take();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -6176,6 +6710,532 @@ exit 1
         release_tx.send(()).expect("release");
         drop(relay);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn control_lane_retains_bursts_above_16_prioritizes_cancels_and_deduplicates() {
+        let _staging = crate::sandbox_relay::test_support::staging_quota();
+        let dir = tempfile::tempdir().expect("dir");
+        let binding = TransportBindingV11 {
+            server: "wss://example".into(),
+            host_owner_id: "owner".into(),
+            host_id: "host".into(),
+        };
+        let journal = Arc::new(
+            crate::sandbox_relay::test_support::open_journal(dir.path(), &binding)
+                .expect("journal"),
+        );
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let fake = FakeRuntime::new()
+            .with_cancel_hook({
+                let events = events.clone();
+                move |id| {
+                    events.lock().unwrap().push(format!("cancel:{id}"));
+                    Ok(())
+                }
+            })
+            .with_stdin_hook({
+                let events = events.clone();
+                move |req| {
+                    events.lock().unwrap().push(format!(
+                        "stdin:{}:{}:{}",
+                        req.operation_id,
+                        String::from_utf8_lossy(&req.bytes),
+                        req.eof
+                    ));
+                    Ok(())
+                }
+            });
+        fake.fixture_root().unwrap();
+        let runtime: Arc<dyn SandboxRuntime> = Arc::new(fake);
+        let authority = HostAuthority::default();
+        authority.attach(1);
+        authority
+            .accept_dispatch("cmd-1", "sbx", "command.run", 1, 1)
+            .expect("admit");
+        authority.start_stdin("cmd-1", 0);
+        let relay = RelaySupervisor::start(runtime, journal, authority.clone(), None);
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        relay
+            .control(move || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let make_stdin = |op: &str, seq: u64, eof: bool| StdinControlWork {
+            metadata: sandbox_protocol::StreamBinaryMetadata {
+                r#type: if eof {
+                    sandbox_protocol::StreamKind::End
+                } else {
+                    sandbox_protocol::StreamKind::Chunk
+                },
+                stream_id: format!("stdin-{op}"),
+                operation_id: op.into(),
+                generation: 1,
+                attempt: 1,
+                offset: None,
+                gap_start: None,
+                sequence: seq,
+                flags: Some(sandbox_protocol::StreamChunkFlags {
+                    stdin: Some(true),
+                    stdout: None,
+                    stderr: None,
+                    file_upload: None,
+                    file_download: None,
+                }),
+                final_chunk: Some(eof),
+            },
+            body: format!("c{seq}").into_bytes(),
+            exec: None,
+        };
+
+        // Enqueue 24 unique stdin chunks (> 16) plus duplicates: all retained,
+        // duplicates ignored, and stdin_next stays 0 while queued.
+        for seq in 0..24 {
+            assert_eq!(
+                relay.enqueue_stdin(make_stdin("cmd-1", seq, seq == 23)),
+                StdinEnqueue::Queued
+            );
+        }
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-1", 0, false)),
+            StdinEnqueue::Ignored
+        );
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-1", 5, false)),
+            StdinEnqueue::Ignored
+        );
+        assert_eq!(authority.stdin_next("cmd-1"), Some(0));
+
+        // Enqueue 24 unique runtime cancels (> 16) plus duplicates.
+        for i in 0..24 {
+            relay.cancel_runtime(format!("other-{i}"));
+            relay.cancel_runtime(format!("other-{i}"));
+        }
+
+        let (done_tx, done_rx) = mpsc::channel();
+        relay.control(move || done_tx.send(()).unwrap()).unwrap();
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let log = events.lock().unwrap().clone();
+        assert_eq!(log.len(), 48);
+        for (i, entry) in log.iter().enumerate().take(24) {
+            assert_eq!(entry, &format!("cancel:other-{i}"));
+        }
+        for (seq, entry) in log.iter().skip(24).enumerate() {
+            assert_eq!(entry, &format!("stdin:cmd-1:c{seq}:{}", seq == 23));
+        }
+        assert_eq!(authority.stdin_next("cmd-1"), None);
+        drop(relay);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn control_lane_stdin_overflow_evicts_only_the_overflowing_command_and_never_blocks_finished() {
+        type StdinLog = Arc<Mutex<Vec<(String, Vec<u8>, bool)>>>;
+        let _staging = crate::sandbox_relay::test_support::staging_quota();
+        let dir = tempfile::tempdir().expect("dir");
+        let binding = TransportBindingV11 {
+            server: "wss://example".into(),
+            host_owner_id: "owner".into(),
+            host_id: "host".into(),
+        };
+        let journal = Arc::new(
+            crate::sandbox_relay::test_support::open_journal(dir.path(), &binding)
+                .expect("journal"),
+        );
+        let delivered: StdinLog = Arc::new(Mutex::new(Vec::new()));
+        let fake = FakeRuntime::new().with_stdin_hook({
+            let delivered = delivered.clone();
+            move |req| {
+                delivered.lock().unwrap().push((
+                    req.operation_id.clone(),
+                    req.bytes.clone(),
+                    req.eof,
+                ));
+                Ok(())
+            }
+        });
+        fake.fixture_root().unwrap();
+        let runtime: Arc<dyn SandboxRuntime> = Arc::new(fake);
+        let authority = HostAuthority::default();
+        authority.attach(1);
+        for id in ["cmd-ok", "cmd-flood"] {
+            authority
+                .accept_dispatch(id, "sbx", "command.run", 1, 1)
+                .expect("admit");
+            authority.start_stdin(id, 0);
+        }
+        let relay = RelaySupervisor::start(runtime, journal.clone(), authority.clone(), None);
+        relay.set_stdin_queue_limits(StdinQueueLimits {
+            per_op_chunks: 4,
+            per_op_bytes: 1024,
+            host_chunks: 6,
+            host_bytes: 2048,
+        });
+
+        // Saturate finished_tx completely to prove push_finished never blocks.
+        for n in 0..QUEUE_CAP {
+            let d = dispatch(&format!("fill-{n}"), "command.run", 1);
+            relay
+                .finished_tx
+                .try_send(finish_dispatch(
+                    &d,
+                    Err(DispatchFailure::Rejected(DispatchError {
+                        reason: None,
+                        code: SandboxErrorCode::HostCapacity.into(),
+                        message: "full".into(),
+                    })),
+                    Instant::now(),
+                ))
+                .expect("fill finished_tx");
+        }
+
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        relay
+            .control(move || {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        let make_stdin = |op: &str, seq: u64, eof: bool| StdinControlWork {
+            metadata: sandbox_protocol::StreamBinaryMetadata {
+                r#type: if eof {
+                    sandbox_protocol::StreamKind::End
+                } else {
+                    sandbox_protocol::StreamKind::Chunk
+                },
+                stream_id: format!("stdin-{op}"),
+                operation_id: op.into(),
+                generation: 1,
+                attempt: 1,
+                offset: None,
+                gap_start: None,
+                sequence: seq,
+                flags: Some(sandbox_protocol::StreamChunkFlags {
+                    stdin: Some(true),
+                    stdout: None,
+                    stderr: None,
+                    file_upload: None,
+                    file_download: None,
+                }),
+                final_chunk: Some(eof),
+            },
+            body: format!("{op}-{seq}").into_bytes(),
+            exec: None,
+        };
+
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-ok", 0, false)),
+            StdinEnqueue::Queued
+        );
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-ok", 1, false)),
+            StdinEnqueue::Queued
+        );
+        for seq in 0..4 {
+            assert_eq!(
+                relay.enqueue_stdin(make_stdin("cmd-flood", seq, false)),
+                StdinEnqueue::Queued
+            );
+        }
+        // 5th chunk exceeds per_op_chunks (and host_chunks): refuses and evicts
+        // cmd-flood, freeing its 4 slots for cmd-ok immediately.
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-flood", 4, false)),
+            StdinEnqueue::Full
+        );
+        authority.cancel("cmd-flood");
+        assert_eq!(authority.stdin_next("cmd-flood"), None);
+
+        // Non-blocking completion push succeeds even while finished_tx is full.
+        let overflow_finished = finish_effect(
+            "cmd-flood",
+            "sbx",
+            1,
+            1,
+            Err(DispatchError {
+                reason: None,
+                code: SandboxErrorCode::HostCapacity.into(),
+                message: "host stdin control queue full".into(),
+            }
+            .into_runtime()
+            .into()),
+        );
+        relay.push_finished(overflow_finished);
+
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-ok", 2, false)),
+            StdinEnqueue::Queued
+        );
+        assert_eq!(
+            relay.enqueue_stdin(make_stdin("cmd-ok", 3, true)),
+            StdinEnqueue::Queued
+        );
+
+        let (done_tx, done_rx) = mpsc::channel();
+        relay.control(move || done_tx.send(()).unwrap()).unwrap();
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let writes = delivered.lock().unwrap().clone();
+        assert_eq!(
+            writes,
+            vec![
+                ("cmd-ok".into(), b"cmd-ok-0".to_vec(), false),
+                ("cmd-ok".into(), b"cmd-ok-1".to_vec(), false),
+                ("cmd-ok".into(), b"cmd-ok-2".to_vec(), false),
+                ("cmd-ok".into(), b"cmd-ok-3".to_vec(), true),
+            ]
+        );
+        drop(relay);
+    }
+    #[cfg(target_os = "linux")]
+    fn control_stdin(op: &str, sequence: u64) -> StdinControlWork {
+        StdinControlWork {
+            metadata: serde_json::from_value(json!({
+                "type":"stream.chunk", "streamId":format!("stdin-{op}"),
+                "operationId":op, "generation":1, "attempt":1,
+                "sequence":sequence, "flags":{"stdin":true}
+            }))
+            .unwrap(),
+            body: b"x".to_vec(),
+            exec: None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn control_lane_resend_during_pop_at_full_host_capacity_is_ignored() {
+        let (_dir, _journal, authority, relay) = drain_fixture();
+        for op in ["cmd", "other"] {
+            authority
+                .accept_dispatch(op, "sbx", "command.run", 1, 1)
+                .unwrap();
+            authority.start_stdin(op, 0);
+        }
+        relay.set_stdin_queue_limits(StdinQueueLimits {
+            per_op_chunks: 1,
+            per_op_bytes: 8,
+            host_chunks: 1,
+            host_bytes: 8,
+        });
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        relay
+            .control
+            .set_stdin_pop_hook(Some(Arc::new(move |metadata| {
+                if metadata.operation_id == "cmd" {
+                    entered_tx.send(()).unwrap();
+                    release_rx
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+            })));
+        assert_eq!(
+            relay.enqueue_stdin(control_stdin("cmd", 0)),
+            StdinEnqueue::Queued
+        );
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(authority.stdin_next("cmd"), Some(0));
+        assert_eq!(
+            relay.enqueue_stdin(control_stdin("other", 0)),
+            StdinEnqueue::Queued
+        );
+        // The host bound is full and cmd's item has been popped but has not
+        // entered authority. Its resend must never become overflow refusal.
+        assert_eq!(
+            relay.enqueue_stdin(control_stdin("cmd", 0)),
+            StdinEnqueue::Ignored
+        );
+        let (done_tx, done_rx) = mpsc::channel();
+        relay.control(move || done_tx.send(()).unwrap()).unwrap();
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(authority.stdin_next("cmd"), Some(1));
+        assert_eq!(authority.stdin_next("other"), Some(1));
+        assert_eq!(
+            relay.enqueue_stdin(control_stdin("cmd", 0)),
+            StdinEnqueue::Ignored
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn control_lane_resend_validated_before_commit_cannot_take_a_capacity_slot() {
+        let authority = HostAuthority::default();
+        authority
+            .accept_dispatch("cmd", "sbx", "command.run", 1, 1)
+            .unwrap();
+        authority.start_stdin("cmd", 0);
+        let lane = ControlLane::new();
+        for sequence in 0..STDIN_QUEUE_PER_OP_CHUNKS as u64 {
+            assert_eq!(
+                lane.enqueue_stdin(&authority, control_stdin("cmd", sequence)),
+                StdinEnqueue::Queued
+            );
+        }
+        let Some(ControlItem::Stdin(original)) = lane.next() else {
+            panic!("stdin");
+        };
+        assert_eq!(original.metadata.sequence, 0);
+        let (checked_tx, checked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        lane.state.lock().unwrap().stdin_enqueue_hook = Some(Arc::new(move |metadata| {
+            if metadata.sequence == 0 {
+                checked_tx.send(()).unwrap();
+                release_rx
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+        }));
+        let producer_lane = lane.clone();
+        let producer_authority = authority.clone();
+        let producer = thread::spawn(move || {
+            producer_lane.enqueue_stdin(&producer_authority, control_stdin("cmd", 0))
+        });
+        checked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Drive the original worker through handoff and completion while its
+        // resend is paused after the optimistic authority check, before insert.
+        let requests = authority
+            .claim_stdin("cmd", 1, 1, 0, original.body, false)
+            .unwrap();
+        assert_eq!(requests.len(), 1);
+        authority.commit_stdin("cmd", 1, 1, 0, false);
+        lane.finish_stdin_in_flight();
+        release_tx.send(()).unwrap();
+        assert_eq!(producer.join().unwrap(), StdinEnqueue::Ignored);
+        assert_eq!(
+            lane.state.lock().unwrap().stdin.len(),
+            STDIN_QUEUE_PER_OP_CHUNKS - 1
+        );
+        assert_eq!(
+            lane.enqueue_stdin(
+                &authority,
+                control_stdin("cmd", STDIN_QUEUE_PER_OP_CHUNKS as u64)
+            ),
+            StdinEnqueue::Queued
+        );
+        assert_eq!(
+            lane.state.lock().unwrap().stdin.len(),
+            STDIN_QUEUE_PER_OP_CHUNKS
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn control_lane_pressure_reclaims_obsolete_sequences_of_an_active_command() {
+        let authority = HostAuthority::default();
+        authority
+            .accept_dispatch("cmd", "sbx", "command.run", 1, 1)
+            .unwrap();
+        authority.start_stdin("cmd", 0);
+        let lane = ControlLane::new();
+        for sequence in 0..STDIN_QUEUE_PER_OP_CHUNKS as u64 {
+            assert_eq!(
+                lane.enqueue_stdin(&authority, control_stdin("cmd", sequence)),
+                StdinEnqueue::Queued
+            );
+        }
+        // Model a retained obsolete replay, with the operation still active.
+        authority
+            .claim_stdin("cmd", 1, 1, 0, b"x".to_vec(), false)
+            .unwrap();
+        authority.commit_stdin("cmd", 1, 1, 0, false);
+        assert_eq!(
+            lane.enqueue_stdin(
+                &authority,
+                control_stdin("cmd", STDIN_QUEUE_PER_OP_CHUNKS as u64)
+            ),
+            StdinEnqueue::Queued
+        );
+        let state = lane.state.lock().unwrap();
+        assert_eq!(state.stdin.len(), STDIN_QUEUE_PER_OP_CHUNKS);
+        assert_eq!(state.stdin.front().unwrap().metadata.sequence, 1);
+        assert_eq!(
+            state.stdin_per_op[&("cmd".into(), 1, 1)],
+            (STDIN_QUEUE_PER_OP_CHUNKS, STDIN_QUEUE_PER_OP_CHUNKS)
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdin_capacity_observation_keeps_output_until_sole_owner_finishes() {
+        let (_dir, journal, authority, relay) = drain_fixture();
+        let binding = TransportBindingV11 {
+            server: "wss://example".into(),
+            host_owner_id: "owner".into(),
+            host_id: "host".into(),
+        };
+        let d = dispatch("cmd", "command.run", 1);
+        journal
+            .record_fixture_intent(&intent_from_dispatch(&journal, &binding, &d))
+            .unwrap();
+        journal.record_effect("cmd").unwrap();
+        authority
+            .accept_dispatch("cmd", "sbx", "command.run", 1, 1)
+            .unwrap();
+        authority.start_stdin("cmd", 0);
+        let owner = authority.take_ownership("cmd", 1, 1).unwrap();
+        let exec = ExecSupervisor::new(IncusClient::new("unused", "default"));
+        let output = CommandOutput::default();
+        relay
+            .outputs
+            .lock()
+            .unwrap()
+            .insert(("cmd".into(), 1, 1), OutputWindow::new(output.clone()));
+        let work = control_stdin("cmd", 0);
+        let failure = super::super::connect::apply_stdin(
+            &journal,
+            Some(&exec),
+            relay.runtime.as_ref(),
+            &authority,
+            &work.metadata,
+            vec![0; STDIN_QUEUE_PER_OP_BYTES + 1],
+        )
+        .expect_err("exec buffer capacity");
+        assert!(failure.interim);
+        assert_eq!(
+            failure.error.as_ref().unwrap().code,
+            SandboxErrorCode::HostCapacity
+        );
+        relay.push_finished(persist_finished(&journal, *failure));
+        let observations = relay.poll_finished();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].state, OperationState::UnknownOutcome);
+        assert!(relay.output_open("cmd", 1, 1));
+        assert!(authority.owned("cmd", 1, 1));
+        // Cancellation has not completed. Diagnostics emitted after the
+        // observation retain their window and must drain before final output.
+        output.push(CommandStream::Stderr, b"termination diagnostics");
+        output.close();
+        let mut final_result = finished_command("cmd");
+        final_result.owner = Some(owner);
+        relay.push_finished(final_result);
+        let (final_result, frames) = done_with_output(&relay, "cmd");
+        assert!(!final_result.interim);
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame.body() == b"termination diagnostics")
+        );
+        assert!(!relay.output_open("cmd", 1, 1));
+    }
+
     use sandbox_runtime::*;
     use std::sync::Mutex;
     include!("command_pool_tests.rs");

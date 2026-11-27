@@ -338,7 +338,12 @@ pub(super) fn reconcile_after_hello(
     // stale storage is not counted as reported: the dispatch loop
     // republishes its expiry arm under a current observation.
     let states = {
-        let (journal, runtime, failures) = (journal.clone(), runtime.clone(), failures.clone());
+        let (journal, runtime, failures, busy) = (
+            journal.clone(),
+            runtime.clone(),
+            failures.clone(),
+            busy.clone(),
+        );
         while_reading(
             socket,
             "inventory census",
@@ -355,9 +360,11 @@ pub(super) fn reconcile_after_hello(
         journal,
         runtime,
         states,
+        &busy,
         key_control,
         wire,
         deferred,
+        adoption,
     )?;
     socket.send(tungstenite::Message::Text(
         super::plain_frame(&deferred.complete(resolutions))?.into(),
@@ -809,7 +816,7 @@ fn inventory_census_filtered(
                 lease,
             };
             if observe_roots {
-                observe_entry_root(journal, runtime, &mut entry);
+                observe_entry_root(journal, runtime, busy, &mut entry);
             }
             Ok(entry)
         })
@@ -860,6 +867,7 @@ pub(super) fn pool_bindings(
 fn observe_entry_root(
     journal: &HostJournal,
     runtime: &dyn sandbox_runtime::SandboxRuntime,
+    busy: &std::collections::HashSet<String>,
     entry: &mut sandbox_protocol::InventoryEntry,
 ) {
     let bound = bound_allocation(journal, &entry.sandbox_id);
@@ -878,6 +886,23 @@ fn observe_entry_root(
                 Ok(_) => true,
                 // A pinned-root mismatch is conclusive absence-without-cleanup
                 // evidence. Timeouts, cancellation and IO failures are not.
+                Err(error) if error.code == sandbox_protocol::SandboxErrorCode::VmSizeMismatch => {
+                    false
+                }
+                Err(_) => return None,
+            }
+        } else if volume.is_none()
+            && !busy.contains(&entry.sandbox_id)
+            && entry.state == sandbox_protocol::SandboxLifecycleState::Absent
+        {
+            // Retained roots whose cleanup KILL failed never set `root_deleted`
+            // on a lease. Independently verify VM, pinned-root, and host network
+            // cleanup absence so a later census can settle an exhausted cleanup.
+            match runtime.prove_root_absent(&root, &name) {
+                Ok(_) => match runtime.prove_network_cleanup_complete(&entry.sandbox_id) {
+                    Ok(complete) => complete,
+                    Err(_) => return None,
+                },
                 Err(error) if error.code == sandbox_protocol::SandboxErrorCode::VmSizeMismatch => {
                     false
                 }
@@ -1013,12 +1038,71 @@ pub(super) struct ExpiryOffer {
     pub raced: std::collections::BTreeSet<String>,
     /// The journal's pool binding of offered entries without a root.
     pub bindings: std::collections::BTreeMap<String, super::evidence::PoolBinding>,
+    pub retirements: RootRetirements,
+}
+
+pub(super) type RootRetirements =
+    std::collections::BTreeMap<String, super::journal::storage::RootRetirementFence>;
+
+pub(super) fn root_retirement_fences(
+    journal: &HostJournal,
+    ids: impl IntoIterator<Item = String>,
+) -> RootRetirements {
+    ids.into_iter()
+        .filter_map(|id| journal.root_retirement_fence(&id).map(|f| (id, f)))
+        .collect()
+}
+
+fn invalidate_raced_root_proofs(
+    journal: &HostJournal,
+    entries: &mut [sandbox_protocol::InventoryEntry],
+    fences: &RootRetirements,
+) {
+    for entry in entries {
+        if let Some(before) = fences.get(&entry.sandbox_id)
+            && journal.root_retirement_fence(&entry.sandbox_id).as_ref() != Some(before)
+            && let Some(root) = entry.root.as_mut()
+        {
+            root.network_cleanup_complete = false;
+        }
+    }
+}
+
+pub(super) fn retire_acknowledged_roots(
+    journal: &HostJournal,
+    entries: &[sandbox_protocol::InventoryEntry],
+    results: &[sandbox_protocol::CensusEntryResult],
+    fences: &RootRetirements,
+    busy: &std::collections::HashSet<String>,
+) -> Result<std::collections::BTreeSet<String>> {
+    anyhow::ensure!(
+        sandbox_protocol::census_results_match(entries, results),
+        "root retirement acknowledgement differs"
+    );
+    let mut raced = std::collections::BTreeSet::new();
+    for (entry, result) in entries.iter().zip(results) {
+        if !result.root_retired {
+            continue;
+        }
+        let retired = if !busy.contains(&entry.sandbox_id)
+            && let Some(fence) = fences.get(&entry.sandbox_id)
+        {
+            journal.acknowledge_root_retired(entry, fence)?
+        } else {
+            false
+        };
+        if !retired && journal.retained_roots().contains_key(&entry.sandbox_id) {
+            raced.insert(entry.sandbox_id.clone());
+        }
+    }
+    Ok(raced)
 }
 
 /// Observes every arm whose digest changed since `reported`, plus the
 /// `reoffer` entries the ledger has due. Changed arms without a lease are
 /// reported without an offer; re-offered entries are kept with or without one
 /// (census evidence for a retained root carries none).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn expiry_status_offer(
     journal: &HostJournal,
     runtime: &dyn sandbox_runtime::SandboxRuntime,
@@ -1027,22 +1111,29 @@ pub(super) fn expiry_status_offer(
     reported: &ExpiryReported,
     reoffer: std::collections::BTreeSet<String>,
     blocked: &std::collections::BTreeSet<String>,
+    busy: &std::collections::HashSet<String>,
 ) -> Result<ExpiryOffer> {
     let changes = expiry_changes(failures, completions, reported, blocked);
-    let selected: std::collections::BTreeSet<&String> =
-        changes.keys().chain(reoffer.iter()).collect();
-    let (entries, raced) = if selected.is_empty() {
+    let selected: std::collections::BTreeSet<&String> = changes
+        .keys()
+        .chain(reoffer.iter())
+        .filter(|id| !busy.contains(*id))
+        .collect();
+    let retirements = root_retirement_fences(journal, selected.iter().map(|id| (**id).clone()));
+    let (entries, mut raced) = if selected.is_empty() {
         (Vec::new(), Default::default())
     } else {
         observe_selected(journal, runtime, failures, &selected)?
     };
-    let entries: Vec<_> = entries
+    raced.extend(busy.iter().cloned());
+    let mut entries: Vec<_> = entries
         .into_iter()
         .filter(|e| {
             reoffer.contains(&e.sandbox_id)
                 || (changes.contains_key(&e.sandbox_id) && e.lease.is_some())
         })
         .collect();
+    invalidate_raced_root_proofs(journal, &mut entries, &retirements);
     let bindings = pool_bindings(journal, &entries);
     Ok(ExpiryOffer {
         entries,
@@ -1050,6 +1141,7 @@ pub(super) fn expiry_status_offer(
         reoffered: reoffer,
         raced,
         bindings,
+        retirements,
     })
 }
 
@@ -1085,14 +1177,17 @@ pub(super) fn expiry_changes(
 /// Every ACK must judge exactly its page's entries. Returns the ids the
 /// server refused for stale storage (e.g. health that aged out while the
 /// server was busy).
+#[allow(clippy::too_many_arguments)]
 fn send_census_judged(
     socket: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     journal: &std::sync::Arc<HostJournal>,
     runtime: &std::sync::Arc<dyn sandbox_runtime::SandboxRuntime>,
     states: Vec<sandbox_protocol::InventoryEntry>,
+    busy: &std::collections::HashSet<String>,
     key_control: KeyControl<'_>,
     wire: sandbox_protocol::WireCodes,
     deferred: &mut DeferredPushes,
+    adoption: Option<&Adoption<'_>>,
 ) -> Result<std::collections::BTreeSet<String>> {
     let mut stale = std::collections::BTreeSet::new();
     let mut pages: Vec<Vec<sandbox_protocol::InventoryEntry>> = states
@@ -1110,8 +1205,8 @@ fn send_census_judged(
             reports.storage_sequence()
         });
         let health = deferred.published_health();
-        let mut entries = {
-            let (journal, runtime) = (journal.clone(), runtime.clone());
+        let (mut entries, retirements) = {
+            let (journal, runtime, busy) = (journal.clone(), runtime.clone(), busy.clone());
             while_reading(
                 socket,
                 "inventory census roots",
@@ -1120,10 +1215,15 @@ fn send_census_judged(
                 move |fence| {
                     let runtime = runtime.with_cancellation(fence);
                     let mut entries = entries;
+                    let retirements = root_retirement_fences(
+                        &journal,
+                        entries.iter().map(|e| e.sandbox_id.clone()),
+                    );
                     for entry in &mut entries {
-                        observe_entry_root(&journal, runtime.as_ref(), entry);
+                        observe_entry_root(&journal, runtime.as_ref(), &busy, entry);
                     }
-                    entries
+                    invalidate_raced_root_proofs(&journal, &mut entries, &retirements);
+                    (entries, retirements)
                 },
             )?
         };
@@ -1165,6 +1265,20 @@ fn send_census_judged(
                 _ => bail!("unexpected inventory response"),
             },
         )?;
+        let mut current_busy = busy.clone();
+        if let Some(adoption) = adoption {
+            current_busy.extend(adoption.busy());
+        }
+        let raced =
+            retire_acknowledged_roots(journal, &entries, &judged, &retirements, &current_busy)?;
+        // The server retired its row, but local work changed during the ACK
+        // window. Keep the charge and re-observe under a newer storage report.
+        for result in &mut judged {
+            if raced.contains(&result.sandbox_id) {
+                result.outcome = sandbox_protocol::CensusEntryOutcome::StaleStorage;
+                result.root_retired = false;
+            }
+        }
         stale.extend(
             judged
                 .iter()
@@ -1988,27 +2102,27 @@ mod tests {
             root: None,
         };
         for _ in 0..2 {
-            observe_entry_root(&journal, &runtime, &mut entry);
+            observe_entry_root(&journal, &runtime, &Default::default(), &mut entry);
             assert!(entry.root.is_none(), "failed proof is not settled evidence");
             assert_eq!(
                 entry.state,
                 sandbox_protocol::SandboxLifecycleState::Stopped
             );
         }
-        observe_entry_root(&journal, &runtime, &mut entry);
+        observe_entry_root(&journal, &runtime, &Default::default(), &mut entry);
         assert_eq!(
             entry.root.as_ref().unwrap().state,
             sandbox_protocol::RootState::Absent
         );
         assert!(!entry.root.as_ref().unwrap().network_cleanup_complete);
-        observe_entry_root(&journal, &runtime, &mut entry);
+        observe_entry_root(&journal, &runtime, &Default::default(), &mut entry);
         assert!(entry.root.as_ref().unwrap().network_cleanup_complete);
         assert_eq!(entry.state, sandbox_protocol::SandboxLifecycleState::Absent);
         // A real volume must remain Present even with a journaled deletion.
         inner
             .create_fixture(&CreateSandboxRequest::for_test("sbx", "recreated"))
             .unwrap();
-        observe_entry_root(&journal, &runtime, &mut entry);
+        observe_entry_root(&journal, &runtime, &Default::default(), &mut entry);
         assert_eq!(
             entry.root.as_ref().unwrap().state,
             sandbox_protocol::RootState::Present
@@ -3431,6 +3545,7 @@ mod tests {
                 &journal,
                 &runtime,
                 census,
+                &Default::default(),
                 KeyControl {
                     journal: &journal,
                     binding: &binding,
@@ -3441,6 +3556,7 @@ mod tests {
                     sandbox_protocol::SANDBOX_RELAY_PROTOCOL_VERSION,
                 ),
                 &mut DeferredPushes::default(),
+                None,
             )
             .unwrap();
             let pages = server.join().unwrap();
@@ -3545,9 +3661,11 @@ mod tests {
                 &journal,
                 &runtime,
                 vec![entry("sbx-a"), entry("sbx-b"), entry("sbx-c")],
+                &Default::default(),
                 key_control,
                 sandbox_protocol::WireCodes::CURRENT,
                 &mut DeferredPushes::default(),
+                None,
             );
             drop(socket);
             server.join().unwrap();
@@ -3644,6 +3762,7 @@ mod tests {
                 &completions,
                 &ExpiryReported::new(),
                 reoffer.clone(),
+                &Default::default(),
                 &Default::default(),
             )
             .unwrap()
@@ -4120,3 +4239,11 @@ mod tests {
         assert_eq!(deferred.len(), MAX_DEFERRED_PUSHES);
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "reconcile_cleanup_tests.rs"]
+mod cleanup_tests;
+
+#[cfg(all(test, unix))]
+#[path = "reconcile_root_ack_tests.rs"]
+mod reconcile_root_ack_tests;

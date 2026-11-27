@@ -1,4 +1,5 @@
 import {
+  hasOpenCredentialLeases,
   settleCredentialConvergence,
   settleCredentialsOnDeleted,
   settleCredentialsOnStopped,
@@ -143,7 +144,7 @@ export type QuarantineReason =
 type EntryOutcome =
   | { stale: true }
   | { conflict: QuarantineReason }
-  | { converged: boolean; staleStorage?: true };
+  | { converged: boolean; staleStorage?: true; rootRetired?: true };
 
 /** Server states whose silent absence can still change something. An ERROR
  * row that holds no slot is already converged: silence carries no lease, so it
@@ -227,6 +228,7 @@ export class InventoryCensus {
       if (outcome.converged) this.convergedCount += 1;
       results.push({
         sandboxId: entry.sandboxId,
+        ...(outcome.rootRetired ? { rootRetired: true as const } : {}),
         outcome: outcome.staleStorage
           ? "stale_storage"
           : outcome.converged
@@ -462,7 +464,6 @@ export async function convergeInventoryEntry(
         }
         // An offloaded sandbox's former host proves nothing more by absence.
         if (located.state === "OFFLOADED" && entry.state === "absent") return { converged: false };
-        if (detachedRemnant && entry.state === "absent") return { converged: false };
         if (!detachedRemnant)
           return lastRanHere
             ? { conflict: "deleted_instance_present" }
@@ -504,6 +505,7 @@ export async function convergeInventoryEntry(
           requireRelayFence(sender.isCurrent?.() !== false);
           return { conflict: "deleted_instance_present" };
         }
+        if (detachedRemnant) return repeatRootRetirement(tx, sender, sandbox, entry);
         const settled = await settleRemnantAbsence(tx, sender, sandbox, entry, clock());
         requireRelayFence(sender.isCurrent?.() !== false);
         return { converged: settled };
@@ -526,40 +528,8 @@ export async function convergeInventoryEntry(
         return { converged: false };
       }
       if (sandbox.diskReservationHeld && entry.root) {
-        // Exact root evidence can refresh omitted pools, but never overwrite a
-        // newer negative health observation or rewrite frozen capacity/drain.
-        const pool = await tx.sandboxHostStoragePool.findFirst({
-          where: {
-            sandboxHostId: sender.hostId,
-            userId: sender.userId,
-            marker: sandbox.storageMarker!,
-            name: sandbox.storagePoolName!,
-          },
-        });
-        const sequence = entry.root.observationSequence;
-        if (!Number.isSafeInteger(sequence) || sequence < 0 || !pool) return { converged: false };
-        // Evidence older than the pool's current observation on this epoch
-        // never counts: that observation may be a newer negative one. It is
-        // retried under a current observation.
-        if (
-          pool.connectionEpoch === sender.connectionEpoch &&
-          BigInt(sequence) < pool.observationSequence
-        )
-          return { converged: false, staleStorage: true };
-        if (
-          pool.connectionEpoch !== sender.connectionEpoch ||
-          BigInt(sequence) > pool.observationSequence
-        )
-          await tx.sandboxHostStoragePool.updateMany({
-            where: { id: pool.id, sandboxHostId: sender.hostId, userId: sender.userId },
-            data: {
-              health: "healthy",
-              healthReason: null,
-              connectionEpoch: sender.connectionEpoch,
-              observationSequence: BigInt(sequence),
-              reportedAt: await hostDatabaseNow(tx),
-            },
-          });
+        const refreshed = await refreshExactRootPool(tx, sender, entry.root);
+        if ("outcome" in refreshed) return refreshed.outcome;
       }
       // census rule (R2, N2): a cached STOPPED copy whose
       // disk is STORED (or EVICTING) is never ERROR or DELETED; nor is a
@@ -678,6 +648,7 @@ export async function convergeInventoryEntry(
         (await laterAllocationMayHaveIssued(tx, sender, sandbox.id, entry.lease.generation))
       )
         return { converged: lease.adopted };
+      let rootAbsent = false;
       if (sandbox.diskReservationHeld && (entry.state === "stopped" || entry.state === "absent")) {
         try {
           await requireRetainedStorage(tx, {
@@ -690,7 +661,7 @@ export async function convergeInventoryEntry(
             ? { converged: lease.adopted, staleStorage: true }
             : { converged: lease.adopted };
         }
-        const rootAbsent =
+        rootAbsent =
           entry.root?.state === "absent" &&
           entry.root.networkCleanupComplete &&
           entry.root.storagePoolName === sandbox.storagePoolName &&
@@ -758,6 +729,7 @@ export async function convergeInventoryEntry(
           ? (entry.lease.expiryFailure ?? null)
           : null;
       let converged = false;
+      let rootRetired = false;
       if (failure)
         converged = await recordExpiryFailure(
           tx,
@@ -776,26 +748,42 @@ export async function convergeInventoryEntry(
         (await settlePendingTeardown(tx, sender, sandbox, entry, hostExpired, now))
       )
         converged = true;
-      else if (
-        (sandbox.state === "READY" && (entry.state === "stopped" || entry.state === "absent")) ||
-        (sandbox.state === "STOPPED" && entry.state === "absent") ||
-        // A failed stop/kill keeps its FAILED operation; later host cleanup still
-        // proves the end state. Absence without destroy proof only frees a held slot.
-        (sandbox.state === "ERROR" &&
-          (entry.state === "stopped" ||
-            (entry.state === "absent" &&
-              (sandbox.liveResourcesHeld || hostExpired?.lease.action === "destroy"))))
-      )
-        converged = await convergeStoppedOrMissing(
-          tx,
-          sender,
-          sandbox,
-          entry.state,
-          hostExpired,
-          now,
-        );
+      else {
+        const failedNeverReadyKill =
+          sandbox.state === "ERROR" &&
+          entry.state === "absent" &&
+          rootAbsent &&
+          (await hasFailedRootCleanupKill(tx, sandbox));
+        if (
+          (sandbox.state === "READY" && (entry.state === "stopped" || entry.state === "absent")) ||
+          (sandbox.state === "STOPPED" && entry.state === "absent") ||
+          // A failed stop/kill keeps its FAILED operation; later host cleanup still
+          // proves the end state. Absence without destroy proof only frees a held slot,
+          // unless exact root absence settles an exhausted never-ready cleanup KILL.
+          (sandbox.state === "ERROR" &&
+            (entry.state === "stopped" ||
+              (entry.state === "absent" &&
+                (sandbox.liveResourcesHeld ||
+                  hostExpired?.lease.action === "destroy" ||
+                  failedNeverReadyKill))))
+        )
+          converged = await convergeStoppedOrMissing(
+            tx,
+            sender,
+            sandbox,
+            entry.state,
+            hostExpired,
+            now,
+            false,
+            failedNeverReadyKill,
+          );
+        rootRetired = converged && failedNeverReadyKill;
+      }
       requireRelayFence(sender.isCurrent?.() !== false);
-      return { converged: converged || lease.adopted };
+      return {
+        converged: converged || lease.adopted,
+        ...(rootRetired ? { rootRetired: true as const } : {}),
+      };
     },
     { stale: true },
   );
@@ -1764,6 +1752,7 @@ export async function judgeExpiryStatus(
     }
     results.push({
       sandboxId: entry.sandboxId,
+      ...(outcome.rootRetired ? { rootRetired: true as const } : {}),
       outcome: outcome.staleStorage
         ? "stale_storage"
         : outcome.converged
@@ -1781,6 +1770,131 @@ function logContainedConflict(sender: RelaySender, sandboxId: string, reason: Qu
   );
 }
 
+/** Called under H and S only after authorizing the exact root identity.
+ * Refresh omitted pools without rewriting frozen capacity, drain or admission.
+ * Equal sequences never override negative health or refresh observation age. */
+async function refreshExactRootPool(
+  tx: Prisma.TransactionClient,
+  sender: RelaySender,
+  root: NonNullable<ObservedEntry["root"]>,
+): Promise<
+  | { pool: { health: string; reportedAt: Date } }
+  | { outcome: { converged: false; staleStorage?: true } }
+> {
+  const pool = await tx.sandboxHostStoragePool.findFirst({
+    where: {
+      sandboxHostId: sender.hostId,
+      userId: sender.userId,
+      name: root.storagePoolName,
+      marker: root.storageMarker,
+    },
+  });
+  const sequence = root.observationSequence;
+  if (!pool || !Number.isSafeInteger(sequence) || sequence < 0)
+    return { outcome: { converged: false } };
+  // A newer observation on this epoch may be negative. Require fresh proof
+  // rather than letting an older root observation overwrite it.
+  if (
+    pool.connectionEpoch === sender.connectionEpoch &&
+    BigInt(sequence) < pool.observationSequence
+  )
+    return { outcome: { converged: false, staleStorage: true } };
+  if (
+    pool.connectionEpoch !== sender.connectionEpoch ||
+    BigInt(sequence) > pool.observationSequence
+  ) {
+    const data = {
+      health: "healthy",
+      healthReason: null,
+      connectionEpoch: sender.connectionEpoch,
+      observationSequence: BigInt(sequence),
+      reportedAt: await hostDatabaseNow(tx),
+    };
+    await tx.sandboxHostStoragePool.updateMany({
+      where: { id: pool.id, sandboxHostId: sender.hostId, userId: sender.userId },
+      data,
+    });
+    return { pool: { ...pool, ...data } };
+  }
+  return { pool };
+}
+
+/** A never-ready sandbox whose cleanup KILL exhausted retries sits in ERROR
+ * holding only its root reservation: exact root + network absence settles it
+ * to DELETED when no login lease still awaits owner recovery. */
+async function repeatRootRetirement(
+  tx: Prisma.TransactionClient,
+  sender: RelaySender,
+  sandbox: ConvergeRow,
+  entry: ObservedEntry,
+): Promise<EntryOutcome> {
+  // Called only after the ordinary retained-placement workload/owner/epoch
+  // fences, under H and S. A claimed owner UUID alone never grants authority.
+  if (
+    sandbox.readyAt !== null ||
+    sandbox.diskOffloadId !== null ||
+    sandbox.liveResourcesHeld ||
+    sandbox.diskReservationHeld ||
+    entry.sandboxOwnerId !== sandbox.userId ||
+    !entry.root ||
+    !rootProofMatches(entry.root, sandbox) ||
+    (await hasOpenCredentialLeases(tx, sandbox.id))
+  )
+    return { converged: false };
+  const retired = await tx.sandboxOperation.findFirst({
+    where: {
+      userId: sandbox.userId,
+      sandboxId: sandbox.id,
+      generation: sandbox.generation,
+      kind: "KILL_SANDBOX",
+      state: "SUCCEEDED",
+      dispatchedHostId: sender.hostId,
+      idempotencyKey: inventoryObservationIdempotencyKey(sandbox.id, sandbox.generation),
+    },
+    select: { id: true },
+  });
+  if (
+    !retired ||
+    !(await hasFailedRootCleanupKill(tx, {
+      ...sandbox,
+      state: "ERROR",
+      generation: sandbox.generation - 1,
+      diskReservationHeld: true,
+    }))
+  )
+    return { converged: false };
+  const refreshed = await refreshExactRootPool(tx, sender, entry.root);
+  if ("outcome" in refreshed) return refreshed.outcome;
+  const { pool } = refreshed;
+  const now = await hostDatabaseNow(tx);
+  if (pool.reportedAt > now || now.getTime() - pool.reportedAt.getTime() > STORAGE_HEALTH_STALE_MS)
+    return { converged: false, staleStorage: true };
+  if (pool.health !== "healthy") return { converged: false };
+  requireRelayFence(sender.isCurrent?.() !== false);
+  return { converged: true, rootRetired: true };
+}
+
+async function hasFailedRootCleanupKill(
+  tx: Prisma.TransactionClient,
+  sandbox: ConvergeRow,
+): Promise<boolean> {
+  if (!isNeverReadyRootOnly(sandbox)) return false;
+  const failed = await tx.sandboxOperation.findFirst({
+    where: {
+      userId: sandbox.userId,
+      sandboxId: sandbox.id,
+      generation: sandbox.generation,
+      kind: "KILL_SANDBOX",
+      state: "FAILED",
+      teardownIntent: null,
+      OR: [{ errorCode: null }, { errorCode: { not: "credential_capture_failed" } }],
+    },
+    select: { id: true },
+  });
+  if (!failed) return false;
+  return !(await hasOpenCredentialLeases(tx, sandbox.id));
+}
+
 /** READY/STOPPED/ERROR disagreeing with the host. A new generation fences every
  * late create/renew/command result against the converged truth. */
 async function convergeStoppedOrMissing(
@@ -1791,6 +1905,7 @@ async function convergeStoppedOrMissing(
   hostExpired: InventoryEntry["lease"] | null,
   now: Date,
   neverIssued = false,
+  destroyConfirmed = false,
 ): Promise<boolean> {
   if (sandbox.generation >= 2_147_483_647) return false;
   // Offload plan I3: a PROVISIONING or ERROR row that still holds its stored
@@ -1811,9 +1926,10 @@ async function convergeStoppedOrMissing(
   const evidence =
     observed === "stopped"
       ? { kind: "STOP_SANDBOX" as const, endState: "stopped", next: "STOPPED" as const }
-      : // A host-reported expiry DESTROY is never a DELETED cause while the
-        // sandbox's disk is offloaded.
-        expiryAction === "DESTROY" && sandbox.diskOffloadId == null
+      : // A host-reported expiry DESTROY or a root-absent census after an
+        // exhausted never-ready cleanup KILL settles to DELETED (never while
+        // the sandbox's disk is offloaded).
+        (expiryAction === "DESTROY" || destroyConfirmed) && sandbox.diskOffloadId == null
         ? { kind: "KILL_SANDBOX" as const, endState: "deleted", next: "DELETED" as const }
         : null;
   // An expiry is attributed only when the host's action explains the observation.

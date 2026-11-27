@@ -326,12 +326,114 @@ impl CommandTimer {
     }
 }
 
-type PendingStdin = HashMap<(String, u64, u64), (Vec<u8>, bool)>;
+pub const EXEC_STDIN_PER_OP_MAX_CHUNKS: usize = 64;
+pub const EXEC_STDIN_PER_OP_MAX_BYTES: usize = 1024 * 1024;
+pub const EXEC_STDIN_HOST_MAX_CHUNKS: usize = 256;
+pub const EXEC_STDIN_HOST_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+type StdinOpKey = (String, u64, u64);
+
+#[derive(Default)]
+struct StdinBudgetState {
+    host_chunks: usize,
+    host_bytes: usize,
+    per_op: HashMap<StdinOpKey, (usize, usize)>,
+}
+
+#[derive(Clone, Default)]
+struct StdinBudget(Arc<Mutex<StdinBudgetState>>);
+
+struct StdinPermit {
+    budget: StdinBudget,
+    key: StdinOpKey,
+    chunks: usize,
+    bytes: usize,
+}
+
+impl Drop for StdinPermit {
+    fn drop(&mut self) {
+        let mut state = self.budget.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.host_chunks = state.host_chunks.saturating_sub(self.chunks);
+        state.host_bytes = state.host_bytes.saturating_sub(self.bytes);
+        if let Some((chunks, bytes)) = state.per_op.get_mut(&self.key) {
+            *chunks = chunks.saturating_sub(self.chunks);
+            *bytes = bytes.saturating_sub(self.bytes);
+            if *chunks == 0 && *bytes == 0 {
+                state.per_op.remove(&self.key);
+            }
+        }
+    }
+}
+
+impl StdinBudget {
+    fn try_acquire(&self, key: StdinOpKey, bytes: usize) -> Result<StdinPermit, RuntimeError> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (op_chunks, op_bytes) = state.per_op.get(&key).copied().unwrap_or((0, 0));
+        if op_chunks >= EXEC_STDIN_PER_OP_MAX_CHUNKS
+            || op_bytes.saturating_add(bytes) > EXEC_STDIN_PER_OP_MAX_BYTES
+            || state.host_chunks >= EXEC_STDIN_HOST_MAX_CHUNKS
+            || state.host_bytes.saturating_add(bytes) > EXEC_STDIN_HOST_MAX_BYTES
+        {
+            return Err(RuntimeError::new(
+                SandboxErrorCode::HostCapacity,
+                "command stdin buffer full",
+            ));
+        }
+        state.host_chunks += 1;
+        state.host_bytes += bytes;
+        let entry = state.per_op.entry(key.clone()).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 += bytes;
+        Ok(StdinPermit {
+            budget: self.clone(),
+            key,
+            chunks: 1,
+            bytes,
+        })
+    }
+}
+
+struct PendingStdinEntry {
+    chunks: Vec<StdinMsg>,
+    eof: bool,
+}
+
+type PendingStdin = HashMap<StdinOpKey, PendingStdinEntry>;
 type ResolvedSignalTarget = (crate::CommandBirth, String, crate::GuestIdentity);
 
-enum StdinMsg {
-    Data(Vec<u8>),
-    Close,
+struct StdinMsg {
+    bytes: Vec<u8>,
+    // Drop the bytes before releasing their reservation, including on send failure.
+    _permit: StdinPermit,
+}
+
+#[derive(Clone)]
+struct StdinSender(Arc<Mutex<Option<mpsc::Sender<StdinMsg>>>>);
+
+impl StdinSender {
+    fn new(tx: mpsc::Sender<StdinMsg>) -> Self {
+        Self(Arc::new(Mutex::new(Some(tx))))
+    }
+
+    fn close(&self) {
+        // Disconnect after queued data; EOF needs no mailbox allocation. Clones
+        // share this slot, so repeated closes cannot enqueue more control work.
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take();
+    }
+
+    fn append_pending(&self, pending: PendingStdinEntry) {
+        let mut sender = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(tx) = sender.as_ref() {
+            for message in pending.chunks {
+                if tx.send(message).is_err() {
+                    break;
+                }
+            }
+        }
+        if pending.eof {
+            sender.take();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -350,7 +452,7 @@ struct ActiveExec {
     guest: crate::GuestIdentity,
     argv: Vec<String>,
     cancelled: bool,
-    stdin: Option<mpsc::Sender<StdinMsg>>,
+    stdin: Option<StdinSender>,
     /// The effective execution budget in ms (`0`: none), journaled with the
     /// start for the retire helper's deadline (S13).
     budget_ms: u64,
@@ -365,6 +467,7 @@ pub struct ExecSupervisor {
     client: IncusClient,
     active: Arc<Mutex<HashMap<String, ActiveExec>>>,
     pending_stdin: Arc<Mutex<PendingStdin>>,
+    stdin_budget: StdinBudget,
     #[cfg(test)]
     pub(super) stdin_error_barrier: Arc<Mutex<Option<Arc<std::sync::Barrier>>>>,
 }
@@ -382,6 +485,7 @@ impl ExecSupervisor {
             output: None,
             active: Arc::new(Mutex::new(HashMap::new())),
             pending_stdin: Arc::new(Mutex::new(HashMap::new())),
+            stdin_budget: StdinBudget::default(),
             #[cfg(test)]
             stdin_error_barrier: Arc::new(Mutex::new(None)),
         }
@@ -395,6 +499,7 @@ impl ExecSupervisor {
             output: self.output.clone(),
             active: self.active.clone(),
             pending_stdin: self.pending_stdin.clone(),
+            stdin_budget: self.stdin_budget.clone(),
             #[cfg(test)]
             stdin_error_barrier: self.stdin_error_barrier.clone(),
         }
@@ -571,6 +676,23 @@ impl ExecSupervisor {
                     )
                     .into());
                 }
+                let key = (
+                    request.operation_id.clone(),
+                    request.generation,
+                    request.attempt,
+                );
+                let has_env_frame = env_frame.is_some();
+                let mut initial_stdin = Vec::new();
+                if let Some(bytes) = request.stdin.as_ref().filter(|bytes| !bytes.is_empty()) {
+                    let permit = self
+                        .stdin_budget
+                        .try_acquire(key, bytes.len())
+                        .map_err(crate::before_issue::not_issued)?;
+                    initial_stdin.push(StdinMsg {
+                        bytes: bytes.clone(),
+                        _permit: permit,
+                    });
+                }
                 active.insert(
                     request.operation_id.clone(),
                     ActiveExec {
@@ -612,7 +734,7 @@ impl ExecSupervisor {
                         &unit,
                         &argv,
                         request.cwd.as_deref(),
-                        pipe_stdin || env_frame.is_some(),
+                        pipe_stdin || has_env_frame,
                     )
                 });
                 let issued = match spawned {
@@ -632,7 +754,8 @@ impl ExecSupervisor {
                         timeout,
                         exit_nonce,
                         env_frame,
-                        pipe_stdin,
+                        initial_stdin,
+                        (has_env_frame && !pipe_stdin) || request.stdin.is_some(),
                     )
                 }))
             },
@@ -646,7 +769,8 @@ impl ExecSupervisor {
                     timeout,
                     exit_nonce,
                     env_frame,
-                    pipe_stdin,
+                    initial_stdin,
+                    close_stdin,
                 ) = issued;
                 if let Some(exec) = active.get_mut(&request.operation_id) {
                     exec.host_pid = Some(child.id());
@@ -655,8 +779,8 @@ impl ExecSupervisor {
                 let (stdin_tx, stdin_pump) = attach_stdin(
                     &mut child,
                     env_frame,
-                    request.stdin.as_deref(),
-                    pipe_stdin,
+                    initial_stdin,
+                    close_stdin,
                     io_failed.clone(),
                     #[cfg(test)]
                     self.stdin_error_barrier
@@ -673,17 +797,8 @@ impl ExecSupervisor {
                         request.generation,
                         request.attempt,
                     ));
-                if let (Some(tx), Some((bytes, eof))) = (&stdin_tx, pending_stdin) {
-                    let _ = send_stdin(
-                        tx,
-                        &WriteStdinRequest {
-                            operation_id: request.operation_id.clone(),
-                            generation: request.generation,
-                            attempt: request.attempt,
-                            bytes,
-                            eof,
-                        },
-                    );
+                if let (Some(tx), Some(pending)) = (&stdin_tx, pending_stdin) {
+                    tx.append_pending(pending);
                 }
                 if let Some(exec) = active.get_mut(&request.operation_id) {
                     exec.stdin = stdin_tx;
@@ -753,7 +868,15 @@ impl ExecSupervisor {
             .transpose()?;
         if let Some(exec) = active.get_mut(operation_id) {
             exec.cancelled = true;
+            if let Some(tx) = &exec.stdin {
+                tx.close();
+            }
         }
+        drop(active);
+        self.pending_stdin
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(id, _, _), _| id != operation_id);
         Ok(local_control_completion(()))
     }
 
@@ -925,8 +1048,8 @@ impl ExecSupervisor {
         }
         if kill {
             exec.cancelled = true;
-            if let Some(tx) = exec.stdin.take() {
-                let _ = tx.send(StdinMsg::Close);
+            if let Some(tx) = &exec.stdin {
+                tx.close();
             }
         } else if exec.cancelled {
             return Err(RuntimeError::new(
@@ -989,7 +1112,13 @@ impl ExecSupervisor {
                 request.generation,
                 request.attempt,
             ))
-            .cloned()
+            .map(|entry| {
+                let mut combined = Vec::new();
+                for message in &entry.chunks {
+                    combined.extend_from_slice(&message.bytes);
+                }
+                (combined, entry.eof)
+            })
     }
 
     pub fn retain_pending_stdin(&self, keep: impl Fn(&str) -> bool) {
@@ -999,31 +1128,82 @@ impl ExecSupervisor {
             .retain(|(operation_id, _, _), _| keep(operation_id));
     }
 
+    /// Closes an attempt's stdin pipe and drops any pre-start buffered stdin
+    /// chunks without racing the sole cancellation/termination owner. Live
+    /// chunks remain charged until the pipe pump writes or drops them.
+    pub fn close_stdin(&self, operation_id: &str, generation: u64, attempt: u64) {
+        let mut active = self.active.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(exec) = active
+            .get_mut(operation_id)
+            .filter(|exec| exec.generation == generation && exec.attempt == attempt)
+            && let Some(sender) = &exec.stdin
+        {
+            sender.close();
+        }
+        self.pending_stdin
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .remove(&(operation_id.to_string(), generation, attempt));
+    }
+
     pub fn write_stdin(&self, request: &WriteStdinRequest) -> EffectOutcome<()> {
+        let key = (
+            request.operation_id.clone(),
+            request.generation,
+            request.attempt,
+        );
         let active = self.active.lock().unwrap_or_else(|err| err.into_inner());
-        let tx = active
-            .get(&request.operation_id)
-            .filter(|exec| exec.generation == request.generation && exec.attempt == request.attempt)
-            .and_then(|exec| exec.stdin.clone());
-        if let Some(tx) = tx {
-            return send_stdin(&tx, request)
+        // Lock order: active -> pending/sender -> budget. The pump and permit
+        // destructors never take active, pending or sender locks; no pipe IO or
+        // capacity waits occur under any of these locks.
+        if let Some(exec) = active.get(&request.operation_id) {
+            if exec.generation != request.generation
+                || exec.attempt != request.attempt
+                || exec.cancelled
+            {
+                return Err(crate::before_issue::not_issued(stdin_closed()));
+            }
+            let tx = exec
+                .stdin
+                .as_ref()
+                .ok_or_else(|| crate::before_issue::not_issued(stdin_closed()))?;
+            return send_stdin(tx, &self.stdin_budget, key, request)
                 .map(local_control_completion)
-                .map_err(EffectError::from);
+                .map_err(crate::before_issue::not_issued);
+        }
+        if request.bytes.is_empty() && !request.eof {
+            return Ok(local_control_completion(()));
         }
         let mut pending = self
             .pending_stdin
             .lock()
             .unwrap_or_else(|err| err.into_inner());
-        let entry = pending
-            .entry((
-                request.operation_id.clone(),
-                request.generation,
-                request.attempt,
-            ))
-            .or_insert_with(|| (Vec::new(), false));
-        entry.0.extend_from_slice(&request.bytes);
+        if pending.get(&key).is_some_and(|entry| entry.eof) {
+            return Ok(local_control_completion(()));
+        }
+        // A first EOF-only entry also consumes a slot. Empty non-EOF requests
+        // and refused requests must never leave an uncharged map entry.
+        let message = if !request.bytes.is_empty() || !pending.contains_key(&key) {
+            let permit = self
+                .stdin_budget
+                .try_acquire(key.clone(), request.bytes.len())
+                .map_err(crate::before_issue::not_issued)?;
+            Some(StdinMsg {
+                bytes: request.bytes.clone(),
+                _permit: permit,
+            })
+        } else {
+            None
+        };
+        let entry = pending.entry(key).or_insert_with(|| PendingStdinEntry {
+            chunks: Vec::new(),
+            eof: false,
+        });
+        if let Some(message) = message {
+            entry.chunks.push(message);
+        }
         if request.eof {
-            entry.1 = true;
+            entry.eof = true;
         }
         Ok(local_control_completion(()))
     }
@@ -2309,71 +2489,106 @@ fn reap_child(child: &mut Child) {
 fn attach_stdin(
     child: &mut Child,
     frame: Option<Vec<u8>>,
-    initial: Option<&[u8]>,
-    user_pipe: bool,
+    initial: Vec<StdinMsg>,
+    close: bool,
     failed: Arc<AtomicBool>,
     #[cfg(test)] error_barrier: Option<Arc<std::sync::Barrier>>,
-) -> (
-    Option<mpsc::Sender<StdinMsg>>,
-    Option<thread::JoinHandle<()>>,
-) {
-    let Some(mut stdin) = child.stdin.take() else {
+) -> (Option<StdinSender>, Option<thread::JoinHandle<()>>) {
+    let Some(stdin) = child.stdin.take() else {
         return (None, None);
     };
     let (tx, rx) = mpsc::channel();
     let pump = thread::spawn(move || {
-        while let Ok(msg) = rx.recv() {
-            match msg {
-                StdinMsg::Data(bytes) => {
-                    if stdin
-                        .write_all(&bytes)
-                        .and_then(|()| stdin.flush())
-                        .is_err()
-                    {
-                        failed.store(true, Ordering::Release);
-                        #[cfg(test)]
-                        if let Some(barrier) = &error_barrier {
-                            barrier.wait();
-                        }
-                        break;
-                    }
-                }
-                StdinMsg::Close => break,
-            }
-        }
-        drop(stdin);
+        pump_stdin(
+            stdin,
+            frame,
+            rx,
+            &failed,
+            #[cfg(test)]
+            error_barrier,
+        );
     });
-    if let Some(frame) = frame {
-        let _ = tx.send(StdinMsg::Data(frame));
-        if !user_pipe {
-            let _ = tx.send(StdinMsg::Close);
-            return (None, Some(pump));
+    let sender = StdinSender::new(tx);
+    sender.append_pending(PendingStdinEntry {
+        chunks: initial,
+        eof: close,
+    });
+    (Some(sender), Some(pump))
+}
+
+fn pump_stdin(
+    mut stdin: impl Write,
+    frame: Option<Vec<u8>>,
+    rx: mpsc::Receiver<StdinMsg>,
+    failed: &AtomicBool,
+    #[cfg(test)] error_barrier: Option<Arc<std::sync::Barrier>>,
+) {
+    // The validated environment envelope is fixed setup metadata (at most
+    // env_limits().json_bytes + 13), written once, outside the data mailbox.
+    if let Some(frame) = frame
+        && stdin
+            .write_all(&frame)
+            .and_then(|()| stdin.flush())
+            .is_err()
+    {
+        failed.store(true, Ordering::Release);
+        #[cfg(test)]
+        if let Some(barrier) = &error_barrier {
+            barrier.wait();
+        }
+        return;
+    }
+    while let Ok(message) = rx.recv() {
+        let result = stdin.write_all(&message.bytes).and_then(|()| stdin.flush());
+        // Keep the message (and its permit) alive across blocking pipe IO.
+        drop(message);
+        if result.is_err() {
+            failed.store(true, Ordering::Release);
+            #[cfg(test)]
+            if let Some(barrier) = &error_barrier {
+                barrier.wait();
+            }
+            break;
         }
     }
-    if let Some(bytes) = initial {
-        if !bytes.is_empty() {
-            let _ = tx.send(StdinMsg::Data(bytes.to_vec()));
-        }
-        let _ = tx.send(StdinMsg::Close);
-    }
-    (Some(tx), Some(pump))
+    drop(stdin);
+}
+
+fn stdin_closed() -> RuntimeError {
+    RuntimeError::new(
+        SandboxErrorCode::NotFound,
+        "command stdin is no longer open",
+    )
 }
 
 fn send_stdin(
-    tx: &mpsc::Sender<StdinMsg>,
+    tx: &StdinSender,
+    budget: &StdinBudget,
+    key: StdinOpKey,
     request: &WriteStdinRequest,
 ) -> Result<(), RuntimeError> {
-    if !request.bytes.is_empty() && tx.send(StdinMsg::Data(request.bytes.clone())).is_err() {
-        return Err(RuntimeError::new(
-            SandboxErrorCode::NotFound,
-            "command stdin is no longer open",
-        ));
+    // Serialize acceptance with close, including data+EOF in one request.
+    let mut sender = tx.0.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(tx) = sender.as_ref() else {
+        return Err(stdin_closed());
+    };
+    if !request.bytes.is_empty() {
+        let permit = budget.try_acquire(key, request.bytes.len())?;
+        tx.send(StdinMsg {
+            bytes: request.bytes.clone(),
+            _permit: permit,
+        })
+        .map_err(|_| stdin_closed())?;
     }
     if request.eof {
-        let _ = tx.send(StdinMsg::Close);
+        sender.take();
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "exec_stdin_tests.rs"]
+mod stdin_tests;
 
 #[cfg(test)]
 mod tests {

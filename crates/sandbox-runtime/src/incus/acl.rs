@@ -2699,12 +2699,18 @@ impl IncusClient {
         &self,
         sandbox_id: &str,
     ) -> Result<bool, RuntimeError> {
-        if self
+        let record = self
             .pending_cleanup_dir()
-            .join(format!("{sandbox_id}.json"))
-            .exists()
-        {
-            return Ok(true);
+            .join(format!("{sandbox_id}.json"));
+        match std::fs::symlink_metadata(&record) {
+            Ok(_) => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(RuntimeError::new(
+                    SandboxErrorCode::Internal,
+                    format!("cannot inspect the network cleanup obligation: {error}"),
+                ));
+            }
         }
         let (network_name, acl_name) = sandbox_network_names(sandbox_id);
         Ok(self.read_network_config(&network_name)?.is_some()
@@ -4722,6 +4728,27 @@ mod host_readiness_tests {
 #[cfg(test)]
 mod persisted_state_tests {
     use super::*;
+
+    #[test]
+    fn network_cleanup_observation_never_treats_a_record_stat_failure_as_absence() {
+        let (client, _) = crate::incus::shim_tests::client_for_with_log("fix6_new_ready");
+        let dir = client.pending_cleanup_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let record = dir.join("sbx-1.json");
+        // Even an unreadable symlink loop is an outstanding obligation.
+        std::os::unix::fs::symlink("sbx-1.json", &record).unwrap();
+        assert!(client.network_cleanup_outstanding("sbx-1").unwrap());
+        std::fs::remove_file(&record).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+        std::fs::write(&dir, b"not a directory").unwrap();
+        assert_eq!(
+            client
+                .network_cleanup_outstanding("sbx-1")
+                .unwrap_err()
+                .code,
+            SandboxErrorCode::Internal
+        );
+    }
 
     #[test]
     fn provisioning_writer_requires_a_binding_and_emits_readable_records() {

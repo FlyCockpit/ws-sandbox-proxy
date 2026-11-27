@@ -1,9 +1,10 @@
+import { seedStoredOffload } from "../../../../packages/api/src/sandbox/testing/offload-fixtures";
 import {
   acknowledgeFixtureExecutionConfigs,
   seedLaunchHost,
   seedSandboxInstance,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
-import { capacityFixture } from "./capacity-fixtures";
+import { capacityFixture, helloFixture } from "./capacity-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -14,6 +15,10 @@ import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { seedTemplateRevision } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  canonicalDigestHex,
+  parseLoginDefinition,
+} from "../../../../packages/login-definition/src/index";
 
 vi.mock("@wssp/db", async () => {
   const { pgTestDatabase: database } = await import("@wssp/db/testing/pg");
@@ -54,6 +59,7 @@ async function processSandboxOutboxBatch(
 const { InventoryCensus, convergeInventoryEntry, judgeExpiryStatus, recordHostHeartbeat } =
   await import("./inventory-reconcile.js");
 const { ObservationFence } = await import("./observation-fence.js");
+const { commitHostHello } = await import("./host-hello.js");
 
 afterAll(() => db.close());
 
@@ -179,7 +185,8 @@ async function census(
   }[],
   options?: { pendingAbsentMax?: number },
 ) {
-  const accepted = await new InventoryCensus(sender, clock, options).acceptPage({
+  const pass = new InventoryCensus(sender, clock, options);
+  const accepted = await pass.acceptPage({
     type: "sandbox.inventory",
     page: 0,
     complete: true,
@@ -205,6 +212,7 @@ async function census(
     )) as never,
   });
   expect(accepted).toEqual({ ok: true });
+  return pass.pageResults;
 }
 
 async function readySandbox(seed: Seed, onExpire: "stop" | "destroy" = "stop") {
@@ -231,6 +239,179 @@ const lifecycleOps = (sandboxId: string) =>
     orderBy: { generation: "asc" },
     select: { kind: true, state: true, generation: true, dispatchAttempt: true },
   });
+
+/** Real STOP/absent followed by the initial cleanup KILL and both retries. */
+async function exhaustedNeverReadyCleanup() {
+  const seed = await seedHost();
+  const sandbox = await createSandbox(
+    seed.owner,
+    createSandboxInput.parse({
+      template: "revision/" + seed.templateId,
+      sandboxHostId: seed.hostId,
+      idempotencyKey: `create-${randomUUID()}`,
+    }),
+  );
+  await stopSandbox(seed.owner, { id: sandbox.id, idempotencyKey: `stop-${randomUUID()}` });
+  const sender = await reconnectHost(seed);
+  // Census settles STOP/absent and queues the initial cleanup KILL (retry 0).
+  await census(sender, [{ sandboxId: sandbox.id, state: "absent" }]);
+  const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandbox.id } });
+  const host = () => db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: seed.hostId } });
+  const poolId = (await row()).storagePoolId!;
+  const pool = () => db.inspect.sandboxHostStoragePool.findUniqueOrThrow({ where: { id: poolId } });
+
+  // Initial cleanup KILL and both system retries (TEARDOWN_RETRY_MAX = 2) fail.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const kill = await db.inspect.sandboxOperation.findFirstOrThrow({
+      where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX", state: "QUEUED" },
+    });
+    await db.inspect.sandboxOperation.update({
+      where: { id: kill.id },
+      data: {
+        state: "ACCEPTED",
+        dispatchAttempt: 1,
+        acceptedAttempt: 1,
+        dispatchedHostId: seed.hostId,
+        dispatchedConnectionEpoch: sender.connectionEpoch,
+      },
+    });
+    expect(
+      await applyOperationResult(
+        {
+          sender,
+          operationId: kill.id,
+          sandboxId: sandbox.id,
+          generation: kill.generation,
+          attempt: 1,
+          state: "failed",
+          error: { code: "internal", message: "cleanup kill failed" },
+        },
+        clock,
+      ),
+    ).toEqual({ written: true });
+  }
+
+  const stuck = await row();
+  expect(stuck).toMatchObject({
+    state: "ERROR",
+    readyAt: null,
+    liveResourcesHeld: false,
+    diskReservationHeld: true,
+    diskOffloadId: null,
+    sandboxHostId: seed.hostId,
+  });
+  expect(await host()).toMatchObject({ liveCount: 0, rootCount: 1 });
+  expect((await pool()).diskReservedGiB).toBeGreaterThan(0);
+
+  const root = await presentRootOf(sandbox.id);
+  const entry = {
+    sandboxOwnerId: seed.owner.ownerId,
+    sandboxId: sandbox.id,
+    state: "absent" as const,
+    root: { ...root, state: "absent" as const, networkCleanupComplete: true },
+  };
+  return { seed, sandbox, sender, row, host, pool, stuck, entry };
+}
+
+/** An unresolved login lease with real FK-bound recoverable guest residue. */
+async function recoveryLeaseFor(f: Awaited<ReturnType<typeof exhaustedNeverReadyCleanup>>) {
+  const userId = f.seed.owner.ownerId;
+  const document = {
+    schemaVersion: 1,
+    id: "cleanup-tool",
+    displayName: "Cleanup tool",
+    login: { command: "tool login", method: "device-code" },
+    credentials: {
+      files: { required: [".config/tool"], optional: [], exclude: [] },
+      sharing: "exclusive",
+    },
+  };
+  const parsed = parseLoginDefinition(document);
+  if (!parsed.success) throw new Error("invalid test login definition");
+  const digest = await canonicalDigestHex(parsed.canonical);
+  const definition = await db.inspect.credentialDefinition.create({
+    data: {
+      userId,
+      slug: "cleanup-tool",
+      version: 1,
+      document,
+      digest,
+      displayName: "Cleanup tool",
+    },
+  });
+  const credential = await db.inspect.credential.create({
+    data: {
+      userId,
+      name: "cleanup-tool",
+      definitionId: definition.id,
+      definitionDigest: digest,
+      mode: "EXCLUSIVE",
+      delivery: "GUEST",
+      copyBack: true,
+    },
+  });
+  const account = await db.inspect.credentialAccount.create({
+    data: { userId, credentialId: credential.id, ordinal: 1 },
+  });
+  const instance = await db.inspect.credentialInstance.create({
+    data: {
+      userId,
+      credentialId: credential.id,
+      accountId: account.id,
+      accountOrdinal: 1,
+      ordinal: 1,
+      activeLeases: 1,
+    },
+  });
+  const operation = await db.inspect.sandboxOperation.findFirstOrThrow({
+    where: { sandboxId: f.sandbox.id, generation: f.stuck.generation, kind: "KILL_SANDBOX" },
+  });
+  const lease = await db.inspect.credentialLease.create({
+    data: {
+      userId,
+      credentialId: credential.id,
+      accountId: account.id,
+      instanceId: instance.id,
+      sandboxId: f.sandbox.id,
+      operationId: operation.id,
+      kind: "WORKLOAD",
+      exclusive: true,
+      state: "RECOVERY_REQUIRED",
+      hostId: f.seed.hostId,
+      baseSeq: 1,
+    },
+  });
+  const binding = await db.inspect.credentialBinding.create({
+    data: {
+      leaseId: lease.id,
+      instanceId: instance.id,
+      sandboxId: f.sandbox.id,
+      hostId: f.seed.hostId,
+      grantGeneration: f.stuck.generation,
+      operationId: operation.id,
+      baseSeq: 1,
+      purpose: "INSTALL",
+    },
+  });
+  await db.inspect.credentialLease.update({
+    where: { id: lease.id },
+    data: { currentBindingId: binding.id },
+  });
+  const residue = await db.inspect.credentialResidue.create({
+    data: {
+      sandboxId: f.sandbox.id,
+      userId,
+      credentialId: credential.id,
+      instanceId: instance.id,
+      leaseId: lease.id,
+      bindingId: binding.id,
+      grantGeneration: f.stuck.generation,
+      paths: [".config/tool"],
+      recoverable: true,
+    },
+  });
+  return { lease, residue, instance, binding };
+}
 
 describe("VM absence waits for root and network cleanup evidence", () => {
   it.each([
@@ -931,6 +1112,618 @@ describe("C33 (real PostgreSQL): offline lifecycle convergence", () => {
         where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX" },
       }),
     ).toBe(1);
+  });
+
+  it("census settles an exhausted never-ready cleanup KILL on exact root absence", async () => {
+    const { seed, sandbox, sender, row, host, pool, stuck } = await exhaustedNeverReadyCleanup();
+
+    // Incomplete root absence (root present, network cleanup incomplete, or
+    // rootless) never releases the reservation.
+    const root = await presentRootOf(sandbox.id);
+    for (const partialRoot of [
+      null,
+      root,
+      { ...root, state: "absent" as const, networkCleanupComplete: false },
+    ]) {
+      expect(
+        await new InventoryCensus(sender, clock).acceptPage({
+          type: "sandbox.inventory",
+          page: 0,
+          complete: true,
+          entries: [
+            {
+              sandboxOwnerId: seed.owner.ownerId,
+              sandboxId: sandbox.id,
+              state: "absent",
+              root: partialRoot,
+            },
+          ],
+        }),
+      ).toEqual({ ok: true });
+      expect(await row()).toMatchObject({
+        state: "ERROR",
+        generation: stuck.generation,
+        diskReservationHeld: true,
+        sandboxHostId: seed.hostId,
+      });
+    }
+
+    // Complete root + network absence settles the exhausted cleanup to DELETED
+    // and releases the disk reservation.
+    const nextSender = await reconnectHost(seed);
+    expect(await census(nextSender, [{ sandboxId: sandbox.id, state: "absent" }])).toEqual([
+      { sandboxId: sandbox.id, outcome: "converged", rootRetired: true },
+    ]);
+    expect(await row()).toMatchObject({
+      state: "DELETED",
+      generation: stuck.generation + 1,
+      liveResourcesHeld: false,
+      diskReservationHeld: false,
+      sandboxHostId: null,
+      storagePoolId: null,
+      lastErrorCode: null,
+      lastErrorDetail: null,
+    });
+    expect(await host()).toMatchObject({ liveCount: 0, rootCount: 0 });
+    expect(await pool()).toMatchObject({ diskReservedGiB: 0 });
+
+    // Replaying the same absence is idempotent and never releases twice.
+    expect(await census(nextSender, [{ sandboxId: sandbox.id, state: "absent" }])).toEqual([
+      { sandboxId: sandbox.id, outcome: "converged", rootRetired: true },
+    ]);
+    expect(await host()).toMatchObject({ liveCount: 0, rootCount: 0 });
+    expect(await pool()).toMatchObject({ diskReservedGiB: 0 });
+  });
+
+  it("retirement ACK replay preserves host, owner, root and fresh-pool authority", async () => {
+    const f = await exhaustedNeverReadyCleanup();
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    for (const root of [
+      null,
+      { ...f.entry.root, state: "present" as const },
+      { ...f.entry.root, networkCleanupComplete: false },
+      { ...f.entry.root, diskGiB: f.entry.root.diskGiB + 1 },
+      { ...f.entry.root, storageMarker: "b".repeat(32) },
+      { ...f.entry.root, storagePoolName: "other" },
+    ]) {
+      expect(await convergeInventoryEntry(f.sender, { ...f.entry, root }, clock)).toEqual({
+        converged: false,
+      });
+    }
+    const foreign = await seedHost();
+    const foreignSender = await reconnectHost(foreign);
+    expect(await convergeInventoryEntry(foreignSender, f.entry, clock)).toEqual({
+      conflict: "foreign_sandbox",
+    });
+    expect(
+      await convergeInventoryEntry(
+        f.sender,
+        { ...f.entry, sandboxOwnerId: foreign.owner.ownerId },
+        clock,
+      ),
+    ).toEqual({ stale: true });
+    expect(
+      await convergeInventoryEntry({ ...f.sender, userId: foreign.owner.ownerId }, f.entry, clock),
+    ).toEqual({ stale: true });
+    const pool = await f.pool();
+    await db.inspect.sandboxHostStoragePool.update({
+      where: { id: pool.id },
+      data: { observationSequence: 101n },
+    });
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: false,
+      staleStorage: true,
+    });
+    const fresh = { ...f.entry, root: { ...f.entry.root, observationSequence: 101 } };
+    expect(await convergeInventoryEntry(f.sender, fresh, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    const nextSender = await reconnectHost(f.seed);
+    const replay = new InventoryCensus(nextSender, clock);
+    expect(
+      await replay.acceptPage({
+        type: "sandbox.inventory",
+        page: 0,
+        complete: true,
+        entries: [fresh],
+      }),
+    ).toEqual({ ok: true });
+    expect(replay.pageResults).toEqual([
+      { sandboxId: f.sandbox.id, outcome: "converged", rootRetired: true },
+    ]);
+    expect(await f.host()).toMatchObject({ rootCount: 0, liveCount: 0 });
+    expect(await f.pool()).toMatchObject({ diskReservedGiB: 0 });
+  });
+
+  it("replays a lost retirement ACK after real hello omits the retained pool without changing frozen metadata", async () => {
+    const f = await exhaustedNeverReadyCleanup();
+    // The server commits deletion, but the daemon loses this retirement ACK.
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    const retired = await f.row();
+    const pool = await f.pool();
+    await db.inspect.sandboxHostStoragePool.update({
+      where: { id: pool.id },
+      data: {
+        capacitySource: "implicit",
+        capacityGiB: 64,
+        totalBasedCapacityGiB: 128,
+        implicitCeilingGiB: 64,
+        derivationTotalBytes: 128n * 1024n ** 3n,
+        derivationFreeBytes: 96n * 1024n ** 3n,
+        derivationCommittedBytes: 33n * 1024n ** 3n,
+        derivationActualBytes: 1024n ** 3n,
+        derivationHeadroomBytes: 1024n ** 3n,
+        draining: true,
+        health: "unavailable",
+        healthReason: "io",
+        reportedAt: new Date(0),
+      },
+    });
+    const unrelated = await db.inspect.sandboxHostStoragePool.create({
+      data: {
+        ...pool,
+        id: randomUUID(),
+        name: "unrelated",
+        marker: randomUUID(),
+        health: "unavailable",
+        healthReason: "io",
+      },
+    });
+    const message = { ...helloFixture(f.seed.hostId), storagePools: [] };
+    const sender = {
+      userId: f.seed.owner.ownerId,
+      hostId: f.seed.hostId,
+      connectionEpoch: await commitHostHello({ identity: f.sender, message, now: clock() }),
+    };
+    const omitted = await f.pool();
+    expect(omitted).toMatchObject({
+      connectionEpoch: f.sender.connectionEpoch,
+      configured: false,
+      newRootsAllowed: false,
+      health: "unavailable",
+      reportedAt: new Date(0),
+    });
+    expect(sender.connectionEpoch).toBe(f.sender.connectionEpoch + 1);
+    const unrelatedOmitted = await db.inspect.sandboxHostStoragePool.findUniqueOrThrow({
+      where: { id: unrelated.id },
+    });
+    const frozenCapacity = (await f.host()).capacityReport;
+    const foreign = await seedHost();
+    for (const root of [
+      null,
+      { ...f.entry.root, state: "present" as const },
+      { ...f.entry.root, networkCleanupComplete: false },
+      { ...f.entry.root, diskGiB: f.entry.root.diskGiB + 1 },
+      { ...f.entry.root, storageMarker: unrelated.marker },
+      { ...f.entry.root, storagePoolName: unrelated.name },
+    ]) {
+      expect(await convergeInventoryEntry(sender, { ...f.entry, root }, clock)).toEqual({
+        converged: false,
+      });
+    }
+    expect(await convergeInventoryEntry(await reconnectHost(foreign), f.entry, clock)).toEqual({
+      conflict: "foreign_sandbox",
+    });
+    for (const [transport, entry] of [
+      [{ ...sender, userId: foreign.owner.ownerId }, f.entry],
+      [sender, { ...f.entry, sandboxOwnerId: foreign.owner.ownerId }],
+    ] as const) {
+      expect(await convergeInventoryEntry(transport, entry, clock)).toEqual({ stale: true });
+    }
+    // Even an authorized refresh must roll back if its sender loses the socket.
+    expect(
+      await convergeInventoryEntry({ ...sender, isCurrent: () => false }, f.entry, clock),
+    ).toEqual({ stale: true });
+    expect(await f.pool()).toEqual(omitted);
+
+    // Sequence numbers are epoch-local; a fresh exact proof may reset them.
+    const fresh = { ...f.entry, root: { ...f.entry.root, observationSequence: 1 } };
+    const replay = new InventoryCensus(sender, clock);
+    expect(
+      await replay.acceptPage({
+        type: "sandbox.inventory",
+        page: 0,
+        complete: true,
+        entries: [fresh],
+      }),
+    ).toEqual({ ok: true });
+    expect(replay.pageResults).toEqual([
+      { sandboxId: f.sandbox.id, outcome: "converged", rootRetired: true },
+    ]);
+    const repaired = await f.pool();
+    expect(repaired).toEqual({
+      ...omitted,
+      health: "healthy",
+      healthReason: null,
+      connectionEpoch: sender.connectionEpoch,
+      observationSequence: 1n,
+      reportedAt: expect.any(Date),
+      updatedAt: expect.any(Date),
+    });
+    expect(repaired.reportedAt.getTime()).toBeGreaterThan(omitted.reportedAt.getTime());
+    expect(await judgeExpiryStatus(sender, [fresh], clock, () => false)).toEqual({
+      results: [{ sandboxId: f.sandbox.id, outcome: "converged", rootRetired: true }],
+    });
+    expect(await f.pool()).toEqual(repaired);
+    expect(await f.row()).toEqual(retired);
+    expect(await f.host()).toMatchObject({
+      rootCount: 0,
+      liveCount: 0,
+      capacityReport: frozenCapacity,
+    });
+    expect(
+      await db.inspect.sandboxHostStoragePool.findUniqueOrThrow({ where: { id: unrelated.id } }),
+    ).toEqual(unrelatedOmitted);
+  });
+
+  it("omitted-pool retirement replay requires a newer proof to repair negative or aged health", async () => {
+    const f = await exhaustedNeverReadyCleanup();
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    const sender = {
+      ...f.sender,
+      connectionEpoch: await commitHostHello({
+        identity: f.sender,
+        message: { ...helloFixture(f.seed.hostId), storagePools: [] },
+        now: clock(),
+      }),
+    };
+    expect((await f.pool()).connectionEpoch).toBe(f.sender.connectionEpoch);
+    expect(await convergeInventoryEntry(sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    const pool = await f.pool();
+    const negative = await db.inspect.sandboxHostStoragePool.update({
+      where: { id: pool.id },
+      data: {
+        health: "unavailable",
+        healthReason: "io",
+        observationSequence: pool.observationSequence + 1n,
+      },
+    });
+    expect(await convergeInventoryEntry(sender, f.entry, clock)).toEqual({
+      converged: false,
+      staleStorage: true,
+    });
+    const current = {
+      ...f.entry,
+      root: { ...f.entry.root, observationSequence: Number(negative.observationSequence) },
+    };
+    expect(await convergeInventoryEntry(sender, current, clock)).toEqual({ converged: false });
+    expect(await f.pool()).toEqual(negative);
+    // Explicit proof newer than the negative observation repairs only this pool.
+    const fresh = {
+      ...f.entry,
+      root: { ...f.entry.root, observationSequence: current.root.observationSequence + 1 },
+    };
+    expect(await convergeInventoryEntry(sender, fresh, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    const healthy = await f.pool();
+    expect(healthy).toEqual({
+      ...negative,
+      health: "healthy",
+      healthReason: null,
+      observationSequence: BigInt(fresh.root.observationSequence),
+      reportedAt: expect.any(Date),
+      updatedAt: expect.any(Date),
+    });
+    for (const reportedAt of [new Date(0), new Date(Date.now() + 60_000)]) {
+      const stale = await db.inspect.sandboxHostStoragePool.update({
+        where: { id: pool.id },
+        data: { reportedAt },
+      });
+      expect(await convergeInventoryEntry(sender, fresh, clock)).toEqual({
+        converged: false,
+        staleStorage: true,
+      });
+      expect(await f.pool()).toEqual(stale);
+    }
+    const newer = {
+      ...fresh,
+      root: { ...fresh.root, observationSequence: fresh.root.observationSequence + 1 },
+    };
+    expect(await convergeInventoryEntry(sender, newer, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    expect(await f.pool()).toMatchObject({
+      configured: false,
+      newRootsAllowed: false,
+      observationSequence: BigInt(newer.root.observationSequence),
+    });
+  });
+
+  it.each([
+    "credential_capture_failed",
+    "older-generation",
+    "offloaded",
+    "open-lease",
+    "teardown-intent",
+  ] as const)(
+    "failed cleanup census excludes %s even with complete host proof",
+    async (excluded) => {
+      const f = await exhaustedNeverReadyCleanup();
+      const recovery = excluded === "open-lease" ? await recoveryLeaseFor(f) : null;
+      if (excluded === "credential_capture_failed" || excluded === "teardown-intent") {
+        await db.inspect.sandboxOperation.updateMany({
+          where: { sandboxId: f.sandbox.id, generation: f.stuck.generation, kind: "KILL_SANDBOX" },
+          data:
+            excluded === "credential_capture_failed"
+              ? { errorCode: "credential_capture_failed" }
+              : { teardownIntent: "OWNER_DESTROY" },
+        });
+      }
+      if (excluded === "older-generation") {
+        await db.inspect.sandbox.update({
+          where: { id: f.sandbox.id },
+          data: { generation: { increment: 1 } },
+        });
+      }
+      let offloadId: string | null = null;
+      if (excluded === "offloaded") {
+        // A retained restore root can coexist with an offload. It must never
+        // enter this cleanup-only deletion path or end its stored-disk pointer.
+        const offload = await db.prisma.$transaction((tx) =>
+          seedStoredOffload(tx, {
+            sandboxId: f.sandbox.id,
+            userId: f.seed.owner.ownerId,
+            hostId: f.seed.hostId,
+          }),
+        );
+        offloadId = offload.offloadId;
+        await db.inspect.sandbox.update({
+          where: { id: f.sandbox.id },
+          data: { diskOffloadId: offloadId, offloadSeq: 1 },
+        });
+      }
+      const before = await f.row();
+      const host = await f.host();
+      const pool = await f.pool();
+      // A STORED disk follows the established OFFLOADED detach, never this
+      // new DELETED path. Other excluded cases keep the retained ERROR root.
+      expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+        converged: !!offloadId,
+      });
+      expect(await f.row()).toMatchObject({
+        state: offloadId ? "OFFLOADED" : "ERROR",
+        generation: before.generation + (offloadId ? 1 : 0),
+        diskReservationHeld: !offloadId,
+        diskOffloadId: offloadId,
+        sandboxHostId: offloadId ? null : f.seed.hostId,
+        lastErrorCode: before.lastErrorCode,
+        lastErrorDetail: before.lastErrorDetail,
+      });
+      expect(await f.host()).toMatchObject({
+        rootCount: offloadId ? 0 : host.rootCount,
+        liveCount: host.liveCount,
+      });
+      expect(await f.pool()).toMatchObject({
+        diskReservedGiB: offloadId ? 0 : pool.diskReservedGiB,
+      });
+      expect(
+        await db.inspect.sandboxOperation.count({
+          where: { sandboxId: f.sandbox.id, kind: "KILL_SANDBOX", state: "SUCCEEDED" },
+        }),
+      ).toBe(0);
+      if (offloadId) {
+        expect(
+          await db.inspect.sandboxDiskOffload.findUniqueOrThrow({ where: { id: offloadId } }),
+        ).toMatchObject({ state: "STORED", liveSandboxId: f.sandbox.id, destroyOperationId: null });
+      }
+      if (recovery) {
+        expect(
+          await db.inspect.credentialLease.findUniqueOrThrow({ where: { id: recovery.lease.id } }),
+        ).toMatchObject({
+          state: "RECOVERY_REQUIRED",
+          releasedAt: null,
+          currentBindingId: recovery.binding.id,
+        });
+        expect(
+          await db.inspect.credentialResidue.findUniqueOrThrow({
+            where: { id: recovery.residue.id },
+          }),
+        ).toMatchObject({
+          clearedAt: null,
+          recoverable: true,
+        });
+        expect(
+          await db.inspect.credentialInstance.findUniqueOrThrow({
+            where: { id: recovery.instance.id },
+          }),
+        ).toMatchObject({ activeLeases: 1 });
+      }
+    },
+  );
+
+  it("failed cleanup census accepts a null error once login recovery is resolved", async () => {
+    const f = await exhaustedNeverReadyCleanup();
+    const recovery = await recoveryLeaseFor(f);
+    await db.inspect.sandboxOperation.updateMany({
+      where: { sandboxId: f.sandbox.id, generation: f.stuck.generation, kind: "KILL_SANDBOX" },
+      data: { errorCode: null },
+    });
+    await db.inspect.credentialLease.update({
+      where: { id: recovery.lease.id },
+      data: { state: "FORCE_RELEASED", releasedAt: new Date(), endReason: "force_released" },
+    });
+    await db.inspect.credentialInstance.update({
+      where: { id: recovery.instance.id },
+      data: { activeLeases: 0 },
+    });
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    expect(await f.row()).toMatchObject({
+      state: "DELETED",
+      diskReservationHeld: false,
+      sandboxHostId: null,
+      storagePoolId: null,
+    });
+    expect(
+      await db.inspect.credentialLease.findUniqueOrThrow({ where: { id: recovery.lease.id } }),
+    ).toMatchObject({
+      state: "FORCE_RELEASED",
+      releasedAt: expect.any(Date),
+    });
+    expect(
+      await db.inspect.credentialResidue.findUniqueOrThrow({ where: { id: recovery.residue.id } }),
+    ).toMatchObject({
+      clearedAt: expect.any(Date),
+      recoverable: false,
+    });
+    expect(
+      await db.inspect.credentialInstance.findUniqueOrThrow({
+        where: { id: recovery.instance.id },
+      }),
+    ).toMatchObject({ activeLeases: 0 });
+    expect(await f.host()).toMatchObject({ rootCount: 0, liveCount: 0 });
+    expect(await f.pool()).toMatchObject({ diskReservedGiB: 0 });
+  });
+
+  it("concurrent failed cleanup census replay releases the root exactly once", async () => {
+    const f = await exhaustedNeverReadyCleanup();
+    const gate = db.pauseAt("cleanup-one", { after: "sandboxOperation.create" });
+    const first = db.run("cleanup-one", () => convergeInventoryEntry(f.sender, f.entry, clock));
+    await gate.waitReached();
+    const second = db.run("cleanup-two", () => convergeInventoryEntry(f.sender, f.entry, clock));
+    try {
+      expect((await db.waitUntilBlocked("cleanup-two", { by: "cleanup-one" })).query).toMatch(
+        /sandbox_host/,
+      );
+    } finally {
+      gate.release();
+    }
+    const outcomes = await Promise.all([first, second]);
+    expect(outcomes.filter((outcome) => "converged" in outcome && outcome.converged)).toHaveLength(
+      1,
+    );
+    expect(await f.row()).toMatchObject({
+      state: "DELETED",
+      generation: f.stuck.generation + 1,
+      diskReservationHeld: false,
+      sandboxHostId: null,
+      storagePoolId: null,
+    });
+    expect(await f.host()).toMatchObject({ rootCount: 0, liveCount: 0 });
+    expect(await f.pool()).toMatchObject({ diskReservedGiB: 0 });
+    expect(
+      await db.inspect.sandboxOperation.count({
+        where: { sandboxId: f.sandbox.id, kind: "KILL_SANDBOX", state: "SUCCEEDED" },
+      }),
+    ).toBe(1);
+    expect(await convergeInventoryEntry(f.sender, f.entry, clock)).toEqual({
+      converged: true,
+      rootRetired: true,
+    });
+    expect(await f.host()).toMatchObject({ rootCount: 0 });
+    expect(await f.pool()).toMatchObject({ diskReservedGiB: 0 });
+  });
+
+  it.each(["generation", "epoch"] as const)(
+    "a concurrent %s advance fences failed cleanup census settlement",
+    async (advance) => {
+      const f = await exhaustedNeverReadyCleanup();
+      const { lockOwnerForAdmission } = await import("@wssp/db/account-deletion");
+      const { lockHostByEpoch } = await import("@wssp/api/sandbox/relay-fence");
+      const gate = db.pauseAt("cleanup-writer", {
+        after: advance === "generation" ? "sandbox.update" : "sandboxHost.update",
+      });
+      const writer = db.run("cleanup-writer", () =>
+        db.prisma.$transaction(async (tx) => {
+          await lockOwnerForAdmission(tx, f.seed.owner.ownerId);
+          await lockHostByEpoch(tx, f.seed.hostId, f.sender.connectionEpoch, f.seed.owner.ownerId);
+          if (advance === "generation") {
+            await tx.sandbox.update({
+              where: { id: f.sandbox.id },
+              data: { generation: { increment: 1 } },
+            });
+          } else {
+            await tx.sandboxHost.update({
+              where: { id: f.seed.hostId },
+              data: { connectionEpoch: { increment: 1 } },
+            });
+          }
+        }),
+      );
+      await gate.waitReached();
+      const report = db.run("cleanup-census", () =>
+        convergeInventoryEntry(f.sender, f.entry, clock),
+      );
+      try {
+        expect(
+          (await db.waitUntilBlocked("cleanup-census", { by: "cleanup-writer" })).query,
+        ).toMatch(/sandbox_host/);
+      } finally {
+        gate.release();
+      }
+      await writer;
+      expect(await report).toEqual({ stale: true });
+      expect(await f.row()).toMatchObject({
+        state: "ERROR",
+        diskReservationHeld: true,
+        generation: f.stuck.generation + (advance === "generation" ? 1 : 0),
+        sandboxHostId: f.seed.hostId,
+      });
+      expect(await f.host()).toMatchObject({ rootCount: 1, liveCount: 0 });
+      expect((await f.pool()).diskReservedGiB).toBeGreaterThan(0);
+    },
+  );
+
+  it("census does not turn a never-ready failed CREATE without a failed KILL into DELETED", async () => {
+    const seed = await seedHost();
+    const sandbox = await createSandbox(
+      seed.owner,
+      createSandboxInput.parse({
+        template: "revision/" + seed.templateId,
+        sandboxHostId: seed.hostId,
+        idempotencyKey: `create-${randomUUID()}`,
+      }),
+    );
+    await processSandboxOutboxBatch(clock);
+    const create = await db.inspect.sandboxOperation.findFirstOrThrow({
+      where: { sandboxId: sandbox.id, kind: "CREATE_SANDBOX" },
+    });
+    expect(
+      await applyOperationResult(
+        {
+          sender: { userId: seed.owner.ownerId, hostId: seed.hostId, connectionEpoch: 1 },
+          operationId: create.id,
+          sandboxId: sandbox.id,
+          generation: create.generation,
+          attempt: create.dispatchAttempt,
+          state: "failed",
+          error: { code: "internal", message: "create failed" },
+        },
+        clock,
+      ),
+    ).toEqual({ written: true });
+    const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandbox.id } });
+    expect(await row()).toMatchObject({
+      state: "ERROR",
+      readyAt: null,
+      liveResourcesHeld: false,
+      diskReservationHeld: true,
+    });
+    const sender = await reconnectHost(seed);
+    await census(sender, [{ sandboxId: sandbox.id, state: "absent" }]);
+    expect(await row()).toMatchObject({
+      state: "ERROR",
+      diskReservationHeld: true,
+      sandboxHostId: seed.hostId,
+    });
   });
 
   it("a completed expiry releases the slot a cold reconnect left held and settles its unknown outcome", async () => {

@@ -1166,6 +1166,8 @@ export type NegotiatedCapabilities = z.infer<typeof negotiatedCapabilitiesSchema
  * the host retries it under a current observation. */
 export type CensusEntryResult = {
   sandboxId: string;
+  /** Exact offered root retirement; convergence alone may only adopt a lease. */
+  rootRetired?: boolean;
   /** `superseded`: only in `sandbox.expiry_status.ack` (`observationFence`):
    * the observation may predate a lifecycle result the server received, so
    * it was not judged; the host offers a newer observation (bounded). */
@@ -1516,6 +1518,27 @@ export function encodeServerControlMessage(
   }
   if (!knownRelayProtocolVersion(protocolVersion))
     throw new SandboxRelayDispatchValidationError("Unknown negotiated protocol version.");
+  if (message.type === "inventory.ack" || message.type === "sandbox.expiry_status.ack") {
+    const resultSchema = z
+      .strictObject({
+        sandboxId: z
+          .string()
+          .min(1)
+          .max(128)
+          .regex(/^[A-Za-z0-9_-]+$/),
+        outcome: z.enum(["converged", "not_converged", "stale_storage", "superseded"]),
+        rootRetired: z.boolean().optional(),
+      })
+      .refine((r) => !r.rootRetired || r.outcome === "converged");
+    if (
+      message.entryResults &&
+      (!z.array(resultSchema).max(INVENTORY_PAGE_MAX_ENTRIES).safeParse(message.entryResults)
+        .success ||
+        (message.type === "inventory.ack" &&
+          message.entryResults.some((r) => r.outcome === "superseded")))
+    )
+      throw new SandboxRelayDispatchValidationError("Invalid inventory acknowledgement.");
+  }
   if (
     message.type === "allocation.attest.request" &&
     (!allocationRequestSchema.safeParse(message).success ||

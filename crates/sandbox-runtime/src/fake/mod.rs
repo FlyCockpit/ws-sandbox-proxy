@@ -240,6 +240,8 @@ struct FakeState {
     next_qemu_pid: u64,
     /// Disk offload (`fake/offload.rs`).
     offload: offload::FakeOffloadState,
+    /// Test fault injection: sandboxes whose host network cleanup is still pending.
+    network_cleanup_pending: HashSet<String>,
 }
 
 impl FakeState {
@@ -1346,6 +1348,8 @@ pub struct FakeRuntime {
     refused_dns_names: std::sync::Arc<RefusedQueue>,
     /// Credential guest homes, faults and holds (CLI logins C6a).
     credentials: std::sync::Arc<std::sync::Mutex<credentials::FakeCredentialState>>,
+    stdin_hook: StdinHook,
+    cancel_hook: LifecycleHook,
 }
 
 /// Observable record of `refresh_dns_grants` calls.
@@ -1391,7 +1395,17 @@ impl Default for FakeRuntime {
             create_failure_switch: None,
             refused_dns_names: Default::default(),
             credentials: Default::default(),
+            stdin_hook: StdinHook::default(),
+            cancel_hook: LifecycleHook::default(),
         }
+    }
+}
+type StdinCallback = dyn Fn(&WriteStdinRequest) -> Result<(), RuntimeError> + Send + Sync;
+#[derive(Clone, Default)]
+struct StdinHook(Option<std::sync::Arc<StdinCallback>>);
+impl std::fmt::Debug for StdinHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StdinHook")
     }
 }
 type RefusedQueue = std::sync::Mutex<Option<Vec<(String, String)>>>;
@@ -1653,6 +1667,31 @@ impl FakeRuntime {
         hook: impl Fn(&FakeGuestIo<'_>) -> Result<(), RuntimeError> + Send + Sync + 'static,
     ) -> Self {
         self.guest_io_hook = GuestIoHook(Some(std::sync::Arc::new(hook)));
+        self
+    }
+    /// Models a durable cleanup record or leftover bridge/ACL for census tests.
+    pub fn set_network_cleanup_pending(&self, sandbox_id: &str, pending: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if pending {
+            state.network_cleanup_pending.insert(sandbox_id.into());
+        } else {
+            state.network_cleanup_pending.remove(sandbox_id);
+        }
+    }
+    /// Barrier/observer seam for `write_stdin` control-lane tests; never used by Incus.
+    pub fn with_stdin_hook(
+        mut self,
+        hook: impl Fn(&WriteStdinRequest) -> Result<(), RuntimeError> + Send + Sync + 'static,
+    ) -> Self {
+        self.stdin_hook = StdinHook(Some(std::sync::Arc::new(hook)));
+        self
+    }
+    /// Barrier/observer seam for `cancel_operation` control-lane tests; never used by Incus.
+    pub fn with_cancel_hook(
+        mut self,
+        hook: impl Fn(&str) -> Result<(), RuntimeError> + Send + Sync + 'static,
+    ) -> Self {
+        self.cancel_hook = LifecycleHook(Some(std::sync::Arc::new(hook)));
         self
     }
     fn guest_io(
@@ -2485,6 +2524,15 @@ impl SandboxRuntime for FakeRuntime {
     ) -> Result<crate::RootAbsenceProof, RuntimeError> {
         self.fake_prove_root_absent(root, name)
     }
+    fn prove_network_cleanup_complete(&self, sandbox_id: &str) -> Result<bool, RuntimeError> {
+        let _permit = self.cancelled.as_ref().map(|c| c.admit()).transpose()?;
+        Ok(!self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .network_cleanup_pending
+            .contains(sandbox_id))
+    }
     fn create_sandbox_on_storage(
         &self,
         request: &CreateSandboxRequest,
@@ -3033,6 +3081,9 @@ impl SandboxRuntime for FakeRuntime {
             .map_err(SimulatedFailure::completed)
     }
     fn cancel_operation(&self, operation_id: &str) -> crate::EffectOutcome<()> {
+        if let Some(hook) = &self.cancel_hook.0 {
+            hook(operation_id).map_err(SimulatedFailure::completed)?;
+        }
         self.state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -3145,6 +3196,9 @@ impl SandboxRuntime for FakeRuntime {
         ))
     }
     fn write_stdin(&self, request: &WriteStdinRequest) -> crate::EffectOutcome<()> {
+        if let Some(hook) = &self.stdin_hook.0 {
+            hook(request).map_err(SimulatedFailure::completed)?;
+        }
         self.state
             .lock()
             .unwrap_or_else(|e| e.into_inner())

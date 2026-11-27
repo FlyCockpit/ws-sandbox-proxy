@@ -1553,6 +1553,12 @@ pub trait SandboxRuntime: Send + Sync {
     ) -> Result<crate::RootAbsenceProof, RuntimeError> {
         Err(storage_unsupported())
     }
+    /// Proves that no host network cleanup obligation (pending cleanup record,
+    /// managed bridge, or managed network ACL) remains for `sandbox_id`.
+    /// Fail-closed default: `Ok(false)`. `Err(_)` is inconclusive.
+    fn prove_network_cleanup_complete(&self, _sandbox_id: &str) -> Result<bool, RuntimeError> {
+        Ok(false)
+    }
     fn create_sandbox_on_storage(
         &self,
         _request: &CreateSandboxRequest,

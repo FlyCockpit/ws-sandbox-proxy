@@ -20,8 +20,10 @@ const read = (name: string) => JSON.parse(readFileSync(join(fixtures, name), "ut
 const fixture = read("census_entry_results.json") as {
   validOffers: unknown[];
   rejectedOffers: unknown[];
+  rejectedAcks: unknown[];
   helloOkCapabilities: Record<string, unknown>;
   ack: { type: "inventory.ack"; page: number; entryResults: unknown[] };
+  expiryAck: { type: "sandbox.expiry_status.ack"; batch: number; entryResults: unknown[] };
 };
 const hello = read("control_hello_daemon.json") as {
   daemon: { capabilities: Record<string, unknown> };
@@ -55,6 +57,12 @@ describe("per-entry census results parity with Rust", () => {
       ).toBe(false);
   });
 
+  it("rejects invalid root retirement acknowledgements from the shared fixture", () => {
+    for (const ack of fixture.rejectedAcks) {
+      expect(() => encodeServerControlMessage(ack as never, "1.0")).toThrow();
+    }
+  });
+
   it("encodes the shared hello.ok answer and the shared judged inventory.ack", () => {
     const answered = { ...negotiatedCapabilities("1.0"), censusEntryResults: true };
     expect(answered).toEqual(fixture.helloOkCapabilities);
@@ -67,8 +75,8 @@ describe("per-entry census results parity with Rust", () => {
         "1.0",
       ),
     ).toThrow("Invalid hello capabilities.");
-    expect(JSON.parse(encodeServerControlMessage(fixture.ack as never, "1.0"))).toEqual(
-      fixture.ack,
-    );
+    for (const ack of [fixture.ack, fixture.expiryAck]) {
+      expect(JSON.parse(encodeServerControlMessage(ack as never, "1.0"))).toEqual(ack);
+    }
   });
 });

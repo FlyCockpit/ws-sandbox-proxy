@@ -11,6 +11,55 @@ pub struct RetainedRoot {
     pub generation: u64,
     pub live: bool,
 }
+
+/// Authority captured before runtime observation; never survives its session.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RootRetirementFence {
+    root: RetainedRoot,
+    epoch: u64,
+    generation: u64,
+    lease: Option<(u64, sandbox_protocol::HostLease, bool, bool)>,
+}
+
+pub(super) fn root_lifecycle(kind: &str) -> bool {
+    matches!(
+        kind,
+        "sandbox.create"
+            | "sandbox.reconnect"
+            | "sandbox.stop"
+            | "sandbox.kill"
+            | "sandbox.lease.renew"
+            | "credential.attach"
+            | "credential.free"
+    )
+}
+
+fn retirement_fence(state: &JournalState, id: &str) -> Option<RootRetirementFence> {
+    if state.lease_workers.get(id).copied().unwrap_or(0) != 0
+        || state
+            .receipts
+            .values()
+            .any(|r| r.sandbox_id == id && root_lifecycle(&r.kind) && !r.is_terminal())
+    {
+        return None;
+    }
+    let root = state.storage.roots.get(id)?.clone();
+    let lease = state.leases.get(id);
+    let generation = state
+        .receipts
+        .values()
+        .filter(|r| r.sandbox_id == id && root_lifecycle(&r.kind))
+        .map(|r| r.generation)
+        .chain(lease.map(|r| r.generation))
+        .chain(state.cleanups.get(id).map(|r| r.generation))
+        .fold(root.generation, u64::max);
+    Some(RootRetirementFence {
+        root,
+        epoch: state.root_observation_epochs.get(id).copied().unwrap_or(0),
+        generation,
+        lease: lease.map(|r| (r.generation, r.lease.clone(), r.expired, r.expiry_complete)),
+    })
+}
 impl RetainedRoot {
     pub fn root(&self) -> sandbox_runtime::RootDisk {
         allocation_root(&self.allocation)
@@ -121,6 +170,44 @@ impl StorageLedger {
     }
 }
 impl HostJournal {
+    pub(crate) fn root_retirement_fence(&self, id: &str) -> Option<RootRetirementFence> {
+        retirement_fence(&self.state.lock().unwrap_or_else(|e| e.into_inner()), id)
+    }
+
+    /// Only an exact ACK of the observed absence can discharge this root.
+    /// The caller additionally excludes queued/carried/active/resolving work.
+    pub(crate) fn acknowledge_root_retired(
+        &self,
+        entry: &sandbox_protocol::InventoryEntry,
+        fence: &RootRetirementFence,
+    ) -> Result<bool> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if self.io.failed()
+            || retirement_fence(&state, &entry.sandbox_id).as_ref() != Some(fence)
+            || entry.sandbox_owner_id.as_deref() != Some(fence.root.sandbox_owner_id.as_str())
+            || entry.state != sandbox_protocol::SandboxLifecycleState::Absent
+            || !entry.root.as_ref().is_some_and(|r| {
+                r.state == sandbox_protocol::RootState::Absent
+                    && r.network_cleanup_complete
+                    && r.storage_pool_name == fence.root.allocation.storage_pool_name
+                    && r.storage_marker == fence.root.allocation.storage_marker
+                    && r.disk_gi_b == fence.root.allocation.disk_gi_b
+            })
+        {
+            return Ok(false);
+        }
+        let mut next = state.storage.clone();
+        next.roots.remove(&entry.sandbox_id);
+        next.deleted
+            .entry(entry.sandbox_id.clone())
+            .and_modify(|g| *g = (*g).max(fence.generation))
+            .or_insert(fence.generation);
+        self.persist_storage(&next)?;
+        state.storage = next;
+        state.root_observation_epochs.remove(&entry.sandbox_id);
+        Ok(true)
+    }
+
     fn persist_storage(&self, ledger: &StorageLedger) -> Result<()> {
         let envelope = Envelope {
             checksum: sha256_hex(&serde_json::to_vec(ledger)?),
@@ -179,6 +266,15 @@ impl HostJournal {
             .storage
             .roots
             .clone()
+    }
+    pub(crate) fn root_deleted_generation(&self, id: &str) -> Option<u64> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .storage
+            .deleted
+            .get(id)
+            .copied()
     }
     pub fn pool_lineages(&self) -> Vec<sandbox_runtime::StoragePoolIdentity> {
         self.state
@@ -310,6 +406,9 @@ impl HostJournal {
             }
             self.persist_storage(&next)?;
             state.storage = next;
+            if deleted {
+                state.root_observation_epochs.remove(id);
+            }
         }
         Ok(())
     }
@@ -568,6 +667,9 @@ impl HostJournal {
             }
             self.persist_storage(&next)?;
             state.storage = next;
+            if deleted {
+                state.root_observation_epochs.remove(id);
+            }
         }
         Ok(())
     }
@@ -618,6 +720,7 @@ impl HostJournal {
         // Its original generation may safely retry after this positive proof.
         self.persist_storage(&next)?;
         state.storage = next;
+        state.root_observation_epochs.remove(id);
         Ok(())
     }
 }

@@ -29,6 +29,7 @@ export { activateLoginLease, destroySavedLoginSandbox } from "./login-relay";
 export { issueCurrentReturnKey, recordReturnKeyAck } from "./return-keys";
 export { freeSpecSkips, readOperationSpecChunks } from "./specs";
 export {
+  hasOpenCredentialLeases,
   ownsReleasingLease,
   rebindPlacementAfterRearm,
   settleCredentialConvergence,

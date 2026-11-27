@@ -2347,10 +2347,6 @@ fn relay_session_loop(
     let sandbox_count = advertised.sandbox_count;
     let socket = &mut *socket;
     set_ws_timeouts(socket, Duration::from_millis(100), RELAY_WRITE_TIMEOUT)?;
-    // Stdin failures complete through the process-scoped channel (N5).
-    let finished_tx = relay.finished_sender();
-    #[cfg(not(target_os = "linux"))]
-    let _ = &finished_tx;
 
     let _key_session =
         super::journal_key::KeySession::start_carrying(journal.clone(), authority.clone());
@@ -2545,6 +2541,7 @@ fn relay_session_loop(
     enum ExpiryObservation {
         Offer(Option<super::reconcile::ExpiryOffer>),
     }
+    let mut root_retirements = super::reconcile::RootRetirements::new();
     let (expiry_tx, expiry_rx) = mpsc::sync_channel::<ExpiryObservation>(1);
     let mut expiry_observing = false;
     // A failed observation delays the next one.
@@ -2893,6 +2890,7 @@ fn relay_session_loop(
                     }
                     let health = deferred.published_health();
                     let evidence = deferred.evidence();
+                    root_retirements = offer.retirements;
                     for id in &offer.reoffered {
                         if !offered.contains(id.as_str()) && !offer.raced.contains(id) {
                             evidence.forget(id);
@@ -2920,6 +2918,7 @@ fn relay_session_loop(
         if registered {
             // Journal state only, no runtime IO: a completed local expiry frees
             // the slot unless a newer generation has acquired it since.
+            live_admission.refresh_retained(&journal);
             for id in live_admission.sandbox_ids() {
                 if let Some(row) = journal.lease(&id)
                     && row.expired
@@ -2996,6 +2995,9 @@ fn relay_session_loop(
                 let observation_sequence = storage_sequence;
                 let reported = expiry_reported.clone();
                 let tx = expiry_tx.clone();
+                let mut busy = authority.pending_lifecycle_sandboxes();
+                busy.extend(relay.lifecycle_busy());
+                busy.extend(resolutions.busy_sandboxes());
                 expiry_observing = relay
                     .observe(move || {
                         let offer = match super::reconcile::expiry_status_offer(
@@ -3006,6 +3008,7 @@ fn relay_session_loop(
                             &reported,
                             reoffer,
                             &blocked,
+                            &busy,
                         ) {
                             Ok(mut offer) => {
                                 for root in offer.entries.iter_mut().filter_map(|e| e.root.as_mut())
@@ -3388,10 +3391,7 @@ fn relay_session_loop(
                         #[cfg(target_os = "linux")]
                         if let Some(supervisor) = &exec_supervisor {
                             for id in authority.take_revoked_execs() {
-                                let supervisor = supervisor.clone();
-                                relay.control(move || {
-                                    let _ = supervisor.cancel(&id);
-                                })?;
+                                relay.cancel_exec(supervisor.clone(), id);
                             }
                         }
                         relay.resume_teardowns(&journal, binding)?;
@@ -3664,14 +3664,12 @@ fn relay_session_loop(
                             if exec_supervisor.is_some() && work.kind == "command.run" {
                                 // The exec owner observes the durable request directly;
                                 // duplicates need no extra control jobs or cleanup owner.
+                                relay.drop_stdin_for(&operation_id);
                                 continue;
                             }
                             #[cfg(not(target_os = "linux"))]
                             let _ = work;
-                            let runtime = runtime.clone();
-                            relay.control(move || {
-                                let _ = runtime.cancel_operation(&operation_id);
-                            })?;
+                            relay.cancel_runtime(operation_id);
                         }
                     }
                     ServerControlMessage::SandboxState { .. } => {}
@@ -3886,10 +3884,23 @@ fn relay_session_loop(
                     }
                     ServerControlMessage::SandboxExpiryStatusAck {
                         batch,
-                        entry_results,
+                        mut entry_results,
                     } => {
                         if !registered {
                             bail!("unnegotiated expiry status ack");
+                        }
+                        let entries = deferred.evidence().acknowledged_entries(batch, &entry_results)?;
+                        let mut busy = authority.pending_lifecycle_sandboxes();
+                        busy.extend(relay.lifecycle_busy());
+                        busy.extend(resolutions.busy_sandboxes());
+                        let raced = super::reconcile::retire_acknowledged_roots(
+                            &journal, &entries, &entry_results, &root_retirements, &busy,
+                        )?;
+                        for result in &mut entry_results {
+                            if raced.contains(&result.sandbox_id) {
+                                result.outcome = sandbox_protocol::CensusEntryOutcome::Superseded;
+                                result.root_retired = false;
+                            }
                         }
                         deferred.evidence().acknowledge(
                             batch,
@@ -3929,25 +3940,24 @@ fn relay_session_loop(
                 let (file_meta, file_body) = parse_binary_frame_ref(&data)?;
                 #[cfg(target_os = "linux")]
                 if file_meta.flags.as_ref().and_then(|f| f.stdin) == Some(true) {
-                    let exec = exec_supervisor.clone();
-                    let runtime = runtime.clone();
-                    let authority = authority.clone();
-                    let tx = finished_tx.clone();
-                    let journal = journal.clone();
-                    let body = file_body.to_vec();
-                    relay.control(move || {
-                        let outcome = apply_stdin(
+                    let metadata = file_meta.clone();
+                    let work = super::supervisor::StdinControlWork {
+                        metadata: file_meta,
+                        body: file_body.to_vec(),
+                        exec: exec_supervisor.clone(),
+                    };
+                    if matches!(
+                        relay.enqueue_stdin(work),
+                        super::supervisor::StdinEnqueue::Full
+                    ) {
+                        refuse_stdin_overflow(
                             &journal,
-                            exec.as_ref(),
-                            runtime.as_ref(),
                             &authority,
-                            &file_meta,
-                            body,
-                        );
-                        if let Err(result) = outcome {
-                            let _ = tx.send(persist_finished(&journal, *result));
-                        }
-                    })?;
+                            relay,
+                            exec_supervisor.as_ref(),
+                            &metadata,
+                        )?;
+                    }
                     continue;
                 }
                 let applied = apply_file_put_chunk(pending_puts, &authority, &file_meta, file_body);
@@ -4072,6 +4082,9 @@ fn drain_finished(
                 continue;
             }
         }
+        #[cfg(target_os = "linux")]
+        let finished_id =
+            (item.state != OperationState::UnknownOutcome).then(|| item.operation_id.clone());
         if let Err(error) = publish_completion(
             socket,
             wire,
@@ -4087,6 +4100,10 @@ fn drain_finished(
             held.extend(batch);
             relay.requeue_finished(held);
             return Err(error);
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(id) = finished_id {
+            relay.drop_stdin_for(&id);
         }
     }
     relay.requeue_finished(held);
@@ -4647,10 +4664,7 @@ fn handle_dispatch(
     #[cfg(target_os = "linux")]
     if let Some(supervisor) = exec_supervisor {
         for id in authority.take_revoked_execs() {
-            let supervisor = supervisor.clone();
-            relay.control(move || {
-                let _ = supervisor.cancel(&id);
-            })?;
+            relay.cancel_exec(supervisor.clone(), id);
         }
         let current = authority.pending_ids();
         supervisor.retain_pending_stdin(|id| current.contains(id));
@@ -5364,7 +5378,7 @@ fn apply_stdin_chunk(
 
 /// Applies one stdin-flagged chunk whose frame the caller already parsed.
 #[cfg(target_os = "linux")]
-fn apply_stdin(
+pub(super) fn apply_stdin(
     journal: &HostJournal,
     supervisor: Option<&ExecSupervisor>,
     runtime: &dyn SandboxRuntime,
@@ -5373,7 +5387,7 @@ fn apply_stdin(
     body: Vec<u8>,
 ) -> Result<bool, Box<FinishedOp>> {
     let eof = metadata.r#type == StreamKind::End || metadata.final_chunk == Some(true);
-    let accepted = authority.accept_stdin(
+    let claimed = authority.claim_stdin(
         &metadata.operation_id,
         metadata.generation,
         metadata.attempt,
@@ -5381,7 +5395,7 @@ fn apply_stdin(
         body,
         eof,
     );
-    let requests = match accepted {
+    let requests = match claimed {
         Ok(requests) => requests,
         Err(err) => {
             return Err(fail_stdin(
@@ -5398,21 +5412,37 @@ fn apply_stdin(
             ));
         }
     };
-    for request in requests {
+    for (sequence, request) in requests {
         let result = if let Some(supervisor) = supervisor {
             supervisor.write_stdin(&request)
         } else {
             runtime.write_stdin(&request)
         };
-        if let Err(err) = result {
-            return Err(fail_stdin(
-                journal,
-                supervisor,
-                runtime,
-                authority,
-                metadata,
-                runtime_err(err.into_error()),
-            ));
+        match result {
+            Ok(_) => {
+                authority.commit_stdin(
+                    &metadata.operation_id,
+                    metadata.generation,
+                    metadata.attempt,
+                    sequence,
+                    request.eof,
+                );
+            }
+            Err(err) => {
+                authority.close_stdin(
+                    &metadata.operation_id,
+                    metadata.generation,
+                    metadata.attempt,
+                );
+                return Err(fail_stdin(
+                    journal,
+                    supervisor,
+                    runtime,
+                    authority,
+                    metadata,
+                    runtime_err(err.into_error()),
+                ));
+            }
         }
     }
     Ok(true)
@@ -5441,17 +5471,87 @@ fn fail_stdin(
             metadata.attempt,
         )
         .is_ok_and(|accepted| accepted.is_ok())
-        && supervisor.is_none()
     {
-        let _ = runtime.cancel_operation(&metadata.operation_id);
+        if let Some(supervisor) = supervisor {
+            supervisor.close_stdin(
+                &metadata.operation_id,
+                metadata.generation,
+                metadata.attempt,
+            );
+        } else {
+            let _ = runtime.cancel_operation(&metadata.operation_id);
+        }
     }
-    Box::new(super::supervisor::finish_effect(
+    let mut finished = super::supervisor::finish_effect(
         &metadata.operation_id,
         &sandbox_id,
         metadata.generation,
         metadata.attempt,
         Err(error.into_runtime().into()),
-    ))
+    );
+    // Interim observation: the command worker stays the sole completion owner
+    // and keeps the output window open until final termination.
+    finished.interim = true;
+    Box::new(finished)
+}
+
+/// Refuses one command whose stdin burst overflowed the bounded retained
+/// control queue, without blocking the relay reader or dropping the session.
+#[cfg(target_os = "linux")]
+fn refuse_stdin_overflow(
+    journal: &HostJournal,
+    authority: &HostAuthority,
+    relay: &RelaySupervisor,
+    supervisor: Option<&ExecSupervisor>,
+    metadata: &StreamBinaryMetadata,
+) -> Result<()> {
+    let sandbox_id = authority
+        .pending(&metadata.operation_id)
+        .map(|work| work.sandbox_id)
+        .unwrap_or_default();
+    let cancelled = authority.request_cancel(
+        journal,
+        &metadata.operation_id,
+        metadata.generation,
+        metadata.attempt,
+    )?;
+    if cancelled.is_err() {
+        return Ok(());
+    }
+    if let Some(supervisor) = supervisor {
+        supervisor.close_stdin(
+            &metadata.operation_id,
+            metadata.generation,
+            metadata.attempt,
+        );
+    } else {
+        relay.cancel_runtime(metadata.operation_id.clone());
+    }
+    tracing::warn!(
+        operation_id = %metadata.operation_id,
+        generation = metadata.generation,
+        attempt = metadata.attempt,
+        sequence = metadata.sequence,
+        "host stdin control queue full; refusing one command and keeping the relay session"
+    );
+    let mut finished = super::supervisor::finish_effect(
+        &metadata.operation_id,
+        &sandbox_id,
+        metadata.generation,
+        metadata.attempt,
+        Err(DispatchError {
+            reason: None,
+            code: SandboxErrorCode::HostCapacity.into(),
+            message: "host stdin control queue full".into(),
+        }
+        .into_runtime()
+        .into()),
+    );
+    // Interim observation: the command worker stays the sole completion owner
+    // and keeps the output window open until final termination.
+    finished.interim = true;
+    relay.push_finished(persist_finished(journal, finished));
+    Ok(())
 }
 
 type ReadyUpload = (

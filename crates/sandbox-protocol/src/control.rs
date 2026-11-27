@@ -1519,9 +1519,10 @@ fn validate_server_admission(message: &ServerControlMessage) -> Result<(), Contr
             || *batch > MAX_SAFE_INTEGER
             || entry_results.is_empty()
             || entry_results.len() > crate::INVENTORY_PAGE_MAX_ENTRIES
-            || entry_results
-                .iter()
-                .any(|r| !crate::valid_inventory_sandbox_id(&r.sandbox_id)))
+            || entry_results.iter().any(|r| {
+                !crate::valid_inventory_sandbox_id(&r.sandbox_id)
+                    || (r.root_retired && r.outcome != crate::CensusEntryOutcome::Converged)
+            }))
     {
         return Err(ControlError::InvalidInventory);
     }
@@ -1533,6 +1534,7 @@ fn validate_server_admission(message: &ServerControlMessage) -> Result<(), Contr
             || results.iter().any(|r| {
                 !crate::valid_inventory_sandbox_id(&r.sandbox_id)
                     || r.outcome == crate::CensusEntryOutcome::Superseded
+                    || (r.root_retired && r.outcome != crate::CensusEntryOutcome::Converged)
             }))
     {
         return Err(ControlError::InvalidAdmission);

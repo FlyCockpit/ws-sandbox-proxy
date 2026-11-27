@@ -127,10 +127,16 @@ fn rejected(message: &str) -> AuthorityReject {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Default)]
 struct StdinStream {
-    next: u64,
+    /// First sequence not yet handed off to the runtime/exec (reported on adopt).
+    committed_next: u64,
+    /// First sequence not yet claimed by the control worker for handoff.
+    claimed_next: u64,
     buffered: BTreeMap<u64, (Vec<u8>, bool)>,
     bytes: usize,
+    /// True once EOF has been handed off or the stream has been closed/failed.
     closed: bool,
+    /// True once EOF has been claimed for handoff.
+    eof_claimed: bool,
 }
 // The private state cannot escape; dropping this lease releases spawn authority.
 #[cfg(target_os = "linux")]
@@ -641,6 +647,40 @@ impl HostAuthority {
         self.lock().start_stdin(id, next)
     }
     #[cfg(target_os = "linux")]
+    pub fn is_stdin_deliverable(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+        sequence: u64,
+    ) -> bool {
+        self.lock()
+            .is_stdin_deliverable(id, generation, attempt, sequence)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn claim_stdin(
+        &self,
+        id: &str,
+        generation: u64,
+        attempt: u64,
+        sequence: u64,
+        mut bytes: Vec<u8>,
+        eof: bool,
+    ) -> Result<Vec<(u64, sandbox_runtime::WriteStdinRequest)>, AuthorityReject> {
+        // The chunk is freed after the guard when it is not buffered.
+        self.lock()
+            .claim_stdin(id, generation, attempt, sequence, &mut bytes, eof)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn commit_stdin(&self, id: &str, generation: u64, attempt: u64, sequence: u64, eof: bool) {
+        self.lock()
+            .commit_stdin(id, generation, attempt, sequence, eof)
+    }
+    #[cfg(target_os = "linux")]
+    pub fn close_stdin(&self, id: &str, generation: u64, attempt: u64) {
+        self.lock().close_stdin(id, generation, attempt)
+    }
+    #[cfg(all(test, target_os = "linux"))]
     pub fn accept_stdin(
         &self,
         id: &str,
@@ -650,9 +690,14 @@ impl HostAuthority {
         mut bytes: Vec<u8>,
         eof: bool,
     ) -> Result<Vec<sandbox_runtime::WriteStdinRequest>, AuthorityReject> {
-        // The chunk is freed after the guard when it is not buffered.
-        self.lock()
-            .accept_stdin(id, generation, attempt, sequence, &mut bytes, eof)
+        let mut state = self.lock();
+        let ready = state.claim_stdin(id, generation, attempt, sequence, &mut bytes, eof)?;
+        let mut out = Vec::with_capacity(ready.len());
+        for (seq, req) in ready {
+            state.commit_stdin(id, generation, attempt, seq, req.eof);
+            out.push(req);
+        }
+        Ok(out)
     }
     #[cfg(test)]
     pub fn cancel(&self, id: &str) {
@@ -1025,6 +1070,13 @@ impl AuthorityState {
         if !self.cancelled.insert(id.to_string()) {
             return Err(rejected("operation already cancelled"));
         }
+        #[cfg(target_os = "linux")]
+        if let Some(stream) = self.stdin_sequences.get_mut(id) {
+            stream.closed = true;
+            stream.eof_claimed = true;
+            stream.buffered.clear();
+            stream.bytes = 0;
+        }
         // An exec's ordinary-work admission is revoked by its execution flag.
         // Its runtime permit remains the *cleanup* authority until lifecycle
         // supersession/shutdown revokes it. Other adapters have no cleanup owner.
@@ -1057,12 +1109,31 @@ impl AuthorityState {
         self.stdin_sequences
             .entry(id.into())
             .or_insert_with(|| StdinStream {
-                next,
+                committed_next: next,
+                claimed_next: next,
                 ..StdinStream::default()
             });
     }
     #[cfg(target_os = "linux")]
-    fn accept_stdin(
+    fn is_stdin_active(&self, id: &str, generation: u64, attempt: u64) -> bool {
+        !self.cancelled.contains(id)
+            && self
+                .current(id, generation, attempt)
+                .is_ok_and(|work| work.kind == "command.run")
+            && self
+                .stdin_sequences
+                .get(id)
+                .is_none_or(|stream| !stream.closed && !stream.eof_claimed)
+    }
+    #[cfg(target_os = "linux")]
+    fn is_stdin_deliverable(&self, id: &str, generation: u64, attempt: u64, sequence: u64) -> bool {
+        self.is_stdin_active(id, generation, attempt)
+            && self.stdin_sequences.get(id).is_none_or(|stream| {
+                sequence >= stream.claimed_next && !stream.buffered.contains_key(&sequence)
+            })
+    }
+    #[cfg(target_os = "linux")]
+    fn claim_stdin(
         &mut self,
         id: &str,
         generation: u64,
@@ -1070,7 +1141,7 @@ impl AuthorityState {
         sequence: u64,
         bytes: &mut Vec<u8>,
         eof: bool,
-    ) -> Result<Vec<sandbox_runtime::WriteStdinRequest>, AuthorityReject> {
+    ) -> Result<Vec<(u64, sandbox_runtime::WriteStdinRequest)>, AuthorityReject> {
         if self.cancelled.contains(id)
             || !self
                 .current(id, generation, attempt)
@@ -1080,13 +1151,18 @@ impl AuthorityState {
         }
         // Entry follows the pending attempt identity; dispatch seeds its starting counter.
         let stream = self.stdin_sequences.entry(id.to_string()).or_default();
-        if stream.closed || sequence < stream.next || stream.buffered.contains_key(&sequence) {
+        if stream.closed
+            || stream.eof_claimed
+            || sequence < stream.claimed_next
+            || stream.buffered.contains_key(&sequence)
+        {
             return Ok(Vec::new());
         }
-        if sequence > stream.next
+        if sequence > stream.claimed_next
             && (stream.buffered.len() >= 64 || stream.bytes + bytes.len() > 1024 * 1024)
         {
             stream.closed = true;
+            stream.eof_claimed = true;
             stream.buffered.clear();
             stream.bytes = 0;
             return Err(AuthorityReject {
@@ -1101,24 +1177,58 @@ impl AuthorityState {
             .buffered
             .insert(sequence, (std::mem::take(bytes), eof));
         let mut ready = Vec::new();
-        while let Some((bytes, eof)) = stream.buffered.remove(&stream.next) {
-            stream.next += 1;
+        while let Some((bytes, eof)) = stream.buffered.remove(&stream.claimed_next) {
+            let claimed_seq = stream.claimed_next;
+            stream.claimed_next += 1;
             stream.bytes -= bytes.len();
-            ready.push(sandbox_runtime::WriteStdinRequest {
-                operation_id: id.into(),
-                generation,
-                attempt,
-                bytes,
-                eof,
-            });
+            ready.push((
+                claimed_seq,
+                sandbox_runtime::WriteStdinRequest {
+                    operation_id: id.into(),
+                    generation,
+                    attempt,
+                    bytes,
+                    eof,
+                },
+            ));
             if eof {
-                stream.closed = true;
+                stream.eof_claimed = true;
                 stream.buffered.clear();
                 stream.bytes = 0;
                 break;
             }
         }
         Ok(ready)
+    }
+    #[cfg(target_os = "linux")]
+    fn commit_stdin(&mut self, id: &str, generation: u64, attempt: u64, sequence: u64, eof: bool) {
+        if !self
+            .current(id, generation, attempt)
+            .is_ok_and(|work| work.kind == "command.run")
+        {
+            return;
+        }
+        if let Some(stream) = self.stdin_sequences.get_mut(id) {
+            stream.committed_next = stream.committed_next.max(sequence.saturating_add(1));
+            if eof {
+                stream.closed = true;
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    fn close_stdin(&mut self, id: &str, generation: u64, attempt: u64) {
+        if !self
+            .current(id, generation, attempt)
+            .is_ok_and(|work| work.kind == "command.run")
+        {
+            return;
+        }
+        if let Some(stream) = self.stdin_sequences.get_mut(id) {
+            stream.closed = true;
+            stream.eof_claimed = true;
+            stream.buffered.clear();
+            stream.bytes = 0;
+        }
     }
     #[cfg(test)]
     fn cancel(&mut self, id: &str) {
@@ -1156,13 +1266,15 @@ impl AuthorityState {
     }
     #[cfg(target_os = "linux")]
     fn stdin_next(&self, id: &str) -> Option<u64> {
-        if self.pending.get(id).is_none_or(|w| w.kind != "command.run") {
+        if self.cancelled.contains(id)
+            || self.pending.get(id).is_none_or(|w| w.kind != "command.run")
+        {
             return None;
         }
         self.stdin_sequences
             .get(id)
             .filter(|stream| !stream.closed)
-            .map(|stream| stream.next)
+            .map(|stream| stream.committed_next)
     }
     fn with_journal(journal: Arc<super::journal::HostJournal>) -> Self {
         Self {
@@ -2073,6 +2185,65 @@ mod tests {
                 .is_ok()
         );
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdin_claimed_batch_commits_one_handoff_at_a_time() {
+        let authority = HostAuthority::default();
+        authority
+            .accept_dispatch("cmd", "sbx", "command.run", 1, 1)
+            .unwrap();
+        authority.start_stdin("cmd", 0);
+        assert!(
+            authority
+                .claim_stdin("cmd", 1, 1, 1, b"b".to_vec(), false)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            authority
+                .claim_stdin("cmd", 1, 1, 2, Vec::new(), true)
+                .unwrap()
+                .is_empty()
+        );
+        let requests = authority
+            .claim_stdin("cmd", 1, 1, 0, b"a".to_vec(), false)
+            .unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(authority.stdin_next("cmd"), Some(0));
+        // The whole batch is deduplicated while each successful handoff
+        // advances only its own applied sequence, including the final EOF.
+        assert!(
+            authority
+                .claim_stdin("cmd", 1, 1, 0, b"a".to_vec(), false)
+                .unwrap()
+                .is_empty()
+        );
+        for (sequence, request) in requests {
+            assert_eq!(authority.stdin_next("cmd"), Some(sequence));
+            authority.commit_stdin("cmd", 1, 1, sequence, request.eof);
+        }
+        assert_eq!(authority.stdin_next("cmd"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stdin_cancel_releases_buffered_out_of_order_chunks() {
+        let authority = HostAuthority::default();
+        authority
+            .accept_dispatch("cmd", "sbx", "command.run", 1, 1)
+            .unwrap();
+        authority.start_stdin("cmd", 0);
+        authority
+            .claim_stdin("cmd", 1, 1, 1, vec![0; 1024 * 1024], false)
+            .unwrap();
+        assert_eq!(authority.lock().stdin_sequences["cmd"].bytes, 1024 * 1024);
+        authority.accept_cancel("cmd", 1, 1).unwrap();
+        assert_eq!(authority.stdin_next("cmd"), None);
+        let state = authority.lock();
+        assert!(state.stdin_sequences["cmd"].buffered.is_empty());
+        assert_eq!(state.stdin_sequences["cmd"].bytes, 0);
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn stdin_byte_bound_eof_and_new_attempt_start() {

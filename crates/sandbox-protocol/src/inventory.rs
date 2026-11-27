@@ -32,15 +32,23 @@ pub enum CensusEntryOutcome {
 pub struct CensusEntryResult {
     pub sandbox_id: String,
     pub outcome: CensusEntryOutcome,
+    /// The exact offered root is durably retired, independently of lease adoption.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub root_retired: bool,
 }
 
 /// Results answer a page exactly: one per entry, same ids, same order.
 pub fn census_results_match(entries: &[InventoryEntry], results: &[CensusEntryResult]) -> bool {
     entries.len() == results.len()
-        && entries
-            .iter()
-            .zip(results)
-            .all(|(entry, result)| entry.sandbox_id == result.sandbox_id)
+        && entries.iter().zip(results).all(|(entry, result)| {
+            entry.sandbox_id == result.sandbox_id
+                && (!result.root_retired
+                    || (result.outcome == CensusEntryOutcome::Converged
+                        && entry.state == SandboxLifecycleState::Absent
+                        && entry.root.as_ref().is_some_and(|root| {
+                            root.state == RootState::Absent && root.network_cleanup_complete
+                        })))
+        })
 }
 
 /// A host-enforced expiry the host has attempted and not yet completed.
