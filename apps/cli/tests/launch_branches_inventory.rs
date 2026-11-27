@@ -171,6 +171,13 @@ const INVENTORY: &[(&str, &str, Class)] = &[
         r#""sandbox.create" | "sandbox.reconnect""#,
         Agnostic,
     ),
+    // Root-retirement fencing classifies journal receipts, not allocation:
+    // every create/reconnect fences retirement, including reconnect + new_root.
+    (
+        "journal/storage.rs",
+        r#"matches!(kind, "sandbox.create" | "sandbox.reconnect")"#,
+        Agnostic,
+    ),
     (
         "journal/storage.rs",
         r#"receipt.allocation_kind() == Some(sandbox_runtime::AllocationKind::Create),"#,
@@ -625,6 +632,20 @@ fn canary_unrouted_create_branch_fails() {
     assert_eq!(
         unlisted,
         vec![format!("{CLI}/canary.rs | kind == \"sandbox.create\"")]
+    );
+    assert!(stale.is_empty());
+}
+
+#[test]
+fn canary_unrouted_create_in_journal_storage_fails() {
+    let mut files = repo_files();
+    let path = format!("{CLI}/journal/storage.rs");
+    let (_, text) = files.iter_mut().find(|(file, _)| file == &path).unwrap();
+    text.push_str("\nfn new_root(kind: &str) -> bool {\n    kind == \"sandbox.create\"\n}\n");
+    let (unlisted, stale) = drift(&scan(&files), &inventory());
+    assert_eq!(
+        unlisted,
+        vec![format!("{path} | kind == \"sandbox.create\"")]
     );
     assert!(stale.is_empty());
 }

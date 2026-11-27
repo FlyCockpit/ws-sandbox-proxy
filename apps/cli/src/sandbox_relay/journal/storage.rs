@@ -22,16 +22,16 @@ pub(crate) struct RootRetirementFence {
 }
 
 pub(super) fn root_lifecycle(kind: &str) -> bool {
-    matches!(
-        kind,
-        "sandbox.create"
-            | "sandbox.reconnect"
-            | "sandbox.stop"
-            | "sandbox.kill"
-            | "sandbox.lease.renew"
-            | "credential.attach"
-            | "credential.free"
-    )
+    // Both launch kinds fence root retirement, independent of launch mode.
+    matches!(kind, "sandbox.create" | "sandbox.reconnect")
+        || matches!(
+            kind,
+            "sandbox.stop"
+                | "sandbox.kill"
+                | "sandbox.lease.renew"
+                | "credential.attach"
+                | "credential.free"
+        )
 }
 
 fn retirement_fence(state: &JournalState, id: &str) -> Option<RootRetirementFence> {
@@ -729,6 +729,28 @@ impl HostJournal {
 mod tests {
     use super::*;
     use crate::sandbox_relay::live_admission::LiveSandboxAdmission;
+
+    #[test]
+    fn root_lifecycle_fences_launches_and_controls_only() {
+        for kind in [
+            "sandbox.create",
+            "sandbox.reconnect",
+            "sandbox.stop",
+            "sandbox.kill",
+            "sandbox.lease.renew",
+            "credential.attach",
+            "credential.free",
+        ] {
+            assert!(root_lifecycle(kind), "{kind} must fence root retirement");
+        }
+        for kind in ["command.run", "file.read", "sandbox.capture", "unknown"] {
+            assert!(
+                !root_lifecycle(kind),
+                "{kind} is not a root lifecycle record"
+            );
+        }
+    }
+
     #[test]
     fn policy_change_rebuild_release_uses_durable_weights_then_new_cold_hold_uses_current_policy() {
         let dir = tempfile::tempdir().unwrap();
