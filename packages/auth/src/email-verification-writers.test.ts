@@ -50,7 +50,13 @@ const reviewed: Record<string, string> = {
   // mark (signup-response.ts); no mailbox proof input or write.
   // Password pepper supplies hash and verify callbacks; mailbox proof is unchanged.
   // Reviewed 11-27 (e2e5-fups T1): password length limits read from ./password-policy.ts (12 / 128, unchanged); no mailbox proof input or write.
-  "packages/auth/src/index.ts": "7df0bca28ad8b730df366d2a8c271143ff38e277c8031a34205e9a37b3c50d42",
+  // Reviewed 11-27 (tpl-e2e5-fups r2): wires mailbox-proof-policy.ts as user.create.before
+  // (first) and user.update.before; refusals only, no proof input or write.
+  "packages/auth/src/index.ts": "f930fed29ffedb63e65bf6defa89286136a01e8740621b7f2698a9ed123be720",
+  // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
+  // no emailVerified write outside /verify-email. Writes nothing.
+  "packages/auth/src/mailbox-proof-policy.ts":
+    "b0f9738a039840e2abe1b026b768df4cc4d1d54dbaa3df7dd4d55875e9402c25",
   // Invites: no proof write. The mailed accept link is Better Auth's own
   // verify-email link (admin-invite-verification.ts mints its signed token, as
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.

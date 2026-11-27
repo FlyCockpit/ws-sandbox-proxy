@@ -45,6 +45,17 @@ sandbox, operation and transfer belongs to exactly one user account.
   invitee's **Email language** on the invite form (default: their own UI
   language); it is saved as the account's locale in the same insert, so the
   invitation and every later mail use it.
+- An address is verified only by opening a link mailed to it (Better Auth's
+  `/verify-email`). A password reset or the temporary password never verifies
+  one, Better Auth never creates a user already verified, no Better Auth write
+  sets `emailVerified` outside `/verify-email`, and account addresses never
+  change (every Better Auth user update carrying an `email` field is refused;
+  the admin plugin's HTTP routes are off).
+  See `packages/auth/src/mailbox-proof-policy.ts`. The one exception is the
+  `SETUP_KEY` first-administrator claim: on the word of the operator who holds
+  the deploy secret, it creates a new, verified account for the address the
+  operator typed, only while no administrator exists; it never verifies or
+  promotes an existing account.
 - Archiving a user (after confirmation) shows a "User archived" toast with
   **Undo** for about 8 seconds. Undo is the row's **Restore user**: it lifts
   the ban, and the sessions the archive ended stay ended.

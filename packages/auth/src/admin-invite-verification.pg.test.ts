@@ -175,6 +175,51 @@ describe("admin invitation acceptance against the real Better Auth", () => {
     expect(await flags(invitee.userId)).toEqual({ emailVerified: false, mustChangePassword: true });
   });
 
+  it("no Better Auth write changes the address or asserts its verification", async () => {
+    const invitee = await invitedUser();
+    const ctx = await auth.$context;
+    const refusedWith = async (write: Promise<unknown>) => {
+      const error = await write.then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      return (error as { body?: { code?: string } } | null)?.body?.code;
+    };
+    const renamed = `${randomUUID()}@example.test`;
+    expect(
+      await refusedWith(ctx.internalAdapter.updateUser(invitee.userId, { email: renamed })),
+    ).toBe("EMAIL_CHANGE_UNSUPPORTED");
+    // A server-side write is no mailbox proof either: only /verify-email sets it.
+    expect(
+      await refusedWith(ctx.internalAdapter.updateUser(invitee.userId, { emailVerified: true })),
+    ).toBe("EMAIL_VERIFICATION_BY_MAIL_ONLY");
+    const created = `${randomUUID()}@example.test`;
+    expect(
+      await refusedWith(
+        ctx.internalAdapter.createUser({ email: created, name: "Created", emailVerified: true }),
+      ),
+    ).toBe("EMAIL_VERIFICATION_BY_MAIL_ONLY");
+    expect(await db.inspect.user.count({ where: { email: created } })).toBe(0);
+    expect(
+      await db.inspect.user.findUniqueOrThrow({
+        where: { id: invitee.userId },
+        select: { email: true, emailVerified: true },
+      }),
+    ).toEqual({ email: invitee.email, emailVerified: false });
+    // The mailed accept link still verifies (the first case signs in after it).
+    const accept = new URL(
+      await adminInviteAcceptUrl({
+        secret: SECRET,
+        authBaseUrl: BASE_URL,
+        userId: invitee.userId,
+        email: invitee.email,
+        locale: "en-US",
+      }),
+    );
+    expect((await auth.handler(new Request(accept, { method: "GET" }))).status).toBe(302);
+    expect((await flags(invitee.userId)).emailVerified).toBe(true);
+  });
+
   it("a flagged session can only replace the password, never with the temporary one, and every other session ends", async () => {
     const invitee = await invitedUser();
     await db.inspect.user.update({ where: { id: invitee.userId }, data: { emailVerified: true } });

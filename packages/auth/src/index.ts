@@ -20,6 +20,7 @@ import {
   deviceVerificationUri,
   requireDeviceLoginScope,
 } from "./host-device-login-scope.js";
+import { refuseUnprovedUserUpdate, refuseVerifiedUserCreation } from "./mailbox-proof-policy.js";
 import { resolveMcpPlugins } from "./mcp-plugins";
 import { createPasswordChangeGuard } from "./password-change-guard.js";
 import { createPasswordPepper } from "./password-pepper.js";
@@ -376,8 +377,17 @@ export const auth = betterAuth({
           }
         },
       },
+      // Mailbox proof stays Better Auth's verify-email link: no Better Auth
+      // write creates a verified user, changes an address, or sets
+      // `emailVerified` outside /verify-email (mailbox-proof-policy.ts).
+      update: {
+        before: async (data, context) => {
+          refuseUnprovedUserUpdate(data, context);
+        },
+      },
       create: {
         before: async (user, context) => {
+          refuseVerifiedUserCreation(user);
           const email = user.email?.toLowerCase();
           const creationMode = getAllowedUserCreationMode();
           // Runs after Better Auth validation/password hashing on HTTP and direct API.
