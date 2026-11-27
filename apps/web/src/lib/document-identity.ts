@@ -34,6 +34,8 @@ const documentIdentity = {
   heldPrivateState: false,
   /** The private UI was hidden and the cache dropped, ahead of the reload. */
   quarantined: false,
+  /** The replacing reload was requested (once is enough). */
+  reloading: false,
 };
 
 const replaceListeners = new Set<() => void>();
@@ -66,9 +68,33 @@ export function observeDocumentIdentity(next: string | null): boolean {
     documentIdentity.replaced = true;
     return true;
   }
+  const changed = documentIdentity.baseline !== next;
   documentIdentity.baseline = next;
   if (typeof next === "string") documentIdentity.heldPrivateState = true;
+  if (changed) notifyVerificationListeners();
   return false;
+}
+
+let admissions = 0;
+
+/**
+ * How many guard answers admitted this document's identity so far (a repeat
+ * of the same identity included): the watcher supersedes a session fetch that
+ * was asked before the latest anonymous admission.
+ */
+export function documentAdmissions(): number {
+  return admissions;
+}
+
+/**
+ * The identity this document was admitted as (`undefined` before any, `null`
+ * for confirmed anonymous). The chrome never shows another account than this
+ * one (`useAuthSession`): the
+ * session atom can hold an account read before any guard ran (a public page's
+ * language menu) whose refresh failed since.
+ */
+export function documentIdentityBaseline(): SessionIdentity {
+  return documentIdentity.baseline;
 }
 
 /** A different identity was confirmed and this document is on its way out. */
@@ -101,8 +127,13 @@ export function sealQueryClient(queryClient: QueryClient): void {
 }
 
 function hidePage(): void {
-  // CSSOM, not a style attribute: allowed under the strict style-src CSP.
-  if (typeof document !== "undefined") document.documentElement.style.visibility = "hidden";
+  // `display: none` on the root, important: no descendant can opt back in
+  // (`visibility: hidden` can be undone by any element that sets itself
+  // `visible`). CSSOM, not a style attribute: allowed under the strict
+  // style-src CSP.
+  if (typeof document !== "undefined") {
+    document.documentElement.style.setProperty("display", "none", "important");
+  }
 }
 
 /**
@@ -129,7 +160,8 @@ function quarantineDocument(): void {
 export function replaceDocument(): void {
   if (typeof window === "undefined") return;
   quarantineDocument();
-  if (documentIdentity.leaving) return;
+  if (documentIdentity.leaving || documentIdentity.reloading) return;
+  documentIdentity.reloading = true;
   // full-reload:audited — An identity change discards all prior user cache and mounted client state.
   window.location.reload();
 }
@@ -156,11 +188,19 @@ type RouteIdentityResolution =
  * document, and the guard never settles, so no page renders the previous
  * identity's cached data even for a frame. A failed probe decides nothing.
  */
-export async function admitRouteIdentity(resolution: RouteIdentityResolution): Promise<void> {
+export async function admitRouteIdentity(
+  resolution: RouteIdentityResolution,
+  /** `identityVerificationGeneration()` taken before the probe started. */
+  since: number = verificationGeneration,
+): Promise<void> {
   if (resolution.status !== "resolved") return;
   const identity = resolution.session?.user.id ?? null;
   if (!observeDocumentIdentity(identity)) {
+    // The server just confirmed this document's own identity.
+    confirmDocumentIdentityFresh(since);
     announceDocumentIdentity(identity);
+    admissions++;
+    notifyVerificationListeners();
     return;
   }
   replaceDocument();
@@ -233,6 +273,79 @@ export function skipErrorToastForIdentity(error: unknown, kind: "query" | "mutat
   return kind === "query";
 }
 
+/**
+ * Another tab announced an identity change (or a request was refused for
+ * having no session) and nothing here has checked it yet: Better Auth's atom
+ * may still hold the previous account. That is the case when no watcher was
+ * connected, when the watcher's check got no settled answer, and while the
+ * watcher's check runs with no account-aware page showing. Until a fresh check
+ * (a guard's server probe, or the watcher's own refetch) confirms this
+ * document's identity, `useAuthSession()` reports `pending`, so no chrome
+ * shows that stale account, even on a page a guard didn't admit (a guard
+ * error, an unguarded page such as verify-email or mcp-login).
+ */
+let identityUnverified = false;
+/**
+ * Bumped by every invalidation (each peer announcement, each 401 that starts
+ * a check), whether or not the identity is already unverified, so an answer
+ * asked for before one can't settle it.
+ */
+let verificationGeneration = 0;
+const verificationListeners = new Set<() => void>();
+
+function notifyVerificationListeners(): void {
+  for (const listener of verificationListeners) listener();
+}
+
+function setIdentityUnverified(next: boolean): void {
+  // Module state is process-wide on the server: never written there.
+  if (typeof window === "undefined" || identityUnverified === next) return;
+  identityUnverified = next;
+  notifyVerificationListeners();
+}
+
+function invalidateIdentity(): void {
+  if (typeof window === "undefined") return;
+  verificationGeneration++;
+}
+
+/**
+ * Hold the chrome neutral until a check settles this document's identity: the
+ * watcher's check for a possible change got no settled answer (a failed or
+ * still superseded fetch), or it is running while no account-aware page is
+ * showing (the next one entered must not show the previous account while it
+ * runs). The event that asked for the check already invalidated.
+ */
+export function holdDocumentIdentityUnverified(): void {
+  setIdentityUnverified(true);
+}
+
+/** Taken before a check starts; pass it to `confirmDocumentIdentityFresh`. */
+export function identityVerificationGeneration(): number {
+  return verificationGeneration;
+}
+
+/**
+ * A fresh check confirmed this document's identity: the chrome may show it
+ * again, unless the identity was invalidated again after that check started
+ * (`since`, from `identityVerificationGeneration()`): its answer may predate
+ * the newer change.
+ */
+export function confirmDocumentIdentityFresh(since: number): void {
+  if (since !== verificationGeneration) return;
+  setIdentityUnverified(false);
+}
+
+export function isDocumentIdentityUnverified(): boolean {
+  return identityUnverified;
+}
+
+/** Called when the unverified state or the admitted identity changes, and on every admission. */
+export function subscribeIdentityVerification(listener: () => void): () => void {
+  verificationListeners.add(listener);
+  return () => verificationListeners.delete(listener);
+}
+
 let sessionCheck: (() => unknown) | undefined;
 let sessionCheckPending = false;
 
@@ -240,11 +353,18 @@ let sessionCheckPending = false;
  * A request was rejected for having no session: ask Better Auth to check the
  * session once (however many queries failed together), so a session lost
  * elsewhere replaces the document instead of leaving one error toast per
- * query. Does nothing while no watcher is mounted.
+ * query. With no watcher mounted, the identity is left unverified for the
+ * watcher's mount check (or a guard) to settle.
  */
 export function reportSessionRejected(): void {
   const check = sessionCheck;
-  if (!check || sessionCheckPending) return;
+  // 401s that share a running check are part of the event that started it.
+  if (sessionCheckPending) return;
+  invalidateIdentity();
+  if (!check) {
+    setIdentityUnverified(true);
+    return;
+  }
   // One check at a time, until it settles: 401s that arrive in separate
   // network tasks while it runs share it.
   sessionCheckPending = true;
@@ -284,9 +404,29 @@ function peerChannel(): IdentityChannel | undefined {
   if (!peersOpened) {
     peersOpened = true;
     peers = openChannel();
-    if (peers) peers.onmessage = () => void sessionCheck?.();
+    if (peers) {
+      // No watcher connected yet (the root identity boundary mounts on the
+      // first app page): nobody here can check it, so it stays unverified.
+      peers.onmessage = () => {
+        invalidateIdentity();
+        if (sessionCheck) void sessionCheck();
+        else setIdentityUnverified(true);
+      };
+    }
   }
   return peers;
+}
+
+/**
+ * Open the document's channel as soon as Better Auth's client loads
+ * (`lib/auth-client.ts`), before anything can read a session: a public page
+ * that reads it (the language menu) may hold an account in the atom long
+ * before the root identity boundary first mounts, and an announcement that
+ * arrives meanwhile must still leave the identity unverified for the
+ * boundary's mount check.
+ */
+export function listenForIdentityPeers(): void {
+  peerChannel();
 }
 
 /**
@@ -337,8 +477,13 @@ export function resetDocumentIdentityForTests(
     leaving: false,
     heldPrivateState: false,
     quarantined: false,
+    reloading: false,
   });
   replaceListeners.clear();
+  identityUnverified = false;
+  verificationGeneration = 0;
+  admissions = 0;
+  verificationListeners.clear();
   sessionCheck = undefined;
   sessionCheckPending = false;
   openChannel = open;

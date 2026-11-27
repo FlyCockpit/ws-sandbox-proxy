@@ -13,7 +13,7 @@ import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { FormAlert } from "@/components/auth/form-alert";
 import { ResendVerification } from "@/components/auth/resend-verification";
-import { useAuthSession } from "@/hooks/use-auth-session";
+import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
@@ -44,7 +44,9 @@ export const Route = createFileRoute("/$lang/_app/signup")({
 function SignupPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
-  const authSession = useAuthSession();
+  // Latched, as on login: a later masked or refetching `pending` (another
+  // tab's identity change being checked) must not unmount the typed form.
+  const sessionSettled = useAuthSessionSettled();
   const {
     data: configData,
     isPending: configPending,
@@ -72,8 +74,7 @@ function SignupPage() {
   // Sign-up is closed to the public: only the administrator addresses and
   // invited people get in, so the page says so before the form.
   const byInvitation = mode === "bootstrap";
-  const sessionPending =
-    authSession.state.status === "pending" || authSession.state.status === "error";
+  const sessionPending = !sessionSettled;
 
   let body: ReactNode;
   if (pendingEmail) {

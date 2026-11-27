@@ -11,7 +11,11 @@ vi.mock("@/server/auth-session", () => ({
 }));
 vi.mock("@/server/admin-route-access", () => ({ getRouteAdminAccess: server.getRouteAdminAccess }));
 
-import { resetDocumentIdentityForTests } from "./document-identity";
+import {
+  isDocumentIdentityUnverified,
+  reportSessionRejected,
+  resetDocumentIdentityForTests,
+} from "./document-identity";
 import {
   resolveProtectedRouteSession,
   resolveRouteAdminAccess,
@@ -19,7 +23,17 @@ import {
 } from "./route-session";
 
 const reload = vi.fn();
-const root = { style: { visibility: "" } };
+/** The root element's inline style, as `hidePage` writes it. */
+const root = {
+  style: {
+    display: "",
+    priority: "",
+    setProperty(name: string, value: string, priority: string) {
+      if (name === "display") Object.assign(this, { display: value, priority });
+    },
+  },
+};
+const hidden = () => root.style.display === "none" && root.style.priority === "important";
 const user = (id: string) => ({
   user: {
     id,
@@ -46,7 +60,7 @@ async function settles(promise: Promise<unknown>): Promise<boolean> {
 beforeEach(() => {
   resetDocumentIdentityForTests(() => undefined);
   reload.mockReset();
-  root.style.visibility = "";
+  Object.assign(root.style, { display: "", priority: "" });
   vi.stubGlobal("window", { location: { reload } });
   // No server-rendered app shell in this document: guards do not wait
   // (lib/app-shell-hydration.test.ts covers the wait).
@@ -93,7 +107,7 @@ describe("route session guards check the document identity", () => {
         server.getRouteAdminAccess.mockResolvedValueOnce({ ...other, authorized: false });
       else server.getRouteSession.mockResolvedValueOnce(other);
       expect(await settles(probe())).toBe(false);
-      expect(root.style.visibility).toBe("hidden");
+      expect(hidden()).toBe(true);
       expect(reload).toHaveBeenCalledOnce();
     },
   );
@@ -105,4 +119,42 @@ describe("route session guards check the document identity", () => {
     expect(await settles(resolveRouteSession())).toBe(false);
     expect(reload).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["session", resolveRouteSession, server.getRouteSession, {}],
+    [
+      "protected",
+      resolveProtectedRouteSession,
+      server.getProtectedRouteSession,
+      { forcedTwoFactorSettings: {}, passwordChangeRequired: false },
+    ],
+    ["admin", resolveRouteAdminAccess, server.getRouteAdminAccess, { authorized: true }],
+  ] as const)(
+    "a %s guard's answer confirms an unverified identity, unless it predates a newer invalidation",
+    async (_kind, probe, serverProbe, extra) => {
+      server.getRouteSession.mockResolvedValueOnce({ status: "resolved", session: user("a") });
+      await resolveRouteSession();
+      // A 401 with no watcher connected: unverified.
+      reportSessionRejected();
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      // The guard's probe is under way when another invalidation arrives.
+      let answer: (value: unknown) => void = () => {};
+      serverProbe.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      );
+      const pending = probe();
+      reportSessionRejected();
+      answer({ status: "resolved", session: user("a"), ...extra });
+      await pending;
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      // The next probe, started after it, confirms A.
+      serverProbe.mockResolvedValueOnce({ status: "resolved", session: user("a"), ...extra });
+      await probe();
+      expect(isDocumentIdentityUnverified()).toBe(false);
+      expect(reload).not.toHaveBeenCalled();
+    },
+  );
 });

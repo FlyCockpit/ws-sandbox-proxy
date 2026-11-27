@@ -1,9 +1,16 @@
+import { useSyncExternalStore } from "react";
 import { authClient } from "@/lib/auth-client";
 import {
   type AuthSessionState,
   getAuthSessionState,
   rememberConfirmedAnonymous,
 } from "@/lib/auth-session-state";
+import {
+  documentIdentityBaseline,
+  isDocumentIdentityUnverified,
+  subscribeIdentityVerification,
+} from "@/lib/document-identity";
+import { useSessionUnconfirmed } from "@/lib/session-unconfirmed";
 
 import { useNetworkStatus } from "./use-network-status";
 
@@ -16,10 +23,50 @@ import { useNetworkStatus } from "./use-network-status";
  */
 let confirmedAnonymous = false;
 
-/** The sole application adapter for Better Auth's reactive session atom. */
-export function useAuthSession(): AuthSessionState {
+/**
+ * The sole application adapter for Better Auth's reactive session atom.
+ * `unmasked` is for the identity watcher (it must see the raw session even
+ * while the chrome is held neutral, `SessionUnconfirmed` or an unverified
+ * identity, to notice the answer that settles it) and for bookkeeping that
+ * never paints the account (`useOrphanOwnerSync`).
+ */
+export function useAuthSession({
+  unmasked = false,
+}: {
+  unmasked?: boolean;
+} = {}): AuthSessionState {
   const session = authClient.useSession();
   const isOnline = useNetworkStatus();
+  // Under `SessionUnconfirmed` (the app shell's pending state), while
+  // another tab's identity change is unchecked here, or while the atom holds
+  // another account than the one this document was admitted as (read before
+  // any guard ran, its refresh failed since): nobody yet.
+  const unconfirmed = useSessionUnconfirmed();
+  const unverified = useSyncExternalStore(
+    subscribeIdentityVerification,
+    isDocumentIdentityUnverified,
+    () => false,
+  );
+  const admitted = useSyncExternalStore(
+    subscribeIdentityVerification,
+    documentIdentityBaseline,
+    () => undefined,
+  );
+  // Anonymous admission counts too: an atom still holding A after a guard
+  // confirmed nobody is signed in must not show A either.
+  const foreign =
+    admitted !== undefined && session.data != null && session.data.user.id !== admitted;
+  if (!unmasked && (unconfirmed || unverified || foreign)) {
+    return getAuthSessionState<NonNullable<typeof session.data>>({
+      data: null,
+      isPending: true,
+      isRefetching: session.isRefetching,
+      error: null,
+      isOnline,
+      refetch: session.refetch,
+      confirmedAnonymous: false,
+    });
+  }
 
   const result = getAuthSessionState({
     data: session.data,
@@ -36,6 +83,28 @@ export function useAuthSession(): AuthSessionState {
     confirmedAnonymous = rememberConfirmedAnonymous(confirmedAnonymous, result.state);
   }
   return result;
+}
+
+/**
+ * The atom's confirmed identity right now, outside React (the watcher reads it
+ * after its own refetch settles): the user id, `null` when confirmed signed
+ * out, `undefined` while unknown (pending, or a failed check).
+ */
+export function readSessionIdentity(): string | null | undefined {
+  const snapshot = authClient.$store.atoms.session?.get();
+  if (!snapshot || snapshot.isPending || snapshot.isRefetching) return undefined;
+  if (snapshot.error) {
+    // A 401 confirms the session is gone; any other failure confirms
+    // nothing, even with the previous answer still retained in `data`.
+    return (snapshot.error as { status?: unknown }).status === 401 ? null : undefined;
+  }
+  return snapshot.data ? snapshot.data.user.id : null;
+}
+
+/** A session fetch is in flight right now (another one superseded ours). */
+export function isSessionFetchInFlight(): boolean {
+  const snapshot = authClient.$store.atoms.session?.get();
+  return snapshot ? snapshot.isPending || snapshot.isRefetching : false;
 }
 
 /** Forget the settled state, as a new document would. Tests only. */

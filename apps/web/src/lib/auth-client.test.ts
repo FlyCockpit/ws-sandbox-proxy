@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const fixture = vi.hoisted(() => ({
   listeners: [] as (() => void)[],
   announce: vi.fn(),
+  listen: vi.fn(),
 }));
 
 vi.mock("better-auth/react", () => ({
@@ -27,7 +28,10 @@ vi.mock("better-auth/client/plugins", () => ({
 vi.mock("@better-auth/oauth-provider/client", () => ({ oauthProviderClient: () => ({}) }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_SERVER_URL: "https://app.test" } }));
 vi.mock("@/i18n", () => ({ default: { language: "en-US" } }));
-vi.mock("@/lib/document-identity", () => ({ announceSessionChange: fixture.announce }));
+vi.mock("@/lib/document-identity", () => ({
+  announceSessionChange: fixture.announce,
+  listenForIdentityPeers: fixture.listen,
+}));
 
 await import("./auth-client");
 
@@ -40,5 +44,11 @@ describe("authClient", () => {
     expect(fixture.announce).not.toHaveBeenCalled();
     fixture.listeners[0]?.();
     expect(fixture.announce).toHaveBeenCalledTimes(1);
+  });
+
+  it("listens to the other tabs from the moment a session can be read here", () => {
+    // Before any watcher mounts (a public page reading the session for the
+    // language menu): an announcement must still mark the identity unverified.
+    expect(fixture.listen).toHaveBeenCalledTimes(1);
   });
 });

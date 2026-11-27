@@ -12,6 +12,7 @@ import { DEFAULT_LOCALE, isSupportedLocale } from "@/i18n/config";
 import { markAppShellHydrated } from "@/lib/app-shell-hydration";
 import { MAIN_SCROLLER_ID } from "@/lib/main-scroller";
 import { resolvePendingLayout } from "@/lib/pending-layout";
+import { SessionUnconfirmed } from "@/lib/session-unconfirmed";
 
 /**
  * The `_app` shell's one grid: header row, the main page scroller, and the
@@ -83,27 +84,31 @@ export function AppShellPending() {
   const routeId = useMatch({ strict: false, select: (match) => match.routeId });
   const matches = useRouterState({ select: (state) => state.matches });
   const layout = resolvePendingLayout(matches, routeId);
+  // It paints before any session guard has admitted anyone: nothing in it
+  // shows an account until one has (lib/session-unconfirmed.ts).
   return (
-    <AppShellFrame
-      header={
-        // The offline notice too, so an offline hard refresh does not move
-        // the page down when the layout replaces this frame.
-        <>
-          <Header placeholder />
-          <OfflineBanner />
-        </>
-      }
-      bottomNav={
-        // Pages in the dashboard frame are signed-in pages: their tabs are
-        // static, so they are drawn for real (the sidebar's are too).
-        layout.frames.includes("dashboard") ? (
-          <BottomNavFirstFrame lang={lang} pathname={pathname} />
-        ) : (
-          <BottomNavSkeleton />
-        )
-      }
-    >
-      <ContentSkeleton layout={layout} />
-    </AppShellFrame>
+    <SessionUnconfirmed>
+      <AppShellFrame
+        header={
+          // The offline notice too, so an offline hard refresh does not move
+          // the page down when the layout replaces this frame.
+          <>
+            <Header placeholder />
+            <OfflineBanner />
+          </>
+        }
+        bottomNav={
+          // Pages in the dashboard frame are signed-in pages: their tabs are
+          // static, so they are drawn for real (the sidebar's are too).
+          layout.frames.includes("dashboard") ? (
+            <BottomNavFirstFrame lang={lang} pathname={pathname} />
+          ) : (
+            <BottomNavSkeleton />
+          )
+        }
+      >
+        <ContentSkeleton layout={layout} />
+      </AppShellFrame>
+    </SessionUnconfirmed>
   );
 }

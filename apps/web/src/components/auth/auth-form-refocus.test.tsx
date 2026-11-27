@@ -88,6 +88,7 @@ vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => k
 vi.mock("@/components/auth/resend-verification", () => ({ ResendVerification: () => null }));
 
 const { resetAuthSessionMemoryForTests } = await import("@/hooks/use-auth-session");
+const identity = await import("@/lib/document-identity");
 
 type Page = (() => ReactNode) & { preload?: () => Promise<void> };
 async function page(path: string): Promise<Page> {
@@ -118,6 +119,7 @@ function setSnapshot(snapshot: Snapshot) {
 
 beforeEach(() => {
   resetAuthSessionMemoryForTests();
+  identity.resetDocumentIdentityForTests(() => undefined);
   fx.snapshot = FIRST_LOAD;
 });
 afterEach(() => cleanup());
@@ -152,6 +154,25 @@ describe.each([
         expect(input(label)?.value).toBe(`typed ${label}`);
       });
     }
+  });
+
+  it("keeps the typed form while another tab's identity change is checked (masked pending)", () => {
+    render(<Page />);
+    setSnapshot(ANONYMOUS);
+    const nodes = labels.map((label) => {
+      const node = input(label) as HTMLInputElement;
+      fireEvent.change(node, { target: { value: `typed ${label}` } });
+      return node;
+    });
+    // A 401 with no watcher connected: every reader but the watcher sees
+    // `pending` until a check settles it.
+    act(() => identity.reportSessionRejected());
+    expect(identity.isDocumentIdentityUnverified()).toBe(true);
+    expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+    labels.forEach((label, index) => {
+      expect(input(label)).toBe(nodes[index]);
+      expect(input(label)?.value).toBe(`typed ${label}`);
+    });
   });
 });
 

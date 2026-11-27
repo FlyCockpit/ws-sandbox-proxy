@@ -6,7 +6,7 @@ import { adminClient, inferAdditionalFields, twoFactorClient } from "better-auth
 import { createAuthClient } from "better-auth/react";
 
 import i18n from "@/i18n";
-import { announceSessionChange } from "@/lib/document-identity";
+import { announceSessionChange, listenForIdentityPeers } from "@/lib/document-identity";
 
 export const authClient = createAuthClient({
   baseURL: env.VITE_SERVER_URL,
@@ -54,3 +54,6 @@ export const authClient = createAuthClient({
 // now, whatever page this tab lands on. docs/design/shell-rules.md § Query
 // cache follows identity.
 authClient.$store.atoms.$sessionSignal?.listen(() => announceSessionChange());
+// And it listens from the first moment a session can be read here, so an
+// announcement from another tab is never missed (no-op on the server).
+listenForIdentityPeers();

@@ -134,7 +134,10 @@ describe("the route guard resolvers", () => {
     };
     vi.doMock("@/server/auth-session", () => probes);
     vi.doMock("@/server/admin-route-access", () => probes);
-    vi.doMock("@/lib/document-identity", () => ({ admitRouteIdentity: admit }));
+    vi.doMock("@/lib/document-identity", () => ({
+      admitRouteIdentity: admit,
+      identityVerificationGeneration: () => 0,
+    }));
     const hydration = await import("./app-shell-hydration");
     const routeSession = (await import("./route-session")) as unknown as Record<
       string,

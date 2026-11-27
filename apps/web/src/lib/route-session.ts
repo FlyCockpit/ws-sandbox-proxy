@@ -1,5 +1,5 @@
 import { appShellHydrated } from "@/lib/app-shell-hydration";
-import { admitRouteIdentity } from "@/lib/document-identity";
+import { admitRouteIdentity, identityVerificationGeneration } from "@/lib/document-identity";
 import type {
   AdminRouteResolution,
   ProtectedRouteSessionResolution,
@@ -21,30 +21,32 @@ import { getProtectedRouteSession, getRouteSession } from "@/server/auth-session
  * docs/design/shell-rules.md § Query cache follows identity.
  */
 async function admitted<T extends Parameters<typeof admitRouteIdentity>[0]>(
-  probe: Promise<T>,
+  probe: () => Promise<T>,
 ): Promise<T> {
   // Nothing a guard decides (redirect, not-found, error) may reach the router
   // while the server-rendered app shell is still hydrating. The wait runs
   // alongside the probe, and a failed probe (a transport error) also waits
-  // before it reaches the router.
-  const [settled] = await Promise.allSettled([probe, appShellHydrated()]);
+  // before it reaches the router. The generation is taken before the probe:
+  // an identity change announced while it runs is newer than its answer.
+  const since = identityVerificationGeneration();
+  const [settled] = await Promise.allSettled([probe(), appShellHydrated()]);
   if (settled.status === "rejected") throw settled.reason;
   const resolution = settled.value;
-  await admitRouteIdentity(resolution);
+  await admitRouteIdentity(resolution, since);
   return resolution;
 }
 
 /** `getRouteSession()` plus the identity check: anonymous-only, device and consent guards. */
 export async function resolveRouteSession(): Promise<RouteSessionResolution> {
-  return admitted(getRouteSession());
+  return admitted(() => getRouteSession());
 }
 
 /** `getProtectedRouteSession()` plus the identity check: the `_auth` layout guard. */
 export async function resolveProtectedRouteSession(): Promise<ProtectedRouteSessionResolution> {
-  return admitted(getProtectedRouteSession());
+  return admitted(() => getProtectedRouteSession());
 }
 
 /** `getRouteAdminAccess()` plus the identity check: the `/admin` guard and its SSR 404. */
 export async function resolveRouteAdminAccess(): Promise<AdminRouteResolution> {
-  return admitted(getRouteAdminAccess());
+  return admitted(() => getRouteAdminAccess());
 }

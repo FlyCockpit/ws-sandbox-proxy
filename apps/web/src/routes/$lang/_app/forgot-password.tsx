@@ -11,7 +11,7 @@ import z from "zod";
 
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
-import { useAuthSession } from "@/hooks/use-auth-session";
+import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
 import { ensureRouteQuery } from "@/lib/route-query";
 import { resolveRouteSession } from "@/lib/route-session";
@@ -46,7 +46,9 @@ export const Route = createFileRoute("/$lang/_app/forgot-password")({
 function ForgotPasswordPage() {
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
-  const authSession = useAuthSession();
+  // Latched, as on login: a later masked or refetching `pending` (another
+  // tab's identity change being checked) must not unmount the typed form.
+  const sessionSettled = useAuthSessionSettled();
   const {
     isPending: configPending,
     isError: configError,
@@ -54,8 +56,7 @@ function ForgotPasswordPage() {
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);
   const [submitted, setSubmitted] = useState(false);
-  const sessionPending =
-    authSession.state.status === "pending" || authSession.state.status === "error";
+  const sessionPending = !sessionSettled;
 
   return (
     <AuthConfigGate

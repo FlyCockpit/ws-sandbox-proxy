@@ -5,9 +5,15 @@ import {
   admitRouteIdentity,
   announceDocumentIdentity,
   announceSessionChange,
+  confirmDocumentIdentityFresh,
   connectIdentityPeers,
+  documentIdentityBaseline,
+  holdDocumentIdentityUnverified,
+  identityVerificationGeneration,
+  isDocumentIdentityUnverified,
   isDocumentReplaced,
   leaveDocument,
+  listenForIdentityPeers,
   markExplicitSignOut,
   observeDocumentIdentity,
   onDocumentReplaced,
@@ -17,6 +23,7 @@ import {
   sealQueryClient,
   shouldReloadForIdentity,
   skipErrorToastForIdentity,
+  subscribeIdentityVerification,
   watchDocumentRestore,
 } from "./document-identity";
 
@@ -24,13 +31,23 @@ const reload = vi.fn();
 let pageshow: ((event: { persisted: boolean }) => void) | undefined;
 let pagehide: ((event: { persisted: boolean }) => void) | undefined;
 const assign = vi.fn();
-const root = { style: { visibility: "" } };
+/** The root element's inline style, as `hidePage` writes it. */
+const root = {
+  style: {
+    display: "",
+    priority: "",
+    setProperty(name: string, value: string, priority: string) {
+      if (name === "display") Object.assign(this, { display: value, priority });
+    },
+  },
+};
+const hidden = () => root.style.display === "none" && root.style.priority === "important";
 
 beforeEach(() => {
   resetDocumentIdentityForTests(() => undefined);
   reload.mockReset();
   assign.mockReset();
-  root.style.visibility = "";
+  Object.assign(root.style, { display: "", priority: "" });
   pageshow = undefined;
   pagehide = undefined;
   vi.stubGlobal("window", {
@@ -150,7 +167,7 @@ describe("explicit sign-out", () => {
     // The signed-out session is seen first: hidden and sealed, no reload.
     expect(observeDocumentIdentity(null)).toBe(true);
     replaceDocument();
-    expect(root.style.visibility).toBe("hidden");
+    expect(hidden()).toBe(true);
     expect(seal).toHaveBeenCalledTimes(1);
     expect(reload).not.toHaveBeenCalled();
     leaveDocument("/en-US/login");
@@ -164,7 +181,7 @@ describe("explicit sign-out", () => {
     observeDocumentIdentity("a");
     markExplicitSignOut();
     leaveDocument("/en-US/login");
-    expect(root.style.visibility).toBe("hidden");
+    expect(hidden()).toBe(true);
     expect(seal).toHaveBeenCalledTimes(1);
     expect(assign).toHaveBeenCalledTimes(1);
   });
@@ -176,9 +193,9 @@ describe("explicit sign-out", () => {
     observeDocumentIdentity("a");
     // A normal unload (not cached) leaves the page alone.
     pagehide?.({ persisted: false });
-    expect(root.style.visibility).toBe("");
+    expect(hidden()).toBe(false);
     pagehide?.({ persisted: true });
-    expect(root.style.visibility).toBe("hidden");
+    expect(hidden()).toBe(true);
     // Another account signs in meanwhile; Back restores this frozen copy.
     pageshow?.({ persisted: true });
     expect(seal).toHaveBeenCalledTimes(1);
@@ -190,7 +207,7 @@ describe("explicit sign-out", () => {
     observeDocumentIdentity(null);
     pagehide?.({ persisted: true });
     pageshow?.({ persisted: true });
-    expect(root.style.visibility).toBe("");
+    expect(hidden()).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });
 
@@ -327,7 +344,7 @@ describe("global error toasts", () => {
     expect(observeDocumentIdentity("b")).toBe(true);
     replaceDocument();
     expect(reload).toHaveBeenCalledTimes(1);
-    expect(root.style.visibility).toBe("hidden");
+    expect(hidden()).toBe(true);
     expect(client.getQueryData(["documents"])).toBeUndefined();
     respond({ name: "A's settings" });
     fail(new Error("late"));
@@ -384,6 +401,103 @@ describe("other tabs", () => {
     announceSessionChange();
     announceSessionChange();
     expect(channel.postMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("a peer's announcement or a 401 with no watcher mounted leaves the identity unverified", async () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    observeDocumentIdentity("a");
+    announceDocumentIdentity("a");
+    const changed = vi.fn();
+    subscribeIdentityVerification(changed);
+    channel.onmessage?.({} as MessageEvent);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(changed).toHaveBeenCalledTimes(1);
+    // A guard's server answer for the same account confirms it.
+    await admitRouteIdentity(resolved("a"));
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    reportSessionRejected();
+    expect(isDocumentIdentityUnverified()).toBe(true);
+  });
+
+  it("with a watcher connected, a peer's announcement is checked, not left unverified", () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    channel.onmessage?.({} as MessageEvent);
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(isDocumentIdentityUnverified()).toBe(false);
+  });
+
+  it("tells the session readers when the admitted identity changes", () => {
+    const changed = vi.fn();
+    subscribeIdentityVerification(changed);
+    observeDocumentIdentity(null);
+    observeDocumentIdentity(null);
+    observeDocumentIdentity("a");
+    expect(changed).toHaveBeenCalledTimes(2);
+    expect(documentIdentityBaseline()).toBe("a");
+  });
+
+  it("listens before any watcher or announcement: a peer's message leaves it unverified", () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    listenForIdentityPeers();
+    expect(channel.postMessage).not.toHaveBeenCalled();
+    channel.onmessage?.({} as MessageEvent);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+  });
+
+  it("every announcement and every check-starting 401 invalidates, even when already unverified", () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    observeDocumentIdentity("a");
+    announceDocumentIdentity("a");
+    const start = identityVerificationGeneration();
+    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({} as MessageEvent);
+    reportSessionRejected();
+    expect(identityVerificationGeneration()).toBe(start + 3);
+    // A hold sets the mask without a new invalidation.
+    confirmDocumentIdentityFresh(identityVerificationGeneration());
+    holdDocumentIdentityUnverified();
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(identityVerificationGeneration()).toBe(start + 3);
+  });
+
+  it("401s that share a running check don't invalidate it", async () => {
+    let answer: () => void = () => {};
+    connectIdentityPeers(
+      () =>
+        new Promise<void>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    const start = identityVerificationGeneration();
+    reportSessionRejected();
+    await Promise.resolve();
+    reportSessionRejected();
+    reportSessionRejected();
+    expect(identityVerificationGeneration()).toBe(start + 1);
+    answer();
+  });
+
+  it("an answer that predates a newer invalidation settles nothing", async () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    observeDocumentIdentity("a");
+    announceDocumentIdentity("a");
+    channel.onmessage?.({} as MessageEvent);
+    // A guard's probe starts, then another tab announces again mid-probe.
+    const since = identityVerificationGeneration();
+    channel.onmessage?.({} as MessageEvent);
+    await admitRouteIdentity(resolved("a"), since);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    confirmDocumentIdentityFresh(since);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    confirmDocumentIdentityFresh(identityVerificationGeneration());
+    expect(isDocumentIdentityUnverified()).toBe(false);
   });
 
   it("a guard announces a sign-in on a document whose watcher is not running", async () => {
