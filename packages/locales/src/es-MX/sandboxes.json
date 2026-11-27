@@ -841,6 +841,7 @@
     "termUnlimited": "sin límite de tiempo",
     "shortenTitle": "¿Acortar el tiempo de vida?",
     "shortenDescription": "El nuevo tiempo de vida termina antes que el actual ({{from}} → {{to}}). El sandbox se detiene antes.",
+    "shortenDescriptionDestroy": "El nuevo tiempo de vida termina antes que el actual ({{from}} → {{to}}). El sandbox se destruye antes.",
     "shortenConfirm": "Acortar tiempo de vida",
     "doneStop": "Tiempo de vida renovado. Ahora se detiene a las {{time}}.",
     "doneDestroy": "Tiempo de vida renovado. Ahora se destruye a las {{time}}.",

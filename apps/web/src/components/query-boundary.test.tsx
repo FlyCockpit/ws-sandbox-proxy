@@ -162,4 +162,30 @@ describe("QueryBoundary", () => {
       expect(html.indexOf(offlineCopy)).toBeLessThan(html.indexOf("alpha"));
     });
   });
+
+  describe("unreachable", () => {
+    const unreachableCopy = enErrors.unreachable.replace("'", "&#x27;");
+
+    it("uses the unreachable copy when the server cannot be reached online", () => {
+      const html = render({
+        data: undefined,
+        isPending: false,
+        isError: true,
+        error: new TypeError("Failed to fetch"),
+      });
+      expect(html).toContain(unreachableCopy);
+      expect(html).not.toContain("Failed to load posts.");
+    });
+
+    it("keeps retained content when a refetch cannot reach the server", () => {
+      const html = render({
+        data: ["alpha"],
+        isPending: false,
+        isError: true,
+        error: new TypeError("Failed to fetch"),
+      });
+      expect(html).toContain("alpha");
+      expect(html.indexOf(unreachableCopy)).toBeLessThan(html.indexOf("alpha"));
+    });
+  });
 });

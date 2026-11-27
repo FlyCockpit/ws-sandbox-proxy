@@ -25,26 +25,35 @@ vi.mock("@tanstack/react-router", () => ({
     className,
     to,
     params,
+    activeOptions,
     ...rest
   }: {
     children: ReactNode;
     className?: string;
     to: string;
     params?: { lang?: string };
+    activeOptions?: { exact?: boolean };
     "data-nav-id"?: string;
     "data-active"?: string;
     onClick?: () => void;
-  }) => (
-    <a
-      className={className}
-      href={to.replace("$lang", params?.lang ?? "$lang")}
-      data-nav-id={rest["data-nav-id"]}
-      data-active={rest["data-active"]}
-      onClick={rest.onClick}
-    >
-      {children}
-    </a>
-  ),
+  }) => {
+    const href = to.replace("$lang", params?.lang ?? "$lang");
+    const isActive = activeOptions?.exact
+      ? state.pathname === href
+      : state.pathname === href || state.pathname.startsWith(`${href}/`);
+    return (
+      <a
+        className={className}
+        href={href}
+        aria-current={isActive ? "page" : undefined}
+        data-nav-id={rest["data-nav-id"]}
+        data-active={rest["data-active"]}
+        onClick={rest.onClick}
+      >
+        {children}
+      </a>
+    );
+  },
   useParams: () => ({ lang: state.lang }),
   useLocation: () => ({ pathname: state.pathname }),
 }));
@@ -146,6 +155,8 @@ describe("bottom tabs", () => {
     mount();
     const active = tabs().filter((el) => (el as HTMLElement).dataset.active === "true");
     expect(active.map((el) => (el as HTMLElement).dataset.navId)).toEqual([id]);
+    const currentLinks = links().filter((a) => a.getAttribute("aria-current") === "page");
+    expect(currentLinks.map((a) => a.dataset.navId)).toEqual(id === "more" ? [] : [id]);
   });
 
   it.each([

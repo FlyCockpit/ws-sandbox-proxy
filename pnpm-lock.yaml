@@ -455,6 +455,9 @@ importers:
       '@better-auth/mcp':
         specifier: 'catalog:'
         version: 1.7.18(6ab752934d51d62584e0d5c54ea57f9e)
+      '@better-auth/oauth-provider':
+        specifier: 'catalog:'
+        version: 1.7.18(6ab752934d51d62584e0d5c54ea57f9e)
       '@hono/node-server':
         specifier: ^2.1.6
         version: 2.1.6(hono@4.13.17)

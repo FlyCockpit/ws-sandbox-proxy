@@ -182,7 +182,9 @@
     "notConfigured": "Webhooks are not configured on this server.",
     "notFound": "It no longer exists. The list has been refreshed.",
     "rateLimited": "Too many requests. Wait a moment and try again.",
-    "generic": "That didn't work. Check your connection and try again."
+    "generic": "That didn't work. Check your connection and try again.",
+    "offline": "You're offline. Check your connection and try again.",
+    "unreachable": "Couldn't reach the server. Check your connection and try again."
   },
   "eventGroup": {
     "sandbox": "Sandboxes",

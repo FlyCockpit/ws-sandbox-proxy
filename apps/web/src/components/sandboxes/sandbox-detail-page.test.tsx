@@ -2576,9 +2576,22 @@ describe("renew (design review #2)", () => {
     await selectOption(user, popup.getByLabelText(enSandboxes.lifetime.field), /^5 minutes$/);
     await user.click(popup.getByRole("button", { name: enSandboxes.renew.submit }));
     expect(await popup.findByText(enSandboxes.renew.shortenTitle)).toBeTruthy();
+    expect(popup.getByText(/stops sooner/)).toBeTruthy();
     await user.click(popup.getByRole("button", { name: enCommon.actions.back }));
     expect(popup.getByLabelText(enSandboxes.lifetime.field)).toBeTruthy();
     expect(calls("setSandboxTimeout")).toHaveLength(0);
+  });
+
+  it("shortening a destroy-on-expire lease says the sandbox is destroyed sooner", async () => {
+    server.current.sandboxes = [sandboxRow({ leaseExpireAction: "DESTROY" })];
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: enSandboxes.renew.action }));
+    const popup = within(screen.getByRole("dialog"));
+    await selectOption(user, popup.getByLabelText(enSandboxes.lifetime.field), /^5 minutes$/);
+    await user.click(popup.getByRole("button", { name: enSandboxes.renew.submit }));
+    expect(await popup.findByText(enSandboxes.renew.shortenTitle)).toBeTruthy();
+    expect(popup.getByText(/destroyed sooner/)).toBeTruthy();
   });
 });
 

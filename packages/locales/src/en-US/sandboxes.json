@@ -191,6 +191,7 @@
     "termUnlimited": "no time limit",
     "shortenTitle": "Shorten the lifetime?",
     "shortenDescription": "The new lifetime ends earlier than the current one ({{from}} → {{to}}). The sandbox stops sooner.",
+    "shortenDescriptionDestroy": "The new lifetime ends earlier than the current one ({{from}} → {{to}}). The sandbox is destroyed sooner.",
     "shortenConfirm": "Shorten lifetime",
     "doneStop": "Lifetime renewed. It now stops at {{time}}.",
     "doneDestroy": "Lifetime renewed. It is now destroyed at {{time}}.",

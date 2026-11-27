@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@wssp/ui/components/button";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { InlineRetry } from "@/components/inline-retry";
 import {
@@ -77,7 +77,15 @@ function QuickButton({
   );
 }
 
-export function SandboxQuickAction({ sandbox, lang }: { sandbox: SandboxListItem; lang: string }) {
+export function SandboxQuickAction({
+  sandbox,
+  lang,
+  openLink,
+}: {
+  sandbox: SandboxListItem;
+  lang: string;
+  openLink?: ReactNode;
+}) {
   const { t } = useTranslation(["sandboxes"]);
   // The dialog of the first click, set only once a fresh read succeeded: a
   // cached view (the detail page's, say) may hold an older lease limit or
@@ -92,7 +100,12 @@ export function SandboxQuickAction({ sandbox, lang }: { sandbox: SandboxListItem
   });
   useTwoFactorRedirectOnError(lang, [detail.error]);
   // Gone or no longer ours: no controls, exactly as the detail page hides them.
-  if (detail.isError && isQueryAccessError(detail.error)) return null;
+  if (detail.isError && isQueryAccessError(detail.error))
+    return openLink ? (
+      <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:justify-self-end sm:flex-nowrap">
+        {openLink}
+      </div>
+    ) : null;
   if (first !== null && detail.data)
     return (
       <LoadedQuickAction
@@ -102,6 +115,7 @@ export function SandboxQuickAction({ sandbox, lang }: { sandbox: SandboxListItem
         first={first}
         transientError={detail.isError}
         refreshing={detail.isFetching}
+        openLink={openLink}
         refresh={async () => {
           const next = await detail.refetch();
           return !next.isError;
@@ -109,25 +123,32 @@ export function SandboxQuickAction({ sandbox, lang }: { sandbox: SandboxListItem
       />
     );
   const dialog = quickDialog(sandbox);
-  if (dialog === null) return null;
+  if (dialog === null && !openLink) return null;
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      <QuickButton
-        dialog={dialog}
-        sandbox={sandbox}
-        disabled={detail.isFetching}
-        onClick={() =>
-          void detail.refetch().then((next) => {
-            if (!next.isError && next.data) setFirst(dialog);
-          })
-        }
-      />
+    <>
+      <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:justify-self-end sm:flex-nowrap">
+        {dialog === null ? null : (
+          <QuickButton
+            dialog={dialog}
+            sandbox={sandbox}
+            disabled={detail.isFetching}
+            onClick={() =>
+              void detail.refetch().then((next) => {
+                if (!next.isError && next.data) setFirst(dialog);
+              })
+            }
+          />
+        )}
+        {openLink}
+      </div>
       {detail.isError ? (
-        <p role="alert" data-quick-action-problem="" className="text-xs text-destructive">
-          {t("sandboxes:detail.loadFailed")}
-        </p>
+        <div className="min-w-0 sm:col-span-full">
+          <p role="alert" data-quick-action-problem="" className="text-xs text-destructive">
+            {t("sandboxes:detail.loadFailed")}
+          </p>
+        </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -144,6 +165,7 @@ function LoadedQuickAction({
   first,
   transientError,
   refreshing,
+  openLink,
   refresh,
 }: {
   item: SandboxListItem;
@@ -152,6 +174,7 @@ function LoadedQuickAction({
   first: QuickDialog;
   transientError: boolean;
   refreshing: boolean;
+  openLink?: ReactNode;
   /** Reads the full view again; false when that read failed. */
   refresh: () => Promise<boolean>;
 }) {
@@ -161,27 +184,32 @@ function LoadedQuickAction({
   const lifecycle = useSandboxLifecycle(sandbox, lang, dialog === first ? first : null);
   const { setOpen, problem, pending } = lifecycle;
   return (
-    <div className="flex min-w-0 flex-col gap-1">
-      {dialog ? (
-        <QuickButton
-          dialog={dialog}
-          sandbox={item}
-          disabled={pending || refreshing}
-          // The lease limit and remembered lifetime may have changed since the
-          // last read: open the dialog only on a fresh one.
-          onClick={() =>
-            void refresh().then((fresh) => {
-              if (fresh) setOpen(dialog);
-            })
-          }
-        />
-      ) : null}
+    <>
+      <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:justify-self-end sm:flex-nowrap">
+        {dialog ? (
+          <QuickButton
+            dialog={dialog}
+            sandbox={item}
+            disabled={pending || refreshing}
+            // The lease limit and remembered lifetime may have changed since the
+            // last read: open the dialog only on a fresh one.
+            onClick={() =>
+              void refresh().then((fresh) => {
+                if (fresh) setOpen(dialog);
+              })
+            }
+          />
+        ) : null}
+        {openLink}
+      </div>
       {problem ? (
-        <p role="alert" data-action-problem={problem} className="text-xs text-destructive">
-          {t(`sandboxes:problem.${problem}`)}
-        </p>
+        <div className="min-w-0 sm:col-span-full">
+          <p role="alert" data-action-problem={problem} className="text-xs text-destructive">
+            {t(`sandboxes:problem.${problem}`)}
+          </p>
+        </div>
       ) : transientError ? (
-        <div data-quick-action-problem="">
+        <div data-quick-action-problem="" className="min-w-0 sm:col-span-full">
           <InlineRetry message={t("sandboxes:detail.loadFailed")} onRetry={() => void refresh()} />
         </div>
       ) : null}
@@ -191,6 +219,6 @@ function LoadedQuickAction({
         lifecycle={lifecycle}
         waiting={sandbox.state === "WAITING_FOR_CAPACITY"}
       />
-    </div>
+    </>
   );
 }

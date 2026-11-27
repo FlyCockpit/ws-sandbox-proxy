@@ -70,7 +70,12 @@
         "sileo"
       ]
     },
-    "apps/server": {},
+    "apps/server": {
+      "ignoreDependencies": [
+        // Kept direct so tsdown leaves @better-auth/oauth-provider external when bundling @wssp/auth, sharing one oAuthState instance with @better-auth/mcp.
+        "@better-auth/oauth-provider"
+      ]
+    },
     "apps/worker": {},
     "packages/ui": {
       "entry": ["src/components/**/*.tsx", "src/styles/**/*.css"]

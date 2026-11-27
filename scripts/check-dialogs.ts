@@ -71,7 +71,7 @@ export function judgeDialog(label: string, probe: DialogProbe): string[] {
 }
 
 // Runs in the page (agent-browser eval). Self-contained: no closures.
-const PROBE = `(() => {
+export const PROBE = `(() => {
   const popups = [...document.querySelectorAll('[data-slot="dialog-content"], [data-slot="alert-dialog-content"]')];
   const popup = popups[popups.length - 1];
   const out = { vw: document.documentElement.clientWidth, vh: window.innerHeight, popup: null, scrollers: [], covered: [] };
@@ -93,6 +93,15 @@ const PROBE = `(() => {
       if (bars.some((other) => other === el || other.contains(el) || el.contains(other))) continue;
       // The close button is drawn on the header's corner on purpose.
       if (el.closest('[data-slot="dialog-close"]')) continue;
+      // Closed <details> keeps collapsed fields in DOM for validation; browsers hide them via content-visibility while retaining layout rects.
+      let hiddenByDetails = false;
+      for (let d = el.closest("details:not([open])"); d; d = d.parentElement?.closest("details:not([open])") ?? null) {
+        if (!d.querySelector(":scope > summary")?.contains(el)) {
+          hiddenByDetails = true;
+          break;
+        }
+      }
+      if (hiddenByDetails) continue;
       if (el.children.length > 0 && !el.matches("input, textarea, select, button")) continue;
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0 || getComputedStyle(el).visibility === "hidden") continue;

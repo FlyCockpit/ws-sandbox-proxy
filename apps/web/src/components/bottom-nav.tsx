@@ -74,6 +74,7 @@ export function BottomNavFirstFrame({ lang, pathname }: { lang: string; pathname
           key={item.id}
           to={toLangRoute(item.path)}
           params={{ lang }}
+          activeOptions={{ exact: item.id !== active ? true : item.exact }}
           data-tab-id={item.id}
           data-active={item.id === active ? "true" : undefined}
           className={cn(TAB_CLASS, item.id === active ? "text-primary" : "text-muted-foreground")}
@@ -135,7 +136,7 @@ function SignedInBottomNav() {
           key={item.id}
           to={toLangRoute(item.path)}
           params={{ lang }}
-          activeOptions={{ exact: item.exact }}
+          activeOptions={{ exact: item.id !== active ? true : item.exact }}
           data-nav-id={item.id}
           data-active={item.id === active ? "true" : undefined}
           className={cn(TAB_CLASS, item.id === active ? "text-primary" : "text-muted-foreground")}

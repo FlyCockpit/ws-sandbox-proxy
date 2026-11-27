@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { byRole, type CheckRun, formSignIn, pollPage, sessionName } from "./browser-check-lib.ts";
 import { DIALOGS, SHELL_PAGES, seededAccount, signIn } from "./browser-checks.config.ts";
-import { type DialogProbe, judgeDialog, stepScript } from "./check-dialogs.ts";
+import { type DialogProbe, judgeDialog, PROBE, stepScript } from "./check-dialogs.ts";
 
 const fits: DialogProbe = {
   vw: 1280,
@@ -53,6 +53,114 @@ describe("judgeDialog", () => {
 
   it("fails when no dialog opened", () => {
     assert.deepEqual(judgeDialog("x", { ...fits, popup: null }), ["x: no dialog opened"]);
+  });
+
+  it("ignores collapsed descendants inside nested closed <details> while keeping visible summaries checked", () => {
+    const popupRect = { top: 100, bottom: 500, left: 400, right: 800, width: 400, height: 400 };
+    const footerRect = { top: 440, bottom: 500, left: 400, right: 800, width: 400, height: 60 };
+    const makeNode = (opts: {
+      tagName: string;
+      slot?: string | null;
+      rect: {
+        top: number;
+        bottom: number;
+        left: number;
+        right: number;
+        width: number;
+        height: number;
+      };
+      open?: boolean;
+      summaryNode?: unknown;
+      parentDetails?: unknown;
+    }) => {
+      const node: Record<string, unknown> = {
+        tagName: opts.tagName,
+        children: [],
+        getAttribute: (name: string) => (name === "data-slot" ? (opts.slot ?? null) : null),
+        matches: () => false,
+        getBoundingClientRect: () => opts.rect,
+        contains: (target: unknown) => target === node,
+        querySelector: (sel: string) =>
+          sel === ":scope > summary" ? (opts.summaryNode ?? null) : null,
+        closest: (sel: string): unknown => {
+          if (sel === "details:not([open])") {
+            if (opts.tagName === "DETAILS" && !opts.open) return node;
+            return opts.parentDetails
+              ? (opts.parentDetails as { closest: (s: string) => unknown }).closest(sel)
+              : null;
+          }
+          return null;
+        },
+        parentElement: opts.parentDetails
+          ? {
+              closest: (sel: string) =>
+                (opts.parentDetails as { closest: (s: string) => unknown }).closest(sel),
+            }
+          : null,
+      };
+      return node;
+    };
+
+    const footer = makeNode({ tagName: "DIV", slot: "dialog-footer", rect: footerRect });
+    const outerSummary = makeNode({
+      tagName: "SUMMARY",
+      rect: { top: 450, bottom: 470, left: 410, right: 790, width: 380, height: 20 },
+    });
+    const outerClosed = makeNode({
+      tagName: "DETAILS",
+      rect: footerRect,
+      open: false,
+      summaryNode: outerSummary,
+    });
+    outerSummary.parentElement = { closest: () => outerClosed };
+    outerSummary.closest = (sel: string) => (sel === "details:not([open])" ? outerClosed : null);
+
+    const hiddenLabel = makeNode({
+      tagName: "LABEL",
+      rect: { top: 450, bottom: 465, left: 410, right: 790, width: 380, height: 15 },
+      parentDetails: outerClosed,
+    });
+    const innerSummary = makeNode({
+      tagName: "SUMMARY",
+      rect: { top: 450, bottom: 470, left: 410, right: 790, width: 380, height: 20 },
+    });
+    const innerClosed = makeNode({
+      tagName: "DETAILS",
+      rect: footerRect,
+      open: false,
+      summaryNode: innerSummary,
+      parentDetails: outerClosed,
+    });
+    innerSummary.parentElement = { closest: () => innerClosed };
+    innerSummary.closest = (sel: string) => (sel === "details:not([open])" ? innerClosed : null);
+
+    const runProbe = (elements: unknown[]) => {
+      const popup = {
+        getBoundingClientRect: () => popupRect,
+        scrollHeight: 400,
+        clientHeight: 400,
+        querySelectorAll: (sel: string) =>
+          sel === '[data-slot$="dialog-header"], [data-slot$="dialog-footer"]'
+            ? [footer]
+            : elements,
+      };
+      const fakeDoc = {
+        documentElement: { clientWidth: 1280 },
+        querySelectorAll: () => [popup],
+      };
+      const fn = new Function("document", "window", "getComputedStyle", `return ${PROBE}`);
+      return JSON.parse(
+        fn(fakeDoc, { innerHeight: 800 }, () => ({
+          overflowY: "visible",
+          visibility: "visible",
+        })) as string,
+      ) as DialogProbe;
+    };
+
+    // Collapsed descendants and inner summaries inside a closed outer <details> are ignored.
+    assert.equal(runProbe([footer, hiddenLabel, innerSummary]).covered.length, 0);
+    // An exposed summary covered by the action bar still fails.
+    assert.equal(runProbe([footer, outerSummary]).covered.length, 1);
   });
 });
 

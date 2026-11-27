@@ -605,10 +605,15 @@ function RenewDialog({
           </DialogTitle>
           <DialogDescription>
             {confirming && preview
-              ? t("sandboxes:renew.shortenDescription", {
-                  from: term(current),
-                  to: term(preview.newDeadline),
-                })
+              ? t(
+                  onExpire === "destroy"
+                    ? "sandboxes:renew.shortenDescriptionDestroy"
+                    : "sandboxes:renew.shortenDescription",
+                  {
+                    from: term(current),
+                    to: term(preview.newDeadline),
+                  },
+                )
               : t("sandboxes:renew.description")}
           </DialogDescription>
         </DialogHeader>

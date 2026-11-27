@@ -338,7 +338,9 @@
       "rateLimited": "Demasiadas solicitudes. Espera antes de volver a intentarlo.",
       "generic": "La solicitud falló. Recarga el grupo para revisar su estado actual.",
       "unusableScopes": "La solicitud no está permitida.",
-      "templateOffHost": "El recurso seleccionado ya no está disponible."
+      "templateOffHost": "El recurso seleccionado ya no está disponible.",
+      "offline": "Sin conexión. Revisa tu conexión e inténtalo de nuevo.",
+      "unreachable": "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo."
     },
     "noHostsToAdd": "Todos los hosts ya son miembros o están pendientes de eliminación.",
     "noHostsOnPage": "No hay hosts para agregar en esta página. Carga más hosts.",

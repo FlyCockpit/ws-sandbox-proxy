@@ -943,6 +943,7 @@ describe("name filter, quiet receipts and row Start/Stop (design review #13)", (
     expect(problem.getAttribute("role")).toBe("alert");
     expect(problem.dataset.actionProblem).toBe("stateChanged");
     expect(problem.textContent).toBe(enSandboxes.problem.stateChanged);
+    expect(problem.parentElement?.className).toContain("sm:col-span-full");
   });
 });
 

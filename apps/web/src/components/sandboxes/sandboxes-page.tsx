@@ -304,6 +304,16 @@ function SandboxRow({
   const deadline = sandbox.leaseExpiresAt ? new Date(sandbox.leaseExpiresAt).getTime() : null;
   const stopped = sandboxPhase(sandbox.state) === "stopped";
   const offline = sandbox.state !== "DELETED" && sandboxHostView(sandbox.host, now) === "offline";
+  const openLink = (
+    <Link
+      to="/$lang/dashboard/sandboxes/$sandboxId"
+      params={{ lang, sandboxId: sandbox.id }}
+      aria-label={t("sandboxes:openLabel", { id: sandbox.id })}
+      className={buttonVariants({ variant: "outline", size: "touch" })}
+    >
+      {t("sandboxes:open")}
+    </Link>
+  );
   return (
     <li
       data-sandbox-id={sandbox.id}
@@ -311,9 +321,10 @@ function SandboxRow({
       className="flex min-w-0 flex-col rounded-xl border bg-card px-4 py-3 text-card-foreground"
     >
       {/* Dense by design (design review #13): one row of facts at desktop
-          widths, two columns on a phone, the actions beside the name. */}
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
+          widths, two columns on a phone, the actions beside the name. Inline
+          action errors span below so they never widen the button column. */}
+      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+        <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
             {/* Under the page's h1, each sandbox is a second-level heading. */}
             <h2 data-sandbox-name="" className="min-w-0 truncate font-mono text-sm font-medium">
@@ -428,19 +439,13 @@ function SandboxRow({
             </p>
           ) : null}
         </div>
-        <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:flex-nowrap">
-          {sandbox.state === "DELETED" ? null : (
-            <SandboxQuickAction sandbox={sandbox} lang={lang} />
-          )}
-          <Link
-            to="/$lang/dashboard/sandboxes/$sandboxId"
-            params={{ lang, sandboxId: sandbox.id }}
-            aria-label={t("sandboxes:openLabel", { id: sandbox.id })}
-            className={buttonVariants({ variant: "outline", size: "touch" })}
-          >
-            {t("sandboxes:open")}
-          </Link>
-        </div>
+        {sandbox.state === "DELETED" ? (
+          <div className="flex min-w-0 shrink-0 flex-wrap items-start gap-2 sm:justify-self-end sm:flex-nowrap">
+            {openLink}
+          </div>
+        ) : (
+          <SandboxQuickAction sandbox={sandbox} lang={lang} openLink={openLink} />
+        )}
       </div>
     </li>
   );

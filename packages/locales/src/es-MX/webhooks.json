@@ -152,7 +152,9 @@
     "notConfigured": "Los webhooks no están configurados en este servidor.",
     "notFound": "Ya no existe. La lista ha sido actualizada.",
     "rateLimited": "Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
-    "generic": "Eso no funcionó. Verifica tu conexión e inténtalo de nuevo."
+    "generic": "Eso no funcionó. Verifica tu conexión e inténtalo de nuevo.",
+    "offline": "Sin conexión. Revisa tu conexión e inténtalo de nuevo.",
+    "unreachable": "No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo."
   },
   "rotate": {
     "action": "Rotar secreto",

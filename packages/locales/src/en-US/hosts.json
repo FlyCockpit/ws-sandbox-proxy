@@ -242,7 +242,9 @@
       "rateLimited": "Too many requests. Wait before trying again.",
       "generic": "The request failed. Reload the pool to check its current state.",
       "unusableScopes": "The request is not permitted.",
-      "templateOffHost": "The selected resource is no longer available."
+      "templateOffHost": "The selected resource is no longer available.",
+      "offline": "You're offline. Check your connection and try again.",
+      "unreachable": "Couldn't reach the server. Check your connection and try again."
     },
     "noHostsToAdd": "All hosts are already members, or pending deletion.",
     "noHostsOnPage": "No hosts to add on this page. Load more hosts.",

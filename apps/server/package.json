@@ -31,7 +31,8 @@
     "ws": "catalog:",
     "zod": "catalog:",
     "@modelcontextprotocol/server": "catalog:",
-    "@better-auth/mcp": "catalog:"
+    "@better-auth/mcp": "catalog:",
+    "@better-auth/oauth-provider": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

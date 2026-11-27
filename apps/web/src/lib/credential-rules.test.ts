@@ -267,6 +267,7 @@ describe("errors", () => {
   });
 
   it("maps server refusals to explanations", () => {
+    expect(credentialProblem(new TypeError("Failed to fetch"))).toBe("unreachable");
     expect(credentialProblem({ code: "NOT_FOUND" })).toBe("notFound");
     expect(credentialProblem({ code: "CONFLICT" })).toBe("changed");
     expect(credentialProblem({ code: "FORBIDDEN" })).toBe("forbidden");

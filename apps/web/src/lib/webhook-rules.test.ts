@@ -38,6 +38,7 @@ describe("webhook draft rules", () => {
       "notConfigured",
     );
     expect(webhookProblem({ status: 429 })).toBe("rateLimited");
+    expect(webhookProblem(new TypeError("Failed to fetch"))).toBe("unreachable");
     expect(webhookProblem(new Error("x"))).toBe("generic");
   });
 });

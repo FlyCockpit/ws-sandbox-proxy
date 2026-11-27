@@ -5,6 +5,7 @@ import {
   WEBHOOK_URL_MAX_LENGTH,
   type WebhookSubscribableEventType,
 } from "@wssp/api/webhooks/constants";
+import { networkFailureKind } from "./network-failure";
 
 /**
  * Pure rules for the Webhooks pages. The server re-checks every URL (and
@@ -50,6 +51,8 @@ export function webhookHost(url: string): string {
 }
 
 export type WebhookProblem =
+  | "offline"
+  | "unreachable"
   | "destinationInvalid"
   | "destinationBlocked"
   | "limit"
@@ -73,6 +76,8 @@ const BY_CODE: Record<string, WebhookProblem> = {
 
 /** Map a failed webhook call to the explanation shown next to it. */
 export function webhookProblem(error: unknown): WebhookProblem {
+  const network = networkFailureKind(error);
+  if (network) return network;
   const shape = (error && typeof error === "object" ? error : {}) as {
     code?: unknown;
     status?: unknown;

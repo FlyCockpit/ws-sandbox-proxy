@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { InlineRetry } from "@/components/inline-retry";
 import { useNetworkStatus } from "@/hooks/use-network-status";
+import { networkFailureKind } from "@/lib/network-failure";
 import { isQueryAccessError } from "@/lib/query-access-error";
 
 type QueryLike<T> = {
@@ -75,7 +76,13 @@ export function QueryBoundary<T>({
       />
     );
   }
-  const message = online ? errorMessage : offlineMessage;
+  const network = networkFailureKind(query.error);
+  const message =
+    !online || network === "offline"
+      ? offlineMessage
+      : network === "unreachable"
+        ? t("unreachable")
+        : errorMessage;
 
   if ((isError && isQueryAccessError(query.error)) || data === undefined) {
     // Nothing to keep on screen: the error card takes the content's slot.

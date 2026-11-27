@@ -12,6 +12,7 @@ import {
 } from "@wssp/api/lib/sdk-key-rules";
 import { SERVICE_SCOPES, type ServiceScope } from "@wssp/api/lib/service-scopes";
 import { TWO_FACTOR_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
+import { networkFailureKind } from "./network-failure";
 
 /**
  * Pure rules for the Host credentials and SDK keys pages (C45). They decide
@@ -361,6 +362,8 @@ export function isTwoFactorRequiredError(error: unknown): boolean {
 }
 
 export type CredentialProblem =
+  | "offline"
+  | "unreachable"
   | "unusableScopes"
   | "templateOffHost"
   | "webhooksRequireAllOwned"
@@ -376,6 +379,8 @@ export type CredentialProblem =
 
 /** Map a failed credential mint/revoke to the explanation shown next to it. */
 export function credentialProblem(error: unknown): CredentialProblem {
+  const network = networkFailureKind(error);
+  if (network) return network;
   const shape = shapeOf(error);
   const code =
     shape.data != null && typeof shape.data === "object"

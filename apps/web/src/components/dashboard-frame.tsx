@@ -204,7 +204,7 @@ function SidebarLink({ item, lang, active }: { item: AppNavItem; lang: string; a
     <Link
       to={toLangRoute(item.path)}
       params={{ lang }}
-      activeOptions={{ exact: item.exact }}
+      activeOptions={{ exact: !active ? true : item.exact }}
       title={label}
       data-nav-id={item.id}
       data-active={active ? "true" : undefined}
