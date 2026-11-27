@@ -102,7 +102,9 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
     'kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX", "RENEW_SANDBOX_LEASE"] },':
       "kind-agnostic",
     'kind: { in: ["STOP_SANDBOX", "KILL_SANDBOX"] },': "kind-agnostic",
-    'requireRelayFence(next === "STOPPED" || next === "DELETED" || next === "OFFLOADED");':
+    // Census teardown settlement also keeps never-ready root cleanup STOPPING;
+    // this fences terminal/cleanup states without choosing launch semantics.
+    'next === "STOPPING" || next === "STOPPED" || next === "DELETED" || next === "OFFLOADED",':
       "kind-agnostic",
     // The census rule (STOPPED cached copy; PROVISIONING/ERROR with a stored
     // disk, I3): state checks, no launch-kind branch.
@@ -136,6 +138,9 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
     '(operation.kind === "CREATE_SANDBOX" || operation.kind === "RECONNECT_SANDBOX"),':
       "kind-agnostic",
     'const launch = input.kind === "sandbox.create" || input.kind === "sandbox.reconnect";':
+      "kind-agnostic",
+    // Dispatch-audit redelivery is bounded for every allocation launch mode.
+    'if (op.kind === "CREATE_SANDBOX" || op.kind === "RECONNECT_SANDBOX") return false;':
       "kind-agnostic",
   },
   "apps/server/src/sandbox-relay/outbox-processor.ts": {
@@ -346,6 +351,11 @@ export const LAUNCH_BRANCH_INVENTORY: Readonly<
   },
   "packages/api/src/sandbox/sharing-access.ts": {
     'kind: { in: ["CREATE_SANDBOX", "RECONNECT_SANDBOX"] },': "kind-agnostic",
+  },
+  "packages/api/src/sandbox/sensitive-errors.ts": {
+    // Display only: fixed public error text for a failed COLD reconnect;
+    // no new-root versus existing-root behavior is chosen here.
+    'operation?.kind === "RECONNECT_SANDBOX" &&': "kind-agnostic",
   },
   "packages/api/src/sandbox/state-transitions.ts": {
     '"CREATE_SANDBOX",': "kind-agnostic",

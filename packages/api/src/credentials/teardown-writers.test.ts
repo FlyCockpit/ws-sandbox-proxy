@@ -84,20 +84,27 @@ const WRITERS: readonly Entry[] = [
     file: LEASE,
     text: "const nextGeneration = sandbox.generation + 1;",
     helper: "settleCredentialTeardown",
-    near: 350,
+    near: 420,
   },
   {
     file: LEASE,
     text: "const nextGeneration = sandbox.generation + 1;",
     helper: "settleCredentialTeardown",
-    near: 180,
+    near: 250,
   },
   // Retry cleanup (offload §8.7, U10) re-queues through queueSystemTeardown.
   {
     file: LEASE,
     text: "const nextGeneration = sandbox.generation + 1;",
     helper: "settleCredentialTeardown",
-    near: 90,
+    near: 160,
+  },
+  // STOP/absent before READY retires its root through queueSystemTeardown.
+  {
+    file: LEASE,
+    text: "const nextGeneration = sandbox.generation + 1;",
+    helper: "settleCredentialTeardown",
+    near: 100,
   },
   {
     file: LEASE,

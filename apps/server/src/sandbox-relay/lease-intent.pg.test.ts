@@ -178,6 +178,47 @@ async function ready(f: Fixture) {
   expect(await applyOperationResult(await dispatch(f), f.clock)).toEqual({ written: true });
 }
 
+async function expectNeverReadyStopCleanup(f: Fixture, stopGeneration: number) {
+  const generation = stopGeneration + 1;
+  expect(await f.row()).toMatchObject({
+    state: "STOPPING",
+    generation,
+    readyAt: null,
+    liveResourcesHeld: false,
+    sandboxHostId: f.host.id,
+    diskReservationHeld: true,
+    diskOffloadId: null,
+  });
+  const kills = await db.inspect.sandboxOperation.findMany({
+    where: { sandboxId: f.sandbox.id, kind: "KILL_SANDBOX" },
+    take: 2,
+  });
+  expect(kills).toHaveLength(1);
+  const kill = kills[0]!;
+  expect(kill).toMatchObject({
+    state: "QUEUED",
+    generation,
+    idempotencyKey: `teardown-retry:${f.sandbox.id}:${generation}:0`,
+  });
+  const events = await db.inspect.outboxEvent.findMany({
+    where: { aggregateId: f.sandbox.id, eventType: "sandbox.kill_requested" },
+    take: 2,
+  });
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({
+    operationId: kill.id,
+    processedAt: null,
+    payload: {
+      operationId: kill.id,
+      kind: "sandbox.kill",
+      generation,
+      authorizingPrincipal: { kind: "system" },
+      credentialTeardown: "system",
+    },
+  });
+  return kill;
+}
+
 it.each(["REQUESTED", "SCHEDULED", "PROVISIONING", "RECOVERED", "READY"] as const)(
   "D2 stop from %s fences create, holds UNKNOWN capacity and releases once on stopped proof",
   async (state) => {
@@ -239,7 +280,7 @@ it.each(["REQUESTED", "SCHEDULED", "PROVISIONING", "RECOVERED", "READY"] as cons
   },
 );
 
-it("D2 stop before init releases live once but retains the root claim", async () => {
+it("D2 stop before init releases live once and retains the root claim until cleanup KILL", async () => {
   const f = await fixture();
   const staleCreate = await dispatch(f);
   const stop = await stopSandbox(f.owner, { id: f.sandbox.id, idempotencyKey: "no-instance" });
@@ -248,11 +289,19 @@ it("D2 stop before init releases live once but retains the root claim", async ()
   expect(await applyOperationResult(absent, f.clock)).toEqual({ written: true });
   expect(await applyOperationResult(absent, f.clock)).toEqual({ written: false });
   expect(await applyOperationResult(staleCreate, f.clock)).toEqual({ written: false });
+  const kill = await expectNeverReadyStopCleanup(f, result.generation);
+  expect(
+    (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
+  ).toBe(0);
+  const deleted = await dispatch(f, kill.id);
+  expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: true });
+  expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: false });
   expect(await f.row()).toMatchObject({
-    state: "STOPPED",
+    state: "DELETED",
+    generation: kill.generation,
     liveResourcesHeld: false,
-    sandboxHostId: f.host.id,
-    diskReservationHeld: true,
+    diskReservationHeld: false,
+    sandboxHostId: null,
   });
   expect(
     (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
@@ -260,7 +309,7 @@ it("D2 stop before init releases live once but retains the root claim", async ()
 });
 
 it.each(["receipt", "inventory"])(
-  "D2 lease-expiry Stop before init retains the root via %s and releases live once",
+  "D2 lease-expiry Stop before init queues cleanup KILL via %s and releases live once",
   async (source) => {
     const f = await fixture({ timeoutMs: 1_000, onTimeout: "stop" });
     const createResult = await dispatch(f);
@@ -297,18 +346,33 @@ it.each(["receipt", "inventory"])(
         state: "absent" as const,
       };
       expect(await convergeInventoryEntry(sender, entry, f.clock)).toEqual({ converged: true });
+      await convergeInventoryEntry(sender, entry, f.clock);
     }
-    expect(await f.row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: false });
+    const kill = await expectNeverReadyStopCleanup(f, cleanup.generation);
     expect(
       (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
     ).toBe(0);
     expect(await reclaimExpiredSandboxLeases(f.clock)).toBe(0);
+    const deleted = await dispatch(f, kill.id);
+    expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: true });
+    expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: false });
+    expect(await f.row()).toMatchObject({
+      state: "DELETED",
+      generation: kill.generation,
+      liveResourcesHeld: false,
+      diskReservationHeld: false,
+      sandboxHostId: null,
+    });
+    expect(
+      (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
+    ).toBe(0);
   },
 );
 
-it("D2 inventory absence settles stop before init while retaining the unobserved root", async () => {
+it("D2 inventory absence settles stop before init and queues KILL for the unobserved root", async () => {
   const f = await fixture();
   await stopSandbox(f.owner, { id: f.sandbox.id, idempotencyKey: "inventory-no-instance" });
+  const stopGeneration = (await f.row()).generation;
   const sender = { userId: f.owner.ownerId, hostId: f.host.id, connectionEpoch: 1 };
   const entry = {
     sandboxOwnerId: f.owner.ownerId,
@@ -317,16 +381,25 @@ it("D2 inventory absence settles stop before init while retaining the unobserved
     state: "absent" as const,
   };
   expect(await convergeInventoryEntry(sender, entry, f.clock)).toEqual({ converged: true });
-  expect(await f.row()).toMatchObject({
-    state: "STOPPED",
-    liveResourcesHeld: false,
-    sandboxHostId: f.host.id,
-    diskReservationHeld: true,
-  });
+  const kill = await expectNeverReadyStopCleanup(f, stopGeneration);
   expect(
     (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
   ).toBe(0);
   await convergeInventoryEntry(sender, entry, f.clock);
+  expect((await expectNeverReadyStopCleanup(f, stopGeneration)).id).toBe(kill.id);
+  expect(
+    (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
+  ).toBe(0);
+  const deleted = await dispatch(f, kill.id);
+  expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: true });
+  expect(await applyOperationResult(deleted, f.clock)).toEqual({ written: false });
+  expect(await f.row()).toMatchObject({
+    state: "DELETED",
+    generation: kill.generation,
+    liveResourcesHeld: false,
+    diskReservationHeld: false,
+    sandboxHostId: null,
+  });
   expect(
     (await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: f.host.id } })).liveCount,
   ).toBe(0);

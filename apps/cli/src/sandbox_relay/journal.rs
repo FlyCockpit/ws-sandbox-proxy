@@ -1033,7 +1033,11 @@ impl HostJournal {
             }
         }
         if receipt.digest_pruned {
-            bail!("receipt_digest_pruned");
+            return Err(IntentRefused::new(
+                SandboxErrorCode::ReceiptDigestPruned,
+                "receipt_digest_pruned",
+            )
+            .into());
         }
         if content_dispatch(receipt)
             && state
@@ -1097,9 +1101,12 @@ impl HostJournal {
         }
         if let Some(config) = &receipt.private_config {
             let key = self.key.lock().unwrap_or_else(|e| e.into_inner());
-            let key = key
-                .as_ref()
-                .ok_or_else(|| anyhow::Error::msg(SandboxErrorCode::DigestKeyUnavailable))?;
+            let key = key.as_ref().ok_or_else(|| {
+                IntentRefused::new(
+                    SandboxErrorCode::DigestKeyUnavailable,
+                    "Digest key unavailable.",
+                )
+            })?;
             let binding = TransportBindingV11 {
                 server: receipt.server.clone(),
                 host_owner_id: receipt.host_owner_id.clone(),
@@ -1113,7 +1120,8 @@ impl HostJournal {
                 &receipt.sandbox_id,
                 receipt.generation,
                 config,
-            )?;
+            )
+            .map_err(IntentRefused::private_config)?;
         }
         let mut stored = receipt.clone();
         stored.phase = ReceiptPhase::Intent;
@@ -1765,6 +1773,47 @@ impl HostJournal {
         Ok(())
     }
 }
+
+/// One operation's admission refusal from [`HostJournal::record_intent`]:
+/// nothing was journaled for it and nothing started. The relay answers that
+/// operation with `code` and keeps its session; a failure to persist the
+/// journal itself still ends it (follow-up 11: one sandbox's refusal held a
+/// whole host offline). Like `prepare_dispatch`, a sandbox's private config
+/// that cannot be read or verified refuses only that dispatch.
+#[derive(Debug, Clone)]
+pub struct IntentRefused {
+    pub code: SandboxErrorCode,
+    message: String,
+}
+
+impl IntentRefused {
+    pub(crate) fn new(code: SandboxErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+    /// A private config reference this journal cannot verify for the dispatch.
+    fn private_config(error: anyhow::Error) -> anyhow::Error {
+        let code = error
+            .downcast_ref::<SandboxErrorCode>()
+            .copied()
+            .unwrap_or(SandboxErrorCode::StateConflict);
+        Self::new(code, format!("{error:#}")).into()
+    }
+    /// The operator-facing message the operation fails with.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for IntentRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for IntentRefused {}
 
 #[derive(Debug, Clone)]
 pub enum Decision {

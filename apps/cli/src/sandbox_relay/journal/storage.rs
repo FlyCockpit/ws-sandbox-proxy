@@ -327,66 +327,84 @@ impl HostJournal {
         ) {
             return Ok(());
         }
+        // Each check refuses this one operation (`IntentRefused`), never the
+        // relay session: a durable bad dispatch must not hold the host offline.
+        macro_rules! refuse {
+            ($ok:expr, $code:expr, $message:expr $(,)?) => {
+                if !$ok {
+                    return Err(super::IntentRefused::new($code, $message).into());
+                }
+            };
+        }
         let mut next = state.storage.clone();
-        anyhow::ensure!(
+        refuse!(
             next.binding.server == receipt.server
                 && next.binding.host_id == receipt.host_id
                 && (next.binding.host_owner_id.is_empty()
                     || next.binding.host_owner_id == receipt.host_owner_id),
+            SandboxErrorCode::StateConflict,
             "retained root belongs to a different owner"
         );
         next.binding.host_owner_id = receipt.host_owner_id.clone();
-        anyhow::ensure!(
+        refuse!(
             next.pools
                 .get(&a.storage_marker)
                 .is_some_and(|p| p.name == a.storage_pool_name),
+            SandboxErrorCode::StateConflict,
             "allocation missing original pool ceiling"
         );
-        anyhow::ensure!(
+        refuse!(
             !next
                 .deleted
                 .get(&receipt.sandbox_id)
                 .is_some_and(|g| *g >= receipt.generation),
+            SandboxErrorCode::SandboxNotFound,
             "allocation predates deleted root"
         );
         let mut a = a.clone();
         if let Some(old) = next.roots.get(&receipt.sandbox_id) {
-            anyhow::ensure!(
+            refuse!(
                 old.sandbox_owner_id == receipt.sandbox_owner_id
                     && old.root() == allocation_root(&a)
                     && old.allocation.root_charge_gi_b == a.root_charge_gi_b
                     && old.allocation.cpu_count == a.cpu_count
                     && old.allocation.memory_mi_b == a.memory_mi_b,
+                SandboxErrorCode::VmSizeMismatch,
                 "retained allocation differs"
             );
             // An existing possible-live hold uses its locally pinned weights.
             if old.live {
-                anyhow::ensure!(
+                refuse!(
                     a == old.allocation,
+                    SandboxErrorCode::VmSizeMismatch,
                     "live charges differ from durable allocation"
                 );
                 a = old.allocation.clone();
             }
         } else {
             // A restore reconnect retains a new root.
-            anyhow::ensure!(
+            refuse!(
                 receipt.allocation_kind() == Some(sandbox_runtime::AllocationKind::Create),
-                "cold start missing retained root"
+                SandboxErrorCode::SandboxNotFound,
+                "cold start missing retained root: this host holds no disk for the \
+                 sandbox, so nothing was started"
             );
-            anyhow::ensure!(
+            refuse!(
                 next.roots.len()
                     < sandbox_protocol::vm_size_limits()?.host_managed_sandbox_ceiling as usize,
+                SandboxErrorCode::HostCapacity,
                 "managed root ceiling reached"
             );
         }
         if !next.roots.get(&receipt.sandbox_id).is_some_and(|r| r.live) {
-            anyhow::ensure!(
+            refuse!(
                 a.charged_memory_mi_b
                     == sandbox_protocol::vm_live_memory_charge_mi_b(a.memory_mi_b)?
                     && a.charged_vcpu == a.cpu_count
                     && (next.roots.contains_key(&receipt.sandbox_id)
                         || a.root_charge_gi_b
                             == sandbox_protocol::vm_root_charge_gi_b(a.disk_gi_b)?),
+                SandboxErrorCode::VmSizeMismatch,
                 "new allocation charges differ from local policy"
             );
         }

@@ -1,6 +1,6 @@
 import { inspect } from "node:util";
 import { ORPCError } from "@orpc/server";
-import { SDK_ERRORS } from "@wssp/sandbox-contracts";
+import { publicOperationErrorCode, SDK_ERRORS } from "@wssp/sandbox-contracts";
 import { describe, expect, it } from "vitest";
 import {
   isTransientDatabaseOverload,
@@ -11,6 +11,45 @@ import {
 } from "./sensitive-errors";
 
 const sentinel = "synthetic-env-stdin-sensitive-3a";
+
+describe("cold start disk refusal", () => {
+  const cold = { kind: "RECONNECT_SANDBOX", launchMode: "COLD", state: "FAILED" };
+
+  it("maps a failed cold reconnect's sandbox_not_found to fixed public text", () => {
+    const error = safeOperationError("sandbox_not_found", sentinel, cold);
+    expect(error).toEqual({
+      code: "start_disk_missing",
+      message:
+        "This sandbox can't start: its host has no usable disk for it. Create a new sandbox.",
+    });
+    expect(publicOperationErrorCode(error.code)).toBe("start_disk_missing");
+    // Public operation detail re-renders from the stored code alone.
+    expect(safeOperationError(error.code)).toEqual(error);
+    expect(inspect(error)).not.toContain(sentinel);
+  });
+
+  it("keeps other kinds, launch modes, outcomes and errors unchanged", () => {
+    for (const operation of [
+      undefined,
+      { ...cold, kind: "STOP_SANDBOX" },
+      { ...cold, launchMode: "WARM" },
+      { ...cold, launchMode: "NEW_ROOT" },
+      { ...cold, launchMode: null },
+      { ...cold, state: "UNKNOWN_OUTCOME" },
+      { ...cold, state: "SUCCEEDED" },
+    ])
+      expect(safeOperationError("sandbox_not_found", sentinel, operation)).toEqual({
+        code: "sandbox_not_found",
+        message: "Sandbox not found.",
+      });
+    expect(safeOperationError("state_conflict", sentinel, cold)).toEqual({
+      code: "state_conflict",
+      message: "Operation conflicts with current state.",
+    });
+    expect(safeOperationError("timeout", undefined, cold)).toEqual(safeOperationError("timeout"));
+    expect(safeOperationError(sentinel, undefined, cold)).toEqual(safeOperationError(sentinel));
+  });
+});
 
 describe("sensitive producer errors", () => {
   it("takes the HTTP status from the domain code's catalog row, not the outer code (B1-K-6)", () => {

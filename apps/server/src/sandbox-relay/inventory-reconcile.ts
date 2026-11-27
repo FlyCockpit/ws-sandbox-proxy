@@ -36,10 +36,12 @@ import { defaultIncusInstanceName } from "@wssp/api/sandbox/incus-name";
 import { restoreOffloadOf } from "@wssp/api/sandbox/launch-mode";
 import {
   inventoryObservationIdempotencyKey,
+  isNeverReadyRootOnly,
   type LeaseClock,
   leaseExpiryDispatchAction,
   leaseExpiryIdempotencyKey,
   leaseNow,
+  queueNeverReadyStopCleanup,
 } from "@wssp/api/sandbox/lease";
 import { leaseWireSchema } from "@wssp/api/sandbox/lease-wire";
 import { outboxOperationWhere } from "@wssp/api/sandbox/outbox-operation";
@@ -376,6 +378,7 @@ const sandboxConvergeSelect = {
   generation: true,
   liveResourcesHeld: true,
   diskReservationHeld: true,
+  readyAt: true,
   storagePoolName: true,
   storageMarker: true,
   diskGiB: true,
@@ -1368,9 +1371,13 @@ async function settlePendingTeardown(
     !(entry.root?.state === "absent" && entry.root.networkCleanupComplete)
   )
     return false;
+  const neverReadyStopCleanup =
+    operation.kind === "STOP_SANDBOX" && endState === "absent" && isNeverReadyRootOnly(sandbox);
   const next =
     operation.kind === "STOP_SANDBOX" && sandbox.diskReservationHeld
-      ? "STOPPED"
+      ? neverReadyStopCleanup
+        ? "STOPPING"
+        : "STOPPED"
       : sandboxStateForLifecycleResult(
           operation.kind,
           "SUCCEEDED",
@@ -1382,7 +1389,9 @@ async function settlePendingTeardown(
         );
   // M2: the kill's `teardownIntent` decides; a SYSTEM_DETACH kill of a
   // sandbox whose disk is offloaded ends OFFLOADED (detach, below).
-  requireRelayFence(next === "STOPPED" || next === "DELETED" || next === "OFFLOADED");
+  requireRelayFence(
+    next === "STOPPING" || next === "STOPPED" || next === "DELETED" || next === "OFFLOADED",
+  );
   const settled = await tx.sandboxOperation.updateMany({
     where: {
       id: operation.id,
@@ -1452,6 +1461,14 @@ async function settlePendingTeardown(
       : null,
     now,
   });
+  if (neverReadyStopCleanup) {
+    // finishConvergence settled the STOP and released live resources. Keep
+    // its credential settlement before advancing through the teardown choke
+    // point. noteHostBlockerReleased defers finalization until this new KILL
+    // is visible, in the same K → H → S → O transaction.
+    await settleCredentialsOnStopped(tx, sandbox.id);
+    await queueNeverReadyStopCleanup(tx, { ...sandbox, state: "STOPPING" }, now);
+  }
   return true;
 }
 

@@ -345,6 +345,8 @@ const OPERATION_ERRORS = {
   sandbox_not_running: "Sandbox is not running.",
   snapshot_failed: "Snapshot failed.",
   state_conflict: "Operation conflicts with current state.",
+  start_disk_missing:
+    "This sandbox can't start: its host has no usable disk for it. Create a new sandbox.",
   superseded: "Operation superseded.",
   timeout: "Operation timed out.",
   transfer_expired: "Transfer expired.",
@@ -396,9 +398,12 @@ const OPERATION_ERRORS = {
   "credential.unavailable": SDK_ERRORS["credential.unavailable"][1],
 } as const satisfies Record<OperationErrorCode, string> & Record<string, string>;
 
+type OperationErrorContext = { kind: string; launchMode: string | null; state: string };
+
 export function safeOperationError(
   code: OperationErrorCode | null,
   reason?: unknown,
+  operation?: OperationErrorContext,
 ): {
   code: OperationErrorCode;
   message: string;
@@ -407,11 +412,20 @@ export function safeOperationError(
 export function safeOperationError(
   code: unknown,
   reason?: unknown,
+  operation?: OperationErrorContext,
 ): { code: string; message: string; reason?: import("@wssp/sandbox-contracts").CapacityReason };
 export function safeOperationError(
   code: unknown,
   reason?: unknown,
+  operation?: OperationErrorContext,
 ): { code: string; message: string; reason?: import("@wssp/sandbox-contracts").CapacityReason } {
+  if (
+    code === "sandbox_not_found" &&
+    operation?.kind === "RECONNECT_SANDBOX" &&
+    operation.launchMode === "COLD" &&
+    operation.state === "FAILED"
+  )
+    return { code: "start_disk_missing", message: OPERATION_ERRORS.start_disk_missing };
   if (typeof code === "string" && Object.hasOwn(OPERATION_ERRORS, code)) {
     const known = code as keyof typeof OPERATION_ERRORS;
     const capacity =

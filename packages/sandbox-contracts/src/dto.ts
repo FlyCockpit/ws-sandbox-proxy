@@ -290,6 +290,8 @@ export const OPERATION_ERROR_CODES = [
   "sandbox_not_running",
   "snapshot_failed",
   "state_conflict",
+  // A cold reconnect refused because the host has no usable retained disk.
+  "start_disk_missing",
   "superseded",
   "timeout",
   "transport",

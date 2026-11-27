@@ -686,8 +686,9 @@ export const TEARDOWN_RETRY_MAX = 2;
 /**
  * A stop/kill that FAILED (the host's own failure, or the server's verdict on
  * a receipt it could not apply) leaves the sandbox ERROR still holding its
- * live resources: the VM may be running, and neither lease reclaim (which
- * excludes ERROR) nor a connected session would ever resolve it. Queue the
+ * live resources, or its never-ready root reservation: the VM or root may
+ * remain, and neither lease reclaim (which excludes ERROR) nor a connected
+ * session would ever resolve it. Queue the
  * same teardown again as a system operation, at most TEARDOWN_RETRY_MAX
  * times per chain (a user's new stop/kill starts a new chain), and never for
  * a sandbox with an unfinished login lease (its recovery is the owner's).
@@ -740,7 +741,8 @@ export async function queueFailedTeardownRetry(
   if (
     sandbox == null ||
     sandbox.state !== "ERROR" ||
-    !sandbox.liveResourcesHeld ||
+    (!sandbox.liveResourcesHeld &&
+      !(input.failed.kind === "KILL_SANDBOX" && isNeverReadyRootOnly(sandbox))) ||
     sandbox.generation !== input.generation ||
     sandbox.sandboxHostId == null ||
     (await hasOpenCredentialLeases(tx, sandbox.id))
@@ -762,7 +764,14 @@ export async function queueFailedTeardownRetry(
       userId: sandbox.userId,
       state: "ERROR",
       generation: sandbox.generation,
-      liveResourcesHeld: true,
+      ...(sandbox.liveResourcesHeld
+        ? { liveResourcesHeld: true }
+        : {
+            liveResourcesHeld: false,
+            diskReservationHeld: true,
+            readyAt: null,
+            diskOffloadId: null,
+          }),
     },
     data: { state: "STOPPING", generation: nextGeneration },
   });
@@ -860,6 +869,67 @@ export async function requeueRestoreCleanup(
     attempt: retainedAttempt(intent, failed),
   });
   return true;
+}
+
+/** A never-ready sandbox still owes root cleanup and has no stored disk. */
+export function isNeverReadyRootOnly(sandbox: {
+  readyAt: Date | null;
+  diskReservationHeld: boolean;
+  diskOffloadId: string | null;
+}): boolean {
+  return sandbox.diskReservationHeld && sandbox.readyAt === null && sandbox.diskOffloadId === null;
+}
+
+/**
+ * A successful STOP proved no VM for a never-ready sandbox, but did not
+ * retire its retained root. Own K → H → S → O; settle the STOP receipt and
+ * release live resources before calling. Only a KILL can finish root cleanup.
+ */
+export async function queueNeverReadyStopCleanup(
+  tx: Prisma.TransactionClient,
+  sandbox: Pick<SandboxLeaseRow, "id" | "userId" | "state" | "sandboxHostId" | "generation"> & {
+    readyAt: Date | null;
+    diskReservationHeld: boolean;
+    diskOffloadId: string | null;
+  },
+  now: Date,
+): Promise<void> {
+  requireRelayFence(
+    sandbox.state === "STOPPING" &&
+      sandbox.sandboxHostId != null &&
+      isNeverReadyRootOnly(sandbox) &&
+      sandbox.generation < 2_147_483_647,
+  );
+  const { kind, intent } = await systemTeardownKind(tx, sandbox, "KILL_SANDBOX");
+  const nextGeneration = sandbox.generation + 1;
+  const idempotencyKey = teardownRetryIdempotencyKey(sandbox.id, nextGeneration, 0);
+  const written = await tx.sandbox.updateMany({
+    where: {
+      id: sandbox.id,
+      userId: sandbox.userId,
+      state: "STOPPING",
+      generation: sandbox.generation,
+      sandboxHostId: sandbox.sandboxHostId,
+      readyAt: null,
+      diskReservationHeld: true,
+      diskOffloadId: null,
+    },
+    data: { state: "STOPPING", generation: nextGeneration },
+  });
+  requireRelayFence(written.count === 1);
+  await queueSystemTeardown(tx, sandbox, {
+    kind,
+    intent,
+    generation: nextGeneration,
+    idempotencyKey,
+    requestBodyHash: hashEnvFreeBody({
+      sandboxId: sandbox.id,
+      action: "never-ready-stop-cleanup",
+      kind,
+      generation: nextGeneration,
+    }),
+    now,
+  });
 }
 
 /** The system teardown row, supersession, login settlement and dispatch

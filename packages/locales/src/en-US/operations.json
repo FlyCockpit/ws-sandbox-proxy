@@ -105,6 +105,7 @@
     "snapshot_failed": "Snapshot failed",
     "vm_size_mismatch": "VM size conflicts with the accepted allocation",
     "state_conflict": "The sandbox changed state",
+    "start_disk_missing": "This sandbox can't start: its host has no usable disk for it. Create a new sandbox.",
     "superseded": "Superseded by a newer sandbox action",
     "timeout": "Timed out",
     "transport": "Transport error",

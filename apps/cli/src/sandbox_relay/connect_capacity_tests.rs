@@ -1476,3 +1476,95 @@ fn daemon_heartbeat_repush_and_create_follow_the_guard_socket() {
         OperationState::Succeeded
     );
 }
+
+/// Follow-up 11: a cold reconnect for a sandbox this host retains no root for
+/// (stopped before its first start finished) fails as that one operation with
+/// a clear code. It used to end the relay session, and the server's dispatch
+/// audit redelivered it after every re-register, holding the whole host
+/// offline. The same session keeps serving another sandbox, and a redelivered
+/// attempt is answered again instead of dropping the session.
+#[test]
+fn cold_reconnect_without_retained_root_fails_one_operation_and_keeps_the_session() {
+    let mut host = ConnectedHost::start_with_live_limit(FakeRuntime::new(), |_, _| {}, false, 2);
+    assert_eq!(
+        host.send(&dispatch("create-a", "a", "sandbox.create", 1)),
+        OperationState::Succeeded
+    );
+    let cold = dispatch("cold-b", "b", "sandbox.reconnect", 3);
+    let (state, error) = host.send_detail(&cold);
+    assert_eq!(state, OperationState::Failed);
+    let error = error.expect("refusal detail");
+    // The wire carries the code; the server renders fixed text for it.
+    assert_eq!(error.code.known(), Some(SandboxErrorCode::SandboxNotFound));
+    // A redelivered attempt is answered on the same connection too.
+    let mut again = cold.clone();
+    again.attempt = 2;
+    let (state, _) = host.send_detail(&again);
+    assert!(
+        matches!(
+            state,
+            OperationState::Failed | OperationState::UnknownOutcome
+        ),
+        "{state:?}"
+    );
+    assert!(
+        host.runtime
+            .sandbox_inventory()
+            .unwrap()
+            .iter()
+            .all(|e| e.sandbox_id != "b")
+    );
+    // The other sandbox on this host keeps working on the same session.
+    for d in [
+        dispatch("stop-a", "a", "sandbox.stop", 2),
+        dispatch("reconnect-a", "a", "sandbox.reconnect", 3),
+        dispatch("create-c", "c", "sandbox.create", 1),
+    ] {
+        assert_eq!(
+            host.send(&d),
+            OperationState::Succeeded,
+            "{}",
+            d.operation_id
+        );
+    }
+}
+
+/// Follow-up 11 audit: a live probe for a sandbox this host holds no lease
+/// for at that generation (a probe racing a stop) is answered `unreachable`
+/// for that request; it used to end the relay session.
+#[test]
+fn probe_without_matching_lease_answers_unreachable_and_keeps_the_session() {
+    let mut host = ConnectedHost::start_with_live_limit(FakeRuntime::new(), |_, _| {}, false, 2);
+    assert_eq!(
+        host.send(&dispatch("create-a", "a", "sandbox.create", 1)),
+        OperationState::Succeeded
+    );
+    for (request, sandbox, generation) in [("probe-stale", "a", 7), ("probe-unknown", "zz", 1)] {
+        host.wire
+            .send(Message::Text(
+                json!({"type":"sandbox.probe.request", "requestId":request,
+                    "hostId":"host-1", "hostOwnerId":"owner-1", "sandboxOwnerId":"owner",
+                    "sandboxId":sandbox, "generation":generation,
+                    "incusFingerprint":format!("sha256:{}", "a".repeat(64)),
+                    "architecture":"x86_64", "guestUid":1000, "guestGid":1000,
+                    "guestHome":"/home/user", "guestShell":"/bin/bash"})
+                .to_string()
+                .into(),
+            ))
+            .unwrap();
+        loop {
+            let frame = host.wire.read().unwrap();
+            if let DaemonControlMessage::SandboxProbeResult { request_id, state } =
+                parse_daemon_control(frame.to_text().unwrap()).unwrap()
+            {
+                assert_eq!(request_id, request);
+                assert_eq!(state, "unreachable");
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        host.send(&dispatch("create-b", "b", "sandbox.create", 1)),
+        OperationState::Succeeded
+    );
+}

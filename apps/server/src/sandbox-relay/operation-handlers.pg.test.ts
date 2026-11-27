@@ -15,8 +15,11 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
   consumeSandboxWriteBudget: async () => {},
 }));
+vi.mock("../../../../packages/api/src/lib/procedure-budget", () => ({
+  createProcedureBudget: () => async () => {},
+}));
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { OperationState, SandboxOperationKind, SandboxState } from "@wssp/db";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1157,6 +1160,424 @@ describe("allocation lineage (M3)", () => {
   });
 });
 
+describe("stop during initial provisioning", () => {
+  it("settles the absent STOP's credential receipt before queuing its cleanup KILL", async () => {
+    const savedKey = process.env.DATA_ENCRYPTION_KEY;
+    const savedEnabled = process.env.CREDENTIALS_ENABLED;
+    process.env.DATA_ENCRYPTION_KEY = randomBytes(32).toString("hex");
+    process.env.CREDENTIALS_ENABLED = "true";
+    try {
+      const s = await seed({ kind: "STOP_SANDBOX", state: "ACCEPTED" });
+      expect(s.sandbox).toMatchObject({ readyAt: null, generation: 1 });
+      const service = await import("@wssp/api/credentials/service");
+      const { settleCredentialTeardown } = await import(
+        "../../../../packages/api/src/credentials/teardown"
+      );
+      const actor = { kind: "session" as const, ownerId: s.userId };
+      const slug = `tool-${randomUUID().slice(0, 8)}`;
+      const definition = await service.createDefinition(actor, {
+        document: {
+          schemaVersion: 1,
+          id: slug,
+          displayName: "Tool",
+          login: { command: "tool login", method: "device-code" },
+          credentials: {
+            files: { required: [".config/tool"], optional: [], exclude: [] },
+            sharing: "exclusive",
+          },
+        },
+      });
+      const login = await service.createLogin(actor, { name: slug, definitionId: definition.id });
+      const account = await service.createAccount(actor, { credentialId: login.id });
+      const instance = await service.createInstance(actor, {
+        credentialId: login.id,
+        accountId: account.id,
+      });
+      const lease = await db.inspect.credentialLease.create({
+        data: {
+          userId: s.userId,
+          credentialId: login.id,
+          accountId: account.id,
+          instanceId: instance.id,
+          sandboxId: s.sandbox.id,
+          operationId: `create-${randomUUID()}`,
+          kind: "WORKLOAD",
+          exclusive: true,
+          state: "ACTIVE",
+          hostId: s.host.id,
+          baseSeq: 1,
+        },
+      });
+      await db.inspect.credentialInstance.update({
+        where: { id: instance.id },
+        data: { activeLeases: 1, state: "READY", currentSeq: 1, nextStorageSeq: 2 },
+      });
+      const binding = await db.inspect.credentialBinding.create({
+        data: {
+          leaseId: lease.id,
+          instanceId: instance.id,
+          sandboxId: s.sandbox.id,
+          hostId: s.host.id,
+          grantGeneration: 1,
+          baseSeq: 1,
+          purpose: "INSTALL",
+        },
+      });
+      await db.inspect.credentialLease.update({
+        where: { id: lease.id },
+        data: { currentBindingId: binding.id },
+      });
+      await db.inspect.credentialResidue.create({
+        data: {
+          sandboxId: s.sandbox.id,
+          userId: s.userId,
+          credentialId: login.id,
+          instanceId: instance.id,
+          leaseId: lease.id,
+          bindingId: binding.id,
+          grantGeneration: 1,
+          paths: [".config/tool"],
+          recoverable: true,
+        },
+      });
+      // Use the same teardown writer as stop acceptance, under the sandbox lock.
+      await db.inspect.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM sandbox_instance WHERE id = ${s.sandbox.id} FOR UPDATE`;
+        await settleCredentialTeardown(tx, {
+          sandboxId: s.sandbox.id,
+          priorState: "PROVISIONING",
+          generation: 1,
+          teardownOperationId: s.operation.id,
+        });
+      });
+      const leaseRow = () =>
+        db.inspect.credentialLease.findUniqueOrThrow({ where: { id: lease.id } });
+      expect(await leaseRow()).toMatchObject({
+        state: "RELEASING",
+        teardownOperationId: s.operation.id,
+        releasedAt: null,
+      });
+      expect(await s.adopt()).toBe(true);
+      // Seed the committed capture ledger: settlement trusts this row, not the receipt's ack.
+      const captureId = `cap-${randomUUID()}`;
+      await db.inspect.credentialCapture.create({
+        data: {
+          captureId,
+          leaseId: lease.id,
+          bindingId: binding.id,
+          captureSeq: 1,
+          kind: "stop",
+          kidR: "test-return-key",
+          envelopeDigest: Buffer.alloc(32),
+          outcome: "COMMITTED",
+          storageSeq: 2,
+        },
+      });
+      await db.inspect.credentialInstance.update({
+        where: { id: instance.id },
+        data: { currentSeq: 2, nextStorageSeq: 3 },
+      });
+      expect(
+        await applyOperationResult({
+          sender: s.sender,
+          operationId: s.operation.id,
+          sandboxId: s.sandbox.id,
+          generation: 1,
+          attempt: 1,
+          state: "succeeded",
+          result: {
+            state: "absent",
+            credentialOutcomes: [
+              {
+                leaseId: lease.id,
+                bindingId: binding.id,
+                capture: { status: "acked", captureId, outcome: "committed" },
+                scrub: "verified",
+              },
+            ],
+          },
+        }),
+      ).toEqual({ written: true });
+      expect(await s.row()).toMatchObject({ state: "SUCCEEDED", result: { state: "absent" } });
+      expect(JSON.stringify((await s.row()).result)).not.toContain("credentialOutcomes");
+      const sandboxRow = () =>
+        db.inspect.sandbox.findUniqueOrThrow({ where: { id: s.sandbox.id } });
+      expect(await sandboxRow()).toMatchObject({ state: "STOPPING", generation: 2, readyAt: null });
+      const kills = await db.inspect.sandboxOperation.findMany({
+        where: { sandboxId: s.sandbox.id, kind: "KILL_SANDBOX" },
+        take: 2,
+      });
+      expect(kills).toHaveLength(1);
+      const kill = kills[0]!;
+      expect(kill).toMatchObject({ state: "QUEUED", generation: 2 });
+      // Match the ordinary successful STOP: captured lease released, binding closed, scrub applied.
+      const settledLease = await leaseRow();
+      expect(settledLease).toMatchObject({
+        state: "RELEASED",
+        endReason: "captured",
+        releasedAt: expect.any(Date),
+        teardownOperationId: null,
+      });
+      expect(settledLease.teardownOperationId).not.toBe(kill.id);
+      const instanceRow = () =>
+        db.inspect.credentialInstance.findUniqueOrThrow({ where: { id: instance.id } });
+      expect(await instanceRow()).toMatchObject({ activeLeases: 0, currentSeq: 2, state: "READY" });
+      expect(
+        await db.inspect.credentialBinding.findUniqueOrThrow({ where: { id: binding.id } }),
+      ).toMatchObject({ closedAt: expect.any(Date), closeReason: "captured" });
+      const residueRow = () =>
+        db.inspect.credentialResidue.findUniqueOrThrow({ where: { bindingId: binding.id } });
+      const scrubbedResidue = await residueRow();
+      expect(scrubbedResidue).toMatchObject({
+        clearedAt: expect.any(Date),
+        clearReason: "scrubbed",
+      });
+
+      await db.inspect.sandboxOperation.update({
+        where: { id: kill.id },
+        data: {
+          state: "ACCEPTED",
+          dispatchAttempt: 1,
+          acceptedAttempt: 1,
+          dispatchedHostId: s.host.id,
+          dispatchedConnectionEpoch: NOW,
+        },
+      });
+      expect(
+        await applyOperationResult({
+          sender: s.sender,
+          operationId: kill.id,
+          sandboxId: s.sandbox.id,
+          generation: kill.generation,
+          attempt: 1,
+          state: "succeeded",
+          result: { state: "deleted" },
+        }),
+      ).toEqual({ written: true });
+      expect(await sandboxRow()).toMatchObject({
+        state: "DELETED",
+        generation: 2,
+        liveResourcesHeld: false,
+        diskReservationHeld: false,
+        sandboxHostId: null,
+      });
+      // DELETED settlement preserves terminal leases and already-cleared scrub evidence.
+      expect(await leaseRow()).toEqual(settledLease);
+      expect(await instanceRow()).toMatchObject({ activeLeases: 0, currentSeq: 2, state: "READY" });
+      expect(await residueRow()).toEqual(scrubbedResidue);
+    } finally {
+      if (savedKey === undefined) delete process.env.DATA_ENCRYPTION_KEY;
+      else process.env.DATA_ENCRYPTION_KEY = savedKey;
+      if (savedEnabled === undefined) delete process.env.CREDENTIALS_ENABLED;
+      else process.env.CREDENTIALS_ENABLED = savedEnabled;
+    }
+  });
+
+  it.each([false, true])(
+    "keeps absent never-ready roots STOPPING until system kill proves deletion (retry=%s)",
+    async (retry) => {
+      const s = await seed({ kind: "STOP_SANDBOX", state: "ACCEPTED" });
+      await db.inspect.sandboxHost.update({
+        where: { id: s.host.id },
+        data: { daemonDiskOffload: true },
+      });
+      expect(s.sandbox).toMatchObject({ readyAt: null, diskReservationHeld: true });
+      expect(await s.adopt()).toBe(true);
+      const stopResult = {
+        sender: s.sender,
+        operationId: s.operation.id,
+        sandboxId: s.sandbox.id,
+        generation: 1,
+        attempt: 1,
+        state: "succeeded",
+        result: { state: "absent" },
+      };
+      expect(await applyOperationResult(stopResult)).toEqual({ written: true });
+      expect(await s.row()).toMatchObject({ state: "SUCCEEDED", result: { state: "absent" } });
+      const sandbox = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: s.sandbox.id } });
+      expect(await sandbox()).toMatchObject({
+        state: "STOPPING",
+        generation: 2,
+        readyAt: null,
+        lastStoppedAt: null,
+        liveResourcesHeld: false,
+        diskReservationHeld: true,
+        sandboxHostId: s.host.id,
+      });
+      expect(
+        await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: s.host.id } }),
+      ).toMatchObject({
+        liveCount: 0,
+        rootCount: 1,
+      });
+      const kills = () =>
+        db.inspect.sandboxOperation.findMany({
+          where: { sandboxId: s.sandbox.id, kind: "KILL_SANDBOX" },
+          take: 2,
+        });
+      let [kill] = await kills();
+      expect(await kills()).toHaveLength(1);
+      expect(kill).toMatchObject({ state: "QUEUED", generation: 2, teardownIntent: null });
+      const events = await db.inspect.outboxEvent.findMany({
+        where: { aggregateId: s.sandbox.id, eventType: "sandbox.kill_requested" },
+        take: 2,
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        operationId: kill!.id,
+        processedAt: null,
+        payload: {
+          operationId: kill!.id,
+          generation: 2,
+          kind: "sandbox.kill",
+          credentialTeardown: "system",
+          authorizingPrincipal: { kind: "system" },
+        },
+      });
+      expect(await applyOperationResult(stopResult)).toEqual({ written: false });
+      expect(await kills()).toHaveLength(1);
+
+      // Exercise both real offload gates with deployment availability enabled:
+      // neither the candidate scan nor a direct enqueue may export this root.
+      const availability = await import("@wssp/api/sandbox/disk-offload/availability");
+      const available = vi.spyOn(availability, "canOffload").mockReturnValue(true);
+      try {
+        const { enqueueOffload, offloadCandidates } = await import(
+          "@wssp/api/sandbox/disk-offload/enqueue"
+        );
+        expect((await offloadCandidates()).some((c) => c.sandboxId === s.sandbox.id)).toBe(false);
+        expect(
+          await enqueueOffload({
+            sandboxId: s.sandbox.id,
+            userId: s.userId,
+            generation: 2,
+            hostId: s.host.id,
+            hostOwnerId: s.userId,
+            epoch: NOW,
+          }),
+        ).toBeNull();
+      } finally {
+        available.mockRestore();
+      }
+      expect(
+        await db.inspect.sandboxDiskOffload.count({ where: { sandboxId: s.sandbox.id } }),
+      ).toBe(0);
+
+      await db.inspect.sandboxOperation.update({
+        where: { id: kill!.id },
+        data: {
+          state: "ACCEPTED",
+          dispatchAttempt: 1,
+          acceptedAttempt: 1,
+          dispatchedHostId: s.host.id,
+          dispatchedConnectionEpoch: NOW,
+        },
+      });
+      if (retry) {
+        const failedKill = {
+          sender: s.sender,
+          operationId: kill!.id,
+          sandboxId: s.sandbox.id,
+          generation: kill!.generation,
+          attempt: 1,
+          state: "failed",
+          error: { code: "host_capacity" as const, message: "host refused cleanup admission" },
+        };
+        expect(await applyOperationResult(failedKill)).toEqual({ written: true });
+        expect(
+          await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: kill!.id } }),
+        ).toMatchObject({ state: "FAILED", errorCode: "host_capacity" });
+        expect(await sandbox()).toMatchObject({
+          state: "STOPPING",
+          generation: 3,
+          liveResourcesHeld: false,
+          diskReservationHeld: true,
+        });
+        expect(await applyOperationResult(failedKill)).toEqual({ written: false });
+        expect(await kills()).toHaveLength(2);
+        kill = await db.inspect.sandboxOperation.findFirstOrThrow({
+          where: { sandboxId: s.sandbox.id, kind: "KILL_SANDBOX", generation: 3 },
+        });
+        expect(kill).toMatchObject({ state: "QUEUED" });
+        await db.inspect.sandboxOperation.update({
+          where: { id: kill.id },
+          data: {
+            state: "ACCEPTED",
+            dispatchAttempt: 1,
+            acceptedAttempt: 1,
+            dispatchedHostId: s.host.id,
+            dispatchedConnectionEpoch: NOW,
+          },
+        });
+      }
+      const killResult = {
+        sender: s.sender,
+        operationId: kill!.id,
+        sandboxId: s.sandbox.id,
+        generation: kill!.generation,
+        attempt: 1,
+        state: "succeeded",
+        result: { state: "deleted" },
+      };
+      expect(await applyOperationResult(killResult)).toEqual({ written: true });
+      expect(await sandbox()).toMatchObject({
+        state: "DELETED",
+        generation: kill!.generation,
+        liveResourcesHeld: false,
+        diskReservationHeld: false,
+        sandboxHostId: null,
+        storagePoolId: null,
+      });
+      expect(
+        await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: s.host.id } }),
+      ).toMatchObject({
+        liveCount: 0,
+        rootCount: 0,
+      });
+      expect(
+        await db.inspect.sandboxHostStoragePool.findUniqueOrThrow({
+          where: { id: s.sandbox.storagePoolId! },
+        }),
+      ).toMatchObject({ diskReservedGiB: 0 });
+      expect(await applyOperationResult(killResult)).toEqual({ written: false });
+    },
+  );
+
+  it("preserves STOPPED and its root when the sandbox previously reached READY", async () => {
+    const s = await seed({ kind: "STOP_SANDBOX", state: "ACCEPTED" });
+    await db.inspect.sandbox.update({
+      where: { id: s.sandbox.id },
+      data: { readyAt: new Date(0) },
+    });
+    expect(await s.adopt()).toBe(true);
+    expect(
+      await applyOperationResult({
+        sender: s.sender,
+        operationId: s.operation.id,
+        sandboxId: s.sandbox.id,
+        generation: 1,
+        attempt: 1,
+        state: "succeeded",
+        result: { state: "absent" },
+      }),
+    ).toEqual({ written: true });
+    expect(
+      await db.inspect.sandbox.findUniqueOrThrow({ where: { id: s.sandbox.id } }),
+    ).toMatchObject({
+      state: "STOPPED",
+      generation: 1,
+      liveResourcesHeld: false,
+      diskReservationHeld: true,
+      sandboxHostId: s.host.id,
+    });
+    expect(
+      await db.inspect.sandboxOperation.count({
+        where: { sandboxId: s.sandbox.id, kind: "KILL_SANDBOX" },
+      }),
+    ).toBe(0);
+  });
+});
+
 describe("minor 6: census settles an adopted stop", () => {
   it("the later live result is a no-op and the exact receipt confirms", async () => {
     const s = await seed({ kind: "STOP_SANDBOX", state: "ACCEPTED" });
@@ -1599,6 +2020,37 @@ describe("reconnect dispatch audit (live finding B-1)", () => {
     const s = await seed({ kind: "CREATE_SANDBOX", state: "DISPATCHED" });
     expect(await settleUndeliveredDispatch(entryOf(s))).toBe("requeued");
     expect((await s.row()).state).toBe("QUEUED");
+  });
+
+  // Follow-up 11: a lifecycle op the host dropped with its session on every
+  // attempt cycled the node for 37 minutes. Allocation redelivery is bounded:
+  // it stays DISPATCHED for reconciliation (UNKNOWN, then attestation).
+  // Teardown keeps requeueing until cleanup completes.
+  it("bounds redelivery of a repeatedly undelivered lifecycle attempt", async () => {
+    const { UNDELIVERED_REDISPATCH_MAX_ATTEMPT } = await import("./operation-handlers");
+    for (const kind of ["CREATE_SANDBOX", "STOP_SANDBOX"] as const) {
+      for (const attempt of [
+        UNDELIVERED_REDISPATCH_MAX_ATTEMPT - 1,
+        UNDELIVERED_REDISPATCH_MAX_ATTEMPT,
+        UNDELIVERED_REDISPATCH_MAX_ATTEMPT + 3,
+      ] as const) {
+        const verdict =
+          kind === "CREATE_SANDBOX" && attempt >= UNDELIVERED_REDISPATCH_MAX_ATTEMPT
+            ? false
+            : "requeued";
+        const s = await seed({ kind, state: "DISPATCHED" });
+        await db.inspect.sandboxOperation.update({
+          where: { id: s.operation.id },
+          data: { dispatchAttempt: attempt },
+        });
+        expect(await settleUndeliveredDispatch({ ...entryOf(s), attempt }), kind).toBe(verdict);
+        expect(await s.row()).toMatchObject(
+          verdict === false
+            ? { state: "DISPATCHED", dispatchAttempt: attempt, errorCode: null }
+            : { state: "QUEUED", dispatchAttempt: attempt },
+        );
+      }
+    }
   });
 
   it("refuses acknowledged, superseded, mismatched and current-epoch attempts", async () => {

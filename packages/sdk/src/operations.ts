@@ -96,6 +96,7 @@ const FAILED_KIND_BY_OPERATION_CODE = {
   sandbox_not_running: "conflict",
   snapshot_failed: "unavailable",
   state_conflict: "conflict",
+  start_disk_missing: "conflict",
   vm_size_mismatch: "conflict",
   superseded: "conflict",
   timeout: "timeout",
@@ -178,19 +179,21 @@ export function ensureSucceeded(operation: OperationRead, context: PollContext):
     const init = {
       kind: failedKind(operation.errorCode),
       message:
-        operation.errorCode === "unknown_outcome"
-          ? // A FAILED unknown_outcome is settled: the node daemon never
-            // reported a result (most often because it restarted).
-            `${context.label}: the operation failed (unknown_outcome): the node daemon could not confirm a result (it restarted or lost its connection mid-operation). Nothing is retried; submit it again with a new idempotency key.`
-          : operation.errorCode === "host_disconnect_expired"
-            ? // The host proved it stopped the work at its `max_carry` cap.
-              `${context.label}: the operation failed (host_disconnect_expired): the node stayed disconnected from the server past its carry limit, so it stopped the work. Nothing is retried; submit it again with a new idempotency key.`
-            : operation.errorCode === "guest_unavailable" &&
-                "readinessReason" in operation &&
-                operation.readinessReason
-              ? // The guest readiness check that failed (a fixed label).
-                `${context.label}: the operation failed (guest_unavailable: readiness check ${operation.readinessReason} failed).`
-              : `${context.label}: the operation failed (${operation.errorCode ?? "internal"}).`,
+        operation.errorCode === "start_disk_missing"
+          ? "This sandbox can't start: its host has no usable disk for it. Create a new sandbox."
+          : operation.errorCode === "unknown_outcome"
+            ? // A FAILED unknown_outcome is settled: the node daemon never
+              // reported a result (most often because it restarted).
+              `${context.label}: the operation failed (unknown_outcome): the node daemon could not confirm a result (it restarted or lost its connection mid-operation). Nothing is retried; submit it again with a new idempotency key.`
+            : operation.errorCode === "host_disconnect_expired"
+              ? // The host proved it stopped the work at its `max_carry` cap.
+                `${context.label}: the operation failed (host_disconnect_expired): the node stayed disconnected from the server past its carry limit, so it stopped the work. Nothing is retried; submit it again with a new idempotency key.`
+              : operation.errorCode === "guest_unavailable" &&
+                  "readinessReason" in operation &&
+                  operation.readinessReason
+                ? // The guest readiness check that failed (a fixed label).
+                  `${context.label}: the operation failed (guest_unavailable: readiness check ${operation.readinessReason} failed).`
+                : `${context.label}: the operation failed (${operation.errorCode ?? "internal"}).`,
       failure: "failure" in operation ? operation.failure : null,
       ...base,
     };

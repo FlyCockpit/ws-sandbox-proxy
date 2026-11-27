@@ -3692,13 +3692,28 @@ fn relay_session_loop(
                         if !registered
                             || binding.host_owner_id != host_owner_id
                             || binding.host_id != host_id
-                            || journal.sandbox_owner(&sandbox_id).as_deref()
-                                != Some(sandbox_owner_id.as_str())
+                        {
+                            bail!("invalid live probe binding");
+                        }
+                        // Follow-up 11: one sandbox this host holds no lease for
+                        // at that generation (a probe racing a stop) answers
+                        // that probe as unknown; it never ends the session.
+                        if journal.sandbox_owner(&sandbox_id).as_deref()
+                            != Some(sandbox_owner_id.as_str())
                             || journal
                                 .lease(&sandbox_id)
                                 .is_none_or(|l| l.generation != generation)
                         {
-                            bail!("invalid live probe binding");
+                            tracing::warn!(%sandbox_id, generation,
+                                "live probe for a sandbox without a matching lease");
+                            socket.send(Message::Text(
+                                super::plain_frame(&DaemonControlMessage::SandboxProbeResult {
+                                    request_id,
+                                    state: "unreachable".into(),
+                                })?
+                                .into(),
+                            ))?;
+                            continue;
                         }
                         let runtime = runtime.clone();
                         let tx = observations_tx.clone();
@@ -4462,7 +4477,61 @@ fn handle_dispatch(
     }
     // Lifecycle admission can revoke an existing exec permit and trigger a kill.
     // Its intent must be durable before even that in-memory authority change.
-    let decision = journal.record_intent(&receipt)?;
+    let decision = match journal.record_intent(&receipt) {
+        Ok(decision) => Ok(decision),
+        // Follow-up 11: a deterministic journal refusal (no retained root,
+        // differing allocation, unverifiable private config, pruned digest)
+        // fails this one operation. Returning it as an error dropped the
+        // session, and every reconnect's dispatch audit redelivered it.
+        Err(err) => match err.downcast_ref::<super::journal::IntentRefused>() {
+            Some(refused) => Err(DispatchError {
+                reason: None,
+                code: refused.code.into(),
+                message: refused.message().into(),
+            }),
+            None => return Err(err),
+        },
+    };
+    let decision = match decision {
+        Ok(decision) => decision,
+        Err(error) => {
+            if let Some(existing) = prior {
+                return deliver_unknown(socket, wire, authority, dispatch, existing);
+            }
+            tracing::warn!(
+                operation_id = %dispatch.operation_id,
+                sandbox_id = %dispatch.sandbox_id,
+                kind = %dispatch.kind,
+                code = ?error.code,
+                "refused one dispatch: {}",
+                error.message
+            );
+            if matches!(
+                dispatch.kind.as_str(),
+                "sandbox.create" | "sandbox.reconnect"
+            ) {
+                if let Some(finished) = relay.refuse_unadmitted(
+                    dispatch,
+                    journal.first_unadmitted_allocation(&receipt),
+                    false,
+                    error,
+                ) {
+                    send_finished(socket, wire, Some(&dispatch.kind), finished)?;
+                }
+                return Ok(());
+            }
+            return send_operation_result(
+                socket,
+                wire,
+                &dispatch.kind,
+                &dispatch.operation_id,
+                &dispatch.sandbox_id,
+                dispatch.generation,
+                dispatch.attempt,
+                Err(error),
+            );
+        }
+    };
     if matches!(
         decision,
         Decision::Capacity | Decision::SandboxReceipts | Decision::Conflict

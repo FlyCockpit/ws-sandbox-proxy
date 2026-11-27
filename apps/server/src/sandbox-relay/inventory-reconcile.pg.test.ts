@@ -868,6 +868,71 @@ describe("C33 (real PostgreSQL): offline lifecycle convergence", () => {
     ]);
   });
 
+  it("census settles a never-ready STOP/absent and queues one root cleanup KILL", async () => {
+    const seed = await seedHost();
+    const sandbox = await createSandbox(
+      seed.owner,
+      createSandboxInput.parse({
+        template: "revision/" + seed.templateId,
+        sandboxHostId: seed.hostId,
+        idempotencyKey: `create-${randomUUID()}`,
+      }),
+    );
+    // Stop before the queued create ever runs: no uncertain allocation can
+    // block the census, but the reserved root still needs a KILL proof.
+    await stopSandbox(seed.owner, { id: sandbox.id, idempotencyKey: `stop-${randomUUID()}` });
+    const stop = await db.inspect.sandboxOperation.findFirstOrThrow({
+      where: { sandboxId: sandbox.id, kind: "STOP_SANDBOX" },
+    });
+    const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandbox.id } });
+    expect(await row()).toMatchObject({
+      state: "STOPPING",
+      readyAt: null,
+      diskReservationHeld: true,
+      diskOffloadId: null,
+    });
+    const sender = await reconnectHost(seed);
+    await census(sender, [{ sandboxId: sandbox.id, state: "absent" }]);
+    expect(
+      await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: stop.id } }),
+    ).toMatchObject({ state: "SUCCEEDED", result: { state: "absent" } });
+    expect(await row()).toMatchObject({
+      state: "STOPPING",
+      generation: stop.generation + 1,
+      liveResourcesHeld: false,
+      diskReservationHeld: true,
+      sandboxHostId: seed.hostId,
+    });
+    expect(
+      await db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: seed.hostId } }),
+    ).toMatchObject({ liveCount: 0, rootCount: 1 });
+    const kills = await db.inspect.sandboxOperation.findMany({
+      where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX" },
+      take: 2,
+    });
+    expect(kills).toHaveLength(1);
+    expect(kills[0]).toMatchObject({ state: "QUEUED", generation: stop.generation + 1 });
+    expect(
+      await db.inspect.outboxEvent.findFirstOrThrow({ where: { operationId: kills[0]!.id } }),
+    ).toMatchObject({
+      processedAt: null,
+      payload: { kind: "sandbox.kill", credentialTeardown: "system" },
+    });
+    // Root proof in the next census settles that KILL; it never creates a
+    // second cleanup or leaves a restartable STOPPED row.
+    await census(sender, [{ sandboxId: sandbox.id, state: "absent" }]);
+    expect(await row()).toMatchObject({
+      state: "DELETED",
+      diskReservationHeld: false,
+      sandboxHostId: null,
+    });
+    expect(
+      await db.inspect.sandboxOperation.count({
+        where: { sandboxId: sandbox.id, kind: "KILL_SANDBOX" },
+      }),
+    ).toBe(1);
+  });
+
   it("a completed expiry releases the slot a cold reconnect left held and settles its unknown outcome", async () => {
     const seed = await seedHost();
     const sandboxId = await readySandbox(seed);
@@ -1382,41 +1447,50 @@ describe("UNKNOWN targeted attestation on real PostgreSQL", () => {
     return { seed, sandbox, op, event, payload, sender, row, host, pass, frame, success };
   }
 
-  it("a refused first cold reconnect releases its slot once and preserves STOPPED", async () => {
-    const seed = await seedHost();
-    const sandboxId = await readySandbox(seed);
-    await stopSandbox(seed.owner, { id: sandboxId, idempotencyKey: `stop-${randomUUID()}` });
-    await processSandboxOutboxBatch(clock);
-    const stop = await db.inspect.sandboxOperation.findFirstOrThrow({
-      where: { sandboxId, kind: "STOP_SANDBOX" },
-    });
-    expect(await reportSucceeded(stop.id, "stopped", 1)).toEqual({ written: true });
-    await reconnectSandbox(seed.owner, { id: sandboxId, idempotencyKey: `cold-${randomUUID()}` });
-    await processSandboxOutboxBatch(clock);
-    const op = await db.inspect.sandboxOperation.findFirstOrThrow({
-      where: { sandboxId, kind: "RECONNECT_SANDBOX" },
-    });
-    expect(op.dispatchAttempt).toBe(1);
-    const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandboxId } });
-    const host = () => db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: seed.hostId } });
-    expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: true });
-    expect(await host()).toMatchObject({ liveCount: 1, memoryReservedMiB: 1344 });
-    const refusal = {
-      sender: { userId: seed.owner.ownerId, hostId: seed.hostId, connectionEpoch: 1 },
-      operationId: op.id,
-      sandboxId,
-      generation: op.generation,
-      attempt: op.dispatchAttempt,
-      state: "failed" as const,
-      error: { code: "host_capacity" as const, message: "host refused dispatch admission" },
-    };
-    expect(await applyOperationResult(refusal)).toEqual({ written: true });
-    expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: false });
-    expect(await host()).toMatchObject({ liveCount: 0, memoryReservedMiB: 0 });
-    expect(await applyOperationResult(refusal)).toEqual({ written: false });
-    expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: false });
-    expect(await host()).toMatchObject({ liveCount: 0, memoryReservedMiB: 0 });
-  });
+  it.each(["host_capacity", "sandbox_not_found", "state_conflict"] as const)(
+    "a refused first cold reconnect (%s) releases its slot once and preserves STOPPED",
+    async (code) => {
+      const seed = await seedHost();
+      const sandboxId = await readySandbox(seed);
+      await stopSandbox(seed.owner, { id: sandboxId, idempotencyKey: `stop-${randomUUID()}` });
+      await processSandboxOutboxBatch(clock);
+      const stop = await db.inspect.sandboxOperation.findFirstOrThrow({
+        where: { sandboxId, kind: "STOP_SANDBOX" },
+      });
+      expect(await reportSucceeded(stop.id, "stopped", 1)).toEqual({ written: true });
+      await reconnectSandbox(seed.owner, { id: sandboxId, idempotencyKey: `cold-${randomUUID()}` });
+      await processSandboxOutboxBatch(clock);
+      const op = await db.inspect.sandboxOperation.findFirstOrThrow({
+        where: { sandboxId, kind: "RECONNECT_SANDBOX" },
+      });
+      expect(op.dispatchAttempt).toBe(1);
+      expect(op.launchMode).toBe("COLD");
+      const row = () => db.inspect.sandbox.findUniqueOrThrow({ where: { id: sandboxId } });
+      const host = () => db.inspect.sandboxHost.findUniqueOrThrow({ where: { id: seed.hostId } });
+      expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: true });
+      expect(await host()).toMatchObject({ liveCount: 1, memoryReservedMiB: 1344 });
+      const refusal = {
+        sender: { userId: seed.owner.ownerId, hostId: seed.hostId, connectionEpoch: 1 },
+        operationId: op.id,
+        sandboxId,
+        generation: op.generation,
+        attempt: op.dispatchAttempt,
+        state: "failed" as const,
+        error: { code, message: "host refused dispatch admission" },
+      };
+      expect(await applyOperationResult(refusal)).toEqual({ written: true });
+      const errorCode = code === "sandbox_not_found" ? "start_disk_missing" : code;
+      expect(
+        await db.inspect.sandboxOperation.findUniqueOrThrow({ where: { id: op.id } }),
+      ).toMatchObject({ state: "FAILED", errorCode });
+      expect(await row()).toMatchObject({ lastErrorCode: errorCode });
+      expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: false });
+      expect(await host()).toMatchObject({ liveCount: 0, memoryReservedMiB: 0 });
+      expect(await applyOperationResult(refusal)).toEqual({ written: false });
+      expect(await row()).toMatchObject({ state: "STOPPED", liveResourcesHeld: false });
+      expect(await host()).toMatchObject({ liveCount: 0, memoryReservedMiB: 0 });
+    },
+  );
 
   it("refusal FAILED cannot release another host's allocation or cross its operation fence", async () => {
     const f = await unknownCreate("REQUESTED", false);
@@ -1609,7 +1683,7 @@ describe("UNKNOWN targeted attestation on real PostgreSQL", () => {
           expect(await applyOperationResult(result)).toEqual({ written: false });
           expect(await f.success()).toEqual({ written: false });
           expect(await f.row()).toMatchObject({
-            state: kind === "stop" ? "STOPPED" : "DELETED",
+            state: kind === "stop" ? "STOPPING" : "DELETED",
             liveResourcesHeld: false,
           });
         }

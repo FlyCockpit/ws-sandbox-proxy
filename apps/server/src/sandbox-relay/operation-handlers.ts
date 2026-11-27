@@ -34,10 +34,12 @@ import { isRestoreAttempt, restoreOffloadOf } from "@wssp/api/sandbox/launch-mod
 import {
   finalizeExpiredSandboxLifecycleOperation,
   isLeaseDeadlinePassed,
+  isNeverReadyRootOnly,
   type LeaseClock,
   leaseNow,
   leaseTransactionNow,
   queueFailedTeardownRetry,
+  queueNeverReadyStopCleanup,
 } from "@wssp/api/sandbox/lease";
 import {
   fromReadyDeadlineAcceptable,
@@ -1401,6 +1403,20 @@ async function applyResultOnce(
           ? { reason: input.error.reason }
           : {}),
       };
+      // Follow-up 11: a cold start the host refused as sandbox_not_found
+      // (no retained disk) gets its fixed diagnostic; the daemon's message
+      // text never becomes public detail.
+      if (
+        resultError?.code === "sandbox_not_found" &&
+        operation.kind === "RECONNECT_SANDBOX" &&
+        operation.launchMode === "COLD" &&
+        opState === "FAILED"
+      )
+        resultError = safeOperationError(resultError.code, undefined, {
+          kind: operation.kind,
+          launchMode: operation.launchMode,
+          state: opState,
+        });
       // A FAILED (not UNKNOWN) exact-image-missing create is the daemon's proof
       // that it refused before any runtime effect (an uncertain allocation is
       // reported UNKNOWN_OUTCOME instead), so no root exists to retain.
@@ -1548,12 +1564,17 @@ async function applyResultOnce(
           { ownsReleasingLease: rearm, priorState: operation.teardownPriorState },
           operation.teardownIntent,
         );
+        const neverReadyStopCleanup =
+          operation.kind === "STOP_SANDBOX" &&
+          opState === "SUCCEEDED" &&
+          input.result?.state === "absent" &&
+          isNeverReadyRootOnly(sandbox);
         if (
           nextSandbox === "DELETED" &&
           operation.kind === "STOP_SANDBOX" &&
           sandbox.diskReservationHeld
         )
-          nextSandbox = "STOPPED";
+          nextSandbox = neverReadyStopCleanup ? "STOPPING" : "STOPPED";
         // A cold start the host reported ready without installed logins: the
         // VM is running, so it is never recorded STOPPED; ERROR keeps it in
         // reclaim and inventory convergence.
@@ -1701,7 +1722,11 @@ async function applyResultOnce(
             opState,
             receipt: {
               outcomes: teardownOutcomesFromResult(input.result),
-              next: nextSandbox,
+              // The never-ready STOP finished with the guest gone: its receipt
+              // settles logins as a stop does (scrub outcomes applied) while
+              // the row stays STOPPING for the cleanup KILL (as the census
+              // path settles it).
+              next: neverReadyStopCleanup ? "STOPPED" : nextSandbox,
               rearm,
             },
           });
@@ -1726,9 +1751,14 @@ async function applyResultOnce(
             // with its live hold; nothing else would ever free it.
             neverIssued: imageMissingProven,
           });
+        // STOP/absent releases live capacity but cannot retire the retained
+        // root. Advance only after settling that receipt, through the system
+        // teardown choke point (including login settlement). STOPPING also
+        // excludes this sandbox from on_stop offload candidates.
+        if (neverReadyStopCleanup) await queueNeverReadyStopCleanup(tx, sandbox, now);
         // A failed stop/kill (host failure or server verdict) left ERROR with
-        // the live hold: nothing else resolves it while the host stays
-        // connected. Retry the teardown (bounded); its proof releases the hold.
+        // a live hold or never-ready root: nothing else resolves it while the
+        // host stays connected. Retry the teardown (bounded); its proof releases the hold.
         // Never past a login capture failure: a system retry would discard
         // the login changes that refusal kept (CLI logins §10.3).
         if (
@@ -2626,8 +2656,10 @@ export async function adoptOperation(
   }, false);
 }
 
-/** Highest attempt of non-lifecycle work a dispatch audit may requeue; the
- * host proved every earlier attempt undelivered too (E4-01). */
+/** Attempt at which a dispatch audit stops requeueing work the host proved
+ * undelivered on every earlier attempt too (E4-01): non-lifecycle work settles
+ * FAILED, create/reconnect work is left to allocation reconciliation.
+ * Stop/kill keeps requeueing until teardown completes. */
 export const UNDELIVERED_REDISPATCH_MAX_ATTEMPT = 5;
 
 export type DispatchAuditEntry = {
@@ -2717,8 +2749,10 @@ export async function listUnacknowledgedDispatches(
  * CANCELLED; otherwise it is dispatched again on this epoch (back to QUEUED,
  * claimed as attempt + 1 after reconciliation), or, for non-lifecycle work
  * a fresh dispatch would refuse or that reached
- * `UNDELIVERED_REDISPATCH_MAX_ATTEMPT`, settled FAILED `host_effect_not_issued`.
- * Never UNKNOWN. Fenced like adoption: exact identity tuple, older epoch,
+ * `UNDELIVERED_REDISPATCH_MAX_ATTEMPT`, settled FAILED `host_effect_not_issued`;
+ * create/reconnect at that bound stays DISPATCHED (`false`) for allocation
+ * reconciliation; stop/kill keeps requeueing until cleanup completes.
+ * Fenced like adoption: exact identity tuple, older epoch,
  * never acknowledged, not superseded, generation/state CAS, workload binding.
  */
 type UndeliveredVerdict = "requeued" | "cancelled" | "failed" | false;
@@ -2845,12 +2879,17 @@ export async function settleUndeliveredDispatch(
       requireRelayFence(sender.isCurrent?.() !== false);
       return "cancelled";
     }
-    // A frame repeatedly proven never received must not cycle the node
-    // offline indefinitely. Settle it as never issued after bounded retries.
-    if (!isLifecycleOperationKind(op.kind) && input.attempt >= UNDELIVERED_REDISPATCH_MAX_ATTEMPT) {
-      await settle("FAILED", "host_effect_not_issued");
-      requireRelayFence(sender.isCurrent?.() !== false);
-      return "failed";
+    // Bound repeatedly undelivered allocations: reconciliation marks them
+    // UNKNOWN, then allocation attestation settles them. Teardown must keep
+    // requeueing until it completes; per-operation host refusals cannot loop
+    // the session. Non-lifecycle work settles as never issued at the bound.
+    if (input.attempt >= UNDELIVERED_REDISPATCH_MAX_ATTEMPT) {
+      if (op.kind === "CREATE_SANDBOX" || op.kind === "RECONNECT_SANDBOX") return false;
+      if (!isLifecycleOperationKind(op.kind)) {
+        await settle("FAILED", "host_effect_not_issued");
+        requireRelayFence(sender.isCurrent?.() !== false);
+        return "failed";
+      }
     }
     if (!isLifecycleOperationKind(op.kind)) {
       const event = await tx.outboxEvent.findFirst({

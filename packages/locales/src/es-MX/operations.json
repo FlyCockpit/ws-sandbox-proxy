@@ -96,6 +96,7 @@
     "snapshot_failed": "Falló la instantánea",
     "vm_size_mismatch": "El tamaño de la VM no coincide con la asignación aceptada",
     "state_conflict": "El sandbox cambió de estado",
+    "start_disk_missing": "Este sandbox no puede iniciar: su host no tiene un disco utilizable para él. Crea un sandbox nuevo.",
     "superseded": "Reemplazada por una acción más reciente del sandbox",
     "timeout": "Tiempo agotado",
     "transport": "Error de transporte",

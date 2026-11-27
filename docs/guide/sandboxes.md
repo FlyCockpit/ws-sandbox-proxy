@@ -103,9 +103,12 @@ for budgets, stale reports and overcommit.
   `idempotency_conflict`.
 - **Stop** can interrupt boot as well as shut down a ready VM. It first settles
   issued create effects, then keeps the disk in `STOPPED` so cold reconnect can
-  start it again. If no instance was created, there is no disk to start: the
-  sandbox ends in `DELETED` after proven absence releases capacity and detaches
-  the host. Create another sandbox when you need a new disk.
+  start it again. If a never-ready sandbox reports no instance and has no stored
+  disk, it stays `STOPPING` without offloading until system destroy proves root
+  cleanup, then ends `DELETED` and releases its disk reservation and host.
+  This also applies when host inventory confirms absence. Failed root cleanup
+  gets the same bounded system retries as other failed teardowns.
+  Create another sandbox when you need a new disk.
 - **Stop is a clean shutdown.** The host first copies back and removes login
   files (see CLI logins below), then asks the guest to shut down and waits up
   to 10 seconds (about 16 seconds in all), so files the guest has written
