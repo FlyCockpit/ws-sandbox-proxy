@@ -23,6 +23,7 @@ export function AgentTokensPage({ lang }: { lang: string }) {
         <h2 className="font-semibold">{t("connect.title")}</h2>
         <p>{t("connect.description")}</p>
         <CopyField value={url} copyLabel={t("connect.copyUrl")} />
+        <p className="text-sm text-muted-foreground">{t("connect.protocol")}</p>
         <p>{t("connect.oauth")}</p>
         <CodeSnippet
           code={`claude mcp add --transport http wssp ${url}`}

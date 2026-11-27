@@ -6,7 +6,12 @@ import { resolveClientIp } from "../client-ip.js";
 import { consumeMcpIpQuota } from "../mcp-rate-limit.js";
 import { createMcpAuthenticator, type McpAuthInstance } from "./auth.js";
 import { mcpJsonBodyLimit } from "./body-limit.js";
-import { mcpQuotaResponse, mcpUnauthorized } from "./errors.js";
+import {
+  applyMcpResponseHeaders,
+  mcpQuotaResponse,
+  mcpUnauthorized,
+  withMcpResponseHeaders,
+} from "./errors.js";
 import { createMcpTransport } from "./handler.js";
 
 export function createMcpApi(authInstance: McpAuthInstance) {
@@ -14,11 +19,17 @@ export function createMcpApi(authInstance: McpAuthInstance) {
   const transport = createMcpTransport();
   const authenticate = createMcpAuthenticator({ authInstance, transport });
   app.onError(() =>
-    Response.json(
-      { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } },
-      { status: 500 },
+    withMcpResponseHeaders(
+      Response.json(
+        { jsonrpc: "2.0", id: null, error: { code: -32603, message: "Internal error" } },
+        { status: 500 },
+      ),
     ),
   );
+  app.use("/mcp", async (c, next) => {
+    await next();
+    applyMcpResponseHeaders(c.res.headers);
+  });
   app.all("/mcp", async (c, next) => {
     if (env.MCP_ENABLED === false) return c.notFound();
     if (c.req.method !== "POST") return c.newResponse(null, 405, { Allow: "POST" });

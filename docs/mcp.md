@@ -1,8 +1,10 @@
 # Built-in MCP server
 
-WS Sandbox Proxy serves a stateless, JSON-only MCP endpoint at `https://HOST/mcp`.
-It accepts POST requests only, caps JSON bodies at 1 MiB, and supports the modern
-MCP 2026-07-28 protocol. It has no sessions, SSE subscriptions, browser cookie
+WS Sandbox Proxy serves a stateless MCP endpoint at `https://HOST/mcp`.
+It accepts POST requests only, caps JSON bodies at 1 MiB, rejects JSON-RPC
+batch arrays, and supports MCP `2026-07-28` (primary, JSON responses) plus
+stateless legacy `2025-06-18` (per-request SSE responses with 15-second
+keep-alives). It has no sessions, SSE subscriptions, browser cookie
 authentication, or CORS authentication path. `MCP_ENABLED=false` disables the
 endpoint, OAuth provider, JWKS, and discovery routes; the default is `true`.
 
@@ -164,7 +166,7 @@ structured error. Infrastructure failures refuse admission with 503.
 
 ## Claude Code
 
-The installed CLI's `claude mcp add --help` confirms HTTP transport and headers:
+Tested with Claude Code 2.1.332 (MCP `2026-07-28`). The installed CLI's `claude mcp add --help` confirms HTTP transport and headers:
 
 ```sh
 claude mcp add --transport http wssp https://HOST/mcp
@@ -178,7 +180,7 @@ claude mcp add --transport http wssp https://HOST/mcp --header "Authorization: B
 
 ## Codex
 
-Add this to `~/.codex/config.toml`:
+Tested with Codex 0.172.0 (stateless MCP `2025-06-18`). Add this to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.wssp]

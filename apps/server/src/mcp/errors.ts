@@ -118,3 +118,26 @@ export function mcpQuotaResponse(error: unknown): Response {
     },
   );
 }
+
+/** Enforce stateless non-cacheable headers and strip session/cookie headers on every /mcp response. */
+export function applyMcpResponseHeaders(headers: Headers): void {
+  headers.delete("set-cookie");
+  headers.delete("mcp-session-id");
+  const contentType = headers.get("content-type")?.toLowerCase() ?? "";
+  headers.set(
+    "cache-control",
+    contentType.includes("text/event-stream")
+      ? "private, no-store, no-cache, no-transform"
+      : "private, no-store",
+  );
+}
+
+export function withMcpResponseHeaders(response: Response): Response {
+  const headers = new Headers(response.headers);
+  applyMcpResponseHeaders(headers);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}

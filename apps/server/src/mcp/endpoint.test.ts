@@ -60,4 +60,41 @@ it("reserves every method while disabled and returns an IP Retry-After", async (
   const response = await app.request("/mcp", { method: "POST" });
   expect(response.status).toBe(429);
   expect(response.headers.get("retry-after")).toBe("60");
+  expect(response.headers.get("cache-control")).toBe("private, no-store");
+});
+
+it("sets Allow: POST on 405, rejects query strings, and enforces stateless cache/cookie hygiene", async () => {
+  for (const method of ["GET", "DELETE"]) {
+    const res = await app.request("/mcp", { method });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("POST");
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+  }
+  const withQuery = await app.request("/mcp?session=1", {
+    method: "POST",
+    headers: { authorization: "Bearer wssp_agent_token", "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(withQuery.status).toBe(400);
+  expect(withQuery.headers.get("cache-control")).toBe("private, no-store");
+
+  mocks.authenticate.mockResolvedValueOnce(
+    new Response("{}", {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "set-cookie": "x=1",
+        "mcp-session-id": "s1",
+      },
+    }),
+  );
+  const ok = await app.request("/mcp", {
+    method: "POST",
+    headers: { authorization: "Bearer wssp_agent_token", "content-type": "application/json" },
+    body: "{}",
+  });
+  expect(ok.status).toBe(200);
+  expect(ok.headers.get("set-cookie")).toBeNull();
+  expect(ok.headers.get("mcp-session-id")).toBeNull();
+  expect(ok.headers.get("cache-control")).toBe("private, no-store");
 });
