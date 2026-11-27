@@ -38,6 +38,27 @@ import { launchableRevisionWhere } from "./template-resolution";
  * /v1/key`). Callers authorize first; nothing here is a service entry point.
  */
 
+/** Call with the owner lock held, before any credential write. The session
+ * share lock also serializes with Better Auth deleting sessions between reset
+ * sweeps. The signed cookie cache supplies identity, never mint authority. */
+export async function requireCredentialMintSession(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  sessionId: string | undefined,
+): Promise<void> {
+  if (!sessionId) throw new ORPCError("UNAUTHORIZED");
+  await tx.$queryRaw`SELECT id FROM session WHERE id = ${sessionId} FOR SHARE`;
+  const [clock] = await tx.$queryRaw<
+    { now: Date }[]
+  >`SELECT clock_timestamp() AT TIME ZONE 'UTC' AS now`;
+  if (!clock) throw new Error("Database clock unavailable");
+  const session = await tx.session.findUnique({
+    where: { id: sessionId, userId, expiresAt: { gt: clock.now }, impersonatedBy: null },
+    select: { id: true },
+  });
+  if (!session) throw new ORPCError("UNAUTHORIZED");
+}
+
 /** Retained legacy host links are not structurally owner-composite. Filter
  * before projecting host names, just as credential authorization filters IDs. */
 export function ownedSdkKeyListSelect(ownerId: string) {

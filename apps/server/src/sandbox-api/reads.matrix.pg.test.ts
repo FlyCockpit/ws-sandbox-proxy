@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { Hono } from "hono";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import { seedMintSession } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -81,7 +82,7 @@ async function person() {
       twoFactorEnabled: true,
     },
   });
-  return { kind: "session" as const, ownerId: id };
+  return seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
 }
 async function key(owner: Awaited<ReturnType<typeof person>>, ownSandboxesOnly: boolean) {
   const api = await createSdkKey(owner, {

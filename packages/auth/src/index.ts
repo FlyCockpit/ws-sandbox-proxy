@@ -13,7 +13,12 @@ import {
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { deleteSessionCookie } from "better-auth/cookies";
 import { admin, deviceAuthorization, twoFactor } from "better-auth/plugins";
+import {
+  passwordChangeRevocationTarget,
+  revokeCredentialsAfterPasswordChange,
+} from "./credential-revocation.js";
 import {
   DISABLED_BETTER_AUTH_PATHS,
   deviceIssuanceGuard,
@@ -179,6 +184,29 @@ export const auth = betterAuth({
     // A reset proves the mailbox: whoever else is signed in (a stolen
     // password, an administrator's temporary one) is signed out.
     revokeSessionsOnPasswordReset: true,
+    // Sessions alone do not revoke SDK/CLI, agent or OAuth credentials.
+    // The before-hook already revokes sessions and credentials atomically.
+    // Keep a second credential sweep after reset; failures are logged and rethrown.
+    onPasswordReset: async ({ user }) => {
+      let revocationFailure: { error: unknown } | undefined;
+      try {
+        await revokeCredentialsAfterPasswordChange(user.id);
+      } catch (error) {
+        revocationFailure = { error };
+      }
+      // The password is already committed. Finish recovery even when the
+      // second sweep failed; no other emailed recovery link may restore it.
+      // Clear the temporary-password restriction without asserting mailbox
+      // verification: only Better Auth's mailed /verify-email link does that.
+      await prisma.verification.deleteMany({
+        where: { value: user.id, identifier: { startsWith: "reset-password:" } },
+      });
+      await prisma.user.updateMany({
+        where: { id: user.id, mustChangePassword: true },
+        data: { mustChangePassword: false },
+      });
+      if (revocationFailure) throw revocationFailure.error;
+    },
     sendResetPassword: async ({ user, url }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
       // callback `user` is typed against the base user shape, so `locale`
@@ -287,6 +315,48 @@ export const auth = betterAuth({
   rateLimit: { enabled: false },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      // Pinned 1.7.18: /update-user's sessionMiddleware accepts cookie cache
+      // and setSessionCookie renews it. Check the signed token against the
+      // durable row before any session-bearing write, including plugin paths.
+      if (!isAnonymousAuthPath(ctx.path) && !isReadAuthRequest(ctx)) {
+        const token = await ctx.getSignedCookie(
+          ctx.context.authCookies.sessionToken.name,
+          ctx.context.secret,
+        );
+        if (token) {
+          const live = await ctx.context.internalAdapter.findSession(token);
+          if (!live || live.session.expiresAt.getTime() <= Date.now()) {
+            deleteSessionCookie(ctx);
+            // The HTTP router catches before-hook errors outside dispatch's
+            // header merger; carry the expiry cookies on the error itself.
+            throw new APIError("UNAUTHORIZED", { message: "Session expired" }, ctx.responseHeaders);
+          }
+          ctx.context.session = live;
+        }
+      }
+      if (ctx.path === "/reset-password") {
+        // Mirror the pinned endpoint's token lookup and strict expiry comparison.
+        const token = ctx.body?.token || ctx.query?.token;
+        if (typeof token === "string" && token) {
+          try {
+            const verification = await ctx.context.internalAdapter.findVerificationValue(
+              `reset-password:${token}`,
+            );
+            if (verification && !(verification.expiresAt < new Date())) {
+              await revokeCredentialsAfterPasswordChange(verification.value, {
+                revokeSessions: true,
+              });
+              // A later failure before the password write leaves sessions and
+              // credentials revoked, with the unchanged password/link retryable.
+            }
+          } catch {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              message:
+                "We couldn't finish securing your account. Nothing was changed — try the link again.",
+            });
+          }
+        }
+      }
       await deviceIssuanceGuard(ctx);
       await terminalHooks.before(ctx);
       return passwordChangeGuard.before(ctx);
@@ -300,6 +370,12 @@ export const auth = betterAuth({
         });
       }
       await terminalHooks.after(ctx);
+      const revocationTarget = passwordChangeRevocationTarget({
+        path: ctx.path,
+        body: ctx.body,
+        returned: ctx.context.returned,
+      });
+      if (revocationTarget) await revokeCredentialsAfterPasswordChange(revocationTarget);
       await passwordChangeGuard.after(ctx);
     }),
   },
@@ -433,3 +509,34 @@ export const auth = betterAuth({
 });
 
 export type Session = typeof auth.$Infer.Session;
+
+// These endpoints authenticate by mailbox proof, password, challenge, client
+// credentials or bearer token rather than by a browser session.
+function isAnonymousAuthPath(path: string): boolean {
+  return (
+    path.startsWith("/sign-in/") ||
+    path.startsWith("/sign-up/") ||
+    path.startsWith("/reset-password/") ||
+    [
+      "/sign-out",
+      "/reset-password",
+      "/request-password-reset",
+      "/device/code",
+      "/device/token",
+      "/oauth2/token",
+      "/oauth2/introspect",
+      "/oauth2/revoke",
+      "/oauth2/userinfo",
+    ].includes(path)
+  );
+}
+
+function isReadAuthRequest(ctx: { path: string; method?: string; request?: Request }): boolean {
+  // Direct auth.api dispatch does not fill in the endpoint's default method
+  // before global hooks (dist/api/dispatch.mjs); HTTP supplies request.method.
+  const configured = Object.values(auth.api).find((endpoint) => endpoint.path === ctx.path)?.options
+    .method;
+  const method =
+    ctx.request?.method ?? ctx.method ?? (Array.isArray(configured) ? configured[0] : configured);
+  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+}

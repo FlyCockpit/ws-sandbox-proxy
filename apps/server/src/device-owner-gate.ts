@@ -62,7 +62,11 @@ const deviceDecisionInput = z.object({
 const deviceDecision = ownerDeviceProcedure
   .input(deviceDecisionInput.extend({ action: z.enum(["claim", "approve", "deny"]) }))
   .handler(({ input, context }) =>
-    transitionDeviceCode({ ...input, userId: context.session.user.id }),
+    transitionDeviceCode({
+      ...input,
+      userId: context.session.user.id,
+      sessionId: context.session.session.id,
+    }),
   );
 
 export async function deviceDecisionHandler(c: Context) {

@@ -4,7 +4,7 @@ import { authenticateSdkKeySecret } from "../../lib/sdk-key-access";
 import { SERVICE_SCOPES } from "../../lib/service-scopes";
 import { sessionPrincipal } from "../contracts";
 import { createSdkKey } from "../services/sdk-keys";
-import { seedLaunchHost, seedTemplateRevision } from "./resource-fixtures";
+import { seedLaunchHost, seedMintSession, seedTemplateRevision } from "./resource-fixtures";
 
 export async function poolFixture(db: PgTestDatabase) {
   const id = randomUUID();
@@ -17,7 +17,7 @@ export async function poolFixture(db: PgTestDatabase) {
       emailVerified: true,
     },
   });
-  const owner = sessionPrincipal(id);
+  const owner = await seedMintSession(db.inspect, sessionPrincipal(id));
   const hosts = await Promise.all(
     ["one", "two"].map((slug) =>
       seedLaunchHost(db.inspect, {

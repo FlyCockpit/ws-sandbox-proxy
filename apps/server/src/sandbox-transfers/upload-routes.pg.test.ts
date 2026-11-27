@@ -16,6 +16,7 @@ import { bodyLimit } from "hono/body-limit";
 import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   seedLaunchHost,
+  seedMintSession,
   seedSandboxInstance,
   seedTemplateRevision,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
@@ -155,19 +156,18 @@ async function seed(scopes: ("files:write" | "files:read")[] = ["files:write"]) 
       state: "READY",
     },
   });
-  const key = await createSdkKey(
-    { kind: "session", ownerId: userId },
-    {
-      name: "upload",
-      scopes,
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-      expiresAt: null,
-    },
-  );
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: userId });
+  const key = await createSdkKey(owner, {
+    name: "upload",
+    scopes,
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+    expiresAt: null,
+  });
   return {
     userId,
+    owner,
     sandbox,
     key,
     headers: { authorization: `Bearer ${key.secret}` },
@@ -445,17 +445,14 @@ it("applies the live scope grant and originating key to every upload endpoint", 
     row = await create(f);
   const principal = await authenticateSdkKeySecret(f.key.secret);
   if (!principal) throw new Error("missing key");
-  const sibling = await createSdkKey(
-    { kind: "session", ownerId: f.userId },
-    {
-      name: "sibling",
-      scopes: ["files:write"],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-      expiresAt: null,
-    },
-  );
+  const sibling = await createSdkKey(f.owner, {
+    name: "sibling",
+    scopes: ["files:write"],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+    expiresAt: null,
+  });
   const requests = () => [
     () =>
       app.request("/v1/transfers", {

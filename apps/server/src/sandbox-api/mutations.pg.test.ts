@@ -1,6 +1,7 @@
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", async (original) => ({
@@ -136,17 +137,15 @@ async function fixture(scopes: readonly (typeof SERVICE_SCOPES)[number][] = SERV
       processStartedAt: new Date(),
     },
   });
-  const key = await createSdkKey(
-    { kind: "session", ownerId: id },
-    {
-      name: "sdk",
-      scopes: [...scopes],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
-  return { id, host, template, sandbox, operation, key };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
+  const key = await createSdkKey(owner, {
+    name: "sdk",
+    scopes: [...scopes],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
+  return { id, owner, host, template, sandbox, operation, key };
 }
 type Fixture = Awaited<ReturnType<typeof fixture>>;
 // Receipt-bearing mutations only. Capture needs an image-capable host (its
@@ -356,16 +355,13 @@ it("mounts every mutation with its declared scope, durable receipt and operation
         verificationConnectionEpoch: f.host.connectionEpoch,
       });
     expect(response.headers.get("location"), id).toBe(receipt.location);
-    const reader = await createSdkKey(
-      { kind: "session", ownerId: f.id },
-      {
-        name: "reader",
-        scopes: ["operations:read"],
-        resourceMode: "ALL_OWNED",
-        hostIds: [],
-        templateRevisionIds: [],
-      },
-    );
+    const reader = await createSdkKey(f.owner, {
+      name: "reader",
+      scopes: ["operations:read"],
+      resourceMode: "ALL_OWNED",
+      hostIds: [],
+      templateRevisionIds: [],
+    });
     expect(
       (
         await app.request(receipt.location, {
@@ -375,16 +371,13 @@ it("mounts every mutation with its declared scope, durable receipt and operation
       id,
     ).toBe(200);
     for (const missing of required) {
-      const denied = await createSdkKey(
-        { kind: "session", ownerId: f.id },
-        {
-          name: "denied",
-          scopes: withoutScope(missing),
-          resourceMode: "ALL_OWNED",
-          hostIds: [],
-          templateRevisionIds: [],
-        },
-      );
+      const denied = await createSdkKey(f.owner, {
+        name: "denied",
+        scopes: withoutScope(missing),
+        resourceMode: "ALL_OWNED",
+        hostIds: [],
+        templateRevisionIds: [],
+      });
       const rejection = await request(f, id, bodyFor(id, f), randomUUID(), denied.secret);
       expect(rejection.status, `${id} without ${missing}`).toBe(403);
     }
@@ -397,16 +390,13 @@ it.each(["createSandbox", "startCommand", "stopSandbox", "destroySandbox"] as co
     const f = await fixture();
     const body = bodyFor(id, f);
     const key = randomUUID();
-    const otherKey = await createSdkKey(
-      { kind: "session", ownerId: f.id },
-      {
-        name: "retry",
-        scopes: [...SERVICE_SCOPES],
-        resourceMode: "ALL_OWNED",
-        hostIds: [],
-        templateRevisionIds: [],
-      },
-    );
+    const otherKey = await createSdkKey(f.owner, {
+      name: "retry",
+      scopes: [...SERVICE_SCOPES],
+      resourceMode: "ALL_OWNED",
+      hostIds: [],
+      templateRevisionIds: [],
+    });
     const gate = db.pauseAt("first", { after: "sandboxOperation.create" });
     const first = db.run("first", () => request(f, id, body, key));
     await gate.waitReached();
@@ -562,16 +552,13 @@ it("probe receipts require a host observation and preserve unknown transport out
   expect((await response).status).toBe(202);
   expect((await json(await read(f, pending.location))).observation).toBe("guest_ready");
   expect(probe).toHaveBeenCalledTimes(1);
-  const statusOnly = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "status",
-      scopes: ["operations:read"],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
+  const statusOnly = await createSdkKey(f.owner, {
+    name: "status",
+    scopes: ["operations:read"],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
   const redacted = await app.request(pending.location, {
     headers: { authorization: `Bearer ${statusOnly.secret}` },
   });
@@ -778,20 +765,17 @@ it("rechecks owner, creating key and revocation while retained replay survives f
   expect((await request(f, "startCommand", body, key)).status).toBe(202);
   expect((await request(f, "startCommand", body, key, other.key.secret)).status).toBe(404);
   for (const allow of ["host", "template"] as const) {
-    const restricted = await createSdkKey(
-      { kind: "session", ownerId: f.id },
-      {
-        name: "restricted",
-        scopes: SERVICE_SCOPES.filter(
-          // An allowlist key can hold neither webhooks:write (all-owned only) nor
-          // credentials:use without an allowlisted login.
-          (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
-        ),
-        resourceMode: "ALLOWLIST",
-        hostIds: [f.host.id],
-        templateRevisionIds: [f.template.id],
-      },
-    );
+    const restricted = await createSdkKey(f.owner, {
+      name: "restricted",
+      scopes: SERVICE_SCOPES.filter(
+        // An allowlist key can hold neither webhooks:write (all-owned only) nor
+        // credentials:use without an allowlisted login.
+        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      ),
+      resourceMode: "ALLOWLIST",
+      hostIds: [f.host.id],
+      templateRevisionIds: [f.template.id],
+    });
     await db.inspect.sandboxOperation.updateMany({
       where: { sandboxId: f.sandbox.id, kind: "CREATE_SANDBOX" },
       data: { authorizingKeyId: restricted.key.id },
@@ -837,16 +821,13 @@ it("retains template action status after host deletion without granting restrict
     },
   });
   expect((await read(f, `/v1/operations/${row.id}`)).status).toBe(200);
-  const restricted = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "restricted",
-      scopes: ["operations:read"],
-      resourceMode: "ALLOWLIST",
-      hostIds: [f.host.id],
-      templateRevisionIds: [f.template.id],
-    },
-  );
+  const restricted = await createSdkKey(f.owner, {
+    name: "restricted",
+    scopes: ["operations:read"],
+    resourceMode: "ALLOWLIST",
+    hostIds: [f.host.id],
+    templateRevisionIds: [f.template.id],
+  });
   const response = await app.request(`/v1/operations/${row.id}`, {
     headers: { authorization: `Bearer ${restricted.secret}` },
   });
@@ -1219,20 +1200,17 @@ it.each(["host", "revision"] as const)(
   "stored_creation_key_matrix HTTP retains history after future %s grant removal; use needs the current host",
   async (removed) => {
     const f = await fixture();
-    const key = await createSdkKey(
-      { kind: "session", ownerId: f.id },
-      {
-        name: "matrix",
-        scopes: SERVICE_SCOPES.filter(
-          // An allowlist key can hold neither webhooks:write (all-owned only) nor
-          // credentials:use without an allowlisted login.
-          (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
-        ),
-        resourceMode: "ALLOWLIST",
-        hostIds: [f.host.id],
-        templateRevisionIds: [f.template.id],
-      },
-    );
+    const key = await createSdkKey(f.owner, {
+      name: "matrix",
+      scopes: SERVICE_SCOPES.filter(
+        // An allowlist key can hold neither webhooks:write (all-owned only) nor
+        // credentials:use without an allowlisted login.
+        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+      ),
+      resourceMode: "ALLOWLIST",
+      hostIds: [f.host.id],
+      templateRevisionIds: [f.template.id],
+    });
     await db.inspect.sandboxOperation.updateMany({
       where: { sandboxId: f.sandbox.id, kind: "CREATE_SANDBOX" },
       data: { authorizingKeyId: key.key.id },
@@ -1307,16 +1285,13 @@ it("3B HTTP K2 correct and guessed envs return identical conflict without invoki
   const key = randomUUID();
   const body = { script: "true", envs: { TOKEN: "synthetic-k1-secret" } };
   expect((await request(f, "startCommand", body, key)).status).toBe(202);
-  const other = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "other",
-      scopes: [...SERVICE_SCOPES],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
+  const other = await createSdkKey(f.owner, {
+    name: "other",
+    scopes: [...SERVICE_SCOPES],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
   const digests = await import("@wssp/api/sandbox/idempotency");
   const digest = vi.spyOn(digests, "hashOperationRequestBody");
   try {
@@ -1342,20 +1317,17 @@ it("3B HTTP K2 correct and guessed envs return identical conflict without invoki
 
 it("3B typed non-sandbox action receipt requires its exact revision grant", async () => {
   const f = await fixture();
-  const key = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "typed-receipt",
-      scopes: SERVICE_SCOPES.filter(
-        // An allowlist key can hold neither webhooks:write (all-owned only) nor
-        // credentials:use without an allowlisted login.
-        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
-      ),
-      resourceMode: "ALLOWLIST",
-      hostIds: [f.host.id],
-      templateRevisionIds: [f.template.id],
-    },
-  );
+  const key = await createSdkKey(f.owner, {
+    name: "typed-receipt",
+    scopes: SERVICE_SCOPES.filter(
+      // An allowlist key can hold neither webhooks:write (all-owned only) nor
+      // credentials:use without an allowlisted login.
+      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+    ),
+    resourceMode: "ALLOWLIST",
+    hostIds: [f.host.id],
+    templateRevisionIds: [f.template.id],
+  });
   const receipt = await db.inspect.sandboxActionReceipt.create({
     data: {
       digestContext: digestContextSnapshot({
@@ -1390,20 +1362,17 @@ it("3B typed non-sandbox action receipt requires its exact revision grant", asyn
 
 it("3E a logical ID or resourceId fallback never authorizes an exact revision receipt", async () => {
   const f = await fixture();
-  const key = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "exact",
-      scopes: SERVICE_SCOPES.filter(
-        // An allowlist key can hold neither webhooks:write (all-owned only) nor
-        // credentials:use without an allowlisted login.
-        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
-      ),
-      resourceMode: "ALLOWLIST",
-      hostIds: [f.host.id],
-      templateRevisionIds: [f.template.id],
-    },
-  );
+  const key = await createSdkKey(f.owner, {
+    name: "exact",
+    scopes: SERVICE_SCOPES.filter(
+      // An allowlist key can hold neither webhooks:write (all-owned only) nor
+      // credentials:use without an allowlisted login.
+      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+    ),
+    resourceMode: "ALLOWLIST",
+    hostIds: [f.host.id],
+    templateRevisionIds: [f.template.id],
+  });
   for (const revisionId of [null, f.template.templateId]) {
     const row = await db.inspect.sandboxActionReceipt.create({
       data: {
@@ -1433,20 +1402,17 @@ it("3E a logical ID or resourceId fallback never authorizes an exact revision re
 });
 it("3E an interrupted append keeps a visible logical context and replays UNKNOWN without another verification", async () => {
   const f = await fixture();
-  const key = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "append",
-      scopes: SERVICE_SCOPES.filter(
-        // An allowlist key can hold neither webhooks:write (all-owned only) nor
-        // credentials:use without an allowlisted login.
-        (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
-      ),
-      resourceMode: "ALLOWLIST",
-      hostIds: [f.host.id],
-      templateRevisionIds: [f.template.id],
-    },
-  );
+  const key = await createSdkKey(f.owner, {
+    name: "append",
+    scopes: SERVICE_SCOPES.filter(
+      // An allowlist key can hold neither webhooks:write (all-owned only) nor
+      // credentials:use without an allowlisted login.
+      (scope) => scope !== "webhooks:write" && scope !== "credentials:use",
+    ),
+    resourceMode: "ALLOWLIST",
+    hostIds: [f.host.id],
+    templateRevisionIds: [f.template.id],
+  });
   const verify = vi.fn(async () => ({ incusFingerprint: FP, architecture: "x86_64" }));
   bindHostImageVerifier(verify);
   const idempotencyKey = randomUUID();
@@ -1731,16 +1697,13 @@ it("captureSandbox: each declared scope is required, and a host without the imag
     error: { code: "sandbox.capture_unsupported", reason: "runtime" },
   });
   for (const missing of required) {
-    const denied = await createSdkKey(
-      { kind: "session", ownerId: f.id },
-      {
-        name: "denied",
-        scopes: withoutScope(missing),
-        resourceMode: "ALL_OWNED",
-        hostIds: [],
-        templateRevisionIds: [],
-      },
-    );
+    const denied = await createSdkKey(f.owner, {
+      name: "denied",
+      scopes: withoutScope(missing),
+      resourceMode: "ALL_OWNED",
+      hostIds: [],
+      templateRevisionIds: [],
+    });
     const rejection = await request(f, "captureSandbox", {}, randomUUID(), denied.secret);
     expect(rejection.status, `captureSandbox without ${missing}`).toBe(403);
   }
@@ -1814,16 +1777,13 @@ it("PUT /v1/sandboxes/{id} renames with a 200 Sandbox, typed refusals and the wr
   expect(taken.status).toBe(409);
   expect((await json(taken)).error.code).toBe("sandbox.name_taken");
 
-  const reader = await createSdkKey(
-    { kind: "session", ownerId: f.id },
-    {
-      name: "reader",
-      scopes: withoutScope("sandboxes:manage"),
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
+  const reader = await createSdkKey(f.owner, {
+    name: "reader",
+    scopes: withoutScope("sandboxes:manage"),
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
   expect((await put({ name: "other-name" }, reader.secret)).status).toBe(403);
   const other = await fixture();
   expect((await put({ name: "other-name" }, other.key.secret)).status).toBe(404);

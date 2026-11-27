@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, expect, it, vi } from "vitest";
+import { seedMintSession } from "../sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -42,7 +43,7 @@ async function fixture() {
       twoFactorEnabled: true,
     },
   });
-  return { kind: "session" as const, ownerId: id };
+  return seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
 }
 const mintInput = () => ({
   name: "Agent",

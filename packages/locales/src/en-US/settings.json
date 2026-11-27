@@ -20,7 +20,7 @@
     "currentPasswordLabel": "Current password",
     "newPasswordLabel": "New password",
     "confirmPasswordLabel": "Confirm new password",
-    "passwordSessionRevocation": "After your password changes, every other device will be signed out. This device will stay signed in.",
+    "passwordSessionRevocation": "After your password changes, every other device will be signed out. CLI logins, API keys, personal access tokens and MCP client access will be revoked. Sign in to the CLI again and give integrations replacement credentials. This device will stay signed in.",
     "changePassword": "Change password",
     "changingPassword": "Changing password…",
     "passwordChangedSuccess": "Password changed. Other devices have been signed out.",

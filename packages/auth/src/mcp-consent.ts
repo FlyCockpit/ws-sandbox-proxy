@@ -69,7 +69,9 @@ export function mcpConsent({ secret }: { secret: string }) {
                   scopes: scopes.filter((scope) => scope !== "offline_access"),
                 },
               });
-            } catch {
+            } catch (error) {
+              if (consentBody(error).code === "UNAUTHORIZED")
+                throw new APIError("UNAUTHORIZED", { error: "access_denied" });
               throw new APIError("INTERNAL_SERVER_ERROR", { error: "server_error" });
             }
           }),

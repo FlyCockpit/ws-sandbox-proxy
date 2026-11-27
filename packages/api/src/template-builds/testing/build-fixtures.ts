@@ -4,7 +4,11 @@ import type { PgTestDatabase } from "@wssp/db/testing/pg";
 import { sessionPrincipal } from "../../sandbox/contracts";
 import { recordCaptureResult } from "../../sandbox/image-store/capture-result";
 import { finalizeCapture } from "../../sandbox/image-store/captures";
-import { seedLaunchHost, seedTemplateRevision } from "../../sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+  seedTemplateRevision,
+} from "../../sandbox/testing/resource-fixtures";
 import { advanceTemplateBuild, runTemplateBuildCleanup } from "../orchestrator";
 
 /**
@@ -61,7 +65,7 @@ export async function buildOwnerFixture(db: PgTestDatabase) {
       incusFingerprint: `sha256:${"a".repeat(64)}`,
     },
   });
-  const session = sessionPrincipal(id);
+  const session = await seedMintSession(db.inspect, sessionPrincipal(id));
   return { id, host, base, session };
 }
 

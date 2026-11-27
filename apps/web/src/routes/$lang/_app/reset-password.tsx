@@ -127,6 +127,7 @@ function ResetPasswordForm({
 }) {
   const navigate = useNavigate();
   const { t } = useTranslation(["auth", "validation"]);
+  const [retryableError, setRetryableError] = useState<string | null>(null);
   // Errors are toasted below (a dead link also swaps in the invalid-link card),
   // so the global mutation toast would only repeat them.
   const claimSetupLink = useMutation(
@@ -153,6 +154,7 @@ function ResetPasswordForm({
   const form = useForm({
     defaultValues: { newPassword: "", confirmPassword: "" },
     onSubmit: async ({ value }) => {
+      setRetryableError(null);
       if (isSetup) {
         if (!(await claimFirstAdmin(value.newPassword))) return;
         toast.success(t("auth:resetPassword.setup.success"));
@@ -168,11 +170,16 @@ function ResetPasswordForm({
           toast.error(friendly(result.error));
           return;
         }
-        // A rejected token (expired / already used) is the common failure here
-        // — surface the invalid state with a path back to forgot-password.
-        console.error("[reset-password.reset]", result.error);
-        toast.error(t("auth:resetPassword.failed"));
-        onTokenRejected();
+        if (result.error.code === "INVALID_TOKEN") {
+          toast.error(t("auth:resetPassword.failed"));
+          onTokenRejected();
+          return;
+        }
+        // A pre-sweep 503 leaves the password and link usable. Keep the
+        // mounted form and both values so the same submission can be retried.
+        setRetryableError(
+          result.error.status === 503 ? t("auth:resetPassword.retryable") : friendly(result.error),
+        );
         return;
       }
       toast.success(t("auth:resetPassword.success"));
@@ -205,6 +212,11 @@ function ResetPasswordForm({
       }}
       className="space-y-4"
     >
+      {retryableError && (
+        <p role="alert" className="text-sm text-destructive">
+          {retryableError}
+        </p>
+      )}
       <form.Field name="newPassword">
         {(field) => (
           <TextField
@@ -241,7 +253,9 @@ function ResetPasswordForm({
               ? t("auth:resetPassword.resetting")
               : isSetup
                 ? t("auth:resetPassword.setup.submit")
-                : t("auth:resetPassword.submit")}
+                : retryableError
+                  ? t("auth:resetPassword.retry")
+                  : t("auth:resetPassword.submit")}
           </Button>
         )}
       </form.Subscribe>

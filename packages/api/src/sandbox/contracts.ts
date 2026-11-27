@@ -59,6 +59,8 @@ import { isReservedInternalIdempotencyKey } from "./idempotency-key-reserved";
 export type SessionPrincipal = {
   readonly kind: "session";
   readonly ownerId: string;
+  /** Required by standing-credential mints; other session services do not use it. */
+  readonly sessionId?: string;
   /**
    * Set only by wssp's own managed flows (never from a request): the CLI-login
    * flow acts on its CREDENTIAL_LOGIN sandbox through the shared services, and
@@ -99,8 +101,8 @@ export {
   TRANSFER_MAX_BYTES,
 } from "@wssp/sandbox-contracts";
 
-export function sessionPrincipal(ownerId: string): SessionPrincipal {
-  return { kind: "session", ownerId };
+export function sessionPrincipal(ownerId: string, sessionId?: string): SessionPrincipal {
+  return { kind: "session", ownerId, ...(sessionId ? { sessionId } : {}) };
 }
 
 export const listPageInput = cursorPageInput;

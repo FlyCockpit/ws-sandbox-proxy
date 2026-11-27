@@ -1,6 +1,8 @@
+import type { SessionPrincipal } from "../../../../packages/api/src/sandbox/contracts";
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
@@ -61,12 +63,24 @@ type Body = CommandOutputPageDto & { error: { code: string }; outcome: string };
 const json = async (response: Response | Promise<Response>) =>
   (await (await response).json()) as Body;
 
-type Seeded = { owner: string; hosts: string[]; templates: string[]; commands: string[] };
+type Seeded = {
+  principal: SessionPrincipal;
+  owner: string;
+  hosts: string[];
+  templates: string[];
+  commands: string[];
+};
 
 async function seedOwner(label: string): Promise<Seeded> {
   const owner = `user-${label}-${randomUUID()}`;
   await db.inspect.user.create({ data: { id: owner, name: label, email: `${owner}@x.test` } });
-  const seeded: Seeded = { owner, hosts: [], templates: [], commands: [] };
+  const seeded: Seeded = {
+    principal: await seedMintSession(db.inspect, session(owner)),
+    owner,
+    hosts: [],
+    templates: [],
+    commands: [],
+  };
   for (const slug of ["h1", "h2"]) {
     const host = await seedLaunchHost(db.inspect, {
       data: { userId: owner, slug, label: slug, status: "CONNECTED", connectionEpoch: 1 },
@@ -139,7 +153,7 @@ async function mint(
   scopes: string[],
   mode: "ALL_OWNED" | "ALLOWLIST" = "ALL_OWNED",
 ): Promise<string> {
-  const minted = await createSdkKey(session(seeded.owner), {
+  const minted = await createSdkKey(seeded.principal, {
     name: `k-${randomUUID()}`,
     scopes: scopes as never,
     resourceMode: mode,

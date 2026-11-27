@@ -227,3 +227,19 @@ it("never mints an agent token with sandboxes:connect (CLI shells are kind API o
   ).rejects.toMatchObject({ code: "BAD_REQUEST", data: { code: "sdk_key.unusable_scopes" } });
   expect(db.sdkKey.create).not.toHaveBeenCalled();
 });
+
+it("refuses an agent token when reset deleted the browser session after entry", async () => {
+  vi.mocked(db.$transaction).mockImplementation(async (work) =>
+    work(
+      new Proxy(db, {
+        get(target, prop) {
+          if (prop === "session")
+            return { ...target.session, findUnique: vi.fn().mockResolvedValue(null) };
+          return Reflect.get(target, prop);
+        },
+      }),
+    ),
+  );
+  await expect(client().create(input())).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+  expect(db.sdkKey.create).not.toHaveBeenCalled();
+});

@@ -7,7 +7,15 @@ vi.mock("@wssp/env/server", () => ({
   },
 }));
 
-import { consentIssuedCode, validateConsentScopes } from "./mcp-consent";
+vi.mock("@better-auth/oauth-provider", () => ({
+  getOAuthProviderState: async () => ({ query: "client_id=client&scope=sandboxes:read" }),
+}));
+vi.mock("better-auth/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("better-auth/api")>()),
+  getSessionFromCtx: async () => ({ user: { id: "owner" }, session: { id: "session" } }),
+}));
+
+import { consentIssuedCode, mcpConsent, validateConsentScopes } from "./mcp-consent";
 import {
   bindMcpGrantServices,
   deriveMcpConsentReferenceId,
@@ -91,4 +99,15 @@ it("sanitizes grant storage failures before they reach the provider logger", asy
       secret: "secret",
     }),
   ).rejects.toThrow("MCP grant lookup unavailable");
+});
+
+it("returns UNAUTHORIZED when the recording transaction rejects a revoked browser session", async () => {
+  const record = vi.fn().mockRejectedValue({ code: "UNAUTHORIZED", message: "private details" });
+  bindMcpGrantServices({ active, record, revoked: async () => false });
+  const hook = mcpConsent({ secret: "secret" }).hooks.before[0]!.handler;
+  await expect(
+    hook({ body: { accept: true, scope: "sandboxes:read" } } as unknown as Parameters<
+      typeof hook
+    >[0]),
+  ).rejects.toMatchObject({ status: "UNAUTHORIZED" });
 });

@@ -304,7 +304,13 @@ describe("admin invitation acceptance against the real Better Auth", () => {
     };
     expect((await reset(TEMPORARY)).status).toBe(400);
     expect((await reset(TEMPORARY, true)).status).toBe(400);
-    // A malformed reset (no new password) fails validation and changes nothing.
+    // A valid mailbox token revokes access before password validation. Refusing
+    // temporary-password reuse still leaves the password and restriction intact.
+    expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(0);
+    const unchanged = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
+    expect(unchanged.status, await unchanged.clone().text()).toBe(200);
+    expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(1);
+    // A malformed reset also revokes access, but keeps its link retryable.
     const token = randomUUID();
     await db.inspect.verification.create({
       data: {
@@ -315,10 +321,17 @@ describe("admin invitation acceptance against the real Better Auth", () => {
     });
     expect((await post("/reset-password", { token })).status).toBe(400);
     expect(await flags(invitee.userId)).toEqual({ emailVerified: true, mustChangePassword: true });
+    expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(0);
+    // The unchanged temporary password still signs in; a successful retry of
+    // that SAME recovery link then replaces it and ends this fresh session too.
+    const fresh = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
+    expect(fresh.status, await fresh.clone().text()).toBe(200);
     expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(1);
-    const done = await reset(CHOSEN);
+    const done = await post("/reset-password", { token, newPassword: CHOSEN });
     expect(done.status, await done.clone().text()).toBe(200);
     expect(await flags(invitee.userId)).toEqual({ emailVerified: true, mustChangePassword: false });
     expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(0);
+    const stale = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
+    expect(stale.status).toBe(401);
   });
 });

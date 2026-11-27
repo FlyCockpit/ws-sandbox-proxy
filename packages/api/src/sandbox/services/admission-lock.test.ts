@@ -28,7 +28,7 @@ const { createHost, createHostToken } = await import("./hosts");
 const { createTemplate } = await import("./templates");
 const { createSdkKey, createSdkKeyInput } = await import("./sdk-keys");
 
-const owner = { kind: "session" as const, ownerId: "owner-1" };
+const owner = { kind: "session" as const, ownerId: "owner-1", sessionId: "owner-session" };
 const FP = `sha256:${"a".repeat(64)}`;
 
 /** The recording transaction is the mock client itself: every statement's global

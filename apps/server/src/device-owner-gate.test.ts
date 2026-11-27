@@ -116,7 +116,10 @@ function request(
 }
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getSession.mockResolvedValue({ user: { id: "owner", banned: false } });
+  mocks.getSession.mockResolvedValue({
+    user: { id: "owner", banned: false },
+    session: { id: "approver-session" },
+  });
   mocks.loadUser.mockResolvedValue({ emailVerified: true, banned: false });
   mocks.policy.mockResolvedValue(true);
   mocks.transition.mockResolvedValue({ success: true });
@@ -186,6 +189,7 @@ describe("production server device mounts", () => {
       expect(mocks.transition).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: "owner",
+          sessionId: "approver-session",
           action: suffix === "" ? "claim" : suffix.slice(1),
         }),
       );

@@ -154,6 +154,19 @@ export function isBrowserSession(p: Principal): boolean {
   }
 }
 
+/** The browser session to revalidate for credential minting, if present. */
+export function sessionIdOf(p: Principal): string | undefined {
+  switch (p.kind) {
+    case "session":
+      return p.sessionId;
+    case "sdkKey":
+    case "build":
+      return undefined;
+    default:
+      return assertNever(p);
+  }
+}
+
 /** The wssp-managed flow a session principal acts for (CLI logins, §11), or
  * null. Only wssp's own flows set it; no key or build principal carries one. */
 export function managedFlowOf(p: Principal): "credentialLogin" | null {

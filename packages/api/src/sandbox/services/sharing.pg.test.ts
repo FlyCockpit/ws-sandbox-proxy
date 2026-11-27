@@ -3,7 +3,7 @@ import { createRouterClient } from "@orpc/server";
 import type { Session } from "@wssp/auth";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, expect, it, vi } from "vitest";
-import { seedLaunchHost } from "../testing/resource-fixtures";
+import { seedLaunchHost, seedMintSession } from "../testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -67,7 +67,11 @@ import {
 
 const db = await pgTestDatabase();
 afterAll(() => db.close());
-const session = (ownerId: string) => ({ kind: "session" as const, ownerId });
+const session = (ownerId: string) => ({
+  kind: "session" as const,
+  ownerId,
+  sessionId: `mint:${ownerId}`,
+});
 async function fixture() {
   const users = [];
   for (let i = 0; i < 3; i++) {
@@ -85,6 +89,7 @@ async function fixture() {
       }),
     );
   }
+  for (const user of users) await seedMintSession(db.inspect, { ownerId: user.id });
   const [a, b, c] = users as [
     (typeof users)[number],
     (typeof users)[number],

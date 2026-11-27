@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { vmLiveMemoryChargeMiB } from "@wssp/sandbox-contracts";
 import { afterAll, expect, it, vi } from "vitest";
+import { seedMintSession } from "./testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -60,7 +61,7 @@ async function fixture() {
       incusFingerprint: base.revision.incusFingerprint,
     },
   });
-  const owner = { kind: "session" as const, ownerId: creatorId };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: creatorId });
   const input = {
     poolId: base.pool.id,
     template: `revision/${revision.id}`,

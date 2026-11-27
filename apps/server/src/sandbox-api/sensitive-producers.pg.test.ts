@@ -2,6 +2,7 @@ import { vmLiveMemoryChargeMiB } from "@wssp/sandbox-contracts";
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
@@ -173,16 +174,14 @@ async function fixture(scopes: readonly (typeof SERVICE_SCOPES)[number][] = SERV
       dispatchedConnectionEpoch: 1,
     },
   });
-  const key = await createSdkKey(
-    { kind: "session", ownerId: id },
-    {
-      name: "sdk",
-      scopes: [...scopes],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
+  const key = await createSdkKey(owner, {
+    name: "sdk",
+    scopes: [...scopes],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
   return { id, host, template, sandbox, operation, key };
 }
 

@@ -123,7 +123,7 @@
     "currentPasswordLabel": "Contraseña actual",
     "newPasswordLabel": "Nueva contraseña",
     "confirmPasswordLabel": "Confirma la nueva contraseña",
-    "passwordSessionRevocation": "Después de que cambies tu contraseña, todos los demás dispositivos cerrarán sesión. Este dispositivo permanecerá con la sesión iniciada.",
+    "passwordSessionRevocation": "Después de cambiar tu contraseña, se cerrará la sesión en todos los demás dispositivos. Se revocarán los accesos de la CLI, las claves de API, los tokens de acceso personal y el acceso de los clientes MCP. Vuelve a iniciar sesión en la CLI y configura tus integraciones con credenciales nuevas. La sesión de este dispositivo seguirá abierta.",
     "changePassword": "Cambiar contraseña",
     "changingPassword": "Cambiando contraseña…",
     "passwordChangedSuccess": "Contraseña cambiada. Los otros dispositivos han cerrado sesión.",

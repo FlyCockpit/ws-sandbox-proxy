@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, expect, it, vi } from "vitest";
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -54,7 +57,7 @@ it("commands and every file tool obey off/on and the durable dashboard veto thro
       twoFactorEnabled: true,
     },
   });
-  const owner = { kind: "session" as const, ownerId: id };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
   const host = await seedLaunchHost(db.inspect, {
     data: { userId: id, slug: "host", label: "Host" },
   });

@@ -1,5 +1,8 @@
 import { VM_SIZE_LIMITS, vmLiveMemoryChargeMiB } from "@wssp/sandbox-contracts";
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -218,7 +221,7 @@ async function fixture(
       incusFingerprint: FP,
     },
   });
-  const session = { kind: "session" as const, ownerId };
+  const session = await seedMintSession(db.inspect, { kind: "session" as const, ownerId });
   const token = await createHostToken(session, { hostId: host.id, name: "daemon" });
   const key = await createSdkKey(session, {
     name: "harness",
@@ -1599,7 +1602,7 @@ async function sharingFixture(mode: "shared" | "contributed" = "shared", termina
     },
   });
   const a = { kind: "session" as const, ownerId: f.ownerId };
-  const b = { kind: "session" as const, ownerId: creatorId };
+  const b = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: creatorId });
   const { createPool, addPoolMember } = await import(
     "../../../../packages/api/src/sandbox/services/pools"
   );

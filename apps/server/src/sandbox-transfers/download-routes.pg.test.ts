@@ -1,4 +1,8 @@
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import type { SessionPrincipal } from "../../../../packages/api/src/sandbox/contracts";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -167,27 +171,26 @@ async function seed(scopes: ServiceScope[] = ["files:read", "operations:read", "
       state: "READY",
     },
   });
-  const key = await mintKey(userId, scopes);
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: userId });
+  const key = await mintKey(owner, scopes);
   return {
     userId,
+    owner,
     hostId: host.id,
     sandbox,
     key,
     headers: { authorization: `Bearer ${key.secret}` } as Record<string, string>,
   };
 }
-function mintKey(userId: string, scopes: ServiceScope[]) {
-  return createSdkKey(
-    { kind: "session", ownerId: userId },
-    {
-      name: "download",
-      scopes,
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-      expiresAt: null,
-    },
-  );
+function mintKey(owner: SessionPrincipal, scopes: ServiceScope[]) {
+  return createSdkKey(owner, {
+    name: "download",
+    scopes,
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+    expiresAt: null,
+  });
 }
 /** `POST /v1/sandboxes/{id}/files/download`: the public capture request. */
 async function requestDownload(f: Fixture, path = "/home/user/out.bin") {
@@ -328,7 +331,7 @@ it("streams a requested capture whole and by one range with matching length, has
   expect(JSON.parse(statusText)).toMatchObject({ kind: "GET_FILE", state: "SUCCEEDED" });
   for (const secret of [done.transferId, done.sha256, "out.bin", "result"])
     expect(statusText).not.toContain(secret);
-  const reader = await mintKey(f.userId, ["operations:read", "commands:read"]);
+  const reader = await mintKey(f.owner, ["operations:read", "commands:read"]);
   const output = await app.request(`/v1/operations/${operationId}/output`, {
     headers: { authorization: `Bearer ${reader.secret}` },
   });
@@ -465,7 +468,7 @@ it("rechecks credential, scopes and originating identity on every request and ch
   const foreignResponse = await get(foreign, operationId);
   expect(foreignResponse.status).toBe(404);
   expect(await errorCode(foreignResponse)).toBe("sandbox.operation_not_found");
-  const sibling = await mintKey(f.userId, ["files:read", "operations:read"]);
+  const sibling = await mintKey(f.owner, ["files:read", "operations:read"]);
   expect((await get(f, operationId, { authorization: `Bearer ${sibling.secret}` })).status).toBe(
     404,
   );

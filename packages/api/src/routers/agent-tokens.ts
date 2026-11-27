@@ -18,7 +18,10 @@ export const agentTokensRouter = {
   create: liveOwnerSessionProcedure
     .input(createAgentTokenInput)
     .handler(({ input, context }) =>
-      createAgentToken(sessionPrincipal(context.session.user.id), input),
+      createAgentToken(
+        sessionPrincipal(context.session.user.id, context.session.session.id),
+        input,
+      ),
     ),
   list: protectedProcedure
     .input(listAgentTokensInput)

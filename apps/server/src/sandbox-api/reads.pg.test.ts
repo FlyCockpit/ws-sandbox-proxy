@@ -1,6 +1,8 @@
+import type { SessionPrincipal } from "../../../../packages/api/src/sandbox/contracts";
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
@@ -63,6 +65,7 @@ const session = (ownerId: string) => ({ kind: "session" as const, ownerId });
 
 type Owner = {
   id: string;
+  principal: SessionPrincipal;
   hosts: string[];
   templates: string[];
   logicalTemplates: string[];
@@ -75,6 +78,7 @@ async function seedOwner(label: string, sandboxesPerHost: number, base: number):
   await db.inspect.user.create({ data: { id, name: label, email: `${id}@example.test` } });
   const owner: Owner = {
     id,
+    principal: await seedMintSession(db.inspect, session(id)),
     hosts: [],
     templates: [],
     logicalTemplates: [],
@@ -134,7 +138,7 @@ async function seedOwner(label: string, sandboxesPerHost: number, base: number):
 }
 
 async function mint(owner: Owner, mode: "ALL_OWNED" | "ALLOWLIST") {
-  const minted = await createSdkKey(session(owner.id), {
+  const minted = await createSdkKey(owner.principal, {
     name: `${mode}-key`,
     scopes: [...ALL_SCOPES],
     resourceMode: mode,

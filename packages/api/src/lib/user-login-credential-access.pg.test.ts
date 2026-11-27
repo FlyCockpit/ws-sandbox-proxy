@@ -74,7 +74,7 @@ async function owner() {
     data: { userId: id, token: randomUUID(), expiresAt: new Date(Date.now() + 3600000) },
   });
   state.getSession.mockResolvedValue({ user, session } as Session);
-  return { id, email: user.email };
+  return { id, email: user.email, sessionId: session.id };
 }
 
 function deviceRow(
@@ -189,7 +189,7 @@ describe("user-login device flow", () => {
     });
     expect(await db.inspect.deviceCode.count({ where: { id: over.id } })).toBe(1);
     // Dashboard keys do not count against the CLI-login cap.
-    await createSdkKey(sessionPrincipal(o.id), {
+    await createSdkKey(sessionPrincipal(o.id, o.sessionId), {
       name: "dashboard",
       scopes: ["sandboxes:read"],
       resourceMode: "ALL_OWNED",
@@ -289,7 +289,7 @@ describe("user-login device flow", () => {
     });
     expect(await authenticateSdkKeySecret(minted.secret)).toBeNull();
 
-    const dashboard = await createSdkKey(sessionPrincipal(o.id), {
+    const dashboard = await createSdkKey(sessionPrincipal(o.id, o.sessionId), {
       name: "dashboard",
       scopes: ["sandboxes:read"],
       resourceMode: "ALL_OWNED",

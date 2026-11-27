@@ -1,6 +1,7 @@
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
   seedTemplateRevision,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
@@ -204,7 +205,7 @@ async function fixture() {
     where: { revisionId: revision.id, hostId: source.id },
     data: { sizeBytes: 4096n, imageFormat: "unified" },
   });
-  const owner = { kind: "session" as const, ownerId };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId });
   const sandbox = await createSandbox(owner, {
     template: `revision/${revision.id}`,
     sandboxHostId: dest.id,

@@ -16,6 +16,12 @@ beforeEach(() => {
   store.state.deviceCode.set("code-1", deviceRow({ status: "pending" }));
   store.state.user.set("user-1", { id: "user-1" });
   store.state.user.set("user-2", { id: "user-2" });
+  store.state.session.set("approver-session", {
+    id: "approver-session",
+    userId: "user-1",
+    expiresAt: new Date("2099-01-01"),
+    impersonatedBy: null,
+  });
 });
 it.each(["approve", "deny"] as const)(
   "interleaved %s cannot overwrite a committed opposite decision",
@@ -143,7 +149,13 @@ it("user-login approval stores exactly the chosen grant and no enrollment intent
     "code-1",
     deviceRow({ status: "pending", scope: "user-login", enrollmentIntent: null }),
   );
-  await transitionDeviceCode({ userCode: "ABCDEFGH", userId: "user-1", action: "approve", grant });
+  await transitionDeviceCode({
+    userCode: "ABCDEFGH",
+    userId: "user-1",
+    action: "approve",
+    grant,
+    sessionId: "approver-session",
+  });
   expect(store.state.deviceCode.get("code-1")).toMatchObject({
     status: "approved",
     enrollmentIntent: null,
@@ -188,4 +200,49 @@ it.each([
     }),
   ).rejects.toMatchObject({ code: "BAD_REQUEST" });
   expect(store.state.deviceCode.get("code-1")?.status).toBe("pending");
+});
+
+it.each(["claim", "approve"] as const)(
+  "refuses user-login %s from a revoked browser session",
+  async (action) => {
+    store.state.deviceCode.set(
+      "code-1",
+      deviceRow({
+        status: "pending",
+        scope: "user-login",
+        userId: action === "claim" ? null : "user-1",
+      }),
+    );
+    store.state.session.clear();
+    await expect(
+      transitionDeviceCode({
+        userCode: "ABCDEFGH",
+        userId: "user-1",
+        sessionId: "approver-session",
+        action,
+        grant,
+      }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(store.state.deviceCode.get("code-1")).toMatchObject({
+      status: "pending",
+      userId: action === "claim" ? null : "user-1",
+    });
+  },
+);
+
+it("takes the owner and session locks before approving a CLI login", async () => {
+  store.state.deviceCode.set("code-1", deviceRow({ status: "pending", scope: "user-login" }));
+  await transitionDeviceCode({
+    userCode: "ABCDEFGH",
+    userId: "user-1",
+    sessionId: "approver-session",
+    action: "approve",
+    grant,
+  });
+  expect(store.events.indexOf("share:user:user-1")).toBeLessThan(
+    store.events.indexOf("share:session:approver-session"),
+  );
+  expect(store.events.indexOf("share:session:approver-session")).toBeLessThan(
+    store.events.indexOf("lock:deviceCode:code-1"),
+  );
 });

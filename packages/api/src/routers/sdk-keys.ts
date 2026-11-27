@@ -15,7 +15,10 @@ export const sdkKeysRouter = {
   }),
 
   create: liveOwnerSessionProcedure.input(createSdkKeyInput).handler(async ({ input, context }) => {
-    return createSdkKey(sessionPrincipal(context.session.user.id), input);
+    return createSdkKey(
+      sessionPrincipal(context.session.user.id, context.session.session.id),
+      input,
+    );
   }),
 
   revoke: protectedProcedure.input(revokeSdkKeyInput).handler(async ({ input, context }) => {

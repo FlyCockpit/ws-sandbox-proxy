@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import type { SessionPrincipal } from "../../../../packages/api/src/sandbox/contracts";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -54,17 +58,14 @@ afterAll(async () => {
   await manager.dispose();
   await db.close();
 });
-async function credential(ownerId: string) {
-  const key = await createSdkKey(
-    { kind: "session", ownerId },
-    {
-      name: "full",
-      scopes: [...SERVICE_SCOPES],
-      resourceMode: "ALL_OWNED",
-      hostIds: [],
-      templateRevisionIds: [],
-    },
-  );
+async function credential(owner: SessionPrincipal) {
+  const key = await createSdkKey(owner, {
+    name: "full",
+    scopes: [...SERVICE_SCOPES],
+    resourceMode: "ALL_OWNED",
+    hostIds: [],
+    templateRevisionIds: [],
+  });
   const principal = await authenticateSdkKeySecret(key.secret);
   if (!principal) throw new Error("inactive fixture");
   return principal;
@@ -82,7 +83,7 @@ async function fixture() {
       twoFactorEnabled: true,
     },
   });
-  const owner = { kind: "session" as const, ownerId };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId });
   const host = await seedLaunchHost(db.inspect, {
     data: { userId: ownerId, slug: "node", label: "Node" },
   });
@@ -116,7 +117,7 @@ async function fixture() {
   bindHostAccess(manager.hostAccess);
   await daemon.connect();
   await daemon.idle();
-  return { ownerId, host, daemon, applied, principal: await credential(ownerId) };
+  return { ownerId, owner, host, daemon, applied, principal: await credential(owner) };
 }
 const write = (hostId: string, idempotencyKey: string, content = "hi") => ({
   hostId,
@@ -179,7 +180,7 @@ it("refuses a different request under a used key as an idempotency conflict", as
 
 it("scopes keys per credential: another credential of the same owner applies independently", async () => {
   const f = await fixture();
-  const other = await credential(f.ownerId);
+  const other = await credential(f.owner);
   const a = await files.writeHostFile(f.principal, write(f.host.id, "shared"));
   const b = await files.writeHostFile(other, write(f.host.id, "shared", "different"));
   expect(a.etag).not.toBe(b.etag);

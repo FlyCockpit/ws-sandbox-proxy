@@ -1,4 +1,7 @@
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -116,7 +119,8 @@ async function fixture() {
     },
   });
   const token = await createHostToken(principal(id), { hostId: host.id, name: "daemon" });
-  const key = await createSdkKey(principal(id), {
+  const owner = await seedMintSession(db.inspect, principal(id));
+  const key = await createSdkKey(owner, {
     name: "sdk",
     scopes: [
       "hosts:read",

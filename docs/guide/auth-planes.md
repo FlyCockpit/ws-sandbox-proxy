@@ -36,8 +36,32 @@ sandbox, operation and transfer belongs to exactly one user account.
   do Better Auth's own endpoints other than signing in or out, sessions and
   password recovery. The new password must differ from the temporary one, and
   changing it signs out the account's other sessions whatever the client asks.
-  A reset by email also replaces it; every reset signs all of the account's
-  sessions out.
+  A reset by email also replaces it; before changing the password or consuming
+  the recovery link, every reset signs all of the account's sessions out and,
+  in the same locked transaction, revokes its SDK/API keys, device-flow CLI logins,
+  personal/MCP access tokens, OAuth grants/tokens issued to clients, and claimed
+  pending or approved CLI device codes. Password changes that sign out other
+  devices revoke the same credentials. A second credential sweep follows the
+  reset; both sweeps also end sessions impersonating others on this account’s
+  behalf and delete pending two-factor sign-in challenges, their OTPs and attempt
+  counters, session OTPs, and trusted-device records. If reset fails before the
+  password write, the account stays signed out everywhere with the password
+  unchanged and the unconsumed link reusable.
+  A revoked session can continue reading for at most the 60-second signed
+  cookie-cache window; session-authenticated Better Auth writes and credential
+  minting re-check the live session row, so writes cannot renew a revoked cache.
+
+  Requests already authenticated and in flight when reset commits can still
+  finish afterward: a password sign-in verifying the old hash, a change-password
+  request that already verified the old password, an admin impersonation request,
+  or a token refresh. Better Auth core verifies before it writes, without a
+  password-generation check. The proposed follow-up is a password-generation
+  check under the credential lock at session insert or password write.
+  Change-password's credential sweep runs after the password commits, as in the
+  template; a failure there is logged SECURITY and rethrown.
+
+  Machine enrollments, host credentials and host enrollment codes are left
+  unchanged pending an owner decision.
   The invitation is the invitee's only mail: no separate "verify your email"
   mail is sent. A sign-in before accepting (or after the link expired) is
   refused and Better Auth mails one fresh verification link, which the

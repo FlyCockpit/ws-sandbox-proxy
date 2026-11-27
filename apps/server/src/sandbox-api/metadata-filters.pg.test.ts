@@ -1,4 +1,7 @@
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -101,7 +104,7 @@ async function fixture() {
       incusFingerprint: `sha256:${"c".repeat(64)}`,
     },
   });
-  const principal = { kind: "session" as const, ownerId: id };
+  const principal = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
   const key = await createSdkKey(principal, {
     name: "sdk",
     scopes: [

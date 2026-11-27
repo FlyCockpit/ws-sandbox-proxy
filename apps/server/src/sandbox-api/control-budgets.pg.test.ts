@@ -5,6 +5,7 @@ import { afterAll, expect, it, vi } from "vitest";
 import {
   seedAcceptedOperation,
   seedLaunchHost,
+  seedMintSession,
   seedSandboxInstance,
   seedTemplateRevision,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
@@ -48,7 +49,7 @@ async function seed() {
   await db.inspect.user.create({
     data: { id: userId, email: `${userId}@example.test`, name: "Owner", twoFactorEnabled: true },
   });
-  const owner = { kind: "session" as const, ownerId: userId };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: userId });
   const host = await seedLaunchHost(db.inspect, {
     data: { userId, slug: "lab", label: "Lab", status: "CONNECTED", connectionEpoch: 1 },
   });

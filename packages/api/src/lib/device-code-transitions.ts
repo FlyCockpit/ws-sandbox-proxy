@@ -8,6 +8,7 @@ import {
 import prisma, { type Prisma } from "@wssp/db";
 import { sessionPrincipal } from "../sandbox/contracts";
 import { precheckOwnerHostCapacity } from "../sandbox/owner-host-cap";
+import { requireCredentialMintSession } from "../sandbox/sdk-key-mint";
 import { requirePoolUse } from "../sandbox/sharing-authority";
 
 export function userCodeCandidates(userCode: string): string[] {
@@ -53,6 +54,7 @@ async function requireApprovableLoginGrant(userId: string, raw: unknown): Promis
 export async function transitionDeviceCode(input: {
   userCode: string;
   userId: string;
+  sessionId?: string;
   action: "claim" | "approve" | "deny";
   intent?: EnrollmentIntent;
   grant?: unknown;
@@ -61,7 +63,7 @@ export async function transitionDeviceCode(input: {
     where: { userCode: { in: userCodeCandidates(input.userCode) } },
     select: { id: true, status: true, userId: true, scope: true },
   });
-  if (!row || row.status !== "pending" || (row.userId !== null && row.userId !== input.userId)) {
+  if (row?.status !== "pending" || (row.userId !== null && row.userId !== input.userId)) {
     throw new ORPCError("CONFLICT", { message: DEVICE_REQUEST_UNAVAILABLE });
   }
   const kind = deviceRequestKind(row.scope);
@@ -92,6 +94,12 @@ export async function transitionDeviceCode(input: {
       : null;
   return prisma
     .$transaction(async (tx) => {
+      if (kind === "user") {
+        // Same owner lock and owner-before-code order as password revocation
+        // and redemption. Even an unclaimed code needs a live browser session.
+        await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${input.userId} FOR SHARE`;
+        await requireCredentialMintSession(tx, input.userId, input.sessionId);
+      }
       await tx.$queryRaw`SELECT id FROM device_code WHERE id = ${row.id} FOR UPDATE`;
       const current = await tx.deviceCode.findUnique({
         where: { id: row.id },

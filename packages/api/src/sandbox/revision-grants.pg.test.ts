@@ -1,3 +1,5 @@
+import { seedMintSession } from "./testing/resource-fixtures";
+
 vi.mock("@wssp/env/server", () => ({
   env: {
     SANDBOX_REQUEST_HMAC_SECRET: "0123456789abcdef".repeat(4),
@@ -41,7 +43,7 @@ async function fixture() {
       emailVerified: true,
     },
   });
-  const owner = { kind: "session" as const, ownerId: id };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
   const host = await seedLaunchHost(db.inspect, {
     data: {
       userId: id,

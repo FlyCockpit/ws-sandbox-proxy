@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 
 type Row = Record<string, unknown> & { id: string };
-type Model = "deviceCode" | "user" | "sandboxHost" | "hostDeviceCredential";
+type Model = "session" | "deviceCode" | "user" | "sandboxHost" | "hostDeviceCredential";
 type Where = Record<string, unknown>;
 
 export function gate() {
@@ -30,6 +30,7 @@ function matches(row: Row, where: Where): boolean {
  * Unsupported SQL fails rather than pretending to implement Postgres. */
 export function deviceStore() {
   const state: Record<Model, Map<string, Row>> = {
+    session: new Map(),
     deviceCode: new Map(),
     user: new Map(),
     sandboxHost: new Map(),
@@ -148,6 +149,7 @@ export function deviceStore() {
           return [];
         },
       },
+      session: model("session"),
       deviceCode: model("deviceCode"),
       user: model("user"),
       sandboxHost: model("sandboxHost"),
@@ -169,6 +171,10 @@ export function deviceStore() {
             .slice(0, 100);
           for (const row of rows) await lock(`hostDeviceCredential:${row.id}`);
           return rows.map((row) => ({ id: row.id }));
+        }
+        if (sql === "SELECT id FROM session WHERE id = ? FOR SHARE") {
+          events.push(`share:session:${values[0]}`);
+          return view("session").has(String(values[0])) ? [{ id: values[0] }] : [];
         }
         const name = sql.includes("FROM device_code")
           ? "deviceCode"

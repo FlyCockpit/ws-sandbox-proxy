@@ -418,3 +418,20 @@ export async function acknowledgeFixtureExecutionConfigs(tx: Prisma.TransactionC
     cursor = rows[rows.length - 1]!.id;
   }
 }
+
+/** Credential-mint tests need the same durable browser authority as the router. */
+export async function seedMintSession<T extends { ownerId: string }>(
+  tx: Prisma.TransactionClient,
+  principal: T,
+): Promise<T & { sessionId: string }> {
+  const session = await tx.session.create({
+    data: {
+      id: `mint:${principal.ownerId}`,
+      userId: principal.ownerId,
+      token: randomUUID(),
+      expiresAt: new Date(Date.now() + 3_600_000),
+    },
+    select: { id: true },
+  });
+  return { ...principal, sessionId: session.id };
+}

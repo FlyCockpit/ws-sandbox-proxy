@@ -1,3 +1,5 @@
+import { seedMintSession } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+
 const hoisted = vi.hoisted(() => {
   // A real 32-byte key, set before the webhook config is first read.
   const hex = Array.from({ length: 32 }, (_, i) =>
@@ -95,10 +97,15 @@ async function owner(role = "user") {
       role,
     },
   });
+  await seedMintSession(db.inspect, sessionPrincipal(id));
   return id;
 }
+async function mintPrincipal(ownerId: string) {
+  const session = await db.inspect.session.findFirstOrThrow({ where: { userId: ownerId } });
+  return sessionPrincipal(ownerId, session.id);
+}
 async function key(ownerId: string, scopes: ServiceScope[] = ["webhooks:write"]) {
-  return createSdkKey(sessionPrincipal(ownerId), {
+  return createSdkKey(await mintPrincipal(ownerId), {
     name: "webhooks",
     resourceMode: "ALL_OWNED",
     hostIds: [],
@@ -309,7 +316,7 @@ describe("/v1 webhooks (real PostgreSQL)", () => {
       },
     ])
       await expect(
-        createSdkKey(sessionPrincipal(id), { name: "x", scopes: ["webhooks:write"], ...input }),
+        createSdkKey(await mintPrincipal(id), { name: "x", scopes: ["webhooks:write"], ...input }),
       ).rejects.toMatchObject({
         code: "BAD_REQUEST",
         data: { code: "sdk_key.webhooks_requires_all_owned" },

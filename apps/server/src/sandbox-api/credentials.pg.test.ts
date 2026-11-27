@@ -1,4 +1,7 @@
-import { seedAcceptedOperation } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedAcceptedOperation,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 const hoisted = vi.hoisted(() => {
   // A real 32-byte root, set before the vault first reads it.
@@ -93,10 +96,15 @@ async function owner() {
       twoFactorEnabled: true,
     },
   });
+  await seedMintSession(db.inspect, sessionPrincipal(id));
   return id;
 }
+async function mintPrincipal(ownerId: string) {
+  const session = await db.inspect.session.findFirstOrThrow({ where: { userId: ownerId } });
+  return sessionPrincipal(ownerId, session.id);
+}
 async function allOwnedKey(ownerId: string, scopes: ServiceScope[]) {
-  return createSdkKey(sessionPrincipal(ownerId), {
+  return createSdkKey(await mintPrincipal(ownerId), {
     name: "logins",
     resourceMode: "ALL_OWNED",
     hostIds: [],
@@ -352,7 +360,7 @@ describe("/v1 CLI logins (real PostgreSQL)", () => {
         manifestDigest: "b".repeat(64),
       },
     });
-    const limited = await createSdkKey(sessionPrincipal(ownerId), {
+    const limited = await createSdkKey(await mintPrincipal(ownerId), {
       name: "limited",
       resourceMode: "ALLOWLIST",
       poolMode: "ALL_USABLE",
@@ -434,7 +442,7 @@ describe("/v1 CLI logins (real PostgreSQL)", () => {
       },
     });
     await expect(
-      createSdkKey(sessionPrincipal(ownerId), {
+      createSdkKey(await mintPrincipal(ownerId), {
         name: "use-without-logins",
         resourceMode: "ALLOWLIST",
         poolMode: "ALL_USABLE",

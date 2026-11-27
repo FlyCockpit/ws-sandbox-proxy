@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
-import { seedLaunchHost } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
+import {
+  seedLaunchHost,
+  seedMintSession,
+} from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
@@ -59,7 +62,7 @@ async function person() {
       twoFactorEnabled: true,
     },
   });
-  return { kind: "session" as const, ownerId };
+  return seedMintSession(db.inspect, { kind: "session" as const, ownerId });
 }
 async function credential(
   owner: Awaited<ReturnType<typeof person>>,
@@ -396,9 +399,17 @@ it("lifting a veto is owner-only, audited, and cannot turn on an off node", asyn
   await lowerHostTerminal(f.owner, { id: f.host.id });
   await f.daemon.idle();
   const foreign = await person();
-  for (const lift of [liftAgentHostCommandsVeto, liftHostTerminalVeto]) {
+  for (const [target, lift] of [
+    ["hostCommands", liftAgentHostCommandsVeto],
+    ["hostTerminal", liftHostTerminalVeto],
+  ] as const) {
     await expect(lift(foreign, { id: f.host.id })).rejects.toMatchObject({ code: "NOT_FOUND" });
     await expect(lift(f.principal, { id: f.host.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Each lift fences cached authority; daemon.idle() does not await the
+    // relay's asynchronous revalidation before the next off witness is sampled.
+    await expect
+      .poll(() => manager.hostAccess.offWitness(f.host.id, f.owner.ownerId, target)?.isOff())
+      .toBe(true);
     await lift(f.owner, { id: f.host.id });
   }
   expect(await db.inspect.sandboxHost.findUnique({ where: { id: f.host.id } })).toMatchObject({

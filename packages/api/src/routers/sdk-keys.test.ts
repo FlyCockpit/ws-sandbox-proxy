@@ -409,4 +409,55 @@ describe("unit (mocked Prisma; no real-DB test yet for the P2003 mapping) — C1
     expect(db.sdkKey.updateMany).not.toHaveBeenCalled();
     expect(trackedAuthorityKeyCount()).toBe(before);
   });
+
+  // Entry middleware sees the cookie-cache identity and a live row. Only the
+  // transaction can notice a reset that deleted that row after admission.
+  it("refuses a cached session deleted between admission and the key transaction", async () => {
+    vi.mocked(db.$transaction).mockImplementation(async (work) =>
+      work(
+        new Proxy(db, {
+          get(target, prop) {
+            if (prop === "session")
+              return { ...target.session, findUnique: vi.fn().mockResolvedValue(null) };
+            return Reflect.get(target, prop);
+          },
+        }),
+      ),
+    );
+    vi.mocked(db.sdkKey.create).mockResolvedValue(keyRow() as never);
+    await expect(
+      client().create({ name: "stale", scopes: ["sandboxes:read"], resourceMode: "ALL_OWNED" }),
+    ).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(db.sdkKey.create).not.toHaveBeenCalled();
+  });
+
+  it("reads the authorizing session under the owner lock before inserting a key", async () => {
+    vi.mocked(db.sdkKey.create).mockResolvedValue(keyRow() as never);
+    await client().create({ name: "live", scopes: ["sandboxes:read"], resourceMode: "ALL_OWNED" });
+    expect(db.session.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: "auth-session",
+        userId: "user-a",
+        expiresAt: { gt: expect.any(Date) },
+        impersonatedBy: null,
+      },
+      select: { id: true },
+    });
+    const ownerLock = vi
+      .mocked(db.$queryRaw)
+      .mock.calls.findIndex(([sql]) =>
+        sql.join("?").includes('FROM "user" WHERE id = ? FOR SHARE'),
+      );
+    const sessionLock = vi
+      .mocked(db.$queryRaw)
+      .mock.calls.findIndex(
+        ([sql]) => sql.join("?") === "SELECT id FROM session WHERE id = ? FOR SHARE",
+      );
+    expect(ownerLock).toBeGreaterThanOrEqual(0);
+    expect(sessionLock).toBeGreaterThan(ownerLock);
+    expect(vi.mocked(db.$queryRaw).mock.calls[sessionLock]?.[1]).toBe("auth-session");
+    expect(vi.mocked(db.$queryRaw).mock.invocationCallOrder[sessionLock]).toBeLessThan(
+      vi.mocked(db.sdkKey.create).mock.invocationCallOrder[0]!,
+    );
+  });
 });

@@ -20,11 +20,13 @@ import { consumeSandboxWriteBudget } from "../budgets";
 import { lastConnectByKey } from "../connect-sessions";
 import type { Principal } from "../contracts";
 import { poolNotFound } from "../errors";
+import { sessionIdOf } from "../principal-kinds";
 import {
   assertMintableGrant,
   insertSdkKey,
   lockSdkKeyMint,
   ownedSdkKeyListSelect,
+  requireCredentialMintSession,
   rethrowSdkKeyMintError,
   revokeOwnedKey,
   selectedPoolOwnerIds,
@@ -236,6 +238,7 @@ export const mintCredentialKey = serviceProcedure(
     try {
       const created = await prisma.$transaction(async (tx) => {
         await lockSdkKeyMint(tx, owner.ownerId, poolOwnerIds);
+        await requireCredentialMintSession(tx, owner.ownerId, sessionIdOf(owner));
         if (kind === "AGENT_TOKEN") {
           const active = await tx.sdkKey.count({
             where: {

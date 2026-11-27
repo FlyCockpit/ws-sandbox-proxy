@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import enSettings from "@wssp/locales/src/en-US/settings.json";
 import enValidation from "@wssp/locales/src/en-US/validation.json";
+import esSettings from "@wssp/locales/src/es-MX/settings.json";
 import { createInstance } from "i18next";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -70,4 +71,13 @@ describe("change password validation", () => {
     submit();
     expect((await screen.findByRole("alert")).textContent).toBe("Use at most 128 characters.");
   });
+});
+
+it("discloses credential revocation and replacement before submission in both locales", () => {
+  render(<ChangePasswordCard />);
+  expect(screen.getByText(/API.*MCP/).textContent).toMatch(/replacement credentials/);
+  expect(enSettings.security.passwordSessionRevocation).toMatch(/CLI/);
+  expect(esSettings.security.passwordSessionRevocation).toMatch(/CLI.*API.*MCP/);
+  expect(esSettings.security.passwordSessionRevocation).toMatch(/credenciales nuevas/);
+  expect(changePassword).not.toHaveBeenCalled();
 });

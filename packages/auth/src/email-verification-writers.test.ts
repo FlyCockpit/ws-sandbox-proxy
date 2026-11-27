@@ -52,7 +52,9 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-27 (e2e5-fups T1): password length limits read from ./password-policy.ts (12 / 128, unchanged); no mailbox proof input or write.
   // Reviewed 11-27 (tpl-e2e5-fups r2): wires mailbox-proof-policy.ts as user.create.before
   // (first) and user.update.before; refusals only, no proof input or write.
-  "packages/auth/src/index.ts": "f930fed29ffedb63e65bf6defa89286136a01e8740621b7f2698a9ed123be720",
+  // Password recovery revokes standing credentials before and after reset; no mailbox proof input or write.
+  // Round 3: durable session write checks and reset-link/temporary-password finalization; no mailbox proof input or write.
+  "packages/auth/src/index.ts": "c5cac958a036133b5836c227e55826073f0da38a66e3ea21e77ffd050c370ee3",
   // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
   // no emailVerified write outside /verify-email. Writes nothing.
   "packages/auth/src/mailbox-proof-policy.ts":

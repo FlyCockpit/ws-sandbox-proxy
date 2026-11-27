@@ -1,5 +1,6 @@
 import { digestContextSnapshot } from "./digest-context";
 import { requestDigestMetadata } from "./idempotency";
+import { seedMintSession } from "./testing/resource-fixtures";
 
 vi.mock("@wssp/env/server", () => ({
   env: {
@@ -107,7 +108,7 @@ async function grantee(f: Fixture) {
   });
   const { id: _id, ...copy } = availability;
   await db.inspect.sandboxTemplateAvailability.create({ data: { ...copy, hostId: f.other.id } });
-  const owner = { kind: "session" as const, ownerId: id };
+  const owner = await seedMintSession(db.inspect, { kind: "session" as const, ownerId: id });
   return {
     id,
     owner,

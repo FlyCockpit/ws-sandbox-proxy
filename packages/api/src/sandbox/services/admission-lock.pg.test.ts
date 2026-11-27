@@ -1,4 +1,4 @@
-import { seedLaunchHost } from "../testing/resource-fixtures";
+import { seedLaunchHost, seedMintSession } from "../testing/resource-fixtures";
 
 vi.mock("@wssp/api/sandbox/budgets", () => ({
   consumeCreateConnectBudget: async () => {},
@@ -81,6 +81,7 @@ async function seedOwner(resources: SeedKind): Promise<Seeded> {
       twoFactorEnabled: true,
     },
   });
+  await seedMintSession(db.inspect, { ownerId });
   if (resources === "none") return { ownerId };
   const host = await seedLaunchHost(db.inspect, {
     data: {
@@ -143,7 +144,11 @@ type Site = {
   sdkAuthority?: true;
 };
 
-const session = (ownerId: string) => ({ kind: "session" as const, ownerId });
+const session = (ownerId: string) => ({
+  kind: "session" as const,
+  ownerId,
+  sessionId: `mint:${ownerId}`,
+});
 
 const sites: Site[] = [
   {

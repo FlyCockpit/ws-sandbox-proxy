@@ -14,6 +14,7 @@ import {
   grantOf,
   isBrowserSession,
   recordedKeyIdOf,
+  sessionIdOf,
   systemAttribution,
   viewerOf,
 } from "./principal-kinds";
@@ -57,6 +58,12 @@ const keylessBuildAttribution: AuthorizingPrincipal = {
 };
 
 describe("principal-kinds helper mapping", () => {
+  it("returns only a browser principal's session id", () => {
+    expect(sessionIdOf(sessionPrincipal("user-1", "session-1"))).toBe("session-1");
+    for (const principal of [session, key, buildWithKey, buildNoKey])
+      expect(sessionIdOf(principal)).toBeUndefined();
+  });
+
   it("attributes live principals without reconstructing from a nullable key", () => {
     expect(attributionOf(session)).toEqual({ kind: "session" });
     expect(attributionOf(key)).toEqual({ kind: "sdkKey", keyId: "key-1" });
