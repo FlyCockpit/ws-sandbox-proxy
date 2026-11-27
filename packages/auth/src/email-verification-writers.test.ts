@@ -30,13 +30,13 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-26 (wssp-fix phase B): pending-state staticData added; the emailVerified reads are unchanged, read only.
   // Reviewed 11-26 (home-nav): the continue link targets APP_HOME; comment-only emailVerified mention unchanged.
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
-    "93b8e611eac6f763eacc2f601f9f2fd6d52c586fda2e4f05628d316c32b7d5e3",
+    "c4387e9beed2556ec849c4a7601ecf8fb180be3b2a50a4cdca27913fd69fe602",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   // Reviewed 11-26 (viewport-pass): row/badge class names only; the emailVerified read is unchanged, read only.
   // Reviewed 11-26 (tpl-e2e5-fups lane C): invite "Email language" select and the archive Undo toast; the emailVerified read is unchanged, read only.
   // Reviewed 11-26 (e2e5-fups): the invite's temporary password uses the masked secret panel; the emailVerified read is unchanged, read only.
   "apps/web/src/components/admin/admin-users-page.tsx":
-    "76636c266ddb9e7c8617b45dd00a40759ca8a2b0d0439c9894b6b78d80394eb5",
+    "355c2c0081fcf0c6c3d64b6bdd9d3789a782158ba1db6317c2a2eebb538a275b",
   "apps/worker/src/operational-alerts.ts":
     "c60c93d8c519bfb0a69f84a088a27b57799a4f7e368070a872d7673cc9497d59",
   // Reviewed 11-24: comment only (sign-up answers are address-independent).
@@ -55,7 +55,7 @@ const reviewed: Record<string, string> = {
   // Password recovery revokes standing credentials before and after reset; no mailbox proof input or write.
   // Round 3: durable session write checks and reset-link/temporary-password finalization; no mailbox proof input or write.
   // Reset-race: session/write fences and all-session post-sweep; mailbox proof unchanged.
-  "packages/auth/src/index.ts": "d698a756b3d0266d3acc07ddecc1cc3d510a1f5178df68b6144f9bc3024a0353",
+  "packages/auth/src/index.ts": "f2def9077a37c53591184ff4832b1cfa87bd5a2e6bd8eed42b8c038de940caed",
   // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
   // no emailVerified write outside /verify-email. Writes nothing.
   "packages/auth/src/mailbox-proof-policy.ts":
@@ -67,7 +67,7 @@ const reviewed: Record<string, string> = {
   // Reviewed 11-26 (tpl-e2e5-fups lane C): the invite input takes the invitee's locale, written in the same insert, plus the mail's expiry days; still no proof write.
   // Reset-race: only invite budget key/ceiling changed (30/hour); proof handling unchanged.
   "packages/api/src/routers/users.ts":
-    "393a115d7ad3e8201e4daa76a4950397419b680780261806233070cef5228de8",
+    "c2c0c72ba73d3e715106e8974c5bd791193d378eacaba3795d42721bba066b19",
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
   // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.

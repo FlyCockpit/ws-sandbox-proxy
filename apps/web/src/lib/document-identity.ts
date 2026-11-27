@@ -9,14 +9,13 @@
  * expiry or revocation, another account signing in), the document is replaced
  * with a full load: the one reset that drops all of that state at once, and
  * leaves no late mutation callback a cache to write into. Two places observe
- * the identity: every session route guard (`lib/route-session.ts`), before
- * anything under it renders, and the root identity boundary's watcher
- * (`useReloadOnIdentityChange`, kept mounted after the first app page), for a
- * change while a page is open. docs/design/shell-rules.md § Query cache
- * follows identity.
+ * the identity: every session route guard (`resolveRouteSession`), before
+ * anything under it renders, and the `_app` shell's watcher
+ * (`useReloadOnIdentityChange`), for a change while a page is open.
+ * docs/design/shell-rules.md § Query cache follows identity.
  *
- * No runtime imports, so the router and the route guards use it without
- * loading Better Auth.
+ * No eager runtime imports: public loads open the peer channel without
+ * loading Better Auth. An event without a watcher loads its verifier lazily.
  */
 import type { QueryClient } from "@tanstack/react-query";
 
@@ -39,6 +38,26 @@ const documentIdentity = {
 };
 
 const replaceListeners = new Set<() => void>();
+let admissions = 0;
+
+/** Every guard admission, including a repeated anonymous answer. */
+export function documentAdmissions(): number {
+  return admissions;
+}
+
+/** The identity this document was admitted as, before any reactive atom answer. */
+export function documentIdentityBaseline(): SessionIdentity {
+  return documentIdentity.baseline;
+}
+
+function notifyVerificationListeners(): void {
+  for (const listener of verificationListeners) listener();
+}
+
+/** A foreign/inherited atom answer needs a new probe after this invalidation. */
+export function holdDocumentIdentityUnverified(): void {
+  markIdentityUnverified();
+}
 
 /**
  * True when a signed-in user's in-memory state must be dropped: the last known
@@ -64,7 +83,13 @@ export function observeDocumentIdentity(next: string | null): boolean {
   // Module state is process-wide on the server: never written there.
   if (typeof window === "undefined") return false;
   if (documentIdentity.replaced) return true;
-  if (shouldReloadForIdentity(documentIdentity.baseline, next)) {
+  if (
+    shouldReloadForIdentity(documentIdentity.baseline, next) ||
+    (peerChangePending &&
+      isAnonymousOnlyRoute() &&
+      typeof next === "string" &&
+      documentIdentity.baseline !== next)
+  ) {
     documentIdentity.replaced = true;
     return true;
   }
@@ -75,26 +100,56 @@ export function observeDocumentIdentity(next: string | null): boolean {
   return false;
 }
 
-let admissions = 0;
+/** Carry the document's owner, never a freshly switched session's owner. */
+export function withExpectedIdentity(headers?: HeadersInit): Headers {
+  const result = new Headers(headers);
+  if (typeof window !== "undefined" && typeof documentIdentity.baseline === "string") {
+    result.set("X-Expected-User", documentIdentity.baseline);
+  }
+  return result;
+}
 
-/**
- * How many guard answers admitted this document's identity so far (a repeat
- * of the same identity included): the watcher supersedes a session fetch that
- * was asked before the latest anonymous admission.
- */
-export function documentAdmissions(): number {
-  return admissions;
+/** Called on render by an anonymous-only page (also covers hydration). Scoped to this URL. */
+let anonymousOnlyPath: string | undefined;
+let peerChangePending = false;
+export function markAnonymousOnlyRoute(): void {
+  // `location` is read optionally: server renders and some test windows have none.
+  if (typeof window !== "undefined") anonymousOnlyPath = window.location?.pathname;
+}
+
+function isAnonymousOnlyRoute(): boolean {
+  return anonymousOnlyPath !== undefined && anonymousOnlyPath === window.location?.pathname;
 }
 
 /**
- * The identity this document was admitted as (`undefined` before any, `null`
- * for confirmed anonymous). The chrome never shows another account than this
- * one (`useAuthSession`): the
- * session atom can hold an account read before any guard ran (a public page's
- * language menu) whose refresh failed since.
+ * Intercept before transport callbacks: a form must never receive this failure
+ * (or a late response from the discarded document) and paint an inline error.
+ * Like a replaced route guard, the old document's request never settles.
  */
-export function documentIdentityBaseline(): SessionIdentity {
-  return documentIdentity.baseline;
+export async function guardIdentityResponse(response: Response): Promise<Response> {
+  if (response.status === 409) {
+    // HEAD deliberately has no body; its consistency marker survives on the wire.
+    const marked = response.headers.get("X-Identity-Changed") === "1";
+    const body: unknown = marked
+      ? null
+      : await response
+          .clone()
+          .json()
+          .catch(() => null);
+    if (
+      marked ||
+      isIdentityChangedError({ status: 409, ...(body && typeof body === "object" ? body : {}) })
+    )
+      replaceDocument();
+  }
+  if (isDocumentReplaced()) return new Promise<never>(() => {});
+  return response;
+}
+
+function isIdentityChangedError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const e = error as { status?: unknown; code?: unknown; data?: { code?: unknown } };
+  return e.status === 409 && (e.code === "IDENTITY_CHANGED" || e.data?.code === "IDENTITY_CHANGED");
 }
 
 /** A different identity was confirmed and this document is on its way out. */
@@ -159,6 +214,7 @@ function quarantineDocument(): void {
  */
 export function replaceDocument(): void {
   if (typeof window === "undefined") return;
+  documentIdentity.replaced = true;
   quarantineDocument();
   if (documentIdentity.leaving || documentIdentity.reloading) return;
   documentIdentity.reloading = true;
@@ -173,6 +229,7 @@ export function replaceDocument(): void {
  */
 export function leaveDocument(href: string): void {
   if (typeof window === "undefined") return;
+  documentIdentity.replaced = true;
   quarantineDocument();
   // full-reload:audited — Sign-out discards the previous identity's cache and client state.
   window.location.assign(href);
@@ -193,7 +250,12 @@ export async function admitRouteIdentity(
   /** `identityVerificationGeneration()` taken before the probe started. */
   since: number = verificationGeneration,
 ): Promise<void> {
-  if (resolution.status !== "resolved") return;
+  if (resolution.status !== "resolved" || since !== verificationGeneration) return;
+  if (authoritativeSessionRequired) {
+    await (await import("./auth-client")).checkDocumentSession();
+    if (authoritativeSessionRequired) throw new Error("Route session unavailable");
+    if (since !== verificationGeneration) return;
+  }
   const identity = resolution.session?.user.id ?? null;
   if (!observeDocumentIdentity(identity)) {
     // The server just confirmed this document's own identity.
@@ -239,6 +301,9 @@ let restoreWatched = false;
 export function watchDocumentRestore(): void {
   if (typeof window === "undefined" || restoreWatched) return;
   restoreWatched = true;
+  // Listen even on fresh public/404 loads, without loading Better Auth or
+  // probing a session until another tab actually announces a change.
+  peerChannel();
   const holdsPrivateState = () => documentIdentity.heldPrivateState || documentIdentity.replaced;
   window.addEventListener("pagehide", (event) => {
     if (event.persisted && holdsPrivateState()) hidePage();
@@ -267,56 +332,37 @@ function isSessionRejection(error: unknown): boolean {
  * toasts once the document is being replaced. True: skip the toast.
  */
 export function skipErrorToastForIdentity(error: unknown, kind: "query" | "mutation"): boolean {
+  if (isIdentityChangedError(error)) replaceDocument();
   if (documentIdentity.replaced) return true;
   if (!isSessionRejection(error)) return false;
-  reportSessionRejected();
+  reportSessionRejected(error);
   return kind === "query";
 }
 
 /**
  * Another tab announced an identity change (or a request was refused for
- * having no session) and nothing here has checked it yet: Better Auth's atom
- * may still hold the previous account. That is the case when no watcher was
- * connected, when the watcher's check got no settled answer, and while the
- * watcher's check runs with no account-aware page showing. Until a fresh check
- * (a guard's server probe, or the watcher's own refetch) confirms this
+ * having no session) while no watcher could check it: Better Auth's atom may
+ * still hold the previous account. Until a fresh check (a guard's server
+ * probe, or the watcher's refetch when the shell mounts) confirms this
  * document's identity, `useAuthSession()` reports `pending`, so no chrome
  * shows that stale account, even on a page a guard didn't admit (a guard
- * error, an unguarded page such as verify-email or mcp-login).
+ * error, an unguarded page).
  */
 let identityUnverified = false;
-/**
- * Bumped by every invalidation (each peer announcement, each 401 that starts
- * a check), whether or not the identity is already unverified, so an answer
- * asked for before one can't settle it.
- */
+/** Bumped by every invalidation, so an answer that predates one can't settle it. */
 let verificationGeneration = 0;
 const verificationListeners = new Set<() => void>();
-
-function notifyVerificationListeners(): void {
-  for (const listener of verificationListeners) listener();
-}
 
 function setIdentityUnverified(next: boolean): void {
   // Module state is process-wide on the server: never written there.
   if (typeof window === "undefined" || identityUnverified === next) return;
   identityUnverified = next;
-  notifyVerificationListeners();
+  for (const listener of verificationListeners) listener();
 }
 
-function invalidateIdentity(): void {
+function markIdentityUnverified(): void {
   if (typeof window === "undefined") return;
   verificationGeneration++;
-}
-
-/**
- * Hold the chrome neutral until a check settles this document's identity: the
- * watcher's check for a possible change got no settled answer (a failed or
- * still superseded fetch), or it is running while no account-aware page is
- * showing (the next one entered must not show the previous account while it
- * runs). The event that asked for the check already invalidated.
- */
-export function holdDocumentIdentityUnverified(): void {
   setIdentityUnverified(true);
 }
 
@@ -333,6 +379,7 @@ export function identityVerificationGeneration(): number {
  */
 export function confirmDocumentIdentityFresh(since: number): void {
   if (since !== verificationGeneration) return;
+  peerChangePending = false;
   setIdentityUnverified(false);
 }
 
@@ -340,7 +387,6 @@ export function isDocumentIdentityUnverified(): boolean {
   return identityUnverified;
 }
 
-/** Called when the unverified state or the admitted identity changes, and on every admission. */
 export function subscribeIdentityVerification(listener: () => void): () => void {
   verificationListeners.add(listener);
   return () => verificationListeners.delete(listener);
@@ -353,27 +399,70 @@ let sessionCheckPending = false;
  * A request was rejected for having no session: ask Better Auth to check the
  * session once (however many queries failed together), so a session lost
  * elsewhere replaces the document instead of leaving one error toast per
- * query. With no watcher mounted, the identity is left unverified for the
- * watcher's mount check (or a guard) to settle.
+ * query. Without an app watcher, the lazy document verifier handles it.
  */
-export function reportSessionRejected(): void {
-  const check = sessionCheck;
-  // 401s that share a running check are part of the event that started it.
+let authoritativeSessionRequired = false;
+export function needsAuthoritativeSessionCheck(): boolean {
+  return authoritativeSessionRequired;
+}
+export function confirmAuthoritativeSessionCheck(since: number): void {
+  if (since === verificationGeneration) authoritativeSessionRequired = false;
+}
+
+let reportedRejections = new WeakSet<object>();
+
+/** Keep normal query retry limits, but reconcile the first decoded auth failure. */
+export function retryQueryAfterFailure(failureCount: number, error: unknown): boolean {
+  return !isSessionRejection(error) && failureCount < (typeof window === "undefined" ? 0 : 3);
+}
+
+export function reportSessionRejected(error?: unknown): void {
+  // The RPC interceptor and QueryCache receive the same decoded error. That
+  // final callback must not invalidate the authoritative probe it just started.
+  if (error && typeof error === "object") {
+    if (reportedRejections.has(error)) return;
+    reportedRejections.add(error);
+  }
+  // A private401 is stronger than the cookie cache: reject pre-rejection
+  // answers and bypass that cache only until an authoritative check succeeds.
+  // Delayed batch items and a failure retry belong to that same obligation;
+  // they must join, rather than invalidate, its fresh authoritative probe.
+  if (!authoritativeSessionRequired) {
+    authoritativeSessionRequired = true;
+    markIdentityUnverified();
+  }
+  requestSessionCheck();
+}
+
+function requestSessionCheck(): void {
   if (sessionCheckPending) return;
-  invalidateIdentity();
-  if (!check) {
-    setIdentityUnverified(true);
+  sessionCheckPending = true;
+  const check =
+    sessionCheck ??
+    (() => import("./auth-client").then(({ checkDocumentSession }) => checkDocumentSession()));
+  let result: unknown;
+  try {
+    result = check();
+  } catch {
+    sessionCheckPending = false;
     return;
   }
-  // One check at a time, until it settles: 401s that arrive in separate
-  // network tasks while it runs share it.
-  sessionCheckPending = true;
-  void Promise.resolve()
-    .then(check)
+  void Promise.resolve(result)
     .catch(() => {})
     .finally(() => {
       sessionCheckPending = false;
     });
+}
+
+/** A lazy verifier may finish (or retry) after the app watcher has mounted. */
+export function confirmOutsideAppIdentity(identity: string | null, since: number): void {
+  if (since !== verificationGeneration) return;
+  if (observeDocumentIdentity(identity) || (!sessionCheck && peerChangePending)) {
+    replaceDocument();
+  } else {
+    confirmDocumentIdentityFresh(since);
+    announceDocumentIdentity(identity);
+  }
 }
 
 /** The channel the open tabs use to tell each other the signed-in identity changed. */
@@ -396,8 +485,8 @@ let announced: SessionIdentity;
  * kept for the document's life, so an announcement never depends on which
  * layout is mounted. Better Auth tells the other tabs about a sign-out, but not
  * about a sign-in: a tab where an identity is confirmed announces it here, and
- * every other tab with a watcher checks its session (and replaces its document
- * if the account is not its own).
+ * peers share one session check for a conflicting identity or a change hint.
+ * Unversioned peer confirmations may have crossed newer local confirmations.
  */
 function peerChannel(): IdentityChannel | undefined {
   if (typeof window === "undefined") return undefined;
@@ -405,32 +494,36 @@ function peerChannel(): IdentityChannel | undefined {
     peersOpened = true;
     peers = openChannel();
     if (peers) {
-      // No watcher connected yet (the root identity boundary mounts on the
-      // first app page): nobody here can check it, so it stays unverified.
-      peers.onmessage = () => {
-        invalidateIdentity();
-        if (sessionCheck) void sessionCheck();
-        else setIdentityUnverified(true);
+      peers.onmessage = (event) => {
+        if (isDocumentReplaced()) return;
+        const message = event.data;
+        if (
+          message?.kind === "identity" &&
+          (message.id === null || typeof message.id === "string")
+        ) {
+          // Same id costs nothing and cannot certify this tab's cookie.
+          if (documentIdentity.baseline === message.id) return;
+          // A peer's unversioned confirmation may predate our own. Let the
+          // coalesced server check decide whether this document must reload.
+        } else if (message?.kind !== "session-changed") return;
+        peerChangePending = true;
+        // Coalescing cannot make a request started before this announcement
+        // fresh: invalidate even while a watcher or native check is pending.
+        markIdentityUnverified();
+        requestSessionCheck();
       };
     }
   }
   return peers;
 }
 
-/**
- * Open the document's channel as soon as Better Auth's client loads
- * (`lib/auth-client.ts`), before anything can read a session: a public page
- * that reads it (the language menu) may hold an account in the atom long
- * before the root identity boundary first mounts, and an announcement that
- * arrives meanwhile must still leave the identity unverified for the
- * boundary's mount check.
- */
+/** Open peers before an app reader can hold a session atom. Root restore watching does this too. */
 export function listenForIdentityPeers(): void {
   peerChannel();
 }
 
 /**
- * Connect the identity boundary's session check: run for a peer tab's
+ * Connect the `_app` watcher's session check: run for a peer tab's
  * announcement and for a 401 (`reportSessionRejected`). Returns the
  * disconnect.
  */
@@ -438,7 +531,9 @@ export function connectIdentityPeers(checkSession: () => unknown): () => void {
   sessionCheck = checkSession;
   peerChannel();
   return () => {
-    if (sessionCheck === checkSession) sessionCheck = undefined;
+    if (sessionCheck === checkSession) {
+      sessionCheck = undefined;
+    }
   };
 }
 
@@ -446,15 +541,14 @@ export function connectIdentityPeers(checkSession: () => unknown): () => void {
  * Tell the other tabs about a confirmed identity this document has not
  * announced yet. Called by the watcher and by every session guard
  * (`admitRouteIdentity`), so a sign-in whose destination page never mounts the
- * identity boundary (a hidden admin 404 on a fresh document) is still
- * announced.
+ * `_app` shell (a hidden admin 404) is still announced.
  */
 export function announceDocumentIdentity(identity: string | null): void {
   if (identity === announced) return;
   const channel = peerChannel();
   if (!channel) return;
   announced = identity;
-  channel.postMessage("identity-changed");
+  channel.postMessage({ kind: "identity", id: identity });
 }
 
 /**
@@ -464,7 +558,7 @@ export function announceDocumentIdentity(identity: string | null): void {
  * doesn't depend on the destination page running a guard or the watcher.
  */
 export function announceSessionChange(): void {
-  peerChannel()?.postMessage("session-changed");
+  peerChannel()?.postMessage({ kind: "session-changed" });
 }
 
 /** Tests only: a fresh document, with `open` as its peer-channel factory. */
@@ -482,7 +576,6 @@ export function resetDocumentIdentityForTests(
   replaceListeners.clear();
   identityUnverified = false;
   verificationGeneration = 0;
-  admissions = 0;
   verificationListeners.clear();
   sessionCheck = undefined;
   sessionCheckPending = false;
@@ -491,4 +584,9 @@ export function resetDocumentIdentityForTests(
   peersOpened = false;
   announced = undefined;
   restoreWatched = false;
+  admissions = 0;
+  anonymousOnlyPath = undefined;
+  peerChangePending = false;
+  authoritativeSessionRequired = false;
+  reportedRejections = new WeakSet<object>();
 }

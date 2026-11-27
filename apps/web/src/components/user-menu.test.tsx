@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const auth = vi.hoisted(() => ({
+  retry: vi.fn(),
   ownerId: "owner-1" as string | null,
   /** Overrides the derived state: a pending or failing session check. */
   status: undefined as "pending" | "error" | undefined,
@@ -16,6 +17,8 @@ vi.mock("@/lib/pool-invite", () => ({ poolInviteToken: () => config.inviteToken 
 
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
+    actions: { retry: auth.retry },
+    meta: { isDegraded: false, isRefetching: false },
     state: auth.status
       ? { status: auth.status }
       : auth.ownerId === null
@@ -103,26 +106,22 @@ describe("user menu", () => {
     expect(trigger?.getAttribute("aria-label")).toBe("userMenu.open:Owner");
   });
 
-  it("is a skeleton while the session is pending or failing before any identity", () => {
-    for (const status of ["pending", "error"] as const) {
-      auth.status = status;
-      const view = render(<UserMenu />);
-      expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
-      expect(view.container.querySelector("button")).toBeNull();
-      view.unmount();
-    }
+  it("is a skeleton only while the first session check is pending", () => {
+    auth.status = "pending";
+    const view = render(<UserMenu />);
+    expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    expect(view.container.querySelector("button")).toBeNull();
   });
-
-  it("keeps a known account's control, disabled, when its session check fails", () => {
+  it("offers account retry and sign out after an initial or later session failure", () => {
     const view = render(<UserMenu />);
     auth.status = "error";
     view.rerender(<UserMenu />);
-    const control = view.container.querySelector<HTMLButtonElement>("[data-account-unavailable]");
-    expect(control?.disabled).toBe(true);
-    expect(control?.getAttribute("aria-label")).toBe("userMenu.open:Owner");
-    expect(control?.className.split(" ")).toContain("size-11");
+    expect(
+      view.container.querySelector('[aria-label="userMenu.accountUnavailable"]'),
+    ).not.toBeNull();
+    expect(view.container.querySelector('[aria-label="userMenu.signOut"]')).not.toBeNull();
+    expect(view.container.textContent).not.toContain("Owner");
     expect(view.container.querySelector('[data-slot="skeleton"]')).toBeNull();
-    // Back online: the live trigger again.
     auth.status = undefined;
     view.rerender(<UserMenu />);
     expect(view.container.querySelector("[data-account-unavailable]")).toBeNull();

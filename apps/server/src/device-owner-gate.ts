@@ -13,6 +13,10 @@ async function requireVerifiedOwnerDeviceSession(headers: Headers) {
   cookieOnly.delete("authorization");
   // Lookup failures propagate as 5xx; absence alone means unauthenticated.
   const session = (await auth.api.getSession({ headers: cookieOnly })) as Session | null;
+  const expected = headers.get("X-Expected-User");
+  if (expected && session?.user?.id && session.user.id !== expected) {
+    return { ok: false as const, body: { code: "IDENTITY_CHANGED" }, status: 409 as const };
+  }
   return evaluateOwnerDeviceSession(session);
 }
 
@@ -38,7 +42,13 @@ export async function deviceOwnerGate(c: Context, next: Next) {
   if (c.req.method !== "POST") return c.json({ error: "method_not_allowed" }, 405);
   const originError = validateSameSiteJsonRequest(c, { allowTrustedCrossSite: true });
   if (originError) return originError;
-  const result = await requireVerifiedOwnerDeviceSession(c.req.raw.headers);
+  let result: Awaited<ReturnType<typeof requireVerifiedOwnerDeviceSession>>;
+  try {
+    result = await requireVerifiedOwnerDeviceSession(c.req.raw.headers);
+  } catch (error) {
+    if (c.req.header("X-Expected-User")) return c.json({ code: "SESSION_UNAVAILABLE" }, 503);
+    throw error;
+  }
   if (!result.ok) return reject(c, result);
   c.set("deviceOwnerId", result.session.user.id);
   c.set("deviceOwnerSession", result.session);

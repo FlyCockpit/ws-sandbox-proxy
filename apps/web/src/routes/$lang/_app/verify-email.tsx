@@ -60,7 +60,7 @@ function VerifyEmailPage() {
   const {
     data: configData,
     isPending: configPending,
-    isError: configError,
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

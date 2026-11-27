@@ -15,7 +15,7 @@ vi.mock("@/lib/document-identity", () => ({
   leaveDocument: auth.leave,
 }));
 
-const { signOutAndLeave } = await import("./explicit-sign-out");
+const { signOutAndLeave, signOutFailureKey } = await import("./explicit-sign-out");
 
 beforeEach(() => {
   for (const fn of Object.values(auth)) fn.mockReset();
@@ -62,4 +62,9 @@ describe("signOutAndLeave", () => {
     expect(auth.undo).toHaveBeenCalledTimes(1);
     expect(auth.leave).not.toHaveBeenCalled();
   });
+});
+
+it("uses offline copy for network failures and generic copy for server refusals", () => {
+  expect(signOutFailureKey(new TypeError("Failed to fetch"))).toBe("userMenu.signOutOffline");
+  expect(signOutFailureKey({ status: 500 })).toBe("userMenu.signOutFailed");
 });

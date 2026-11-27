@@ -690,6 +690,24 @@ describe("password changes and session cache", () => {
     },
   );
 
+  it("rejects an update when the document owner differs from the cookie owner", async () => {
+    const headers = await signIn();
+    headers.set("X-Expected-User", "another-owner");
+    headers.set("content-type", "application/json");
+    headers.set("origin", "http://localhost:3000");
+    const response = await auth.handler(
+      new Request("http://localhost:3000/api/auth/update-user", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name: "Wrong owner" }),
+      }),
+    );
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "IDENTITY_CHANGED" });
+    expect(memory.user![0]!.name).toBe("Owner");
+    expect(await auth.api.signOut({ headers })).toEqual({ success: true });
+  });
+
   it.each([true, false])(
     "shares revocation only when sign-out is %s",
     async (revokeOtherSessions) => {

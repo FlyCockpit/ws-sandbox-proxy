@@ -235,3 +235,61 @@ it.each([
   expect(mocks.getSession).not.toHaveBeenCalled();
   expect(mocks.transition).not.toHaveBeenCalled();
 });
+
+it("rejects a changed cookie before device policy or transition", async () => {
+  const response = await app.request("https://api.example.test/api/auth/device/approve", {
+    method: "POST",
+    headers: {
+      origin: "https://console.other.test",
+      "sec-fetch-site": "same-site",
+      "content-type": "application/json",
+      "X-Expected-User": "other",
+    },
+    body: JSON.stringify({ userCode: "ABCDEFGH" }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ code: "IDENTITY_CHANGED" });
+  expect(mocks.loadUser).not.toHaveBeenCalled();
+  expect(mocks.transition).not.toHaveBeenCalled();
+});
+
+it("rejects a different owner at the mounted dashboard transfer boundary", async () => {
+  const response = await app.request("https://api.example.test/api/dashboard/transfers", {
+    method: "POST",
+    headers: {
+      origin: "https://api.example.test",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/json",
+      "X-Expected-User": "other",
+    },
+    body: "{}",
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ code: "IDENTITY_CHANGED" });
+});
+
+it("returns session unavailable when a device decision lookup fails", async () => {
+  mocks.getSession.mockRejectedValueOnce(new Error("offline"));
+  const response = await app.request("https://api.example.test/api/auth/device/approve", {
+    method: "POST",
+    headers: {
+      origin: "https://console.other.test",
+      "sec-fetch-site": "same-site",
+      "content-type": "application/json",
+      "X-Expected-User": "owner",
+    },
+    body: JSON.stringify({ userCode: "ABCDEFGH" }),
+  });
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ code: "SESSION_UNAVAILABLE" });
+  expect(mocks.transition).not.toHaveBeenCalled();
+});
+
+it("exposes retry timing to cross-origin clients", async () => {
+  const response = await app.request("https://api.example.test/health", {
+    headers: { origin: "https://console.other.test" },
+  });
+  expect(response.headers.get("access-control-expose-headers")?.toLowerCase()).toContain(
+    "retry-after",
+  );
+});

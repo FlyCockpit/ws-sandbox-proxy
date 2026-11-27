@@ -834,3 +834,22 @@ it("S0 a bodyless mutation rechecks authority before effect", async () => {
     spy.mockRestore();
   }
 });
+
+it("rejects a different document owner before creating a dashboard transfer", async () => {
+  state.getSession.mockResolvedValue({ user: { id: "cookie-owner" } });
+  const create = vi.spyOn(state.store!, "create");
+  const response = await app.request("/api/dashboard/transfers", {
+    method: "POST",
+    headers: {
+      origin: "https://wssp.example",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/json",
+      "X-Expected-User": "document-owner",
+      "Idempotency-Key": "test",
+    },
+    body: JSON.stringify({ sandboxId: "sandbox", guestPath: "/tmp/test", totalBytes: 1 }),
+  });
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({ code: "IDENTITY_CHANGED" });
+  expect(create).not.toHaveBeenCalled();
+});

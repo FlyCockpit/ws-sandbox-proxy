@@ -1,5 +1,11 @@
 import { type QueryClient, queryOptions } from "@tanstack/react-query";
 
+import {
+  documentIdentityBaseline,
+  isDocumentIdentityUnverified,
+  isDocumentReplaced,
+  subscribeIdentityVerification,
+} from "@/lib/document-identity";
 import { getSessionCookieHint } from "@/server/auth-session";
 
 /**
@@ -64,4 +70,17 @@ export function ensureSessionHint(queryClient: QueryClient): Promise<boolean> {
  */
 export function setSessionHint(queryClient: QueryClient, signedIn: boolean): void {
   queryClient.setQueryData(SESSION_HINT_QUERY_KEY, signedIn);
+}
+
+/** Keep public chrome in step with the retained root watcher's verified answers. */
+export function connectSessionHintToIdentity(queryClient: QueryClient): () => void {
+  if (typeof window === "undefined") return () => {};
+  const sync = () => {
+    if (isDocumentIdentityUnverified() || isDocumentReplaced()) return;
+    const identity = documentIdentityBaseline();
+    if (identity !== undefined) setSessionHint(queryClient, typeof identity === "string");
+  };
+  const stop = subscribeIdentityVerification(sync);
+  sync();
+  return stop;
 }

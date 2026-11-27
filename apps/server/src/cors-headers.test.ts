@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { describe, expect, it } from "vitest";
 
-import { CORS_ALLOW_HEADERS } from "./cors-headers";
+import { CORS_ALLOW_HEADERS, CORS_EXPOSE_HEADERS } from "./cors-headers";
 
 const APP_ORIGIN = "https://app.example.com";
 
@@ -19,6 +19,7 @@ function buildApp() {
       origin: APP_ORIGIN,
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: [...CORS_ALLOW_HEADERS],
+      exposeHeaders: [...CORS_EXPOSE_HEADERS],
       credentials: true,
     }),
   );
@@ -57,9 +58,25 @@ describe("CORS_ALLOW_HEADERS", () => {
     expect(allowed).toContain(APP_LOCALE_HEADER);
   });
 
+  it("allows the expected identity header", async () => {
+    const res = await preflight("X-Expected-User");
+    expect(res.headers.get("access-control-allow-headers")?.toLowerCase()).toContain(
+      "x-expected-user",
+    );
+  });
+
   it("allows the CSRF header Better-Auth's client plugin sets", async () => {
     const res = await preflight("x-csrf-token");
     const allowed = (res.headers.get("access-control-allow-headers") ?? "").toLowerCase();
     expect(allowed).toContain("x-csrf-token");
   });
+});
+
+it("exposes retry scheduling and bodyless identity refusals", async () => {
+  const response = await buildApp().request("/api/auth/sign-in/email", {
+    headers: { Origin: APP_ORIGIN },
+  });
+  const exposed = response.headers.get("access-control-expose-headers")?.toLowerCase();
+  expect(exposed).toContain("retry-after");
+  expect(exposed).toContain("x-identity-changed");
 });

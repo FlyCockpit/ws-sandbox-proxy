@@ -15,11 +15,14 @@ import {
   holdDocumentIdentityUnverified,
   identityVerificationGeneration,
   isDocumentIdentityUnverified,
+  isDocumentReplaced,
   observeDocumentIdentity,
   replaceDocument,
   type SessionIdentity,
   subscribeIdentityVerification,
 } from "@/lib/document-identity";
+
+import { runSessionCheck } from "@/lib/session-retry";
 
 /**
  * `undefined` (session pending or errored) is never acted on: a flaky session
@@ -33,89 +36,78 @@ export function sessionIdentity(
   return undefined;
 }
 
-type IdentityChecks = {
-  leftAccountPage: () => void;
-  reconcile: () => void;
-  stop: () => void;
-};
-
 /**
  * The watcher's session checks while it is mounted: for a peer tab's
  * announcement, a 401, and an unverified identity (another tab announced a
- * change, or a request got a 401, while no watcher was mounted: the chrome
- * shows no account until a check settles it). Only a check started here can
- * settle that state: Better Auth's refetch cancels any fetch already in
- * flight, so the answer it settles with was asked for after `since`, never
- * inherited from before a newer invalidation. A check that gets no settled
- * answer (failed, or still superseded after the follow-ups) leaves the identity
- * unverified, even when it was run for a peer's announcement or a 401 with the
- * identity still trusted: this boundary stays mounted across public pages, so
- * no remount would check it again. One run for a peer or a 401 while no
- * account-aware page is showing (`showsAccount`) holds it unverified from the
- * start, so an app page entered while it runs shows no account either; on an
- * account page the chrome already on screen stays until the answer (no flicker
- * for every tab that confirms its identity); leaving the account pages while
- * one runs (`leftAccountPage`) holds it then. A failed check is retried when the tab
- * regains focus, visibility or the network; one superseded by another fetch
- * still running is followed up (at most 3 times, 250 ms apart). `stop()` drops
- * every pending completion, timer and listener.
+ * change while no watcher was mounted: the chrome shows no account until a
+ * check settles it). Checks share the document's retry coordinator and must
+ * start after the invalidation they verify (`since`). The adapter's stable
+ * refetch wrapper also verifies retries started by the header or scheduler.
+ * A failed check is retried with backoff and when the tab regains focus,
+ * visibility or the network; one superseded by another fetch still running is
+ * followed up (at most 3 times, 250 ms apart), with one timer shared by all
+ * callers. A current-generation confirmation makes its queued follow-up
+ * unnecessary. Peer checks also run while hidden or offline; availability
+ * gates only focus/visibility/reconnect checks and scheduled failure retries.
+ * `stop()` drops every pending completion, deferred probe, timer and listener.
  */
-function startIdentityChecks(refetch: () => unknown, showsAccount: () => boolean): IdentityChecks {
+function startIdentityChecks(refetch: () => unknown): { stop: () => void; reconcile: () => void } {
   let connected = true;
   let followUp: ReturnType<typeof setTimeout> | undefined;
-  let running = 0;
-  const check = (superseded = 0): Promise<void> => {
-    if (!connected) return Promise.resolve();
-    const since = identityVerificationGeneration();
-    running++;
-    return Promise.resolve(refetch())
-      .finally(() => {
-        running--;
-      })
-      .then(() => {
-        if (!connected) return;
-        const checked = readSessionIdentity();
-        if (checked === undefined) {
-          if (isSessionFetchInFlight() && superseded < 3) {
-            clearTimeout(followUp);
-            followUp = setTimeout(() => {
-              followUp = undefined;
-              void check(superseded + 1);
-            }, 250);
-          } else {
-            holdDocumentIdentityUnverified();
-          }
-          return;
-        }
-        if (observeDocumentIdentity(checked)) {
-          replaceDocument();
-          return;
-        }
+  const queueFollowUp = (superseded: number) => {
+    if (superseded >= 3 || followUp !== undefined) return;
+    const unverifiedOnly = isDocumentIdentityUnverified();
+    followUp = setTimeout(() => {
+      followUp = undefined;
+      void check(superseded + 1, unverifiedOnly).catch(() => {});
+    }, 250);
+  };
+  const check = (superseded = 0, unverifiedOnly = false): Promise<void> => {
+    const cancelled = () =>
+      !connected || isDocumentReplaced() || (unverifiedOnly && !isDocumentIdentityUnverified());
+    if (cancelled()) return Promise.resolve();
+    let since = identityVerificationGeneration();
+    return runSessionCheck(
+      () => {
+        // The coordinator may wait for an older native refresh before starting
+        // this fresh probe. Verify the generation it actually starts in.
+        since = identityVerificationGeneration();
+        return refetch();
+      },
+      { automatic: true, cancelled },
+    ).then((ran) => {
+      if (!ran || !connected || isDocumentReplaced()) return;
+      if (since !== identityVerificationGeneration()) {
+        if (isDocumentIdentityUnverified()) queueFollowUp(superseded);
+        return;
+      }
+      const checked = readSessionIdentity();
+      if (checked === undefined) {
+        if (isSessionFetchInFlight()) queueFollowUp(superseded);
+        return;
+      }
+      clearTimeout(followUp);
+      followUp = undefined;
+      if (observeDocumentIdentity(checked)) replaceDocument();
+      else {
         confirmDocumentIdentityFresh(since);
         announceDocumentIdentity(checked);
-      });
+      }
+    });
   };
   const retry = () => {
-    if (isDocumentIdentityUnverified() && document.visibilityState !== "hidden") void check();
+    if (document.visibilityState !== "hidden" && navigator.onLine !== false)
+      void check().catch(() => {});
   };
-  const disconnectPeers = connectIdentityPeers(() => {
-    if (!showsAccount()) holdDocumentIdentityUnverified();
-    return check();
-  });
-  if (isDocumentIdentityUnverified()) void check();
+  const disconnectPeers = connectIdentityPeers(() => check());
+  if (isDocumentIdentityUnverified()) void check().catch(() => {});
   window.addEventListener("focus", retry);
   window.addEventListener("online", retry);
   document.addEventListener("visibilitychange", retry);
   return {
     reconcile: () => {
       holdDocumentIdentityUnverified();
-      void check();
-    },
-    leftAccountPage: () => {
-      // A check still running (or about to follow up) was started on an
-      // account page, unmasked: the next app page entered before it answers
-      // must not show the previous account.
-      if (running > 0 || followUp !== undefined) holdDocumentIdentityUnverified();
+      void check().catch(() => {});
     },
     stop: () => {
       connected = false;
@@ -132,65 +124,41 @@ function startIdentityChecks(refetch: () => unknown, showsAccount: () => boolean
  * Replaces the document when the signed-in user goes away while a page is
  * open (sign-out in another tab, session expiry or revocation, another account
  * signing in). The identity the document belongs to lives in
- * `lib/document-identity.ts`, not here, so it survives this watcher
- * unmounting; the route guards (`lib/route-session.ts`) check the same
- * baseline before anything renders. Offline, degraded and refetching answers
- * are not proof of a changed identity. Mounted once by the hosted root
- * (`components/identity-boundary.tsx`) from the first account-aware page on.
+ * `lib/document-identity.ts`, not here, so it survives this shell unmounting;
+ * the route guards check the same baseline before anything renders, which
+ * covers a change made while no `_app` page was open. Mounted once, by the
+ * `_app` shell.
  *
  * It also connects the other open tabs: an identity this tab confirms (a
- * sign-in included, which Better Auth does not broadcast) makes them check
- * their session, and a request rejected for having no session
- * (`reportSessionRejected`) checks it here. It reads the session unmasked:
- * while the identity is unverified every other reader sees `pending`, and the
- * watcher must still see the answer that settles it.
+ * sign-in included, which Better Auth does not broadcast) asks conflicting
+ * peers to verify their session here, alongside change hints and requests
+ * rejected for having no session (`reportSessionRejected`).
  */
-export function useReloadOnIdentityChange({
-  showsAccount,
-}: {
-  /** An account-aware (`/$lang/_app`) page is showing, not a public one. */
-  showsAccount: boolean;
-}): void {
-  const auth = useAuthSession({ unmasked: true });
-  const identity =
-    auth.meta.isOffline || auth.meta.isDegraded || auth.meta.isRefetching
-      ? undefined
-      : sessionIdentity(auth.state);
-  const { refetch } = auth.actions;
+export function useReloadOnIdentityChange(): void {
+  // Raw, never masked: the identity effect below must see the session even
+  // while the chrome is held neutral.
+  const authSession = useAuthSession({ unmasked: true });
+  const identity = authSession.meta.isOffline ? undefined : sessionIdentity(authSession.state);
+  const since = identityVerificationGeneration();
+  const { isDegraded, isRefetching } = authSession.meta;
+  const { refetch } = authSession.actions;
 
   // Connected first (effects run in order), so the first identity below is
   // already announced to the other tabs.
-  const showsAccountNow = useRef(showsAccount);
-  const checks = useRef<IdentityChecks | undefined>(undefined);
+  const checks = useRef<ReturnType<typeof startIdentityChecks> | undefined>(undefined);
   useLayoutEffect(() => {
-    const watcher = startIdentityChecks(refetch, () => showsAccountNow.current);
+    const watcher = startIdentityChecks(refetch);
     checks.current = watcher;
     return () => {
       watcher.stop();
       if (checks.current === watcher) checks.current = undefined;
     };
   }, [refetch]);
-  useLayoutEffect(() => {
-    showsAccountNow.current = showsAccount;
-    if (!showsAccount) checks.current?.leftAccountPage();
-  }, [showsAccount]);
 
-  // The atom holds another account than the one this document was admitted
-  // as, and it is not a fresh answer the identity effect below can act on:
-  // retained by failed or running refreshes (`identity` unknown) while a guard
-  // admitted someone else, or inherited from before this watcher existed (a
-  // public page's language menu) where adopting it over an anonymous
-  // admission would be wrong. Held unverified and checked instead (a failed
-  // check is retried on focus, visibility and reconnect as usual). A fresh
-  // answer while mounted is the identity effect's: another account replaces
-  // the document at once, a sign-in over anonymous is adopted. Likewise a
-  // session fetch still running when anonymity is admitted (each admission,
-  // a repeat included, or at mount over it): it was asked before that admission (a session revoked since), so its
-  // answer must not be adopted as a sign-in; the watcher's own check
-  // supersedes it (Better Auth keeps only the latest request's answer). The
-  // chrome shows no account during such a fetch anyway. Before the identity
-  // effect, so it sees the hold.
-  const held = auth.state.status === "authenticated" ? auth.state.session.user.id : undefined;
+  // A public reader can have started a fetch before an anonymous guard admission.
+  // Keep its retained/late answer out of this document until a newer probe settles.
+  const held =
+    authSession.state.status === "authenticated" ? authSession.state.session.user.id : undefined;
   const admitted = useSyncExternalStore(
     subscribeIdentityVerification,
     documentIdentityBaseline,
@@ -213,20 +181,29 @@ export function useReloadOnIdentityChange({
       return;
     }
     if (held === undefined || admitted === undefined || held === admitted) return;
-    if (identity === undefined || inherited) checks.current?.reconcile();
-  }, [held, admitted, admissions, identity]);
+    if (identity === undefined || isDegraded || isRefetching || inherited)
+      checks.current?.reconcile();
+  }, [held, admitted, admissions, identity, isDegraded, isRefetching]);
 
   // Layout effect: replace the document before the browser paints a frame
   // that pairs the new identity's chrome with the old identity's cached data.
-  // While the identity is unverified only the watcher's own checks (which
-  // observe their answers themselves) decide: the atom's snapshot may be the
-  // inherited or retained one they are checking.
   useLayoutEffect(() => {
-    if (identity === undefined || isDocumentIdentityUnverified()) return;
+    // Retained presentation data is not a new confirmation. In particular a
+    // remount after a peer invalidation must wait for its own current probe.
+    if (
+      identity === undefined ||
+      isDegraded ||
+      isRefetching ||
+      isDocumentIdentityUnverified() ||
+      since !== identityVerificationGeneration()
+    )
+      return;
     if (observeDocumentIdentity(identity)) {
       replaceDocument();
       return;
     }
-    announceDocumentIdentity(identity);
-  }, [identity]);
+    // Only the settled, successful atom answer can be broadcast. The
+    // presentation adapter may retain an identity through a failed check.
+    if (readSessionIdentity() === identity) announceDocumentIdentity(identity);
+  }, [identity, isDegraded, isRefetching, since]);
 }

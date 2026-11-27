@@ -12,7 +12,7 @@ import {
 } from "@wssp/mailer";
 import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError, createAuthMiddleware, getSession } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { admin, deviceAuthorization, twoFactor } from "better-auth/plugins";
 import {
@@ -331,6 +331,10 @@ export const auth = betterAuth({
   rateLimit: { enabled: false },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
+      const expected =
+        ctx.path === "/get-session" || ctx.path === "/sign-out"
+          ? null
+          : ctx.headers?.get("X-Expected-User");
       // Pinned 1.7.18: /update-user's sessionMiddleware accepts cookie cache
       // and setSessionCookie renews it. Check the signed token against the
       // durable row before any session-bearing write, including plugin paths.
@@ -340,7 +344,15 @@ export const auth = betterAuth({
           ctx.context.secret,
         );
         if (token) {
-          const live = await ctx.context.internalAdapter.findSession(token);
+          const live = await ctx.context.internalAdapter
+            .findSession(token)
+            .catch((error: unknown) => {
+              if (!expected) throw error;
+              throw new APIError("SERVICE_UNAVAILABLE", {
+                code: "SESSION_UNAVAILABLE",
+                message: "Session verification unavailable",
+              });
+            });
           if (!live || live.session.expiresAt.getTime() <= Date.now()) {
             deleteSessionCookie(ctx);
             // The HTTP router catches before-hook errors outside dispatch's
@@ -348,6 +360,32 @@ export const auth = betterAuth({
             throw new APIError("UNAUTHORIZED", { message: "Session expired" }, ctx.responseHeaders);
           }
           ctx.context.session = live;
+        }
+      }
+      if (expected) {
+        const cookieHeaders = new Headers(ctx.headers ?? ctx.request?.headers);
+        cookieHeaders.delete("authorization");
+        const session =
+          ctx.context.session ??
+          (await getSession()({
+            ...ctx,
+            headers: cookieHeaders,
+            method: "GET",
+            asResponse: false,
+            returnHeaders: false,
+            returnStatus: false,
+            query: {},
+          }).catch(() => {
+            throw new APIError("SERVICE_UNAVAILABLE", {
+              code: "SESSION_UNAVAILABLE",
+              message: "Session verification unavailable",
+            });
+          }));
+        if (session?.user.id && session.user.id !== expected) {
+          throw new APIError("CONFLICT", {
+            code: "IDENTITY_CHANGED",
+            message: "Document identity changed",
+          });
         }
       }
       if (ctx.path === "/reset-password") {

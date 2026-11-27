@@ -38,7 +38,7 @@ import { cors } from "hono/cors";
 import { apiReferenceAdminGate } from "./api-reference-admin-gate.js";
 import { betterAuthAdminGate } from "./better-auth-admin-gate.js";
 import { resolveClientIp } from "./client-ip.js";
-import { CORS_ALLOW_HEADERS } from "./cors-headers.js";
+import { CORS_ALLOW_HEADERS, CORS_EXPOSE_HEADERS } from "./cors-headers.js";
 import { deviceDecisionHandler, deviceOwnerGate } from "./device-owner-gate.js";
 import {
   EMAIL_RECIPIENT_PATHS,
@@ -48,6 +48,7 @@ import {
   SIGNUP_RECIPIENT_PATH,
   signinSentMail,
 } from "./email-recipient-limit.js";
+import { expectedIdentity } from "./expected-identity.js";
 import { registerInstallRoutes } from "./install-script.js";
 import type { createServerLifecycle } from "./lifecycle.js";
 import { withTimeout } from "./lifecycle.js";
@@ -269,6 +270,7 @@ export async function createApp(
         // the preflight fails and the request never leaves the browser — a
         // failure mode invisible in local dev. See cors-headers.ts.
         allowHeaders: [...CORS_ALLOW_HEADERS],
+        exposeHeaders: [...CORS_EXPOSE_HEADERS],
         credentials: true,
       }),
     );
@@ -493,6 +495,8 @@ export async function createApp(
   // Uses Redis-backed limiter with in-memory insurance fallback (fail-open).
   app.use("/rpc/*", createRateLimiterMiddleware(rpcLimiter));
   app.use("/api-reference/*", createRateLimiterMiddleware(rpcLimiter));
+  app.use("/rpc/*", expectedIdentity);
+  app.use("/sw/*", expectedIdentity);
 
   // In production the OpenAPI reference is admin-only: it documents every
   // procedure and shouldn't be a public surface. Non-admins get a 404 (not

@@ -12,8 +12,8 @@ vi.mock("@/server/auth-session", () => ({
 vi.mock("@/server/admin-route-access", () => ({ getRouteAdminAccess: server.getRouteAdminAccess }));
 
 import {
+  holdDocumentIdentityUnverified,
   isDocumentIdentityUnverified,
-  reportSessionRejected,
   resetDocumentIdentityForTests,
 } from "./document-identity";
 import {
@@ -135,7 +135,7 @@ describe("route session guards check the document identity", () => {
       server.getRouteSession.mockResolvedValueOnce({ status: "resolved", session: user("a") });
       await resolveRouteSession();
       // A 401 with no watcher connected: unverified.
-      reportSessionRejected();
+      holdDocumentIdentityUnverified();
       expect(isDocumentIdentityUnverified()).toBe(true);
       // The guard's probe is under way when another invalidation arrives.
       let answer: (value: unknown) => void = () => {};
@@ -145,14 +145,11 @@ describe("route session guards check the document identity", () => {
             answer = resolve;
           }),
       );
-      const pending = probe();
-      reportSessionRejected();
-      answer({ status: "resolved", session: user("a"), ...extra });
-      await pending;
-      expect(isDocumentIdentityUnverified()).toBe(true);
-      // The next probe, started after it, confirms A.
       serverProbe.mockResolvedValueOnce({ status: "resolved", session: user("a"), ...extra });
-      await probe();
+      const pending = probe();
+      holdDocumentIdentityUnverified();
+      answer({ status: "resolved", session: user("stale"), ...extra });
+      await expect(pending).resolves.toMatchObject({ session: user("a") });
       expect(isDocumentIdentityUnverified()).toBe(false);
       expect(reload).not.toHaveBeenCalled();
     },

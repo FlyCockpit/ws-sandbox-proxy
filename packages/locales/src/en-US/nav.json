@@ -31,6 +31,8 @@
     "open": "{{name}}, account menu",
     "helpDocs": "Help & docs",
     "openApp": "Open app",
-    "signOutFailed": "Couldn't sign out. Check your connection and try again."
+    "signOutFailed": "Couldn't sign out. Check your connection and try again.",
+    "signOutOffline": "You're offline. You're still signed in — sign out again when you're back online.",
+    "accountUnavailable": "Account unavailable — Retry"
   }
 }

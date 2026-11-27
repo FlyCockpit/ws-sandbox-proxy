@@ -1,5 +1,11 @@
 import { TRANSFER_CHUNK_BYTES, TRANSFER_MAX_BYTES } from "@wssp/api/sandbox/contracts";
 
+import {
+  guardIdentityResponse,
+  isDocumentReplaced,
+  reportSessionRejected,
+  withExpectedIdentity,
+} from "@/lib/document-identity";
 import { newIntentKey, sandboxProblem } from "@/lib/sandbox-rules";
 import { Sha256 } from "@/lib/sha256";
 
@@ -180,11 +186,13 @@ async function send(
   init: RequestInit,
   signal?: AbortSignal,
 ): Promise<Response> {
+  if (isDocumentReplaced()) return new Promise<never>(() => {});
   const doFetch = deps.fetch ?? fetch;
   let response: Response;
   try {
     response = await doFetch(`${base(deps)}${path}`, {
       ...init,
+      headers: withExpectedIdentity(init.headers),
       credentials: "include",
       cache: "no-store",
       signal,
@@ -193,7 +201,8 @@ async function send(
     if (signal?.aborted) throw new TransferError("cancelled");
     throw new TransferError("network", undefined);
   }
-  return response;
+  if (response.status === 401) reportSessionRejected(response);
+  return guardIdentityResponse(response);
 }
 
 async function expectOk(response: Response, statuses: readonly number[]) {

@@ -5,6 +5,7 @@ import { sessionPrincipal } from "@wssp/api/sandbox/contracts";
 import type { Session } from "@wssp/auth";
 import { env } from "@wssp/env/server";
 import { type Context, Hono } from "hono";
+import { expectedIdentity } from "../expected-identity.js";
 import { createRateLimiterMiddleware, rpcLimiter } from "../rate-limit.js";
 import type { SandboxApiEnv } from "../sandbox-api/auth.js";
 import { sdkErrorResponse } from "../sandbox-api/errors.js";
@@ -42,6 +43,7 @@ export function createDashboardTransferApi() {
   });
   app.use("*", sessionMiddleware);
   app.use("*", createRateLimiterMiddleware(rpcLimiter));
+  app.use("*", expectedIdentity);
   const authorize = (c: Context) =>
     call(browserPrincipal, undefined, {
       context: { session: c.get("session") as Session | null, clientIp: undefined },

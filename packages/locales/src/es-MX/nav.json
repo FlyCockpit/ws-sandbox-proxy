@@ -31,6 +31,8 @@
     "open": "{{name}}, menú de la cuenta",
     "helpDocs": "Ayuda y documentación",
     "openApp": "Abrir la app",
-    "signOutFailed": "No se pudo cerrar la sesión. Revisa tu conexión e inténtalo de nuevo."
+    "signOutFailed": "No se pudo cerrar la sesión. Revisa tu conexión e inténtalo de nuevo.",
+    "signOutOffline": "No tienes conexión. Tu sesión sigue activa; cierra sesión cuando vuelvas a conectarte.",
+    "accountUnavailable": "Cuenta no disponible — Reintentar"
   }
 }

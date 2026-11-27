@@ -25,6 +25,7 @@ vi.mock("./i18n", () => ({
   createRequestI18n: () => undefined,
 }));
 vi.mock("./lib/pool-invite", () => ({ capturePoolInviteFragment: () => {} }));
+vi.mock("@/server/auth-session", () => ({ getSessionCookieHint: vi.fn(async () => false) }));
 vi.mock("./routeTree.gen", () => ({ routeTree: {} }));
 vi.mock("./stores/orphan-credentials", () => ({
   useOrphanCredentials: { getState: () => ({ clear: () => {} }) },

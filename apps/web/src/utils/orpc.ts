@@ -1,4 +1,4 @@
-import { createORPCClient } from "@orpc/client";
+import { createORPCClient, onError } from "@orpc/client";
 import { RPCLink } from "@orpc/client/fetch";
 import {
   BatchLinkPlugin,
@@ -11,8 +11,26 @@ import type { AppRouterClient } from "@wssp/api/routers/index";
 import { ORPC_BATCH_MAX_SIZE } from "@wssp/config/orpc-batch";
 import { env } from "@wssp/env/web";
 
+import {
+  guardIdentityResponse,
+  isDocumentReplaced,
+  reportSessionRejected,
+  withExpectedIdentity,
+} from "@/lib/document-identity";
+
 const link = new RPCLink({
   url: `${env.VITE_SERVER_URL}/rpc`,
+  interceptors: [
+    onError((error) => {
+      if (
+        error &&
+        typeof error === "object" &&
+        (("code" in error && error.code === "UNAUTHORIZED") ||
+          ("status" in error && error.status === 401))
+      )
+        reportSessionRejected(error);
+    }),
+  ],
   plugins: [
     new SimpleCsrfProtectionLinkPlugin(),
     // `maxSize` must stay in sync with the server's `BatchHandlerPlugin` —
@@ -30,11 +48,15 @@ const link = new RPCLink({
     // surfaces them as a friendly toast instead.
     new ClientRetryPlugin(),
   ],
-  fetch(url, options) {
-    return fetch(url, {
-      ...options,
-      credentials: "include",
-    });
+  async fetch(url, options) {
+    if (isDocumentReplaced()) return new Promise<never>(() => {});
+    return guardIdentityResponse(
+      await fetch(url, {
+        ...options,
+        credentials: "include",
+        headers: withExpectedIdentity(url.headers),
+      }),
+    );
   },
 });
 

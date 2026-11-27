@@ -1,6 +1,23 @@
 import { createHash } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const identity = vi.hoisted(() => ({ replaced: false, guard: vi.fn(), recheck: vi.fn() }));
+vi.mock("@/lib/document-identity", () => ({
+  isDocumentReplaced: () => identity.replaced,
+  withExpectedIdentity: (headers?: HeadersInit) => {
+    const result = new Headers(headers);
+    result.set("X-Expected-User", "owner-a");
+    return result;
+  },
+  guardIdentityResponse: identity.guard,
+  reportSessionRejected: identity.recheck,
+}));
+beforeEach(() => {
+  identity.replaced = false;
+  identity.recheck.mockReset();
+  identity.guard.mockReset().mockImplementation(async (response: Response) => response);
+});
 
 import {
   downloadUrl,
@@ -551,4 +568,30 @@ describe("download", () => {
       ).rejects.toMatchObject({ problem });
     }
   });
+});
+
+it("sends the document owner and guards responses before processing", async () => {
+  const server = fakeServer(
+    () => new Response(null, { status: 200, headers: { "content-length": "4" } }),
+  );
+  expect(await probeDownload({ serverUrl: SERVER, fetch: server.fetchImpl }, "op")).toEqual({
+    sizeBytes: 4,
+  });
+  expect(server.calls[0]?.headers["x-expected-user"]).toBe("owner-a");
+  expect(identity.guard).toHaveBeenCalledTimes(1);
+});
+
+it("stalls a replaced document and a guarded late response", async () => {
+  const server = fakeServer(() => json(409, { code: "IDENTITY_CHANGED" }));
+  identity.guard.mockImplementation(() => new Promise(() => {}));
+  let settled = false;
+  void probeDownload({ serverUrl: SERVER, fetch: server.fetchImpl }, "op").finally(() => {
+    settled = true;
+  });
+  await vi.waitFor(() => expect(identity.guard).toHaveBeenCalledTimes(1));
+  expect(settled).toBe(false);
+  identity.replaced = true;
+  void probeDownload({ serverUrl: SERVER, fetch: server.fetchImpl }, "other");
+  await Promise.resolve();
+  expect(server.calls).toHaveLength(1);
 });

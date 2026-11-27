@@ -23,7 +23,7 @@ import { friendly } from "../utils/friendly-error";
  * failed while online says the server could not be reached. See
  * docs/design/shell-rules.md § Offline.
  */
-export default function ErrorState({ error, reset }: ErrorComponentProps) {
+export default function ErrorState({ error }: ErrorComponentProps) {
   useRouteImportFailure(error);
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
@@ -33,13 +33,12 @@ export default function ErrorState({ error, reset }: ErrorComponentProps) {
   const retry = async () => {
     setRetrying(true);
     try {
-      await router.invalidate();
+      await router.invalidate({ forcePending: true });
     } catch {
       // A route that fails again lands in its match's error state; the reset
       // below renders that new error.
     } finally {
       setRetrying(false);
-      reset();
     }
   };
   useRetryOnReconnect(() => void retry(), !online);

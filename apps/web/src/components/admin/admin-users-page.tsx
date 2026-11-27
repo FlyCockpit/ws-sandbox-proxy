@@ -382,7 +382,14 @@ export function AdminUsersPage({ currentUserId }: { currentUserId: string }) {
           title={t(`admin:users.confirm.${pendingChange.kind}Title`, {
             name: pendingChange.user.name || pendingChange.user.email,
           })}
-          description={t(`admin:users.confirm.${pendingChange.kind}Description`)}
+          description={
+            <>
+              <span className="block">
+                {t(`admin:users.confirm.${pendingChange.kind}Description`)}
+              </span>
+              <span className="block">{pendingChange.user.email}</span>
+            </>
+          }
           confirmLabel={t(`admin:users.confirm.${pendingChange.kind}Action`)}
           pendingLabel={t("admin:users.confirm.working")}
           destructive={pendingChange.kind !== "promote"}

@@ -28,12 +28,16 @@ async function admitted<T extends Parameters<typeof admitRouteIdentity>[0]>(
   // alongside the probe, and a failed probe (a transport error) also waits
   // before it reaches the router. The generation is taken before the probe:
   // an identity change announced while it runs is newer than its answer.
-  const since = identityVerificationGeneration();
-  const [settled] = await Promise.allSettled([probe(), appShellHydrated()]);
-  if (settled.status === "rejected") throw settled.reason;
-  const resolution = settled.value;
-  await admitRouteIdentity(resolution, since);
-  return resolution;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const since = identityVerificationGeneration();
+    const [settled] = await Promise.allSettled([probe(), appShellHydrated()]);
+    if (since !== identityVerificationGeneration()) continue;
+    if (settled.status === "rejected") throw settled.reason;
+    const resolution = settled.value;
+    await admitRouteIdentity(resolution, since);
+    if (since === identityVerificationGeneration()) return resolution;
+  }
+  return { status: "error" } as T;
 }
 
 /** `getRouteSession()` plus the identity check: anonymous-only, device and consent guards. */

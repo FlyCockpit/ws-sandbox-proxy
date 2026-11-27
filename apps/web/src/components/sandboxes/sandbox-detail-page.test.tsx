@@ -1,4 +1,8 @@
-const browserAuthority = vi.hoisted(() => ({ impersonatedBy: null as string | null }));
+const browserAuthority = vi.hoisted(() => ({
+  impersonatedBy: null as string | null,
+  checkSession: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/auth-client", () => ({ checkDocumentSession: browserAuthority.checkSession }));
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
     state: {
@@ -109,6 +113,7 @@ vi.mock("@/utils/orpc", async () => {
   };
 });
 
+import { resetDocumentIdentityForTests } from "@/lib/document-identity";
 import { formatClock } from "@/lib/sandbox-status";
 import { TerminalClient } from "@/lib/terminal-client";
 import { SandboxDetailPage } from "./sandbox-detail-page";
@@ -205,6 +210,8 @@ const receipt = (kind: string, state: string) => ({
 });
 
 beforeEach(() => {
+  resetDocumentIdentityForTests(() => undefined);
+  browserAuthority.checkSession.mockClear();
   vi.stubGlobal("matchMedia", () => ({
     matches: true,
     addEventListener: vi.fn(),
@@ -2307,6 +2314,7 @@ describe("S0 sensitive session unavailable", () => {
       ),
     );
     expect(screen.queryByText(enSandboxes.sensitiveAccessUnavailable)).toBeNull();
+    expect(browserAuthority.checkSession).toHaveBeenCalledTimes(1);
   });
 });
 

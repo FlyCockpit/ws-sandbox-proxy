@@ -8,11 +8,11 @@ import { cn } from "@wssp/ui/lib/utils";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
-
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { ensureRouteQuery } from "@/lib/route-query";
 import { resolveRouteSession } from "@/lib/route-session";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
@@ -44,6 +44,7 @@ export const Route = createFileRoute("/$lang/_app/forgot-password")({
 });
 
 function ForgotPasswordPage() {
+  markAnonymousOnlyRoute();
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   // Latched, as on login: a later masked or refetching `pending` (another
@@ -51,7 +52,7 @@ function ForgotPasswordPage() {
   const sessionSettled = useAuthSessionSettled();
   const {
     isPending: configPending,
-    isError: configError,
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);

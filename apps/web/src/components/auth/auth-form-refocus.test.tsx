@@ -25,6 +25,9 @@ const fx = vi.hoisted(() => ({
   snapshot: { data: null, isPending: true, isRefetching: false, error: null } as Snapshot,
   listeners: new Set<() => void>(),
   config: { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: true },
+  configFailed: false,
+  signup: vi.fn(),
+  toastError: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -44,7 +47,13 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   }),
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: fx.config, isPending: false, isError: false, refetch: vi.fn() }),
+  useQuery: () => ({
+    data: fx.config,
+    isPending: false,
+    isError: fx.configFailed,
+    isLoadingError: false,
+    refetch: vi.fn(),
+  }),
 }));
 // Better Auth's session atom: a store the test moves through its snapshots.
 vi.mock("@/lib/auth-client", () => ({
@@ -60,7 +69,7 @@ vi.mock("@/lib/auth-client", () => ({
       refetch: vi.fn(),
     }),
     signIn: { email: vi.fn() },
-    signUp: { email: vi.fn() },
+    signUp: { email: fx.signup },
     requestPasswordReset: vi.fn(),
   },
 }));
@@ -76,7 +85,7 @@ vi.mock("@/lib/pool-invite", () => ({
   postAuthHref: (href: string) => href,
   clearPoolInviteToken: vi.fn(),
 }));
-vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: fx.toastError } }));
 vi.mock("@/utils/friendly-error", () => ({
   friendly: (_error: unknown, fallback?: string) => fallback ?? "failed",
   isCredentialRejection: (error: { code?: string }) => error?.code === "INVALID_EMAIL_OR_PASSWORD",
@@ -121,6 +130,9 @@ beforeEach(() => {
   resetAuthSessionMemoryForTests();
   identity.resetDocumentIdentityForTests(() => undefined);
   fx.snapshot = FIRST_LOAD;
+  fx.configFailed = false;
+  fx.signup.mockReset();
+  fx.toastError.mockReset();
 });
 afterEach(() => cleanup());
 
@@ -192,5 +204,42 @@ describe("a page mounted during a refetch", () => {
     fx.snapshot = { ...FAILED_REFETCH };
     render(<LoginPage />);
     expect(input("auth:fields.email")).toBeNull();
+  });
+});
+
+describe("retained auth configuration", () => {
+  it.each([
+    ["login", LoginPage],
+    ["signup", SignupPage],
+    ["forgot password", ForgotPasswordPage],
+  ] as const)("keeps the %s form mounted on a background config error", (_name, Page) => {
+    fx.snapshot = ANONYMOUS;
+    const view = render(<Page />);
+    const email = input("auth:fields.email") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "person@example.test" } });
+    fx.configFailed = true;
+    view.rerender(<Page />);
+    expect(input("auth:fields.email")).toBe(email);
+    expect(email.value).toBe("person@example.test");
+  });
+
+  it("reports a thrown signup failure without discarding values", async () => {
+    fx.snapshot = ANONYMOUS;
+    fx.signup.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<SignupPage />);
+    for (const [label, value] of [
+      ["auth:fields.name", "Person"],
+      ["auth:fields.email", "person@example.test"],
+      ["auth:fields.password", "CorrectHorseBattery1!"],
+    ] as const) {
+      fireEvent.change(input(label) as HTMLInputElement, { target: { value } });
+    }
+    const email = input("auth:fields.email") as HTMLInputElement;
+    fireEvent.submit(email.closest("form") as HTMLFormElement);
+    await vi.waitFor(() =>
+      expect(fx.toastError).toHaveBeenCalledWith("auth:errors.couldNotCreateAccount"),
+    );
+    expect(email.value).toBe("person@example.test");
+    expect(input("auth:fields.email")).toBe(email);
   });
 });

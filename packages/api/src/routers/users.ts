@@ -301,7 +301,7 @@ export const usersRouter = {
       }
       const target = await context.adminTx.user.findUnique({
         where: { id: input.userId },
-        select: { id: true },
+        select: { id: true, role: true },
       });
       if (!target) throw userNotFound();
 
@@ -311,6 +311,17 @@ export const usersRouter = {
         data: { role: input.role },
         select: { id: true },
       });
+      if (target.role !== input.role) {
+        context.afterCommit(async () => {
+          console.info({
+            event: "users.role_changed",
+            actorId: context.session.user.id,
+            userId: input.userId,
+            previousRole: target.role,
+            role: input.role,
+          });
+        });
+      }
       return { success: true };
     }),
 

@@ -12,6 +12,17 @@ const fake = vi.hoisted(() => ({
   kind: "host" as "host" | "user",
   fetch: vi.fn<typeof fetch>(),
   toast: { success: vi.fn(), error: vi.fn() },
+  replaced: false,
+  guard: vi.fn(),
+}));
+vi.mock("@/lib/document-identity", () => ({
+  isDocumentReplaced: () => fake.replaced,
+  withExpectedIdentity: (headers?: HeadersInit) => {
+    const result = new Headers(headers);
+    result.set("X-Expected-User", "owner-1");
+    return result;
+  },
+  guardIdentityResponse: fake.guard,
 }));
 vi.mock("@wssp/env/web", () => ({ env: { VITE_SERVER_URL: "https://api.example.test" } }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: fake.toast }));
@@ -57,6 +68,8 @@ import { DevicePage } from "./device-page";
 let client: QueryClient;
 beforeEach(() => {
   fake.fetch.mockReset();
+  fake.replaced = false;
+  fake.guard.mockReset().mockImplementation(async (response: Response) => response);
   fake.toast.error.mockReset();
   fake.toast.success.mockReset();
   vi.stubGlobal("fetch", fake.fetch);
@@ -132,4 +145,39 @@ it.each([
   releaseRetry(Response.json({ success: true }));
   await waitFor(() => expect(fake.toast.success).toHaveBeenCalledOnce());
   expect(fake.toast.error).not.toHaveBeenCalled();
+});
+
+it("carries the owner and stalls an identity-change response before showing an error", async () => {
+  fake.fetch.mockResolvedValueOnce(Response.json({ code: "IDENTITY_CHANGED" }, { status: 409 }));
+  fake.guard.mockImplementation(() => new Promise(() => {}));
+  fake.kind = "host";
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { auth: en, common } } });
+  render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <DevicePage lang="en-US" ownerId="owner-1" userCode="ABCDEFGH" />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  await waitFor(() => expect(fake.guard).toHaveBeenCalledTimes(1));
+  expect(new Headers(fake.fetch.mock.calls[0]?.[1]?.headers).get("X-Expected-User")).toBe(
+    "owner-1",
+  );
+  expect(fake.toast.error).not.toHaveBeenCalled();
+});
+
+it("does not dispatch a device request from a replaced document", async () => {
+  fake.replaced = true;
+  const i18n = createInstance();
+  await i18n.init({ lng: "en-US", resources: { "en-US": { auth: en, common } } });
+  render(
+    <QueryClientProvider client={client}>
+      <I18nextProvider i18n={i18n}>
+        <DevicePage lang="en-US" ownerId="owner-1" userCode="ABCDEFGH" />
+      </I18nextProvider>
+    </QueryClientProvider>,
+  );
+  await Promise.resolve();
+  expect(fake.fetch).not.toHaveBeenCalled();
 });

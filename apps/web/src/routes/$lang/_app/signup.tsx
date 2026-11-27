@@ -8,13 +8,13 @@ import { cn } from "@wssp/ui/lib/utils";
 import { type ReactNode, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import z from "zod";
-
 import { AuthConfigGate } from "@/components/auth/auth-config-gate";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { FormAlert } from "@/components/auth/form-alert";
 import { ResendVerification } from "@/components/auth/resend-verification";
 import { useAuthSessionSettled } from "@/hooks/use-auth-session-settled";
 import { authClient } from "@/lib/auth-client";
+import { markAnonymousOnlyRoute } from "@/lib/document-identity";
 import { newPasswordSchema, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { clearPoolInviteToken, poolInviteToken } from "@/lib/pool-invite";
 import { resolveRouteSession } from "@/lib/route-session";
@@ -42,6 +42,7 @@ export const Route = createFileRoute("/$lang/_app/signup")({
 });
 
 function SignupPage() {
+  markAnonymousOnlyRoute();
   const { lang } = Route.useParams();
   const { redirectTo } = Route.useSearch();
   // Latched, as on login: a later masked or refetching `pending` (another
@@ -50,7 +51,7 @@ function SignupPage() {
   const {
     data: configData,
     isPending: configPending,
-    isError: configError,
+    isLoadingError: configError,
     refetch: refetchConfig,
   } = useQuery(orpc.appConfig.queryOptions());
   const { t } = useTranslation(["auth", "common"]);
@@ -193,14 +194,20 @@ function SignUpForm({
     defaultValues: { name: "", email: "", password: "" },
     onSubmit: async ({ value }) => {
       setFormError(null);
-      const result = await authClient.signUp.email(
-        {
-          email: value.email,
-          password: value.password,
-          name: value.name,
-        },
-        { body: poolInviteToken() ? { poolInviteToken: poolInviteToken() } : undefined },
-      );
+      let result: Awaited<ReturnType<typeof authClient.signUp.email>>;
+      try {
+        result = await authClient.signUp.email(
+          {
+            email: value.email,
+            password: value.password,
+            name: value.name,
+          },
+          { body: poolInviteToken() ? { poolInviteToken: poolInviteToken() } : undefined },
+        );
+      } catch (error) {
+        toast.error(friendly(error, t("auth:errors.couldNotCreateAccount")));
+        return;
+      }
       if (result.error) {
         // Better-Auth's database hook rejects an address sign-up is closed to
         // with a plain Error, which the sign-up route converts to a generic

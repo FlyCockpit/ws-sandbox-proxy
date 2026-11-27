@@ -11,6 +11,7 @@ import { RouteContentSkeleton } from "./components/route-content-skeleton";
 import i18n, { createRequestI18n } from "./i18n";
 import {
   onDocumentReplaced,
+  retryQueryAfterFailure,
   sealQueryClient,
   skipErrorToastForIdentity,
   watchDocumentRestore,
@@ -19,6 +20,7 @@ import { MAIN_SCROLLER_SELECTOR } from "./lib/main-scroller";
 import { networkFailureKind } from "./lib/network-failure";
 import { installOfflineMutationPolicy } from "./lib/offline-mutations";
 import { capturePoolInviteFragment } from "./lib/pool-invite";
+import { connectSessionHintToIdentity } from "./lib/session-hint";
 import { routeTree } from "./routeTree.gen";
 import { useOrphanCredentials } from "./stores/orphan-credentials";
 import { friendly } from "./utils/friendly-error";
@@ -67,7 +69,7 @@ export function getRouter() {
   if (typeof window !== "undefined") capturePoolInviteFragment();
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { staleTime: 1000 * 60 * 5 },
+      queries: { staleTime: 1000 * 60 * 5, retry: retryQueryAfterFailure },
     },
     queryCache: new QueryCache({
       onError: (error, query) => {
@@ -136,6 +138,7 @@ export function getRouter() {
   // load (lib/document-identity.ts). Client only; no-ops during SSR.
   watchDocumentRestore();
   if (typeof window !== "undefined") {
+    connectSessionHintToIdentity(queryClient);
     onDocumentReplaced(() => {
       sealQueryClient(queryClient);
       useOrphanCredentials.getState().clear();

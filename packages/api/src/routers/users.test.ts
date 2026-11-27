@@ -546,13 +546,28 @@ describe("usersRouter", () => {
 
   describe("setRole", () => {
     it("updates the role on a different user", async () => {
-      db.user.findUnique.mockResolvedValue({ id: "other-user-id" });
+      db.user.findUnique.mockResolvedValue({ id: "other-user-id", role: "user" });
       db.user.update.mockResolvedValue({});
+      const audit = vi.spyOn(console, "info").mockImplementation(() => {});
 
-      const client = createRouterClient(usersRouter, { context: buildContext() });
+      const ctx = buildContext();
+      db.user.findUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+        args.select?.id && args.select?.role && Object.keys(args.select).length === 2
+          ? { id: "other-user-id", role: "user" }
+          : defaultSensitiveSessionGateUser,
+      );
+      const client = createRouterClient(usersRouter, { context: ctx });
       const res = await client.setRole({ userId: "other-user-id", role: "admin" });
 
       expect(res).toEqual({ success: true });
+      expect(audit).toHaveBeenCalledWith({
+        event: "users.role_changed",
+        actorId: "admin-user-id",
+        userId: "other-user-id",
+        previousRole: "user",
+        role: "admin",
+      });
+      audit.mockRestore();
       expect(db.user.update).toHaveBeenCalledWith({
         where: { id: "other-user-id" },
         data: { role: "admin" },
@@ -575,12 +590,20 @@ describe("usersRouter", () => {
     it("allows promoting yourself to admin (no-op safety net)", async () => {
       // Even though the admin is already admin, the schema allows the call.
       // We only block demotion of self — promoting yourself is harmless.
-      db.user.findUnique.mockResolvedValue({ id: "admin-user-id" });
+      db.user.findUnique.mockResolvedValue({ id: "admin-user-id", role: "admin" });
       db.user.update.mockResolvedValue({});
-
-      const client = createRouterClient(usersRouter, { context: buildContext() });
+      const audit = vi.spyOn(console, "info").mockImplementation(() => {});
+      const ctx = buildContext();
+      db.user.findUnique.mockImplementation(async (args: { select?: Record<string, boolean> }) =>
+        args.select?.id && args.select?.role && Object.keys(args.select).length === 2
+          ? { id: "admin-user-id", role: "admin" }
+          : defaultSensitiveSessionGateUser,
+      );
+      const client = createRouterClient(usersRouter, { context: ctx });
       const res = await client.setRole({ userId: "admin-user-id", role: "admin" });
       expect(res).toEqual({ success: true });
+      expect(audit).not.toHaveBeenCalled();
+      audit.mockRestore();
     });
 
     it("throws NOT_FOUND for an unknown user id", async () => {

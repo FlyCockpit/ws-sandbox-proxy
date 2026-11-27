@@ -62,6 +62,8 @@ vi.mock("@/components/mode-toggle", () => ({ ModeToggle: () => <i data-control="
 // controls that must fit one row at phone widths when sign-up is open.
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
+    meta: { isDegraded: false, isRefetching: false },
+    actions: { retry: vi.fn() },
     state: route.authenticated
       ? { status: "authenticated", session: { user: { id: "u1", name: "Owner" } } }
       : { status: "anonymous" },

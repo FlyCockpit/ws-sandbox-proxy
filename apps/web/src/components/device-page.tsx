@@ -14,7 +14,6 @@ import { toast } from "@wssp/ui/components/sileo";
 import { ShieldCheck, ShieldX } from "lucide-react";
 import { useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
-
 import {
   DeviceLoginRequestDetails,
   DeviceLoginRequestSkeleton,
@@ -22,6 +21,11 @@ import {
 } from "@/components/device-login-request";
 import { InlineRetry } from "@/components/inline-retry";
 import { UserLoginApproval } from "@/components/user-login-approval";
+import {
+  guardIdentityResponse,
+  isDocumentReplaced,
+  withExpectedIdentity,
+} from "@/lib/document-identity";
 import { friendly } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
@@ -93,13 +97,19 @@ async function deviceDecision(
   fallbackMessage: string,
   approval?: ApproveBody,
 ): Promise<DeviceClaimResult | undefined> {
+  if (isDocumentReplaced()) return new Promise<never>(() => {});
   const suffix = action === "claim" ? "" : `/${action}`;
-  const response = await fetch(`${env.VITE_SERVER_URL}/api/auth/device${suffix}`, {
-    method: "POST",
-    credentials: "include",
-    headers: { Accept: "application/json", "Content-Type": "application/json" },
-    body: JSON.stringify({ userCode, ...approval }),
-  });
+  const response = await guardIdentityResponse(
+    await fetch(`${env.VITE_SERVER_URL}/api/auth/device${suffix}`, {
+      method: "POST",
+      credentials: "include",
+      headers: withExpectedIdentity({
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify({ userCode, ...approval }),
+    }),
+  );
   if (!response.ok) {
     let message: string | undefined;
     let hostLimit: number | null = null;

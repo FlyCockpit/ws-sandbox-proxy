@@ -1,19 +1,16 @@
 import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import {
   admitRouteIdentity,
   announceDocumentIdentity,
   announceSessionChange,
   confirmDocumentIdentityFresh,
   connectIdentityPeers,
-  documentIdentityBaseline,
-  holdDocumentIdentityUnverified,
   identityVerificationGeneration,
   isDocumentIdentityUnverified,
   isDocumentReplaced,
   leaveDocument,
-  listenForIdentityPeers,
+  markAnonymousOnlyRoute,
   markExplicitSignOut,
   observeDocumentIdentity,
   onDocumentReplaced,
@@ -25,7 +22,9 @@ import {
   skipErrorToastForIdentity,
   subscribeIdentityVerification,
   watchDocumentRestore,
+  withExpectedIdentity,
 } from "./document-identity";
+import { probeDownload, uploadToSandbox } from "./sandbox-transfers";
 
 const reload = vi.fn();
 let pageshow: ((event: { persisted: boolean }) => void) | undefined;
@@ -60,6 +59,7 @@ beforeEach(() => {
   vi.stubGlobal("document", { documentElement: root });
 });
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -79,6 +79,46 @@ async function settles(promise: Promise<unknown>): Promise<boolean> {
 
 const unauthorized = () =>
   Object.assign(new Error("no session"), { code: "UNAUTHORIZED", status: 401 });
+
+describe("sandbox upload identity fence", () => {
+  it.each(["reservation", "chunk", "commit"])(
+    "intercepts a %s conflict before upload callbacks",
+    async (phase) => {
+      await admitRouteIdentity(resolved("a"));
+      const transport = vi.fn<typeof fetch>(async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        const current = path.endsWith("/commit")
+          ? "commit"
+          : init?.method === "PUT"
+            ? "chunk"
+            : "reservation";
+        if (current === phase) return Response.json({ code: "IDENTITY_CHANGED" }, { status: 409 });
+        return current === "chunk"
+          ? new Response(null, { status: 200 })
+          : Response.json({ id: "transfer" }, { status: 201 });
+      });
+      const success = vi.fn();
+      const error = vi.fn();
+      void uploadToSandbox(
+        {
+          serverUrl: "https://app.test",
+          fetch: transport,
+          random: () => "00000000-0000-4000-8000-000000000001",
+        },
+        { sandboxId: "sandbox", guestPath: "/tmp/upload", file: new Blob(["data"]) },
+      ).then(success, error);
+      for (let i = 0; i < 30 && !isDocumentReplaced(); i++)
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(reload).toHaveBeenCalledTimes(1);
+      expect(hidden()).toBe(true);
+      expect(success).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
+      for (const [, init] of transport.mock.calls)
+        expect(new Headers(init?.headers).get("X-Expected-User")).toBe("a");
+      if (phase === "reservation") expect(transport).toHaveBeenCalledTimes(1);
+    },
+  );
+});
 
 describe("shouldReloadForIdentity", () => {
   it("only reloads when a signed-in user goes away", () => {
@@ -129,10 +169,9 @@ describe("admitRouteIdentity (session guards)", () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it("catches a switch the watcher did not see (offline, refetching, not yet mounted)", async () => {
-    // A guard admitted A; the identity boundary saw no confirmed change since
-    // (its answers were offline/degraded/refetching, or it was not mounted
-    // yet). Another account signs in meanwhile. On the next navigation, the
+  it("catches a switch made while no `_app` page (and so no watcher) was open", async () => {
+    // An `_app` page as A, then a public page: the shell (and its watcher)
+    // unmounts. Another account signs in meanwhile. Back into the app, the
     // guard sees B before anything renders: the document reloads and the
     // guard never settles, so no page under it shows A's cache.
     expect(await settles(admitRouteIdentity(resolved("a")))).toBe(true);
@@ -375,11 +414,11 @@ describe("other tabs", () => {
     announceDocumentIdentity("a");
     announceDocumentIdentity("a");
     expect(channel.postMessage).toHaveBeenCalledTimes(2);
-    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     expect(check).toHaveBeenCalledTimes(1);
     // Without a watcher, a peer's announcement or a 401 checks nothing.
     disconnect();
-    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     reportSessionRejected();
     expect(check).toHaveBeenCalledTimes(1);
   });
@@ -406,11 +445,12 @@ describe("other tabs", () => {
   it("a peer's announcement or a 401 with no watcher mounted leaves the identity unverified", async () => {
     const channel = fakeChannel();
     resetDocumentIdentityForTests(() => channel);
-    observeDocumentIdentity("a");
-    announceDocumentIdentity("a");
     const changed = vi.fn();
     subscribeIdentityVerification(changed);
-    channel.onmessage?.({} as MessageEvent);
+    observeDocumentIdentity("a");
+    announceDocumentIdentity("a");
+    changed.mockClear();
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     expect(isDocumentIdentityUnverified()).toBe(true);
     expect(changed).toHaveBeenCalledTimes(1);
     // A guard's server answer for the same account confirms it.
@@ -420,78 +460,15 @@ describe("other tabs", () => {
     expect(isDocumentIdentityUnverified()).toBe(true);
   });
 
-  it("with a watcher connected, a peer's announcement is checked, not left unverified", () => {
-    const channel = fakeChannel();
-    resetDocumentIdentityForTests(() => channel);
-    const check = vi.fn();
-    connectIdentityPeers(check);
-    channel.onmessage?.({} as MessageEvent);
-    expect(check).toHaveBeenCalledTimes(1);
-    expect(isDocumentIdentityUnverified()).toBe(false);
-  });
-
-  it("tells the session readers when the admitted identity changes", () => {
-    const changed = vi.fn();
-    subscribeIdentityVerification(changed);
-    observeDocumentIdentity(null);
-    observeDocumentIdentity(null);
-    observeDocumentIdentity("a");
-    expect(changed).toHaveBeenCalledTimes(2);
-    expect(documentIdentityBaseline()).toBe("a");
-  });
-
-  it("listens before any watcher or announcement: a peer's message leaves it unverified", () => {
-    const channel = fakeChannel();
-    resetDocumentIdentityForTests(() => channel);
-    listenForIdentityPeers();
-    expect(channel.postMessage).not.toHaveBeenCalled();
-    channel.onmessage?.({} as MessageEvent);
-    expect(isDocumentIdentityUnverified()).toBe(true);
-  });
-
-  it("every announcement and every check-starting 401 invalidates, even when already unverified", () => {
-    const channel = fakeChannel();
-    resetDocumentIdentityForTests(() => channel);
-    observeDocumentIdentity("a");
-    announceDocumentIdentity("a");
-    const start = identityVerificationGeneration();
-    channel.onmessage?.({} as MessageEvent);
-    channel.onmessage?.({} as MessageEvent);
-    reportSessionRejected();
-    expect(identityVerificationGeneration()).toBe(start + 3);
-    // A hold sets the mask without a new invalidation.
-    confirmDocumentIdentityFresh(identityVerificationGeneration());
-    holdDocumentIdentityUnverified();
-    expect(isDocumentIdentityUnverified()).toBe(true);
-    expect(identityVerificationGeneration()).toBe(start + 3);
-  });
-
-  it("401s that share a running check don't invalidate it", async () => {
-    let answer: () => void = () => {};
-    connectIdentityPeers(
-      () =>
-        new Promise<void>((resolve) => {
-          answer = resolve;
-        }),
-    );
-    const start = identityVerificationGeneration();
-    reportSessionRejected();
-    await Promise.resolve();
-    reportSessionRejected();
-    reportSessionRejected();
-    expect(identityVerificationGeneration()).toBe(start + 1);
-    answer();
-  });
-
   it("an answer that predates a newer invalidation settles nothing", async () => {
     const channel = fakeChannel();
     resetDocumentIdentityForTests(() => channel);
     observeDocumentIdentity("a");
     announceDocumentIdentity("a");
-    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     // A guard's probe starts, then another tab announces again mid-probe.
     const since = identityVerificationGeneration();
-    channel.onmessage?.({} as MessageEvent);
+    channel.onmessage?.({ data: { kind: "session-changed" } } as MessageEvent);
     await admitRouteIdentity(resolved("a"), since);
     expect(isDocumentIdentityUnverified()).toBe(true);
     confirmDocumentIdentityFresh(since);
@@ -500,9 +477,29 @@ describe("other tabs", () => {
     expect(isDocumentIdentityUnverified()).toBe(false);
   });
 
-  it("a guard announces a sign-in on a document whose watcher is not running", async () => {
+  it("an obsolete guard answer on a public anonymous document records and announces nothing", async () => {
+    const channel = fakeChannel();
+    resetDocumentIdentityForTests(() => channel);
+    await admitRouteIdentity(resolved(null));
+    channel.postMessage.mockClear();
+    const since = identityVerificationGeneration();
+    // B is newer than the in-flight A probe, with no watcher mounted here.
+    channel.onmessage?.({ data: { kind: "identity", id: "b" } } as MessageEvent);
+    await admitRouteIdentity(resolved("a"), since);
+    expect(channel.postMessage).not.toHaveBeenCalled();
+    expect(withExpectedIdentity().has("X-Expected-User")).toBe(false);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(reload).not.toHaveBeenCalled();
+    await admitRouteIdentity(resolved("b"));
+    expect(channel.postMessage).toHaveBeenCalledExactlyOnceWith({ kind: "identity", id: "b" });
+    expect(withExpectedIdentity().get("X-Expected-User")).toBe("b");
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("a guard announces a sign-in whose page never mounts the `_app` shell", async () => {
     // Window 2 signs in as B and lands on a hidden admin page: the guard
-    // confirms B and renders the public 404 before any watcher runs there.
+    // confirms B and renders a public 404, so no watcher ever runs there.
     const channel = fakeChannel();
     resetDocumentIdentityForTests(() => channel);
     expect(await settles(admitRouteIdentity(resolved("b")))).toBe(true);
@@ -510,5 +507,229 @@ describe("other tabs", () => {
     // A replaced document announces nothing: it is on its way out.
     expect(await settles(admitRouteIdentity(resolved("c")))).toBe(false);
     expect(channel.postMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("expected document identity", () => {
+  it("uses the baseline even after an unrelated cookie change, preserving other headers", () => {
+    expect(withExpectedIdentity().has("X-Expected-User")).toBe(false);
+    observeDocumentIdentity(null);
+    expect(withExpectedIdentity().has("X-Expected-User")).toBe(false);
+    observeDocumentIdentity("a");
+    const headers = withExpectedIdentity({ "x-csrf-token": "token" });
+    expect(headers.get("X-Expected-User")).toBe("a");
+    expect(headers.get("x-csrf-token")).toBe("token");
+  });
+  it("recognizes a server-confirmed identity conflict in the global toast filters", () => {
+    observeDocumentIdentity("a");
+    expect(skipErrorToastForIdentity({ status: 409, code: "IDENTITY_CHANGED" }, "mutation")).toBe(
+      true,
+    );
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("confirmed peer messages", () => {
+  function channel() {
+    const peer = {
+      onmessage: null as ((event: MessageEvent) => void) | null,
+      postMessage: vi.fn(),
+    };
+    resetDocumentIdentityForTests(() => peer);
+    return { receive: (data: unknown) => peer.onmessage?.({ data } as MessageEvent) };
+  }
+  it.each(["b", null])("a different peer identity (%s) waits for a server check", async (id) => {
+    const peer = channel();
+    observeDocumentIdentity("a");
+    let finish!: () => void;
+    const check = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    connectIdentityPeers(check);
+    peer.receive({ kind: "identity", id });
+    expect(reload).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    // Only the check's server answer can decide to replace the document.
+    if (observeDocumentIdentity(id)) replaceDocument();
+    finish();
+    await Promise.resolve();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+  it("same identity is ignored and does not certify an unverified cookie", () => {
+    const peer = channel();
+    observeDocumentIdentity("a");
+    reportSessionRejected();
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    peer.receive({ kind: "identity", id: "a" });
+    expect(check).not.toHaveBeenCalled();
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(reload).not.toHaveBeenCalled();
+  });
+  it("a matching peer identity leaves local sign-in navigation on /login alone", () => {
+    const peer = channel();
+    window.location.pathname = "/en-US/login";
+    markAnonymousOnlyRoute();
+    observeDocumentIdentity(null);
+    // Local sign-in confirms A before the router finishes leaving /login.
+    observeDocumentIdentity("a");
+    reportSessionRejected();
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    const since = identityVerificationGeneration();
+    peer.receive({ kind: "identity", id: "a" });
+    expect(reload).not.toHaveBeenCalled();
+    expect(check).not.toHaveBeenCalled();
+    expect(identityVerificationGeneration()).toBe(since);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(withExpectedIdentity().get("X-Expected-User")).toBe("a");
+  });
+  it("coalesces pending checks while every relevant announcement invalidates their generation", async () => {
+    const peer = channel();
+    observeDocumentIdentity("a");
+    let finish!: () => void;
+    const check = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    connectIdentityPeers(check);
+    peer.receive({ kind: "session-changed" });
+    peer.receive({ kind: "session-changed" });
+    expect(check).toHaveBeenCalledTimes(1);
+    const since = identityVerificationGeneration();
+    peer.receive({ kind: "identity", id: "b" });
+    expect(reload).not.toHaveBeenCalled();
+    expect(identityVerificationGeneration()).toBe(since + 1);
+    confirmDocumentIdentityFresh(since);
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    expect(check).toHaveBeenCalledTimes(1);
+    finish();
+    await Promise.resolve();
+  });
+  it("a delayed hint confirming the local sign-in keeps its pending /login navigation", async () => {
+    const peer = channel();
+    window.location.pathname = "/en-US/login";
+    markAnonymousOnlyRoute();
+    observeDocumentIdentity(null);
+    observeDocumentIdentity("b");
+    const check = vi.fn(async () => {
+      const since = identityVerificationGeneration();
+      await Promise.resolve();
+      if (observeDocumentIdentity("b")) replaceDocument();
+      else confirmDocumentIdentityFresh(since);
+    });
+    connectIdentityPeers(check);
+    peer.receive({ kind: "session-changed" });
+    expect(isDocumentIdentityUnverified()).toBe(true);
+    await check.mock.results[0]?.value;
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+    expect(isDocumentReplaced()).toBe(false);
+    expect(isDocumentIdentityUnverified()).toBe(false);
+    expect(withExpectedIdentity().get("X-Expected-User")).toBe("b");
+  });
+  it.each(["login", "signup", "forgot-password", "reset-password"])(
+    "peer sign-in checks before replacing the anonymous-only %s page",
+    (route) => {
+      const peer = channel();
+      window.location.pathname = `/en-US/${route}`;
+      markAnonymousOnlyRoute();
+      observeDocumentIdentity(null);
+      const check = vi.fn();
+      connectIdentityPeers(check);
+      peer.receive({ kind: "identity", id: "b" });
+      expect(reload).not.toHaveBeenCalled();
+      expect(check).toHaveBeenCalledTimes(1);
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      if (observeDocumentIdentity("b")) replaceDocument();
+      expect(reload).toHaveBeenCalledTimes(1);
+    },
+  );
+  it("a sign-in found by a hinted check replaces an anonymous-only form", async () => {
+    const peer = channel();
+    window.location.pathname = "/en-US/login";
+    markAnonymousOnlyRoute();
+    observeDocumentIdentity(null);
+    connectIdentityPeers(() => {
+      if (observeDocumentIdentity("b")) replaceDocument();
+    });
+    peer.receive({ kind: "session-changed" });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+  it("the anonymous-only marker does not affect a later public page", () => {
+    const peer = channel();
+    window.location.pathname = "/en-US/login";
+    markAnonymousOnlyRoute();
+    observeDocumentIdentity(null);
+    window.location.pathname = "/en-US/about";
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    peer.receive({ kind: "identity", id: "b" });
+    expect(reload).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("wssp admission notifications", () => {
+  it("notifies session readers for every admission, including repeated anonymity", async () => {
+    const { subscribeIdentityVerification, documentAdmissions, documentIdentityBaseline } =
+      await import("./document-identity");
+    const listener = vi.fn();
+    const stop = subscribeIdentityVerification(listener);
+    await admitRouteIdentity({ status: "resolved", session: null });
+    const first = documentAdmissions();
+    listener.mockClear();
+    await admitRouteIdentity({ status: "resolved", session: null });
+    expect(documentAdmissions()).toBe(first + 1);
+    expect(documentIdentityBaseline()).toBeNull();
+    expect(listener).toHaveBeenCalled();
+    stop();
+  });
+});
+
+describe("raw transfer identity reconciliation", () => {
+  it("intercepts a bodyless HEAD conflict before download callbacks", async () => {
+    await admitRouteIdentity(resolved("a"));
+    const transport = vi.fn<typeof fetch>(
+      async () => new Response(null, { status: 409, headers: { "X-Identity-Changed": "1" } }),
+    );
+    const success = vi.fn();
+    const error = vi.fn();
+    void probeDownload({ serverUrl: "https://app.test", fetch: transport }, "operation").then(
+      success,
+      error,
+    );
+    for (let i = 0; i < 20 && !isDocumentReplaced(); i++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(success).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(transport.mock.calls[0]?.[1]?.method).toBe("HEAD");
+  });
+  it("a refused upload requests a session check before its signed-out error reaches the form", async () => {
+    await admitRouteIdentity(resolved("a"));
+    const check = vi.fn();
+    connectIdentityPeers(check);
+    const transport = vi.fn<typeof fetch>(async () =>
+      Response.json({ error: { code: "UNAUTHORIZED" } }, { status: 401 }),
+    );
+    await expect(
+      uploadToSandbox(
+        {
+          serverUrl: "https://app.test",
+          fetch: transport,
+          random: () => "00000000-0000-4000-8000-000000000001",
+        },
+        { sandboxId: "sandbox", guestPath: "/tmp/file", file: new Blob(["data"]) },
+      ),
+    ).rejects.toMatchObject({ problem: "signedOut", status: 401 });
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(isDocumentIdentityUnverified()).toBe(true);
   });
 });
