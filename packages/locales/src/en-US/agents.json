@@ -144,6 +144,9 @@
     "detail": "{{entry}} · {{detail}}"
   },
   "revoke": {
+    "done": "Agent token revoked.",
+    "badge": "Revoked",
+    "description": "Requests with this token fail from now on. Work it already started is not cancelled.",
     "typePrompt": "Type the token name to confirm",
     "copyName": "Copy token name"
   },

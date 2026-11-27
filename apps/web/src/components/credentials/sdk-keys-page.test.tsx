@@ -1284,6 +1284,46 @@ it("marks an existing no-expiry agent token as blocked by policy, without hiding
   expect(within(dated).queryByText(enAgents.expiry.blockedByPolicy)).toBeNull();
 });
 
+it("revoking an agent token says the agent token was revoked", async () => {
+  server.keys = [
+    {
+      id: "agent-z",
+      name: "ci agent",
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      poolIds: [],
+      scopes: ["hosts:read"],
+      lookupPrefix: "wssp_agent_abcdefghijkl",
+      lastUsedAt: null,
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 7 * 86_400_000),
+      createdAt: new Date(),
+      hostAllowlist: [],
+      revisionAllowlist: [],
+      ownSandboxesOnly: true,
+      blockedByPolicy: false,
+    },
+  ];
+  const user = userEvent.setup();
+  mount(true);
+  await screen.findByText("wssp_agent_abcdefghijkl…");
+  await user.click(within(row("agent-z")).getByRole("button", { name: "Revoke ci agent" }));
+  const confirm = await screen.findByRole("alertdialog");
+  // The dialog speaks of a token, not a key.
+  expect(within(confirm).getByText(enAgents.revoke.description)).toBeTruthy();
+  await user.type(within(confirm).getByLabelText(enAgents.revoke.typePrompt), "ci agent");
+  await user.click(within(confirm).getByRole("button", { name: enCredentials.revoke.confirm }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith(enAgents.revoke.done));
+  expect(toast.success).not.toHaveBeenCalledWith(enSdkKeys.revoke.done);
+  await user.click(screen.getByRole("button", { name: enCredentials.filter.all }));
+  const revoked = await waitFor(() => {
+    const found = row("agent-z");
+    if (!found) throw new Error("no revoked row");
+    return found;
+  });
+  expect(within(revoked).getByText(enAgents.revoke.badge)).toBeTruthy();
+});
+
 describe("sandboxes:connect scope", () => {
   it("the SDK key form offers it alone in its own described group, never preselected, and mints it only when ticked", async () => {
     const user = userEvent.setup();

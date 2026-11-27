@@ -257,7 +257,7 @@ function SdkKeyRow({
   const revoke = useRevoke(
     lang,
     (id) => api.revoke.call({ id }),
-    t("sdkKeys:revoke.done"),
+    t(agent ? "agents:revoke.done" : "sdkKeys:revoke.done"),
     (client) => void client.invalidateQueries({ queryKey: api.list.key() }),
   );
   const expires = toMs(sdkKey.expiresAt);
@@ -301,7 +301,7 @@ function SdkKeyRow({
             ) : null}
             {revoked ? (
               <Badge variant="outline" data-revoked-badge="" className="shrink-0">
-                {t("sdkKeys:list.revoked")}
+                {t(agent ? "agents:revoke.badge" : "sdkKeys:list.revoked")}
               </Badge>
             ) : null}
           </div>
@@ -466,7 +466,7 @@ function SdkKeyRow({
           open={revoke.confirming}
           onOpenChange={revoke.setConfirming}
           title={t("sdkKeys:revoke.title", { name: sdkKey.name })}
-          description={t("sdkKeys:revoke.description")}
+          description={t(agent ? "agents:revoke.description" : "sdkKeys:revoke.description")}
           confirmToken={sdkKey.name}
           typePrompt={t(agent ? "agents:revoke.typePrompt" : "sdkKeys:revoke.typePrompt")}
           copyAriaLabel={t(agent ? "agents:revoke.copyName" : "sdkKeys:revoke.copyName")}

@@ -144,6 +144,9 @@
     "detail": "{{entry}} · {{detail}}"
   },
   "revoke": {
+    "done": "Token de agente revocado.",
+    "badge": "Revocado",
+    "description": "Las solicitudes con este token fallan desde ahora. El trabajo que ya inició no se cancela.",
     "typePrompt": "Escribe el nombre del token para confirmar",
     "copyName": "Copiar nombre del token"
   },
