@@ -30,3 +30,10 @@ describe("migration and backup shared declarations", () => {
     ).toEqual([]);
   });
 });
+
+it("reserves room for a password lock, nested revocation and handler work", () => {
+  expect(sharedVars.DATABASE_POOL_MAX.parse(undefined)).toBe(10);
+  for (const value of [0, 1, 2, -1, 3.5, "many"])
+    expect(sharedVars.DATABASE_POOL_MAX.safeParse(value).success).toBe(false);
+  expect(sharedVars.DATABASE_POOL_MAX.parse("3")).toBe(3);
+});

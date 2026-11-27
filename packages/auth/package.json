@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./password-auth-handler": {
+      "default": "./src/password-auth-handler.ts"
+    },
+    "./lock-slots": {
+      "default": "./src/lock-slots.ts"
+    },
     ".": {
       "default": "./src/index.ts"
     },

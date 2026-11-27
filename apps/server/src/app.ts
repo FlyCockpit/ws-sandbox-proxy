@@ -23,6 +23,7 @@ import {
 import { bindMcpGrantTokenRevocation } from "@wssp/api/sandbox/services/mcp-grants";
 import { auth, type Session } from "@wssp/auth";
 import { bindMcpGrantServices } from "@wssp/auth/mcp-grant";
+import { handlePasswordAuthRequest } from "@wssp/auth/password-auth-handler";
 import { TWO_FACTOR_REQUIRED_ERROR_CODE } from "@wssp/auth/two-factor-policy";
 import { ORPC_BATCH_MAX_SIZE } from "@wssp/config/orpc-batch";
 import { THEME_INIT_SCRIPT } from "@wssp/config/theme-init";
@@ -472,7 +473,8 @@ export async function createApp(
   app.post("/api/auth/device/deny", deviceDecisionHandler);
 
   app.on(["POST", "GET"], "/api/auth/*", (c) => {
-    if (!isMcpOauthRawPath(new URL(c.req.raw.url).pathname)) return auth.handler(c.req.raw);
+    if (!isMcpOauthRawPath(new URL(c.req.raw.url).pathname))
+      return handlePasswordAuthRequest(auth, c.req.raw);
     try {
       return auth.handler(cloneRequestOntoPublicOrigin(c.req.raw));
     } catch {

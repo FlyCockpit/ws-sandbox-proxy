@@ -9,13 +9,25 @@ const { default: prisma } = await import("@wssp/db");
 const { transitionDeviceCode } = await import("./device-code-transitions");
 let store: ReturnType<typeof deviceStore>;
 const decide = (action: "claim" | "approve" | "deny", userId = "user-1") =>
-  transitionDeviceCode({ userCode: "ABCD-EFGH", userId, action, intent: { kind: "create" } });
+  transitionDeviceCode({
+    userCode: "ABCD-EFGH",
+    userId,
+    action,
+    intent: { kind: "create" },
+    sessionId: userId === "user-1" ? "approver-session" : "second-session",
+  });
 beforeEach(() => {
   store = deviceStore();
   Object.assign(prisma, store.db);
   store.state.deviceCode.set("code-1", deviceRow({ status: "pending" }));
   store.state.user.set("user-1", { id: "user-1" });
   store.state.user.set("user-2", { id: "user-2" });
+  store.state.session.set("second-session", {
+    id: "second-session",
+    userId: "user-2",
+    expiresAt: new Date("2099-01-01"),
+    impersonatedBy: null,
+  });
   store.state.session.set("approver-session", {
     id: "approver-session",
     userId: "user-1",
@@ -56,6 +68,7 @@ it("approval persists exactly the displayed replacement identity", async () => {
   await transitionDeviceCode({
     userCode: "ABCDEFGH",
     userId: "user-1",
+    sessionId: "approver-session",
     action: "approve",
     intent: { kind: "replace", hostId: "host-reviewed" },
   });
@@ -239,6 +252,32 @@ it("takes the owner and session locks before approving a CLI login", async () =>
     action: "approve",
     grant,
   });
+  expect(store.events.indexOf("share:user:user-1")).toBeLessThan(
+    store.events.indexOf("share:session:approver-session"),
+  );
+  expect(store.events.indexOf("share:session:approver-session")).toBeLessThan(
+    store.events.indexOf("lock:deviceCode:code-1"),
+  );
+});
+
+it.each(["claim", "approve", "deny"] as const)(
+  "refuses host-enrollment %s from a revoked browser session before changing the code",
+  async (action) => {
+    store.state.deviceCode.set(
+      "code-1",
+      deviceRow({ status: "pending", userId: action === "claim" ? null : "user-1" }),
+    );
+    store.state.session.clear();
+    await expect(decide(action)).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    expect(store.state.deviceCode.get("code-1")).toMatchObject({
+      status: "pending",
+      userId: action === "claim" ? null : "user-1",
+    });
+  },
+);
+
+it("takes the owner and live-session locks before approving a host enrollment", async () => {
+  await decide("approve");
   expect(store.events.indexOf("share:user:user-1")).toBeLessThan(
     store.events.indexOf("share:session:approver-session"),
   );

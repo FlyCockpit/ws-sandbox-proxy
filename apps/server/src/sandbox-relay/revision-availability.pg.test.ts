@@ -28,6 +28,7 @@ vi.mock("@wssp/queue", () => ({ redisConnection: {} }));
 import { createSandbox } from "../../../../packages/api/src/sandbox/services/sandboxes";
 import {
   seedLaunchHost,
+  seedMintSession,
   seedTemplateRevision,
 } from "../../../../packages/api/src/sandbox/testing/resource-fixtures";
 import { applyOperationResult } from "./operation-handlers.js";
@@ -453,7 +454,7 @@ it("Incus JSON and CLI image absence traverses the real daemon and settles only 
           "../../../../packages/api/src/sandbox/services/hosts"
         );
         const token = await createHostToken(
-          { kind: "session", ownerId: f.userId },
+          await seedMintSession(db.inspect, { kind: "session" as const, ownerId: f.userId }),
           { hostId: target.hostId, name: "association-daemon" },
         );
         const manager = new SandboxRelaySessionManager();

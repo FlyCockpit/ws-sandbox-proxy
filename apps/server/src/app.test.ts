@@ -26,6 +26,8 @@ import type { SandboxApiEnv } from "./sandbox-api/auth.js";
 import { SDK_JSON_MAX_BYTES } from "./sandbox-api/middleware.js";
 
 const state = vi.hoisted(() => ({
+  passwordFence: vi.fn(),
+  passwordWrite: vi.fn(),
   globalBody: vi.fn(),
   transferStatus: vi.fn(),
   transferWrite: vi.fn(),
@@ -83,6 +85,14 @@ vi.mock("@wssp/db", async () => {
   const { createMockPrisma } = await import("@wssp/api/test/mock-prisma");
   return { default: await createMockPrisma() };
 });
+vi.mock("../../../packages/auth/src/password-sign-in-fence.js", () => ({
+  withPasswordSignInFence: (request: Request, run: () => Promise<Response>) =>
+    state.passwordFence(request, run),
+}));
+vi.mock("../../../packages/auth/src/password-write-lock.js", () => ({
+  PASSWORD_WRITE_PATHS: new Set(["/change-password", "/reset-password"]),
+  withPasswordWriteLock: (...args: unknown[]) => state.passwordWrite(...args),
+}));
 vi.mock("@wssp/auth", () => ({
   auth: { api: { getSession: state.getSession }, handler: vi.fn() },
 }));
@@ -207,6 +217,12 @@ beforeEach(async () => {
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  state.passwordFence.mockImplementation(async (_request: Request, run: () => Promise<Response>) =>
+    run(),
+  );
+  state.passwordWrite.mockImplementation(
+    async (_path: string, _request: Request, run: () => Promise<Response>) => run(),
+  );
   state.failure = undefined;
   state.afterRead = undefined;
   state.budgetFailure = undefined;
@@ -1162,4 +1178,78 @@ describe("readiness build identity", () => {
       expect(state.charges).toHaveLength(charges);
     },
   );
+});
+
+describe("password security HTTP mount", () => {
+  it.each(["/change-password", "/reset-password"])(
+    "wraps POST %s and preserves its body",
+    async (path) => {
+      const { auth } = await import("@wssp/auth");
+      vi.mocked(auth.handler).mockImplementationOnce(async (request) =>
+        Response.json(await request.json()),
+      );
+      const body = {
+        token: "reset-unit-token",
+        currentPassword: "old-unit-password",
+        newPassword: "new-unit-password",
+      };
+      const response = await app.request(`/api/auth${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(body);
+      expect(state.passwordWrite).toHaveBeenCalledOnce();
+      const [actualPath, request, , options] = state.passwordWrite.mock.calls[0]!;
+      expect(actualPath).toBe(path);
+      expect(new URL(request.url).pathname).toBe(`/api/auth${path}`);
+      const headers = new Headers({ cookie });
+      await options.getSession(headers);
+      expect(state.getSession).toHaveBeenCalledWith({ headers });
+      expect(state.passwordFence).not.toHaveBeenCalled();
+      expect(auth.handler).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("fences password sign-in through the actual shared dispatcher", async () => {
+    const { auth } = await import("@wssp/auth");
+    vi.mocked(auth.handler).mockImplementationOnce(async (request) =>
+      Response.json(await request.json()),
+    );
+    const body = { email: "unit@example.test", password: "unit-test-password" };
+    const response = await app.request("/api/auth/sign-in/email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(body);
+    expect(state.passwordFence).toHaveBeenCalledOnce();
+    expect(state.passwordWrite).not.toHaveBeenCalled();
+    expect(auth.handler).toHaveBeenCalledOnce();
+  });
+
+  it.each(["/api/auth/get-session", "/api/auth/reset-password/link"])(
+    "keeps GET %s outside password-write locks",
+    async (path) => {
+      const { auth } = await import("@wssp/auth");
+      vi.mocked(auth.handler).mockResolvedValueOnce(new Response("read"));
+      expect((await app.request(path)).status).toBe(200);
+      expect(state.passwordWrite).not.toHaveBeenCalled();
+      expect(state.passwordFence).not.toHaveBeenCalled();
+    },
+  );
+
+  it("retains the admin HTTP gate before the password boundary", async () => {
+    const { auth } = await import("@wssp/auth");
+    const response = await app.request("/api/auth/admin/set-user-password", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ userId: "target", newPassword: "unit-test-password" }),
+    });
+    expect(response.status).toBe(404);
+    expect(state.passwordWrite).not.toHaveBeenCalled();
+    expect(auth.handler).not.toHaveBeenCalled();
+  });
 });

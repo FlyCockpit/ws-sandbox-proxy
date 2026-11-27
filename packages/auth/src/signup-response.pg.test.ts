@@ -7,6 +7,7 @@ const admins = vi.hoisted(() => new Set<string>());
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
 }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: "http://localhost:3000",
@@ -25,6 +26,7 @@ vi.mock("@wssp/mailer", () => ({
 }));
 const db = await pgTestDatabase();
 const { auth } = await import("./index");
+const { handlePasswordAuthRequest } = await import("./password-auth-handler");
 const { runWithAllowedUserCreation } = await import("./user-creation-policy");
 const { SIGNUP_SETTING_KEY } = await import("./signup-policy");
 afterAll(() => db.close());
@@ -48,7 +50,8 @@ const PRISMA_METHODS = [
 const address = () => `${randomUUID()}@example.test`;
 
 function signUp(fields: Record<string, unknown>) {
-  return auth.handler(
+  return handlePasswordAuthRequest(
+    auth,
     new Request(`${base}/api/auth/sign-up/email`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: base },

@@ -54,7 +54,8 @@ const reviewed: Record<string, string> = {
   // (first) and user.update.before; refusals only, no proof input or write.
   // Password recovery revokes standing credentials before and after reset; no mailbox proof input or write.
   // Round 3: durable session write checks and reset-link/temporary-password finalization; no mailbox proof input or write.
-  "packages/auth/src/index.ts": "c5cac958a036133b5836c227e55826073f0da38a66e3ea21e77ffd050c370ee3",
+  // Reset-race: session/write fences and all-session post-sweep; mailbox proof unchanged.
+  "packages/auth/src/index.ts": "d698a756b3d0266d3acc07ddecc1cc3d510a1f5178df68b6144f9bc3024a0353",
   // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
   // no emailVerified write outside /verify-email. Writes nothing.
   "packages/auth/src/mailbox-proof-policy.ts":
@@ -64,8 +65,9 @@ const reviewed: Record<string, string> = {
   // its sendVerificationEmail does); Better Auth's endpoint writes the proof.
   // The new row is created with mustChangePassword, not emailVerified.
   // Reviewed 11-26 (tpl-e2e5-fups lane C): the invite input takes the invitee's locale, written in the same insert, plus the mail's expiry days; still no proof write.
+  // Reset-race: only invite budget key/ceiling changed (30/hour); proof handling unchanged.
   "packages/api/src/routers/users.ts":
-    "5f3e3915075e65489ea8a56d2eec0ec523f5a5267b9646db7b4e04f6352c901b",
+    "393a115d7ad3e8201e4daa76a4950397419b680780261806233070cef5228de8",
   // App shell: reads the session's emailVerified to show admins their 2FA deadline (read only).
   // Reviewed 11-26 (wssp-fix): pending/error frames added; the emailVerified read is unchanged.
   // Reviewed 11-26 (wssp-fix phase B): pendingFrame staticData and the route content skeleton; the emailVerified read is unchanged, read only.

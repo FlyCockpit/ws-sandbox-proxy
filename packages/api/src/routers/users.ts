@@ -49,14 +49,14 @@ function generateTempPassword(): string {
 }
 
 /**
- * One invitation is one point: a password hash, two rows and an email. 50 per
+ * One invitation is one point: a password hash, two rows and an email. 30 per
  * actor per hour covers onboarding a team in one sitting, while the `/rpc`
  * limiter alone (100 batched requests of 10 procedures a minute) would allow
  * ~1,000 an admin per minute. Fail-closed: this budget meters mail and writes.
  */
 const consumeInviteBudget = createProcedureBudget({
-  keyPrefix: "rl:admin-invite",
-  points: 50,
+  keyPrefix: "rl:users-invite-mail",
+  points: 30,
   durationSeconds: 3600,
   failClosed: true,
   overBudgetMessage: (retryAfterSeconds) =>

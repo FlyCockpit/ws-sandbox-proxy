@@ -47,8 +47,16 @@ vi.mock("@wssp/auth", () => ({
   auth: { $context: Promise.resolve({ password: { hash: hashPassword } }) },
 }));
 
-const inviteBudget = vi.hoisted(() => vi.fn(async (_key: string) => undefined));
-vi.mock("../lib/procedure-budget", () => ({ createProcedureBudget: () => inviteBudget }));
+const { inviteBudget, budgetOptions } = vi.hoisted(() => ({
+  inviteBudget: vi.fn(async (_key: string) => undefined),
+  budgetOptions: [] as unknown[],
+}));
+vi.mock("../lib/procedure-budget", () => ({
+  createProcedureBudget: (options: unknown) => {
+    budgetOptions.push(options);
+    return inviteBudget;
+  },
+}));
 
 // Mock @wssp/mailer so invites don't try to open SMTP. Tests assert on the
 // call shape via the mock instead. `renderInviteUser` is stubbed to return a
@@ -61,6 +69,17 @@ vi.mock("@wssp/mailer", () => ({
     html: "<html><body>invite</body></html>",
   })),
 }));
+
+it("configures the invite mail budget to fail closed at 30 per hour", () => {
+  expect(budgetOptions).toContainEqual(
+    expect.objectContaining({
+      keyPrefix: "rl:users-invite-mail",
+      points: 30,
+      durationSeconds: 3600,
+      failClosed: true,
+    }),
+  );
+});
 
 const { default: prisma } = await import("@wssp/db");
 const { defaultSensitiveSessionGateUser, wireSensitiveSessionGateUser } = await import(

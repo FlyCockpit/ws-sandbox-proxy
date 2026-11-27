@@ -20,6 +20,7 @@ vi.mock("../../api/src/sandbox/budgets", () => ({ consumeSandboxWriteBudget: asy
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
 }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: BASE_URL,
@@ -40,6 +41,7 @@ vi.mock("@wssp/mailer", () => ({
 
 const db = await pgTestDatabase();
 const { auth } = await import("./index");
+const { handlePasswordAuthRequest } = await import("./password-auth-handler");
 const { adminInviteAcceptUrl } = await import("./admin-invite-verification");
 const { sendEmail } = await import("@wssp/mailer");
 /** Mails Better Auth sent to one address (verification resends, resets). */
@@ -71,7 +73,8 @@ function cookiesFrom(response: Response, previous = ""): string {
 }
 
 async function post(path: string, body: unknown, cookie = ""): Promise<Response> {
-  return auth.handler(
+  return handlePasswordAuthRequest(
+    auth,
     new Request(`${BASE_URL}/api/auth${path}`, {
       method: "POST",
       headers: {
@@ -108,6 +111,101 @@ const flags = (userId: string) =>
   });
 
 describe("admin invitation acceptance against the real Better Auth", () => {
+  it.each(["change-password", "reset-password"] as const)(
+    "a temporary-password sign-in paused at INSERT cannot survive the invitee's %s",
+    async (replacement) => {
+      const invitee = await invitedUser();
+      await db.inspect.user.update({
+        where: { id: invitee.userId },
+        data: { emailVerified: true },
+      });
+      const signedIn = await post("/sign-in/email", { email: invitee.email, password: TEMPORARY });
+      expect(signedIn.status).toBe(200);
+      const cookie = cookiesFrom(signedIn);
+      const context = await auth.$context;
+      const reached = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      const create = context.adapter.create;
+      let pause = true;
+      const insert = vi.spyOn(context.adapter, "create").mockImplementation(
+        new Proxy(create, {
+          apply: async (writer, owner, args) => {
+            if (pause && args[0]?.model === "session") {
+              pause = false;
+              reached.resolve();
+              await release.promise;
+            }
+            return Reflect.apply(writer, owner, args);
+          },
+        }),
+      );
+      const delayed = post("/sign-in/email", { email: invitee.email, password: TEMPORARY }).then(
+        (response) => ({ response, error: undefined }),
+        (error: unknown) => ({ response: undefined, error }),
+      );
+      try {
+        await Promise.race([
+          reached.promise,
+          delayed.then((result) => {
+            throw new Error(
+              `Sign-in returned ${result.response?.status ?? "an error"} before the INSERT latch`,
+            );
+          }),
+        ]);
+        // The production adapter's create is paused after the session before-
+        // hook, before its real PostgreSQL INSERT. The probe client's $extends
+        // boundary is deliberately not used as an adapter pause point.
+        let changed: Response;
+        if (replacement === "change-password") {
+          changed = await post(
+            "/change-password",
+            {
+              currentPassword: TEMPORARY,
+              newPassword: CHOSEN,
+              revokeOtherSessions: false,
+            },
+            cookie,
+          );
+        } else {
+          const token = randomUUID();
+          await db.inspect.verification.create({
+            data: {
+              identifier: `reset-password:${token}`,
+              value: invitee.userId,
+              expiresAt: new Date(Date.now() + 60_000),
+            },
+          });
+          changed = await post("/reset-password", { token, newPassword: CHOSEN });
+        }
+        expect(changed.status, await changed.clone().text()).toBe(200);
+        expect(await flags(invitee.userId)).toEqual({
+          emailVerified: true,
+          mustChangePassword: false,
+        });
+        release.resolve();
+        const result = await delayed;
+        expect(result.error).toBeUndefined();
+        expect(result.response?.status).toBe(401);
+        expect(
+          result.response?.headers
+            .getSetCookie()
+            .filter((header) => header.includes("session_token="))
+            .every((header) => header.includes("session_token=;")),
+        ).toBe(true);
+        expect(await db.inspect.session.count({ where: { userId: invitee.userId } })).toBe(
+          replacement === "change-password" ? 1 : 0,
+        );
+        expect(
+          (await post("/sign-in/email", { email: invitee.email, password: CHOSEN })).status,
+        ).toBe(200);
+      } finally {
+        release.resolve();
+        await delayed;
+        insert.mockRestore();
+      }
+    },
+  );
+
   it("the accept link verifies the address, then the invitee replaces the temporary password", async () => {
     const invitee = await invitedUser();
     // The temporary password alone is not mailbox proof.

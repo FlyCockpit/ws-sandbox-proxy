@@ -33,7 +33,7 @@ vi.mock("@wssp/env/server", () => ({
   ADMIN_EMAILS: new Set<string>(),
   SIGNUP_ENABLED: true,
 }));
-vi.mock("@wssp/env/shared", () => ({ env: {} }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/queue", () => ({ redisConnection: {} }));
 vi.mock("@wssp/mailer", () => ({
   isEmailConfigured: () => false,
@@ -45,6 +45,7 @@ vi.mock("@wssp/mailer", () => ({
 
 const db = await pgTestDatabase();
 const { auth } = await import("@wssp/auth");
+const { handlePasswordAuthRequest } = await import("@wssp/auth/password-auth-handler");
 const { onAuthSessionsRevoked } = await import("@wssp/db/session-revocation");
 const { checkBrowserTerminalBinding: checkTerminalBinding } = await import(
   "@wssp/api/sandbox/terminal-tickets"
@@ -75,7 +76,8 @@ function cookiesFrom(response: Response): string {
 }
 
 function post(path: string, body: unknown, cookie = ""): Promise<Response> {
-  return auth.handler(
+  return handlePasswordAuthRequest(
+    auth,
     new Request(`${BASE_URL}/api/auth${path}`, {
       method: "POST",
       headers: {

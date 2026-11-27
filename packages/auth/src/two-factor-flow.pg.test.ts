@@ -20,6 +20,7 @@ vi.mock("../../api/src/sandbox/budgets", () => ({ consumeSandboxWriteBudget: asy
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
 }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: BASE_URL,
@@ -40,6 +41,7 @@ vi.mock("@wssp/mailer", () => ({
 
 const db = await pgTestDatabase();
 const { auth } = await import("./index");
+const { handlePasswordAuthRequest } = await import("./password-auth-handler");
 afterAll(() => db.close());
 
 const PASSWORD = "correct-horse-battery-staple";
@@ -84,7 +86,8 @@ function cookiesFrom(response: Response, previous = ""): string {
 }
 
 async function post(path: string, body: unknown, cookie = ""): Promise<Response> {
-  return auth.handler(
+  return handlePasswordAuthRequest(
+    auth,
     new Request(`${BASE_URL}/api/auth${path}`, {
       method: "POST",
       headers: {

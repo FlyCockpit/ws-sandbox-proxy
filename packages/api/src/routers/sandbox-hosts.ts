@@ -119,7 +119,10 @@ export const sandboxHostsRouter = {
   createHostToken: liveOwnerSessionProcedure
     .input(createHostTokenInput)
     .handler(async ({ input, context }) => {
-      return createHostToken(sessionPrincipal(context.session.user.id), input);
+      return createHostToken(
+        sessionPrincipal(context.session.user.id, context.session.session.id),
+        input,
+      );
     }),
 
   revokeHostToken: protectedProcedure

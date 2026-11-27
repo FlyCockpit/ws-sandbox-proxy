@@ -94,7 +94,7 @@ export async function transitionDeviceCode(input: {
       : null;
   return prisma
     .$transaction(async (tx) => {
-      if (kind === "user") {
+      if (kind === "user" || kind === "host") {
         // Same owner lock and owner-before-code order as password revocation
         // and redemption. Even an unclaimed code needs a live browser session.
         await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${input.userId} FOR SHARE`;

@@ -29,11 +29,12 @@ export const sharedVars = {
   REDIS_URL: z.string().min(1),
   // Fresh per-process identity from entrypoint admission; absent in local dev/tests.
   WSSP_INSTANCE_ID: z.uuid().optional(),
+  // Minimum 3: password-write lock, reserved nested revocation and handler work.
   // Max connections in this process's Postgres pool (node-postgres `max`).
   // Default 10 matches the driver default — raise it only against the
   // database's connection budget, since every server/worker replica holds its
   // own pool. Transaction-mode poolers need a pool size that fits the budget.
-  DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
+  DATABASE_POOL_MAX: z.coerce.number().int().min(3).default(10),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   // ---- Automatic database backups are opt-in: migration snapshots, the daily
   // writer and freshness monitoring. Explicit backup/restore commands still work.

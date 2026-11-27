@@ -75,7 +75,11 @@ const app = new Hono()
   .route("/api/sandbox-host", createHostControlApi())
   .route("/v1", createSandboxApi());
 afterAll(() => db.close());
-const principal = (ownerId: string) => ({ kind: "session" as const, ownerId });
+const principal = (ownerId: string) => ({
+  kind: "session" as const,
+  ownerId,
+  sessionId: `mint:${ownerId}`,
+});
 async function fixture() {
   const id = `drain-${randomUUID()}`;
   const user = await db.inspect.user.create({
@@ -118,8 +122,8 @@ async function fixture() {
       state: "STOPPED",
     },
   });
-  const token = await createHostToken(principal(id), { hostId: host.id, name: "daemon" });
   const owner = await seedMintSession(db.inspect, principal(id));
+  const token = await createHostToken(owner, { hostId: host.id, name: "daemon" });
   const key = await createSdkKey(owner, {
     name: "sdk",
     scopes: [

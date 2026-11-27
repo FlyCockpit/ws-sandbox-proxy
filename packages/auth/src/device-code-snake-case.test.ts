@@ -11,6 +11,7 @@ const db = vi.hoisted(
   }),
 );
 vi.mock("@wssp/db", () => ({ default: { $extends: () => ({}) } }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: BASE_URL,

@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({ oauthResource: [], oauthClientResource: [] }));
 vi.mock("@wssp/db", () => ({ default: { $extends: () => ({}) } }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: "http://localhost:3000",

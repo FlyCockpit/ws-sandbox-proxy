@@ -31,6 +31,16 @@ import { createPasswordChangeGuard } from "./password-change-guard.js";
 import { createPasswordPepper } from "./password-pepper.js";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
 import {
+  fencePasswordSessionAfter,
+  fencePasswordSessionBefore,
+  recordTwoFactorChallenge,
+} from "./password-sign-in-fence.js";
+import {
+  confirmPasswordWriteLocked,
+  guardPasswordAccountCreate,
+  guardPasswordAccountUpdate,
+} from "./password-write-lock.js";
+import {
   notifySessionOwners,
   notifySessionRevocations,
   sessionRevocationsFor,
@@ -138,6 +148,11 @@ export const auth = betterAuth({
     }),
     {
       provider: "postgresql",
+      // Keep adapter transactions off. Sign-up sends verification mail and its
+      // callback reads locale through the global Prisma client, which cannot see
+      // an uncommitted user. SMTP can also retry three times without a total
+      // delivery deadline, exceeding an interactive transaction timeout.
+      transaction: false,
     },
   ),
 
@@ -181,16 +196,17 @@ export const auth = betterAuth({
     // ./password-policy.ts: the new-password forms read the same numbers.
     minPasswordLength: PASSWORD_MIN_LENGTH,
     maxPasswordLength: PASSWORD_MAX_LENGTH,
-    // A reset proves the mailbox: whoever else is signed in (a stolen
+    // A reset ends standing access: whoever else is signed in (a stolen
     // password, an administrator's temporary one) is signed out.
     revokeSessionsOnPasswordReset: true,
     // Sessions alone do not revoke SDK/CLI, agent or OAuth credentials.
     // The before-hook already revokes sessions and credentials atomically.
-    // Keep a second credential sweep after reset; failures are logged and rethrown.
+    // Sweep ALL sessions and credentials again after the password commit,
+    // catching sign-ins that landed in the pre-sweep/write gap. Failures log and rethrow.
     onPasswordReset: async ({ user }) => {
       let revocationFailure: { error: unknown } | undefined;
       try {
-        await revokeCredentialsAfterPasswordChange(user.id);
+        await revokeCredentialsAfterPasswordChange(user.id, { revokeSessions: true });
       } catch (error) {
         revocationFailure = { error };
       }
@@ -375,7 +391,10 @@ export const auth = betterAuth({
         body: ctx.body,
         returned: ctx.context.returned,
       });
-      if (revocationTarget) await revokeCredentialsAfterPasswordChange(revocationTarget);
+      if (revocationTarget)
+        await revokeCredentialsAfterPasswordChange(revocationTarget.userId, {
+          keepSessionToken: revocationTarget.keepSessionToken,
+        });
       await passwordChangeGuard.after(ctx);
     }),
   },
@@ -437,6 +456,25 @@ export const auth = betterAuth({
     }),
   ],
   databaseHooks: {
+    account: {
+      create: {
+        before: async (account, context) => guardPasswordAccountCreate(account, context),
+        after: async () => confirmPasswordWriteLocked({ hash: passwordPepper.hash }),
+      },
+      update: {
+        before: async (data) => guardPasswordAccountUpdate(data),
+        after: async () => confirmPasswordWriteLocked({ hash: passwordPepper.hash }),
+      },
+    },
+    session: {
+      create: {
+        before: async (session, context) => fencePasswordSessionBefore(session, context),
+        after: async (session, context) => fencePasswordSessionAfter(session, context),
+      },
+    },
+    verification: {
+      create: { after: async (verification) => recordTwoFactorChallenge(verification) },
+    },
     user: {
       delete: {
         before: async (user) => {

@@ -217,11 +217,17 @@ describe("shared env — DATABASE_POOL_MAX", () => {
     expect(mod.env.DATABASE_POOL_MAX).toBe(25);
   });
 
-  it("rejects zero, negative, and non-numeric values", async () => {
+  it.each(["0", "1", "2", "-5", "many"])(
+    "rejects a pool below the reserve or invalid: %s",
+    async (value) => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await expect(importServerEnv({ DATABASE_POOL_MAX: value })).rejects.toThrow();
+    },
+  );
+
+  it("accepts the minimum pool of three", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "0" })).rejects.toThrow();
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "-5" })).rejects.toThrow();
-    await expect(importServerEnv({ DATABASE_POOL_MAX: "many" })).rejects.toThrow();
+    expect((await importServerEnv({ DATABASE_POOL_MAX: "3" })).env.DATABASE_POOL_MAX).toBe(3);
   });
 });
 

@@ -40,28 +40,94 @@ sandbox, operation and transfer belongs to exactly one user account.
   the recovery link, every reset signs all of the account's sessions out and,
   in the same locked transaction, revokes its SDK/API keys, device-flow CLI logins,
   personal/MCP access tokens, OAuth grants/tokens issued to clients, and claimed
-  pending or approved CLI device codes. Password changes that sign out other
-  devices revoke the same credentials. A second credential sweep follows the
+  pending or approved CLI device codes. Recovery also revokes dashboard host
+  tokens, host-device credentials and owner-bound host enrollment codes in both
+  sweeps. Live host connections revalidate after the committed owner authority
+  change; the owner must sign in again and reconnect each host. Host rows, disks
+  and sandbox data remain. Machine mints and host approvals recheck the browser
+  session under that same owner lock, so a cached cookie cannot restore them.
+  Password changes that sign out other devices revoke the CLI/API/MCP credentials
+  while retaining host credentials and host enrollment codes. A second credential sweep follows the
   reset; both sweeps also end sessions impersonating others on this account’s
   behalf and delete pending two-factor sign-in challenges, their OTPs and attempt
-  counters, session OTPs, and trusted-device records. If reset fails before the
-  password write, the account stays signed out everywhere with the password
+  counters, session OTPs, and trusted-device records. If reset fails before link
+  consumption, the account stays signed out everywhere with the password
   unchanged and the unconsumed link reusable.
   A revoked session can continue reading for at most the 60-second signed
   cookie-cache window; session-authenticated Better Auth writes and credential
   minting re-check the live session row, so writes cannot renew a revoked cache.
 
-  Requests already authenticated and in flight when reset commits can still
-  finish afterward: a password sign-in verifying the old hash, a change-password
-  request that already verified the old password, an admin impersonation request,
-  or a token refresh. Better Auth core verifies before it writes, without a
-  password-generation check. The proposed follow-up is a password-generation
-  check under the credential lock at session insert or password write.
-  Change-password's credential sweep runs after the password commits, as in the
-  template; a failure there is logged SECURITY and rethrown.
+  Password sign-ins take a credential fingerprint before Better Auth reads the
+  hash, and check it before inserting a session and after the insert commits.
+  A reset during verification or insertion refuses the sign-in and removes
+  its session without setting cookies. Two-factor password steps store that
+  fingerprint beside the challenge; completion requires the current fingerprint
+  before and after its session insert. Both reset sweeps delete **all** sessions
+  and pending challenge metadata, including sessions inserted between the first
+  sweep and the password commit. A password change signing out other devices
+  keeps only the token it just issued.
 
-  Machine enrollments, host credentials and host enrollment codes are left
-  unchanged pending an owner decision.
+  Every session derived from a signed-in session must have its parent row
+  present before and after insertion. This covers two-factor enrollment and
+  enable/disable rotations, including requests carrying cached cookies. A raced
+  two-factor disable may still change the flag, but cannot retain a new session.
+  Session refresh updates the existing row; it cannot resurrect a deleted row.
+  Admin HTTP impersonation and device-token redemption remain disabled.
+
+  `handlePasswordAuthRequest` is the shared HTTP boundary. Password changes
+  and resets hold a per-user `password-write:<userId>` advisory lock around the
+  whole Better Auth handler. A waiting change rechecks its live session after
+  acquiring the lock; a waiting reset runs last and removes the change's session.
+  Account hooks refuse password-bearing writes outside that lock, including
+  server-only `setPassword`. Only a new user's sign-up credential is exempt;
+  admin invitation creates a new user/account directly in its governance
+  transaction. An account after-hook probes the still-open lock transaction:
+  a delayed write that commits after lock expiry is quarantined with an unusable
+  peppered hash and all sessions, challenges and standing credentials revoked.
+  Recovery requires Forgot password; the error explains that next step.
+
+  Lock order is **password-write → existing owner credential row lock**
+  (`FOR NO KEY UPDATE` for revocation, `FOR SHARE` for admission), followed by
+  the existing host → code order where applicable. There is no second competing
+  credential lock and no set-password-link feature or setup lock. The single
+  `packages/auth/src/lock-slots.ts` counter reserves both the writer's connection
+  and its nested revocation slot together, leaving a connection for Better Auth.
+  `DATABASE_POOL_MAX` is at least 3. Revocation uses those same slots. Ordinary
+  admission, MCP consent recording and pepper maintenance use only their own
+  transaction connection and never wait for external pooled work, so they do
+  not need another slot counter. No auth dependency is added to the DB package.
+
+  Pinned Better Auth **1.7.18** session-create inventory (core and enabled plugins):
+
+  | Source / route                                                            | Proof required here                                                       |
+  | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+  | `api/routes/sign-in.mjs`: `/sign-in/email`                                | Credential fence                                                          |
+  | `api/routes/update-user.mjs`: `/change-password`                          | Password-write lock with live parent recheck                              |
+  | `plugins/two-factor/index.mjs`: enable (TOTP/OTP), disable                | Parent session before and after insertion                                 |
+  | `plugins/two-factor/{totp,otp}/index.mjs`: authenticated enrollment       | Parent session before and after insertion                                 |
+  | `plugins/two-factor/verify-two-factor.mjs`: verify TOTP, OTP, backup code | Parent session or credential-bound challenge                              |
+  | `api/routes/sign-up.mjs`, `email-verification.mjs`                        | No auto sign-in: required verification; `autoSignInAfterVerification` off |
+  | `oauth2/link-account.mjs`                                                 | Unreachable: no social/generic OAuth sign-in providers                    |
+  | `plugins/admin/routes.mjs`, `device-authorization/routes.mjs`             | All admin HTTP paths and `/device/token` disabled                         |
+  | Enabled JWT, MCP, OAuth-provider, CIMD                                    | No session creation sites                                                 |
+
+  No other parentless session is permitted. Username, anonymous, SIWE, phone,
+  magic-link and email-OTP sign-in plugins are not enabled. Plugin additions
+  must audit this list and the before/after session-create proof rules.
+
+  Adapter transactions stay off: sign-up mail resolves locale through the
+  global Prisma client, which cannot read an uncommitted user, and SMTP retries
+  have no total delivery deadline. If the password write fails after Better Auth
+  spent the link and deleted sessions, the old password remains usable and no
+  post-sweep runs; request a fresh reset link. Failed post-reset cleanup still
+  clears `mustChangePassword` before reporting the failure. It preserves mailbox
+  proof: only the mailed `/verify-email` link verifies an address. Exhausted cleanup/quarantine errors are logged as SECURITY and
+  propagated. A sign-in completed before password commit can mint a standing
+  credential in that gap; it survives only if every post-sweep attempt fails.
+
+  Recovery and late-write quarantine revoke machine authentication; an ordinary
+  signed-in password change retains it. No admin reset-password dialog or
+  procedure is exposed: Better Auth's admin HTTP namespace remains disabled.
   The invitation is the invitee's only mail: no separate "verify your email"
   mail is sent. A sign-in before accepting (or after the link expired) is
   refused and Better Auth mails one fresh verification link, which the

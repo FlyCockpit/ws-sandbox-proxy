@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pgTestDatabase } from "@wssp/db/testing/pg";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { seedLaunchHost } from "../testing/resource-fixtures";
+import { seedLaunchHost, seedMintSession } from "../testing/resource-fixtures";
 
 /**
  * C52-R2-3 (real PostgreSQL): the per-owner host cap
@@ -58,6 +58,7 @@ async function seedOwner(hosts = 0) {
       twoFactorEnabled: true,
     },
   });
+  await seedMintSession(db.inspect, { ownerId });
   for (let index = 0; index < hosts; index++) {
     await seedLaunchHost(db.inspect, {
       data: { userId: ownerId, slug: `seed-${index}`, label: `Seed ${index}` },
@@ -174,6 +175,7 @@ describe("C52-R2-3 per-owner host cap (real PostgreSQL)", () => {
       transitionDeviceCode({
         userCode: refusedCode,
         userId: ownerId,
+        sessionId: `mint:${ownerId}`,
         action: "approve",
         intent: { kind: "create" },
       }),
@@ -186,6 +188,7 @@ describe("C52-R2-3 per-owner host cap (real PostgreSQL)", () => {
       transitionDeviceCode({
         userCode: await pending(),
         userId: ownerId,
+        sessionId: `mint:${ownerId}`,
         action: "approve",
         intent: { kind: "replace", hostId: host.id },
       }),

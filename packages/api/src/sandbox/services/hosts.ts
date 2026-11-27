@@ -61,8 +61,9 @@ import { readHostTerminalPolicy } from "../host-terminal-policy";
 import { LEASE_UNLIMITED_DEADLINE_MS } from "../lease-limits";
 import { assertOwnerHostCapacity } from "../owner-host-cap";
 import { lockPoolGraph } from "../pool-locks";
-import { isBrowserSession } from "../principal-kinds";
+import { isBrowserSession, sessionIdOf } from "../principal-kinds";
 import { lockCurrentHostEpoch, RelayFenceRejected, requireRelayFence } from "../relay-fence";
+import { requireCredentialMintSession } from "../sdk-key-mint";
 import { discoverHostPaths, notifySharingAccessChanged } from "../sharing-access";
 import { readContributionPool } from "./sharing";
 
@@ -784,6 +785,9 @@ export const createHostToken = serviceProcedure(
       const token = await prisma.$transaction(async (tx) => {
         // C21-13 owner lock, then C21-11 enrollment admission (tombstone rejects).
         await lockOwnerForAdmission(tx, owner.ownerId);
+        // Reset takes the same owner fence before revoking machine credentials.
+        // A cookie cached before it cannot authorize a new host token afterward.
+        await requireCredentialMintSession(tx, owner.ownerId, sessionIdOf(owner));
         await lockAdmissionHost(tx, host.id, owner.ownerId);
         return tx.hostToken.create({
           data: {

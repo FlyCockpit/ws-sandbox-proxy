@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { memory, revokeCredentials } = vi.hoisted(() => ({
+const { memory, revokeCredentials, adapterOptions } = vi.hoisted(() => ({
   memory: {} as Record<string, Record<string, unknown>[]>,
   revokeCredentials: vi.fn(),
+  adapterOptions: [] as unknown[],
 }));
 vi.mock("@wssp/db", async () => {
   const { createMockPrisma } = await import("../../api/src/test/mock-prisma");
@@ -12,8 +13,14 @@ vi.mock("@wssp/db", async () => {
 });
 vi.mock("better-auth/adapters/prisma", async () => {
   const { memoryAdapter } = await import("better-auth/adapters/memory");
-  return { prismaAdapter: () => memoryAdapter(memory) };
+  return {
+    prismaAdapter: (_client: unknown, options: unknown) => {
+      adapterOptions.push(options);
+      return memoryAdapter(memory);
+    },
+  };
 });
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   ADMIN_EMAILS: new Set(),
   SIGNUP_ENABLED: false,
@@ -45,8 +52,54 @@ vi.mock("./credential-revocation.js", async (importOriginal) => ({
   revokeCredentialsAfterPasswordChange: revokeCredentials,
 }));
 
-const { auth, passwordPepper } = await import("./index");
+const { auth: rawAuth, passwordPepper } = await import("./index");
+const { withPasswordWriteLock } = await import("./password-write-lock");
+const { withPasswordSignInFence } = await import("./password-sign-in-fence");
+// Preserve direct-API error assertions while applying the same HTTP security
+// boundaries. The production server mount has its own integration regressions.
+async function securedCall<T>(
+  path: string,
+  input: { body?: unknown; headers?: ConstructorParameters<typeof Headers>[0] },
+  run: () => Promise<T>,
+): Promise<T> {
+  const request = new Request(`http://localhost:3000/api/auth${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...Object.fromEntries(new Headers(input.headers)),
+    },
+    body: JSON.stringify(input.body),
+  });
+  let result!: T;
+  const handler = async () => {
+    result = await run();
+    return new Response(null);
+  };
+  if (path === "/sign-in/email") await withPasswordSignInFence(request, handler);
+  else
+    await withPasswordWriteLock(path, request, handler, {
+      getSession: (headers) => rawAuth.api.getSession({ headers }),
+    });
+  return result;
+}
+const auth = {
+  ...rawAuth,
+  api: {
+    ...rawAuth.api,
+    resetPassword: (input: NonNullable<Parameters<typeof rawAuth.api.resetPassword>[0]>) =>
+      securedCall("/reset-password", input, () => rawAuth.api.resetPassword(input)),
+    changePassword: (input: NonNullable<Parameters<typeof rawAuth.api.changePassword>[0]>) =>
+      securedCall("/change-password", input, () => rawAuth.api.changePassword(input)),
+    signInEmail: (input: Parameters<typeof rawAuth.api.signInEmail>[0] & { asResponse: true }) =>
+      securedCall("/sign-in/email", input, () => rawAuth.api.signInEmail(input)),
+  },
+};
 const { default: prisma } = await import("@wssp/db");
+it("keeps Prisma adapter transactions disabled", () => {
+  expect(adapterOptions).toContainEqual(
+    expect.objectContaining({ provider: "postgresql", transaction: false }),
+  );
+});
 const userId = "reset-owner";
 const password = "original-password-test-only";
 const newPassword = "replacement-password-test-only";
@@ -102,11 +155,48 @@ beforeEach(async () => {
     twoFactor: [],
   });
   vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+  vi.mocked(prisma.$queryRaw).mockResolvedValue([{ locked: true }]);
+  vi.mocked(prisma.session.findFirst).mockImplementation(
+    (args) =>
+      Promise.resolve(
+        memory.session!.find((row) => matchesWhere(row, args?.where)) ?? null,
+      ) as ReturnType<typeof prisma.session.findFirst>,
+  );
+  vi.mocked(prisma.account.findFirst).mockImplementation(
+    (args) =>
+      Promise.resolve(
+        memory.account!.find((row) => {
+          const where = args?.where;
+          if (where?.user)
+            return (
+              row.providerId === "credential" &&
+              memory.user!.some(
+                (user) => user.id === row.userId && user.email === "owner@example.test",
+              )
+            );
+          return matchesWhere(row, where);
+        }) ?? null,
+      ) as ReturnType<typeof prisma.account.findFirst>,
+  );
+  vi.mocked(prisma.verification.findFirst).mockImplementation(
+    (args) =>
+      Promise.resolve(
+        memory.verification!.find((row) => matchesWhere(row, args?.where)) ?? null,
+      ) as ReturnType<typeof prisma.verification.findFirst>,
+  );
   vi.mocked(prisma.user.updateMany).mockImplementation((args) => {
     const rows = memory.user!.filter((row) => matchesWhere(row, args?.where));
-    for (const row of rows) Object.assign(row, args?.data);
-    return Promise.resolve({ count: rows.length }) as ReturnType<typeof prisma.user.updateMany>;
+    for (const row of rows) Object.assign(row, args.data);
+    return Object.defineProperty(Promise.resolve({ count: rows.length }), Symbol.toStringTag, {
+      value: "PrismaPromise",
+    }) as ReturnType<typeof prisma.user.updateMany>;
   });
+  vi.mocked(prisma.verification.create).mockImplementation((args) => {
+    const row = { id: `fence-${memory.verification!.length}`, ...args.data };
+    memory.verification!.push(row);
+    return Promise.resolve(row) as ReturnType<typeof prisma.verification.create>;
+  });
+
   vi.mocked(prisma.verification.findMany).mockImplementation((args) => {
     const rows = memory.verification!.filter((row) => matchesWhere(row, args?.where));
     return Promise.resolve(rows.slice(0, args?.take ?? rows.length)) as ReturnType<
@@ -141,6 +231,9 @@ function matchesWhere(row: Record<string, unknown>, where: unknown): boolean {
       if ("startsWith" in filter) return String(row[field]).startsWith(String(filter.startsWith));
       if ("in" in filter && Array.isArray(filter.in)) return filter.in.includes(row[field]);
       if ("equals" in filter) return row[field] === filter.equals;
+      if ("not" in filter) return row[field] !== filter.not;
+      if ("gt" in filter && filter.gt instanceof Date)
+        return row[field] instanceof Date && row[field] > filter.gt;
       throw new Error(`Unsupported fixture filter: ${field}`);
     }
     return row[field] === filter;
@@ -180,7 +273,10 @@ describe("password recovery", () => {
   it("enables session revocation and awaits revocation for the reset token's owner", async () => {
     expect(auth.options.emailAndPassword?.revokeSessionsOnPasswordReset).toBe(true);
     await expect(reset()).resolves.toEqual({ status: true });
-    expect(revokeCredentials.mock.calls).toEqual([[userId, { revokeSessions: true }], [userId]]);
+    expect(revokeCredentials.mock.calls).toEqual([
+      [userId, { revokeSessions: true }],
+      [userId, { revokeSessions: true }],
+    ]);
     expect(memory.session?.map((row) => row.userId)).toEqual(["another-owner"]);
   });
 
@@ -189,15 +285,20 @@ describe("password recovery", () => {
     memory.user![0]!.mustChangePassword = true;
     vi.mocked(prisma.user.findUnique).mockResolvedValue({ mustChangePassword: true } as never);
     await expect(reset()).resolves.toEqual({ status: true });
-    expect(revokeCredentials.mock.calls).toEqual([[userId, { revokeSessions: true }], [userId]]);
+    expect(revokeCredentials.mock.calls).toEqual([
+      [userId, { revokeSessions: true }],
+      [userId, { revokeSessions: true }],
+    ]);
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: userId, mustChangePassword: true },
       data: { mustChangePassword: false },
     });
     expect(memory.user![0]).toMatchObject({ emailVerified: false, mustChangePassword: false });
-    await expect(
-      auth.api.signInEmail({ body: { email: "owner@example.test", password: newPassword } }),
-    ).rejects.toMatchObject({ body: { code: "EMAIL_NOT_VERIFIED" } });
+    const signInChosen = () => {
+      const input = { body: { email: "owner@example.test", password: newPassword } };
+      return securedCall("/sign-in/email", input, () => rawAuth.api.signInEmail(input));
+    };
+    await expect(signInChosen()).rejects.toMatchObject({ body: { code: "EMAIL_NOT_VERIFIED" } });
     const { adminInviteAcceptUrl } = await import("./admin-invite-verification");
     const accept = await adminInviteAcceptUrl({
       secret: "password-reset-unit-test-secret-at-least-32-chars",
@@ -210,9 +311,7 @@ describe("password recovery", () => {
     expect(verified.status).toBe(302);
     expect(verified.headers.get("location")).toBe("/en-US/verify-email?ok=1");
     expect(memory.user![0]).toMatchObject({ emailVerified: true, mustChangePassword: false });
-    await expect(
-      auth.api.signInEmail({ body: { email: "owner@example.test", password: newPassword } }),
-    ).resolves.toMatchObject({ user: { id: userId } });
+    await expect(signInChosen()).resolves.toMatchObject({ user: { id: userId } });
   });
 
   it("refuses before changing the password or consuming the link, then accepts the same link", async () => {
@@ -244,14 +343,22 @@ describe("password recovery", () => {
       await vi.importActual<typeof import("./credential-revocation")>("./credential-revocation");
     const error = new Error("private database details");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(prisma.$transaction)
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error);
+    let failures = 3;
+    vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+      if (
+        Array.isArray(strings) &&
+        strings.join("").includes("FOR NO KEY UPDATE") &&
+        failures-- > 0
+      )
+        return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
+          value: "PrismaPromise",
+        }) as ReturnType<typeof prisma.$queryRaw>;
+      return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+    });
     revokeCredentials.mockImplementationOnce(realRevoke);
     const hash = memory.account?.[0]?.password;
     await expect(reset()).rejects.toMatchObject({ status: "SERVICE_UNAVAILABLE" });
-    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(4);
     expect(memory.account?.[0]?.password).toBe(hash);
     expect(memory.verification).toHaveLength(1);
     expect(memory.session).toHaveLength(3);
@@ -307,14 +414,25 @@ describe("password recovery", () => {
         value: "another-owner",
       };
       memory.verification!.push(unrelatedLink);
-      vi.mocked(prisma.$transaction)
-        .mockRejectedValueOnce(error)
-        .mockRejectedValueOnce(error)
-        .mockRejectedValueOnce(error);
+      let failures = 3;
+      vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+        if (
+          Array.isArray(strings) &&
+          strings.join("").includes("FOR NO KEY UPDATE") &&
+          failures-- > 0
+        )
+          return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
+            value: "PrismaPromise",
+          }) as ReturnType<typeof prisma.$queryRaw>;
+        return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+      });
       revokeCredentials.mockResolvedValueOnce(undefined).mockImplementationOnce(realRevoke);
       await expect(reset()).rejects.toBe(error);
-      expect(prisma.$transaction).toHaveBeenCalledTimes(3);
-      expect(revokeCredentials.mock.calls).toEqual([[userId, { revokeSessions: true }], [userId]]);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(revokeCredentials.mock.calls).toEqual([
+        [userId, { revokeSessions: true }],
+        [userId, { revokeSessions: true }],
+      ]);
       expect(memory.verification).toEqual([unrelatedLink]);
       expect(prisma.verification.deleteMany).toHaveBeenCalledWith({
         where: { value: userId, identifier: { startsWith: "reset-password:" } },
@@ -488,6 +606,90 @@ async function signIn() {
 }
 
 describe("password changes and session cache", () => {
+  it.each(["password verification", "session insert"] as const)(
+    "an admin's temporary-password sign-in paused at %s cannot outlive the invitee replacing it",
+    async (stage) => {
+      const headers = await signIn();
+      memory.user![0]!.mustChangePassword = true;
+      vi.mocked(prisma.user.findUnique).mockImplementation(
+        (args) =>
+          Promise.resolve(
+            memory.user!.find((row) => matchesWhere(row, args?.where)) ?? null,
+          ) as ReturnType<typeof prisma.user.findUnique>,
+      );
+      const context = await rawAuth.$context;
+      const reached = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      if (stage === "password verification") {
+        const verify = context.password.verify;
+        vi.spyOn(context.password, "verify").mockImplementationOnce(async (input) => {
+          const valid = await verify(input);
+          reached.resolve();
+          await release.promise;
+          return valid;
+        });
+      } else {
+        let pause = true;
+        const create = context.adapter.create;
+        vi.spyOn(context.adapter, "create").mockImplementation(
+          new Proxy(create, {
+            apply: async (create, owner, args) => {
+              if (pause && args[0]?.model === "session") {
+                pause = false;
+                reached.resolve();
+                await release.promise;
+              }
+              return Reflect.apply(create, owner, args);
+            },
+          }),
+        );
+      }
+      const { handlePasswordAuthRequest } = await import("./password-auth-handler");
+      const signInRequest = () =>
+        new Request("http://localhost:3000/api/auth/sign-in/email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+          body: JSON.stringify({ email: "owner@example.test", password }),
+        });
+      const attacker = handlePasswordAuthRequest(rawAuth, signInRequest());
+      await reached.promise;
+      const { revokeCredentialsAfterPasswordChange: realRevoke } =
+        await vi.importActual<typeof import("./credential-revocation")>("./credential-revocation");
+      revokeCredentials.mockImplementation(realRevoke);
+      try {
+        // The temporary-password guard forces sign-out even when the client
+        // asks to keep other sessions; clearing the flag must not admit an
+        // earlier sign-in that already verified the admin-known password.
+        await auth.api.changePassword({
+          headers,
+          body: {
+            currentPassword: password,
+            newPassword,
+            revokeOtherSessions: false,
+          },
+        });
+        expect(memory.user![0]!.mustChangePassword).toBe(false);
+      } finally {
+        release.resolve();
+      }
+      const refused = await attacker;
+      expect(refused.status).toBe(401);
+      expect(
+        refused.headers
+          .getSetCookie()
+          .filter((cookie) => cookie.includes("session_token="))
+          .every((cookie) => cookie.includes("session_token=;")),
+      ).toBe(true);
+      expect(memory.session!.filter((row) => row.userId === userId)).toHaveLength(1);
+      expect(
+        await passwordPepper.verify({
+          hash: String(memory.account![0]!.password),
+          password: newPassword,
+        }),
+      ).toBe(true);
+    },
+  );
+
   it.each([true, false])(
     "shares revocation only when sign-out is %s",
     async (revokeOtherSessions) => {
@@ -496,7 +698,10 @@ describe("password changes and session cache", () => {
         headers,
         body: { currentPassword: password, newPassword, revokeOtherSessions },
       });
-      if (revokeOtherSessions) expect(revokeCredentials).toHaveBeenCalledExactlyOnceWith(userId);
+      if (revokeOtherSessions)
+        expect(revokeCredentials).toHaveBeenCalledExactlyOnceWith(userId, {
+          keepSessionToken: expect.any(String),
+        });
       else expect(revokeCredentials).not.toHaveBeenCalled();
     },
   );
@@ -523,7 +728,9 @@ describe("password changes and session cache", () => {
       headers,
       body: { currentPassword: password, newPassword, revokeOtherSessions: false },
     });
-    expect(revokeCredentials).toHaveBeenCalledExactlyOnceWith(userId);
+    expect(revokeCredentials).toHaveBeenCalledExactlyOnceWith(userId, {
+      keepSessionToken: expect.any(String),
+    });
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
       where: { id: userId, mustChangePassword: true },
       data: { mustChangePassword: false },
@@ -547,10 +754,18 @@ describe("password changes and session cache", () => {
       await vi.importActual<typeof import("./credential-revocation")>("./credential-revocation");
     const error = new Error("revocation unavailable");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(prisma.$transaction)
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error)
-      .mockRejectedValueOnce(error);
+    let failures = 3;
+    vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+      if (
+        Array.isArray(strings) &&
+        strings.join("").includes("FOR NO KEY UPDATE") &&
+        failures-- > 0
+      )
+        return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
+          value: "PrismaPromise",
+        }) as ReturnType<typeof prisma.$queryRaw>;
+      return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+    });
     revokeCredentials.mockImplementation(realRevoke);
     await expect(
       auth.api.changePassword({
@@ -564,7 +779,7 @@ describe("password changes and session cache", () => {
         password: newPassword,
       }),
     ).toBe(true);
-    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(4);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("SECURITY"), {
       userId,
       errorClass: "Error",
@@ -727,4 +942,132 @@ it("password revocation aborts an already-open MCP request through the ban annou
   expect(activeSignal?.aborted).toBe(true);
   // Upstream's stateless transport reports an aborted bodyless response as 499.
   expect((await pending).status).toBe(499);
+});
+
+// Adapter writes commit independently; a spent reset link never returns on failure.
+describe("password reset without adapter transactions", { timeout: 20_000 }, () => {
+  it.each([400, 500])(
+    "fails closed when the password write fails after the token was spent (%i)",
+    async (status) => {
+      const { APIError } = await import("better-auth/api");
+      const { betterAuth: realBetterAuth } =
+        await vi.importActual<typeof import("better-auth")>("better-auth");
+      const { memoryAdapter } = await import("better-auth/adapters/memory");
+      const now = new Date();
+      const db: Record<string, Record<string, unknown>[]> = {
+        user: [
+          {
+            id: "u1",
+            email: "reset@example.test",
+            name: "Reset",
+            emailVerified: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        account: [],
+        session: [
+          {
+            id: "s1",
+            userId: "u1",
+            token: "session-token",
+            expiresAt: new Date(now.getTime() + 3_600_000),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        verification: [
+          {
+            id: "v1",
+            identifier: "reset-password:the-token",
+            value: "u1",
+            expiresAt: new Date(now.getTime() + 3_600_000),
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      };
+      const memory = memoryAdapter(db);
+      // Like chess's Prisma adapter: `transaction` just runs the work, so every
+      // write commits as it happens. The account (password) write fails.
+      const nonTransactional = ((adapterOptions: Parameters<typeof memory>[0]) => {
+        const inner = memory(adapterOptions);
+        const adapter: typeof inner = new Proxy(inner, {
+          get(target, key, receiver) {
+            if (key === "transaction")
+              return (work: (trx: typeof inner) => unknown) => work(adapter);
+            const value = Reflect.get(target, key, receiver);
+            if ((key === "update" || key === "updateMany") && typeof value === "function") {
+              return (args: { model: string }) => {
+                if (args.model === "account") {
+                  if (status === 400)
+                    throw new APIError("BAD_REQUEST", { message: "password write failed" });
+                  throw new Error("password write failed");
+                }
+                return Reflect.apply(value, target, [args]);
+              };
+            }
+            return value;
+          },
+        });
+        return adapter;
+      }) as typeof memory;
+      revokeCredentials.mockClear();
+      const instance = realBetterAuth({
+        baseURL: "https://app.example.test",
+        secret: "disposable-unit-test-secret-with-no-external-use",
+        database: nonTransactional,
+        rateLimit: { enabled: false },
+        user: rawAuth.options.user,
+        emailAndPassword: { ...rawAuth.options.emailAndPassword, enabled: true },
+        logger: { disabled: true },
+      } as Parameters<typeof realBetterAuth>[0]);
+      const ctx = await instance.$context;
+      const oldHash = await ctx.password.hash("old-password-12345");
+      db.account?.push({
+        id: "a1",
+        userId: "u1",
+        accountId: "u1",
+        providerId: "credential",
+        password: oldHash,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const res = await instance.handler(
+        new Request("https://app.example.test/api/auth/reset-password", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "https://app.example.test" },
+          body: JSON.stringify({ token: "the-token", newPassword: "new-password-12345" }),
+        }),
+      );
+
+      expect(res.status).toBe(status);
+      expect(db.verification).toHaveLength(0); // the link is spent
+      expect(db.session).toHaveLength(0); // existing sessions were deleted
+      expect(db.account?.[0]?.password).toBe(oldHash); // the old password stays
+      expect(revokeCredentials).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it("refuses server-only setPassword for an existing passwordless user outside a write lock", async () => {
+  const headers = await signIn();
+  memory.account = [];
+  await expect(rawAuth.api.setPassword({ headers, body: { newPassword } })).rejects.toThrow(
+    /password-write lock/,
+  );
+  expect(memory.account).toEqual([]);
+});
+
+it("production session hook refuses a raw unfenced password sign-in", async () => {
+  const response = await rawAuth.handler(
+    new Request("http://localhost:3000/api/auth/sign-in/email", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "owner@example.test", password }),
+    }),
+  );
+  expect(response.status).toBeGreaterThanOrEqual(400);
+  expect(memory.session).toHaveLength(3);
 });

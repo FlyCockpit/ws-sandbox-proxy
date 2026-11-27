@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   handler: vi.fn(),
 }));
 vi.mock("@wssp/env/load-dotenv", () => ({}));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     NODE_ENV: "test",

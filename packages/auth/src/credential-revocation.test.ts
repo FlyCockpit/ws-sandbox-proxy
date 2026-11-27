@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 3 } }));
 vi.mock("@wssp/db", async () => {
   const { createMockPrisma } = await import("../../api/src/test/mock-prisma");
   return { default: await createMockPrisma() };
@@ -84,8 +85,8 @@ describe("standing credential revocation", () => {
     });
   });
 
-  it("leaves machine enrollments and host credentials unchanged", async () => {
-    await revokeCredentialsAfterPasswordChange("owner");
+  it("a signed-in password change preserves machine enrollments and host credentials", async () => {
+    await revokeCredentialsAfterPasswordChange("owner", { keepSessionToken: "changer-token" });
     for (const model of [prisma.hostToken, prisma.hostDeviceCredential, prisma.sandboxHost]) {
       expect(model.updateMany).not.toHaveBeenCalled();
       expect(model.update).not.toHaveBeenCalled();
@@ -95,6 +96,21 @@ describe("standing credential revocation", () => {
     expect(prisma.deviceCode.deleteMany).toHaveBeenCalledExactlyOnceWith({
       where: { userId: "owner", scope: "user-login" },
     });
+  });
+
+  it("reset sweeps revoke both machine credential types and all owner-bound device requests", async () => {
+    await revokeCredentialsAfterPasswordChange("owner", { revokeSessions: true });
+    for (const model of [prisma.hostToken, prisma.hostDeviceCredential]) {
+      expect(model.updateMany).toHaveBeenCalledExactlyOnceWith({
+        where: { userId: "owner", revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+    }
+    expect(prisma.deviceCode.deleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { userId: "owner" },
+    });
+    expect(prisma.sandboxHost.updateMany).not.toHaveBeenCalled();
+    expect(prisma.sandboxHost.deleteMany).not.toHaveBeenCalled();
   });
 
   it("invalidates the owner's existing and in-flight authority tickets and signals live consumers", async () => {
@@ -171,5 +187,71 @@ describe("password change revocation target", () => {
     },
   ])("ignores unsuccessful or ineligible requests: %j", (ctx) => {
     expect(passwordChangeRevocationTarget(ctx)).toBeNull();
+  });
+});
+
+describe("password-write security cleanup", () => {
+  it("a change keeps only its own issued token", async () => {
+    expect(
+      passwordChangeRevocationTarget({
+        path: "/change-password",
+        body: { revokeOtherSessions: true },
+        returned: { user: { id: "owner" }, token: "mine" },
+      }),
+    ).toEqual({ userId: "owner", keepSessionToken: "mine" });
+    expect(
+      passwordChangeRevocationTarget({
+        path: "/change-password",
+        body: { revokeOtherSessions: true },
+        returned: { user: { id: "owner" } },
+      }),
+    ).toBeNull();
+    await revokeCredentialsAfterPasswordChange("owner", { keepSessionToken: "mine" });
+    expect(prisma.session.deleteMany).toHaveBeenCalledWith({
+      where: { userId: "owner", token: { not: "mine" } },
+    });
+  });
+
+  it("scrambles first, then revokes all sessions and standing credentials under the owner lock", async () => {
+    const { quarantineUntrustedPasswordWrite } = await import("./credential-revocation");
+    const order: string[] = [];
+    vi.mocked(prisma.account.updateMany).mockImplementationOnce(() => {
+      order.push("scramble");
+      return Object.defineProperty(Promise.resolve({ count: 1 }), Symbol.toStringTag, {
+        value: "PrismaPromise",
+      }) as ReturnType<typeof prisma.account.updateMany>;
+    });
+    vi.mocked(prisma.$transaction).mockImplementationOnce(async (work) => {
+      order.push("sweep");
+      return typeof work === "function" ? work(prisma) : Promise.all(work);
+    });
+    const hash = vi.fn(async () => "peppered-unusable-hash");
+    await quarantineUntrustedPasswordWrite("owner", { hash });
+    expect(order).toEqual(["scramble", "sweep"]);
+    expect(hash).toHaveBeenCalledWith(expect.any(String));
+    expect(prisma.account.updateMany).toHaveBeenCalledWith({
+      where: { userId: "owner", providerId: "credential" },
+      data: { password: "peppered-unusable-hash" },
+    });
+    expect(prisma.session.deleteMany).toHaveBeenCalledWith({ where: { userId: "owner" } });
+    expect(prisma.hostToken.updateMany).toHaveBeenCalledWith({
+      where: { userId: "owner", revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+    expect(prisma.hostDeviceCredential.updateMany).toHaveBeenCalledWith({
+      where: { userId: "owner", revokedAt: null },
+      data: { revokedAt: expect.any(Date) },
+    });
+  });
+
+  it("revocation waits for the same shared slots as password writes", async () => {
+    const { tryAcquireSlots, releaseSlots } = await import("./lock-slots");
+    expect(tryAcquireSlots(2)).toBe(true);
+    const pending = revokeCredentialsAfterPasswordChange("owner", { revokeSessions: true });
+    await Promise.resolve();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    releaseSlots(2);
+    await pending;
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
   });
 });

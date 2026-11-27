@@ -39,6 +39,12 @@ beforeEach(() => {
   store = deviceStore();
   Object.assign(prisma, store.db);
   store.state.deviceCode.set("code-1", deviceRow({ status: "pending", userId: null }));
+  store.state.session.set("approver-session", {
+    id: "approver-session",
+    userId: "user-1",
+    expiresAt: new Date("2099-01-01"),
+    impersonatedBy: null,
+  });
   store.state.user.set("user-1", {
     id: "user-1",
     emailVerified: true,
@@ -83,6 +89,7 @@ it.each(["claim", "approve", "poll"])(
       await transitionDeviceCode({
         userCode: "ABCDEFGH",
         userId: "user-1",
+        sessionId: "approver-session",
         action,
         intent: { kind: "create" },
       });

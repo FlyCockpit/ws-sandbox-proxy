@@ -121,6 +121,24 @@ describe("sandboxHostsRouter — unit (mocked Prisma; no real-DB test yet for th
     expect(db.sandboxHost.findMany).not.toHaveBeenCalled();
   });
 
+  it("refuses a host token after reset wins between admission and the locked mint", async () => {
+    db.sandboxHost.findFirst.mockResolvedValue(hostRow({ userId: "test-user-id" }) as never);
+    db.hostToken.create.mockResolvedValue(tokenRow() as never);
+    db.$transaction.mockImplementation(async (work: (tx: typeof db) => Promise<unknown>) => {
+      // Entry authorization already completed; recovery deletes the durable
+      // session before this transaction obtains the owner's credential lock.
+      db.session.findUnique.mockResolvedValueOnce(null);
+      return work(db);
+    });
+    await expect(
+      client().createHostToken({ hostId: "host-1", name: "daemon" }),
+    ).rejects.toMatchObject({
+      code: "UNAUTHORIZED",
+    });
+    // An exit-only gate would hide the reply while leaving a usable token.
+    expect(db.hostToken.create).not.toHaveBeenCalled();
+  });
+
   it("lists owner-scoped hosts", async () => {
     db.sandboxHost.findMany.mockResolvedValue([hostRow()]);
     const result = await client().listHosts({ limit: 20 });

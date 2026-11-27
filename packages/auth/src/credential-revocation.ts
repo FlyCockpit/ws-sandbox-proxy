@@ -1,7 +1,10 @@
+import { randomBytes } from "node:crypto";
 import prisma from "@wssp/db";
 import { withAuthorityChange } from "@wssp/db/authority";
 import { notifyAuthSessionsRevoked } from "@wssp/db/session-revocation";
 import { isAPIError } from "better-auth/api";
+import { hashPassword } from "better-auth/crypto";
+import { withLockSlot } from "./lock-slots.js";
 import { REVOKED_SESSION_OWNERS_MAX } from "./session-revocation-scope";
 
 const REVOCATION_ATTEMPTS = 3;
@@ -19,7 +22,10 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * order; NO KEY UPDATE also permits unrelated FK KEY SHARE writers.
  *
  * Reset revokes all sessions in this transaction before Better Auth may write
- * the password or consume the link, then sweeps credentials again afterward.
+ * the password or consume the link, then sweeps ALL sessions and credentials again afterward.
+ * Lock order: password-write (if present) → this existing owner row lock.
+ * Single-connection admissions need no extra slot; never add a competing
+ * credential advisory lock or reverse owner → host → code order.
  * A revoked session can continue reading for at most the 60-second cookie-cache
  * window; credential minting and reset re-check the live session row.
  * If reset fails before the password write, signing out everywhere with the
@@ -28,69 +34,89 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  */
 export async function revokeCredentialsAfterPasswordChange(
   userId: string,
-  { revokeSessions = false }: { revokeSessions?: boolean } = {},
+  {
+    revokeSessions = false,
+    keepSessionToken,
+  }: { revokeSessions?: boolean; keepSessionToken?: string } = {},
 ): Promise<void> {
   await withAuthorityChange({ ownerId: userId }, async () => {
     for (let attempt = 0; ; attempt += 1) {
       try {
-        const impersonations = await prisma.$transaction(async (tx) => {
-          await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${userId} FOR NO KEY UPDATE`;
-          // Delete sessions in the revocation transaction with the owner lock held:
-          // no surviving browser session may authorize a mint between sweeps.
-          if (revokeSessions) await tx.session.deleteMany({ where: { userId } });
-          // An administrator's impersonation belongs to the target user, but
-          // it is still authority obtained by this administrator's password.
-          const impersonations = await tx.session.findMany({
-            where: { impersonatedBy: userId },
-            select: { id: true, userId: true },
-            take: REVOKED_SESSION_OWNERS_MAX + 1,
-          });
-          await tx.session.deleteMany({ where: { impersonatedBy: userId } });
-          // Better Auth 1.7.18: 2fa-<random> holds the user ID. Pending
-          // OTPs and attempt counters hold hashes/counts, keyed by that ID.
-          // Delete each bounded batch with its dependents while holding the
-          // owner lock; neither sweep may leave a pending sign-in usable.
-          for (;;) {
-            const challenges = await tx.verification.findMany({
-              where: { value: userId, identifier: { startsWith: "2fa-" } },
-              select: { identifier: true },
-              take: TWO_FACTOR_CHALLENGE_BATCH,
+        const impersonations = await withLockSlot(() =>
+          prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT id FROM "user" WHERE id = ${userId} FOR NO KEY UPDATE`;
+            // Delete sessions in the revocation transaction with the owner lock held:
+            // no surviving browser session may authorize a mint between sweeps.
+            if (revokeSessions || keepSessionToken)
+              await tx.session.deleteMany({
+                where: {
+                  userId,
+                  ...(keepSessionToken ? { token: { not: keepSessionToken } } : {}),
+                },
+              });
+            // An administrator's impersonation belongs to the target user, but
+            // it is still authority obtained by this administrator's password.
+            const impersonations = await tx.session.findMany({
+              where: { impersonatedBy: userId },
+              select: { id: true, userId: true },
+              take: REVOKED_SESSION_OWNERS_MAX + 1,
             });
-            if (challenges.length === 0) break;
+            await tx.session.deleteMany({ where: { impersonatedBy: userId } });
+            // Better Auth 1.7.18: 2fa-<random> holds the user ID. Pending
+            // OTPs and attempt counters hold hashes/counts, keyed by that ID.
+            // Delete each bounded batch with its dependents while holding the
+            // owner lock; neither sweep may leave a pending sign-in usable.
+            for (;;) {
+              const challenges = await tx.verification.findMany({
+                where: { value: userId, identifier: { startsWith: "2fa-" } },
+                select: { identifier: true },
+                take: TWO_FACTOR_CHALLENGE_BATCH,
+              });
+              if (challenges.length === 0) break;
+              await tx.verification.deleteMany({
+                where: {
+                  identifier: {
+                    in: challenges.flatMap(({ identifier }) => [
+                      identifier,
+                      `2fa-attempts-${identifier}`,
+                      `2fa-otp-${identifier}`,
+                    ]),
+                  },
+                },
+              });
+            }
             await tx.verification.deleteMany({
               where: {
-                identifier: {
-                  in: challenges.flatMap(({ identifier }) => [
-                    identifier,
-                    `2fa-attempts-${identifier}`,
-                    `2fa-otp-${identifier}`,
-                  ]),
-                },
+                OR: [
+                  { value: userId, identifier: { startsWith: "trust-device-" } },
+                  // Authenticated-session OTPs use userId!sessionId instead.
+                  { identifier: { startsWith: `2fa-otp-${userId}!` } },
+                ],
               },
             });
-          }
-          await tx.verification.deleteMany({
-            where: {
-              OR: [
-                { value: userId, identifier: { startsWith: "trust-device-" } },
-                // Authenticated-session OTPs use userId!sessionId instead.
-                { identifier: { startsWith: `2fa-otp-${userId}!` } },
-              ],
-            },
-          });
-          const where = { userId, revokedAt: null };
-          const data = { revokedAt: new Date() };
-          await tx.sdkKey.updateMany({ where, data });
-          await tx.mcpGrant.updateMany({ where, data });
-          // Machine enrollments/host credentials are deliberately not revoked here pending the owner decision.
-          // Claimed pending and approved CLI requests must not mint a credential later.
-          await tx.deviceCode.deleteMany({ where: { userId, scope: "user-login" } });
-          await tx.oauthAccessToken.deleteMany({ where: { userId } });
-          await tx.oauthRefreshToken.deleteMany({ where: { userId } });
-          await tx.oauthConsent.deleteMany({ where: { userId } });
-          return impersonations;
-        });
-        if (revokeSessions) notifyAuthSessionsRevoked({ userId });
+            const where = { userId, revokedAt: null };
+            const data = { revokedAt: new Date() };
+            await tx.sdkKey.updateMany({ where, data });
+            await tx.mcpGrant.updateMany({ where, data });
+            if (revokeSessions && !keepSessionToken) {
+              // Both recovery sweeps and quarantine revoke machine authority
+              // under the same owner fence used by enrollment and token minting.
+              // Keep host rows and their data; only authentication is revoked.
+              await tx.hostToken.updateMany({ where, data });
+              await tx.hostDeviceCredential.updateMany({ where, data });
+              // Claimed pending and approved host/CLI codes cannot mint later.
+              await tx.deviceCode.deleteMany({ where: { userId } });
+            } else {
+              // A signed-in password change keeps the owner's enrolled hosts.
+              await tx.deviceCode.deleteMany({ where: { userId, scope: "user-login" } });
+            }
+            await tx.oauthAccessToken.deleteMany({ where: { userId } });
+            await tx.oauthRefreshToken.deleteMany({ where: { userId } });
+            await tx.oauthConsent.deleteMany({ where: { userId } });
+            return impersonations;
+          }),
+        );
+        if (revokeSessions || keepSessionToken) notifyAuthSessionsRevoked({ userId });
         if (impersonations.length > REVOKED_SESSION_OWNERS_MAX) notifyAuthSessionsRevoked({});
         else
           for (const session of impersonations)
@@ -112,19 +138,58 @@ export async function revokeCredentialsAfterPasswordChange(
   });
 }
 
+export type PasswordChangeRevocationTarget = { userId: string; keepSessionToken: string };
+
 /** Only a successful password change requesting sign-out revokes credentials. */
 export function passwordChangeRevocationTarget(ctx: {
   path: string;
   body?: unknown;
   returned?: unknown;
-}): string | null {
+}): PasswordChangeRevocationTarget | null {
   if (ctx.path !== "/change-password" || !isRecord(ctx.body)) return null;
   if (ctx.body.revokeOtherSessions !== true || isAPIError(ctx.returned)) return null;
   if (!isRecord(ctx.returned) || !isRecord(ctx.returned.user)) return null;
   const id = ctx.returned.user.id;
-  return typeof id === "string" && id.length > 0 ? id : null;
+  const token = ctx.returned.token;
+  if (typeof id !== "string" || id.length === 0 || typeof token !== "string" || token.length === 0)
+    return null;
+  return { userId: id, keepSessionToken: token };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
+}
+
+/**
+ * A delayed adapter password write may commit after its outer lock expired.
+ * Scramble the credential first, then run the all-session revocation, so a
+ * sign-in either sees the changed fingerprint or is caught by that sweep.
+ * This deliberately takes no password-write lock: the caller may still hold it.
+ * Recovery uses a fresh Forgot password link. Both steps retry and fail loudly.
+ */
+export async function quarantineUntrustedPasswordWrite(
+  userId: string,
+  { hash = hashPassword }: { hash?: (password: string) => Promise<string> } = {},
+): Promise<void> {
+  const unusable = await hash(randomBytes(32).toString("base64url"));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await prisma.account.updateMany({
+        where: { userId, providerId: "credential" },
+        data: { password: unusable },
+      });
+      break;
+    } catch (error) {
+      if (attempt + 1 < REVOCATION_ATTEMPTS) {
+        await sleep(attempt === 0 ? 100 : 400);
+        continue;
+      }
+      console.error("[auth] SECURITY: untrusted password scramble failed", {
+        userId,
+        errorClass: error instanceof Error ? error.constructor.name : typeof error,
+      });
+      throw error;
+    }
+  }
+  await revokeCredentialsAfterPasswordChange(userId, { revokeSessions: true });
 }

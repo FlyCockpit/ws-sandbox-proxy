@@ -7,6 +7,7 @@ const base = "http://localhost:3000";
 vi.mock("@wssp/db", async () => ({
   default: (await (await import("@wssp/db/testing/pg")).pgTestDatabase()).prisma,
 }));
+vi.mock("@wssp/env/shared", () => ({ env: { DATABASE_POOL_MAX: 10 } }));
 vi.mock("@wssp/env/server", () => ({
   env: {
     BETTER_AUTH_URL: "http://localhost:3000",
@@ -28,6 +29,7 @@ vi.mock("@wssp/mailer", () => ({
 }));
 const db = await pgTestDatabase();
 const { auth } = await import("./index");
+const { handlePasswordAuthRequest } = await import("./password-auth-handler");
 const { poolInviteSignup } = await import("./signup-policy");
 afterAll(() => db.close());
 const password = "correct-horse-battery-pool";
@@ -55,7 +57,8 @@ async function invite() {
   return { email, token, row, ownerId: id };
 }
 async function post(body: unknown, path = "/sign-up/email") {
-  return auth.handler(
+  return handlePasswordAuthRequest(
+    auth,
     new Request(`${base}/api/auth${path}`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: base },
