@@ -115,13 +115,27 @@ sandbox, operation and transfer belongs to exactly one user account.
   magic-link and email-OTP sign-in plugins are not enabled. Plugin additions
   must audit this list and the before/after session-create proof rules.
 
-  Adapter transactions stay off: sign-up mail resolves locale through the
+  Only `/reset-password` uses a real Better Auth adapter transaction. Token
+  consumption, the chosen password, clearing `mustChangePassword` and deletion
+  of all competing reset links commit together; a write or commit failure rolls
+  them all back and leaves the same token retryable. Independent pre-sweep
+  revocation may remain committed. Account after-hooks run after the reset
+  commits and are discarded on rollback, preserving the lapse/quarantine fence.
+  Standalone sign-up stays nontransactional: mail resolves locale through the
   global Prisma client, which cannot read an uncommitted user, and SMTP retries
-  have no total delivery deadline. If the password write fails after Better Auth
-  spent the link and deleted sessions, the old password remains usable and no
-  post-sweep runs; request a fresh reset link. Failed post-reset cleanup still
-  clears `mustChangePassword` before reporting the failure. It preserves mailbox
-  proof: only the mailed `/verify-email` link verifies an address. Exhausted cleanup/quarantine errors are logged as SECURITY and
+  have no total delivery deadline.
+
+  `/verify-email` writes mailbox proof and invalidates outstanding reset tokens
+  together in a short transaction, acquiring password-write then the existing
+  owner row lock on the same connection. Its selector must be one exact,
+  case-sensitive scalar id or email. A reset rechecks token and owner after the
+  owner lock; a verification or winning reset invalidates even a competitor
+  that read the old token before waiting. Verification never replaces the
+  password or clears the temporary-password restriction. Reset never establishes
+  mailbox proof, including without SMTP. The password holder reserves one
+  nested slot for the reset transaction; revocation inside it reuses that client,
+  and session/authority notifications publish only after commit. A pool of three
+  leaves the third connection for ordinary Better Auth reads. Exhausted revocation/quarantine errors are logged as SECURITY and
   propagated. A sign-in completed before password commit can mint a standing
   credential in that gap; it survives only if every post-sweep attempt fails.
 

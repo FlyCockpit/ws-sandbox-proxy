@@ -255,3 +255,66 @@ describe("password-write security cleanup", () => {
     expect(prisma.$transaction).toHaveBeenCalledOnce();
   });
 });
+
+it.each([true, false])(
+  "a reused transaction settles authority and session notifications after commit=%s",
+  async (commit) => {
+    const { afterCredentialCommit, withCredentialTransaction } = await import(
+      "./credential-revocation"
+    );
+    const seen = vi.fn();
+    const notified = vi.fn();
+    const extra = vi.fn();
+    const off = onAuthorityCommitted(seen);
+    const offSessions = onAuthSessionsRevoked(notified);
+    const error = new Error("owned fixture transaction rollback");
+    const before = authorityTicket({ ownerId: "transaction-owner" });
+    try {
+      const work = withCredentialTransaction(prisma, async (tx) => {
+        await revokeCredentialsAfterPasswordChange("transaction-owner", { revokeSessions: true });
+        expect(tx).toBe(prisma);
+        expect(prisma.$transaction).toHaveBeenCalledOnce();
+        expect(before()).toBe(false);
+        expect(authorityTicket({ ownerId: "transaction-owner" })()).toBe(false);
+        expect(seen).not.toHaveBeenCalled();
+        expect(notified).not.toHaveBeenCalled();
+        afterCredentialCommit(extra);
+        if (!commit) throw error;
+      });
+      if (commit) await work;
+      else await expect(work).rejects.toBe(error);
+      await Promise.resolve();
+      expect(seen).toHaveBeenCalledTimes(commit ? 1 : 0);
+      expect(notified).toHaveBeenCalledTimes(commit ? 1 : 0);
+      expect(extra).toHaveBeenCalledTimes(commit ? 1 : 0);
+      expect(authorityTicket({ ownerId: "transaction-owner" })()).toBe(true);
+      for (const model of [prisma.hostToken, prisma.hostDeviceCredential])
+        expect(model.updateMany).toHaveBeenCalledWith({
+          where: { userId: "transaction-owner", revokedAt: null },
+          data: { revokedAt: expect.any(Date) },
+        });
+    } finally {
+      off();
+      offSessions();
+    }
+  },
+);
+
+it("does not retry a failed statement in an already-aborted reused transaction", async () => {
+  vi.useRealTimers();
+  const { withCredentialTransaction } = await import("./credential-revocation");
+  const failure = new Error("owned fixture statement failure");
+  vi.mocked(prisma.hostToken.updateMany).mockRejectedValueOnce(failure);
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  await expect(
+    withCredentialTransaction(prisma, async () => {
+      await revokeCredentialsAfterPasswordChange("owner", { revokeSessions: true });
+    }),
+  ).rejects.toBe(failure);
+  expect(prisma.$transaction).toHaveBeenCalledOnce();
+  expect(prisma.hostToken.updateMany).toHaveBeenCalledOnce();
+  expect(log).toHaveBeenCalledWith(expect.stringContaining("SECURITY"), {
+    userId: "owner",
+    errorClass: "Error",
+  });
+});

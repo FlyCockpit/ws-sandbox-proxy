@@ -55,9 +55,14 @@ const reviewed: Record<string, string> = {
   // Password recovery revokes standing credentials before and after reset; no mailbox proof input or write.
   // Round 3: durable session write checks and reset-link/temporary-password finalization; no mailbox proof input or write.
   // Reset-race: session/write fences and all-session post-sweep; mailbox proof unchanged.
-  "packages/auth/src/index.ts": "f2def9077a37c53591184ff4832b1cfa87bd5a2e6bd8eed42b8c038de940caed",
+  // Activation port: selective reset adapter preserves proof policy and defers session signals until commit.
+  "packages/auth/src/index.ts": "34c4a2d38ee04b1a4ad8fdc1d005109c71074ac9a457c00c6c092bf143b5ae39",
   // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
   // no emailVerified write outside /verify-email. Writes nothing.
+  // Activation: only mediates BA verify-email proof writes under PW -> owner,
+  // with atomic reset-token deletion. Reset never writes mailbox proof.
+  "packages/auth/src/password-reset-adapter.ts":
+    "3bc14d2c6deedba44f19677aad5f5a36dfedfa805e0b2e623f592dfb39bea377",
   "packages/auth/src/mailbox-proof-policy.ts":
     "b0f9738a039840e2abe1b026b768df4cc4d1d54dbaa3df7dd4d55875e9402c25",
   // Invites: no proof write. The mailed accept link is Better Auth's own

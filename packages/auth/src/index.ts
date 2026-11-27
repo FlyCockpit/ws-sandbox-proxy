@@ -11,11 +11,11 @@ import {
   sendEmail,
 } from "@wssp/mailer";
 import { betterAuth } from "better-auth";
-import { prismaAdapter } from "better-auth/adapters/prisma";
 import { APIError, createAuthMiddleware, getSession } from "better-auth/api";
 import { deleteSessionCookie } from "better-auth/cookies";
 import { admin, deviceAuthorization, twoFactor } from "better-auth/plugins";
 import {
+  afterCredentialCommit,
   passwordChangeRevocationTarget,
   revokeCredentialsAfterPasswordChange,
 } from "./credential-revocation.js";
@@ -30,6 +30,7 @@ import { resolveMcpPlugins } from "./mcp-plugins";
 import { createPasswordChangeGuard } from "./password-change-guard.js";
 import { createPasswordPepper } from "./password-pepper.js";
 import { PASSWORD_MAX_LENGTH, PASSWORD_MIN_LENGTH } from "./password-policy.js";
+import { createPasswordResetAdapter } from "./password-reset-adapter.js";
 import {
   fencePasswordSessionAfter,
   fencePasswordSessionBefore,
@@ -87,7 +88,7 @@ export const passwordPepper = createPasswordPepper({
 });
 
 export const auth = betterAuth({
-  database: prismaAdapter(
+  database: createPasswordResetAdapter(
     prisma.$extends({
       query: {
         user: {
@@ -133,27 +134,24 @@ export const auth = betterAuth({
           delete: async ({ args, query }) => {
             const deleted = await query(args);
             if (typeof deleted?.userId === "string" && typeof deleted?.id === "string")
-              notifySessionRevocations([{ userId: deleted.userId, sessionId: deleted.id }]);
-            else notifySessionOwners(typeof deleted?.userId === "string" ? [deleted.userId] : null);
+              afterCredentialCommit(() =>
+                notifySessionRevocations([{ userId: deleted.userId, sessionId: deleted.id }]),
+              );
+            else
+              afterCredentialCommit(() =>
+                notifySessionOwners(typeof deleted?.userId === "string" ? [deleted.userId] : null),
+              );
             return deleted;
           },
           deleteMany: async ({ args, query }) => {
             const scopes = await sessionRevocationsFor(args.where);
             const deleted = await query(args);
-            notifySessionRevocations(scopes);
+            afterCredentialCommit(() => notifySessionRevocations(scopes));
             return deleted;
           },
         },
       },
     }),
-    {
-      provider: "postgresql",
-      // Keep adapter transactions off. Sign-up sends verification mail and its
-      // callback reads locale through the global Prisma client, which cannot see
-      // an uncommitted user. SMTP can also retry three times without a total
-      // delivery deadline, exceeding an interactive transaction timeout.
-      transaction: false,
-    },
   ),
 
   logger: {
@@ -204,24 +202,9 @@ export const auth = betterAuth({
     // Sweep ALL sessions and credentials again after the password commit,
     // catching sign-ins that landed in the pre-sweep/write gap. Failures log and rethrow.
     onPasswordReset: async ({ user }) => {
-      let revocationFailure: { error: unknown } | undefined;
-      try {
-        await revokeCredentialsAfterPasswordChange(user.id, { revokeSessions: true });
-      } catch (error) {
-        revocationFailure = { error };
-      }
-      // The password is already committed. Finish recovery even when the
-      // second sweep failed; no other emailed recovery link may restore it.
-      // Clear the temporary-password restriction without asserting mailbox
-      // verification: only Better Auth's mailed /verify-email link does that.
-      await prisma.verification.deleteMany({
-        where: { value: user.id, identifier: { startsWith: "reset-password:" } },
-      });
-      await prisma.user.updateMany({
-        where: { id: user.id, mustChangePassword: true },
-        data: { mustChangePassword: false },
-      });
-      if (revocationFailure) throw revocationFailure.error;
+      // Token/password/temporary-state cleanup has committed in the adapter.
+      // Sweep again to catch authority minted while that transaction was open.
+      await revokeCredentialsAfterPasswordChange(user.id, { revokeSessions: true });
     },
     sendResetPassword: async ({ user, url }) => {
       // Same locale-resolution dance as sendVerificationEmail: Better-Auth's
@@ -433,7 +416,7 @@ export const auth = betterAuth({
         await revokeCredentialsAfterPasswordChange(revocationTarget.userId, {
           keepSessionToken: revocationTarget.keepSessionToken,
         });
-      await passwordChangeGuard.after(ctx);
+      if (ctx.path !== "/reset-password") await passwordChangeGuard.after(ctx);
     }),
   },
   disabledPaths: [...DISABLED_BETTER_AUTH_PATHS],

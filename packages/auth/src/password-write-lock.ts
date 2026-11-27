@@ -72,6 +72,7 @@ const POLL_MS = 50;
 
 type HeldLock = {
   userId: string;
+  path: string;
   held: boolean;
   expiresAt: number;
   /** Answers true only while the lock transaction is still open (and so still holds the lock). */
@@ -150,6 +151,7 @@ export async function withPasswordWriteLock(
     async () => {
       const lock: HeldLock = {
         userId: target.userId,
+        path,
         held: false,
         expiresAt: performance.now() + HELD_FOR_MS,
         probe: async () => false,
@@ -227,8 +229,8 @@ export function passwordWriteLockHeld(): boolean {
  * the account hooks before every password write and by the session hook for
  * the session a password change mints.
  */
-export function assertPasswordWriteLocked(): void {
-  if (!passwordWriteLockHeld()) {
+export function assertPasswordWriteLocked(userId?: string): void {
+  if (!passwordWriteLockHeld() || (userId !== undefined && heldFor.getStore()?.userId !== userId)) {
     throw new Error(
       "Password write refused: the request does not hold the user's password-write lock (see password-write-lock.ts).",
     );
@@ -296,4 +298,9 @@ export async function confirmPasswordWriteLocked({
     message:
       "This password change could not be confirmed, so the account's password was disabled for safety. Use Forgot password to set a new one.",
   });
+}
+
+/** The request path stays accurate after lapse, including BA rollback hook decisions. */
+export function isResetPasswordWrite(): boolean {
+  return heldFor.getStore()?.path === RESET_PASSWORD_PATH;
 }

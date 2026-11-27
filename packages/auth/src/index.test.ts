@@ -95,10 +95,11 @@ const auth = {
   },
 };
 const { default: prisma } = await import("@wssp/db");
-it("keeps Prisma adapter transactions disabled", () => {
+it("keeps standalone Prisma operations nontransactional", async () => {
   expect(adapterOptions).toContainEqual(
     expect.objectContaining({ provider: "postgresql", transaction: false }),
   );
+  expect((await rawAuth.$context).adapter.options?.adapterConfig.transaction).toBe(false);
 });
 const userId = "reset-owner";
 const password = "original-password-test-only";
@@ -155,7 +156,14 @@ beforeEach(async () => {
     twoFactor: [],
   });
   vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
-  vi.mocked(prisma.$queryRaw).mockResolvedValue([{ locked: true }]);
+  vi.mocked(prisma.$queryRaw).mockImplementation(
+    (sql, id) =>
+      Promise.resolve(
+        Array.isArray(sql) && sql.join("").includes("FOR NO KEY UPDATE")
+          ? [{ id }]
+          : [{ locked: true }],
+      ) as ReturnType<typeof prisma.$queryRaw>,
+  );
   vi.mocked(prisma.session.findFirst).mockImplementation(
     (args) =>
       Promise.resolve(
@@ -344,7 +352,7 @@ describe("password recovery", () => {
     const error = new Error("private database details");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     let failures = 3;
-    vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+    vi.mocked(prisma.$queryRaw).mockImplementation((strings, id) => {
       if (
         Array.isArray(strings) &&
         strings.join("").includes("FOR NO KEY UPDATE") &&
@@ -353,7 +361,11 @@ describe("password recovery", () => {
         return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
           value: "PrismaPromise",
         }) as ReturnType<typeof prisma.$queryRaw>;
-      return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+      return Promise.resolve(
+        Array.isArray(strings) && strings.join("").includes("FOR NO KEY UPDATE")
+          ? [{ id }]
+          : [{ locked: true }],
+      ) as ReturnType<typeof prisma.$queryRaw>;
     });
     revokeCredentials.mockImplementationOnce(realRevoke);
     const hash = memory.account?.[0]?.password;
@@ -415,20 +427,25 @@ describe("password recovery", () => {
       };
       memory.verification!.push(unrelatedLink);
       let failures = 3;
-      vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+      vi.mocked(prisma.$queryRaw).mockImplementation((strings, id) => {
         if (
           Array.isArray(strings) &&
           strings.join("").includes("FOR NO KEY UPDATE") &&
+          revokeCredentials.mock.calls.length === 2 &&
           failures-- > 0
         )
           return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
             value: "PrismaPromise",
           }) as ReturnType<typeof prisma.$queryRaw>;
-        return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+        return Promise.resolve(
+          Array.isArray(strings) && strings.join("").includes("FOR NO KEY UPDATE")
+            ? [{ id }]
+            : [{ locked: true }],
+        ) as ReturnType<typeof prisma.$queryRaw>;
       });
       revokeCredentials.mockResolvedValueOnce(undefined).mockImplementationOnce(realRevoke);
       await expect(reset()).rejects.toBe(error);
-      expect(prisma.$transaction).toHaveBeenCalledTimes(4);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(5);
       expect(revokeCredentials.mock.calls).toEqual([
         [userId, { revokeSessions: true }],
         [userId, { revokeSessions: true }],
@@ -442,8 +459,8 @@ describe("password recovery", () => {
         data: { mustChangePassword: false },
       });
       expect(memory.user![0]).toMatchObject({ emailVerified, mustChangePassword: false });
-      expect(revokeCredentials.mock.invocationCallOrder[1]).toBeLessThan(
-        vi.mocked(prisma.verification.deleteMany).mock.invocationCallOrder[0]!,
+      expect(vi.mocked(prisma.user.updateMany).mock.invocationCallOrder[0]).toBeLessThan(
+        revokeCredentials.mock.invocationCallOrder[1]!,
       );
       expect(vi.mocked(prisma.verification.deleteMany).mock.invocationCallOrder[0]).toBeLessThan(
         vi.mocked(prisma.user.updateMany).mock.invocationCallOrder[0]!,
@@ -773,7 +790,7 @@ describe("password changes and session cache", () => {
     const error = new Error("revocation unavailable");
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     let failures = 3;
-    vi.mocked(prisma.$queryRaw).mockImplementation((strings) => {
+    vi.mocked(prisma.$queryRaw).mockImplementation((strings, id) => {
       if (
         Array.isArray(strings) &&
         strings.join("").includes("FOR NO KEY UPDATE") &&
@@ -782,7 +799,11 @@ describe("password changes and session cache", () => {
         return Object.defineProperty(Promise.reject(error), Symbol.toStringTag, {
           value: "PrismaPromise",
         }) as ReturnType<typeof prisma.$queryRaw>;
-      return Promise.resolve([{ locked: true }]) as ReturnType<typeof prisma.$queryRaw>;
+      return Promise.resolve(
+        Array.isArray(strings) && strings.join("").includes("FOR NO KEY UPDATE")
+          ? [{ id }]
+          : [{ locked: true }],
+      ) as ReturnType<typeof prisma.$queryRaw>;
     });
     revokeCredentials.mockImplementation(realRevoke);
     await expect(

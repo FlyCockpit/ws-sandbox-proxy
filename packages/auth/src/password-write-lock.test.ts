@@ -351,3 +351,41 @@ describe("withPasswordWriteLock", () => {
     });
   });
 });
+
+it("reset path marker survives lapse while live-lock and owner checks fail closed", async () => {
+  const { assertPasswordWriteLocked, isResetPasswordWrite } = await import("./password-write-lock");
+  expect(isResetPasswordWrite()).toBe(false);
+  await withPasswordWriteLock(
+    "/reset-password",
+    post("/reset-password", { token: "tk1" }),
+    async () => {
+      expect(isResetPasswordWrite()).toBe(true);
+      expect(() => assertPasswordWriteLocked("u1")).not.toThrow();
+      expect(() => assertPasswordWriteLocked("u2")).toThrow(/password-write lock/);
+      const clock = vi.spyOn(performance, "now").mockReturnValue(performance.now() + 26_000);
+      try {
+        expect(isResetPasswordWrite()).toBe(true);
+        expect(passwordWriteLockHeld()).toBe(false);
+        expect(() => assertPasswordWriteLocked("u1")).toThrow(/password-write lock/);
+      } finally {
+        clock.mockRestore();
+      }
+      return ok();
+    },
+    { getSession: noSession },
+  );
+  expect(isResetPasswordWrite()).toBe(false);
+});
+
+it("an empty body reset token follows BA's query-token choice under the lock", async () => {
+  await withPasswordWriteLock(
+    "/reset-password",
+    post("/reset-password", { token: "" }, "?token=tk2"),
+    async () => {
+      expect(passwordWriteLockHeld()).toBe(true);
+      expect(db.locks.has(passwordWriteLockKey("u2"))).toBe(true);
+      return ok();
+    },
+    { getSession: noSession },
+  );
+});

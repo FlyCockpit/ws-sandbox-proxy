@@ -140,13 +140,28 @@ describe("sign-up answers the same for a free and a registered address", () => {
       (...args: unknown[]) => unknown
     >;
     const operations: string[] = [];
-    for (const name of ["findOne", "findMany", "count", "create", "update", "updateMany"]) {
-      const original = adapter[name]!.bind(adapter);
-      vi.spyOn(adapter, name).mockImplementation((...args: unknown[]) => {
-        operations.push(`${name}:${(args[0] as { model?: string } | undefined)?.model}`);
-        return original(...args);
+    const recordAdapter = (current: typeof adapter) => {
+      for (const name of ["findOne", "findMany", "count", "create", "update", "updateMany"]) {
+        const original = current[name]!.bind(current);
+        vi.spyOn(current, name).mockImplementation((...args: unknown[]) => {
+          operations.push(`${name}:${(args[0] as { model?: string } | undefined)?.model}`);
+          return original(...args);
+        });
+      }
+    };
+    recordAdapter(adapter);
+    // The selective wrapper binds a fresh adapter for BA's transaction callback,
+    // even when signup deliberately stays nontransactional. Trace that instance
+    // too; the same-work assertions must observe every actual adapter call.
+    const transaction = adapter.transaction!.bind(adapter);
+    vi.spyOn(adapter, "transaction").mockImplementation((callback: unknown) => {
+      if (typeof callback !== "function")
+        throw new Error("Expected an adapter transaction callback");
+      return transaction((current: typeof adapter) => {
+        recordAdapter(current);
+        return Reflect.apply(callback, undefined, [current]);
       });
-    }
+    });
     // Plus every direct Prisma call the hooks make (setting, invitation, user
     // reads) and raw SQL.
     const prisma = (await import("@wssp/db")).default as unknown as Record<
