@@ -16,6 +16,7 @@ vi.mock("sileo", () => ({ sileo: backend, Toaster: () => null }));
 vi.mock("sileo/styles.css", () => ({}));
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   vi.resetModules();
   for (const fn of Object.values(backend)) fn.mockClear();
 });
@@ -35,16 +36,42 @@ describe("toast facade", () => {
     expect(first).not.toBe("sileo-default");
   });
 
-  it("keeps a short message as the pill title with no description", async () => {
+  it("keeps a short message as the pill title with no description when there is no action", async () => {
     const { toast } = await import("@wssp/ui/components/sileo");
-    const onClick = vi.fn();
-    toast.success("Saved", { duration: 5000, action: { label: "Undo", onClick } });
+    toast.success("Saved", { duration: 5000 });
     expect(backend.success).toHaveBeenCalledWith({
       id: expect.any(String),
       title: "Saved",
       duration: 5000,
-      button: { title: "Undo", onClick },
     });
+  });
+
+  it("renders action toasts inside description without a nested sileo button prop", async () => {
+    vi.stubGlobal("window", {});
+    const { invokeToastAction, toast } = await import("@wssp/ui/components/sileo");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const onClick = vi.fn();
+
+    const id = toast.success("Saved", { duration: 5000, action: { label: "Undo", onClick } });
+    const call = backend.success.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(call).toMatchObject({ id, title: "Saved", duration: 5000 });
+    expect(call).not.toHaveProperty("button");
+    expect(call).toHaveProperty("description");
+
+    const html = renderToStaticMarkup(call.description as never);
+    expect(html).toContain('data-sileo-button=""');
+    expect(html).toContain('data-state="success"');
+    expect(html).toContain(`data-toast-action-id="${id}"`);
+    expect(html).toContain(">Undo</span>");
+    expect(html).not.toMatch(/<button|<a\b/);
+
+    invokeToastAction(id);
+    expect(onClick).toHaveBeenCalledTimes(1);
+
+    toast.clear();
+    expect(backend.clear).toHaveBeenCalledTimes(1);
+    invokeToastAction(id);
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 
   it("repeats a long message in the description when no short title is set", async () => {
@@ -73,6 +100,30 @@ describe("toast facade", () => {
     expect(backend.error).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Something went wrong", description: LONG }),
     );
+  });
+
+  it("keeps both the overflowing message text and action inside description", async () => {
+    const { Toaster, toast } = await import("@wssp/ui/components/sileo");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    renderToStaticMarkup(
+      <Toaster
+        titles={{
+          message: "Notice",
+          success: "Done",
+          error: "Something went wrong",
+          info: "Info",
+          warning: "Warning",
+        }}
+      />,
+    );
+    const id = toast.error(LONG, { action: { label: "Try again", onClick: vi.fn() } });
+    const call = backend.error.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(call).toMatchObject({ id, title: "Something went wrong" });
+    expect(call).not.toHaveProperty("button");
+    const html = renderToStaticMarkup(call.description as never);
+    expect(html).toContain(LONG.replaceAll("'", "&#x27;"));
+    expect(html).toContain('data-sileo-button=""');
+    expect(html).toContain(">Try again</span>");
   });
 
   it("decides by the measured width, not the character count", async () => {

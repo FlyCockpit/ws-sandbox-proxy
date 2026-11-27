@@ -78,37 +78,24 @@ function VerifyEmailPage() {
         title={error ? t("auth:verifyEmail.invalidTitle") : t("auth:verifyEmail.pendingTitle")}
         description={
           error
-            ? t("auth:verifyEmail.invalidDescription")
-            : t("auth:verifyEmail.pendingDescription")
+            ? t(
+                canResend
+                  ? "auth:verifyEmail.invalidDescription"
+                  : "auth:verifyEmail.invalidDescriptionNoResend",
+              )
+            : t(
+                canResend
+                  ? "auth:verifyEmail.pendingDescription"
+                  : "auth:verifyEmail.pendingDescriptionNoResend",
+              )
         }
       >
-        {configPending ? (
-          <Skeleton className="h-10 w-full" />
-        ) : configError ? (
-          // Without this branch a transient fetch failure leaves `configData`
-          // undefined, so `canResend` is false and the user is told email is
-          // unconfigured — a wrong diagnosis with no way out. Offer the retry
-          // instead, as login.tsx and signup.tsx do.
-          <div className="space-y-2 text-center">
-            <p className="text-sm text-muted-foreground">
-              {t("auth:login.unableToConnectDescription")}
-            </p>
-            <Button
-              type="button"
-              variant="outline"
-              className="min-h-[44px] w-full"
-              onClick={() => refetchConfig()}
-            >
-              {t("common:actions.retry")}
-            </Button>
-          </div>
-        ) : canResend ? (
-          <ResendVerification />
-        ) : (
-          <p className="text-center text-sm text-muted-foreground">
-            {t("auth:verifyEmail.emailUnavailable")}
-          </p>
-        )}
+        <ResendSection
+          isPending={configPending}
+          isError={configError}
+          canResend={canResend}
+          onRetry={() => refetchConfig()}
+        />
         <div className="text-center">
           <Link
             to="/$lang/login"
@@ -151,5 +138,43 @@ function VerifyEmailPage() {
         </Link>
       )}
     </AuthCard>
+  );
+}
+
+function ResendSection({
+  isPending,
+  isError,
+  canResend,
+  onRetry,
+}: {
+  isPending: boolean;
+  isError: boolean;
+  canResend: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation(["auth", "common"]);
+
+  if (isPending) return <Skeleton className="h-10 w-full" />;
+  if (isError) {
+    // Without this branch a transient fetch failure leaves `configData`
+    // undefined, so `canResend` is false and the user is told email is
+    // unconfigured — a wrong diagnosis with no way out. Offer the retry
+    // instead, as login.tsx and signup.tsx do.
+    return (
+      <div className="space-y-2 text-center">
+        <p className="text-sm text-muted-foreground">
+          {t("auth:login.unableToConnectDescription")}
+        </p>
+        <Button type="button" variant="outline" className="min-h-[44px] w-full" onClick={onRetry}>
+          {t("common:actions.retry")}
+        </Button>
+      </div>
+    );
+  }
+  if (canResend) return <ResendVerification />;
+  return (
+    <p className="text-center text-sm text-muted-foreground">
+      {t("auth:verifyEmail.emailUnavailable")}
+    </p>
   );
 }

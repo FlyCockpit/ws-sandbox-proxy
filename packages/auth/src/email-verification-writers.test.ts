@@ -29,8 +29,9 @@ const reviewed: Record<string, string> = {
     "78630ae45d0d2c05b2d9c169be7cabc11c6eb4690bdbb4d6e6380c726be0ea40",
   // Reviewed 11-26 (wssp-fix phase B): pending-state staticData added; the emailVerified reads are unchanged, read only.
   // Reviewed 11-26 (home-nav): the continue link targets APP_HOME; comment-only emailVerified mention unchanged.
+  // Reviewed 11-27 (tpl-polish-final): gated pending/invalid descriptions without resend; comment-only emailVerified mention unchanged.
   "apps/web/src/routes/$lang/_app/verify-email.tsx":
-    "c4387e9beed2556ec849c4a7601ecf8fb180be3b2a50a4cdca27913fd69fe602",
+    "66d0271366b99f489af54e88a7c565840ca5643c1edb028c72e831abf85a598e",
   // Reviewed 11-26 (wssp-fix): the unverified pill reads `user.emailVerified` only.
   // Reviewed 11-26 (viewport-pass): row/badge class names only; the emailVerified read is unchanged, read only.
   // Reviewed 11-26 (tpl-e2e5-fups lane C): invite "Email language" select and the archive Undo toast; the emailVerified read is unchanged, read only.

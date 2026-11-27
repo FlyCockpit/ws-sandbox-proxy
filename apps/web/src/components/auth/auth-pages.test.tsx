@@ -14,6 +14,13 @@ const fx = vi.hoisted(() => ({
     adminBootstrapSignupEnabled: false,
     emailEnabled: false,
   },
+  configPending: false,
+  configError: false,
+  search: {
+    redirectTo: undefined as string | undefined,
+    error: undefined as string | undefined,
+    ok: undefined as boolean | undefined,
+  },
   signIn: vi.fn(),
   signUp: vi.fn(),
   // A pool invitation held in this tab's memory (lib/pool-invite.ts).
@@ -25,7 +32,7 @@ const fx = vi.hoisted(() => ({
     verifyBackupCode: vi.fn(),
   },
   // Better Auth's session atom as the page sees it; `setSession` re-renders.
-  session: { status: "anonymous" as "pending" | "anonymous" | "error" },
+  session: { status: "anonymous" as "pending" | "anonymous" | "authenticated" | "error" },
   listeners: new Set<() => void>(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
@@ -45,11 +52,17 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({
     options,
     useParams: () => ({ lang: "en-US" }),
-    useSearch: () => ({ redirectTo: undefined }),
+    useSearch: () => fx.search,
   }),
 }));
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: fx.config, isPending: false, isError: false, refetch: vi.fn() }),
+  useQuery: () => ({
+    data: fx.config,
+    isPending: fx.configPending,
+    isError: fx.configError,
+    isLoadingError: fx.configError,
+    refetch: vi.fn(),
+  }),
 }));
 vi.mock("@/hooks/use-auth-session", () => ({
   useAuthSession: () => ({
@@ -87,12 +100,22 @@ vi.mock("react-i18next", async (importOriginal) => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
+import enAuth from "@wssp/locales/src/en-US/auth.json";
 import enErrors from "@wssp/locales/src/en-US/errors.json";
+import esAuth from "@wssp/locales/src/es-MX/auth.json";
 import esErrors from "@wssp/locales/src/es-MX/errors.json";
 import i18n, { loadLocale } from "@/i18n";
 
-vi.mock("./resend-verification", () => ({ ResendVerification: () => null }));
-vi.mock("@/components/auth/resend-verification", () => ({ ResendVerification: () => null }));
+vi.mock("./resend-verification", () => ({
+  ResendVerification: ({ email }: { email?: string }) => (
+    <div data-resend-verification="" data-email={email ?? ""} />
+  ),
+}));
+vi.mock("@/components/auth/resend-verification", () => ({
+  ResendVerification: ({ email }: { email?: string }) => (
+    <div data-resend-verification="" data-email={email ?? ""} />
+  ),
+}));
 
 type Page = (() => ReactNode) & { preload?: () => Promise<void> };
 async function page(path: string): Promise<Page> {
@@ -102,11 +125,16 @@ async function page(path: string): Promise<Page> {
 }
 const LoginPage = await page("@/routes/$lang/_app/login");
 const SignupPage = await page("@/routes/$lang/_app/signup");
+const VerifyEmailPage = await page("@/routes/$lang/_app/verify-email");
 
 beforeEach(() => {
   fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
+  fx.configPending = false;
+  fx.configError = false;
+  fx.search = { redirectTo: undefined, error: undefined, ok: undefined };
   fx.signIn.mockReset();
   fx.toast.error.mockReset();
+  fx.toast.success.mockReset();
   fx.signUp.mockReset();
   fx.inviteToken = undefined;
   for (const fn of Object.values(fx.twoFactor)) fn.mockReset();
@@ -411,5 +439,100 @@ describe("sign up", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("auth:errors.couldNotCreateAccount");
     expect(screen.getByLabelText("auth:fields.email").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("shows accountCreatedNoEmail without repeating emailUnavailable when mail is disabled", async () => {
+    fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
+    fx.signUp.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    render(<SignupPage />);
+    fill("auth:fields.name", "Person");
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "a-long-enough-password");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signUp" }));
+
+    expect(await screen.findByText("auth:verifyEmail.pendingTitle")).toBeTruthy();
+    expect(screen.getByText("auth:verifyEmail.accountCreatedNoEmail")).toBeTruthy();
+    expect(screen.queryByText("auth:verifyEmail.emailUnavailable")).toBeNull();
+    expect(document.querySelector("[data-resend-verification]")).toBeNull();
+  });
+
+  it("shows sent copy and ResendVerification when mail is enabled after signup", async () => {
+    fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: true };
+    fx.inviteToken = "wssp_inv_x";
+    fx.signUp.mockResolvedValue({ data: { user: { id: "u1" } }, error: null });
+    render(<SignupPage />);
+    fill("auth:fields.name", "Person");
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "a-long-enough-password");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signUp" }));
+
+    expect(await screen.findByText("auth:verifyEmail.sentTitle")).toBeTruthy();
+    expect(screen.getByText("auth:verifyEmail.sentDescription")).toBeTruthy();
+    expect(screen.getByText("auth:poolInviteReopen")).toBeTruthy();
+    expect(screen.queryByText("auth:verifyEmail.emailUnavailable")).toBeNull();
+    expect(document.querySelector("[data-resend-verification]")?.getAttribute("data-email")).toBe(
+      "person@example.test",
+    );
+  });
+});
+
+describe("verify email", () => {
+  it.each([
+    ["pending", undefined, "pendingDescriptionNoResend", "pendingDescription"],
+    ["invalid", "INVALID_TOKEN", "invalidDescriptionNoResend", "invalidDescription"],
+  ] as const)(
+    "uses %s no-resend description without prompting for email when mail is off",
+    (_label, error, expectedKey, suppressedKey) => {
+      fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
+      fx.search = { redirectTo: undefined, error, ok: undefined };
+      render(<VerifyEmailPage />);
+      expect(screen.getByText(`auth:verifyEmail.${expectedKey}`)).toBeTruthy();
+      expect(screen.queryByText(`auth:verifyEmail.${suppressedKey}`)).toBeNull();
+      expect(screen.getByText("auth:verifyEmail.emailUnavailable")).toBeTruthy();
+      expect(document.querySelector("[data-resend-verification]")).toBeNull();
+    },
+  );
+
+  it.each([
+    ["pending", undefined, "pendingDescription", "pendingDescriptionNoResend"],
+    ["invalid", "INVALID_TOKEN", "invalidDescription", "invalidDescriptionNoResend"],
+  ] as const)(
+    "shows %s resend prompt and form when mail is enabled",
+    (_label, error, expectedKey, suppressedKey) => {
+      fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: true };
+      fx.search = { redirectTo: undefined, error, ok: undefined };
+      render(<VerifyEmailPage />);
+      expect(screen.getByText(`auth:verifyEmail.${expectedKey}`)).toBeTruthy();
+      expect(screen.queryByText(`auth:verifyEmail.${suppressedKey}`)).toBeNull();
+      expect(screen.queryByText("auth:verifyEmail.emailUnavailable")).toBeNull();
+      expect(document.querySelector("[data-resend-verification]")).not.toBeNull();
+    },
+  );
+
+  it("does not prompt for email while config is pending or failed to load", () => {
+    fx.configPending = true;
+    render(<VerifyEmailPage />);
+    expect(screen.getByText("auth:verifyEmail.pendingDescriptionNoResend")).toBeTruthy();
+    expect(screen.queryByText("auth:verifyEmail.pendingDescription")).toBeNull();
+    cleanup();
+
+    fx.configPending = false;
+    fx.configError = true;
+    fx.search = { redirectTo: undefined, error: "INVALID_TOKEN", ok: undefined };
+    render(<VerifyEmailPage />);
+    expect(screen.getByText("auth:verifyEmail.invalidDescriptionNoResend")).toBeTruthy();
+    expect(screen.queryByText("auth:verifyEmail.invalidDescription")).toBeNull();
+    expect(screen.getByRole("button", { name: "common:actions.retry" })).toBeTruthy();
+  });
+
+  it("does not prompt to enter email in en-US or es-MX no-resend copy", () => {
+    for (const bundle of [enAuth, esAuth]) {
+      expect(bundle.verifyEmail.pendingDescriptionNoResend).not.toMatch(
+        /enter your email|ingresa tu correo/i,
+      );
+      expect(bundle.verifyEmail.invalidDescriptionNoResend).not.toMatch(
+        /enter your email|ingresa tu correo/i,
+      );
+    }
   });
 });
