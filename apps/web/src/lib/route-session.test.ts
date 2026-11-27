@@ -15,6 +15,7 @@ import {
   holdDocumentIdentityUnverified,
   isDocumentIdentityUnverified,
   resetDocumentIdentityForTests,
+  subscribeIdentityVerification,
 } from "./document-identity";
 import {
   resolveProtectedRouteSession,
@@ -154,4 +155,23 @@ describe("route session guards check the document identity", () => {
       expect(reload).not.toHaveBeenCalled();
     },
   );
+
+  it("commits an anonymous admission when its notification triggers an in-flight reconcile hold", async () => {
+    server.getRouteSession.mockClear();
+    server.getRouteSession.mockResolvedValue({ status: "resolved", session: null });
+    let reconciled = false;
+    const unsub = subscribeIdentityVerification(() => {
+      if (reconciled) return;
+      reconciled = true;
+      holdDocumentIdentityUnverified();
+    });
+    try {
+      await expect(resolveRouteSession()).resolves.toEqual({ status: "resolved", session: null });
+      expect(server.getRouteSession).toHaveBeenCalledTimes(1);
+      expect(isDocumentIdentityUnverified()).toBe(true);
+      expect(reload).not.toHaveBeenCalled();
+    } finally {
+      unsub();
+    }
+  });
 });

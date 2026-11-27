@@ -125,7 +125,7 @@ describe("the route guard resolvers", () => {
 
   async function load(probeName: string, probe: () => Promise<unknown>) {
     vi.resetModules();
-    const admit = vi.fn(async () => undefined);
+    const admit = vi.fn(async () => true);
     const probes = {
       getRouteSession: vi.fn(),
       getProtectedRouteSession: vi.fn(),

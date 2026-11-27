@@ -16,7 +16,7 @@
   "connect": {
     "title": "Conectar un agente",
     "description": "URL del endpoint MCP",
-    "protocol": "Compatible con MCP 2026-07-28 y 2025-06-18 sin estado. La verificación con clientes en vivo está pendiente.",
+    "protocol": "Compatible con MCP 2026-07-28 y 2025-06-18 sin estado.",
     "oauth": "Usa OAuth para iniciar sesión y aprobar cada aplicación conectada, o configura un token:",
     "token": "Configura WSSP_AGENT_TOKEN con tu token en tu entorno local. Para OAuth con Codex, ejecuta: codex mcp login wssp.",
     "copyUrl": "Copiar URL de MCP",

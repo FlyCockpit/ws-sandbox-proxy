@@ -241,20 +241,26 @@ type RouteIdentityResolution =
 
 /**
  * A session guard's check, after its server probe and before anything under
- * it loads or renders. A different identity than this document's replaces the
- * document, and the guard never settles, so no page renders the previous
- * identity's cached data even for a frame. A failed probe decides nothing.
+ * it loads or renders. Returns true once this probe is settled for generation
+ * `since` (admitted, replaced, or an uninvalidated error), or false when an
+ * invalidation bumped the generation before admission could commit so the
+ * caller should re-probe. An invalidation triggered synchronously *by* the
+ * admission's own listener notification (e.g. `useReloadOnIdentityChange`
+ * reconciling an already-inflight client fetch) does not undo the admission
+ * that just committed. A different identity replaces the document and never
+ * settles.
  */
 export async function admitRouteIdentity(
   resolution: RouteIdentityResolution,
   /** `identityVerificationGeneration()` taken before the probe started. */
   since: number = verificationGeneration,
-): Promise<void> {
-  if (resolution.status !== "resolved" || since !== verificationGeneration) return;
+): Promise<boolean> {
+  if (since !== verificationGeneration) return false;
+  if (resolution.status !== "resolved") return true;
   if (authoritativeSessionRequired) {
     await (await import("./auth-client")).checkDocumentSession();
     if (authoritativeSessionRequired) throw new Error("Route session unavailable");
-    if (since !== verificationGeneration) return;
+    if (since !== verificationGeneration) return false;
   }
   const identity = resolution.session?.user.id ?? null;
   if (!observeDocumentIdentity(identity)) {
@@ -263,10 +269,10 @@ export async function admitRouteIdentity(
     announceDocumentIdentity(identity);
     admissions++;
     notifyVerificationListeners();
-    return;
+    return true;
   }
   replaceDocument();
-  await new Promise<never>(() => {});
+  return await new Promise<never>(() => {});
 }
 
 /**

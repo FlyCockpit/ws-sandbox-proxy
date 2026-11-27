@@ -34,8 +34,7 @@ async function admitted<T extends Parameters<typeof admitRouteIdentity>[0]>(
     if (since !== identityVerificationGeneration()) continue;
     if (settled.status === "rejected") throw settled.reason;
     const resolution = settled.value;
-    await admitRouteIdentity(resolution, since);
-    if (since === identityVerificationGeneration()) return resolution;
+    if (await admitRouteIdentity(resolution, since)) return resolution;
   }
   return { status: "error" } as T;
 }
