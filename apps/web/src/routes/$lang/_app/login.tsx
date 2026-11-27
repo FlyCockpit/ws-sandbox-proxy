@@ -1,6 +1,6 @@
 import { useForm } from "@tanstack/react-form";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
@@ -20,7 +20,7 @@ import { poolInviteToken, postAuthHref } from "@/lib/pool-invite";
 import { resolveRouteSession } from "@/lib/route-session";
 import { decideAnonymousOnlyRouteAccess } from "@/lib/route-session-access";
 import { signupMode } from "@/lib/signup-mode";
-import { friendly, isRateLimit } from "@/utils/friendly-error";
+import { friendly, isCredentialRejection, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 import { safeRedirectTo } from "@/utils/safe-redirect";
 
@@ -147,21 +147,25 @@ function SignInForm({
   showForgotPassword: boolean;
   onNeeds2FA: () => void;
 }) {
-  const navigate = useNavigate();
   const { t } = useTranslation(["auth", "validation"]);
   const formRef = useRef<HTMLFormElement>(null);
   // A failure that belongs to no one field (rate limit, network): shown above
   // the button, and it never blocks the next attempt.
   const [formError, setFormError] = useState<string | null>(null);
+  const [unverified, setUnverified] = useState(false);
 
   const form = useForm({
     defaultValues: { email: "", password: "" },
     onSubmit: async ({ value }) => {
       setFormError(null);
-      const result = await authClient.signIn.email({
-        email: value.email,
-        password: value.password,
-      });
+      setUnverified(false);
+      let result: Awaited<ReturnType<typeof authClient.signIn.email>>;
+      try {
+        result = await authClient.signIn.email({ email: value.email, password: value.password });
+      } catch (error) {
+        toast.error(friendly(error));
+        return;
+      }
       if (result.error) {
         // `requireEmailVerification` rejects correct credentials on an
         // unverified account. Better-Auth distinguishes this itself, so say so
@@ -171,26 +175,19 @@ function SignInForm({
         //
         // `emailVerification.sendOnSignIn` is on, so Better-Auth has already
         // mailed a fresh link by the time we get here — but the original may
-        // have expired days ago, so the toast also offers the resend page
+        // have expired days ago, so the form also offers the resend page
         // rather than leaving a dead end if that mail doesn't arrive.
         if (result.error.code === "EMAIL_NOT_VERIFIED") {
-          toast.error(t("auth:verifyEmail.notVerified"), {
-            action: {
-              label: t("auth:verifyEmail.resend"),
-              onClick: () =>
-                navigate({
-                  to: "/$lang/verify-email",
-                  params: { lang },
-                  // No `ok`: this is a self-navigation, not a verification hop,
-                  // so the page must show its neutral resend state.
-                  search: { error: undefined, ok: undefined },
-                }),
-            },
-          });
+          setFormError(t("auth:verifyEmail.notVerified"));
+          setUnverified(true);
           return;
         }
         if (isRateLimit(result.error)) {
           setFormError(friendly(result.error));
+          return;
+        }
+        if (!isCredentialRejection(result.error)) {
+          toast.error(friendly(result.error));
           return;
         }
         // Wrong email or password (the server never says which): under the
@@ -224,6 +221,7 @@ function SignInForm({
 
   const clearCredentialsError = () => {
     setFormError(null);
+    setUnverified(false);
     form.setFieldMeta("password", (meta) => ({
       ...meta,
       errorMap: { ...meta.errorMap, onSubmit: undefined },
@@ -269,7 +267,10 @@ function SignInForm({
               label={t("auth:fields.password")}
               type="password"
               autoComplete="current-password"
-              onChange={() => setFormError(null)}
+              onChange={() => {
+                setFormError(null);
+                setUnverified(false);
+              }}
             />
           )}
         </form.Field>
@@ -292,6 +293,16 @@ function SignInForm({
       </div>
 
       <FormAlert message={formError} />
+      {unverified ? (
+        <Link
+          to="/$lang/verify-email"
+          params={{ lang }}
+          search={{ error: undefined, ok: undefined }}
+          className={cn(buttonVariants({ variant: "link" }), "min-h-[44px] px-0")}
+        >
+          {t("auth:verifyEmail.resend")}
+        </Link>
+      ) : null}
 
       <form.Subscribe
         selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}

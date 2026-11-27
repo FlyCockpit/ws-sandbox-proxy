@@ -3,7 +3,7 @@ import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { toast } from "@wssp/ui/components/sileo";
 import { cn } from "@wssp/ui/lib/utils";
 import { ChevronRight, Circle, CircleCheck } from "lucide-react";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { useGettingStartedHidden } from "@/hooks/use-getting-started-hidden";
@@ -11,6 +11,7 @@ import {
   defaultGettingStartedExpanded,
   gettingStartedProgress,
   hideGettingStarted,
+  setGettingStartedHidden,
 } from "@/lib/getting-started";
 
 /**
@@ -69,19 +70,38 @@ export function GettingStarted({
 }) {
   const { t } = useTranslation("common");
   const hidden = useGettingStartedHidden(scope);
+  const [justHidden, setJustHidden] = useState(false);
   const [expanded, setExpanded] = useState(defaultGettingStartedExpanded);
   const listId = useId();
+  const restoreFocus = useRef(false);
   const progress = gettingStartedProgress(steps);
 
-  if (hidden || progress.allDone) return null;
+  if (progress.allDone) return null;
+  if (hidden)
+    return justHidden ? (
+      <Button
+        type="button"
+        variant="outline"
+        className="min-h-11"
+        onClick={() => {
+          restoreFocus.current = true;
+          setGettingStartedHidden(scope, false);
+          setJustHidden(false);
+        }}
+      >
+        {t("gettingStarted.show")}
+      </Button>
+    ) : null;
 
   const heading = title ?? t("gettingStarted.title");
-  const hide = () =>
+  const hide = () => {
+    setJustHidden(true);
     hideGettingStarted(scope, (undo) => {
       toast.message(t("gettingStarted.hidden"), {
         action: { label: t("gettingStarted.undo"), onClick: undo },
       });
     });
+  };
 
   return (
     <section
@@ -94,6 +114,12 @@ export function GettingStarted({
         <h2 className="min-w-0 flex-1">
           <button
             type="button"
+            ref={(element) => {
+              if (element && restoreFocus.current) {
+                restoreFocus.current = false;
+                element.focus();
+              }
+            }}
             aria-expanded={expanded}
             aria-controls={listId}
             onClick={() => setExpanded((open) => !open)}

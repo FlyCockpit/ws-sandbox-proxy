@@ -330,12 +330,15 @@ async function run() {
       );
     await until(() => approve()?.disabled === false);
     approve()?.click();
-    await until(() => (Reflect.get(globalThis, "deviceTestToastErrors") as unknown[]).length > 0);
+    await until(() => !!container.querySelector('[role="alert"]'));
+    const alert = container.querySelector('[role="alert"]');
     const errors = Reflect.get(globalThis, "deviceTestToastErrors") as string[];
     assert(
-      errors[0] === en.device.hostLimit_other.replace("{{count}}", "20"),
-      `host-limit toast names the limit: ${errors[0]}`,
+      alert?.textContent === en.device.hostLimit_other.replace("{{count}}", "20"),
+      `host-limit alert names the limit: ${alert?.textContent}`,
     );
+    assert(alert?.getAttribute("aria-live") === "assertive", "refusal is announced inline");
+    assert(errors.length === 0, "a refused approval does not toast an error");
     assert(
       !container.textContent?.includes(en.device.approved.title),
       "a refused approval is not shown as approved",

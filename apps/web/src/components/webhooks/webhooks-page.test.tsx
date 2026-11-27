@@ -188,7 +188,29 @@ describe("WebhooksPage", () => {
     expect(await screen.findByText("https://hooks.example.com/wssp")).toBeTruthy();
     expect(screen.getByText(enWebhooks.event["sandbox.ready"])).toBeTruthy();
     expect(screen.getByText("21 consecutive failures")).toBeTruthy();
+    expect(screen.queryByText(enWebhooks.list.healthy)).toBeNull();
     expect(screen.getByText(enWebhooks.status.disabled)).toBeTruthy();
+  });
+
+  // Follow-up 09 #7c: a disabled endpoint never reads "Healthy", even with no
+  // recorded failures; an enabled one with none still does.
+  it("a disabled endpoint without failures shows no Healthy", async () => {
+    const endpoint = (id: string, enabled: boolean) => ({
+      id,
+      url: `https://${id}.example.com/wssp`,
+      description: null,
+      events: ["sandbox.ready"],
+      operationKinds: "all",
+      enabled,
+      disabledReason: null,
+      health: { consecutiveFailures: 0 },
+    });
+    server.endpoints = [endpoint("off", false), endpoint("on", true)];
+    renderPage();
+    await screen.findByText("https://off.example.com/wssp");
+    const card = (id: string) => document.querySelector<HTMLElement>(`[data-webhook-id="${id}"]`)!;
+    expect(within(card("off")).queryByText(enWebhooks.list.healthy)).toBeNull();
+    expect(within(card("on")).getByText(enWebhooks.list.healthy)).toBeTruthy();
   });
 
   it("an enabled endpoint that keeps failing shows a Failing warning, not a calm Enabled", async () => {
@@ -321,6 +343,18 @@ describe("WebhooksPage", () => {
         "credential.needs_login",
       ],
     });
+  });
+
+  it("marks and focuses the URL when its host cannot be resolved", async () => {
+    server.createError = { code: "BAD_REQUEST", data: { code: "webhook.destination_invalid" } };
+    const user = userEvent.setup();
+    renderPage("create");
+    const url = await screen.findByLabelText(enWebhooks.form.url);
+    await user.type(url, "https://example.invalid/hook");
+    await user.click(screen.getByRole("button", { name: enWebhooks.create.submit }));
+    expect(await screen.findByText(enWebhooks.problem.destinationUnreachable)).toBeTruthy();
+    expect(url.getAttribute("aria-invalid")).toBe("true");
+    await waitFor(() => expect(document.activeElement).toBe(url));
   });
 
   it("maps a blocked destination to its explanation", async () => {

@@ -120,8 +120,8 @@ function ConnectedApp({ lang, grant }: { lang: string; grant: Grant }) {
         title={t("agents:apps.revokeTitle")}
         description={t("agents:apps.revokeDescription")}
         confirmToken={grant.SdkKey.name}
-        typePrompt={t("sdkKeys:revoke.typePrompt")}
-        copyAriaLabel={t("sdkKeys:revoke.copyName")}
+        typePrompt={t("agents:revoke.typePrompt")}
+        copyAriaLabel={t("agents:revoke.copyName")}
         confirmLabel={t("credentials:revoke.confirm")}
         pendingLabel={t("credentials:revoke.pending")}
         isPending={revoke.mutation.isPending}

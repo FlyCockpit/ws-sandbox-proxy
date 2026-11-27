@@ -156,7 +156,19 @@ function CreateWebhookForm({
         });
         onCreated({ id: result.endpoint.id, secret: result.secret });
       } catch (error) {
-        if (!redirect(error)) setProblem(webhookProblem(error));
+        if (!redirect(error)) {
+          const next = webhookProblem(error);
+          if (next === "destinationInvalid") {
+            form.setFieldMeta("url", (meta) => ({
+              ...meta,
+              errorMap: {
+                ...meta.errorMap,
+                onSubmit: t("webhooks:problem.destinationUnreachable"),
+              },
+            }));
+            focusFirstInvalidField(root.current);
+          } else setProblem(next);
+        }
       } finally {
         setPending(false);
         invalidateWebhooks(queryClient);

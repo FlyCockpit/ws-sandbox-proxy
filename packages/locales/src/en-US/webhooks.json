@@ -173,6 +173,7 @@
     "endpoint_disabled": "Endpoint disabled"
   },
   "problem": {
+    "destinationUnreachable": "We can't deliver to this URL. Use an https:// address whose host resolves to a public address, on port 443 or 1024–65535, with no credentials or #fragment.",
     "destinationInvalid": "That URL is not valid: use https://, no credentials or fragment, and port 443 or 1024-65535.",
     "destinationBlocked": "That destination is not allowed: private, local and metadata addresses are refused.",
     "limit": "You already have the maximum of 10 webhook endpoints.",

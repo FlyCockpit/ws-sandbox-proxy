@@ -1,6 +1,6 @@
 {
   "actionsLabel": "Acciones del sandbox",
-  "allocation": "{{cpuCount}} vCPU · {{memoryMiB}} MiB · {{diskGiB}} GiB",
+  "allocation": "{{cpuCount}} vCPU · {{memoryMiB}} MiB · {{diskGiB}} GiB",
   "capacityWait": {
     "line": "Número {{position}} en la fila · espera hasta {{deadline}} · bloqueado por {{blocker}}",
     "noDeadline": "sin límite"
@@ -987,7 +987,7 @@
     "notRunning": "No está en ejecución",
     "measured": "Uso medido",
     "measuredNone": "El uso de CPU, memoria, disco y red todavía no se mide por sandbox.",
-    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB de memoria · {{diskGiB}} GiB de disco"
+    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB de memoria · {{diskGiB}} GiB de disco"
   },
   "ports": {
     "title": "Puertos y vistas previas",

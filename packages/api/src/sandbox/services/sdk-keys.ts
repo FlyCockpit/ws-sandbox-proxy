@@ -268,7 +268,7 @@ export const mintCredentialKey = serviceProcedure(
       });
       return { key: serializeSdkKey(created), secret: credential.raw };
     } catch (error) {
-      rethrowSdkKeyMintError(error);
+      rethrowSdkKeyMintError(error, kind);
     }
   },
 );

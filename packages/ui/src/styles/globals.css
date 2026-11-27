@@ -289,8 +289,9 @@
     /* Large-screen scale. Every size in the app is rem, so this one rule
        grows type, controls, page widths and dialogs together on big screens:
        the browser's default (100 %, 16px unless the user changed it) up to a
-       1920 CSS px long side, then a linear ramp (+1px per 240px) to 150 % at
-       3840 (a 4K screen at 100 % scaling, in either orientation). Screens at
+       1920 CSS px long side, then a linear ramp (+1px per 240px, so +8px at
+       3840: 150 % with the usual 16px default, 28px from a 20px one) capped at
+       150 % (a 4K screen at 100 % scaling, in either orientation). Screens at
        1920 and below, phones, and 4K at 200 % (1920 CSS px) are unchanged.
        Media queries keep using the browser default, so breakpoints do not
        move. See docs/design/shell-rules.md § Viewport scale */

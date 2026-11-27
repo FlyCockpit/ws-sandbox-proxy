@@ -18,7 +18,16 @@ vi.mock("@wssp/api/sandbox/budgets", () => ({
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, configure, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  configure,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
@@ -101,6 +110,7 @@ vi.mock("@/utils/orpc", async () => {
 });
 
 import { formatClock } from "@/lib/sandbox-status";
+import { TerminalClient } from "@/lib/terminal-client";
 import { SandboxDetailPage } from "./sandbox-detail-page";
 import { OPERATION_POLL_MS } from "./sandbox-files";
 
@@ -216,6 +226,42 @@ afterEach(() => {
 });
 
 describe("reading a sandbox", () => {
+  it("attaches from the terminal link only on an unmodified left click", async () => {
+    vi.doMock("@/lib/xterm-view", () => new Promise(() => {}));
+    const start = vi.spyOn(TerminalClient.prototype, "start");
+    mount();
+    const link = await screen.findByRole("link", { name: enSandboxes.openTerminal });
+    expect(link.getAttribute("href")).toBe("#sandbox-section-terminal");
+    const panel = document.querySelector<HTMLElement>("[data-terminal-status]")!;
+    expect(panel.dataset.terminalStatus).toBe("idle");
+    for (const modifiers of [
+      { ctrlKey: true },
+      { metaKey: true },
+      { shiftKey: true },
+      { altKey: true },
+      { button: 1 },
+    ]) {
+      fireEvent.click(link, modifiers);
+      expect(panel.dataset.terminalStatus).toBe("idle");
+    }
+    fireEvent.click(link);
+    await waitFor(() => expect(panel.dataset.terminalStatus).toBe("loading"));
+    expect(start).toHaveBeenCalledTimes(1);
+    const user = userEvent.setup();
+    await user.click(within(panel).getByRole("button", { name: enTerminal.header.more }));
+    await user.click(await screen.findByRole("menuitem", { name: enTerminal.header.endSession }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: enTerminal.endDialog.confirm,
+      }),
+    );
+    await waitFor(() => expect(panel.dataset.terminalStatus).toBe("ended"));
+    fireEvent.click(link);
+    await waitFor(() => expect(panel.dataset.terminalStatus).toBe("loading"));
+    expect(start).toHaveBeenCalledTimes(2);
+    vi.doUnmock("@/lib/xterm-view");
+  });
+
   it("has exactly one page heading, the sandbox name, and its full ID copyable under Advanced", async () => {
     mount();
     const heading = await screen.findByRole("heading", { level: 1 });
@@ -2270,7 +2316,7 @@ it("shows the actual allocation through stop/cold start and template refetches",
   mount();
   await waitFor(() =>
     expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-      "2 vCPU · 3 GiB memory · 32 GiB disk",
+      "2\u00a0vCPU · 3\u00a0GiB memory · 32\u00a0GiB disk",
     ),
   );
   await waitFor(() => expect(calls("getTemplateRevision")).toHaveLength(1));
@@ -2278,13 +2324,13 @@ it("shows the actual allocation through stop/cold start and template refetches",
   sandbox().state = "STOPPED";
   await refetch();
   expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-    "2 vCPU · 3 GiB memory · 32 GiB disk",
+    "2\u00a0vCPU · 3\u00a0GiB memory · 32\u00a0GiB disk",
   );
   sandbox().state = "READY";
   sandbox().generation = 2;
   await refetch();
   expect(document.querySelector("[data-sandbox-allocation]")?.textContent).toBe(
-    "2 vCPU · 3 GiB memory · 32 GiB disk",
+    "2\u00a0vCPU · 3\u00a0GiB memory · 32\u00a0GiB disk",
   );
 });
 

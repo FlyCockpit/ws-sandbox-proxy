@@ -79,6 +79,9 @@ vi.mock("@/lib/pool-invite", () => ({
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/utils/friendly-error", () => ({
   friendly: (_error: unknown, fallback?: string) => fallback ?? "failed",
+  isCredentialRejection: (error: { code?: string }) => error?.code === "INVALID_EMAIL_OR_PASSWORD",
+  isCodeRejection: (error: { code?: string }) =>
+    ["INVALID_CODE", "INVALID_BACKUP_CODE", "OTP_HAS_EXPIRED"].includes(error?.code ?? ""),
   isRateLimit: () => false,
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));

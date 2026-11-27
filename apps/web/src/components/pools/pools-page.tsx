@@ -24,6 +24,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@wssp/ui/components/sheet";
+import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
 import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { Plus } from "lucide-react";
@@ -242,6 +243,7 @@ function CreatePoolDialog({ lang, onClose }: { lang: string; onClose: () => void
       setProblem(null);
       try {
         await create.mutateAsync({ slug: value.slug, label: value.label });
+        toast.success(t("hosts:pools.createdToast"));
         await queryClient.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
         onClose();
       } catch (error) {
@@ -686,6 +688,7 @@ function PoolRow({ pool, lang }: { pool: Pool; lang: string }) {
     ...orpc.sandboxPools.delete.mutationOptions(),
     meta: { skipGlobalErrorToast: true },
     onSuccess: () => {
+      toast.success(t("hosts:pools.deletedToast"));
       setDeleting(false);
       void queryClient.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
     },

@@ -24,6 +24,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@wssp/ui/components/sheet";
+import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
 import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { useState } from "react";
@@ -153,14 +154,14 @@ function useSharingAction(lang: string, messages: SharingMessages = GENERIC_SHAR
   const redirect = useTwoFactorRedirect(lang);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<ReturnType<typeof sharingProblem> | null>(null);
-  async function run(work: () => Promise<unknown>) {
+  async function run(work: () => Promise<unknown>, errorMessages = messages) {
     setPending(true);
     setProblem(null);
     try {
       await work();
       await client.invalidateQueries({ queryKey: orpc.sandboxPools.key() });
     } catch (error) {
-      if (!redirect(error)) setProblem(sharingProblem(error, messages));
+      if (!redirect(error)) setProblem(sharingProblem(error, errorMessages));
     } finally {
       setPending(false);
     }
@@ -399,7 +400,10 @@ function SharedPoolRow({ pool, lang }: { pool: SharedPool; lang: string }) {
           }
         }}
         title={t(withdraw ? "hosts:sharing.withdraw" : "hosts:sharing.leave")}
-        description={t("hosts:sharing.contributionNotice")}
+        description={t(
+          withdraw ? "hosts:sharing.contributionNotice" : "hosts:sharing.leaveDescription",
+        )}
+        confirmLabel={t(withdraw ? "hosts:sharing.withdraw" : "hosts:sharing.leave")}
         confirmToken={withdraw?.id ?? pool.slug}
         typePrompt={t("hosts:pools.confirm")}
         copyAriaLabel={t("hosts:pools.copy")}
@@ -507,6 +511,7 @@ export function ShareForm({
           const result = await orpc.sandboxPools.grantShare.call(
             grantPoolShareInput.parse({ ...settings, poolId }),
           );
+          toast.success(t("hosts:sharing.sharedToast"));
           if (result.kind === "invite")
             setSecret({
               link: `${window.location.origin}/${lang}/settings/pools/invite#${result.token}`,
@@ -800,7 +805,9 @@ export function PoolSharing({
               className="flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm"
             >
               <span className="break-all font-medium">{invite.email}</span>
-              {invite.acceptedAt ? (
+              {invite.revokedAt ? (
+                <span>{t("hosts:sharing.inviteRevoked")}</span>
+              ) : invite.acceptedAt ? (
                 <span>{t("hosts:sharing.inviteAccepted")}</span>
               ) : (
                 <span>
@@ -809,7 +816,7 @@ export function PoolSharing({
                   })}
                 </span>
               )}
-              {!invite.acceptedAt ? (
+              {!invite.acceptedAt && !invite.revokedAt ? (
                 <span>{t(invite.sentAt ? "hosts:sharing.sent" : "hosts:sharing.unsent")}</span>
               ) : null}
               {!invite.acceptedAt && !invite.revokedAt && !invite.expiredAt ? (
@@ -819,16 +826,22 @@ export function PoolSharing({
                     variant="outline"
                     disabled={action.pending}
                     onClick={() =>
-                      void action.run(async () => {
-                        const result = await orpc.sandboxPools.resendInvite.call({
-                          poolId,
-                          inviteId: invite.id,
-                        });
-                        setSecret({
-                          link: `${window.location.origin}/${lang}/settings/pools/invite#${result.token}`,
-                          sent: result.sent,
-                        });
-                      })
+                      void action.run(
+                        async () => {
+                          const result = await orpc.sandboxPools.resendInvite.call({
+                            poolId,
+                            inviteId: invite.id,
+                          });
+                          setSecret({
+                            link: `${window.location.origin}/${lang}/settings/pools/invite#${result.token}`,
+                            sent: result.sent,
+                          });
+                        },
+                        {
+                          conflict: "hosts:sharing.shareConflict",
+                          tooMany: "hosts:sharing.tooMany",
+                        },
+                      )
                     }
                   >
                     {t("hosts:sharing.resend")}

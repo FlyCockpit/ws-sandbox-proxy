@@ -644,7 +644,7 @@
     "SIGINT": "Send INT",
     "SIGHUP": "Send HUP"
   },
-  "allocation": "{{cpuCount}} vCPU · {{memoryMiB}} MiB · {{diskGiB}} GiB",
+  "allocation": "{{cpuCount}} vCPU · {{memoryMiB}} MiB · {{diskGiB}} GiB",
   "storageUnknown": "No retained storage binding.",
   "sharing": {
     "loss": "Pool access lost. Guest IO is unavailable; disk deletion is scheduled no earlier than {{date}}. Restore a fitting access path before deletion commits to retain the disk. Offline cleanup may take longer.",
@@ -987,7 +987,7 @@
     "notRunning": "Not running",
     "measured": "Measured use",
     "measuredNone": "CPU, memory, disk and network use are not measured per sandbox yet.",
-    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB memory · {{diskGiB}} GiB disk"
+    "allocation": "{{cpuCount}} vCPU · {{memoryGiB}} GiB memory · {{diskGiB}} GiB disk"
   },
   "ports": {
     "title": "Ports & previews",

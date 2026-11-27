@@ -24,6 +24,8 @@ const state = vi.hoisted(() => ({
   shared: [] as Record<string, unknown>[],
   sharedGate: null as Promise<void> | null,
 }));
+const toastSuccess = vi.hoisted(() => vi.fn());
+vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: toastSuccess } }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
   Link: ({ children, className }: { children: ReactNode; className?: string }) => (
@@ -249,6 +251,7 @@ it("creates a pool, edits in a sheet, and adds/enables/removes a host with confi
   expect((dialog.getByLabelText(en.pools.slug) as HTMLInputElement).value).toBe("test-pool");
   await user.click(dialog.getByRole("button", { name: en.pools.create }));
   await screen.findByRole("heading", { name: "Test pool" });
+  expect(toastSuccess).toHaveBeenCalledWith(en.pools.createdToast);
   expect(state.calls[0]?.input).toEqual({ slug: "test-pool", label: "Test pool" });
   await choosePoolAction(user, "Test pool", en.pools.edit.action);
   expect((await screen.findByRole("dialog")).getAttribute("data-slot")).toBe("sheet-content");
@@ -776,6 +779,9 @@ it("the pool card summarizes hosts, people, capacity and the longest lifetime, w
   // The delete confirmation names the pool.
   const confirm = within(await screen.findByRole("alertdialog"));
   expect(confirm.getByText(en.pools.deleteTitle.replace("{{label}}", "Lab"))).toBeTruthy();
+  await user.type(confirm.getByLabelText(en.pools.confirm), "lab");
+  await user.click(confirm.getByRole("button", { name: common.actions.delete }));
+  await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith(en.pools.deletedToast));
   // The page says what a pool is, once.
   expect(screen.getByText(en.pools.description)).toBeTruthy();
 });

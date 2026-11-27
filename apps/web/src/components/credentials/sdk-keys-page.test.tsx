@@ -14,6 +14,11 @@ import enCommon from "@wssp/locales/src/en-US/common.json";
 import enCredentials from "@wssp/locales/src/en-US/credentials.json";
 import enDashboard from "@wssp/locales/src/en-US/dashboard.json";
 import enSdkKeys from "@wssp/locales/src/en-US/sdkKeys.json";
+import esAgents from "@wssp/locales/src/es-MX/agents.json";
+import esCommon from "@wssp/locales/src/es-MX/common.json";
+import esCredentials from "@wssp/locales/src/es-MX/credentials.json";
+import esDashboard from "@wssp/locales/src/es-MX/dashboard.json";
+import esSdkKeys from "@wssp/locales/src/es-MX/sdkKeys.json";
 import { createInstance, type i18n as I18n } from "i18next";
 import type { ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
@@ -262,6 +267,13 @@ beforeAll(async () => {
     ns: ["common", "dashboard", "sdkKeys", "credentials"],
     defaultNS: "common",
     resources: {
+      "es-MX": {
+        common: esCommon,
+        dashboard: esDashboard,
+        sdkKeys: esSdkKeys,
+        agents: esAgents,
+        credentials: esCredentials,
+      },
       "en-US": {
         common: enCommon,
         dashboard: enDashboard,
@@ -1322,6 +1334,116 @@ it("revoking an agent token says the agent token was revoked", async () => {
     return found;
   });
   expect(within(revoked).getByText(enAgents.revoke.badge)).toBeTruthy();
+});
+
+it("the agent form uses credential wording in both locales", async () => {
+  for (const [lang, agents, sdk, credentials] of [
+    ["en-US", enAgents, enSdkKeys, enCredentials],
+    ["es-MX", esAgents, esSdkKeys, esCredentials],
+  ] as const) {
+    await i18n.changeLanguage(lang);
+    mount(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: agents.mint.action }));
+    expect(within(dialog()).getByText(lang === "en-US" ? "Credential" : "Credencial")).toBeTruthy();
+    expect(
+      within(dialog()).getByText(
+        lang === "en-US" ? "What every credential needs." : "Lo que toda credencial necesita.",
+      ),
+    ).toBeTruthy();
+    expect(within(dialog()).getByText(sdk.form.sections.limitsHint)).toBeTruthy();
+    expandSections();
+    expect(within(dialog()).getByText(sdk.poolMode.immutable)).toBeTruthy();
+    expect(within(dialog()).getByText(sdk.form.ownSandboxesOnlyHint)).toBeTruthy();
+    for (const text of [
+      sdk.form.sections.limitsHint,
+      sdk.poolMode.immutable,
+      sdk.form.ownSandboxesOnlyHint,
+    ]) {
+      expect(text).toMatch(lang === "en-US" ? /credential/i : /credencial/i);
+      expect(text).not.toMatch(lang === "en-US" ? /\bkeys?\b/i : /\bclaves?\b/i);
+    }
+    const checkWording = (text: string) => {
+      expect(text).toMatch(lang === "en-US" ? /credential|token/i : /credencial|token/i);
+      expect(text).not.toMatch(lang === "en-US" ? /\bkeys?\b/i : /\bclaves?\b/i);
+      expect(within(dialog()).getByText(text)).toBeTruthy();
+    };
+    await user.click(
+      within(dialog()).getByRole("radio", { name: new RegExp(`^${sdk.form.preset.custom.title}`) }),
+    );
+    checkWording(sdk.scope.webhooks.write);
+    checkWording(sdk.scope.credentials.use);
+    await user.click(scopeBox("credentials:use"));
+    await user.click(scopeBox("commands:execute"));
+    checkWording(sdk.form.credentialsUseDisclosure);
+    await user.click(
+      within(dialog()).getByRole("radio", { name: new RegExp(`^${sdk.form.mode.ALLOWLIST}`) }),
+    );
+    checkWording(sdk.form.loginsRequired);
+    await user.type(within(dialog()).getByLabelText(credentials.form.name), "helper");
+    await user.click(within(dialog()).getByRole("button", { name: agents.mint.submit }));
+    checkWording(credentials.draft.credentialsUseNeedsLogins);
+    await user.click(scopeBox("credentials:use"));
+    checkWording(sdk.form.loginsHint);
+    cleanup();
+  }
+  await i18n.changeLanguage("en-US");
+});
+
+it("agent mint refusals use credential wording in both locales", async () => {
+  for (const [lang, agents, credentials] of [
+    ["en-US", enAgents, enCredentials],
+    ["es-MX", esAgents, esCredentials],
+  ] as const) {
+    await i18n.changeLanguage(lang);
+    for (const [code, message] of [
+      ["sdk_key.credentials_use_needs_logins", credentials.problem.credentialsUseNeedsLogins],
+      ["sdk_key.webhooks_requires_all_owned", credentials.problem.webhooksRequireAllOwned],
+    ] as const) {
+      server.mintError = { code: "BAD_REQUEST", data: { code } };
+      mount(true);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: agents.mint.action }));
+      await user.type(await within(dialog()).findByLabelText(credentials.form.name), "helper");
+      await user.click(within(dialog()).getByRole("button", { name: agents.mint.submit }));
+      expect(await within(dialog()).findByText(message)).toBeTruthy();
+      expect(message).toMatch(lang === "en-US" ? /credential|token/i : /credencial|token/i);
+      expect(message).not.toMatch(lang === "en-US" ? /\bkeys?\b/i : /\bclaves?\b/i);
+      cleanup();
+    }
+  }
+  await i18n.changeLanguage("en-US");
+});
+
+it("uses the masculine revoked badge for an agent token in Spanish", async () => {
+  await i18n.changeLanguage("es-MX");
+  server.keys = [
+    {
+      id: "agent-es",
+      name: "agent",
+      resourceMode: "ALL_OWNED",
+      poolMode: "ALL_USABLE",
+      poolIds: [],
+      scopes: ["hosts:read"],
+      lookupPrefix: "wssp_agent_spanish",
+      lastUsedAt: null,
+      revokedAt: new Date(),
+      expiresAt: null,
+      createdAt: new Date(),
+      hostAllowlist: [],
+      revisionAllowlist: [],
+      ownSandboxesOnly: true,
+      blockedByPolicy: false,
+    },
+  ];
+  mount(true);
+  await userEvent
+    .setup()
+    .click(await screen.findByRole("button", { name: esCredentials.filter.all }));
+  await screen.findByText("wssp_agent_spanish…");
+  expect(within(row("agent-es")).getByText(esAgents.revoke.badge)).toBeTruthy();
+  expect(within(row("agent-es")).queryByText(esSdkKeys.list.revoked)).toBeNull();
+  await i18n.changeLanguage("en-US");
 });
 
 describe("sandboxes:connect scope", () => {

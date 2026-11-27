@@ -2,7 +2,7 @@ import { Button } from "@wssp/ui/components/button";
 import { toast } from "@wssp/ui/components/sileo";
 import { cn } from "@wssp/ui/lib/utils";
 import { ClipboardPaste, Copy, Keyboard, Plug, Power } from "lucide-react";
-import { type ReactNode, useId, useRef, useState } from "react";
+import { type ReactNode, type Ref, useId, useImperativeHandle, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -31,7 +31,10 @@ import { effectiveFontSize, useTerminalPreferences } from "@/stores/terminal-pre
 /** How long the text-size badge stays on the terminal. */
 const SIZE_BADGE_MS = 1_400;
 
+export type TerminalPanelHandle = { attach: () => void };
+
 export function TerminalPanel({
+  ref,
   sandboxId,
   hostId,
   lang,
@@ -51,6 +54,7 @@ export function TerminalPanel({
    * handoff): a transformed popup traps `position: fixed`, so it cannot fill
    * the screen there.
    */
+  ref?: Ref<TerminalPanelHandle>;
   maximizable?: boolean;
   /** The terminal's name in the phone header's picker (the sandbox or host). */
   name?: string;
@@ -193,6 +197,11 @@ export function TerminalPanel({
     onAttempt?.();
     terminal.attach(code);
   };
+  useImperativeHandle(ref, () => ({
+    attach: () => {
+      if (available && (status === "idle" || status === "ended")) attach();
+    },
+  }));
   const copyText = async (text: string): Promise<ClipboardOutcome> => {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return "unavailable";
     try {

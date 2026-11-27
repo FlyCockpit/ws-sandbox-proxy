@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { AuthCard } from "@/components/auth/auth-screen";
 import { InlineInputField } from "@/components/auth/inline-input-field";
 import { authClient } from "@/lib/auth-client";
-import { friendly, isRateLimit } from "@/utils/friendly-error";
+import { friendly, isCodeRejection, isRateLimit } from "@/utils/friendly-error";
 import { orpc } from "@/utils/orpc";
 
 /**
@@ -104,21 +104,23 @@ export function TwoFactorChallenge({
             : await authClient.twoFactor.verifyTotp({ code: state.code.trim() });
       if (result.error) {
         console.error("[login.twoFactor.verify]", state.mode, result.error);
-        fail(
-          isRateLimit(result.error)
-            ? friendly(result.error)
-            : state.mode === "backup"
+        if (isCodeRejection(result.error)) {
+          fail(
+            state.mode === "backup"
               ? t("auth:errors.invalidBackupCode")
               : state.mode === "email"
                 ? t("auth:errors.invalidEmailCode")
                 : t("auth:errors.invalidTotp"),
-        );
+          );
+        } else {
+          toast.error(friendly(result.error));
+        }
         return;
       }
       onVerified();
     } catch (error) {
       console.error("[login.twoFactor.verify]", state.mode, error);
-      fail(friendly(error));
+      toast.error(friendly(error));
     } finally {
       setState((s) => ({ ...s, verifying: false }));
     }

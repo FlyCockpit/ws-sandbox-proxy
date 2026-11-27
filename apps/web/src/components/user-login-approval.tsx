@@ -85,6 +85,7 @@ export type UserLoginApprovalProps = {
   actionsEnabled: boolean;
   approving: boolean;
   denying: boolean;
+  refusal?: string | null;
   /** Called with a grant that parses with `userLoginGrantSchema`. */
   onApprove: (grant: UserLoginGrant) => void;
   onDeny: () => void;
@@ -98,6 +99,7 @@ export function UserLoginApproval({
   actionsEnabled,
   approving,
   denying,
+  refusal,
   onApprove,
   onDeny,
 }: UserLoginApprovalProps) {
@@ -280,6 +282,11 @@ export function UserLoginApproval({
         )}
       </form.Field>
 
+      {refusal ? (
+        <p role="alert" aria-live="assertive" className="text-sm text-destructive">
+          {refusal}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" className="min-h-[44px]" disabled={!actionsEnabled}>
           {approving ? t("device.approving") : t("device.approve")}

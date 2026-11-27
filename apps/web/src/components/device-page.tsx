@@ -145,6 +145,9 @@ function DevicePageRequest({
   ownerId: string;
 }) {
   const [decisionsByRequestId, setDecisionsByRequestId] = useState<Record<string, Decision>>({});
+  const [refusal, setRefusal] = useState<{ requestId: string | null; message: string } | null>(
+    null,
+  );
   const queryClient = useQueryClient();
   const { t } = useTranslation("auth");
 
@@ -163,6 +166,7 @@ function DevicePageRequest({
   });
 
   const boundRequestId = claimQuery.data?.deviceRequestId ?? null;
+  const refusalMessage = refusal?.requestId === boundRequestId ? refusal.message : null;
   const decision = boundRequestId ? (decisionsByRequestId[boundRequestId] ?? null) : null;
   const setDecision = (value: Decision) => {
     if (!boundRequestId) return;
@@ -245,7 +249,8 @@ function DevicePageRequest({
   const settledKind: RequestKind | null =
     summarySettled && requestSummary ? requestSummary.kind : null;
 
-  const approve = (grant?: UserLoginGrant) =>
+  const approve = (grant?: UserLoginGrant) => {
+    setRefusal(null);
     approveMutation.mutate(grant, {
       onSuccess: (kind) => {
         setDecision({ outcome: "approved", kind });
@@ -255,17 +260,21 @@ function DevicePageRequest({
         console.error("[device.approve]", err);
         if (err instanceof DevicePoolNotFoundError)
           void queryClient.invalidateQueries({ queryKey: orpc.sandboxPools.listUsable.key() });
-        toast.error(
-          err instanceof DeviceHostLimitError
-            ? t("device.hostLimit", { count: err.limit })
-            : err instanceof DevicePoolNotFoundError
-              ? t("device.user.poolNotFound")
-              : friendly(err, t("device.approveError")),
-        );
+        setRefusal({
+          requestId: boundRequestId,
+          message:
+            err instanceof DeviceHostLimitError
+              ? t("device.hostLimit", { count: err.limit })
+              : err instanceof DevicePoolNotFoundError
+                ? t("device.user.poolNotFound")
+                : friendly(err, t("device.approveError")),
+        });
       },
     });
+  };
 
   const deny = () => {
+    setRefusal(null);
     const kind = settledKind ?? "host";
     denyMutation.mutate(undefined, {
       onSuccess: () => {
@@ -274,7 +283,7 @@ function DevicePageRequest({
       },
       onError: (err: unknown) => {
         console.error("[device.deny]", err);
-        toast.error(friendly(err, t("device.denyError")));
+        setRefusal({ requestId: boundRequestId, message: friendly(err, t("device.denyError")) });
       },
     });
   };
@@ -373,6 +382,7 @@ function DevicePageRequest({
             actionsEnabled={actionsEnabled}
             approving={approveMutation.isPending}
             denying={denyMutation.isPending}
+            refusal={refusalMessage}
             onApprove={approve}
             onDeny={deny}
           />
@@ -403,6 +413,11 @@ function DevicePageRequest({
             ) : (
               <DeviceLoginRequestSkeleton />
             )}
+            {refusalMessage ? (
+              <p role="alert" aria-live="assertive" className="text-sm text-destructive">
+                {refusalMessage}
+              </p>
+            ) : null}
             <div className="flex gap-2">
               <Button
                 type="button"

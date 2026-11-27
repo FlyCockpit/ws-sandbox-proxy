@@ -130,6 +130,7 @@
     "stepToDo": "Pendiente",
     "hide": "Ocultar",
     "hideAriaLabel": "Ocultar la lista de primeros pasos",
+    "show": "Mostrar primeros pasos",
     "hidden": "Se ocultaron los primeros pasos.",
     "undo": "Deshacer"
   }

@@ -163,18 +163,20 @@ export function WebhooksPage({ lang }: { lang: string }) {
                           </li>
                         ))}
                       </ul>
-                      <p
-                        className={cn(
-                          "text-sm",
-                          failing ? "font-medium text-state-warning" : "text-muted-foreground",
-                        )}
-                      >
-                        {endpoint.health.consecutiveFailures > 0
-                          ? t("webhooks:list.failing", {
-                              count: endpoint.health.consecutiveFailures,
-                            })
-                          : t("webhooks:list.healthy")}
-                      </p>
+                      {endpoint.enabled || failing ? (
+                        <p
+                          className={cn(
+                            "text-sm",
+                            failing ? "font-medium text-state-warning" : "text-muted-foreground",
+                          )}
+                        >
+                          {endpoint.health.consecutiveFailures > 0
+                            ? t("webhooks:list.failing", {
+                                count: endpoint.health.consecutiveFailures,
+                              })
+                            : t("webhooks:list.healthy")}
+                        </p>
+                      ) : null}
                     </li>
                   );
                 })}

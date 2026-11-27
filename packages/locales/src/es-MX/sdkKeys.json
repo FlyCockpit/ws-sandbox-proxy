@@ -34,15 +34,15 @@
       "REJECTED": "Imagen rechazada"
     },
     "ownedPool": "De tu propiedad",
-    "credentialsUseDisclosure": "Esta clave puede poner valores de inicio de sesión en sandboxes (credentials:use) y ejecutar comandos o leer archivos ahí. Quien tenga la clave puede leer esos valores. Otórgala solo a código al que confiarías los inicios de sesión mismos.",
+    "credentialsUseDisclosure": "Esta credencial puede poner valores de inicio de sesión en sandboxes (credentials:use) y ejecutar comandos o leer archivos ahí. Quien la tenga puede leer esos valores. Otórgala solo a código al que confiarías los inicios de sesión mismos.",
     "logins": "Inicios de sesión de CLI",
-    "loginsHint": "Los inicios de sesión que esta clave puede usar, leer o cambiar. Déjalo vacío para ninguno.",
-    "loginsRequired": "Con credentials:use, elige al menos un inicio de sesión que esta clave pueda usar.",
+    "loginsHint": "Los inicios de sesión que esta credencial puede usar, leer o cambiar. Déjalo vacío para ninguno.",
+    "loginsRequired": "Con credentials:use, elige al menos un inicio de sesión que esta credencial pueda usar.",
     "loginsFailed": "No se pudieron cargar tus inicios de sesión.",
     "noLogins": "Todavía no tienes inicios de sesión de CLI.",
     "moreLogins": "Cargar más inicios de sesión",
     "ownSandboxesOnly": "Solo sandboxes propios",
-    "ownSandboxesOnlyHint": "Solo sandboxes creados originalmente con esta clave, incluidos comandos, archivos y operaciones. Esta opción no limita los comandos del host.",
+    "ownSandboxesOnlyHint": "Solo sandboxes creados originalmente con esta credencial, incluidos comandos, archivos y operaciones. Esta opción no limita los comandos del host.",
     "hostScopeWarning": "El usuario del daemon es administrador de Incus. Los comandos y las herramientas de archivos del host pueden acceder a todos los sandboxes del nodo, incluidos los de otras personas en pools compartidos. “Solo sandboxes propios” no limita el acceso al host. También debes habilitar la opción en el nodo.",
     "access": "Acceso",
     "preset": {
@@ -66,10 +66,10 @@
     "scopeCount_one": "{{count}} permiso",
     "scopeCount_other": "{{count}} permisos",
     "sections": {
-      "key": "Clave",
-      "keyHint": "Lo que toda clave necesita.",
+      "key": "Credencial",
+      "keyHint": "Lo que toda credencial necesita.",
       "limits": "Límites",
-      "limitsHint": "Opcional: limita lo que alcanza la clave. Los valores predeterminados sirven para la mayoría.",
+      "limitsHint": "Opcional: limita lo que alcanza la credencial. Los valores predeterminados sirven para la mayoría.",
       "resources": "Recursos",
       "pools": "Grupos",
       "sandboxes": "Sandboxes"
@@ -111,7 +111,7 @@
     "title": "Selección de grupos (independiente de hosts/revisiones)",
     "ALL_USABLE": "Todos los grupos utilizables actualmente",
     "SELECTED": "Solo grupos seleccionados",
-    "immutable": "Las claves son inmutables. Perder un permiso elimina acceso futuro al grupo; recuperarlo requiere otra clave seleccionada. El trabajo retenido sigue ligado a su clave de creación.",
+    "immutable": "Las credenciales son inmutables. Perder un permiso elimina acceso futuro al grupo; recuperarlo requiere otra credencial seleccionada. El trabajo retenido sigue ligado a la credencial con la que se creó.",
     "revisionContext": "Grupo donde buscar tus revisiones exactas en hosts ajenos"
   },
   "resourceIdentity": "{{label}} · {{id}}",
@@ -157,12 +157,12 @@
       "read": "Consultar grupos y miembros permitidos."
     },
     "webhooks": {
-      "write": "Administrar endpoints de webhook que reciben eventos de todos los sandboxes de la cuenta. Requiere una clave sobre todos los recursos propios y todos los grupos utilizables."
+      "write": "Administrar endpoints de webhook que reciben eventos de todos los sandboxes de la cuenta. Requiere una credencial sobre todos los recursos propios y todos los grupos utilizables."
     },
     "credentials": {
       "read": "Lista definiciones de inicio de sesión, inicios de sesión, cuentas, instancias y sus eventos. Nunca devuelve un valor.",
       "write": "Crea y edita definiciones, inicios de sesión, cuentas e instancias, pausa cuentas y sube valores. Los valores son de solo escritura.",
-      "use": "Adjunta y libera inicios de sesión en sandboxes, nómbralos al crear y fíjalos al iniciar. El valor llega al invitado: con commands:execute o files:read esta clave puede leerlo. Una clave con lista permitida solo alcanza los inicios de sesión que nombra."
+      "use": "Adjunta y libera inicios de sesión en sandboxes, nómbralos al crear y fíjalos al iniciar. El valor llega al invitado: con commands:execute o files:read esta credencial puede leerlo. Una credencial restringida solo alcanza los inicios de sesión que nombra."
     }
   },
   "scopeGroup": {

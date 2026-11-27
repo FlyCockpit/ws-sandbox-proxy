@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -243,4 +245,16 @@ describe("signed-out header buttons", () => {
     route.signupEnabled = true;
     expect(renderToStaticMarkup(<Header />)).not.toMatch(/<a [^>]*><button/);
   });
+});
+
+describe("auth header landmark", () => {
+  it.each(["/en-US/login", "/en-US/forgot-password"])(
+    "wraps the controls in a banner on %s",
+    (path) => {
+      route.pathname = path;
+      render(<Header />);
+      expect(screen.getByRole("banner").querySelector("[data-control]")).not.toBeNull();
+      cleanup();
+    },
+  );
 });

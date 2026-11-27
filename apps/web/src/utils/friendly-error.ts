@@ -65,6 +65,34 @@ export function isRateLimit(error: unknown): boolean {
   return e.status === 429 || e.code === "TOO_MANY_REQUESTS";
 }
 
+/**
+ * True for Better-Auth's answer to a wrong email or password
+ * (`INVALID_EMAIL_OR_PASSWORD`). Only that belongs under the sign-in password
+ * field: a field error blocks resubmitting until the field changes, which is
+ * wrong for a server error or a rate limit (patterns/forms.md § Server errors on a field).
+ */
+export function isCredentialRejection(error: unknown): boolean {
+  const e = asErrorShape(error);
+  if (!e || isRateLimit(e)) return false;
+  // The code, not the status: Better-Auth also answers 401
+  // `FAILED_TO_CREATE_SESSION` after accepting correct credentials.
+  return e.code === "INVALID_EMAIL_OR_PASSWORD";
+}
+
+/**
+ * True for Better-Auth's answer to a wrong or expired one-time code (2FA app
+ * code, emailed code, backup code). Only that belongs under the code field;
+ * a rate limit, a lockout, an expired 2FA session or a server/network failure
+ * is not the code's fault and goes to `friendly()` instead.
+ */
+export function isCodeRejection(error: unknown): boolean {
+  const e = asErrorShape(error);
+  if (!e) return false;
+  return (
+    e.code === "INVALID_CODE" || e.code === "INVALID_BACKUP_CODE" || e.code === "OTP_HAS_EXPIRED"
+  );
+}
+
 type ErrorShape = {
   status?: number;
   code?: string;

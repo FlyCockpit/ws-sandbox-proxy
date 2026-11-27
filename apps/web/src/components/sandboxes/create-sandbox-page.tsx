@@ -39,6 +39,7 @@ import { LifetimeFields } from "@/components/sandboxes/sandbox-parts";
 import { SegmentedControl } from "@/components/segmented-control";
 import { useKeyValueEditorLabels } from "@/hooks/use-form-field-labels";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
+import { useRevealSettledProblem } from "@/hooks/use-reveal-settled-problem";
 import { useStatusClock } from "@/hooks/use-status-clock";
 import { useSubmissionFence } from "@/hooks/use-submission-fence";
 import { useTwoFactorRedirect, useTwoFactorRedirectOnError } from "@/hooks/use-two-factor-redirect";
@@ -485,8 +486,6 @@ export function CreateSandboxPage({
       setProblem(next);
       const loginKey = credentialErrorKey(error);
       setLoginProblemKey(loginKey);
-      // Show it where it belongs and move there (the action bar repeats it).
-      reveal(loginKey ? "logins" : (SERVER_PLACE[next] ?? null));
       if (DEFINITE.has(next)) {
         lastSubmitted.current = null;
         create.reset();
@@ -833,6 +832,9 @@ export function CreateSandboxPage({
     ),
   );
   const pending = create.isPending;
+  useRevealSettledProblem(problem, pending, () =>
+    reveal(loginProblemKey ? "logins" : problem ? (SERVER_PLACE[problem] ?? null) : null),
+  );
 
   // One set of grant fields: the allowlist when internet access is off, the
   // fallback grants (collapsed) when it is on.

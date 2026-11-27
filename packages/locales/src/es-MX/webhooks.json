@@ -143,6 +143,7 @@
     "description": "Este servidor no tiene DATA_ENCRYPTION_KEY, así que no se pueden crear endpoints de webhook. Pide al operador que los habilite."
   },
   "problem": {
+    "destinationUnreachable": "No podemos entregar a esta URL. Usa una dirección https:// cuyo host resuelva a una dirección pública, en el puerto 443 o 1024–65535, sin credenciales ni #fragmento.",
     "destinationInvalid": "Esa URL no es válida: usa https://, sin credenciales ni fragmento, y puerto 443 o 1024-65535.",
     "destinationBlocked": "Ese destino no está permitido: se rechazan direcciones privadas, locales y de metadatos.",
     "limit": "Ya tienes el máximo de 10 endpoints de webhook.",

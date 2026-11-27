@@ -24,11 +24,14 @@ vi.mock("@/utils/orpc", () => ({
   orpc: { auth: { verifyEmailTransport: { call: auth.transport } } },
 }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: auth.toast }));
-vi.mock("@/utils/friendly-error", () => ({
-  friendly: () => "Too many attempts. Wait a minute.",
-  isRateLimit: (error: { status?: number } | null) => error?.status === 429,
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-i18next")>()),
+  useTranslation: () => ({ t: (key: string) => key }),
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+
+import enErrors from "@wssp/locales/src/en-US/errors.json";
+import esErrors from "@wssp/locales/src/es-MX/errors.json";
+import i18n, { loadLocale } from "@/i18n";
 
 import { codeIsComplete, normalizeBackupCode, TwoFactorChallenge } from "./two-factor-challenge";
 
@@ -38,6 +41,7 @@ const onCancel = vi.fn();
 beforeEach(() => {
   for (const fn of [auth.verifyTotp, auth.verifyOtp, auth.verifyBackupCode, auth.sendOtp])
     fn.mockReset();
+  auth.toast.error.mockReset();
   auth.transport.mockReset().mockResolvedValue({ ok: true });
   onVerified.mockReset();
   onCancel.mockReset();
@@ -130,14 +134,41 @@ describe("authenticator and email codes", () => {
     expect(field().getAttribute("aria-invalid")).toBeNull();
   });
 
-  it("shows a rate limit in the same place", async () => {
+  it.each([
+    ["en-US", enErrors],
+    ["es-MX", esErrors],
+  ] as const)("classifies verification failures in %s", async (lang, errors) => {
+    await loadLocale(lang);
+    await i18n.changeLanguage(lang);
+    for (const kind of ["server", "offline", "unreachable"] as const) {
+      Object.defineProperty(navigator, "onLine", { configurable: true, value: kind !== "offline" });
+      if (kind === "server") auth.verifyTotp.mockResolvedValueOnce({ error: { status: 503 } });
+      else auth.verifyTotp.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      mount();
+      fireEvent.change(field(), { target: { value: "123456" } });
+      fireEvent.click(button("auth:twoFactor.verify"));
+      await waitFor(() =>
+        expect(auth.toast.error).toHaveBeenLastCalledWith(
+          kind === "server" ? errors.serverError : errors[kind],
+        ),
+      );
+      expect(field().value).toBe("123456");
+      expect(field().getAttribute("aria-invalid")).toBeNull();
+      cleanup();
+    }
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+    await i18n.changeLanguage("en-US");
+  });
+
+  it("toasts a rate limit without marking the code invalid or clearing it", async () => {
     auth.verifyTotp.mockResolvedValue({ error: { status: 429 } });
     mount();
     fireEvent.change(field(), { target: { value: "123456" } });
     fireEvent.click(button("auth:twoFactor.verify"));
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "Too many attempts. Wait a minute.",
-    );
+    await waitFor(() => expect(auth.toast.error).toHaveBeenCalledWith(enErrors.rateLimited));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field().value).toBe("123456");
+    expect(field().getAttribute("aria-invalid")).toBeNull();
   });
 
   it("after emailing a code, verifies it by email and can go back to the authenticator", async () => {

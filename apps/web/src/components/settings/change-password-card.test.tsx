@@ -51,6 +51,9 @@ describe("change password validation", () => {
       document.getElementById(
         screen.getByLabelText(label).getAttribute("aria-describedby")?.split(" ").at(-1) ?? "",
       )?.textContent;
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByLabelText("Current password")),
+    );
     expect(errorFor("Current password")).toBe("Enter your current password.");
     expect(errorFor("New password")).toBe("Use at least 12 characters.");
     expect(errorFor("Confirm new password")).toBe("Enter the new password again.");

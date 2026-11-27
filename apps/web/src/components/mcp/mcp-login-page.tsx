@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Button } from "@wssp/ui/components/button";
 import { useTranslation } from "react-i18next";
+import { InlineRetry } from "@/components/inline-retry";
 import { SkeletonList } from "@/components/skeleton-list";
 import { useAuthSession } from "@/hooks/use-auth-session";
 import { useMcpContinue } from "@/hooks/use-mcp-continue";
@@ -11,14 +12,24 @@ export function McpLoginPage({ lang, search }: { lang: string; search: Record<st
 }
 function LoginTransaction({ lang, search }: { lang: string; search: Record<string, unknown> }) {
   const { t } = useTranslation("agents");
-  const { state } = useAuthSession();
+  const { state, actions } = useAuthSession();
   const { status, proceed } = useMcpContinue();
   const reauth = useMcpReauthenticate(lang);
   const info = parseMcpRequest(search);
   if (!info.usable) return <p role="alert">{t("consent.invalid")}</p>;
   if (state.status === "pending" || status === "pending" || reauth.status === "pending")
     return <SkeletonList count={2} />;
-  if (state.status === "error") return <p role="alert">{t("consent.invalid")}</p>;
+  // The asynchronous failure is announced (InlineRetry has no live region).
+  if (state.status === "error")
+    return (
+      <div role="alert">
+        <InlineRetry
+          variant="destructive"
+          message={t("login.sessionCheckFailed")}
+          onRetry={() => void actions.refetch()}
+        />
+      </div>
+    );
   return (
     <section className="mx-auto my-6 flex w-[calc(100%-2rem)] min-w-0 max-w-xl flex-col gap-4 rounded-xl border p-4">
       <h1>{t("login.title")}</h1>

@@ -299,14 +299,16 @@ export async function insertSdkKey(
 }
 
 /** Mint-time database races as domain conflicts. */
-export function rethrowSdkKeyMintError(error: unknown): never {
+export function rethrowSdkKeyMintError(error: unknown, kind: "API" | "AGENT_TOKEN" = "API"): never {
   if (isPrismaForeignKeyViolation(error)) {
     throw new ORPCError("CONFLICT", {
       message: "An allowlisted resource was removed during mint.",
     });
   }
   if (isPrismaUniqueViolation(error)) {
-    throw new ORPCError("CONFLICT", { message: "Could not mint SDK key." });
+    throw new ORPCError("CONFLICT", {
+      message: kind === "AGENT_TOKEN" ? "Could not mint agent token." : "Could not mint SDK key.",
+    });
   }
   throw error;
 }
@@ -329,15 +331,17 @@ export async function revokeOwnedKey(
     ...(key.origin ? { origin: key.origin } : {}),
   } satisfies Prisma.SdkKeyWhereInput;
   // Unknown ids answer before the change: each change keys process memory by id.
+  const notFoundMessage =
+    key.kind === "AGENT_TOKEN" ? "Agent token not found." : "SDK key not found.";
   const known = await prisma.sdkKey.findFirst({ where, select: { id: true } });
-  if (!known) throw new ORPCError("NOT_FOUND", { message: "SDK key not found." });
+  if (!known) throw new ORPCError("NOT_FOUND", { message: notFoundMessage });
   const updated = await withAuthorityChange({ ownerId, credentialId: key.id }, () =>
     prisma.$transaction(async (tx) => {
       await lockOwnerForAdmission(tx, ownerId);
       return tx.sdkKey.updateMany({ where, data: { revokedAt: new Date() } });
     }),
   );
-  if (updated.count === 0) throw new ORPCError("NOT_FOUND", { message: "SDK key not found." });
+  if (updated.count === 0) throw new ORPCError("NOT_FOUND", { message: notFoundMessage });
   // Committed: this key's waiting creates now fail credential_inactive.
   notifyCapacityChanged("all");
 }

@@ -142,6 +142,7 @@
     "latch": {
       "off": "apagado",
       "hold": "mantén",
+      "onceShort": "1 vez",
       "once": "una vez",
       "lock": "fijo"
     },

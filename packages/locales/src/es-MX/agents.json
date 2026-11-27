@@ -44,6 +44,7 @@
     "denied": "Acceso denegado."
   },
   "login": {
+    "sessionCheckFailed": "No pudimos comprobar si iniciaste sesión. Revisa tu conexión e inténtalo de nuevo.",
     "title": "Conectar a MCP",
     "description": "Inicia sesión para revisar el acceso solicitado por {{client}}.",
     "continue": "Continuar para revisar el acceso",

@@ -82,11 +82,15 @@ vi.mock("@/lib/pool-invite", () => ({
   clearPoolInviteToken: vi.fn(),
 }));
 vi.mock("@wssp/ui/components/sileo", () => ({ toast: fx.toast }));
-vi.mock("@/utils/friendly-error", () => ({
-  friendly: (_error: unknown, fallback?: string) => fallback ?? "Too many attempts.",
-  isRateLimit: (error: { status?: number } | null) => error?.status === 429,
+vi.mock("react-i18next", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("react-i18next")>()),
+  useTranslation: () => ({ t: (key: string) => key }),
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+
+import enErrors from "@wssp/locales/src/en-US/errors.json";
+import esErrors from "@wssp/locales/src/es-MX/errors.json";
+import i18n, { loadLocale } from "@/i18n";
+
 vi.mock("./resend-verification", () => ({ ResendVerification: () => null }));
 vi.mock("@/components/auth/resend-verification", () => ({ ResendVerification: () => null }));
 
@@ -102,6 +106,7 @@ const SignupPage = await page("@/routes/$lang/_app/signup");
 beforeEach(() => {
   fx.config = { signupEnabled: true, adminBootstrapSignupEnabled: false, emailEnabled: false };
   fx.signIn.mockReset();
+  fx.toast.error.mockReset();
   fx.signUp.mockReset();
   fx.inviteToken = undefined;
   for (const fn of Object.values(fx.twoFactor)) fn.mockReset();
@@ -150,8 +155,54 @@ describe("sign in", () => {
     fill("auth:fields.password", "some-password");
     fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("Too many attempts.");
+    expect(alert.textContent).toBe(enErrors.rateLimited);
     expect(screen.getByLabelText("auth:fields.password").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it.each([
+    ["en-US", enErrors],
+    ["es-MX", esErrors],
+  ] as const)("classifies sign-in failures in %s", async (lang, errors) => {
+    await loadLocale(lang);
+    await i18n.changeLanguage(lang);
+    for (const kind of ["server", "offline", "unreachable"] as const) {
+      Object.defineProperty(navigator, "onLine", { configurable: true, value: kind !== "offline" });
+      if (kind === "server") fx.signIn.mockResolvedValueOnce({ error: { status: 503 } });
+      else fx.signIn.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+      render(<LoginPage />);
+      fill("auth:fields.email", "person@example.test");
+      fill("auth:fields.password", "some-password");
+      fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+      await waitFor(() =>
+        expect(fx.toast.error).toHaveBeenLastCalledWith(
+          kind === "server" ? errors.serverError : errors[kind],
+        ),
+      );
+      expect(screen.getByLabelText("auth:fields.password").getAttribute("aria-invalid")).toBeNull();
+      expect(screen.getByLabelText("auth:fields.email")).toHaveProperty(
+        "value",
+        "person@example.test",
+      );
+      expect(screen.getByLabelText("auth:fields.password")).toHaveProperty(
+        "value",
+        "some-password",
+      );
+      cleanup();
+    }
+    Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+    await i18n.changeLanguage("en-US");
+  });
+
+  it("shows verification guidance and a resend link inside the form", async () => {
+    fx.signIn.mockResolvedValue({ error: { code: "EMAIL_NOT_VERIFIED", status: 403 } });
+    render(<LoginPage />);
+    fill("auth:fields.email", "person@example.test");
+    fill("auth:fields.password", "some-password");
+    fireEvent.click(screen.getByRole("button", { name: "auth:login.signIn" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("auth:verifyEmail.notVerified");
+    expect(screen.getByText("auth:verifyEmail.resend").closest("a")?.dataset.to).toBe(
+      "/$lang/verify-email",
+    );
   });
 
   it("offers Sign Up only while sign-up is open", () => {

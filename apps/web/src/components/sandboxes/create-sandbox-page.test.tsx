@@ -945,6 +945,10 @@ describe("creating a sandbox", () => {
 
   it("an invalid name is a draft problem; a taken one is explained and the next submit is a new request", async () => {
     server.current.errors.createSandbox = [coded("sandbox.name_taken")];
+    let release!: () => void;
+    server.current.gates.createSandbox = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const user = userEvent.setup();
     await openCreate(user);
     await user.type(form().getByLabelText(enSandboxes.create.name), "wssp-x");
@@ -956,13 +960,20 @@ describe("creating a sandbox", () => {
     await user.clear(form().getByLabelText(enSandboxes.create.name));
     await user.type(form().getByLabelText(enSandboxes.create.name), "quiet-otter");
     await submit(user);
+    await waitFor(() =>
+      expect(form().getByLabelText<HTMLInputElement>(enSandboxes.create.name).disabled).toBe(true),
+    );
+    release();
     // The refusal is Name's own error: marked invalid, described by it, focused.
     const name = form().getByLabelText<HTMLInputElement>(enSandboxes.create.name);
     await waitFor(() => expect(name.getAttribute("aria-invalid")).toBe("true"));
     const errorId = name.getAttribute("aria-describedby")?.split(" ").at(-1);
     expect(document.getElementById(errorId!)?.textContent).toBe(enSandboxes.problem.nameTaken);
     expect(summary()?.textContent).toContain(enSandboxes.problem.nameTaken);
-    await waitFor(() => expect(document.activeElement).toBe(name));
+    await waitFor(() => {
+      expect(name.disabled).toBe(false);
+      expect(document.activeElement).toBe(name);
+    });
     // "Show" in the action bar goes back to the field, not to a message.
     name.blur();
     await user.click(

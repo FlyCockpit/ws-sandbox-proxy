@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Button, buttonVariants } from "@wssp/ui/components/button";
 import { ArrowLeft, SquareTerminal, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AdvancedDetails } from "@/components/advanced-details";
 import { EmptyState } from "@/components/empty-state";
@@ -49,6 +49,7 @@ import {
   SANDBOX_IDLE_REFETCH_MS,
 } from "@/components/sandboxes/sandboxes-page";
 import { SkeletonList } from "@/components/skeleton-list";
+import type { TerminalPanelHandle } from "@/components/terminal-panel";
 import { useRerenderAt } from "@/hooks/use-rerender-at";
 import { useSharingRestoration } from "@/hooks/use-sharing-restoration";
 import { useStatusClock } from "@/hooks/use-status-clock";
@@ -170,6 +171,7 @@ function SandboxDetail({
   const restored = useSharingRestoration(sandbox.id, sandbox.accessGraceUntil);
   const lifecycle = useSandboxLifecycle(sandbox, lang);
   const { setOpen, problem, pending } = lifecycle;
+  const terminalRef = useRef<TerminalPanelHandle>(null);
   const [capturing, setCapturing] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const imagePolicy = useQuery({
@@ -218,6 +220,17 @@ function SandboxDetail({
     <a
       href={`#${sectionId("terminal")}`}
       data-primary-action="terminal"
+      onClick={(event) => {
+        if (
+          event.button === 0 &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.shiftKey &&
+          !event.altKey
+        ) {
+          terminalRef.current?.attach();
+        }
+      }}
       className={buttonVariants({ size: "touch" })}
     >
       <SquareTerminal aria-hidden="true" className="size-4" />
@@ -357,6 +370,7 @@ function SandboxDetail({
               sandbox, and A's terminal must never stay attached on B's page. */}
           <SandboxTerminal
             key={sandbox.id}
+            ref={terminalRef}
             sandboxId={sandbox.id}
             name={sandbox.name}
             lang={lang}

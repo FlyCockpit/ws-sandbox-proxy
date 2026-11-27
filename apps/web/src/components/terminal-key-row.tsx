@@ -288,8 +288,10 @@ function HoldModifierKey({
       }}
     >
       <span>{t(`terminal:keys.name.${name}`)}</span>
-      <span className="max-w-full truncate text-xs leading-none font-normal text-muted-foreground">
-        {t(`terminal:keys.latch.${latch === "off" ? "hold" : latch}`)}
+      <span className="max-w-full whitespace-nowrap text-xs leading-none font-normal text-muted-foreground">
+        {latch === "once"
+          ? t("terminal:keys.latch.onceShort")
+          : t(`terminal:keys.latch.${latch === "off" ? "hold" : latch}`)}
       </span>
     </button>
   );

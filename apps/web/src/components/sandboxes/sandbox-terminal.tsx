@@ -1,9 +1,11 @@
+import type { Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { TerminalPanel } from "@/components/terminal-panel";
+import { TerminalPanel, type TerminalPanelHandle } from "@/components/terminal-panel";
 import type { PhotoTarget } from "@/components/terminal-utilities";
 import { useSensitiveAccessUnavailable } from "@/hooks/use-sensitive-access-unavailable";
 
 type SandboxTerminalProps = {
+  ref?: Ref<TerminalPanelHandle>;
   sandboxId: string;
   /** The picker's label on phones (the sandbox's name). */
   name?: string;

@@ -32,6 +32,8 @@ const CLOSED_POLICY = {
   openEgress: "none",
   guestSudo: "all",
 };
+const toastSuccess = vi.hoisted(() => vi.fn());
+vi.mock("@wssp/ui/components/sileo", () => ({ toast: { success: toastSuccess } }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children, className, to }: { children: ReactNode; className?: string; to: string }) => (
     <a className={className} href={to}>
@@ -118,6 +120,7 @@ afterEach(() => {
   cleanup();
   grant.mockReset();
   contribute.mockReset();
+  resend.mockReset();
   rows.contributions = [];
   rows.invites = [];
   rows.shared = null;
@@ -151,6 +154,26 @@ async function mount(kind: "form" | "shared" | "manage", lang = "en-US") {
   );
   return { ...view, client };
 }
+it("a revoked invitation shows its status without delivery or actions", async () => {
+  rows.invites = [
+    {
+      id: "revoked",
+      email: "revoked@example.test",
+      acceptedAt: null,
+      expiresAt: new Date("2030-01-01"),
+      sentAt: new Date(),
+      revokedAt: new Date(),
+      expiredAt: null,
+    },
+  ];
+  await mount("manage");
+  await screen.findByText("revoked@example.test");
+  expect(screen.getByText(en.sharing.inviteRevoked)).toBeTruthy();
+  expect(screen.queryByText(en.sharing.sent)).toBeNull();
+  expect(screen.queryByRole("button", { name: en.sharing.resend })).toBeNull();
+  expect(screen.queryByRole("button", { name: en.sharing.revoke })).toBeNull();
+  expect(document.body.textContent).not.toContain("2030");
+});
 it.each(["en-US", "es-MX"])(
   "%s defaults BOTH and null caps, explains trust and forwarding, and keeps one-time invite secret out of caches",
   async (lang) => {
@@ -184,6 +207,7 @@ it.each(["en-US", "es-MX"])(
     );
     await user.click(screen.getByRole("button", { name: copy.sharing.invite }));
     await waitFor(() => expect(grant).toHaveBeenCalledTimes(1));
+    expect(toastSuccess).toHaveBeenCalledWith(copy.sharing.sharedToast);
     void actions;
     expect(grant.mock.calls[0]?.[0]).toMatchObject({
       canUse: true,
@@ -392,6 +416,26 @@ it.each(["en-US", "es-MX"])(
   },
 );
 
+it("a rate-limited resend uses the invitation limit message", async () => {
+  rows.invites = [
+    {
+      id: "pending",
+      email: "pending@example.test",
+      acceptedAt: null,
+      expiresAt: new Date("2030-01-01"),
+      sentAt: new Date(),
+      revokedAt: null,
+      expiredAt: null,
+    },
+  ];
+  resend.mockRejectedValueOnce({ code: "TOO_MANY_REQUESTS", data: { retryAfterSeconds: 120 } });
+  const user = userEvent.setup();
+  await mount("manage");
+  await user.click(await screen.findByRole("button", { name: en.sharing.resend }));
+  expect(await screen.findByText(/Too many invitations for now/)).toBeTruthy();
+  expect(screen.queryByText(/Too many sharing changes/)).toBeNull();
+});
+
 it("a resent invitation link is shown with the inviter's forwarding warning, once", async () => {
   rows.invites = [
     {
@@ -519,10 +563,14 @@ it("a rate-limited Leave says to wait, without invitation wording", async () => 
   await user.click(
     await screen.findByRole("button", { name: en.pools.actions.more.replace("{{label}}", "Pool") }),
   );
-  await user.click(await screen.findByRole("menuitem", { name: en.sharing.leave }));
+  const leaveItem = await screen.findByRole("menuitem", { name: en.sharing.leave });
+  expect(leaveItem.getAttribute("data-variant")).toBe("destructive");
+  await user.click(leaveItem);
   const confirm = within(await screen.findByRole("alertdialog"));
+  expect(confirm.getByText(en.sharing.leaveDescription)).toBeTruthy();
+  expect(confirm.queryByText(en.sharing.contributionNotice)).toBeNull();
   await user.type(confirm.getByRole("textbox"), "same");
-  await user.click(confirm.getByRole("button", { name: common.actions.delete }));
+  await user.click(confirm.getByRole("button", { name: en.sharing.leave }));
   expect(await screen.findByText(en.sharing.tooManyChangesLater)).toBeTruthy();
   expect(screen.queryByText(/invitations/)).toBeNull();
 });

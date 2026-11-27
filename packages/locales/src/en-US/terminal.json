@@ -142,6 +142,7 @@
     "latch": {
       "off": "off",
       "hold": "hold",
+      "onceShort": "next",
       "once": "next key",
       "lock": "locked"
     },

@@ -1,3 +1,6 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render as renderDom, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import enCommon from "@wssp/locales/src/en-US/common.json";
 import { createInstance } from "i18next";
 import type { ReactNode } from "react";
@@ -144,4 +147,22 @@ describe("GettingStarted", () => {
     const html = render(steps);
     expect(html).toMatch(/aria-label="Hide the getting-started checklist"[^>]*>Hide</);
   });
+});
+
+it("keeps a visible way to restore the checklist after hiding it", async () => {
+  window.localStorage.clear();
+  window.matchMedia = () => ({ matches: true }) as MediaQueryList;
+  renderDom(
+    <I18nextProvider i18n={i18n}>
+      <GettingStarted steps={steps} scope="dom-test" />
+    </I18nextProvider>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: enCommon.gettingStarted.hideAriaLabel }));
+  const show = screen.getByRole("button", { name: enCommon.gettingStarted.show });
+  expect(show.className).toContain("min-h-11");
+  show.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: /Get started/ }));
+  expect(screen.getByRole("button", { name: enCommon.gettingStarted.hideAriaLabel })).toBeTruthy();
+  cleanup();
 });

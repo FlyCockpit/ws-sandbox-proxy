@@ -44,6 +44,7 @@
     "denied": "Access denied."
   },
   "login": {
+    "sessionCheckFailed": "We couldn't check whether you're signed in. Check your connection and try again.",
     "title": "Connect to MCP",
     "description": "Sign in to review the access requested by {{client}}.",
     "continue": "Continue to review access",

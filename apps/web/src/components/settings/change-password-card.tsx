@@ -9,6 +9,7 @@ import {
 } from "@wssp/ui/components/card";
 import { toast } from "@wssp/ui/components/sileo";
 import { TextField } from "@wssp/ui/components/text-field";
+import { focusFirstInvalidField } from "@wssp/ui/lib/focus-first-invalid";
 import { KeyRound } from "lucide-react";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -68,6 +69,7 @@ export function ChangePasswordCard({
           path: ["confirmPassword"],
         }),
     },
+    onSubmitInvalid: () => focusFirstInvalidField(formRef.current),
     onSubmit: async ({ value }) => {
       setFormError(null);
       // A refusal about one field goes under it, focused, and clears on edit.

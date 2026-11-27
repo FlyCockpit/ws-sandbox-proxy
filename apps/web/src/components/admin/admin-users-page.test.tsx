@@ -403,6 +403,7 @@ describe("admin users mutations", () => {
     await u.type(within(form).getByLabelText(enAdmin.users.emailLabel), "new@example.com");
     await u.click(within(form).getByRole("button", { name: enAdmin.users.sendInvite }));
     const reveal = await screen.findByRole("dialog", { name: enAdmin.users.revealTitle });
+    expect(reveal.textContent).toContain("open the invitation email to verify their address");
     const value = () => reveal.querySelector("[data-secret-value]")!;
     // Masked by default: the password is not in the dialog's text.
     expect(value().textContent).not.toContain("Qx7-temp-pass");

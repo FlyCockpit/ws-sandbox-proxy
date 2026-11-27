@@ -67,15 +67,15 @@
       "REJECTED": "Image rejected"
     },
     "ownedPool": "Owned by you",
-    "credentialsUseDisclosure": "This key can put login values into sandboxes (credentials:use) and run commands or read files there. Whoever holds the key can read those values back. Grant it only to code you trust with the logins themselves.",
+    "credentialsUseDisclosure": "This credential can put login values into sandboxes (credentials:use) and run commands or read files there. Whoever holds it can read those values back. Grant it only to code you trust with the logins themselves.",
     "logins": "CLI logins",
-    "loginsHint": "The logins this key may use, read or change. Leave empty for none.",
-    "loginsRequired": "With credentials:use, choose at least one login this key may use.",
+    "loginsHint": "The logins this credential may use, read or change. Leave empty for none.",
+    "loginsRequired": "With credentials:use, choose at least one login this credential may use.",
     "loginsFailed": "Couldn't load your logins.",
     "noLogins": "You have no CLI logins yet.",
     "moreLogins": "Load more logins",
     "ownSandboxesOnly": "Own sandboxes only",
-    "ownSandboxesOnlyHint": "Only sandboxes originally created with this key, including commands, files and operations. Host commands are not limited by this option.",
+    "ownSandboxesOnlyHint": "Only sandboxes originally created with this credential, including commands, files and operations. Host commands are not limited by this option.",
     "hostScopeWarning": "The daemon user is an Incus admin. Host commands and host file tools can reach every sandbox on the node, including other users’ sandboxes in shared pools. “Own sandboxes only” does not limit host access. Host access also requires the setting to be enabled on the node.",
     "access": "Access",
     "preset": {
@@ -99,10 +99,10 @@
     "scopeCount_one": "{{count}} permission",
     "scopeCount_other": "{{count}} permissions",
     "sections": {
-      "key": "Key",
-      "keyHint": "What every key needs.",
+      "key": "Credential",
+      "keyHint": "What every credential needs.",
       "limits": "Limits",
-      "limitsHint": "Optional: narrow what the key reaches. The defaults suit most keys.",
+      "limitsHint": "Optional: narrow what the credential reaches. The defaults suit most credentials.",
       "resources": "Resources",
       "pools": "Pools",
       "sandboxes": "Sandboxes"
@@ -165,12 +165,12 @@
       "read": "Discover pools and permitted members."
     },
     "webhooks": {
-      "write": "Manage webhook endpoints that receive events for every sandbox on the account. Needs a key over all owned resources and all usable pools."
+      "write": "Manage webhook endpoints that receive events for every sandbox on the account. Needs a credential over all owned resources and all usable pools."
     },
     "credentials": {
       "read": "List login definitions, logins, accounts, instances and their events. Never returns a value.",
       "write": "Create and edit login definitions, logins, accounts and instances, pause accounts and upload values. Values are write-only.",
-      "use": "Attach and free logins on sandboxes, name them at create and pin them on start. The login's value reaches the guest: with commands:execute or files:read this key can read it back. An allowlist key reaches only the logins it names."
+      "use": "Attach and free logins on sandboxes, name them at create and pin them on start. The login's value reaches the guest: with commands:execute or files:read this credential can read it back. A restricted credential reaches only the logins it names."
     }
   },
   "scopeNeeds": {
@@ -186,7 +186,7 @@
     "title": "Pool selection (independent of hosts/revisions)",
     "ALL_USABLE": "All currently usable pools",
     "SELECTED": "Selected pools only",
-    "immutable": "Keys are immutable. Losing a grant removes future pool access; regrant requires a new selected key. Retained creator work stays bound to its original create key.",
+    "immutable": "Credentials are immutable. Losing a grant removes future pool access; regrant requires a new selected credential. Retained creator work stays bound to its original credential.",
     "revisionContext": "Pool to discover your exact revisions on foreign hosts"
   },
   "emptyActive": {
