@@ -622,6 +622,24 @@ async function signIn() {
   return new Headers({ cookie: cookies.join("; ") });
 }
 
+// Issue legacy cache cookies only for regression coverage of the write guard.
+async function legacyCacheFixture() {
+  const { betterAuth } = await vi.importActual<typeof import("better-auth")>("better-auth");
+  const instance = betterAuth({
+    ...rawAuth.options,
+    session: { ...rawAuth.options.session, cookieCache: { enabled: true, maxAge: 60 } },
+  });
+  const request = new Request("http://localhost:3000/api/auth/sign-in/email", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+    body: JSON.stringify({ email: "owner@example.test", password }),
+  });
+  const response = await withPasswordSignInFence(request, () => instance.handler(request));
+  expect(response.status).toBe(200);
+  const cookies = response.headers.getSetCookie().map((value) => value.split(";")[0]);
+  return { instance, headers: new Headers({ cookie: cookies.join("; ") }) };
+}
+
 describe("password changes and session cache", () => {
   it.each(["password verification", "session insert"] as const)(
     "an admin's temporary-password sign-in paused at %s cannot outlive the invitee replacing it",
@@ -828,7 +846,7 @@ describe("password changes and session cache", () => {
   it.each(["revoked", "expired"])(
     "stops a %s session's cookie-cache renewal chain",
     async (state) => {
-      const headers = await signIn();
+      const { instance: auth, headers } = await legacyCacheFixture();
       const cached = await auth.api.getSession({ headers });
       expect(cached?.user.id).toBe(userId);
       if (state === "revoked")
@@ -837,7 +855,7 @@ describe("password changes and session cache", () => {
         memory.session!.find((row) => row.token === cached!.session.token)!.expiresAt = new Date(
           Date.now() - 1,
         );
-      // The signed cache is still valid for reads, just as on origin.
+      // The synthetic legacy cache remains valid for reads, exercising the write guard.
       expect((await auth.api.getSession({ headers }))?.user.id).toBe(userId);
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await auth.handler(
@@ -876,7 +894,7 @@ describe("password changes and session cache", () => {
   it.each(["/two-factor/generate-backup-codes", "/two-factor/send-otp"])(
     "rejects revoked cookie authority on plugin write %s",
     async (path) => {
-      const headers = await signIn();
+      const { instance: auth, headers } = await legacyCacheFixture();
       memory.session = [];
       const response = await auth.handler(
         new Request(`http://localhost:3000/api/auth${path}`, {
@@ -902,7 +920,7 @@ describe("password changes and session cache", () => {
   );
 
   it("allows a live session to update and renew its cache", async () => {
-    const headers = await signIn();
+    const { instance: auth, headers } = await legacyCacheFixture();
     const response = await auth.api.updateUser({
       headers,
       body: { name: "New name" },
@@ -928,8 +946,27 @@ describe("password changes and session cache", () => {
     await expect(auth.api.signOut({ headers })).resolves.toEqual({ success: true });
   });
 
-  it("keeps the 60 s signed cookie cache (a revoked session ends within it; minting re-checks the live row)", () => {
-    expect(auth.options.session?.cookieCache).toEqual({ enabled: true, maxAge: 60 });
+  it.each(["revoked", "expired"] as const)(
+    "production session reads refuse a %s session carrying a legacy cache cookie",
+    async (state) => {
+      const { headers } = await legacyCacheFixture();
+      const live = await rawAuth.api.getSession({ headers });
+      expect(live?.user.id).toBe(userId);
+      if (state === "revoked")
+        memory.session = memory.session!.filter((row) => row.token !== live!.session.token);
+      else
+        memory.session!.find((row) => row.token === live!.session.token)!.expiresAt = new Date(0);
+      expect(await rawAuth.api.getSession({ headers })).toBeNull();
+      const response = await rawAuth.handler(
+        new Request("http://localhost:3000/api/auth/get-session", { headers }),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toBeNull();
+    },
+  );
+
+  it("disables cookie caching for production session consumers", () => {
+    expect(auth.options.session?.cookieCache?.enabled).toBe(false);
   });
 });
 

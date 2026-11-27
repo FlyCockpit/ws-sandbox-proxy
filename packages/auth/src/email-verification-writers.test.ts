@@ -57,7 +57,8 @@ const reviewed: Record<string, string> = {
   // Round 3: durable session write checks and reset-link/temporary-password finalization; no mailbox proof input or write.
   // Reset-race: session/write fences and all-session post-sweep; mailbox proof unchanged.
   // Activation port: selective reset adapter preserves proof policy and defers session signals until commit.
-  "packages/auth/src/index.ts": "34c4a2d38ee04b1a4ad8fdc1d005109c71074ac9a457c00c6c092bf143b5ae39",
+  // Reviewed 11-27 (precut-signin-race): cookie cache disabled; mailbox proof configuration and writers unchanged.
+  "packages/auth/src/index.ts": "c9e5fc539ccb023d04b1d29dc15257907a33731cd962b3eb3221ec423483c092",
   // Refusals only: no Better Auth create with emailVerified=true, no update carrying email,
   // no emailVerified write outside /verify-email. Writes nothing.
   // Activation: only mediates BA verify-email proof writes under PW -> owner,

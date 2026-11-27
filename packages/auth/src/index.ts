@@ -276,11 +276,10 @@ export const auth = betterAuth({
     // session:30d, refresh every 1d
     expiresIn: 60 * 60 * 24 * 30,
     updateAge: 60 * 60 * 24,
-    // Short-lived signed cookie cache: skips the session DB lookup on most
-    // requests; revocations/role changes propagate within 60s.
+    // Route guards and identity checks must see revocations and role changes
+    // on the next request, including requests carrying previously issued caches.
     cookieCache: {
-      enabled: true,
-      maxAge: 60,
+      enabled: false,
     },
   },
   advanced: {

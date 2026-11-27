@@ -53,9 +53,9 @@ sandbox, operation and transfer belongs to exactly one user account.
   counters, session OTPs, and trusted-device records. If reset fails before link
   consumption, the account stays signed out everywhere with the password
   unchanged and the unconsumed link reusable.
-  A revoked session can continue reading for at most the 60-second signed
-  cookie-cache window; session-authenticated Better Auth writes and credential
-  minting re-check the live session row, so writes cannot renew a revoked cache.
+  Session reads consult the live database row without a signed cookie cache,
+  so a revoked session is refused on its next check. Session-authenticated
+  Better Auth writes and credential minting also re-check the live session row.
 
   Password sign-ins take a credential fingerprint before Better Auth reads the
   hash, and check it before inserting a session and after the insert commits.

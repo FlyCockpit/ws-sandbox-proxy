@@ -107,8 +107,8 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  * Lock order: password-write (if present) → this existing owner row lock.
  * Single-connection admissions need no extra slot; never add a competing
  * credential advisory lock or reverse owner → host → code order.
- * A revoked session can continue reading for at most the 60-second cookie-cache
- * window; credential minting and reset re-check the live session row.
+ * Session reads bypass the cookie cache and refuse a revoked row on the next
+ * check; credential minting and reset also re-check the live session row.
  * If reset fails before the password write, signing out everywhere with the
  * password unchanged is the safe direction. Retry the idempotent transaction;
  * a failed before-sweep leaves the same recovery link usable.

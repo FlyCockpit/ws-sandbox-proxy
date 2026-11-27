@@ -10,9 +10,9 @@
  *
  * Why any of them need it: the admin plugin only rejects a banned user when a
  * session is CREATED (`session.create.before`). It never re-checks on
- * `getSession`, and with the 60s cookie cache an already-issued session keeps
- * working for up to a minute after a ban. Credentials that are not sessions at
- * all — an API key row, a device token — are never re-checked by the plugin on
+ * `getSession`, so the current user returned by that database read still needs
+ * an explicit ban check. Credentials that are not sessions at all — an API key
+ * row, a device token — are never re-checked by the plugin on
  * any request. `users.archive` therefore sets `banned` AND deletes sessions AND
  * fences live authority, and these gates close the remaining windows.
  */
